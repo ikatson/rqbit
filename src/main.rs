@@ -59,15 +59,16 @@ struct Opts {
 fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
 
+    let opts = Opts::parse();
+
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
+        .enable_time()
+        .enable_io()
         // the default is 512, it can get out of hand.
         .max_blocking_threads(8)
         .build()?;
 
     rt.block_on(async move {
-        let opts = Opts::parse();
-
         let torrent = if opts.torrent_path.starts_with("http://")
             || opts.torrent_path.starts_with("https://")
         {
