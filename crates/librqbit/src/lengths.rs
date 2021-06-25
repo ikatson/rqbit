@@ -113,6 +113,9 @@ impl Lengths {
         }
         self.piece_length
     }
+    pub const fn chunk_absolute_offset(&self, chunk_info: &ChunkInfo) -> u64 {
+        self.piece_offset(chunk_info.piece_index) + chunk_info.offset as u64
+    }
     pub const fn piece_offset(&self, index: ValidPieceIndex) -> u64 {
         index.0 as u64 * self.piece_length as u64
     }

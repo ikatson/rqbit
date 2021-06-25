@@ -3,10 +3,44 @@ use std::{fs::File, io::Read};
 use anyhow::Context;
 use clap::Clap;
 use librqbit::{
-    clone_to_owned::CloneToOwned, torrent_manager::TorrentManagerBuilder,
-    torrent_metainfo::torrent_from_bytes,
+    clone_to_owned::CloneToOwned,
+    torrent_manager::TorrentManagerBuilder,
+    torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Owned},
 };
 use log::info;
+
+async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
+    let response = reqwest::get(url)
+        .await
+        .with_context(|| format!("error downloading torrent metadata from {}", url))?;
+    if !response.status().is_success() {
+        anyhow::bail!("GET {} returned {}", url, response.status())
+    }
+    let b = response
+        .bytes()
+        .await
+        .with_context(|| format!("error reading repsonse body from {}", url))?;
+    Ok(torrent_from_bytes(&b)
+        .context("error decoding torrent")?
+        .clone_to_owned())
+}
+
+fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
+    let mut buf = Vec::new();
+    if filename == "-" {
+        std::io::stdin()
+            .read_to_end(&mut buf)
+            .context("error reading stdin")?;
+    } else {
+        File::open(filename)
+            .with_context(|| format!("error opening {}", filename))?
+            .read_to_end(&mut buf)
+            .with_context(|| format!("error reading {}", filename))?;
+    }
+    Ok(torrent_from_bytes(&buf)
+        .context("error decoding torrent")?
+        .clone_to_owned())
+}
 
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Igor Katson <igor.katson@gmail.com>")]
@@ -30,36 +64,9 @@ async fn main() -> anyhow::Result<()> {
 
     let torrent =
         if opts.torrent_path.starts_with("http://") || opts.torrent_path.starts_with("https://") {
-            let response = reqwest::get(&opts.torrent_path).await.with_context(|| {
-                format!(
-                    "error downloading torrent metadata from {}",
-                    &opts.torrent_path
-                )
-            })?;
-            if !response.status().is_success() {
-                anyhow::bail!("GET {} returned {}", &opts.torrent_path, response.status())
-            }
-            let b = response.bytes().await.with_context(|| {
-                format!("error reading repsonse body from {}", &opts.torrent_path)
-            })?;
-            torrent_from_bytes(&b)
-                .context("error decoding torrent")?
-                .clone_to_owned()
+            torrent_from_url(&opts.torrent_path).await?
         } else {
-            let mut buf = Vec::new();
-            if opts.torrent_path == "-" {
-                std::io::stdin()
-                    .read_to_end(&mut buf)
-                    .context("error reading stdin")?;
-            } else {
-                File::open(&opts.torrent_path)
-                    .with_context(|| format!("error opening {}", &opts.torrent_path))?
-                    .read_to_end(&mut buf)
-                    .with_context(|| format!("error reading {}", &opts.torrent_path))?;
-            }
-            torrent_from_bytes(&buf)
-                .context("error decoding torrent")?
-                .clone_to_owned()
+            torrent_from_file(&opts.torrent_path)?
         };
 
     info!("Torrent metadata: {:#?}", &torrent);

@@ -23,7 +23,7 @@ use crate::{
     buffers::ByteString,
     chunk_tracker::ChunkTracker,
     clone_to_owned::CloneToOwned,
-    lengths::{Lengths, ValidPieceIndex},
+    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_comms::{
         Handshake, Message, MessageBorrowed, MessageDeserializeError, MessageOwned, Piece, Request,
     },
@@ -615,12 +615,13 @@ impl TorrentManager {
     fn check_piece_blocking(
         &self,
         who_sent: PeerHandle,
-        index: ValidPieceIndex,
+        piece_index: ValidPieceIndex,
+        last_received_chunk: &ChunkInfo,
     ) -> anyhow::Result<bool> {
         let mut h = sha1::Sha1::new();
-        let piece_length = self.inner.lengths.piece_length(index);
-        let mut absolute_offset = self.inner.lengths.piece_offset(index);
-        let mut buf = vec![0; std::cmp::min(8192, piece_length as usize)];
+        let piece_length = self.inner.lengths.piece_length(piece_index);
+        let mut absolute_offset = self.inner.lengths.piece_offset(piece_index);
+        let mut buf = vec![0u8; std::cmp::min(8192, piece_length as usize)];
 
         let mut left_to_read = piece_length as usize;
 
@@ -631,10 +632,13 @@ impl TorrentManager {
             }
             let file_remaining_len = file_len - absolute_offset;
 
-            let mut left_to_read_in_file =
-                std::cmp::min(file_remaining_len, left_to_read as u64) as usize;
+            let to_read_in_file = std::cmp::min(file_remaining_len, left_to_read as u64) as usize;
+            let mut left_to_read_in_file = to_read_in_file;
             let mut file_g = self.inner.files[file_idx].lock();
-            trace!("piece={}, seeking to {}", index, absolute_offset);
+            debug!(
+                "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
+                piece_index, who_sent, file_idx, absolute_offset, &last_received_chunk
+            );
             file_g
                 .seek(std::io::SeekFrom::Start(absolute_offset))
                 .with_context(|| {
@@ -657,22 +661,7 @@ impl TorrentManager {
                 left_to_read_in_file -= chunk_length;
             }
 
-            match self.inner.torrent.info.compare_hash(index.get(), &h) {
-                Some(true) => {
-                    debug!("piece={} hash matches", index);
-                }
-                Some(false) => {
-                    warn!("the piece={} hash does not match", index);
-                    return Ok(false);
-                }
-                None => {
-                    // this is probably a bug?
-                    warn!("compare_hash() did not find the piece");
-                    anyhow::bail!("compare_hash() did not find the piece");
-                }
-            }
-
-            left_to_read -= left_to_read_in_file;
+            left_to_read -= to_read_in_file;
 
             if left_to_read == 0 {
                 return Ok(true);
@@ -680,7 +669,22 @@ impl TorrentManager {
 
             absolute_offset = 0;
         }
-        Ok(true)
+
+        match self.inner.torrent.info.compare_hash(piece_index.get(), &h) {
+            Some(true) => {
+                debug!("piece={} hash matches", piece_index);
+                Ok(true)
+            }
+            Some(false) => {
+                warn!("the piece={} hash does not match", piece_index);
+                Ok(false)
+            }
+            None => {
+                // this is probably a bug?
+                warn!("compare_hash() did not find the piece");
+                anyhow::bail!("compare_hash() did not find the piece");
+            }
+        }
     }
 
     // TODO: this is a task per chunk, not good
@@ -712,12 +716,11 @@ impl TorrentManager {
     fn write_chunk_blocking(
         &self,
         who_sent: PeerHandle,
-        chunk: &Piece<ByteString>,
+        data: &Piece<ByteString>,
+        chunk_info: &ChunkInfo,
     ) -> anyhow::Result<()> {
-        let mut absolute_offset =
-            self.inner.torrent.info.piece_length as u64 * chunk.index as u64 + chunk.begin as u64;
-
-        let mut buf = chunk.block.as_ref();
+        let mut buf = data.block.as_ref();
+        let mut absolute_offset = self.inner.lengths.chunk_absolute_offset(&chunk_info);
 
         for (file_idx, file_len) in self.inner.torrent.info.iter_file_lengths().enumerate() {
             if absolute_offset > file_len {
@@ -730,10 +733,15 @@ impl TorrentManager {
 
             let mut file_g = self.inner.files[file_idx].lock();
             debug!(
-                "piece={}, handle={}, writing {} bytes to file {} at offset {}",
-                chunk.index, who_sent, to_write, file_idx, absolute_offset
+                "piece={}, chunk={}, handle={}, begin={}, file={}, writing {} bytes at {}",
+                chunk_info.piece_index,
+                chunk_info.chunk_index,
+                who_sent,
+                chunk_info.offset,
+                file_idx,
+                to_write,
+                absolute_offset
             );
-            debug!("piece={}, seeking to {}", chunk.index, absolute_offset);
             file_g.seek(std::io::SeekFrom::Start(absolute_offset))?;
             file_g.write_all(&buf[..to_write])?;
             buf = &buf[to_write..];
@@ -782,10 +790,13 @@ impl TorrentManager {
 
         let this = self.clone();
         spawn_blocking(
-            format!("write_and_check(piece={}, block={:?})", piece.index, &piece),
+            format!(
+                "write_and_check(piece={}, peer={}, block={:?})",
+                piece.index, handle, &piece
+            ),
             move || {
                 let index = piece.index;
-                this.write_chunk_blocking(handle, &piece)?;
+                this.write_chunk_blocking(handle, &piece, &chunk_info)?;
 
                 let piece_done = match this
                     .inner
@@ -825,7 +836,7 @@ impl TorrentManager {
 
                 let clone = this.clone();
                 match clone
-                    .check_piece_blocking(handle, chunk_info.piece_index)
+                    .check_piece_blocking(handle, chunk_info.piece_index, &chunk_info)
                     .with_context(|| format!("error checking piece={}", index))?
                 {
                     true => {
