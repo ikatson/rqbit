@@ -110,3 +110,9 @@ impl<'a> From<&'a [u8]> for ByteString {
         Self(b.into())
     }
 }
+
+impl From<Vec<u8>> for ByteString {
+    fn from(b: Vec<u8>) -> Self {
+        Self(b)
+    }
+}

@@ -57,6 +57,17 @@ impl<ByteBuf> Piece<ByteBuf>
 where
     ByteBuf: AsRef<[u8]>,
 {
+    pub fn from_vec(index: u32, begin: u32, block: Vec<u8>) -> Piece<ByteBuf>
+    where
+        ByteBuf: From<Vec<u8>>,
+    {
+        Piece {
+            index,
+            begin,
+            block: ByteBuf::from(block),
+        }
+    }
+
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         byteorder::BigEndian::write_u32(&mut buf[0..4], self.index);
         byteorder::BigEndian::write_u32(&mut buf[4..8], self.begin);

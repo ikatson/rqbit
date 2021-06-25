@@ -141,18 +141,19 @@ impl Lengths {
         })
     }
 
-    pub fn chunk_info_from_received_piece_data(
+    pub fn chunk_info_from_received_data(
         &self,
-        piece: &Piece<ByteString>,
+        piece_index: ValidPieceIndex,
+        begin: u32,
+        chunk_size: u32,
     ) -> Option<ChunkInfo> {
-        let piece_index = self.validate_piece_index(piece.index)?;
-        let index = piece.begin / self.chunk_length;
-        let chunk_size = self.chunk_size(piece_index, index)?;
+        let index = begin / self.chunk_length;
+        let expected_chunk_size = self.chunk_size(piece_index, index)?;
         let offset = self.chunk_offset_in_piece(piece_index, index)?;
-        if offset != piece.begin {
+        if offset != begin {
             return None;
         }
-        if chunk_size as usize != piece.block.len() {
+        if expected_chunk_size != chunk_size {
             return None;
         }
         let absolute_index = self.chunks_per_piece * piece_index.get() + index;
@@ -163,6 +164,14 @@ impl Lengths {
             offset,
             absolute_index,
         })
+    }
+
+    pub fn chunk_info_from_received_piece(&self, piece: &Piece<ByteString>) -> Option<ChunkInfo> {
+        self.chunk_info_from_received_data(
+            self.validate_piece_index(piece.index)?,
+            piece.begin,
+            piece.block.len() as u32,
+        )
     }
     pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
         let start = index.0 * self.chunks_per_piece;

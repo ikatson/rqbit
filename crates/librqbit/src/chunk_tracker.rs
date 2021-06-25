@@ -55,7 +55,7 @@ impl ChunkTracker {
 
     // return true if the whole piece is marked downloaded
     pub fn mark_chunk_downloaded(&mut self, piece: &Piece<ByteString>) -> Option<bool> {
-        let chunk_info = self.lengths.chunk_info_from_received_piece_data(piece)?;
+        let chunk_info = self.lengths.chunk_info_from_received_piece(piece)?;
         self.chunk_status
             .set(chunk_info.absolute_index as usize, true);
         let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
