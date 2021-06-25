@@ -1,0 +1,25 @@
+[package]
+name = "rqbit"
+version = "0.1.0"
+authors = ["Igor Katson <igor.katson@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+librqbit = {path="./crates/librqbit"}
+tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
+anyhow = "1"
+clap = "3.0.0-beta.2"
+log = "0.4"
+pretty_env_logger = "0.4"
+reqwest = "0.11"
+
+[dev-dependencies]
+futures = {version = "0.3"}
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
