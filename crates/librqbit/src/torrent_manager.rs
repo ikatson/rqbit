@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     fs::{File, OpenOptions},
+    future::Future,
     io::{Read, Seek, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -13,7 +14,7 @@ use std::{
 };
 
 use anyhow::Context;
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
 use log::{debug, error, info, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
@@ -243,7 +244,7 @@ fn spawn<N: Display + 'static + Send>(
 fn spawn_blocking<T: Send + Sync + 'static, N: Display + 'static + Send>(
     name: N,
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
-) -> JoinHandle<anyhow::Result<T>> {
+) -> impl Future<Output = anyhow::Result<T>> {
     debug!("starting blocking task \"{}\"", name);
     tokio::task::spawn_blocking(move || match f() {
         Ok(v) => {
@@ -255,6 +256,7 @@ fn spawn_blocking<T: Send + Sync + 'static, N: Display + 'static + Send>(
             Err(e)
         }
     })
+    .map(|j| j.unwrap())
 }
 
 fn make_lengths(torrent: &TorrentMetaV1Owned) -> anyhow::Result<Lengths> {
@@ -474,7 +476,7 @@ impl TorrentManager {
                 ),
                 move || clone.read_chunk_blocking(peer_handle, chunk_info),
             )
-            .await??;
+            .await?;
             let tx = this
                 .inner
                 .locked
