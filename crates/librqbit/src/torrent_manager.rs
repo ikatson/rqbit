@@ -419,7 +419,7 @@ fn initial_check(
             have_bytes += piece_info.len as u64;
             have_pieces.set(piece_info.piece_index.get() as usize, true);
         } else {
-            if !at_least_one_file_required {
+            if at_least_one_file_required {
                 trace!(
                     "piece {} hash does not match, marking as needed",
                     piece_info.piece_index
@@ -428,7 +428,7 @@ fn initial_check(
                 needed_pieces.set(piece_info.piece_index.get() as usize, true);
             } else {
                 trace!(
-                    "piece {} is not required by any of the requested files, ignoring",
+                    "piece {} hash does not match, but it is not required by any of the requested files, ignoring",
                     piece_info.piece_index
                 );
             }
