@@ -26,9 +26,10 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
         let chunks_per_piece = lengths
             .chunks_per_piece(lengths.validate_piece_index(piece_index as u32).unwrap())
             as usize;
-        for i in 0..chunks_per_piece {
-            chunk_bf.set(offset + i, true);
-        }
+        chunk_bf
+            .get_mut(offset..offset + chunks_per_piece)
+            .unwrap()
+            .set_all(true);
     }
     chunk_bf
 }
