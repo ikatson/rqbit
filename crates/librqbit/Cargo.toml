@@ -18,6 +18,7 @@ bincode = "1"
 bitvec = "0.22"
 parking_lot = "0.11"
 log = "0.4"
+size_format = "1"
 
 uuid = {version = "0.8", features = ["v4"]}
 futures = "0.3"

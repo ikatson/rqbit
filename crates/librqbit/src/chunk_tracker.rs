@@ -8,11 +8,27 @@ use crate::{
 };
 
 pub struct ChunkTracker {
+    // This forms the basis of a "queue" to pull from.
+    // It's set to 1 if we need a piece, but the moment we start requesting a peer,
+    // it's set to 0.
+
+    // Better to rename into piece_queue or smth, and maybe use some other form of a queue.
     needed_pieces: BF,
+
+    // This has a bit set per each chunk (block) that we have written to the output file.
+    // It doesn't mean it's valid yet. Used to track how much is left in each piece.
     chunk_status: BF,
+
+    // These are the pieces that we actually have, fully checked and downloaded.
+    have: BF,
+
     lengths: Lengths,
 }
 
+// TODO: this should be redone from "have" pieces, not from "needed" pieces.
+// Needed pieces are the ones we need to download, not necessarily the ones we have.
+// E.g. we might have more pieces, but the client asks to download only some files
+// partially.
 fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
     let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
@@ -35,11 +51,12 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
 }
 
 impl ChunkTracker {
-    pub fn new(needed_pieces: BF, lengths: Lengths) -> Self {
+    pub fn new(needed_pieces: BF, have_pieces: BF, lengths: Lengths) -> Self {
         Self {
             chunk_status: compute_chunk_status(&lengths, &needed_pieces),
             needed_pieces,
             lengths,
+            have: have_pieces,
         }
     }
     pub fn get_needed_pieces(&self) -> &BF {
@@ -58,6 +75,10 @@ impl ChunkTracker {
                 true
             })
             .unwrap_or_default()
+    }
+
+    pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
+        self.have.set(idx.get() as usize, true)
     }
 
     // return true if the whole piece is marked downloaded
