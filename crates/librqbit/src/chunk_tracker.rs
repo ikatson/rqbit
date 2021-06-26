@@ -14,13 +14,19 @@ pub struct ChunkTracker {
 }
 
 fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
-    let required_bits = lengths.total_chunks();
-    let required_size = (required_bits as usize + 1) / 8;
+    let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
     let mut chunk_bf = BF::from_vec(vec);
-    for bit in needed_pieces.iter_zeros() {
-        let offset = bit * 8;
-        for i in 0..8 {
+    for piece_index in needed_pieces
+        .get(0..lengths.total_pieces() as usize)
+        .unwrap()
+        .iter_zeros()
+    {
+        let offset = piece_index * lengths.default_chunks_per_piece() as usize;
+        let chunks_per_piece = lengths
+            .chunks_per_piece(lengths.validate_piece_index(piece_index as u32).unwrap())
+            as usize;
+        for i in 0..chunks_per_piece {
             chunk_bf.set(offset + i, true);
         }
     }

@@ -2,8 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     fs::{File, OpenOptions},
-    future::Future,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
@@ -14,14 +13,11 @@ use std::{
 };
 
 use anyhow::Context;
-use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{stream::FuturesUnordered, StreamExt};
 use log::{debug, error, info, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
-use tokio::{
-    sync::{mpsc::Sender, Notify, Semaphore},
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc::Sender, Notify, Semaphore};
 
 use crate::{
     buffers::ByteString,
@@ -171,16 +167,6 @@ impl PeerStates {
             _ => return None,
         }
     }
-    fn mark_peer_choked(&mut self, handle: PeerHandle, is_choked: bool) -> Option<bool> {
-        match self.states.get_mut(&handle) {
-            Some(PeerState::Live(live)) => {
-                let prev = live.peer_choked;
-                live.peer_choked = is_choked;
-                return Some(prev);
-            }
-            _ => return None,
-        }
-    }
     fn update_bitfield_from_vec(
         &mut self,
         handle: PeerHandle,
@@ -195,9 +181,6 @@ impl PeerStates {
             }
             _ => None,
         }
-    }
-    fn get_tx(&self, handle: PeerHandle) -> Option<&Sender<MessageOwned>> {
-        self.tx.get(&handle).map(|v| v.as_ref())
     }
     fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<Sender<MessageOwned>>> {
         Some(self.tx.get(&handle)?.clone())
@@ -256,7 +239,7 @@ fn spawn<N: Display + 'static + Send>(
 fn spawn_blocking<T: Send + Sync + 'static, N: Display + 'static + Send>(
     name: N,
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
-) -> impl Future<Output = anyhow::Result<T>> {
+) -> tokio::task::JoinHandle<anyhow::Result<T>> {
     debug!("starting blocking task \"{}\"", name);
     tokio::task::spawn_blocking(move || match f() {
         Ok(v) => {
@@ -268,7 +251,6 @@ fn spawn_blocking<T: Send + Sync + 'static, N: Display + 'static + Send>(
             Err(e)
         }
     })
-    .map(|j| j.unwrap())
 }
 
 fn make_lengths(torrent: &TorrentMetaV1Owned) -> anyhow::Result<Lengths> {
@@ -446,6 +428,10 @@ fn compute_needed_pieces(
         }
 
         if !at_least_one_file_required {
+            trace!(
+                "piece {} is not required by any of the requested files, ignoring",
+                piece_info.piece_index
+            );
             continue;
         }
 
@@ -486,7 +472,7 @@ impl TorrentManager {
         overwrite: bool,
         only_files: Option<Vec<usize>>,
     ) -> anyhow::Result<TorrentManagerHandle> {
-        let mut files = {
+        let files = {
             let mut files =
                 Vec::<Arc<Mutex<File>>>::with_capacity(torrent.info.iter_file_lengths().count());
 
@@ -681,7 +667,7 @@ impl TorrentManager {
                 ),
                 move || clone.read_chunk_blocking(peer_handle, chunk_info),
             )
-            .await?;
+            .await??;
             let tx = this
                 .inner
                 .locked
@@ -708,7 +694,6 @@ impl TorrentManager {
         who_sent: PeerHandle,
         chunk_info: ChunkInfo,
     ) -> anyhow::Result<Vec<u8>> {
-        let mut h = sha1::Sha1::new();
         let mut absolute_offset = self.inner.lengths.chunk_absolute_offset(&chunk_info);
         let mut result_buf = vec![0u8; chunk_info.size as usize];
         let mut buf = &mut result_buf[..];
@@ -842,8 +827,12 @@ impl TorrentManager {
             Some(l) => l.have_notify.clone(),
             None => return Ok(()),
         };
-        // TODO: this might dangle
-        tokio::time::timeout(Duration::from_secs(60), notify.notified()).await;
+
+        // TODO: this might dangle, same below.
+        #[allow(unused_must_use)]
+        {
+            tokio::time::timeout(Duration::from_secs(60), notify.notified()).await;
+        }
 
         loop {
             let next = match self.reserve_next_needed_piece(handle) {
@@ -854,8 +843,11 @@ impl TorrentManager {
                         Some(l) => l.have_notify.clone(),
                         None => return Ok(()),
                     };
-                    // TODO: this might dangle
-                    tokio::time::timeout(Duration::from_secs(60), notify.notified()).await;
+
+                    #[allow(unused_must_use)]
+                    {
+                        tokio::time::timeout(Duration::from_secs(60), notify.notified()).await;
+                    }
                     continue;
                 }
             };
@@ -1106,6 +1098,7 @@ impl TorrentManager {
         }
 
         let this = self.clone();
+
         spawn_blocking(
             format!(
                 "write_and_check(piece={}, peer={}, block={:?})",
@@ -1264,7 +1257,7 @@ impl TorrentManager {
             };
         }
     }
-    fn set_peer_live(&self, handle: PeerHandle, addr: SocketAddr, h: Handshake) {
+    fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
         let mut g = self.inner.locked.write();
         match g.peers.states.get_mut(&handle) {
             Some(s @ &mut PeerState::Connecting(_)) => {
@@ -1315,7 +1308,7 @@ impl TorrentManager {
             anyhow::bail!("info hash does not match");
         }
 
-        self.set_peer_live(handle, addr, h);
+        self.set_peer_live(handle, h);
 
         if read_bytes > hlen {
             read_buf.copy_within(hlen..read_bytes, 0);

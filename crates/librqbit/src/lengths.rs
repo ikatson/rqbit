@@ -92,6 +92,9 @@ impl Lengths {
     pub const fn piece_bitfield_bytes(&self) -> usize {
         ceil_div_u64(self.total_pieces() as u64, 8) as usize
     }
+    pub const fn chunk_bitfield_bytes(&self) -> usize {
+        ceil_div_u64(self.total_chunks() as u64, 8) as usize
+    }
     pub const fn total_length(&self) -> u64 {
         self.total_length
     }
@@ -106,6 +109,9 @@ impl Lengths {
     }
     pub const fn default_chunk_length(&self) -> u32 {
         self.chunk_length
+    }
+    pub const fn default_chunks_per_piece(&self) -> u32 {
+        self.chunks_per_piece
     }
     pub const fn total_chunks(&self) -> u32 {
         ceil_div_u64(self.total_length, self.chunk_length as u64) as u32

@@ -1,4 +1,4 @@
-use std::{fmt::Write, fs::File, ops::Deref, path::PathBuf};
+use std::{fmt::Write, ops::Deref, path::PathBuf};
 
 use serde::Deserialize;
 
@@ -126,7 +126,7 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
 }
 
 impl<BufType: Clone + Deref<Target = [u8]>> TorrentMetaV1Info<BufType> {
-    pub fn get_hash(&self, piece: u32, hash: &sha1::Sha1) -> Option<&[u8]> {
+    pub fn get_hash(&self, piece: u32) -> Option<&[u8]> {
         let start = piece as usize * 20;
         let end = start + 20;
         let expected_hash = self.pieces.deref().get(start..end)?;

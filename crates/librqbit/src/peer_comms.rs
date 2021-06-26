@@ -68,10 +68,11 @@ where
         }
     }
 
-    pub fn serialize(&self, buf: &mut [u8]) -> usize {
+    pub fn serialize(&self, mut buf: &mut [u8]) -> usize {
         byteorder::BigEndian::write_u32(&mut buf[0..4], self.index);
         byteorder::BigEndian::write_u32(&mut buf[4..8], self.begin);
-        (&mut buf[8..8 + self.block.as_ref().len()]).copy_from_slice(self.block.as_ref());
+        buf = &mut buf[8..];
+        buf.copy_from_slice(self.block.as_ref());
         self.block.as_ref().len() + 8
     }
     pub fn deserialize<'a>(buf: &'a [u8]) -> Piece<ByteBuf>
@@ -235,12 +236,17 @@ where
             Message::Bitfield(_) => todo!(),
             Message::Choke | Message::Unchoke | Message::Interested => PREAMBLE_LEN,
             Message::Piece(p) => {
-                let msg_len = PREAMBLE_LEN + 8 + p.block.as_ref().len();
+                let payload_len = 8 + p.block.as_ref().len();
+                let msg_len = PREAMBLE_LEN + payload_len;
                 out.resize(msg_len, 0);
-                p.serialize(&mut out[PREAMBLE_LEN..(8 + p.block.as_ref().len())]);
+                let tmp = &mut out[PREAMBLE_LEN..];
+                p.serialize(&mut tmp[..payload_len]);
                 msg_len
             }
-            Message::KeepAlive => 4,
+            Message::KeepAlive => {
+                // the len prefix was already written out to buf
+                4
+            }
             Message::Have(v) => {
                 let msg_len = PREAMBLE_LEN + 4;
                 out.resize(msg_len, 0);
