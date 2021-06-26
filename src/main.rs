@@ -57,6 +57,10 @@ struct Opts {
     /// Set if you are ok to write on top of existing files
     #[clap(long)]
     overwrite: bool,
+
+    /// Only list the torrent metadata contents, don't do anything else.
+    #[clap(short, long)]
+    list: bool,
 }
 
 fn compute_only_files(
@@ -105,6 +109,9 @@ fn main() -> anyhow::Result<()> {
         };
 
         info!("Torrent metadata: {:#?}", &torrent);
+        if opts.list {
+            return Ok(());
+        }
 
         let only_files = if let Some(filename_re) = opts.only_files_matching_regex {
             Some(compute_only_files(&torrent, &filename_re)?)

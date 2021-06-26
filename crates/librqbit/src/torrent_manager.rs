@@ -21,7 +21,7 @@ use size_format::SizeFormatterBinary as SF;
 use tokio::sync::{mpsc::Sender, Notify, Semaphore};
 
 use crate::{
-    buffers::ByteString,
+    buffers::{ByteBuf, ByteString},
     chunk_tracker::ChunkTracker,
     clone_to_owned::CloneToOwned,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
@@ -115,7 +115,24 @@ struct PeerStates {
     tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::Sender<MessageOwned>>>,
 }
 
+#[derive(Debug, Default)]
+struct AggregatePeerStats {
+    connecting: usize,
+    live: usize,
+}
+
 impl PeerStates {
+    fn stats(&self) -> AggregatePeerStats {
+        self.states
+            .values()
+            .fold(AggregatePeerStats::default(), |mut s, p| {
+                match p {
+                    PeerState::Connecting(_) => s.connecting += 1,
+                    PeerState::Live(_) => s.live += 1,
+                };
+                s
+            })
+    }
     fn add_if_not_seen(
         &mut self,
         addr: SocketAddr,
@@ -350,7 +367,7 @@ fn initial_check(
     for piece_info in lengths.iter_piece_infos() {
         let mut computed_hash = sha1::Sha1::new();
         let mut piece_remaining = piece_info.len as usize;
-        let mut piece_is_needed = false;
+        let mut some_files_broken = false;
         let mut at_least_one_file_required = current_file.full_file_required;
 
         while piece_remaining > 0 {
@@ -372,11 +389,7 @@ fn initial_check(
             current_file.mark_processed_bytes(to_read_in_file as u64);
 
             if current_file.is_broken {
-                piece_is_needed = true;
-                continue;
-            }
-
-            if piece_is_needed {
+                // no need to read.
                 continue;
             }
 
@@ -393,16 +406,18 @@ fn initial_check(
                     "error reading from file {} ({:?}) at {}: {:#}",
                     current_file.index, current_file.name, pos, &err
                 );
-                piece_is_needed = true;
                 current_file.is_broken = true;
+                some_files_broken = true;
             }
         }
 
-        if piece_is_needed {
+        if at_least_one_file_required && some_files_broken {
             trace!(
                 "piece {} had errors, marking as needed",
                 piece_info.piece_index
             );
+
+            needed_bytes += piece_info.len as u64;
             needed_pieces.set(piece_info.piece_index.get() as usize, true);
             continue;
         }
@@ -539,25 +554,27 @@ impl TorrentManager {
 
     async fn stats_printer(self) -> anyhow::Result<()> {
         loop {
-            let live_peers = self.inner.locked.read().peers.states.len();
+            let live_peers = self.inner.locked.read().peers.stats();
             let have = self.inner.have.load(Ordering::Relaxed);
             let fetched = self.inner.fetched_bytes.load(Ordering::Relaxed);
             let needed = self.inner.needed;
             let downloaded = self.inner.downloaded_and_checked.load(Ordering::Relaxed);
             let remaining = needed - downloaded;
+            let uploaded = self.inner.uploaded.load(Ordering::Relaxed);
             let downloaded_pct = if downloaded == needed {
                 100f64
             } else {
                 (downloaded as f64 / needed as f64) * 100f64
             };
             info!(
-                "Stats: downloaded {:.2}% ({}), live peers {}, fetched {}, remaining {} out of {}, total have {}",
+                "Stats: downloaded {:.2}% ({}), peers {:?}, fetched {}, remaining {} out of {}, uploaded {}, total have {}",
                 downloaded_pct,
                 SF::new(downloaded),
                 live_peers,
                 SF::new(fetched),
                 SF::new(remaining),
                 SF::new(needed),
+                SF::new(uploaded),
                 SF::new(have)
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1295,11 +1312,18 @@ impl TorrentManager {
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
-        let mut conn = tokio::net::TcpStream::connect(addr).await?;
+        let mut conn = tokio::net::TcpStream::connect(addr)
+            .await
+            .context("error connecting")?;
         let handshake = Handshake::new(self.inner.info_hash, self.inner.peer_id);
-        conn.write_all(&handshake.serialize()).await?;
+        conn.write_all(&handshake.serialize())
+            .await
+            .context("error writing handshake")?;
         let mut read_buf = vec![0u8; 16384 * 2];
-        let read_bytes = conn.read(&mut read_buf).await?;
+        let read_bytes = conn
+            .read(&mut read_buf)
+            .await
+            .context("error reading handshake")?;
         if read_bytes == 0 {
             anyhow::bail!("bad handshake");
         }
@@ -1325,16 +1349,42 @@ impl TorrentManager {
 
         let (mut read_half, mut write_half) = tokio::io::split(conn);
 
+        let this = self.clone();
         let writer = async move {
-            let mut buf = vec![0u8; 1024];
+            let mut buf = Vec::<u8>::new();
             let keep_alive_interval = Duration::from_secs(120);
+
+            if this.inner.have.load(Ordering::Relaxed) > 0 {
+                let len = {
+                    let g = this.inner.locked.read();
+                    let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
+                    let len = msg.serialize(&mut buf);
+                    debug!("sending to {}: {:?}, length={}", handle, &msg, len);
+                    len
+                };
+
+                write_half
+                    .write_all(&buf[..len])
+                    .await
+                    .context("error writing bitfield to peer")?;
+                debug!("sent bitfield to {}", handle);
+            }
+
             loop {
                 let msg =
                     match tokio::time::timeout(keep_alive_interval, outgoing_chan.recv()).await {
                         Ok(Some(msg)) => msg,
-                        Ok(None) => return Err(anyhow::anyhow!("torrent manager closed")),
+                        Ok(None) => {
+                            // we were closed
+                            return Ok(());
+                        }
                         Err(_) => MessageOwned::KeepAlive,
                     };
+
+                let uploaded_add = match &msg {
+                    Message::Piece(p) => Some(p.block.len()),
+                    _ => None,
+                };
 
                 let len = msg.serialize(&mut buf);
                 debug!("sending to {}: {:?}, length={}", handle, &msg, len);
@@ -1342,7 +1392,13 @@ impl TorrentManager {
                 write_half
                     .write_all(&buf[..len])
                     .await
-                    .context("error writing")?;
+                    .context("error writing the message to peer")?;
+
+                if let Some(uploaded_add) = uploaded_add {
+                    this.inner
+                        .uploaded
+                        .fetch_add(uploaded_add as u64, Ordering::Relaxed);
+                }
             }
 
             // For type inference.
@@ -1373,6 +1429,8 @@ impl TorrentManager {
                     }
                     read_so_far += size;
                 };
+
+                trace!("received from {}: {:?}", handle, &message);
 
                 if read_so_far > size {
                     read_buf.copy_within(size..read_so_far, 0);

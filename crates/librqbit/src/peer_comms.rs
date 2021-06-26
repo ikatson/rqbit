@@ -233,10 +233,18 @@ where
                     .unwrap();
                 MSG_LEN
             }
-            Message::Bitfield(_) => todo!(),
+            Message::Bitfield(b) => {
+                let block_len = b.as_ref().len();
+                let msg_len = PREAMBLE_LEN + block_len;
+                out.resize(msg_len, 0);
+                (&mut out[PREAMBLE_LEN..PREAMBLE_LEN + block_len]).copy_from_slice(b.as_ref());
+                msg_len
+            }
             Message::Choke | Message::Unchoke | Message::Interested => PREAMBLE_LEN,
             Message::Piece(p) => {
-                let payload_len = 8 + p.block.as_ref().len();
+                // below code is wrong, need to serialize len_prefix
+                let block_len = p.block.as_ref().len();
+                let payload_len = 8 + block_len;
                 let msg_len = PREAMBLE_LEN + payload_len;
                 out.resize(msg_len, 0);
                 let tmp = &mut out[PREAMBLE_LEN..];
