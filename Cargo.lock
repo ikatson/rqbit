@@ -904,6 +904,7 @@ dependencies = [
  "librqbit",
  "log",
  "pretty_env_logger",
+ "regex",
  "reqwest",
  "tokio",
 ]

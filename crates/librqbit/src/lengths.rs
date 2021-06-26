@@ -17,6 +17,12 @@ pub const fn last_element_size_u64(total: u64, chunk_size: u64) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PieceInfo {
+    pub piece_index: ValidPieceIndex,
+    pub len: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkInfo {
     pub piece_index: ValidPieceIndex,
     pub chunk_index: u32,
@@ -119,6 +125,17 @@ impl Lengths {
     pub const fn piece_offset(&self, index: ValidPieceIndex) -> u64 {
         index.0 as u64 * self.piece_length as u64
     }
+
+    pub fn iter_piece_infos(&self) -> impl Iterator<Item = PieceInfo> {
+        let last_id = self.last_piece_id;
+        let last_len = self.last_piece_length;
+        let pl = self.piece_length;
+        (0..self.total_pieces()).map(move |idx| PieceInfo {
+            piece_index: ValidPieceIndex(idx),
+            len: if idx == last_id { last_len } else { pl },
+        })
+    }
+
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
         let mut remaining = self.piece_length(index);
         let chunk_size = self.chunk_length;

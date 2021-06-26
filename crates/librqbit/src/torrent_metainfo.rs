@@ -1,4 +1,4 @@
-use std::{fs::File, ops::Deref, path::PathBuf};
+use std::{fmt::Write, fs::File, ops::Deref, path::PathBuf};
 
 use serde::Deserialize;
 
@@ -73,7 +73,42 @@ pub enum FileIteratorName<'a, ByteBuf> {
     Tree(&'a [ByteBuf]),
 }
 
+impl<'a, ByteBuf> std::fmt::Debug for FileIteratorName<'a, ByteBuf>
+where
+    ByteBuf: AsRef<[u8]>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (idx, item) in self.iter_components().enumerate() {
+            if idx > 0 {
+                f.write_char(std::path::MAIN_SEPARATOR)?;
+            }
+            match item {
+                Some(bit) => {
+                    f.write_str(std::str::from_utf8(bit.as_ref()).unwrap_or("<INVALID UTF-8>"))?;
+                }
+                None => f.write_str("output")?,
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
+    pub fn to_pathbuf(&self) -> anyhow::Result<PathBuf>
+    where
+        ByteBuf: AsRef<[u8]>,
+    {
+        let mut buf = PathBuf::new();
+        for part in self.iter_components() {
+            if let Some(part) = part {
+                buf.push(std::str::from_utf8(part.as_ref())?)
+            } else {
+                buf.push("output");
+                break;
+            }
+        }
+        Ok(buf)
+    }
     pub fn iter_components(&self) -> impl Iterator<Item = Option<&'a ByteBuf>> {
         let single_it = std::iter::once(match self {
             FileIteratorName::Single(n) => Some(*n),
@@ -91,6 +126,12 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
 }
 
 impl<BufType: Clone + Deref<Target = [u8]>> TorrentMetaV1Info<BufType> {
+    pub fn get_hash(&self, piece: u32, hash: &sha1::Sha1) -> Option<&[u8]> {
+        let start = piece as usize * 20;
+        let end = start + 20;
+        let expected_hash = self.pieces.deref().get(start..end)?;
+        Some(expected_hash)
+    }
     pub fn compare_hash(&self, piece: u32, hash: &sha1::Sha1) -> Option<bool> {
         let start = piece as usize * 20;
         let end = start + 20;

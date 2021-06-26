@@ -3,7 +3,7 @@ use std::{
     fmt::Display,
     fs::{File, OpenOptions},
     future::Future,
-    io::{Read, Seek, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::{
@@ -32,13 +32,14 @@ use crate::{
         Handshake, Message, MessageBorrowed, MessageDeserializeError, MessageOwned, Piece, Request,
     },
     peer_id::try_decode_peer_id,
-    torrent_metainfo::TorrentMetaV1Owned,
+    torrent_metainfo::{FileIteratorName, TorrentMetaV1Owned},
     tracker_comms::{CompactTrackerResponse, TrackerRequest, TrackerRequestEvent},
 };
 pub struct TorrentManagerBuilder {
     torrent: TorrentMetaV1Owned,
     overwrite: bool,
     output_folder: PathBuf,
+    only_files: Option<Vec<usize>>,
 }
 
 impl TorrentManagerBuilder {
@@ -47,16 +48,27 @@ impl TorrentManagerBuilder {
             torrent,
             overwrite: false,
             output_folder: output_folder.as_ref().into(),
+            only_files: None,
         }
     }
 
-    pub fn overwrite(mut self, overwrite: bool) -> Self {
+    pub fn only_files(&mut self, only_files: Vec<usize>) -> &mut Self {
+        self.only_files = Some(only_files);
+        self
+    }
+
+    pub fn overwrite(&mut self, overwrite: bool) -> &mut Self {
         self.overwrite = overwrite;
         self
     }
 
     pub async fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
-        TorrentManager::start(self.torrent, self.output_folder, self.overwrite)
+        TorrentManager::start(
+            self.torrent,
+            self.output_folder,
+            self.overwrite,
+            self.only_files,
+        )
     }
 }
 
@@ -264,15 +276,206 @@ fn make_lengths(torrent: &TorrentMetaV1Owned) -> anyhow::Result<Lengths> {
     Lengths::new(total_length, torrent.info.piece_length, None)
 }
 
+fn update_hash_from_file(
+    file: &mut File,
+    hash: &mut sha1::Sha1,
+    buf: &mut [u8],
+    mut bytes_to_read: usize,
+) -> anyhow::Result<()> {
+    let mut read = 0;
+    while bytes_to_read > 0 {
+        let chunk = std::cmp::min(buf.len(), bytes_to_read);
+        file.read_exact(&mut buf[..chunk]).with_context(|| {
+            format!(
+                "failed reading chunk of size {}, read so far {}",
+                chunk, read
+            )
+        })?;
+        bytes_to_read -= chunk;
+        read += chunk;
+        hash.update(&buf[..chunk]);
+    }
+    Ok(())
+}
+
 fn compute_needed_pieces(
     torrent: &TorrentMetaV1Owned,
-    files: &mut [Arc<Mutex<File>>],
+    files: &[Arc<Mutex<File>>],
+    only_files: Option<&[usize]>,
     lengths: &Lengths,
 ) -> anyhow::Result<BF> {
-    let needed_pieces = vec![u8::MAX; lengths.piece_bitfield_bytes()];
-    let needed_pieces = BF::from_vec(needed_pieces);
+    let needed_pieces = vec![0u8; lengths.piece_bitfield_bytes()];
+    let mut needed_pieces = BF::from_vec(needed_pieces);
+    struct CurrentFile<'a> {
+        index: usize,
+        fd: &'a Arc<Mutex<File>>,
+        len: u64,
+        name: FileIteratorName<'a, ByteString>,
+        full_file_required: bool,
+        processed_bytes: u64,
+        is_broken: bool,
+    }
+    impl<'a> CurrentFile<'a> {
+        fn remaining(&self) -> u64 {
+            self.len - self.processed_bytes
+        }
+        fn mark_processed_bytes(&mut self, bytes: u64) {
+            self.processed_bytes += bytes as u64
+        }
+    }
+    let mut file_iterator = files
+        .iter()
+        .zip(torrent.info.iter_filenames_and_lengths())
+        .enumerate()
+        .map(|(idx, (fd, (name, len)))| {
+            let full_file_required = if let Some(only_files) = only_files {
+                only_files.contains(&idx)
+            } else {
+                true
+            };
+            CurrentFile {
+                index: idx,
+                fd,
+                len,
+                name,
+                full_file_required,
+                processed_bytes: 0,
+                is_broken: false,
+            }
+        });
 
-    // TODO: read and validate existing files
+    let mut current_file = file_iterator
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("empty input file list"))?;
+
+    let mut read_buffer = vec![0u8; 65536];
+
+    for piece_info in lengths.iter_piece_infos() {
+        // We need to compute the hash (and afterwards mark the piece as NOT needed) if ANY of the following are true
+        // - the file is required
+        // - the current piece is required (i.e. it's a part of some other file that is required)
+
+        // This means, that for an easy implementation:
+        // - we ALWAYS try to compute the hash from existing files
+        // - after the whole piece was processed, we mark the piece needed if:
+        //   - at least one file that the piece owns was required
+        //   - and (there were errors OR the hash does not match)
+        //
+        // If there's an error, it's fine only if none of the files was required.
+
+        // let mut seek: Option<u64> = None;
+
+        // Optimization for a common case: if the piece is wholy in the file, and the file is not required, continue
+
+        // if !current_file.full_file_required && current_file.remaining() >= piece_info.len as u64 {
+        //     seek = match seek {
+        //         None => Some(piece_info.len as u64),
+        //         Some(s) => {
+        //             current_file.mark_processed_bytes(piece_info.len as u64);
+        //             Some(s + piece_info.len as u64)
+        //         }
+        //     };
+        //     continue;
+        // }
+
+        let mut computed_hash = sha1::Sha1::new();
+        let mut piece_remaining = piece_info.len as usize;
+        let mut piece_is_needed = false;
+        let mut at_least_one_file_required = current_file.full_file_required;
+
+        while piece_remaining > 0 {
+            let mut to_read_in_file =
+                std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
+            while to_read_in_file == 0 {
+                current_file = file_iterator
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("broken torrent metadata"))?;
+
+                at_least_one_file_required |= current_file.full_file_required;
+
+                to_read_in_file =
+                    std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
+            }
+
+            let pos = current_file.processed_bytes;
+            piece_remaining -= to_read_in_file;
+            current_file.mark_processed_bytes(to_read_in_file as u64);
+
+            if current_file.is_broken {
+                piece_is_needed = true;
+                continue;
+            }
+
+            if piece_is_needed {
+                continue;
+            }
+
+            let mut fd = current_file.fd.lock();
+
+            // if let Some(offset) = seek.take() {
+            //     match fd.seek(SeekFrom::Start(offset)) {
+            //         Ok(v) => {
+            //             assert_eq!(v, offset)
+            //         }
+            //         Err(e) => {
+            //             debug!(
+            //                 "error seeking in file {} to {}: {:#}",
+            //                 current_file.index, offset, &e
+            //             );
+            //             piece_is_needed = true;
+            //             current_file.is_broken = true;
+            //             continue;
+            //         }
+            //     }
+            // }
+
+            fd.seek(SeekFrom::Start(pos)).unwrap();
+            if let Err(err) = update_hash_from_file(
+                &mut fd,
+                &mut computed_hash,
+                &mut read_buffer,
+                to_read_in_file,
+            ) {
+                debug!(
+                    "error reading from file {} ({:?}) at {}: {:#}",
+                    current_file.index, current_file.name, pos, &err
+                );
+                piece_is_needed = true;
+                current_file.is_broken = true;
+            }
+        }
+
+        if !at_least_one_file_required {
+            continue;
+        }
+
+        if piece_is_needed {
+            trace!(
+                "piece {} had errors, marking as needed",
+                piece_info.piece_index
+            );
+            needed_pieces.set(piece_info.piece_index.get() as usize, true);
+            continue;
+        }
+
+        if torrent
+            .info
+            .compare_hash(piece_info.piece_index.get(), &computed_hash)
+            .unwrap()
+        {
+            trace!(
+                "piece {} is fine, not marking as needed",
+                piece_info.piece_index
+            );
+        } else {
+            trace!(
+                "piece {} hash does not match, marking as needed",
+                piece_info.piece_index
+            );
+            needed_pieces.set(piece_info.piece_index.get() as usize, true);
+        }
+    }
+
     Ok(needed_pieces)
 }
 
@@ -281,6 +484,7 @@ impl TorrentManager {
         torrent: TorrentMetaV1Owned,
         out: P,
         overwrite: bool,
+        only_files: Option<Vec<usize>>,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let mut files = {
             let mut files =
@@ -319,7 +523,8 @@ impl TorrentManager {
 
         let peer_id = generate_peer_id();
         let lengths = make_lengths(&torrent).context("unable to compute Lengths from torrent")?;
-        let needed_pieces = compute_needed_pieces(&torrent, &mut files, &lengths)?;
+        let needed_pieces =
+            compute_needed_pieces(&torrent, &files, only_files.as_deref(), &lengths)?;
         debug!("computed lengths: {:?}", &lengths);
         let chunk_tracker = ChunkTracker::new(needed_pieces, lengths);
 
@@ -522,7 +727,7 @@ impl TorrentManager {
                 chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
             );
             file_g
-                .seek(std::io::SeekFrom::Start(absolute_offset))
+                .seek(SeekFrom::Start(absolute_offset))
                 .with_context(|| {
                     format!(
                         "error seeking to {}, file id: {}",
@@ -736,49 +941,50 @@ impl TorrentManager {
         let mut h = sha1::Sha1::new();
         let piece_length = self.inner.lengths.piece_length(piece_index);
         let mut absolute_offset = self.inner.lengths.piece_offset(piece_index);
-        let mut buf = vec![0u8; std::cmp::min(8192, piece_length as usize)];
+        let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];
 
-        let mut left_to_read = piece_length as usize;
+        let mut piece_remaining_bytes = piece_length as usize;
 
-        for (file_idx, file_len) in self.inner.torrent.info.iter_file_lengths().enumerate() {
+        for (file_idx, (name, file_len)) in self
+            .inner
+            .torrent
+            .info
+            .iter_filenames_and_lengths()
+            .enumerate()
+        {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
             }
             let file_remaining_len = file_len - absolute_offset;
 
-            let to_read_in_file = std::cmp::min(file_remaining_len, left_to_read as u64) as usize;
-            let mut left_to_read_in_file = to_read_in_file;
+            let to_read_in_file =
+                std::cmp::min(file_remaining_len, piece_remaining_bytes as u64) as usize;
             let mut file_g = self.inner.files[file_idx].lock();
             debug!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
                 piece_index, who_sent, file_idx, absolute_offset, &last_received_chunk
             );
             file_g
-                .seek(std::io::SeekFrom::Start(absolute_offset))
+                .seek(SeekFrom::Start(absolute_offset))
                 .with_context(|| {
                     format!(
                         "error seeking to {}, file id: {}",
                         absolute_offset, file_idx
                     )
                 })?;
-            while left_to_read_in_file > 0 {
-                let chunk_length = std::cmp::min(buf.len(), left_to_read_in_file);
-                file_g
-                    .read_exact(&mut buf[..chunk_length])
-                    .with_context(|| {
-                        format!(
-                            "error reading {} bytes, file_id: {}, left_to_read_in_file: {}",
-                            chunk_length, file_idx, left_to_read_in_file
-                        )
-                    })?;
-                h.update(&buf[..chunk_length]);
-                left_to_read_in_file -= chunk_length;
-            }
+            update_hash_from_file(&mut file_g, &mut h, &mut buf, to_read_in_file).with_context(
+                || {
+                    format!(
+                        "error reading {} bytes, file_id: {} (\"{:?}\")",
+                        to_read_in_file, file_idx, name
+                    )
+                },
+            )?;
 
-            left_to_read -= to_read_in_file;
+            piece_remaining_bytes -= to_read_in_file;
 
-            if left_to_read == 0 {
+            if piece_remaining_bytes == 0 {
                 return Ok(true);
             }
 
@@ -857,7 +1063,7 @@ impl TorrentManager {
                 to_write,
                 absolute_offset
             );
-            file_g.seek(std::io::SeekFrom::Start(absolute_offset))?;
+            file_g.seek(SeekFrom::Start(absolute_offset))?;
             file_g.write_all(&buf[..to_write])?;
             buf = &buf[to_write..];
             if buf.is_empty() {

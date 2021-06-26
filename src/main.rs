@@ -51,9 +51,36 @@ struct Opts {
     /// The filename of the .torrent file.
     output_folder: String,
 
+    #[clap(short = 'r', long = "filename-re")]
+    only_files_matching_regex: Option<String>,
+
     /// Set if you are ok to write on top of existing files
     #[clap(long)]
     overwrite: bool,
+}
+
+fn compute_only_files(
+    torrent: &TorrentMetaV1Owned,
+    filename_re: &str,
+) -> anyhow::Result<Vec<usize>> {
+    let filename_re = regex::Regex::new(&filename_re).context("filename regex is incorrect")?;
+    let mut only_files = Vec::new();
+    for (idx, (filename, _)) in torrent.info.iter_filenames_and_lengths().enumerate() {
+        let full_path = filename
+            .to_pathbuf()
+            .with_context(|| format!("filename of file {} is not valid utf8", idx))?;
+        if filename_re.is_match(
+            full_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("filename of file {} is not valid utf8", idx))?,
+        ) {
+            only_files.push(idx);
+        }
+    }
+    if only_files.is_empty() {
+        anyhow::bail!("none of the filenames match the given regex")
+    }
+    Ok(only_files)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -79,10 +106,33 @@ fn main() -> anyhow::Result<()> {
 
         info!("Torrent metadata: {:#?}", &torrent);
 
-        let builder =
-            TorrentManagerBuilder::new(torrent, opts.output_folder).overwrite(opts.overwrite);
+        let only_files = if let Some(filename_re) = opts.only_files_matching_regex {
+            Some(compute_only_files(&torrent, &filename_re)?)
+        } else {
+            None
+        };
+
+        let mut builder = TorrentManagerBuilder::new(torrent, opts.output_folder);
+        builder.overwrite(opts.overwrite);
+        if let Some(only_files) = only_files {
+            builder.only_files(only_files);
+        }
+
         let manager_handle = builder.start_manager().await?;
         manager_handle.wait_until_completed().await?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs::File, io::Read};
+
+    #[test]
+    fn test_bullshit() {
+        let mut buf = vec![0u8; 65536];
+        let mut f =
+            File::open("/tmp/torrent-download/08.Comedy.Club.S17.WEB-DL.1080p.7turza.mkv").unwrap();
+        f.read_exact(&mut buf[..]).unwrap();
+    }
 }
