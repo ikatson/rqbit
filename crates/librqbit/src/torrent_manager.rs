@@ -860,6 +860,8 @@ impl TorrentManager {
                     }
 
                     if let Some(piece) = self.try_steal_piece() {
+                        // TODO: ok, so there's a problem here. It can keep looping here requesting the same
+                        // pieces over and over again.
                         info!("{}: stole a piece {}", handle, piece);
                         (piece, true)
                     } else {
@@ -884,13 +886,19 @@ impl TorrentManager {
                 if self.inner.locked.read().chunks.is_chunk_downloaded(&chunk) {
                     continue;
                 }
-                self.inner
+                if !self
+                    .inner
                     .locked
                     .write()
                     .peers
                     .try_get_live_mut(handle)?
                     .inflight_requests
-                    .insert(InflightRequest::from(&chunk));
+                    .insert(InflightRequest::from(&chunk))
+                {
+                    // we already requested this chunk.
+                    // this should not happen, but due do a bug above it actually does.
+                    continue;
+                }
 
                 let request = Request {
                     index: next.get(),
@@ -1122,7 +1130,10 @@ impl TorrentManager {
             .fetched_bytes
             .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
 
-        if !h.inflight_requests.remove(&(&chunk_info).into()) {
+        if !h
+            .inflight_requests
+            .remove(&InflightRequest::from(&chunk_info))
+        {
             anyhow::bail!(
                 "peer {} sent us a piece that we did not ask it for. Requested pieces: {:?}. Got: {:?}", handle, &h.inflight_requests, &piece,
             );
