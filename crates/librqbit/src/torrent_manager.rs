@@ -812,15 +812,15 @@ impl TorrentManager {
             })
     }
 
-    fn try_steal_piece(&self) -> Option<ValidPieceIndex> {
+    fn try_steal_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
         let mut rng = rand::thread_rng();
         use rand::seq::IteratorRandom;
-        self.inner
-            .locked
-            .read()
-            .peers
+        let g = self.inner.locked.read();
+        let pl = g.peers.get_live(handle)?;
+        g.peers
             .inflight_pieces
             .iter()
+            .filter(|p| !pl.inflight_requests.iter().any(|req| req.piece == **p))
             .choose(&mut rng)
             .copied()
     }
@@ -859,9 +859,7 @@ impl TorrentManager {
                         return Ok(());
                     }
 
-                    if let Some(piece) = self.try_steal_piece() {
-                        // TODO: ok, so there's a problem here. It can keep looping here requesting the same
-                        // pieces over and over again.
+                    if let Some(piece) = self.try_steal_piece(handle) {
                         info!("{}: stole a piece {}", handle, piece);
                         (piece, true)
                     } else {
@@ -895,8 +893,10 @@ impl TorrentManager {
                     .inflight_requests
                     .insert(InflightRequest::from(&chunk))
                 {
-                    // we already requested this chunk.
-                    // this should not happen, but due do a bug above it actually does.
+                    warn!(
+                        "{}: probably a bug, we already requested {:?}",
+                        handle, chunk
+                    );
                     continue;
                 }
 
