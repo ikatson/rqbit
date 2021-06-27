@@ -74,8 +74,28 @@ impl ChunkTracker {
     pub fn reserve_needed_piece(&mut self, index: ValidPieceIndex) {
         self.needed_pieces.set(index.get() as usize, false)
     }
-    pub fn mark_piece_needed(&mut self, index: ValidPieceIndex) -> bool {
-        info!("remarking piece={} as needed", index);
+
+    // None if wrong chunk
+    // true if did something
+    // false if didn't do anything
+    pub fn mark_chunk_request_cancelled(
+        &mut self,
+        index: ValidPieceIndex,
+        chunk: u32,
+    ) -> Option<bool> {
+        if *self.have.get(index.get() as usize)? {
+            return Some(false);
+        }
+        // This will trigger the requesters to re-check each chunk in this piece.
+        let chunk_range = self.lengths.chunk_range(index);
+        if !self.chunk_status.get(chunk_range)?.all() {
+            self.needed_pieces.set(index.get() as usize, true);
+        }
+        Some(true)
+    }
+
+    pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) -> bool {
+        info!("remarking piece={} as broken", index);
         self.needed_pieces.set(index.get() as usize, true);
         self.chunk_status
             .get_mut(self.lengths.chunk_range(index))
