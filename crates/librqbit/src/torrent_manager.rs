@@ -18,11 +18,14 @@ use log::{debug, error, info, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
 use size_format::SizeFormatterBinary as SF;
-use tokio::sync::{mpsc::Sender, Notify, Semaphore};
+use tokio::{
+    sync::{mpsc::Sender, Notify, Semaphore},
+    time::timeout,
+};
 
 use crate::{
     buffers::{ByteBuf, ByteString},
-    chunk_tracker::ChunkTracker,
+    chunk_tracker::{ChunkMarkingResult, ChunkTracker},
     clone_to_owned::CloneToOwned,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_comms::{
@@ -112,6 +115,7 @@ struct LivePeerState {
 struct PeerStates {
     states: HashMap<PeerHandle, PeerState>,
     seen_peers: HashSet<SocketAddr>,
+    requested_pieces: HashSet<ValidPieceIndex>,
     tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::Sender<MessageOwned>>>,
 }
 
@@ -789,6 +793,19 @@ impl TorrentManager {
             })
     }
 
+    fn try_steal_piece(&self) -> Option<ValidPieceIndex> {
+        let mut rng = rand::thread_rng();
+        use rand::seq::IteratorRandom;
+        self.inner
+            .locked
+            .read()
+            .peers
+            .requested_pieces
+            .iter()
+            .choose(&mut rng)
+            .copied()
+    }
+
     async fn requester(self, handle: PeerHandle) -> anyhow::Result<()> {
         let notify = match self.inner.locked.read().peers.get_live(handle) {
             Some(l) => l.have_notify.clone(),
@@ -798,24 +815,42 @@ impl TorrentManager {
         // TODO: this might dangle, same below.
         #[allow(unused_must_use)]
         {
-            tokio::time::timeout(Duration::from_secs(60), notify.notified()).await;
+            timeout(Duration::from_secs(60), notify.notified()).await;
         }
 
         loop {
-            let next = match self.reserve_next_needed_piece(handle) {
-                Some(next) => next,
-                None => {
-                    info!("no pieces to request from {}", handle);
-                    let notify = match self.inner.locked.read().peers.get_live(handle) {
-                        Some(l) => l.have_notify.clone(),
-                        None => return Ok(()),
-                    };
-
+            match self.am_i_choked(handle) {
+                Some(true) => {
+                    warn!("we are choked by {}, can't reserve next piece", handle);
                     #[allow(unused_must_use)]
                     {
-                        tokio::time::timeout(Duration::from_secs(60), notify.notified()).await;
+                        timeout(Duration::from_secs(60), notify.notified()).await;
                     }
                     continue;
+                }
+                Some(false) => {}
+                None => return Ok(()),
+            }
+
+            let (next, is_stolen) = match self.reserve_next_needed_piece(handle) {
+                Some(next) => (next, false),
+                None => {
+                    if self.get_left_to_download() == 0 {
+                        info!("{}: nothing left to download, closing requester", handle);
+                        return Ok(());
+                    }
+
+                    if let Some(piece) = self.try_steal_piece() {
+                        info!("{}: stole a piece {}", handle, piece);
+                        (piece, true)
+                    } else {
+                        info!("no pieces to request from {}", handle);
+                        #[allow(unused_must_use)]
+                        {
+                            timeout(Duration::from_secs(60), notify.notified()).await;
+                        }
+                        continue;
+                    }
                 }
             };
             let tx = match self.inner.locked.read().peers.clone_tx(handle) {
@@ -827,6 +862,9 @@ impl TorrentManager {
                 None => return Ok(()),
             };
             for chunk in self.inner.lengths.iter_chunk_infos(next) {
+                if is_stolen && self.inner.locked.read().chunks.is_chunk_downloaded(&chunk) {
+                    continue;
+                }
                 let request = Request {
                     index: next.get(),
                     begin: chunk.offset,
@@ -880,6 +918,7 @@ impl TorrentManager {
                     break;
                 }
             }
+
             self.inner.lengths.validate_piece_index(n_opt? as u32)?
         };
 
@@ -887,6 +926,7 @@ impl TorrentManager {
             .get_live_mut(peer_handle)?
             .requested_pieces
             .insert(n);
+        g.peers.requested_pieces.insert(n);
         g.chunks.reserve_needed_piece(n);
         Some(n)
     }
@@ -1057,9 +1097,14 @@ impl TorrentManager {
             .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
 
         if !h.requested_pieces.contains(&chunk_info.piece_index) {
+            // TODO: this is wrong, we need to distinguish between these cases.
             warn!(
                 "peer {} sent us a piece that we did not ask for, dropping it. Requested pieces: {:?}. Got: {:?}", handle, &h.requested_pieces, &piece,
             );
+
+            // this prevents a deadlock.
+            drop(g);
+
             self.drop_peer(handle);
             return None;
         }
@@ -1075,21 +1120,24 @@ impl TorrentManager {
                 let index = piece.index;
                 this.write_chunk_blocking(handle, &piece, &chunk_info)?;
 
-                let piece_done = match this
+                match this
                     .inner
                     .locked
                     .write()
                     .chunks
                     .mark_chunk_downloaded(&piece)
                 {
-                    Some(true) => {
+                    Some(ChunkMarkingResult::Completed) => {
+                        debug!("piece={} done by {}, will checksum", piece.index, handle);
+                    }
+                    Some(ChunkMarkingResult::PreviouslyCompleted) => {
                         debug!(
-                            "piece={} done, requesting a piece from {}",
+                            "piece={} was done by someone else {}, ignoring",
                             piece.index, handle
                         );
-                        true
+                        return Ok(());
                     }
-                    Some(false) => false,
+                    Some(ChunkMarkingResult::NotCompleted) => return Ok(()),
                     None => {
                         warn!(
                             "bogus data received from {}: {:?}, cannot map this to a chunk, dropping peer",
@@ -1100,16 +1148,14 @@ impl TorrentManager {
                     }
                 };
 
-                if !piece_done {
-                    return Ok(());
-                }
                 // Ignore responses about this piece from now on.
-                this.inner
-                    .locked
-                    .write()
-                    .peers
-                    .get_live_mut(handle)
-                    .map(|l| l.requested_pieces.remove(&chunk_info.piece_index));
+                {
+                    let mut g = this.inner.locked.write();
+                    g.peers
+                        .get_live_mut(handle)
+                        .map(|l| l.requested_pieces.remove(&chunk_info.piece_index));
+                    g.peers.requested_pieces.remove(&chunk_info.piece_index);
+                }
 
                 let clone = this.clone();
                 match clone
@@ -1309,14 +1355,13 @@ impl TorrentManager {
             }
 
             loop {
-                let msg =
-                    match tokio::time::timeout(keep_alive_interval, outgoing_chan.recv()).await {
-                        Ok(Some(msg)) => msg,
-                        Ok(None) => {
-                            anyhow::bail!("closing writer, channel closed")
-                        }
-                        Err(_) => MessageOwned::KeepAlive,
-                    };
+                let msg = match timeout(keep_alive_interval, outgoing_chan.recv()).await {
+                    Ok(Some(msg)) => msg,
+                    Ok(None) => {
+                        anyhow::bail!("closing writer, channel closed")
+                    }
+                    Err(_) => MessageOwned::KeepAlive,
+                };
 
                 let uploaded_add = match &msg {
                     Message::Piece(p) => Some(p.block.len()),

@@ -2,7 +2,7 @@ use log::{debug, info};
 
 use crate::{
     buffers::ByteString,
-    lengths::{Lengths, ValidPieceIndex},
+    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_comms::Piece,
     type_aliases::BF,
 };
@@ -50,6 +50,12 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
     chunk_bf
 }
 
+pub enum ChunkMarkingResult {
+    PreviouslyCompleted,
+    NotCompleted,
+    Completed,
+}
+
 impl ChunkTracker {
     pub fn new(needed_pieces: BF, have_pieces: BF, lengths: Lengths) -> Self {
         Self {
@@ -84,19 +90,33 @@ impl ChunkTracker {
         self.have.set(idx.get() as usize, true)
     }
 
-    // return true if the whole piece is marked downloaded
-    pub fn mark_chunk_downloaded(&mut self, piece: &Piece<ByteString>) -> Option<bool> {
-        let chunk_info = self.lengths.chunk_info_from_received_piece(piece)?;
-        self.chunk_status
-            .set(chunk_info.absolute_index as usize, true);
-        let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
-        let chunk_range = self.chunk_status.get(chunk_range).unwrap();
-        let all = chunk_range.all();
+    pub fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {
+        *self
+            .chunk_status
+            .get(chunk.absolute_index as usize)
+            .unwrap()
+    }
 
+    // return true if the whole piece is marked downloaded
+    pub fn mark_chunk_downloaded(
+        &mut self,
+        piece: &Piece<ByteString>,
+    ) -> Option<ChunkMarkingResult> {
+        let chunk_info = self.lengths.chunk_info_from_received_piece(piece)?;
+        let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
+        let chunk_range = self.chunk_status.get_mut(chunk_range).unwrap();
+        if chunk_range.all() {
+            return Some(ChunkMarkingResult::PreviouslyCompleted);
+        }
+        chunk_range.set(chunk_info.chunk_index as usize, true);
         debug!(
             "piece={}, chunk_info={:?}, bits={:?}",
             piece.index, chunk_info, chunk_range,
         );
-        Some(all)
+
+        if chunk_range.all() {
+            return Some(ChunkMarkingResult::Completed);
+        }
+        return Some(ChunkMarkingResult::NotCompleted);
     }
 }
