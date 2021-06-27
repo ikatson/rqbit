@@ -1225,18 +1225,7 @@ impl TorrentManager {
         }
         Ok(response.interval)
     }
-    fn get_total(&self) -> u64 {
-        if let Some(length) = self.inner.torrent.info.length {
-            return length;
-        }
-        self.inner
-            .torrent
-            .info
-            .files
-            .as_ref()
-            .map(|files| files.iter().map(|f| f.length).sum())
-            .unwrap_or_default()
-    }
+
     fn get_left_to_download(&self) -> u64 {
         self.inner.needed - self.get_downloaded()
     }
