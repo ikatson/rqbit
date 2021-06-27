@@ -240,7 +240,9 @@ where
                 (&mut out[PREAMBLE_LEN..PREAMBLE_LEN + block_len]).copy_from_slice(b.as_ref());
                 msg_len
             }
-            Message::Choke | Message::Unchoke | Message::Interested => PREAMBLE_LEN,
+            Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested => {
+                PREAMBLE_LEN
+            }
             Message::Piece(p) => {
                 // below code is wrong, need to serialize len_prefix
                 let block_len = p.block.as_ref().len();
@@ -261,7 +263,6 @@ where
                 byteorder::BE::write_u32(&mut out[PREAMBLE_LEN..], *v);
                 msg_len
             }
-            Message::NotInterested => todo!(),
         }
     }
     pub fn deserialize<'a>(
