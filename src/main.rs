@@ -130,16 +130,3 @@ fn main() -> anyhow::Result<()> {
         Ok(())
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use std::{fs::File, io::Read};
-
-    #[test]
-    fn test_bullshit() {
-        let mut buf = vec![0u8; 65536];
-        let mut f =
-            File::open("/tmp/torrent-download/08.Comedy.Club.S17.WEB-DL.1080p.7turza.mkv").unwrap();
-        f.read_exact(&mut buf[..]).unwrap();
-    }
-}
