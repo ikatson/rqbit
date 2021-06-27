@@ -791,11 +791,11 @@ impl TorrentManager {
             .peers
             .update_bitfield_from_vec(handle, bitfield.0);
         if !self.am_i_interested_in_peer(handle) {
-            self.inner.locked.write().peers.drop_peer(handle);
+            // self.inner.locked.write().peers.drop_peer(handle);
             return;
         }
 
-        // Additional spawn per peer.
+        // Additional spawn per peer, not good.
         spawn(
             format!("peer_chunk_requester({})", handle),
             self.clone().task_peer_chunk_requester(handle),
@@ -1375,8 +1375,7 @@ impl TorrentManager {
                     match tokio::time::timeout(keep_alive_interval, outgoing_chan.recv()).await {
                         Ok(Some(msg)) => msg,
                         Ok(None) => {
-                            // we were closed
-                            return Ok(());
+                            anyhow::bail!("closing writer, channel closed")
                         }
                         Err(_) => MessageOwned::KeepAlive,
                     };
