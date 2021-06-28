@@ -1,4 +1,4 @@
-use crate::{buffers::ByteString, constants::CHUNK_SIZE, peer_binary_protocol::Piece};
+use crate::{constants::CHUNK_SIZE, peer_binary_protocol::Piece};
 
 const fn is_power_of_two(x: u64) -> bool {
     (x != 0) && ((x & (x - 1)) == 0)

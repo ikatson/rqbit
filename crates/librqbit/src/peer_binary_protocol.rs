@@ -5,10 +5,16 @@ use serde::{Deserialize, Serialize};
 use crate::{
     buffers::{ByteBuf, ByteString},
     clone_to_owned::CloneToOwned,
+    constants::CHUNK_SIZE,
     lengths::ChunkInfo,
 };
 
-const PREAMBLE_LEN: usize = 5;
+const INTEGER_LEN: usize = 4;
+const MSGID_LEN: usize = 1;
+const PREAMBLE_LEN: usize = INTEGER_LEN + MSGID_LEN;
+const PIECE_MESSAGE_PREAMBLE_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 2;
+pub const PIECE_MESSAGE_DEFAULT_LEN: usize = PIECE_MESSAGE_PREAMBLE_LEN + CHUNK_SIZE as usize;
+
 const NO_PAYLOAD_MSG_LEN: usize = PREAMBLE_LEN;
 
 const PSTR_BT1: &str = "BitTorrent protocol";
@@ -56,7 +62,7 @@ pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize 
     BE::write_u32(&mut buf[0..4], chunk.piece_index.get());
     BE::write_u32(&mut buf[4..8], chunk.offset);
 
-    PREAMBLE_LEN + 8
+    PIECE_MESSAGE_PREAMBLE_LEN
 }
 
 #[derive(Debug)]

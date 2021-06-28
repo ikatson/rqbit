@@ -12,6 +12,7 @@ use crate::{
     buffers::ByteString,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::Piece,
+    sha1w::{self, ISha1},
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Owned},
     type_aliases::{PeerHandle, BF},
 };
@@ -23,9 +24,9 @@ pub struct InitialCheckResults {
     pub needed_bytes: u64,
 }
 
-pub fn update_hash_from_file(
+pub fn update_hash_from_file<Sha1: ISha1>(
     file: &mut File,
-    hash: &mut sha1::Sha1,
+    hash: &mut Sha1,
     buf: &mut [u8],
     mut bytes_to_read: usize,
 ) -> anyhow::Result<()> {
@@ -120,7 +121,7 @@ impl<'a> FileOps<'a> {
         let mut read_buffer = vec![0u8; 65536];
 
         for piece_info in self.lengths.iter_piece_infos() {
-            let mut computed_hash = sha1::Sha1::new();
+            let mut computed_hash = sha1w::Sha1Openssl::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
             let mut at_least_one_file_required = current_file.full_file_required;
@@ -180,7 +181,7 @@ impl<'a> FileOps<'a> {
             if self
                 .torrent
                 .info
-                .compare_hash(piece_info.piece_index.get(), &computed_hash)
+                .compare_hash(piece_info.piece_index.get(), computed_hash.finish())
                 .unwrap()
             {
                 trace!(
@@ -220,7 +221,7 @@ impl<'a> FileOps<'a> {
         piece_index: ValidPieceIndex,
         last_received_chunk: &ChunkInfo,
     ) -> anyhow::Result<bool> {
-        let mut h = sha1::Sha1::new();
+        let mut h = sha1w::Sha1Openssl::new();
         let piece_length = self.lengths.piece_length(piece_index);
         let mut absolute_offset = self.lengths.piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];
@@ -269,7 +270,11 @@ impl<'a> FileOps<'a> {
             absolute_offset = 0;
         }
 
-        match self.torrent.info.compare_hash(piece_index.get(), &h) {
+        match self
+            .torrent
+            .info
+            .compare_hash(piece_index.get(), h.finish())
+        {
             Some(true) => {
                 debug!("piece={} hash matches", piece_index);
                 Ok(true)

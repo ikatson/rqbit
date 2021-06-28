@@ -15,10 +15,10 @@ use crate::{
     lengths::ChunkInfo,
     peer_binary_protocol::{
         serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
-        MessageOwned, Piece, Request,
+        MessageOwned, Piece, Request, PIECE_MESSAGE_DEFAULT_LEN,
     },
     peer_id::try_decode_peer_id,
-    spawn_utils::spawn,
+    spawn_utils::{spawn, spawn_block_in_place},
     torrent_state::{InflightRequest, TorrentState},
     type_aliases::PeerHandle,
 };
@@ -57,7 +57,7 @@ impl PeerConnection {
         conn.write_all(&handshake.serialize())
             .await
             .context("error writing handshake")?;
-        let mut read_buf = vec![0u8; 16384 * 2];
+        let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
         let read_bytes = conn
             .read(&mut read_buf)
             .await
@@ -89,7 +89,7 @@ impl PeerConnection {
 
         let this = self.clone();
         let writer = async move {
-            let mut buf = Vec::<u8>::new();
+            let mut buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
             let keep_alive_interval = Duration::from_secs(120);
 
             if this.state.stats.have.load(Ordering::Relaxed) > 0 {
@@ -127,7 +127,7 @@ impl PeerConnection {
                         let preamble_len = serialize_piece_preamble(&chunk, &mut buf);
                         let full_len = preamble_len + chunk.size as usize;
                         buf.resize(full_len, 0);
-                        tokio::task::block_in_place(|| {
+                        spawn_block_in_place(|| {
                             this.state.file_ops().read_chunk(
                                 handle,
                                 &chunk,
@@ -402,15 +402,15 @@ impl PeerConnection {
                 Some(next) => next,
                 None => {
                     if self.state.get_left_to_download() == 0 {
-                        info!("{}: nothing left to download, closing requester", handle);
+                        debug!("{}: nothing left to download, closing requester", handle);
                         return Ok(());
                     }
 
                     if let Some(piece) = self.state.try_steal_piece(handle) {
-                        info!("{}: stole a piece {}", handle, piece);
+                        debug!("{}: stole a piece {}", handle, piece);
                         piece
                     } else {
-                        info!("no pieces to request from {}", handle);
+                        debug!("no pieces to request from {}", handle);
                         #[allow(unused_must_use)]
                         {
                             timeout(Duration::from_secs(60), notify.notified()).await;
@@ -534,7 +534,7 @@ impl PeerConnection {
         // to prevent deadlocks.
         drop(g);
 
-        tokio::task::block_in_place(move || {
+        spawn_block_in_place(move || {
             let index = piece.index;
 
             // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what

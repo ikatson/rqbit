@@ -132,11 +132,11 @@ impl<BufType: Clone + Deref<Target = [u8]>> TorrentMetaV1Info<BufType> {
         let expected_hash = self.pieces.deref().get(start..end)?;
         Some(expected_hash)
     }
-    pub fn compare_hash(&self, piece: u32, hash: &sha1::Sha1) -> Option<bool> {
+    pub fn compare_hash(&self, piece: u32, hash: [u8; 20]) -> Option<bool> {
         let start = piece as usize * 20;
         let end = start + 20;
         let expected_hash = self.pieces.deref().get(start..end)?;
-        Some(expected_hash == hash.digest().bytes())
+        Some(expected_hash == hash)
     }
     pub fn iter_filenames_and_lengths(
         &self,

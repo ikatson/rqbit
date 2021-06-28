@@ -514,6 +514,7 @@ dependencies = [
  "byteorder",
  "futures",
  "log",
+ "openssl",
  "parking_lot",
  "rand",
  "reqwest",

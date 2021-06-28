@@ -318,7 +318,7 @@ impl TorrentManager {
         let peer_connection = PeerConnection::new(self.inner.clone());
         spawn(format!("manage_peer({})", handle), async move {
             if let Err(e) = peer_connection.manage_peer(addr, handle, out_rx).await {
-                error!("error managing peer {}: {:#}", handle, e)
+                debug!("error managing peer {}: {:#}", handle, e)
             };
             peer_connection.into_state().drop_peer(handle);
             Ok::<_, anyhow::Error>(())

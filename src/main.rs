@@ -42,6 +42,15 @@ fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
         .clone_to_owned())
 }
 
+#[derive(Debug, Clap)]
+enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Igor Katson <igor.katson@gmail.com>")]
 struct Opts {
@@ -61,6 +70,9 @@ struct Opts {
     /// Only list the torrent metadata contents, don't do anything else.
     #[clap(short, long)]
     list: bool,
+
+    #[clap(arg_enum, short = 'v')]
+    log_level: Option<LogLevel>,
 }
 
 fn compute_only_files(
@@ -87,15 +99,40 @@ fn compute_only_files(
     Ok(only_files)
 }
 
-fn main() -> anyhow::Result<()> {
+fn init_logging(opts: &Opts) {
+    match opts.log_level.as_ref() {
+        Some(level) => {
+            let level_str = match level {
+                LogLevel::Trace => "trace",
+                LogLevel::Debug => "debug",
+                LogLevel::Info => "info",
+                LogLevel::Warn => "warn",
+                LogLevel::Error => "error",
+            };
+            std::env::set_var("RUST_LOG", level_str);
+        }
+        None => {
+            if std::env::var_os("RUST_LOG").is_none() {
+                std::env::set_var("RUST_LOG", "info");
+            };
+        }
+    };
     pretty_env_logger::init();
+}
 
+fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
+
+    init_logging(&opts);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_time()
         .enable_io()
-        // the default is 512, it can get out of hand.
+        // the default is 512, it can get out of hand, as this program is CPU-bound on
+        // hash checking.
+        // note: we aren't using spawn_blocking() anymore, so this doesn't apply,
+        // however I'm still messing around, so in case we do, let's block the number of
+        // spawned threads.
         .max_blocking_threads(8)
         .build()?;
 

@@ -18,3 +18,10 @@ pub fn spawn<N: Display + 'static + Send>(
         }
     });
 }
+
+pub fn spawn_block_in_place<F: FnOnce() -> R, R>(f: F) -> R {
+    // Have this wrapper so that it's easy to switch to just f() when
+    // using tokio's single-threaded runtime. Single-threaded runtime is
+    // easier to read with time profilers.
+    tokio::task::block_in_place(f)
+}

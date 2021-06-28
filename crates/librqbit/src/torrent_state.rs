@@ -276,7 +276,7 @@ impl TorrentState {
     }
 
     pub fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
-        let mut unordered = FuturesUnordered::new();
+        let mut futures = Vec::new();
 
         let g = self.locked.read();
         for (handle, peer_state) in g.peers.states.iter() {
@@ -300,7 +300,7 @@ impl TorrentState {
                         None => continue,
                     };
                     let tx = Arc::downgrade(tx);
-                    unordered.push(async move {
+                    futures.push(async move {
                         if let Some(tx) = tx.upgrade() {
                             if tx
                                 .send(WriterRequest::Message(Message::Have(index.get())))
@@ -316,11 +316,12 @@ impl TorrentState {
             }
         }
 
-        if unordered.is_empty() {
+        if futures.is_empty() {
             trace!("no peers to transmit Have={} to, saving some work", index);
             return;
         }
 
+        let mut unordered: FuturesUnordered<_> = futures.into_iter().collect();
         spawn(
             format!("transmit_haves(piece={}, count={})", index, unordered.len()),
             async move {
