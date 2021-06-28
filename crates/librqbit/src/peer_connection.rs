@@ -202,12 +202,7 @@ impl PeerConnection {
                     Message::Bitfield(b) => self.on_bitfield(handle, b.clone_to_owned()).await?,
                     Message::Choke => self.on_i_am_choked(handle),
                     Message::Unchoke => self.on_i_am_unchoked(handle),
-                    Message::Interested => {
-                        warn!(
-                            "{} is interested, but support for interested messages not implemented",
-                            handle
-                        )
-                    }
+                    Message::Interested => self.on_peer_interested(handle),
                     Message::Piece(piece) => {
                         self.on_received_piece(handle, piece)
                             .context("error in on_received_piece()")?;
@@ -366,6 +361,15 @@ impl PeerConnection {
             .write()
             .peers
             .mark_i_am_choked(handle, true);
+    }
+
+    fn on_peer_interested(&self, handle: PeerHandle) {
+        debug!("peer {} is interested", handle);
+        self.state
+            .locked
+            .write()
+            .peers
+            .mark_peer_interested(handle, true);
     }
 
     async fn requester(self, handle: PeerHandle) -> anyhow::Result<()> {
@@ -573,11 +577,7 @@ impl PeerConnection {
                         index, handle
                     );
 
-                    let state_clone = self.state.clone();
-                    let index = piece.index;
-                    spawn("transmit haves", async move {
-                        state_clone.task_transmit_haves(index).await
-                    });
+                    self.state.maybe_transmit_haves(chunk_info.piece_index);
                 }
                 false => {
                     warn!(

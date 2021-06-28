@@ -9,7 +9,7 @@ use std::{
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::warn;
+use log::{trace, warn};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::Sender;
 
@@ -20,6 +20,7 @@ use crate::{
     peer_binary_protocol::{Handshake, Message},
     peer_connection::WriterRequest,
     peer_state::{LivePeerState, PeerState},
+    spawn_utils::spawn,
     torrent_metainfo::TorrentMetaV1Owned,
     type_aliases::{PeerHandle, BF},
 };
@@ -115,6 +116,16 @@ impl PeerStates {
         let live = self.get_live_mut(handle)?;
         let prev = live.i_am_choked;
         live.i_am_choked = is_choked;
+        Some(prev)
+    }
+    pub fn mark_peer_interested(
+        &mut self,
+        handle: PeerHandle,
+        is_interested: bool,
+    ) -> Option<bool> {
+        let live = self.get_live_mut(handle)?;
+        let prev = live.peer_interested;
+        live.peer_interested = is_interested;
         Some(prev)
     }
     pub fn update_bitfield_from_vec(
@@ -264,32 +275,58 @@ impl TorrentState {
         self.needed - self.get_downloaded()
     }
 
-    // TODO: this is a task per chunk, not good
-    pub async fn task_transmit_haves(&self, index: u32) -> anyhow::Result<()> {
+    pub fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
         let mut unordered = FuturesUnordered::new();
 
-        for weak in self
-            .locked
-            .read()
-            .peers
-            .tx
-            .values()
-            .map(|v| Arc::downgrade(v))
-        {
-            unordered.push(async move {
-                if let Some(tx) = weak.upgrade() {
-                    if tx
-                        .send(WriterRequest::Message(Message::Have(index)))
-                        .await
-                        .is_err()
-                    {
-                        // whatever
+        let g = self.locked.read();
+        for (handle, peer_state) in g.peers.states.iter() {
+            match peer_state {
+                PeerState::Live(live) => {
+                    if !live.peer_interested {
+                        continue;
                     }
+
+                    if live
+                        .bitfield
+                        .as_ref()
+                        .and_then(|b| b.get(index.get() as usize).map(|v| *v))
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+
+                    let tx = match g.peers.tx.get(handle) {
+                        Some(tx) => tx,
+                        None => continue,
+                    };
+                    let tx = Arc::downgrade(tx);
+                    unordered.push(async move {
+                        if let Some(tx) = tx.upgrade() {
+                            if tx
+                                .send(WriterRequest::Message(Message::Have(index.get())))
+                                .await
+                                .is_err()
+                            {
+                                // whatever
+                            }
+                        }
+                    });
                 }
-            });
+                _ => continue,
+            }
         }
 
-        while unordered.next().await.is_some() {}
-        Ok(())
+        if unordered.is_empty() {
+            trace!("no peers to transmit Have={} to, saving some work", index);
+            return;
+        }
+
+        spawn(
+            format!("transmit_haves(piece={}, count={})", index, unordered.len()),
+            async move {
+                while unordered.next().await.is_some() {}
+                Ok(())
+            },
+        );
     }
 }
