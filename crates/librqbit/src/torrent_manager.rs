@@ -187,7 +187,8 @@ impl TorrentManager {
 
     async fn stats_printer(self) -> anyhow::Result<()> {
         loop {
-            let live_peers = self.inner.locked.read().peers.stats();
+            let live_peer_stats = self.inner.locked.read().peers.stats();
+            let seen_peers_count = self.inner.locked.read().peers.seen().len();
             let have = self.inner.stats.have.load(Ordering::Relaxed);
             let fetched = self.inner.stats.fetched_bytes.load(Ordering::Relaxed);
             let needed = self.inner.needed;
@@ -204,10 +205,12 @@ impl TorrentManager {
                 (downloaded as f64 / needed as f64) * 100f64
             };
             info!(
-                "Stats: downloaded {:.2}% ({}), peers {:?}, fetched {}, remaining {} out of {}, uploaded {}, total have {}",
+                "Stats: downloaded {:.2}% ({:.2}), peers {{live: {}, connecting: {}, seen: {}}}, fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, total have {:.2}",
                 downloaded_pct,
                 SF::new(downloaded),
-                live_peers,
+                live_peer_stats.live,
+                live_peer_stats.connecting,
+                seen_peers_count,
                 SF::new(fetched),
                 SF::new(remaining),
                 SF::new(needed),

@@ -43,7 +43,7 @@ impl From<&ChunkInfo> for InflightRequest {
 #[derive(Default)]
 pub struct PeerStates {
     states: HashMap<PeerHandle, PeerState>,
-    seen_peers: HashSet<SocketAddr>,
+    seen: HashSet<SocketAddr>,
     inflight_pieces: HashSet<ValidPieceIndex>,
     tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::Sender<WriterRequest>>>,
 }
@@ -71,12 +71,15 @@ impl PeerStates {
         addr: SocketAddr,
         tx: tokio::sync::mpsc::Sender<WriterRequest>,
     ) -> Option<PeerHandle> {
-        if self.seen_peers.contains(&addr) {
+        if self.seen.contains(&addr) {
             return None;
         }
         let handle = self.add(addr, tx)?;
-        self.seen_peers.insert(addr);
+        self.seen.insert(addr);
         Some(handle)
+    }
+    pub fn seen(&self) -> &HashSet<SocketAddr> {
+        &self.seen
     }
     pub fn get_live(&self, handle: PeerHandle) -> Option<&LivePeerState> {
         if let PeerState::Live(ref l) = self.states.get(&handle)? {

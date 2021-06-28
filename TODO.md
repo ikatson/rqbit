@@ -5,7 +5,7 @@
 - [x] use the "update_hash" function in piece checking
 - [ ] signaling when file is done
 
-- [ ]
+- [ ] when we have the whole torrent, there's no point talking to peers that also have the whole torrent
 
 - [ ] per-file stats
 - [ ] per-peer stats
