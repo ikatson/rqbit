@@ -364,16 +364,7 @@ impl TorrentState {
         let mut g = self.locked.write();
         match g.peers.states.get_mut(&handle) {
             Some(s @ &mut PeerState::Connecting(_)) => {
-                *s = PeerState::Live(LivePeerState {
-                    peer_id: h.peer_id,
-                    i_am_choked: true,
-                    peer_choked: true,
-                    peer_interested: false,
-                    bitfield: None,
-                    have_notify: Arc::new(Notify::new()),
-                    outstanding_requests: Arc::new(Semaphore::new(0)),
-                    inflight_requests: Default::default(),
-                });
+                *s = PeerState::Live(LivePeerState::new(h.peer_id));
             }
             _ => {
                 warn!("peer {} was in wrong state", handle);
