@@ -81,7 +81,7 @@ impl ChunkTracker {
     pub fn mark_chunk_request_cancelled(
         &mut self,
         index: ValidPieceIndex,
-        chunk: u32,
+        _chunk: u32,
     ) -> Option<bool> {
         if *self.have.get(index.get() as usize)? {
             return Some(false);
