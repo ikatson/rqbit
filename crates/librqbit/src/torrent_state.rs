@@ -17,7 +17,7 @@ use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    peer_binary_protocol::{Handshake, Message, MessageOwned},
+    peer_binary_protocol::{Handshake, Message},
     peer_connection::WriterRequest,
     peer_state::{LivePeerState, PeerState},
     torrent_metainfo::TorrentMetaV1Owned,

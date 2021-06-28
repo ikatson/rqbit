@@ -18,7 +18,7 @@ use crate::{
         MessageOwned, Piece, Request,
     },
     peer_id::try_decode_peer_id,
-    spawn_utils::{spawn, spawn_blocking},
+    spawn_utils::spawn,
     torrent_state::{InflightRequest, TorrentState},
     type_aliases::PeerHandle,
 };
@@ -117,10 +117,7 @@ impl PeerConnection {
                     Err(_) => WriterRequest::Message(MessageOwned::KeepAlive),
                 };
 
-                let uploaded_add = match &req {
-                    WriterRequest::Message(Message::Piece(p)) => Some(p.block.len()),
-                    _ => None,
-                };
+                let mut uploaded_add = None;
 
                 let len = match &req {
                     WriterRequest::Message(msg) => msg.serialize(&mut buf),
@@ -138,6 +135,7 @@ impl PeerConnection {
                             )
                         })
                         .with_context(|| format!("error reading chunk {:?}", chunk))?;
+                        uploaded_add = Some(chunk.size);
                         full_len
                     }
                 };
@@ -164,15 +162,10 @@ impl PeerConnection {
 
         let reader = async move {
             loop {
-                let message = loop {
+                let (message, size) = loop {
                     match MessageBorrowed::deserialize(&read_buf[..read_so_far]) {
                         Ok((msg, size)) => {
-                            let msg = msg.clone_to_owned();
-                            if read_so_far > size {
-                                read_buf.copy_within(size..read_so_far, 0);
-                            }
-                            read_so_far -= size;
-                            break msg;
+                            break (msg, size);
                         }
                         Err(MessageDeserializeError::NotEnoughData(d, _)) => {
                             if read_buf.len() < read_so_far + d {
@@ -206,7 +199,7 @@ impl PeerConnection {
                                 format!("error handling download request from {}", handle)
                             })?;
                     }
-                    Message::Bitfield(b) => self.on_bitfield(handle, b).await?,
+                    Message::Bitfield(b) => self.on_bitfield(handle, b.clone_to_owned()).await?,
                     Message::Choke => self.on_i_am_choked(handle),
                     Message::Unchoke => self.on_i_am_unchoked(handle),
                     Message::Interested => {
@@ -227,6 +220,11 @@ impl PeerConnection {
                         info!("received \"not interested\", but we don't care yet")
                     }
                 }
+
+                if read_so_far > size {
+                    read_buf.copy_within(size..read_so_far, 0);
+                }
+                read_so_far -= size;
             }
 
             // For type inference.
@@ -471,11 +469,7 @@ impl PeerConnection {
         live.requests_sem.add_permits(16);
     }
 
-    fn on_received_piece(
-        &self,
-        handle: PeerHandle,
-        piece: Piece<ByteString>,
-    ) -> anyhow::Result<()> {
+    fn on_received_piece(&self, handle: PeerHandle, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
         let chunk_info = match self.state.lengths.chunk_info_from_received_piece(&piece) {
             Some(i) => i,
             None => {
@@ -533,73 +527,73 @@ impl PeerConnection {
             }
         };
 
-        let this = self.clone();
+        // to prevent deadlocks.
+        drop(g);
 
-        spawn_blocking(
-            format!(
-                "write_and_check(piece={}, peer={}, block={:?})",
-                piece.index, handle, &piece
-            ),
-            move || {
-                let index = piece.index;
+        tokio::task::block_in_place(move || {
+            let index = piece.index;
 
-                // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what
-                // should we really do? If we unmark it, it will get requested forever...
-                this.state
-                    .file_ops()
-                    .write_chunk(handle, &piece, &chunk_info)?;
+            // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what
+            // should we really do? If we unmark it, it will get requested forever...
+            //
+            // So let's just unwrap and abort.
+            self.state
+                .file_ops()
+                .write_chunk(handle, &piece, &chunk_info)
+                .expect("expected to be able to write to disk");
 
-                if !should_checksum {
-                    return Ok(());
+            if !should_checksum {
+                return Ok(());
+            }
+
+            match self
+                .state
+                .file_ops()
+                .check_piece(handle, chunk_info.piece_index, &chunk_info)
+                .with_context(|| format!("error checking piece={}", index))?
+            {
+                true => {
+                    let piece_len = self.state.lengths.piece_length(chunk_info.piece_index) as u64;
+                    self.state
+                        .stats
+                        .downloaded_and_checked
+                        .fetch_add(piece_len, Ordering::Relaxed);
+                    self.state
+                        .stats
+                        .have
+                        .fetch_add(piece_len, Ordering::Relaxed);
+                    self.state
+                        .locked
+                        .write()
+                        .chunks
+                        .mark_piece_downloaded(chunk_info.piece_index);
+
+                    debug!(
+                        "piece={} successfully downloaded and verified from {}",
+                        index, handle
+                    );
+
+                    let state_clone = self.state.clone();
+                    let index = piece.index;
+                    spawn("transmit haves", async move {
+                        state_clone.task_transmit_haves(index).await
+                    });
                 }
-
-                match this
-                    .state
-                    .file_ops()
-                    .check_piece(handle, chunk_info.piece_index, &chunk_info)
-                    .with_context(|| format!("error checking piece={}", index))?
-                {
-                    true => {
-                        let piece_len =
-                            this.state.lengths.piece_length(chunk_info.piece_index) as u64;
-                        this.state
-                            .stats
-                            .downloaded_and_checked
-                            .fetch_add(piece_len, Ordering::Relaxed);
-                        this.state
-                            .stats
-                            .have
-                            .fetch_add(piece_len, Ordering::Relaxed);
-                        this.state
-                            .locked
-                            .write()
-                            .chunks
-                            .mark_piece_downloaded(chunk_info.piece_index);
-
-                        debug!(
-                            "piece={} successfully downloaded and verified from {}",
-                            index, handle
-                        );
-                        let state_clone = this.state.clone();
-                        spawn("transmit haves", async move {
-                            state_clone.task_transmit_haves(piece.index).await
-                        });
-                    }
-                    false => {
-                        warn!(
-                            "checksum for piece={} did not validate, came from {}",
-                            index, handle
-                        );
-                        this.state
-                            .locked
-                            .write()
-                            .chunks
-                            .mark_piece_broken(chunk_info.piece_index);
-                    }
-                };
-                Ok::<_, anyhow::Error>(())
-            },
-        );
+                false => {
+                    warn!(
+                        "checksum for piece={} did not validate, came from {}",
+                        index, handle
+                    );
+                    self.state
+                        .locked
+                        .write()
+                        .chunks
+                        .mark_piece_broken(chunk_info.piece_index);
+                }
+            };
+            Ok::<_, anyhow::Error>(())
+        })
+        .with_context(|| format!("error processing received chunk {:?}", chunk_info))?;
         Ok(())
     }
 }

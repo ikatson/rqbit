@@ -21,7 +21,6 @@ use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     lengths::Lengths,
-    peer_binary_protocol::MessageOwned,
     peer_connection::{PeerConnection, WriterRequest},
     spawn_utils::spawn,
     torrent_metainfo::TorrentMetaV1Owned,

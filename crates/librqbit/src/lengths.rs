@@ -189,11 +189,17 @@ impl Lengths {
         })
     }
 
-    pub fn chunk_info_from_received_piece(&self, piece: &Piece<ByteString>) -> Option<ChunkInfo> {
+    pub fn chunk_info_from_received_piece<ByteBuf>(
+        &self,
+        piece: &Piece<ByteBuf>,
+    ) -> Option<ChunkInfo>
+    where
+        ByteBuf: AsRef<[u8]>,
+    {
         self.chunk_info_from_received_data(
             self.validate_piece_index(piece.index)?,
             piece.begin,
-            piece.block.len() as u32,
+            piece.block.as_ref().len() as u32,
         )
     }
     pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {

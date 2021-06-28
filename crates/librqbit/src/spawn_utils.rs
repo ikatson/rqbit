@@ -18,20 +18,3 @@ pub fn spawn<N: Display + 'static + Send>(
         }
     });
 }
-
-pub fn spawn_blocking<T: Send + Sync + 'static, N: Display + 'static + Send>(
-    name: N,
-    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
-) -> tokio::task::JoinHandle<anyhow::Result<T>> {
-    debug!("starting blocking task \"{}\"", name);
-    tokio::task::spawn_blocking(move || match f() {
-        Ok(v) => {
-            debug!("blocking task \"{}\" finished", name);
-            Ok(v)
-        }
-        Err(e) => {
-            error!("error in blocking task \"{}\": {:#}", name, &e);
-            Err(e)
-        }
-    })
-}

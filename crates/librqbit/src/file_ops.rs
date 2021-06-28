@@ -340,12 +340,15 @@ impl<'a> FileOps<'a> {
         return Ok(());
     }
 
-    pub fn write_chunk(
+    pub fn write_chunk<ByteBuf>(
         &self,
         who_sent: PeerHandle,
-        data: &Piece<ByteString>,
+        data: &Piece<ByteBuf>,
         chunk_info: &ChunkInfo,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        ByteBuf: AsRef<[u8]>,
+    {
         let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
 
