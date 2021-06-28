@@ -17,7 +17,8 @@ use crate::{
     },
     peer_id::try_decode_peer_id,
     spawn_utils::{spawn, spawn_blocking},
-    torrent_state::{InflightRequest, PeerHandle, TorrentState},
+    torrent_state::{InflightRequest, TorrentState},
+    type_aliases::PeerHandle,
 };
 
 #[derive(Clone)]

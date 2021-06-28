@@ -21,16 +21,10 @@ use crate::{
     file_checking::update_hash_from_file,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::{Handshake, Message, MessageOwned, Piece},
+    peer_state::{LivePeerState, PeerState},
     torrent_metainfo::TorrentMetaV1Owned,
-    type_aliases::BF,
+    type_aliases::{PeerHandle, BF},
 };
-
-pub type PeerHandle = SocketAddr;
-
-pub enum PeerState {
-    Connecting(SocketAddr),
-    Live(LivePeerState),
-}
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct InflightRequest {
@@ -45,20 +39,6 @@ impl From<&ChunkInfo> for InflightRequest {
             chunk: c.chunk_index,
         }
     }
-}
-
-pub struct LivePeerState {
-    #[allow(unused)]
-    pub peer_id: [u8; 20],
-    pub i_am_choked: bool,
-    #[allow(unused)]
-    pub peer_choked: bool,
-    #[allow(unused)]
-    pub peer_interested: bool,
-    pub outstanding_requests: Arc<Semaphore>,
-    pub have_notify: Arc<Notify>,
-    pub bitfield: Option<BF>,
-    pub inflight_requests: HashSet<InflightRequest>,
 }
 
 #[derive(Default)]
