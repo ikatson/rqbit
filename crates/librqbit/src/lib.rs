@@ -2,7 +2,7 @@ pub mod buffers;
 pub mod chunk_tracker;
 pub mod clone_to_owned;
 pub mod constants;
-pub mod files_ops;
+pub mod file_ops;
 pub mod lengths;
 pub mod peer_binary_protocol;
 pub mod peer_connection;

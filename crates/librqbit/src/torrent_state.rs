@@ -14,11 +14,10 @@ use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
-    buffers::ByteString,
     chunk_tracker::ChunkTracker,
-    files_ops::{check_piece, read_chunk, write_chunk},
+    file_ops::FileOps,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    peer_binary_protocol::{Handshake, Message, MessageOwned, Piece},
+    peer_binary_protocol::{Handshake, Message, MessageOwned},
     peer_state::{LivePeerState, PeerState},
     torrent_metainfo::TorrentMetaV1Owned,
     type_aliases::{PeerHandle, BF},
@@ -160,50 +159,8 @@ pub struct TorrentState {
 }
 
 impl TorrentState {
-    pub fn check_piece_blocking(
-        &self,
-        who_sent: PeerHandle,
-        piece_index: ValidPieceIndex,
-        last_received_chunk: &ChunkInfo,
-    ) -> anyhow::Result<bool> {
-        check_piece(
-            &self.torrent,
-            &self.files,
-            &self.lengths,
-            who_sent,
-            piece_index,
-            last_received_chunk,
-        )
-    }
-
-    pub fn read_chunk_blocking(
-        &self,
-        who_sent: PeerHandle,
-        chunk_info: ChunkInfo,
-    ) -> anyhow::Result<Vec<u8>> {
-        read_chunk(
-            &self.torrent,
-            &self.files,
-            &self.lengths,
-            who_sent,
-            chunk_info,
-        )
-    }
-
-    pub fn write_chunk_blocking(
-        &self,
-        who_sent: PeerHandle,
-        data: &Piece<ByteString>,
-        chunk_info: &ChunkInfo,
-    ) -> anyhow::Result<()> {
-        write_chunk(
-            &self.torrent,
-            &self.files,
-            &self.lengths,
-            who_sent,
-            data,
-            chunk_info,
-        )
+    pub fn file_ops(&self) -> FileOps<'_> {
+        FileOps::new(&self.torrent, &self.files, &self.lengths)
     }
 
     pub fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {

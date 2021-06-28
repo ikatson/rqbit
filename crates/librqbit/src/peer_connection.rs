@@ -249,7 +249,7 @@ impl PeerConnection {
                 "read_chunk_blocking(peer={}, chunk_info={:?}",
                 peer_handle, &chunk_info
             ),
-            move || state.read_chunk_blocking(peer_handle, chunk_info),
+            move || state.file_ops().read_chunk(peer_handle, chunk_info),
         )
         .await??;
 
@@ -529,7 +529,8 @@ impl PeerConnection {
                 // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what
                 // should we really do? If we unmark it, it will get requested forever...
                 this.state
-                    .write_chunk_blocking(handle, &piece, &chunk_info)?;
+                    .file_ops()
+                    .write_chunk(handle, &piece, &chunk_info)?;
 
                 if !should_checksum {
                     return Ok(());
@@ -537,7 +538,8 @@ impl PeerConnection {
 
                 match this
                     .state
-                    .check_piece_blocking(handle, chunk_info.piece_index, &chunk_info)
+                    .file_ops()
+                    .check_piece(handle, chunk_info.piece_index, &chunk_info)
                     .with_context(|| format!("error checking piece={}", index))?
                 {
                     true => {

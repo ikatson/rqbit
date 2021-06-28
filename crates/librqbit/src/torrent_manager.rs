@@ -19,7 +19,7 @@ use size_format::SizeFormatterBinary as SF;
 
 use crate::{
     chunk_tracker::ChunkTracker,
-    files_ops::initial_check,
+    file_ops::FileOps,
     lengths::Lengths,
     peer_binary_protocol::MessageOwned,
     peer_connection::PeerConnection,
@@ -146,7 +146,7 @@ impl TorrentManager {
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results =
-            initial_check(&torrent, &files, only_files.as_deref(), &lengths)?;
+            FileOps::new(&torrent, &files, &lengths).initial_check(only_files.as_deref())?;
 
         info!(
             "Initial check results: have {}, needed {}",
