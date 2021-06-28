@@ -249,7 +249,13 @@ impl PeerConnection {
                 "read_chunk_blocking(peer={}, chunk_info={:?}",
                 peer_handle, &chunk_info
             ),
-            move || state.file_ops().read_chunk(peer_handle, chunk_info),
+            move || {
+                let mut buf = Vec::new();
+                state
+                    .file_ops()
+                    .read_chunk(peer_handle, chunk_info, &mut buf)?;
+                Ok(buf)
+            },
         )
         .await??;
 
@@ -265,7 +271,11 @@ impl PeerConnection {
                     peer_handle
                 )
             })?;
-        let message = Message::Piece(Piece::from_vec(
+
+        // TODO: this is not super efficient as it does copying multiple times.
+        // Theoretically, this could be done in the sending code, so that it reads straight into
+        // the send buffer.
+        let message = Message::Piece(Piece::from_data(
             chunk_info.piece_index.get(),
             chunk_info.offset,
             chunk,

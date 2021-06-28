@@ -57,9 +57,9 @@ impl<ByteBuf> Piece<ByteBuf>
 where
     ByteBuf: AsRef<[u8]>,
 {
-    pub fn from_vec(index: u32, begin: u32, block: Vec<u8>) -> Piece<ByteBuf>
+    pub fn from_data<T>(index: u32, begin: u32, block: T) -> Piece<ByteBuf>
     where
-        ByteBuf: From<Vec<u8>>,
+        ByteBuf: From<T>,
     {
         Piece {
             index,
