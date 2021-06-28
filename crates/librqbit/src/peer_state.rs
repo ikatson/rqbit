@@ -10,12 +10,9 @@ pub enum PeerState {
 }
 
 pub struct LivePeerState {
-    #[allow(unused)]
-    peer_id: [u8; 20],
+    pub peer_id: [u8; 20],
     pub i_am_choked: bool,
-    #[allow(unused)]
     pub peer_choked: bool,
-    #[allow(unused)]
     pub peer_interested: bool,
     pub outstanding_requests: Arc<Semaphore>,
     pub have_notify: Arc<Notify>,
