@@ -5,3 +5,9 @@ sign-debug:
 
 sign-release:
 	codesign -f --entitlements resources/debugging.entitlements -s - target/release/rqbit
+
+build-release:
+	cargo build --release
+
+install: build-release
+	cp target/release/rqbit "$(HOME)/bin/"

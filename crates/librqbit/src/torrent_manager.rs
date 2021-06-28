@@ -286,6 +286,7 @@ impl TorrentManager {
             match this.tracker_one_request(tracker_url.clone()).await {
                 Ok(interval) => {
                     event = None;
+                    let interval = 30;
                     let duration = Duration::from_secs(interval);
                     debug!(
                         "sleeping for {:?} after calling tracker {}",
@@ -295,7 +296,7 @@ impl TorrentManager {
                     tokio::time::sleep(duration).await;
                 }
                 Err(e) => {
-                    error!("error calling the tracker {}: {:#}", tracker_url, e);
+                    debug!("error calling the tracker {}: {:#}", tracker_url, e);
                     tokio::time::sleep(Duration::from_secs(60)).await;
                 }
             };

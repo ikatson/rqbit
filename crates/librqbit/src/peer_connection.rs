@@ -123,7 +123,7 @@ impl PeerConnection {
                     WriterRequest::Message(msg) => msg.serialize(&mut buf),
                     WriterRequest::ReadChunkRequest(chunk) => {
                         // this whole section is an optimization
-
+                        buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
                         let preamble_len = serialize_piece_preamble(&chunk, &mut buf);
                         let full_len = preamble_len + chunk.size as usize;
                         buf.resize(full_len, 0);
@@ -280,7 +280,7 @@ impl PeerConnection {
         // Theoretically, this could be done in the sending code, so that it reads straight into
         // the send buffer.
         let request = WriterRequest::ReadChunkRequest(chunk_info);
-        info!("sending to {}: {:?}", peer_handle, &request);
+        debug!("sending to {}: {:?}", peer_handle, &request);
         Ok::<_, anyhow::Error>(tx.send(request).await?)
     }
 
