@@ -116,6 +116,13 @@ impl ChunkTracker {
             .unwrap()
     }
 
+    pub fn is_chunk_ready_to_upload(&self, chunk: &ChunkInfo) -> bool {
+        self.have
+            .get(chunk.piece_index.get() as usize)
+            .map(|b| *b)
+            .unwrap_or(false)
+    }
+
     // return true if the whole piece is marked downloaded
     pub fn mark_chunk_downloaded<ByteBuf>(
         &mut self,

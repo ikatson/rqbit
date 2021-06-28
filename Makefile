@@ -10,4 +10,6 @@ build-release:
 	cargo build --release
 
 install: build-release
+	$(MAKE) build-release
+	$(MAKE) sign-release
 	cp target/release/rqbit "$(HOME)/bin/"

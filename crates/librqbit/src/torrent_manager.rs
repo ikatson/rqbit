@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::Context;
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
 use size_format::SizeFormatterBinary as SF;

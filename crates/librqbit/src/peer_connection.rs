@@ -263,18 +263,22 @@ impl PeerConnection {
             }
         };
 
-        let tx = self
-            .state
-            .locked
-            .read()
-            .peers
-            .clone_tx(peer_handle)
-            .ok_or_else(|| {
+        let tx = {
+            let g = self.state.locked.read();
+            if !g.chunks.is_chunk_ready_to_upload(&chunk_info) {
+                anyhow::bail!(
+                    "got request for a chunk that is not ready to upload. chunk {:?}",
+                    &chunk_info
+                );
+            }
+
+            g.peers.clone_tx(peer_handle).ok_or_else(|| {
                 anyhow::anyhow!(
                     "peer {} died, dropping chunk that it requested",
                     peer_handle
                 )
-            })?;
+            })?
+        };
 
         // TODO: this is not super efficient as it does copying multiple times.
         // Theoretically, this could be done in the sending code, so that it reads straight into
