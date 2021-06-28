@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read};
+use std::{fs::File, io::Read, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
@@ -60,6 +60,8 @@ struct Opts {
     /// The filename of the .torrent file.
     output_folder: String,
 
+    /// If set, only the file whose filename matching this regex will
+    /// be downloaded
     #[clap(short = 'r', long = "filename-re")]
     only_files_matching_regex: Option<String>,
 
@@ -71,8 +73,15 @@ struct Opts {
     #[clap(short, long)]
     list: bool,
 
+    /// The loglevel
     #[clap(arg_enum, short = 'v')]
     log_level: Option<LogLevel>,
+
+    /// The interval in seconds to poll trackers.
+    /// Trackers send the refresh interval when we connect to them. Often this is
+    /// pretty big, e.g. 30 minutes. This can force a certain value.
+    #[clap(short = 'i', long = "tracker-refresh-interval")]
+    force_tracker_interval: Option<u64>,
 }
 
 fn compute_only_files(
@@ -160,6 +169,10 @@ fn main() -> anyhow::Result<()> {
         builder.overwrite(opts.overwrite);
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
+        }
+
+        if let Some(interval) = opts.force_tracker_interval {
+            builder.force_tracker_interval(Duration::from_secs(interval));
         }
 
         let manager_handle = builder.start_manager().await?;

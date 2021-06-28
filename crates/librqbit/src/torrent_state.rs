@@ -9,16 +9,16 @@ use std::{
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use parking_lot::{Mutex, RwLock};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{channel, Sender};
 
 use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::{Handshake, Message},
-    peer_connection::WriterRequest,
+    peer_connection::{PeerConnection, WriterRequest},
     peer_state::{LivePeerState, PeerState},
     spawn_utils::spawn,
     torrent_metainfo::TorrentMetaV1Owned,
@@ -332,5 +332,22 @@ impl TorrentState {
                 Ok(())
             },
         );
+    }
+
+    pub fn add_peer(self: &Arc<Self>, addr: SocketAddr) {
+        let (out_tx, out_rx) = channel::<WriterRequest>(1);
+        let handle = match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
+            Some(handle) => handle,
+            None => return,
+        };
+
+        let peer_connection = PeerConnection::new(self.clone());
+        spawn(format!("manage_peer({})", handle), async move {
+            if let Err(e) = peer_connection.manage_peer(addr, handle, out_rx).await {
+                debug!("error managing peer {}: {:#}", handle, e)
+            };
+            peer_connection.into_state().drop_peer(handle);
+            Ok::<_, anyhow::Error>(())
+        });
     }
 }
