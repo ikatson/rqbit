@@ -28,7 +28,7 @@ use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
     clone_to_owned::CloneToOwned,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    peer_comms::{
+    peer_binary_protocol::{
         Handshake, Message, MessageBorrowed, MessageDeserializeError, MessageOwned, Piece, Request,
     },
     peer_id::try_decode_peer_id,

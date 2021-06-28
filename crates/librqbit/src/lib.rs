@@ -3,7 +3,7 @@ pub mod chunk_tracker;
 pub mod clone_to_owned;
 pub mod constants;
 pub mod lengths;
-pub mod peer_comms;
+pub mod peer_binary_protocol;
 pub mod peer_id;
 pub mod serde_bencode;
 pub mod torrent_manager;

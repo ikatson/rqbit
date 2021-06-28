@@ -3,7 +3,7 @@ use log::{debug, info};
 use crate::{
     buffers::ByteString,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    peer_comms::Piece,
+    peer_binary_protocol::Piece,
     type_aliases::BF,
 };
 
