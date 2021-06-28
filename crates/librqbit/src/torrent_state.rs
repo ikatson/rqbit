@@ -114,29 +114,21 @@ impl PeerStates {
         result
     }
     pub fn mark_i_am_choked(&mut self, handle: PeerHandle, is_choked: bool) -> Option<bool> {
-        match self.states.get_mut(&handle) {
-            Some(PeerState::Live(live)) => {
-                let prev = live.i_am_choked;
-                live.i_am_choked = is_choked;
-                return Some(prev);
-            }
-            _ => return None,
-        }
+        let live = self.get_live_mut(handle)?;
+        let prev = live.i_am_choked;
+        live.i_am_choked = is_choked;
+        Some(prev)
     }
     pub fn update_bitfield_from_vec(
         &mut self,
         handle: PeerHandle,
         bitfield: Vec<u8>,
     ) -> Option<Option<BF>> {
-        match self.states.get_mut(&handle) {
-            Some(PeerState::Live(live)) => {
-                let bitfield = BF::from_vec(bitfield);
-                let prev = live.bitfield.take();
-                live.bitfield = Some(bitfield);
-                Some(prev)
-            }
-            _ => None,
-        }
+        let live = self.get_live_mut(handle)?;
+        let bitfield = BF::from_vec(bitfield);
+        let prev = live.bitfield.take();
+        live.bitfield = Some(bitfield);
+        Some(prev)
     }
     pub fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<Sender<MessageOwned>>> {
         Some(self.tx.get(&handle)?.clone())
@@ -223,10 +215,7 @@ impl TorrentState {
 
     pub fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
         let g = self.locked.read();
-        let bf = match g.peers.states.get(&peer_handle)? {
-            PeerState::Live(l) => l.bitfield.as_ref()?,
-            _ => return None,
-        };
+        let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
         for n in g.chunks.get_needed_pieces().iter_ones() {
             if bf.get(n).map(|v| *v) == Some(true) {
                 // in theory it should be safe without validation, but whatever.
@@ -240,12 +229,8 @@ impl TorrentState {
         self.locked
             .read()
             .peers
-            .states
-            .get(&peer_handle)
-            .and_then(|s| match s {
-                PeerState::Live(l) => Some(l.i_am_choked),
-                _ => None,
-            })
+            .get_live(peer_handle)
+            .map(|l| l.i_am_choked)
     }
 
     pub fn reserve_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {

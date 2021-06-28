@@ -405,7 +405,7 @@ impl PeerConnection {
                 None => return Ok(()),
             };
             let sem = match self.state.locked.read().peers.get_live(handle) {
-                Some(live) => live.outstanding_requests.clone(),
+                Some(live) => live.requests_sem.clone(),
                 None => return Ok(()),
             };
             for chunk in self.state.lengths.iter_chunk_infos(next) {
@@ -451,7 +451,7 @@ impl PeerConnection {
         };
         live.i_am_choked = false;
         live.have_notify.notify_waiters();
-        live.outstanding_requests.add_permits(16);
+        live.requests_sem.add_permits(16);
     }
 
     fn on_received_piece(
@@ -472,7 +472,7 @@ impl PeerConnection {
 
         let mut g = self.state.locked.write();
         let h = g.peers.try_get_live_mut(handle)?;
-        h.outstanding_requests.add_permits(1);
+        h.requests_sem.add_permits(1);
 
         self.state
             .stats
