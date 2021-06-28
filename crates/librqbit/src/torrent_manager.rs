@@ -19,7 +19,7 @@ use size_format::SizeFormatterBinary as SF;
 
 use crate::{
     chunk_tracker::ChunkTracker,
-    file_checking::initial_check,
+    files_ops::initial_check,
     lengths::Lengths,
     peer_binary_protocol::MessageOwned,
     peer_connection::PeerConnection,

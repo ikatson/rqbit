@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    io::{Read, Seek, SeekFrom, Write},
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -9,16 +8,15 @@ use std::{
     },
 };
 
-use anyhow::Context;
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::{debug, warn};
+use log::warn;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
     buffers::ByteString,
     chunk_tracker::ChunkTracker,
-    file_checking::update_hash_from_file,
+    files_ops::{check_piece, read_chunk, write_chunk},
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::{Handshake, Message, MessageOwned, Piece},
     peer_state::{LivePeerState, PeerState},
@@ -162,55 +160,50 @@ pub struct TorrentState {
 }
 
 impl TorrentState {
+    pub fn check_piece_blocking(
+        &self,
+        who_sent: PeerHandle,
+        piece_index: ValidPieceIndex,
+        last_received_chunk: &ChunkInfo,
+    ) -> anyhow::Result<bool> {
+        check_piece(
+            &self.torrent,
+            &self.files,
+            &self.lengths,
+            who_sent,
+            piece_index,
+            last_received_chunk,
+        )
+    }
+
     pub fn read_chunk_blocking(
         &self,
         who_sent: PeerHandle,
         chunk_info: ChunkInfo,
     ) -> anyhow::Result<Vec<u8>> {
-        let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
-        let mut result_buf = vec![0u8; chunk_info.size as usize];
-        let mut buf = &mut result_buf[..];
+        read_chunk(
+            &self.torrent,
+            &self.files,
+            &self.lengths,
+            who_sent,
+            chunk_info,
+        )
+    }
 
-        for (file_idx, file_len) in self.torrent.info.iter_file_lengths().enumerate() {
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
-                continue;
-            }
-            let file_remaining_len = file_len - absolute_offset;
-            let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64) as usize;
-
-            let mut file_g = self.files[file_idx].lock();
-            debug!(
-                "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
-                chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
-            );
-            file_g
-                .seek(SeekFrom::Start(absolute_offset))
-                .with_context(|| {
-                    format!(
-                        "error seeking to {}, file id: {}",
-                        absolute_offset, file_idx
-                    )
-                })?;
-            file_g
-                .read_exact(&mut buf[..to_read_in_file])
-                .with_context(|| {
-                    format!(
-                        "error reading {} bytes, file_id: {}",
-                        file_idx, to_read_in_file
-                    )
-                })?;
-
-            buf = &mut buf[to_read_in_file..];
-
-            if buf.is_empty() {
-                break;
-            }
-
-            absolute_offset = 0;
-        }
-
-        return Ok(result_buf);
+    pub fn write_chunk_blocking(
+        &self,
+        who_sent: PeerHandle,
+        data: &Piece<ByteString>,
+        chunk_info: &ChunkInfo,
+    ) -> anyhow::Result<()> {
+        write_chunk(
+            &self.torrent,
+            &self.files,
+            &self.lengths,
+            who_sent,
+            data,
+            chunk_info,
+        )
     }
 
     pub fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
@@ -254,78 +247,6 @@ impl TorrentState {
         g.peers.inflight_pieces.insert(n);
         g.chunks.reserve_needed_piece(n);
         Some(n)
-    }
-
-    pub fn check_piece_blocking(
-        &self,
-        who_sent: PeerHandle,
-        piece_index: ValidPieceIndex,
-        last_received_chunk: &ChunkInfo,
-    ) -> anyhow::Result<bool> {
-        let mut h = sha1::Sha1::new();
-        let piece_length = self.lengths.piece_length(piece_index);
-        let mut absolute_offset = self.lengths.piece_offset(piece_index);
-        let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];
-
-        let mut piece_remaining_bytes = piece_length as usize;
-
-        for (file_idx, (name, file_len)) in
-            self.torrent.info.iter_filenames_and_lengths().enumerate()
-        {
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
-                continue;
-            }
-            let file_remaining_len = file_len - absolute_offset;
-
-            let to_read_in_file =
-                std::cmp::min(file_remaining_len, piece_remaining_bytes as u64) as usize;
-            let mut file_g = self.files[file_idx].lock();
-            debug!(
-                "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
-                piece_index, who_sent, file_idx, absolute_offset, &last_received_chunk
-            );
-            file_g
-                .seek(SeekFrom::Start(absolute_offset))
-                .with_context(|| {
-                    format!(
-                        "error seeking to {}, file id: {}",
-                        absolute_offset, file_idx
-                    )
-                })?;
-            update_hash_from_file(&mut file_g, &mut h, &mut buf, to_read_in_file).with_context(
-                || {
-                    format!(
-                        "error reading {} bytes, file_id: {} (\"{:?}\")",
-                        to_read_in_file, file_idx, name
-                    )
-                },
-            )?;
-
-            piece_remaining_bytes -= to_read_in_file;
-
-            if piece_remaining_bytes == 0 {
-                return Ok(true);
-            }
-
-            absolute_offset = 0;
-        }
-
-        match self.torrent.info.compare_hash(piece_index.get(), &h) {
-            Some(true) => {
-                debug!("piece={} hash matches", piece_index);
-                Ok(true)
-            }
-            Some(false) => {
-                warn!("the piece={} hash does not match", piece_index);
-                Ok(false)
-            }
-            None => {
-                // this is probably a bug?
-                warn!("compare_hash() did not find the piece");
-                anyhow::bail!("compare_hash() did not find the piece");
-            }
-        }
     }
 
     pub fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
@@ -383,59 +304,6 @@ impl TorrentState {
 
     pub fn get_left_to_download(&self) -> u64 {
         self.needed - self.get_downloaded()
-    }
-
-    pub fn write_chunk_blocking(
-        &self,
-        who_sent: PeerHandle,
-        data: &Piece<ByteString>,
-        chunk_info: &ChunkInfo,
-    ) -> anyhow::Result<()> {
-        let mut buf = data.block.as_ref();
-        let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
-
-        for (file_idx, (name, file_len)) in
-            self.torrent.info.iter_filenames_and_lengths().enumerate()
-        {
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
-                continue;
-            }
-
-            let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(buf.len(), remaining_len as usize);
-
-            let mut file_g = self.files[file_idx].lock();
-            debug!(
-                "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
-                chunk_info.piece_index,
-                chunk_info,
-                who_sent,
-                chunk_info.offset,
-                file_idx,
-                to_write,
-                absolute_offset
-            );
-            file_g
-                .seek(SeekFrom::Start(absolute_offset))
-                .with_context(|| {
-                    format!(
-                        "error seeking to {} in file {} (\"{:?}\")",
-                        absolute_offset, file_idx, name
-                    )
-                })?;
-            file_g
-                .write_all(&buf[..to_write])
-                .with_context(|| format!("error writing to file {} (\"{:?}\")", file_idx, name))?;
-            buf = &buf[to_write..];
-            if buf.is_empty() {
-                break;
-            }
-
-            absolute_offset = 0;
-        }
-
-        Ok(())
     }
 
     // TODO: this is a task per chunk, not good
