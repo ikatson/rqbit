@@ -12,14 +12,22 @@ use crate::{
     buffers::{ByteBuf, ByteString},
     chunk_tracker::ChunkMarkingResult,
     clone_to_owned::CloneToOwned,
+    lengths::ChunkInfo,
     peer_binary_protocol::{
-        Handshake, Message, MessageBorrowed, MessageDeserializeError, MessageOwned, Piece, Request,
+        serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
+        MessageOwned, Piece, Request,
     },
     peer_id::try_decode_peer_id,
     spawn_utils::{spawn, spawn_blocking},
     torrent_state::{InflightRequest, TorrentState},
     type_aliases::PeerHandle,
 };
+
+#[derive(Debug)]
+pub enum WriterRequest {
+    Message(MessageOwned),
+    ReadChunkRequest(ChunkInfo),
+}
 
 #[derive(Clone)]
 pub struct PeerConnection {
@@ -38,7 +46,7 @@ impl PeerConnection {
         addr: SocketAddr,
         handle: PeerHandle,
         // outgoing_chan_tx: tokio::sync::mpsc::Sender<MessageOwned>,
-        mut outgoing_chan: tokio::sync::mpsc::Receiver<MessageOwned>,
+        mut outgoing_chan: tokio::sync::mpsc::Receiver<WriterRequest>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
@@ -101,21 +109,40 @@ impl PeerConnection {
             }
 
             loop {
-                let msg = match timeout(keep_alive_interval, outgoing_chan.recv()).await {
+                let req = match timeout(keep_alive_interval, outgoing_chan.recv()).await {
                     Ok(Some(msg)) => msg,
                     Ok(None) => {
                         anyhow::bail!("closing writer, channel closed")
                     }
-                    Err(_) => MessageOwned::KeepAlive,
+                    Err(_) => WriterRequest::Message(MessageOwned::KeepAlive),
                 };
 
-                let uploaded_add = match &msg {
-                    Message::Piece(p) => Some(p.block.len()),
+                let uploaded_add = match &req {
+                    WriterRequest::Message(Message::Piece(p)) => Some(p.block.len()),
                     _ => None,
                 };
 
-                let len = msg.serialize(&mut buf);
-                debug!("sending to {}: {:?}, length={}", handle, &msg, len);
+                let len = match &req {
+                    WriterRequest::Message(msg) => msg.serialize(&mut buf),
+                    WriterRequest::ReadChunkRequest(chunk) => {
+                        // this whole section is an optimization
+
+                        let preamble_len = serialize_piece_preamble(&chunk, &mut buf);
+                        let full_len = preamble_len + chunk.size as usize;
+                        buf.resize(full_len, 0);
+                        tokio::task::block_in_place(|| {
+                            this.state.file_ops().read_chunk(
+                                handle,
+                                &chunk,
+                                &mut buf[preamble_len..],
+                            )
+                        })
+                        .with_context(|| format!("error reading chunk {:?}", chunk))?;
+                        full_len
+                    }
+                };
+
+                debug!("sending to {}: {:?}, length={}", handle, &req, len);
 
                 write_half
                     .write_all(&buf[..len])
@@ -243,22 +270,6 @@ impl PeerConnection {
             }
         };
 
-        let state = self.state.clone();
-        let chunk = spawn_blocking(
-            format!(
-                "read_chunk_blocking(peer={}, chunk_info={:?}",
-                peer_handle, &chunk_info
-            ),
-            move || {
-                let mut buf = Vec::new();
-                state
-                    .file_ops()
-                    .read_chunk(peer_handle, chunk_info, &mut buf)?;
-                Ok(buf)
-            },
-        )
-        .await??;
-
         let tx = self
             .state
             .locked
@@ -275,13 +286,9 @@ impl PeerConnection {
         // TODO: this is not super efficient as it does copying multiple times.
         // Theoretically, this could be done in the sending code, so that it reads straight into
         // the send buffer.
-        let message = Message::Piece(Piece::from_data(
-            chunk_info.piece_index.get(),
-            chunk_info.offset,
-            chunk,
-        ));
-        info!("sending to {}: {:?}", peer_handle, &message);
-        Ok::<_, anyhow::Error>(tx.send(message).await?)
+        let request = WriterRequest::ReadChunkRequest(chunk_info);
+        info!("sending to {}: {:?}", peer_handle, &request);
+        Ok::<_, anyhow::Error>(tx.send(request).await?)
     }
 
     fn on_have(&self, handle: PeerHandle, have: u32) {
@@ -321,10 +328,10 @@ impl PeerConnection {
                 .peers
                 .clone_tx(handle)
                 .ok_or_else(|| anyhow::anyhow!("peer closed"))?;
-            tx.send(MessageOwned::Unchoke)
+            tx.send(WriterRequest::Message(MessageOwned::Unchoke))
                 .await
                 .context("peer dropped")?;
-            tx.send(MessageOwned::NotInterested)
+            tx.send(WriterRequest::Message(MessageOwned::NotInterested))
                 .await
                 .context("peer dropped")?;
             return Ok(());
@@ -343,10 +350,10 @@ impl PeerConnection {
             Some(tx) => tx,
             None => return Ok(()),
         };
-        tx.send(MessageOwned::Unchoke)
+        tx.send(WriterRequest::Message(MessageOwned::Unchoke))
             .await
             .context("peer dropped")?;
-        tx.send(MessageOwned::Interested)
+        tx.send(WriterRequest::Message(MessageOwned::Interested))
             .await
             .context("peer dropped")?;
 
@@ -445,7 +452,7 @@ impl PeerConnection {
                 };
                 sem.acquire().await?.forget();
 
-                tx.send(MessageOwned::Request(request))
+                tx.send(WriterRequest::Message(MessageOwned::Request(request)))
                     .await
                     .context("peer dropped")?;
             }

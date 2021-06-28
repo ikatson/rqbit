@@ -22,7 +22,7 @@ use crate::{
     file_ops::FileOps,
     lengths::Lengths,
     peer_binary_protocol::MessageOwned,
-    peer_connection::PeerConnection,
+    peer_connection::{PeerConnection, WriterRequest},
     spawn_utils::spawn,
     torrent_metainfo::TorrentMetaV1Owned,
     torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
@@ -304,7 +304,7 @@ impl TorrentManager {
     }
 
     fn add_peer(&self, addr: SocketAddr) {
-        let (out_tx, out_rx) = tokio::sync::mpsc::channel::<MessageOwned>(1);
+        let (out_tx, out_rx) = tokio::sync::mpsc::channel::<WriterRequest>(1);
         let handle = match self
             .inner
             .locked

@@ -18,6 +18,7 @@ use crate::{
     file_ops::FileOps,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::{Handshake, Message, MessageOwned},
+    peer_connection::WriterRequest,
     peer_state::{LivePeerState, PeerState},
     torrent_metainfo::TorrentMetaV1Owned,
     type_aliases::{PeerHandle, BF},
@@ -43,7 +44,7 @@ pub struct PeerStates {
     states: HashMap<PeerHandle, PeerState>,
     seen_peers: HashSet<SocketAddr>,
     inflight_pieces: HashSet<ValidPieceIndex>,
-    tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::Sender<MessageOwned>>>,
+    tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::Sender<WriterRequest>>>,
 }
 
 #[derive(Debug, Default)]
@@ -67,7 +68,7 @@ impl PeerStates {
     pub fn add_if_not_seen(
         &mut self,
         addr: SocketAddr,
-        tx: tokio::sync::mpsc::Sender<MessageOwned>,
+        tx: tokio::sync::mpsc::Sender<WriterRequest>,
     ) -> Option<PeerHandle> {
         if self.seen_peers.contains(&addr) {
             return None;
@@ -95,7 +96,7 @@ impl PeerStates {
     pub fn add(
         &mut self,
         addr: SocketAddr,
-        tx: tokio::sync::mpsc::Sender<MessageOwned>,
+        tx: tokio::sync::mpsc::Sender<WriterRequest>,
     ) -> Option<PeerHandle> {
         let handle = addr;
         if self.states.contains_key(&addr) {
@@ -127,7 +128,7 @@ impl PeerStates {
         live.bitfield = Some(bitfield);
         Some(prev)
     }
-    pub fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<Sender<MessageOwned>>> {
+    pub fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<Sender<WriterRequest>>> {
         Some(self.tx.get(&handle)?.clone())
     }
     pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> bool {
@@ -277,7 +278,11 @@ impl TorrentState {
         {
             unordered.push(async move {
                 if let Some(tx) = weak.upgrade() {
-                    if tx.send(Message::Have(index)).await.is_err() {
+                    if tx
+                        .send(WriterRequest::Message(Message::Have(index)))
+                        .await
+                        .is_err()
+                    {
                         // whatever
                     }
                 }

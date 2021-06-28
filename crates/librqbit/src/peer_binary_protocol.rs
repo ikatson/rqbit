@@ -1,10 +1,11 @@
 use bincode::Options;
-use byteorder::ByteOrder;
+use byteorder::{ByteOrder, BE};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     buffers::{ByteBuf, ByteString},
     clone_to_owned::CloneToOwned,
+    lengths::ChunkInfo,
 };
 
 const PREAMBLE_LEN: usize = 5;
@@ -18,6 +19,7 @@ const LEN_PREFIX_UNCHOKE: u32 = 1;
 const LEN_PREFIX_INTERESTED: u32 = 1;
 const LEN_PREFIX_NOT_INTERESTED: u32 = 1;
 const LEN_PREFIX_HAVE: u32 = 5;
+const LEN_PREFIX_PIECE: u32 = 9;
 const LEN_PREFIX_REQUEST: u32 = 13;
 
 const MSGID_CHOKE: u8 = 0;
@@ -44,6 +46,17 @@ pub enum MessageDeserializeError {
         len_prefix: u32,
         name: &'static str,
     },
+}
+
+pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize {
+    BE::write_u32(&mut buf[0..4], LEN_PREFIX_PIECE + chunk.size);
+    buf[4] = MSGID_PIECE;
+
+    buf = &mut buf[PREAMBLE_LEN..];
+    BE::write_u32(&mut buf[0..4], chunk.piece_index.get());
+    BE::write_u32(&mut buf[4..8], chunk.offset);
+
+    PREAMBLE_LEN + 8
 }
 
 #[derive(Debug)]
@@ -209,7 +222,10 @@ where
             Message::Unchoke => (LEN_PREFIX_UNCHOKE, MSGID_UNCHOKE),
             Message::Interested => (LEN_PREFIX_INTERESTED, MSGID_INTERESTED),
             Message::NotInterested => (LEN_PREFIX_NOT_INTERESTED, MSGID_NOT_INTERESTED),
-            Message::Piece(p) => (9 + p.block.as_ref().len() as u32, MSGID_PIECE),
+            Message::Piece(p) => (
+                LEN_PREFIX_PIECE + p.block.as_ref().len() as u32,
+                MSGID_PIECE,
+            ),
             Message::KeepAlive => (LEN_PREFIX_KEEPALIVE, 0),
             Message::Have(_) => (LEN_PREFIX_HAVE, MSGID_HAVE),
         }
@@ -260,7 +276,7 @@ where
             Message::Have(v) => {
                 let msg_len = PREAMBLE_LEN + 4;
                 out.resize(msg_len, 0);
-                byteorder::BE::write_u32(&mut out[PREAMBLE_LEN..], *v);
+                BE::write_u32(&mut out[PREAMBLE_LEN..], *v);
                 msg_len
             }
         }
@@ -332,10 +348,7 @@ where
             MSGID_HAVE => {
                 let expected_len = 4;
                 match rest.get(..expected_len as usize) {
-                    Some(h) => Ok((
-                        Message::Have(byteorder::BE::read_u32(&h)),
-                        PREAMBLE_LEN + expected_len,
-                    )),
+                    Some(h) => Ok((Message::Have(BE::read_u32(&h)), PREAMBLE_LEN + expected_len)),
                     None => {
                         let missing = expected_len - rest.len();
                         Err(MessageDeserializeError::NotEnoughData(missing, "have"))
