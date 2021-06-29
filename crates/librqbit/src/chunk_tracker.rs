@@ -143,6 +143,17 @@ impl ChunkTracker {
             piece.index, chunk_info, chunk_range,
         );
 
+        // TODO: remove me, it's for debugging
+        // {
+        //     use std::io::Write;
+        //     let mut f = std::fs::OpenOptions::new()
+        //         .write(true)
+        //         .create(true)
+        //         .open("/tmp/chunks")
+        //         .unwrap();
+        //     write!(f, "{:?}", &self.have).unwrap();
+        // }
+
         if chunk_range.all() {
             return Some(ChunkMarkingResult::Completed);
         }

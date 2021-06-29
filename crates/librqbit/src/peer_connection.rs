@@ -403,27 +403,31 @@ impl PeerConnection {
                 None => return Ok(()),
             }
 
-            let next = match self.state.reserve_next_needed_piece(handle) {
+            let next = match self.state.try_steal_old_slow_piece(handle) {
                 Some(next) => next,
-                None => {
-                    if self.state.get_left_to_download() == 0 {
-                        debug!("{}: nothing left to download, closing requester", handle);
-                        return Ok(());
-                    }
-
-                    if let Some(piece) = self.state.try_steal_piece(handle) {
-                        debug!("{}: stole a piece {}", handle, piece);
-                        piece
-                    } else {
-                        debug!("no pieces to request from {}", handle);
-                        #[allow(unused_must_use)]
-                        {
-                            timeout(Duration::from_secs(60), notify.notified()).await;
+                None => match self.state.reserve_next_needed_piece(handle) {
+                    Some(next) => next,
+                    None => {
+                        if self.state.get_left_to_download() == 0 {
+                            debug!("{}: nothing left to download, closing requester", handle);
+                            return Ok(());
                         }
-                        continue;
+
+                        if let Some(piece) = self.state.try_steal_piece(handle) {
+                            debug!("{}: stole a piece {}", handle, piece);
+                            piece
+                        } else {
+                            debug!("no pieces to request from {}", handle);
+                            #[allow(unused_must_use)]
+                            {
+                                timeout(Duration::from_secs(60), notify.notified()).await;
+                            }
+                            continue;
+                        }
                     }
-                }
+                },
             };
+
             let tx = match self.state.locked.read().peers.clone_tx(handle) {
                 Some(tx) => tx,
                 None => return Ok(()),
@@ -508,15 +512,16 @@ impl PeerConnection {
             );
         }
 
-        let should_checksum = match g.chunks.mark_chunk_downloaded(&piece) {
+        let full_piece_download_time = match g.chunks.mark_chunk_downloaded(&piece) {
             Some(ChunkMarkingResult::Completed) => {
                 debug!(
                     "piece={} done by {}, will write and checksum",
                     piece.index, handle
                 );
                 // This will prevent others from stealing it.
-                g.peers.remove_inflight_piece(chunk_info.piece_index);
-                true
+                g.peers
+                    .remove_inflight_piece(chunk_info.piece_index)
+                    .map(|t| t.started.elapsed())
             }
             Some(ChunkMarkingResult::PreviouslyCompleted) => {
                 // TODO: we might need to send cancellations here.
@@ -526,7 +531,7 @@ impl PeerConnection {
                 );
                 return Ok(());
             }
-            Some(ChunkMarkingResult::NotCompleted) => false,
+            Some(ChunkMarkingResult::NotCompleted) => None,
             None => {
                 anyhow::bail!(
                     "bogus data received from {}: {:?}, cannot map this to a chunk, dropping peer",
@@ -551,9 +556,10 @@ impl PeerConnection {
                 .write_chunk(handle, &piece, &chunk_info)
                 .expect("expected to be able to write to disk");
 
-            if !should_checksum {
-                return Ok(());
-            }
+            let full_piece_download_time = match full_piece_download_time {
+                Some(t) => t,
+                None => return Ok(()),
+            };
 
             match self
                 .state
@@ -571,6 +577,18 @@ impl PeerConnection {
                         .stats
                         .have
                         .fetch_add(piece_len, Ordering::Relaxed);
+                    self.state
+                        .stats
+                        .downloaded_pieces
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.state
+                        .stats
+                        .downloaded_pieces
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.state.stats.total_piece_download_ms.fetch_add(
+                        full_piece_download_time.as_millis() as u64,
+                        Ordering::Relaxed,
+                    );
                     self.state
                         .locked
                         .write()

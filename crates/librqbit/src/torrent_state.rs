@@ -6,11 +6,11 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::{debug, trace, warn};
+use log::{debug, info, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::{channel, Sender};
 
@@ -146,11 +146,26 @@ pub struct TorrentStateLocked {
     pub chunks: ChunkTracker,
 }
 
+#[derive(Default)]
 pub struct AtomicStats {
     pub have: AtomicU64,
     pub downloaded_and_checked: AtomicU64,
     pub uploaded: AtomicU64,
     pub fetched_bytes: AtomicU64,
+
+    pub downloaded_pieces: AtomicU64,
+    pub total_piece_download_ms: AtomicU64,
+}
+
+impl AtomicStats {
+    pub fn average_piece_download_time(&self) -> Option<Duration> {
+        let d = self.downloaded_pieces.load(Ordering::Relaxed);
+        let t = self.total_piece_download_ms.load(Ordering::Relaxed);
+        if d == 0 {
+            return None;
+        }
+        Some(Duration::from_secs_f64(t as f64 / d as f64 / 1000f64))
+    }
 }
 
 pub struct TorrentState {
@@ -220,6 +235,38 @@ impl TorrentState {
 
     pub fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
         self.get_next_needed_piece(handle).is_some()
+    }
+
+    pub fn try_steal_old_slow_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
+        let total = self.stats.downloaded_pieces.load(Ordering::Relaxed);
+
+        // heuristic for not enough precision in average time
+        if total < 20 {
+            return None;
+        }
+        let avg_time = self.stats.average_piece_download_time()?;
+
+        let mut g = self.locked.write();
+        let (idx, elapsed, piece_req) = g
+            .peers
+            .inflight_pieces
+            .iter_mut()
+            // don't steal from myself
+            .filter(|(_, r)| r.peer != handle)
+            .map(|(p, r)| (p, r.started.elapsed(), r))
+            .max_by_key(|(_, e, _)| *e)?;
+
+        // heuristic for "too slow peer"
+        if elapsed > avg_time * 10 {
+            debug!(
+                "{} will steal piece {} from {}: elapsed time {:?}, avg piece time: {:?}",
+                handle, idx, piece_req.peer, elapsed, avg_time
+            );
+            piece_req.peer = handle;
+            piece_req.started = Instant::now();
+            return Some(*idx);
+        }
+        None
     }
 
     pub fn try_steal_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {

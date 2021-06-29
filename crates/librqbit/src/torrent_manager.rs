@@ -179,9 +179,7 @@ impl TorrentManager {
                 files,
                 stats: AtomicStats {
                     have: AtomicU64::new(initial_check_results.have_bytes),
-                    downloaded_and_checked: Default::default(),
-                    fetched_bytes: Default::default(),
-                    uploaded: Default::default(),
+                    ..Default::default()
                 },
                 needed: initial_check_results.needed_bytes,
                 lengths,
