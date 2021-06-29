@@ -2,7 +2,25 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use tokio::sync::{Notify, Semaphore};
 
-use crate::{torrent_state::InflightRequest, type_aliases::BF};
+use crate::{
+    lengths::{ChunkInfo, ValidPieceIndex},
+    type_aliases::BF,
+};
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub struct InflightRequest {
+    pub piece: ValidPieceIndex,
+    pub chunk: u32,
+}
+
+impl From<&ChunkInfo> for InflightRequest {
+    fn from(c: &ChunkInfo) -> Self {
+        Self {
+            piece: c.piece_index,
+            chunk: c.chunk_index,
+        }
+    }
+}
 
 pub enum PeerState {
     Connecting(SocketAddr),

@@ -18,8 +18,9 @@ use crate::{
         MessageOwned, Piece, Request, PIECE_MESSAGE_DEFAULT_LEN,
     },
     peer_id::try_decode_peer_id,
+    peer_state::InflightRequest,
     spawn_utils::{spawn, spawn_block_in_place},
-    torrent_state::{InflightRequest, TorrentState},
+    torrent_state::TorrentState,
     type_aliases::PeerHandle,
 };
 

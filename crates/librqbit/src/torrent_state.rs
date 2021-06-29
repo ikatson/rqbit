@@ -16,7 +16,7 @@ use tokio::sync::mpsc::{channel, Sender};
 use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
-    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    lengths::{Lengths, ValidPieceIndex},
     peer_binary_protocol::{Handshake, Message},
     peer_connection::{PeerConnection, WriterRequest},
     peer_state::{LivePeerState, PeerState},
@@ -24,21 +24,6 @@ use crate::{
     torrent_metainfo::TorrentMetaV1Owned,
     type_aliases::{PeerHandle, BF},
 };
-
-#[derive(Debug, Hash, PartialEq, Eq)]
-pub struct InflightRequest {
-    pub piece: ValidPieceIndex,
-    pub chunk: u32,
-}
-
-impl From<&ChunkInfo> for InflightRequest {
-    fn from(c: &ChunkInfo) -> Self {
-        Self {
-            piece: c.piece_index,
-            chunk: c.chunk_index,
-        }
-    }
-}
 
 #[derive(Default)]
 pub struct PeerStates {
