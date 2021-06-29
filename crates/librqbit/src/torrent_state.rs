@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Instant,
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -25,11 +26,16 @@ use crate::{
     type_aliases::{PeerHandle, BF},
 };
 
+pub struct InflightPiece {
+    pub peer: PeerHandle,
+    pub started: Instant,
+}
+
 #[derive(Default)]
 pub struct PeerStates {
     states: HashMap<PeerHandle, PeerState>,
     seen: HashSet<SocketAddr>,
-    inflight_pieces: HashSet<ValidPieceIndex>,
+    inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
     tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::Sender<WriterRequest>>>,
 }
 
@@ -130,7 +136,7 @@ impl PeerStates {
     pub fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<Sender<WriterRequest>>> {
         Some(self.tx.get(&handle)?.clone())
     }
-    pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> bool {
+    pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> Option<InflightPiece> {
         self.inflight_pieces.remove(&piece)
     }
 }
@@ -201,7 +207,13 @@ impl TorrentState {
 
             self.lengths.validate_piece_index(n_opt? as u32)?
         };
-        g.peers.inflight_pieces.insert(n);
+        g.peers.inflight_pieces.insert(
+            n,
+            InflightPiece {
+                peer: peer_handle,
+                started: Instant::now(),
+            },
+        );
         g.chunks.reserve_needed_piece(n);
         Some(n)
     }
@@ -217,7 +229,7 @@ impl TorrentState {
         let pl = g.peers.get_live(handle)?;
         g.peers
             .inflight_pieces
-            .iter()
+            .keys()
             .filter(|p| !pl.inflight_requests.iter().any(|req| req.piece == **p))
             .choose(&mut rng)
             .copied()
