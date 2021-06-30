@@ -146,7 +146,7 @@ pub struct TorrentStateLocked {
     pub chunks: ChunkTracker,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AtomicStats {
     pub have: AtomicU64,
     pub downloaded_and_checked: AtomicU64,
