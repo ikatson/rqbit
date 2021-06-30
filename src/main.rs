@@ -3,7 +3,6 @@ use std::{fs::File, io::Read, time::Duration};
 use anyhow::Context;
 use clap::Clap;
 use librqbit::{
-    clone_to_owned::CloneToOwned,
     torrent_manager::TorrentManagerBuilder,
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Owned},
 };
@@ -20,9 +19,7 @@ async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
         .bytes()
         .await
         .with_context(|| format!("error reading repsonse body from {}", url))?;
-    Ok(torrent_from_bytes(&b)
-        .context("error decoding torrent")?
-        .clone_to_owned())
+    torrent_from_bytes(&b).context("error decoding torrent")
 }
 
 fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
@@ -37,9 +34,7 @@ fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
             .read_to_end(&mut buf)
             .with_context(|| format!("error reading {}", filename))?;
     }
-    Ok(torrent_from_bytes(&buf)
-        .context("error decoding torrent")?
-        .clone_to_owned())
+    torrent_from_bytes(&buf).context("error decoding torrent")
 }
 
 #[derive(Debug, Clap)]

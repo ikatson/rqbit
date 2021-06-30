@@ -10,7 +10,7 @@ use std::{
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::{channel, Sender};
 

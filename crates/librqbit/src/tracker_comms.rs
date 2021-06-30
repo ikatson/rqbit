@@ -36,7 +36,7 @@ pub struct TrackerRequest {
 #[derive(Deserialize, Debug)]
 pub struct TrackerError<'a> {
     #[serde(rename = "failure reason", borrow)]
-    failure_reason: ByteBuf<'a>,
+    pub failure_reason: ByteBuf<'a>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -143,7 +143,7 @@ fn parse_compact_peers(b: &[u8]) -> Vec<SocketAddrV4> {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct CompactTrackerResponse<'a> {
+pub struct TrackerResponse<'a> {
     #[serde(rename = "warning message", borrow)]
     pub warning_message: Option<ByteBuf<'a>>,
     pub complete: u64,

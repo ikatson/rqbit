@@ -11,18 +11,12 @@ use crate::{
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
 
-pub fn torrent_from_bytes(buf: &[u8]) -> anyhow::Result<TorrentMetaV1Borrowed<'_>> {
+pub fn torrent_from_bytes<'de, ByteBuf: Clone + Deserialize<'de>>(
+    buf: &'de [u8],
+) -> anyhow::Result<TorrentMetaV1<ByteBuf>> {
     let mut de = BencodeDeserializer::new_from_buf(buf);
     de.is_torrent_info = true;
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
-    t.info_hash = de.torrent_info_digest.unwrap();
-    Ok(t)
-}
-
-pub fn torrent_from_bytes_owned(buf: &[u8]) -> anyhow::Result<TorrentMetaV1Owned> {
-    let mut de = BencodeDeserializer::new_from_buf(buf);
-    de.is_torrent_info = true;
-    let mut t = TorrentMetaV1Owned::deserialize(&mut de)?;
     t.info_hash = de.torrent_info_digest.unwrap();
     Ok(t)
 }
@@ -259,7 +253,7 @@ mod tests {
             .read_to_end(&mut buf)
             .unwrap();
 
-        let torrent: TorrentMetaV1Owned = from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Owned = torrent_from_bytes(&buf).unwrap();
         dbg!(torrent);
     }
 
@@ -272,7 +266,7 @@ mod tests {
             .read_to_end(&mut buf)
             .unwrap();
 
-        let torrent: TorrentMetaV1Borrowed = from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
         dbg!(torrent);
     }
 
@@ -285,7 +279,7 @@ mod tests {
             .read_to_end(&mut buf)
             .unwrap();
 
-        let torrent = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
         assert_eq!(
             torrent.info_hash,
             *b"\x64\xa9\x80\xab\xe6\xe4\x48\x22\x6b\xb9\x30\xba\x06\x15\x92\xe4\x4c\x37\x81\xa1"

@@ -1,9 +1,12 @@
 use serde::de::Deserializer;
 use serde::de::Error as DeError;
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use crate::buffers::ByteBuf;
 use crate::buffers::ByteString;
+use crate::clone_to_owned::CloneToOwned;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
@@ -83,7 +86,10 @@ where
     Ok(T::deserialize(&mut de)?)
 }
 
-pub fn dyn_from_bytes(buf: &[u8]) -> anyhow::Result<DynBencodeNode<'_>> {
+pub fn dyn_from_bytes<'de, ByteBuf>(buf: &'de [u8]) -> anyhow::Result<BencodeValue<ByteBuf>>
+where
+    ByteBuf: From<&'de [u8]> + Deserialize<'de> + std::hash::Hash + Eq,
+{
     from_bytes(buf)
 }
 
@@ -555,15 +561,23 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for SeqAccess<'a, 'de> {
     }
 }
 
-impl<'de> serde::de::Deserialize<'de> for DynBencodeNode<'de> {
+impl<'de, ByteBuf> serde::de::Deserialize<'de> for BencodeValue<ByteBuf>
+where
+    ByteBuf: From<&'de [u8]> + Deserialize<'de> + std::hash::Hash + Eq,
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct Visitor;
+        struct Visitor<ByteBuf> {
+            buftype: PhantomData<ByteBuf>,
+        }
 
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = DynBencodeNode<'de>;
+        impl<'de, ByteBuf> serde::de::Visitor<'de> for Visitor<ByteBuf>
+        where
+            ByteBuf: From<&'de [u8]> + Deserialize<'de> + std::hash::Hash + Eq,
+        {
+            type Value = BencodeValue<ByteBuf>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(formatter, "a bencode value")
@@ -573,7 +587,7 @@ impl<'de> serde::de::Deserialize<'de> for DynBencodeNode<'de> {
             where
                 E: serde::de::Error,
             {
-                Ok(DynBencodeNode::Integer(v))
+                Ok(BencodeValue::Integer(v))
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -584,14 +598,14 @@ impl<'de> serde::de::Deserialize<'de> for DynBencodeNode<'de> {
                 while let Some(value) = seq.next_element()? {
                     v.push(value);
                 }
-                Ok(DynBencodeNode::List(v))
+                Ok(BencodeValue::List(v))
             }
 
             fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                Ok(DynBencodeNode::Bytes(ByteBuf(v)))
+                Ok(BencodeValue::Bytes(ByteBuf::from(v)))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -603,45 +617,55 @@ impl<'de> serde::de::Deserialize<'de> for DynBencodeNode<'de> {
                     let value = map.next_value()?;
                     hmap.insert(key, value);
                 }
-                Ok(DynBencodeNode::Dict(hmap))
+                Ok(BencodeValue::Dict(hmap))
             }
         }
 
-        deserializer.deserialize_any(Visitor {})
+        deserializer.deserialize_any(Visitor {
+            buftype: PhantomData,
+        })
     }
 }
 
-impl<'de> serde::de::Deserialize<'de> for ByteString {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = Vec<u8>;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("bencode byte string")
-            }
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(v.to_owned())
-            }
-        }
-        Ok(ByteString(deserializer.deserialize_byte_buf(Visitor {})?))
-    }
-}
-
-#[derive(Debug)]
-pub enum DynBencodeNode<'a> {
-    Bytes(ByteBuf<'a>),
+// A dynamic value when we don't know exactly what we are deserializing.
+// Useful for debugging.
+pub enum BencodeValue<ByteBuf> {
+    Bytes(ByteBuf),
     Integer(i64),
-    List(Vec<DynBencodeNode<'a>>),
-    Dict(HashMap<ByteBuf<'a>, DynBencodeNode<'a>>),
+    List(Vec<BencodeValue<ByteBuf>>),
+    Dict(HashMap<ByteBuf, BencodeValue<ByteBuf>>),
 }
+
+impl<ByteBuf: std::fmt::Debug> std::fmt::Debug for BencodeValue<ByteBuf> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BencodeValue::Bytes(b) => std::fmt::Debug::fmt(b, f),
+            BencodeValue::Integer(i) => std::fmt::Debug::fmt(i, f),
+            BencodeValue::List(l) => std::fmt::Debug::fmt(l, f),
+            BencodeValue::Dict(d) => std::fmt::Debug::fmt(d, f),
+        }
+    }
+}
+
+impl<ByteBuf> CloneToOwned for BencodeValue<ByteBuf>
+where
+    ByteBuf: CloneToOwned,
+    <ByteBuf as CloneToOwned>::Target: Eq + std::hash::Hash,
+{
+    type Target = BencodeValue<<ByteBuf as CloneToOwned>::Target>;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        match self {
+            BencodeValue::Bytes(b) => BencodeValue::Bytes(b.clone_to_owned()),
+            BencodeValue::Integer(i) => BencodeValue::Integer(*i),
+            BencodeValue::List(l) => BencodeValue::List(l.clone_to_owned()),
+            BencodeValue::Dict(d) => BencodeValue::Dict(d.clone_to_owned()),
+        }
+    }
+}
+
+pub type DynBencodeNodeBorrowed<'a> = BencodeValue<ByteBuf<'a>>;
+pub type DynBencodeNodeOwned = BencodeValue<ByteString>;
 
 #[cfg(test)]
 mod tests {
@@ -657,7 +681,9 @@ mod tests {
             .read_to_end(&mut buf)
             .unwrap();
 
-        let torrent: DynBencodeNode = from_bytes(&buf).unwrap();
-        dbg!(torrent);
+        let torrent_borrowed: DynBencodeNodeBorrowed = from_bytes(&buf).unwrap();
+        let torrent_owned: DynBencodeNodeOwned = from_bytes(&buf).unwrap();
+        dbg!(torrent_borrowed);
+        dbg!(torrent_owned);
     }
 }

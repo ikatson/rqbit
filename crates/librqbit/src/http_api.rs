@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use std::io::Write;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use warp::Filter;
 
 use crate::torrent_state::TorrentState;

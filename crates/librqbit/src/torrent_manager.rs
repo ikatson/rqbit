@@ -24,7 +24,7 @@ use crate::{
     spawn_utils::spawn,
     torrent_metainfo::TorrentMetaV1Owned,
     torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
-    tracker_comms::{CompactTrackerResponse, TrackerRequest, TrackerRequestEvent},
+    tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
 };
 pub struct TorrentManagerBuilder {
     torrent: TorrentMetaV1Owned,
@@ -263,8 +263,20 @@ impl TorrentManager {
 
     async fn tracker_one_request(&self, tracker_url: Url) -> anyhow::Result<u64> {
         let response: reqwest::Response = reqwest::get(tracker_url).await?;
+        if !response.status().is_success() {
+            anyhow::bail!("tracker responded with {:?}", response.status());
+        }
         let bytes = response.bytes().await?;
-        let response = crate::serde_bencode::from_bytes::<CompactTrackerResponse>(&bytes)?;
+        match crate::serde_bencode::from_bytes::<TrackerError>(&bytes) {
+            Ok(error) => anyhow::bail!(
+                "tracker returned failure. Failure reason: {}",
+                error.failure_reason
+            ),
+            Err(_) => {
+                // ignore, assume ok response
+            }
+        };
+        let response = crate::serde_bencode::from_bytes::<TrackerResponse>(&bytes)?;
 
         for peer in response.peers.iter_sockaddrs() {
             self.state.add_peer_if_not_seen(peer);
