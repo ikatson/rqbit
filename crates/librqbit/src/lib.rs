@@ -3,6 +3,7 @@ pub mod chunk_tracker;
 pub mod clone_to_owned;
 pub mod constants;
 pub mod file_ops;
+pub mod http_api;
 pub mod lengths;
 pub mod peer_binary_protocol;
 pub mod peer_connection;

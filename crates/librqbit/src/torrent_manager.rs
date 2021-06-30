@@ -19,6 +19,7 @@ use size_format::SizeFormatterBinary as SF;
 use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
+    http_api::make_and_run_http_api,
     lengths::Lengths,
     spawn_utils::spawn,
     torrent_metainfo::TorrentMetaV1Owned,
@@ -189,6 +190,7 @@ impl TorrentManager {
 
         spawn("tracker monitor", mgr.clone().task_tracker_monitor());
         spawn("stats printer", mgr.clone().stats_printer());
+        spawn("http api", make_and_run_http_api(mgr.state.clone()));
         Ok(mgr.into_handle())
     }
 
@@ -265,7 +267,7 @@ impl TorrentManager {
         let response = crate::serde_bencode::from_bytes::<CompactTrackerResponse>(&bytes)?;
 
         for peer in response.peers.iter_sockaddrs() {
-            self.state.add_peer(peer);
+            self.state.add_peer_if_not_seen(peer);
         }
         Ok(response.interval)
     }

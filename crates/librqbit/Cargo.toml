@@ -20,7 +20,8 @@ parking_lot = "0.11"
 log = "0.4"
 size_format = "1"
 rand = "0.8"
-openssl = "*"
+openssl = "0.10"
+warp = "0.3"
 
 uuid = {version = "0.8", features = ["v4"]}
 futures = "0.3"

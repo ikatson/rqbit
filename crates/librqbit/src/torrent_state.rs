@@ -378,11 +378,11 @@ impl TorrentState {
         );
     }
 
-    pub fn add_peer(self: &Arc<Self>, addr: SocketAddr) {
+    pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
         let (out_tx, out_rx) = channel::<WriterRequest>(1);
         let handle = match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
             Some(handle) => handle,
-            None => return,
+            None => return false,
         };
 
         let peer_connection = PeerConnection::new(self.clone());
@@ -393,5 +393,6 @@ impl TorrentState {
             peer_connection.into_state().drop_peer(handle);
             Ok::<_, anyhow::Error>(())
         });
+        true
     }
 }
