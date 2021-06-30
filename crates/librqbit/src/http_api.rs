@@ -5,10 +5,14 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 use warp::Filter;
 
+use crate::speed_estimator::SpeedEstimator;
 use crate::torrent_state::TorrentState;
 
 // This is just a stub for debugging, nothing useful here.
-pub async fn make_and_run_http_api(state: Arc<TorrentState>) -> anyhow::Result<()> {
+pub async fn make_and_run_http_api(
+    state: Arc<TorrentState>,
+    estimator: Arc<SpeedEstimator>,
+) -> anyhow::Result<()> {
     let dump_haves = warp::path("haves").map({
         let state = state.clone();
         move || format!("{:?}", state.locked.read().chunks.get_have_pieces())
@@ -20,13 +24,12 @@ pub async fn make_and_run_http_api(state: Arc<TorrentState>) -> anyhow::Result<(
         let initial_downloaded_and_checked =
             state.stats.downloaded_and_checked.load(Ordering::Relaxed);
         move || {
-            let stats = &state.stats;
             let mut buf = Vec::new();
-            writeln!(buf, "{:#?}", &stats).unwrap();
+            writeln!(buf, "{:#?}", state.stats_snapshot()).unwrap();
             writeln!(
                 buf,
                 "Average download time: {:?}",
-                stats.average_piece_download_time()
+                state.stats.average_piece_download_time()
             )
             .unwrap();
 
@@ -37,11 +40,20 @@ pub async fn make_and_run_http_api(state: Arc<TorrentState>) -> anyhow::Result<(
             let downloaded_mb = downloaded_bytes as f64 / 1024f64 / 1024f64;
             writeln!(
                 buf,
-                "Speed: {:.2}Mbps",
+                "Total download speed over all time: {:.2}Mbps",
                 downloaded_mb / elapsed.as_secs_f64()
             )
             .unwrap();
 
+            writeln!(buf, "Download speed: {:.2}Mbps", estimator.download_mbps()).unwrap();
+            match estimator.time_remaining() {
+                Some(time) => {
+                    writeln!(buf, "Time remaining: {:?}", time).unwrap();
+                }
+                None => {
+                    writeln!(buf, "Time remaining: unknown").unwrap();
+                }
+            }
             buf
         }
     });

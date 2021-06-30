@@ -168,6 +168,21 @@ impl AtomicStats {
     }
 }
 
+#[derive(Debug)]
+pub struct StatsSnapshot {
+    pub have_bytes: u64,
+    pub downloaded_and_checked_bytes: u64,
+    pub downloaded_and_checked_pieces: u64,
+    pub fetched_bytes: u64,
+    pub uploaded_bytes: u64,
+    pub initially_needed_bytes: u64,
+    pub remaining_bytes: u64,
+    pub live_peers: u32,
+    pub seen_peers: u32,
+    pub connecting_peers: u32,
+    pub time: Instant,
+}
+
 pub struct TorrentState {
     pub torrent: TorrentMetaV1Owned,
     pub locked: Arc<RwLock<TorrentStateLocked>>,
@@ -394,5 +409,33 @@ impl TorrentState {
             Ok::<_, anyhow::Error>(())
         });
         true
+    }
+
+    pub fn stats_snapshot(&self) -> StatsSnapshot {
+        let g = self.locked.read();
+        use Ordering::*;
+        let (live, connecting) =
+            g.peers
+                .states
+                .values()
+                .fold((0u32, 0u32), |(live, connecting), p| match p {
+                    PeerState::Connecting(_) => (live, connecting + 1),
+                    PeerState::Live(_) => (live + 1, connecting),
+                });
+        let downloaded = self.stats.downloaded_and_checked.load(Relaxed);
+        let remaining = self.needed - downloaded;
+        StatsSnapshot {
+            have_bytes: self.stats.have.load(Relaxed),
+            downloaded_and_checked_bytes: downloaded,
+            downloaded_and_checked_pieces: self.stats.downloaded_pieces.load(Relaxed),
+            fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
+            uploaded_bytes: self.stats.fetched_bytes.load(Relaxed),
+            live_peers: live,
+            seen_peers: g.peers.seen.len() as u32,
+            connecting_peers: connecting,
+            time: Instant::now(),
+            initially_needed_bytes: self.needed,
+            remaining_bytes: remaining,
+        }
     }
 }

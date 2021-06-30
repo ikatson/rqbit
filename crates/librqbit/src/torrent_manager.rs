@@ -22,6 +22,7 @@ use crate::{
     http_api::make_and_run_http_api,
     lengths::Lengths,
     spawn_utils::spawn,
+    speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Owned,
     torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
@@ -90,6 +91,7 @@ impl TorrentManagerHandle {
 #[derive(Clone)]
 struct TorrentManager {
     state: Arc<TorrentState>,
+    speed_estimator: Arc<SpeedEstimator>,
     force_tracker_interval: Option<Duration>,
 }
 
@@ -168,29 +170,38 @@ impl TorrentManager {
             lengths,
         );
 
+        let state = Arc::new(TorrentState {
+            info_hash: torrent.info_hash,
+            torrent,
+            peer_id,
+            locked: Arc::new(RwLock::new(TorrentStateLocked {
+                peers: Default::default(),
+                chunks: chunk_tracker,
+            })),
+            files,
+            stats: AtomicStats {
+                have: AtomicU64::new(initial_check_results.have_bytes),
+                ..Default::default()
+            },
+            needed: initial_check_results.needed_bytes,
+            lengths,
+        });
+        let estimator = SpeedEstimator::new(state.clone(), 5);
+
         let mgr = Self {
-            state: Arc::new(TorrentState {
-                info_hash: torrent.info_hash,
-                torrent,
-                peer_id,
-                locked: Arc::new(RwLock::new(TorrentStateLocked {
-                    peers: Default::default(),
-                    chunks: chunk_tracker,
-                })),
-                files,
-                stats: AtomicStats {
-                    have: AtomicU64::new(initial_check_results.have_bytes),
-                    ..Default::default()
-                },
-                needed: initial_check_results.needed_bytes,
-                lengths,
-            }),
+            state,
+            speed_estimator: estimator,
             force_tracker_interval,
         };
 
         spawn("tracker monitor", mgr.clone().task_tracker_monitor());
         spawn("stats printer", mgr.clone().stats_printer());
-        spawn("http api", make_and_run_http_api(mgr.state.clone()));
+        spawn(
+            "http api",
+            make_and_run_http_api(mgr.state.clone(), mgr.speed_estimator.clone()),
+        );
+        spawn("speed estimator", mgr.speed_estimator.clone().run_forever());
+
         Ok(mgr.into_handle())
     }
 

@@ -12,6 +12,7 @@ pub mod peer_state;
 pub mod serde_bencode;
 pub mod sha1w;
 pub mod spawn_utils;
+pub mod speed_estimator;
 pub mod torrent_manager;
 pub mod torrent_metainfo;
 pub mod torrent_state;
