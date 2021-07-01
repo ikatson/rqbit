@@ -1,8 +1,11 @@
+use std::{collections::HashMap, marker::PhantomData};
+
 use bincode::Options;
 use byteorder::{ByteOrder, BE};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    bencode_value::BencodeValue,
     buffers::{ByteBuf, ByteString},
     clone_to_owned::CloneToOwned,
     constants::CHUNK_SIZE,
@@ -36,6 +39,7 @@ const MSGID_HAVE: u8 = 4;
 const MSGID_BITFIELD: u8 = 5;
 const MSGID_REQUEST: u8 = 6;
 const MSGID_PIECE: u8 = 7;
+const MSGID_EXTENDED: u8 = 20;
 
 #[derive(Debug)]
 pub enum MessageDeserializeError {
@@ -155,7 +159,7 @@ impl std::error::Error for MessageDeserializeError {
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf> {
+pub enum Message<ByteBuf: std::hash::Hash + Eq> {
     Request(Request),
     Bitfield(ByteBuf),
     KeepAlive,
@@ -165,6 +169,7 @@ pub enum Message<ByteBuf> {
     Interested,
     NotInterested,
     Piece(Piece<ByteBuf>),
+    Extended(ExtendedMessage<ByteBuf>),
 }
 
 pub type MessageBorrowed<'a> = Message<ByteBuf<'a>>;
@@ -177,7 +182,11 @@ pub struct Bitfield<'a> {
     pub data: BitfieldBorrowed<'a>,
 }
 
-impl<ByteBuf: CloneToOwned> CloneToOwned for Message<ByteBuf> {
+impl<ByteBuf> CloneToOwned for Message<ByteBuf>
+where
+    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
+    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq,
+{
     type Target = Message<<ByteBuf as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
@@ -195,6 +204,7 @@ impl<ByteBuf: CloneToOwned> CloneToOwned for Message<ByteBuf> {
             Message::KeepAlive => Message::KeepAlive,
             Message::Have(v) => Message::Have(*v),
             Message::NotInterested => Message::NotInterested,
+            Message::Extended(e) => unimplemented!(),
         }
     }
 }
@@ -218,7 +228,7 @@ impl<'a> std::fmt::Debug for Bitfield<'a> {
 
 impl<ByteBuf> Message<ByteBuf>
 where
-    ByteBuf: AsRef<[u8]>,
+    ByteBuf: AsRef<[u8]> + std::hash::Hash + Eq,
 {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
@@ -234,6 +244,7 @@ where
             ),
             Message::KeepAlive => (LEN_PREFIX_KEEPALIVE, 0),
             Message::Have(_) => (LEN_PREFIX_HAVE, MSGID_HAVE),
+            Message::Extended(_) => todo!(),
         }
     }
     pub fn serialize(&self, out: &mut Vec<u8>) -> usize {
@@ -284,6 +295,7 @@ where
                 BE::write_u32(&mut out[PREAMBLE_LEN..], *v);
                 msg_len
             }
+            Message::Extended(_) => todo!(),
         }
     }
     pub fn deserialize<'a>(
@@ -479,6 +491,19 @@ impl Request {
             length,
         }
     }
+}
+
+#[derive(Debug)]
+pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq> {
+    Dyn(BencodeValue<ByteBuf>),
+    Unimplemented(PhantomData<ByteBuf>),
+}
+
+struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
+    m: HashMap<ByteBuf, BencodeValue<ByteBuf>>,
+    p: Option<u32>,
+    v: Option<ByteBuf>,
+    // _phantom: PhantomData<&'a ()>,
 }
 
 #[cfg(test)]

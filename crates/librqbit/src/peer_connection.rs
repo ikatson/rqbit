@@ -217,6 +217,12 @@ impl PeerConnection {
                     Message::NotInterested => {
                         info!("received \"not interested\", but we don't care yet")
                     }
+                    message => {
+                        warn!(
+                            "{}: received unsupported message {:?}, ignoring",
+                            handle, message
+                        );
+                    }
                 }
 
                 if read_so_far > size {

@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::{
     buffers::{ByteBuf, ByteString},
     clone_to_owned::CloneToOwned,
-    serde_bencode::BencodeDeserializer,
+    serde_bencode_de::BencodeDeserializer,
 };
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
@@ -240,7 +240,7 @@ where
 mod tests {
     use std::io::Read;
 
-    use crate::serde_bencode::from_bytes;
+    use crate::serde_bencode_de::from_bytes;
 
     use super::*;
 

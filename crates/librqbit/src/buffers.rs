@@ -123,6 +123,24 @@ impl From<Vec<u8>> for ByteString {
     }
 }
 
+impl<'a> serde::ser::Serialize for ByteBuf<'a> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_slice())
+    }
+}
+
+impl serde::ser::Serialize for ByteString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_slice())
+    }
+}
+
 impl<'de> serde::de::Deserialize<'de> for ByteString {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
