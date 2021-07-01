@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -186,11 +186,11 @@ impl TorrentManager {
             needed: initial_check_results.needed_bytes,
             lengths,
         });
-        let estimator = SpeedEstimator::new(state.clone(), 5);
+        let estimator = Arc::new(SpeedEstimator::new(5));
 
         let mgr = Self {
             state,
-            speed_estimator: estimator,
+            speed_estimator: estimator.clone(),
             force_tracker_interval,
         };
 
@@ -198,9 +198,21 @@ impl TorrentManager {
         spawn("stats printer", mgr.clone().stats_printer());
         spawn(
             "http api",
-            make_and_run_http_api(mgr.state.clone(), mgr.speed_estimator.clone()),
+            make_and_run_http_api(mgr.state.clone(), estimator.clone()),
         );
-        spawn("speed estimator", mgr.speed_estimator.clone().run_forever());
+        spawn("speed estimator updater", {
+            let state = mgr.state.clone();
+            let estimator = estimator.clone();
+            async move {
+                loop {
+                    let downloaded = state.stats.downloaded_and_checked.load(Ordering::Relaxed);
+                    let needed = state.needed;
+                    let remaining = needed - downloaded;
+                    estimator.add_snapshot(downloaded, remaining, Instant::now());
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        });
 
         Ok(mgr.into_handle())
     }
