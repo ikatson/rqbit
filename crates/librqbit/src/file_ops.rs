@@ -25,7 +25,6 @@ pub struct InitialCheckResults {
     pub needed_bytes: u64,
 }
 
-#[inline(never)]
 pub fn update_hash_from_file<Sha1: ISha1>(
     file: &mut File,
     hash: &mut Sha1,
@@ -219,7 +218,6 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         })
     }
 
-    #[inline(never)]
     pub fn check_piece(
         &self,
         who_sent: PeerHandle,
