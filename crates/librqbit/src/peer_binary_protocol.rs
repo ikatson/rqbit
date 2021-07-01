@@ -266,7 +266,6 @@ where
                 PREAMBLE_LEN
             }
             Message::Piece(p) => {
-                // below code is wrong, need to serialize len_prefix
                 let block_len = p.block.as_ref().len();
                 let payload_len = 8 + block_len;
                 let msg_len = PREAMBLE_LEN + payload_len;

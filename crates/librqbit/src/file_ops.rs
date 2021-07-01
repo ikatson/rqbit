@@ -121,7 +121,7 @@ impl<'a> FileOps<'a> {
         let mut read_buffer = vec![0u8; 65536];
 
         for piece_info in self.lengths.iter_piece_infos() {
-            let mut computed_hash = sha1w::Sha1Openssl::new();
+            let mut computed_hash = sha1w::Sha1System::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
             let mut at_least_one_file_required = current_file.full_file_required;
@@ -221,7 +221,7 @@ impl<'a> FileOps<'a> {
         piece_index: ValidPieceIndex,
         last_received_chunk: &ChunkInfo,
     ) -> anyhow::Result<bool> {
-        let mut h = sha1w::Sha1Openssl::new();
+        let mut h = sha1w::Sha1System::new();
         let piece_length = self.lengths.piece_length(piece_index);
         let mut absolute_offset = self.lengths.piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];

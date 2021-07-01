@@ -1,8 +1,10 @@
+use std::io::Write;
+
 // Wrapper for sha1 libraries.
 // Sha1 computation is the majority of CPU usage of this library.
 // openssl seems 2-3x faster, so using it for now, but
 // leaving the pure-rust impl here too. Maybe someday make them
-// runtime swappable.
+// runtime swappable or enabled with a feature.
 
 pub trait ISha1 {
     fn new() -> Self;
@@ -45,5 +47,29 @@ impl ISha1 for Sha1Openssl {
 
     fn finish(self) -> [u8; 20] {
         self.inner.finish()
+    }
+}
+
+pub struct Sha1System {
+    inner: crypto_hash::Hasher,
+}
+
+impl ISha1 for Sha1System {
+    fn new() -> Self {
+        Self {
+            inner: crypto_hash::Hasher::new(crypto_hash::Algorithm::SHA1),
+        }
+    }
+
+    fn update(&mut self, buf: &[u8]) {
+        self.inner.write_all(buf).unwrap();
+    }
+
+    fn finish(mut self) -> [u8; 20] {
+        let result = self.inner.finish();
+        assert_eq!(result.len(), 20);
+        let mut result_arr = [0u8; 20];
+        result_arr.copy_from_slice(&result);
+        result_arr
     }
 }

@@ -22,6 +22,7 @@ size_format = "1"
 rand = "0.8"
 openssl = "0.10"
 warp = "0.3"
+crypto-hash = "0.3"
 
 uuid = {version = "0.8", features = ["v4"]}
 futures = "0.3"
