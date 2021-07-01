@@ -21,9 +21,9 @@ use crate::{
     peer_binary_protocol::{Handshake, Message},
     peer_connection::{PeerConnection, WriterRequest},
     peer_state::{LivePeerState, PeerState},
-    spawn_utils::spawn,
+    spawn_utils::{spawn, BlockingSpawner},
     torrent_metainfo::TorrentMetaV1Owned,
-    type_aliases::{PeerHandle, BF},
+    type_aliases::{PeerHandle, Sha1, BF},
 };
 
 pub struct InflightPiece {
@@ -192,10 +192,12 @@ pub struct TorrentState {
     pub lengths: Lengths,
     pub needed: u64,
     pub stats: AtomicStats,
+
+    pub spawner: BlockingSpawner,
 }
 
 impl TorrentState {
-    pub fn file_ops(&self) -> FileOps<'_> {
+    pub fn file_ops(&self) -> FileOps<'_, Sha1> {
         FileOps::new(&self.torrent, &self.files, &self.lengths)
     }
 
@@ -400,7 +402,7 @@ impl TorrentState {
             None => return false,
         };
 
-        let peer_connection = PeerConnection::new(self.clone());
+        let peer_connection = PeerConnection::new(self.clone(), self.spawner.clone());
         spawn(format!("manage_peer({})", handle), async move {
             if let Err(e) = peer_connection.manage_peer(addr, handle, out_rx).await {
                 debug!("error managing peer {}: {:#}", handle, e)

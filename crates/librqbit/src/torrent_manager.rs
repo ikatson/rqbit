@@ -21,11 +21,12 @@ use crate::{
     file_ops::FileOps,
     http_api::make_and_run_http_api,
     lengths::Lengths,
-    spawn_utils::spawn,
+    spawn_utils::{spawn, BlockingSpawner},
     speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Owned,
     torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
+    type_aliases::Sha1,
 };
 pub struct TorrentManagerBuilder {
     torrent: TorrentMetaV1Owned,
@@ -33,6 +34,7 @@ pub struct TorrentManagerBuilder {
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
     force_tracker_interval: Option<Duration>,
+    spawner: Option<BlockingSpawner>,
 }
 
 impl TorrentManagerBuilder {
@@ -43,6 +45,7 @@ impl TorrentManagerBuilder {
             output_folder: output_folder.as_ref().into(),
             only_files: None,
             force_tracker_interval: None,
+            spawner: None,
         }
     }
 
@@ -61,6 +64,11 @@ impl TorrentManagerBuilder {
         self
     }
 
+    pub fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
+        self.spawner = Some(spawner);
+        self
+    }
+
     pub async fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
         TorrentManager::start(
             self.torrent,
@@ -68,6 +76,7 @@ impl TorrentManagerBuilder {
             self.overwrite,
             self.only_files,
             self.force_tracker_interval,
+            self.spawner.unwrap_or(BlockingSpawner::new(true)),
         )
     }
 }
@@ -114,6 +123,7 @@ impl TorrentManager {
         overwrite: bool,
         only_files: Option<Vec<usize>>,
         force_tracker_interval: Option<Duration>,
+        spawner: BlockingSpawner,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let files = {
             let mut files =
@@ -155,8 +165,8 @@ impl TorrentManager {
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results =
-            FileOps::new(&torrent, &files, &lengths).initial_check(only_files.as_deref())?;
+        let initial_check_results = FileOps::<Sha1>::new(&torrent, &files, &lengths)
+            .initial_check(only_files.as_deref())?;
 
         info!(
             "Initial check results: have {}, needed {}",
@@ -185,6 +195,7 @@ impl TorrentManager {
             },
             needed: initial_check_results.needed_bytes,
             lengths,
+            spawner,
         });
         let estimator = Arc::new(SpeedEstimator::new(5));
 

@@ -3,6 +3,7 @@ use std::{fs::File, io::Read, time::Duration};
 use anyhow::Context;
 use clap::Clap;
 use librqbit::{
+    spawn_utils::BlockingSpawner,
     torrent_manager::TorrentManagerBuilder,
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Owned},
 };
@@ -77,6 +78,12 @@ struct Opts {
     /// pretty big, e.g. 30 minutes. This can force a certain value.
     #[clap(short = 'i', long = "tracker-refresh-interval")]
     force_tracker_interval: Option<u64>,
+
+    /// Set this flag if you want to use tokio's single threaded runtime.
+    /// It MAY perform better, but the main purpose is easier debugging, as time
+    /// profilers work better with this one.
+    #[clap(short, long)]
+    single_thread_runtime: bool,
 }
 
 fn compute_only_files(
@@ -129,7 +136,18 @@ fn main() -> anyhow::Result<()> {
 
     init_logging(&opts);
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let (mut rt_builder, spawner) = match opts.single_thread_runtime {
+        true => (
+            tokio::runtime::Builder::new_current_thread(),
+            BlockingSpawner::new(false),
+        ),
+        false => (
+            tokio::runtime::Builder::new_multi_thread(),
+            BlockingSpawner::new(true),
+        ),
+    };
+
+    let rt = rt_builder
         .enable_time()
         .enable_io()
         // the default is 512, it can get out of hand, as this program is CPU-bound on
@@ -161,7 +179,7 @@ fn main() -> anyhow::Result<()> {
         };
 
         let mut builder = TorrentManagerBuilder::new(torrent, opts.output_folder);
-        builder.overwrite(opts.overwrite);
+        builder.overwrite(opts.overwrite).spawner(spawner);
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
         }

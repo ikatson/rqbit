@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
+    marker::PhantomData,
     sync::Arc,
 };
 
@@ -12,7 +13,7 @@ use crate::{
     buffers::ByteString,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::Piece,
-    sha1w::{self, ISha1},
+    sha1w::ISha1,
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Owned},
     type_aliases::{PeerHandle, BF},
 };
@@ -24,6 +25,7 @@ pub struct InitialCheckResults {
     pub needed_bytes: u64,
 }
 
+#[inline(never)]
 pub fn update_hash_from_file<Sha1: ISha1>(
     file: &mut File,
     hash: &mut Sha1,
@@ -46,13 +48,14 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     Ok(())
 }
 
-pub struct FileOps<'a> {
+pub struct FileOps<'a, Sha1> {
     torrent: &'a TorrentMetaV1Owned,
     files: &'a [Arc<Mutex<File>>],
     lengths: &'a Lengths,
+    phantom_data: PhantomData<Sha1>,
 }
 
-impl<'a> FileOps<'a> {
+impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
     pub fn new(
         torrent: &'a TorrentMetaV1Owned,
         files: &'a [Arc<Mutex<File>>],
@@ -62,6 +65,7 @@ impl<'a> FileOps<'a> {
             torrent,
             files,
             lengths,
+            phantom_data: PhantomData,
         }
     }
 
@@ -121,7 +125,7 @@ impl<'a> FileOps<'a> {
         let mut read_buffer = vec![0u8; 65536];
 
         for piece_info in self.lengths.iter_piece_infos() {
-            let mut computed_hash = sha1w::Sha1System::new();
+            let mut computed_hash = Sha1Impl::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
             let mut at_least_one_file_required = current_file.full_file_required;
@@ -215,13 +219,14 @@ impl<'a> FileOps<'a> {
         })
     }
 
+    #[inline(never)]
     pub fn check_piece(
         &self,
         who_sent: PeerHandle,
         piece_index: ValidPieceIndex,
         last_received_chunk: &ChunkInfo,
     ) -> anyhow::Result<bool> {
-        let mut h = sha1w::Sha1System::new();
+        let mut h = Sha1Impl::new();
         let piece_length = self.lengths.piece_length(piece_index);
         let mut absolute_offset = self.lengths.piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];

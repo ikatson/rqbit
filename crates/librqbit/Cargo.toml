@@ -3,6 +3,13 @@ name = "librqbit"
 version = "0.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
+default-features = ["sha1-system"]
+
+[features]
+default = ["sha1-openssl"]
+sha1-system = ["crypto-hash"]
+sha1-openssl = ["openssl"]
+sha1-rust = ["sha1"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,7 +17,7 @@ edition = "2018"
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 serde = {version = "1", features=["derive"]}
 anyhow = "1"
-sha1 = "0.6"
+
 reqwest = "0.11"
 urlencoding = "1"
 byteorder = "1"
@@ -20,9 +27,11 @@ parking_lot = "0.11"
 log = "0.4"
 size_format = "1"
 rand = "0.8"
-openssl = "0.10"
 warp = "0.3"
-crypto-hash = "0.3"
+
+openssl = {version="0.10", optional=true}
+crypto-hash = {version="0.3", optional=true}
+sha1 = {version = "0.6", optional=true}
 
 uuid = {version = "0.8", features = ["v4"]}
 futures = "0.3"

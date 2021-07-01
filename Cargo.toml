@@ -4,7 +4,8 @@ version = "0.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+rt-single-thread = []
 
 [dependencies]
 librqbit = {path="./crates/librqbit"}

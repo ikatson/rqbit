@@ -12,10 +12,12 @@ pub trait ISha1 {
     fn finish(self) -> [u8; 20];
 }
 
+#[cfg(feature = "sha1-rust")]
 pub struct Sha1Rust {
     inner: sha1::Sha1,
 }
 
+#[cfg(feature = "sha1-rust")]
 impl ISha1 for Sha1Rust {
     fn new() -> Self {
         Sha1Rust {
@@ -31,9 +33,13 @@ impl ISha1 for Sha1Rust {
         self.inner.digest().bytes()
     }
 }
+
+#[cfg(feature = "sha1-openssl")]
 pub struct Sha1Openssl {
     inner: openssl::sha::Sha1,
 }
+
+#[cfg(feature = "sha1-openssl")]
 impl ISha1 for Sha1Openssl {
     fn new() -> Self {
         Self {
@@ -50,10 +56,12 @@ impl ISha1 for Sha1Openssl {
     }
 }
 
+#[cfg(feature = "sha1-system")]
 pub struct Sha1System {
     inner: crypto_hash::Hasher,
 }
 
+#[cfg(feature = "sha1-system")]
 impl ISha1 for Sha1System {
     fn new() -> Self {
         Self {

@@ -7,6 +7,8 @@ use std::marker::PhantomData;
 use crate::buffers::ByteBuf;
 use crate::buffers::ByteString;
 use crate::clone_to_owned::CloneToOwned;
+use crate::sha1w::ISha1;
+use crate::type_aliases::Sha1;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
@@ -536,9 +538,9 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
         let value = seed.deserialize(&mut *self.de)?;
         if self.de.is_torrent_info && self.de.field_context.as_slice() == [ByteBuf(b"info")] {
             let len = self.de.buf.as_ptr() as usize - buf_before.as_ptr() as usize;
-            let mut hash = sha1::Sha1::new();
+            let mut hash = Sha1::new();
             hash.update(&buf_before[..len]);
-            let digest = hash.digest().bytes();
+            let digest = hash.finish();
             self.de.torrent_info_digest = Some(digest)
         }
         self.de.field_context.pop();
