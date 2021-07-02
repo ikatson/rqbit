@@ -21,6 +21,9 @@ impl<'de> BencodeDeserializer<'de> {
             torrent_info_digest: None,
         }
     }
+    pub fn into_remaining(self) -> &'de [u8] {
+        self.buf
+    }
     fn parse_integer(&mut self) -> Result<i64, Error> {
         match self.buf.iter().copied().position(|e| e == b'e') {
             Some(end) => {

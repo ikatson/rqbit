@@ -28,6 +28,22 @@ where
     }
 }
 
+impl CloneToOwned for u8 {
+    type Target = u8;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        *self
+    }
+}
+
+impl CloneToOwned for u32 {
+    type Target = u32;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        *self
+    }
+}
+
 impl<K, V> CloneToOwned for HashMap<K, V>
 where
     K: CloneToOwned,

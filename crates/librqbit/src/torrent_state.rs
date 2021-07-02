@@ -498,7 +498,7 @@ impl PeerConnectionHandler for PeerHandler {
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize> {
         let g = self.state.locked.read();
         let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
-        let len = msg.serialize(buf);
+        let len = msg.serialize(buf, None).unwrap();
         debug!("sending to {}: {:?}, length={}", self.addr, &msg, len);
         Some(len)
     }
@@ -516,6 +516,12 @@ impl PeerConnectionHandler for PeerHandler {
 
     fn read_chunk(&self, chunk: &crate::lengths::ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()> {
         self.state.file_ops().read_chunk(self.addr, chunk, buf)
+    }
+
+    fn on_extended_handshake(
+        &self,
+        extended_handshake: &crate::peer_binary_protocol::ExtendedHandshake<ByteBuf>,
+    ) {
     }
 }
 

@@ -2,14 +2,15 @@ use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use log::{debug, trace};
-use tokio::time::timeout;
+use tokio::{io::AsyncReadExt, time::timeout};
 
 use crate::{
-    buffers::ByteBuf,
+    buffers::{ByteBuf, ByteString},
+    clone_to_owned::CloneToOwned,
     lengths::ChunkInfo,
     peer_binary_protocol::{
-        serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
-        MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
+        serialize_piece_preamble, ExtendedHandshake, ExtendedMessage, Handshake, Message,
+        MessageBorrowed, MessageDeserializeError, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
     },
     peer_id::try_decode_peer_id,
 };
@@ -18,6 +19,7 @@ pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
     fn on_handshake(&self, handshake: Handshake);
+    fn on_extended_handshake(&self, extended_handshake: &ExtendedHandshake<ByteBuf>);
     fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -35,6 +37,34 @@ pub struct PeerConnection<H> {
     info_hash: [u8; 20],
     peer_id: [u8; 20],
 }
+
+// async fn read_one<'a, R: AsyncReadExt + Unpin>(
+//     mut reader: R,
+//     read_buf: &'a mut Vec<u8>,
+//     read_so_far: &mut usize,
+// ) -> anyhow::Result<(MessageBorrowed<'a>, usize)> {
+//     loop {
+//         match MessageBorrowed::deserialize(&read_buf[..*read_so_far]) {
+//             Ok((msg, size)) => return Ok((msg, size)),
+//             Err(MessageDeserializeError::NotEnoughData(d, _)) => {
+//                 if read_buf.len() < *read_so_far + d {
+//                     read_buf.reserve(d);
+//                     read_buf.resize(read_buf.capacity(), 0);
+//                 }
+
+//                 let size = reader
+//                     .read(&mut read_buf[*read_so_far..])
+//                     .await
+//                     .context("error reading from peer")?;
+//                 if size == 0 {
+//                     anyhow::bail!("disconnected while reading, read so far: {}", *read_so_far)
+//                 }
+//                 *read_so_far += size;
+//             }
+//             Err(e) => return Err(e.into()),
+//         }
+//     }
+// }
 
 impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(addr: SocketAddr, info_hash: [u8; 20], peer_id: [u8; 20], handler: H) -> Self {
@@ -62,17 +92,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .await
             .context("error writing handshake")?;
         let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
-        let read_bytes = conn
+        let mut read_so_far = conn
             .read(&mut read_buf)
             .await
             .context("error reading handshake")?;
-        if read_bytes == 0 {
+        if read_so_far == 0 {
             anyhow::bail!("bad handshake");
         }
-        let (h, hlen) = Handshake::deserialize(&read_buf[..read_bytes])
+        let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
             .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
 
-        let mut read_so_far = 0usize;
         debug!(
             "connected peer {}: {:?}",
             self.addr,
@@ -82,11 +111,57 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             anyhow::bail!("info hash does not match");
         }
 
-        self.handler.on_handshake(h);
+        let mut extended_handshake: Option<ExtendedHandshake<ByteString>> = None;
+        let supports_extended = h.supports_extended();
 
-        if read_bytes > hlen {
-            read_buf.copy_within(hlen..read_bytes, 0);
-            read_so_far = read_bytes - hlen;
+        self.handler.on_handshake(h);
+        if read_so_far > size {
+            read_buf.copy_within(size..read_so_far, 0);
+        }
+        read_so_far -= size;
+
+        if supports_extended {
+            // Read extended handshake
+            // I wasn't able to extract that into a function.
+            // TODO: extract into a macro.
+            let (extended, size) = loop {
+                match MessageBorrowed::deserialize(&read_buf[..read_so_far]) {
+                    Ok((msg, size)) => break (msg, size),
+                    Err(MessageDeserializeError::NotEnoughData(d, _)) => {
+                        if read_buf.len() < read_so_far + d {
+                            read_buf.reserve(d);
+                            read_buf.resize(read_buf.capacity(), 0);
+                        }
+
+                        let size = conn
+                            .read(&mut read_buf[read_so_far..])
+                            .await
+                            .context("error reading from peer")?;
+                        if size == 0 {
+                            anyhow::bail!(
+                                "disconnected while reading, read so far: {}",
+                                read_so_far
+                            )
+                        }
+                        read_so_far += size;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
+
+            match extended {
+                Message::Extended(ExtendedMessage::Handshake(h)) => {
+                    trace!("received from {}: {:?}", self.addr, &h);
+                    self.handler.on_extended_handshake(&h);
+                    extended_handshake = Some(h.clone_to_owned())
+                }
+                other => anyhow::bail!("expected extended handshake, but got {:?}", other),
+            };
+
+            if read_so_far > size {
+                read_buf.copy_within(size..read_so_far, 0);
+            }
+            read_so_far -= size;
         }
 
         let (mut read_half, mut write_half) = tokio::io::split(conn);
@@ -117,7 +192,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let mut uploaded_add = None;
 
                 let len = match &req {
-                    WriterRequest::Message(msg) => msg.serialize(&mut buf),
+                    WriterRequest::Message(msg) => {
+                        msg.serialize(&mut buf, extended_handshake.as_ref())?
+                    }
                     WriterRequest::ReadChunkRequest(chunk) => {
                         // this whole section is an optimization
                         buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
