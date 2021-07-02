@@ -2,15 +2,16 @@ use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use log::{debug, trace};
-use tokio::{io::AsyncReadExt, time::timeout};
+use tokio::time::timeout;
 
 use crate::{
     buffers::{ByteBuf, ByteString},
     clone_to_owned::CloneToOwned,
     lengths::ChunkInfo,
     peer_binary_protocol::{
-        serialize_piece_preamble, ExtendedHandshake, ExtendedMessage, Handshake, Message,
-        MessageBorrowed, MessageDeserializeError, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
+        extended::{handshake::ExtendedHandshake, ExtendedMessage},
+        serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
+        MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
     },
     peer_id::try_decode_peer_id,
 };

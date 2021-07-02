@@ -21,7 +21,9 @@ use crate::{
     clone_to_owned::CloneToOwned,
     file_ops::FileOps,
     lengths::{Lengths, ValidPieceIndex},
-    peer_binary_protocol::{Handshake, Message, MessageOwned, Piece, Request},
+    peer_binary_protocol::{
+        extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
+    },
     peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
     peer_state::{InflightRequest, LivePeerState, PeerState},
     spawn_utils::{spawn, BlockingSpawner},
@@ -518,11 +520,7 @@ impl PeerConnectionHandler for PeerHandler {
         self.state.file_ops().read_chunk(self.addr, chunk, buf)
     }
 
-    fn on_extended_handshake(
-        &self,
-        extended_handshake: &crate::peer_binary_protocol::ExtendedHandshake<ByteBuf>,
-    ) {
-    }
+    fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) {}
 }
 
 impl PeerHandler {
