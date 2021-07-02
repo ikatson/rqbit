@@ -48,7 +48,7 @@ const MSGID_REQUEST: u8 = 6;
 const MSGID_PIECE: u8 = 7;
 const MSGID_EXTENDED: u8 = 20;
 
-const MY_EXTENDED_UT_METADATA: u8 = 0;
+const MY_EXTENDED_UT_METADATA: u8 = 3;
 
 #[derive(Debug)]
 pub enum MessageDeserializeError {
@@ -221,7 +221,7 @@ where
             Message::KeepAlive => Message::KeepAlive,
             Message::Have(v) => Message::Have(*v),
             Message::NotInterested => Message::NotInterested,
-            Message::Extended(_) => unimplemented!(),
+            Message::Extended(e) => Message::Extended(e.clone_to_owned()),
         }
     }
 }
@@ -317,9 +317,11 @@ where
                 Ok(msg_len)
             }
             Message::Extended(e) => {
-                e.serialize(out, peer_extended_handshake);
+                e.serialize(out, peer_extended_handshake)?;
                 let msg_size = out.len();
-                BE::write_u32(&mut out[..4], msg_size as u32);
+                // no fucking idea why +1, but I tweaked that for it all to match up
+                // with real messages.
+                BE::write_u32(&mut out[..4], (msg_size - PREAMBLE_LEN + 1) as u32);
                 Ok(msg_size)
             }
         }
@@ -528,8 +530,8 @@ impl<'a> Handshake<'a> {
             ))?;
         Ok((Self::bopts().deserialize(&hbuf).unwrap(), expected_len))
     }
-    pub fn serialize(&self) -> Vec<u8> {
-        Self::bopts().serialize(&self).unwrap()
+    pub fn serialize(&self, buf: &mut Vec<u8>) {
+        Self::bopts().serialize_into(buf, &self).unwrap()
     }
 }
 
@@ -553,7 +555,11 @@ impl Request {
 #[derive(Debug)]
 pub enum UtMetadata<ByteBuf> {
     Request(u32),
-    Data(u32, ByteBuf),
+    Data {
+        piece: u32,
+        total_size: u32,
+        data: ByteBuf,
+    },
     Reject(u32),
 }
 
@@ -563,7 +569,15 @@ impl<ByteBuf: CloneToOwned> CloneToOwned for UtMetadata<ByteBuf> {
     fn clone_to_owned(&self) -> Self::Target {
         match self {
             UtMetadata::Request(req) => UtMetadata::Request(*req),
-            UtMetadata::Data(piece, data) => UtMetadata::Data(*piece, data.clone_to_owned()),
+            UtMetadata::Data {
+                piece,
+                total_size,
+                data,
+            } => UtMetadata::Data {
+                piece: *piece,
+                total_size: *total_size,
+                data: data.clone_to_owned(),
+            },
             UtMetadata::Reject(piece) => UtMetadata::Reject(*piece),
         }
     }
@@ -590,11 +604,15 @@ impl<'a, ByteBuf: 'a> UtMetadata<ByteBuf> {
                 };
                 serde_bencode_ser::bencode_serialize_to_writer(message, buf).unwrap()
             }
-            UtMetadata::Data(piece, data) => {
+            UtMetadata::Data {
+                piece,
+                total_size,
+                data,
+            } => {
                 let message = Message {
                     msg_type: 1,
                     piece: *piece,
-                    total_size: Some(data.as_ref().len() as u32),
+                    total_size: Some(*total_size),
                 };
                 serde_bencode_ser::bencode_serialize_to_writer(message, buf).unwrap();
                 buf.write_all(data.as_ref()).unwrap();
@@ -643,14 +661,11 @@ impl<'a, ByteBuf: 'a> UtMetadata<ByteBuf> {
                         "expected key total_size to be present in UtMetadata \"data\" message"
                     ))
                 })?;
-                if remaining.len() != total_size as usize {
-                    return Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                        "remaining bytes len {} != total_size {}",
-                        remaining.len(),
-                        total_size
-                    )));
-                }
-                Ok(UtMetadata::Data(message.piece, ByteBuf::from(remaining)))
+                Ok(UtMetadata::Data {
+                    piece: message.piece,
+                    total_size,
+                    data: ByteBuf::from(remaining),
+                })
             }
             // reject
             2 => {
@@ -730,16 +745,6 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
     where
         ByteBuf: Deserialize<'a> + From<&'a [u8]>,
     {
-        {
-            use std::io::Write;
-            let mut f = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .open("/tmp/msg")
-                .unwrap();
-            f.write_all(buf).unwrap();
-        }
-
         use crate::serde_bencode_de::from_bytes;
 
         let emsg_id = buf.get(0).copied().ok_or_else(|| {
@@ -759,17 +764,8 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
             MY_EXTENDED_UT_METADATA => {
                 Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(&buf)?))
             }
-            other => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(&buf)?)),
+            _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(&buf)?)),
         }
-
-        // match self {
-        //     ExtendedMessage::Dyn(v, msg) => {
-        //         crate::bencode_value::dyn_from_bytes(buf)
-        //     }
-        //     ExtendedMessage::Handshake(h) => {
-        //         crate::serde_bencode_ser::bencode_serialize_to_writer(h, out).unwrap()
-        //     }
-        // }
     }
 }
 
@@ -777,11 +773,17 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
 pub struct YourIP(pub IpAddr);
 
 impl Serialize for YourIP {
-    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        todo!()
+        match self.0 {
+            IpAddr::V4(ipv4) => {
+                let buf = ipv4.octets();
+                serializer.serialize_bytes(&buf)
+            }
+            IpAddr::V6(_) => todo!(),
+        }
     }
 }
 
@@ -823,7 +825,7 @@ impl<'de> Deserialize<'de> for YourIP {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Default)]
 pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
     #[serde(bound(deserialize = "ByteBuf: From<&'de [u8]>"))]
     pub m: HashMap<ByteBuf, u8>,
@@ -839,7 +841,23 @@ pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
     pub ipv4: Option<ByteBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reqq: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complete_ago: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_only: Option<u32>,
+}
+
+impl ExtendedHandshake<ByteBuf<'static>> {
+    pub fn new() -> Self {
+        let mut features = HashMap::new();
+        features.insert(ByteBuf(b"ut_metadata"), MY_EXTENDED_UT_METADATA);
+        Self {
+            m: features,
+            ..Default::default()
+        }
+    }
 }
 
 impl<ByteBuf: Eq + std::hash::Hash> ExtendedHandshake<ByteBuf> {
@@ -874,21 +892,25 @@ where
             ipv4: self.ipv4.clone_to_owned(),
             reqq: self.reqq,
             metadata_size: self.metadata_size,
+            complete_ago: self.complete_ago,
+            upload_only: self.upload_only,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, str::FromStr};
+    use std::{fs::File, io::Read, net::SocketAddr, str::FromStr};
 
     use log::info;
-    use parking_lot::{Mutex, RwLock};
+    use parking_lot::RwLock;
     use tokio::sync::mpsc::UnboundedSender;
 
     use crate::{
+        lengths::ceil_div_u64,
         peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
         peer_id::generate_peer_id,
+        torrent_metainfo::TorrentMetaV1Borrowed,
     };
     use std::sync::Once;
 
@@ -913,28 +935,44 @@ mod tests {
         let peer_id = [
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ];
-        let b = dbg!(Handshake::new(info_hash, peer_id).serialize());
-        assert_eq!(b.len(), 20 + 20 + 8 + 19 + 1);
+        let mut buf = Vec::new();
+        Handshake::new(info_hash, peer_id).serialize(&mut buf);
+        assert_eq!(buf.len(), 20 + 20 + 8 + 19 + 1);
     }
 
     #[test]
     fn test_extended_serialize() {
-        let feats = HashMap::new();
-        let msg =
-            Message::<ByteBuf<'static>>::Extended(ExtendedMessage::Handshake(ExtendedHandshake {
-                m: feats,
-                p: None,
-                v: None,
-                yourip: None,
-                ipv6: None,
-                ipv4: None,
-                reqq: None,
-                metadata_size: None,
-            }));
-
+        let msg = Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
         let mut out = Vec::new();
-        msg.serialize(&mut out, None);
+        msg.serialize(&mut out, None).unwrap();
         dbg!(out);
+    }
+
+    #[test]
+    fn test_deserialize_serialize_extended_is_same() {
+        use std::fs::File;
+        use std::io::Read;
+        let mut buf = Vec::new();
+        File::open("resources/test/extended-handshake.bin")
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+        let (msg, size) = MessageBorrowed::deserialize(&buf).unwrap();
+        assert_eq!(size, buf.len());
+        let mut write_buf = Vec::new();
+        msg.serialize(&mut write_buf, None).unwrap();
+        if buf != write_buf {
+            {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open("/tmp/test_deserialize_serialize_extended_is_same")
+                    .unwrap();
+                f.write_all(&write_buf).unwrap();
+            }
+            panic!("resources/test/extended-handshake.bin did not serialize exactly the same. Dumped to /tmp/test_deserialize_serialize_extended_is_same, you can compare with resources/test/extended-handshake.bin")
+        }
     }
 
     #[tokio::test]
@@ -961,6 +999,34 @@ mod tests {
 
             fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
                 info!("received message: {:?}", msg);
+
+                if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
+                    piece,
+                    total_size,
+                    data,
+                })) = msg
+                {
+                    // this just assumes piece come in the order requested.
+                    let mut f = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open("/tmp/torrent")
+                        .unwrap();
+                    f.write_all(&data).unwrap();
+
+                    // test if it's the last piece
+                    if data.len() < CHUNK_SIZE as usize {
+                        let mut buf = Vec::new();
+                        let mut f = File::open("/tmp/torrent").unwrap();
+                        f.read_to_end(&mut buf).unwrap();
+
+                        // let torrent: TorrentMetaV1Borrowed =
+                        //     crate::torrent_metainfo::torrent_from_bytes(&buf).unwrap();
+                        let torrent: BencodeValue<ByteBuf> =
+                            crate::bencode_value::dyn_from_bytes(&buf).unwrap();
+                        dbg!(torrent);
+                    }
+                }
                 Ok(())
             }
 
@@ -975,10 +1041,24 @@ mod tests {
                     .write()
                     .replace(extended_handshake.clone_to_owned());
                 self.tx
-                    .send(WriterRequest::Message(Message::Extended(
-                        ExtendedMessage::UtMetadata(UtMetadata::Request(0)),
-                    )))
-                    .unwrap()
+                    .send(WriterRequest::Message(Message::Unchoke))
+                    .unwrap();
+                self.tx
+                    .send(WriterRequest::Message(Message::Interested))
+                    .unwrap();
+
+                let total_metadata_chunks = ceil_div_u64(
+                    extended_handshake.metadata_size.unwrap() as u64,
+                    CHUNK_SIZE as u64,
+                );
+
+                for i in 0..total_metadata_chunks {
+                    self.tx
+                        .send(WriterRequest::Message(Message::Extended(
+                            ExtendedMessage::UtMetadata(UtMetadata::Request(i as u32)),
+                        )))
+                        .unwrap()
+                }
             }
         }
 

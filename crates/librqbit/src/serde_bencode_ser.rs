@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
+
 use serde::{Serialize, Serializer};
+
+use crate::buffers::ByteString;
 
 #[derive(Debug)]
 pub enum SerErrorKind {
@@ -56,27 +60,37 @@ impl std::fmt::Display for SerError {
 
 struct BencodeSerializer<W: std::io::Write> {
     writer: W,
+    hack_no_bytestring_prefix: bool,
 }
 
 impl<W: std::io::Write> BencodeSerializer<W> {
+    pub fn new(writer: W) -> Self {
+        Self {
+            writer,
+            hack_no_bytestring_prefix: false,
+        }
+    }
+    fn write_raw(&mut self, buf: &[u8]) -> Result<(), SerError> {
+        self.writer
+            .write_all(buf)
+            .map_err(|e| SerError::from_err_with_ser(e, &self))
+    }
     fn write_fmt(&mut self, fmt: core::fmt::Arguments<'_>) -> Result<(), SerError> {
         self.writer
             .write_fmt(fmt)
             .map_err(|e| SerError::from_err_with_ser(e, &self))
     }
     fn write_byte(&mut self, byte: u8) -> Result<(), SerError> {
-        self.writer
-            .write_all(&[byte])
-            .map_err(|e| SerError::from_err_with_ser(e, &self))
+        self.write_raw(&[byte])
     }
     fn write_number<N: std::fmt::Display>(&mut self, number: N) -> Result<(), SerError> {
         self.write_fmt(format_args!("i{}e", number))
     }
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerError> {
-        self.write_fmt(format_args!("{}:", bytes.len()))?;
-        self.writer
-            .write_all(bytes)
-            .map_err(|e| SerError::from_err_with_ser(e, &self))
+        if !self.hack_no_bytestring_prefix {
+            self.write_fmt(format_args!("{}:", bytes.len()))?;
+        }
+        self.write_raw(bytes)
     }
 }
 
@@ -162,6 +176,8 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeTupleVariant for SerializeTup
 
 struct SerializeMap<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
+    tmp: BTreeMap<ByteString, ByteString>,
+    last_key: Option<ByteString>,
 }
 impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W> {
     type Ok = ();
@@ -172,23 +188,39 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W>
     where
         T: serde::Serialize,
     {
-        key.serialize(&mut *self.ser)
+        let mut buf = Vec::new();
+        let mut ser = BencodeSerializer::new(&mut buf);
+        ser.hack_no_bytestring_prefix = true;
+        key.serialize(&mut ser)?;
+        self.last_key.replace(ByteString::from(buf));
+        Ok(())
+        // key.serialize(&mut *self.ser);
     }
 
     fn serialize_value<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: serde::Serialize,
     {
-        value.serialize(&mut *self.ser)
+        let mut buf = Vec::new();
+        let mut ser = BencodeSerializer::new(&mut buf);
+        value.serialize(&mut ser)?;
+        self.tmp
+            .insert(self.last_key.take().unwrap(), ByteString::from(buf));
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
+        for (key, value) in self.tmp {
+            self.ser.write_bytes(&key)?;
+            self.ser.write_raw(&value)?;
+        }
         self.ser.write_byte(b'e')
     }
 }
 
 struct SerializeStruct<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
+    tmp: BTreeMap<&'static str, ByteString>,
 }
 impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'ser, W> {
     type Ok = ();
@@ -203,11 +235,18 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'s
     where
         T: serde::Serialize,
     {
-        self.ser.write_bytes(key.as_bytes())?;
-        value.serialize(&mut *self.ser)
+        let mut buf = Vec::new();
+        let mut ser = BencodeSerializer::new(&mut buf);
+        value.serialize(&mut ser)?;
+        self.tmp.insert(key, ByteString::from(buf));
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
+        for (key, value) in self.tmp {
+            self.ser.write_bytes(key.as_bytes())?;
+            self.ser.write_raw(&dbg!(value))?;
+        }
         self.ser.write_byte(b'e')
     }
 }
@@ -412,7 +451,11 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         self.write_byte(b'd')?;
-        Ok(SerializeMap { ser: self })
+        Ok(SerializeMap {
+            ser: self,
+            tmp: Default::default(),
+            last_key: None,
+        })
     }
 
     fn serialize_struct(
@@ -421,7 +464,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         self.write_byte(b'd')?;
-        Ok(SerializeStruct { ser: self })
+        Ok(SerializeStruct {
+            ser: self,
+            tmp: Default::default(),
+        })
     }
 
     fn serialize_struct_variant(
@@ -439,7 +485,7 @@ pub fn bencode_serialize_to_writer<T: Serialize, W: std::io::Write>(
     value: T,
     writer: &mut W,
 ) -> Result<(), SerError> {
-    let mut serializer = BencodeSerializer { writer };
+    let mut serializer = BencodeSerializer::new(writer);
     value.serialize(&mut serializer)?;
     Ok(())
 }

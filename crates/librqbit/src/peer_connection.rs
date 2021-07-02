@@ -66,6 +66,33 @@ pub struct PeerConnection<H> {
 //     }
 // }
 
+macro_rules! read_one {
+    ($conn:ident, $read_buf:ident, $read_so_far:ident) => {{
+        let (extended, size) = loop {
+            match MessageBorrowed::deserialize(&$read_buf[..$read_so_far]) {
+                Ok((msg, size)) => break (msg, size),
+                Err(MessageDeserializeError::NotEnoughData(d, _)) => {
+                    if $read_buf.len() < $read_so_far + d {
+                        $read_buf.reserve(d);
+                        $read_buf.resize($read_buf.capacity(), 0);
+                    }
+
+                    let size = $conn
+                        .read(&mut $read_buf[$read_so_far..])
+                        .await
+                        .context("error reading from peer")?;
+                    if size == 0 {
+                        anyhow::bail!("disconnected while reading, read so far: {}", $read_so_far)
+                    }
+                    $read_so_far += size;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+        (extended, size)
+    }};
+}
+
 impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(addr: SocketAddr, info_hash: [u8; 20], peer_id: [u8; 20], handler: H) -> Self {
         PeerConnection {
@@ -87,10 +114,14 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut conn = tokio::net::TcpStream::connect(self.addr)
             .await
             .context("error connecting")?;
+        let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
-        conn.write_all(&handshake.serialize())
+        handshake.serialize(&mut write_buf);
+        conn.write_all(&write_buf)
             .await
             .context("error writing handshake")?;
+        write_buf.clear();
+
         let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
         let mut read_so_far = conn
             .read(&mut read_buf)
@@ -121,34 +152,15 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         read_so_far -= size;
 
         if supports_extended {
-            // Read extended handshake
-            // I wasn't able to extract that into a function.
-            // TODO: extract into a macro.
-            let (extended, size) = loop {
-                match MessageBorrowed::deserialize(&read_buf[..read_so_far]) {
-                    Ok((msg, size)) => break (msg, size),
-                    Err(MessageDeserializeError::NotEnoughData(d, _)) => {
-                        if read_buf.len() < read_so_far + d {
-                            read_buf.reserve(d);
-                            read_buf.resize(read_buf.capacity(), 0);
-                        }
+            let my_extended =
+                Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
+            my_extended.serialize(&mut write_buf, None).unwrap();
+            conn.write_all(&write_buf)
+                .await
+                .context("error writing extended handshake")?;
+            write_buf.clear();
 
-                        let size = conn
-                            .read(&mut read_buf[read_so_far..])
-                            .await
-                            .context("error reading from peer")?;
-                        if size == 0 {
-                            anyhow::bail!(
-                                "disconnected while reading, read so far: {}",
-                                read_so_far
-                            )
-                        }
-                        read_so_far += size;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            };
-
+            let (extended, size) = read_one!(conn, read_buf, read_so_far);
             match extended {
                 Message::Extended(ExtendedMessage::Handshake(h)) => {
                     trace!("received from {}: {:?}", self.addr, &h);
@@ -167,13 +179,15 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let (mut read_half, mut write_half) = tokio::io::split(conn);
 
         let writer = async move {
-            let mut buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
             let keep_alive_interval = Duration::from_secs(120);
 
             if self.handler.get_have_bytes() > 0 {
-                if let Some(len) = self.handler.serialize_bitfield_message_to_buf(&mut buf) {
+                if let Some(len) = self
+                    .handler
+                    .serialize_bitfield_message_to_buf(&mut write_buf)
+                {
                     write_half
-                        .write_all(&buf[..len])
+                        .write_all(&write_buf[..len])
                         .await
                         .context("error writing bitfield to peer")?;
                     debug!("sent bitfield to {}", self.addr);
@@ -193,16 +207,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 let len = match &req {
                     WriterRequest::Message(msg) => {
-                        msg.serialize(&mut buf, extended_handshake.as_ref())?
+                        msg.serialize(&mut write_buf, extended_handshake.as_ref())?
                     }
                     WriterRequest::ReadChunkRequest(chunk) => {
                         // this whole section is an optimization
-                        buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
-                        let preamble_len = serialize_piece_preamble(&chunk, &mut buf);
+                        write_buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
+                        let preamble_len = serialize_piece_preamble(&chunk, &mut write_buf);
                         let full_len = preamble_len + chunk.size as usize;
-                        buf.resize(full_len, 0);
+                        write_buf.resize(full_len, 0);
                         self.handler
-                            .read_chunk(chunk, &mut buf[preamble_len..])
+                            .read_chunk(chunk, &mut write_buf[preamble_len..])
                             .with_context(|| format!("error reading chunk {:?}", chunk))?;
                         uploaded_add = Some(chunk.size);
                         full_len
@@ -212,9 +226,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 debug!("sending to {}: {:?}, length={}", self.addr, &req, len);
 
                 write_half
-                    .write_all(&buf[..len])
+                    .write_all(&write_buf[..len])
                     .await
                     .context("error writing the message to peer")?;
+                write_buf.clear();
 
                 if let Some(uploaded_add) = uploaded_add {
                     self.handler.on_uploaded_bytes(uploaded_add)
@@ -228,33 +243,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         let reader = async move {
             loop {
-                let (message, size) = loop {
-                    match MessageBorrowed::deserialize(&read_buf[..read_so_far]) {
-                        Ok((msg, size)) => {
-                            break (msg, size);
-                        }
-                        Err(MessageDeserializeError::NotEnoughData(d, _)) => {
-                            if read_buf.len() < read_so_far + d {
-                                read_buf.reserve(d);
-                                read_buf.resize(read_buf.capacity(), 0);
-                            }
-
-                            let size = read_half
-                                .read(&mut read_buf[read_so_far..])
-                                .await
-                                .context("error reading from peer")?;
-                            if size == 0 {
-                                anyhow::bail!(
-                                    "disconnected while reading, read so far: {}",
-                                    read_so_far
-                                )
-                            }
-                            read_so_far += size;
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
-                };
-
+                let (message, size) = read_one!(read_half, read_buf, read_so_far);
                 trace!("received from {}: {:?}", self.addr, &message);
 
                 self.handler

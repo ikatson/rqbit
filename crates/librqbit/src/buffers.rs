@@ -2,10 +2,10 @@ use serde::{Deserialize, Deserializer};
 
 use crate::clone_to_owned::CloneToOwned;
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub struct ByteString(pub Vec<u8>);
 
-#[derive(Deserialize, PartialEq, Eq, Hash, Clone)]
+#[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct ByteBuf<'a>(pub &'a [u8]);
 
