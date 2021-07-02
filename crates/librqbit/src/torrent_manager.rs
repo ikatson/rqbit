@@ -21,6 +21,7 @@ use crate::{
     file_ops::FileOps,
     http_api::make_and_run_http_api,
     lengths::Lengths,
+    peer_id::generate_peer_id,
     spawn_utils::{spawn, BlockingSpawner},
     speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Owned,
@@ -102,13 +103,6 @@ struct TorrentManager {
     state: Arc<TorrentState>,
     speed_estimator: Arc<SpeedEstimator>,
     force_tracker_interval: Option<Duration>,
-}
-
-fn generate_peer_id() -> [u8; 20] {
-    let mut peer_id = [0u8; 20];
-    let u = uuid::Uuid::new_v4();
-    (&mut peer_id[..16]).copy_from_slice(&u.as_bytes()[..]);
-    peer_id
 }
 
 fn make_lengths(torrent: &TorrentMetaV1Owned) -> anyhow::Result<Lengths> {

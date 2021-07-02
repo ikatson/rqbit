@@ -43,3 +43,14 @@ pub enum PeerId {
 pub fn try_decode_peer_id(p: [u8; 20]) -> Option<PeerId> {
     Some(PeerId::AzureusStyle(try_decode_azureus_style(&p)?))
 }
+
+pub fn generate_peer_id() -> [u8; 20] {
+    let mut peer_id = [0u8; 20];
+
+    let u = uuid::Uuid::new_v4();
+    (&mut peer_id[4..20]).copy_from_slice(&u.as_bytes()[..]);
+
+    (&mut peer_id[..8]).copy_from_slice(b"-rQ0001-");
+
+    peer_id
+}

@@ -40,7 +40,7 @@ pub struct LivePeerState {
 impl LivePeerState {
     pub fn new(peer_id: [u8; 20]) -> Self {
         LivePeerState {
-            peer_id: peer_id,
+            peer_id,
             i_am_choked: true,
             peer_interested: false,
             bitfield: None,

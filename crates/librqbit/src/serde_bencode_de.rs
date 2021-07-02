@@ -55,7 +55,13 @@ impl<'de> BencodeDeserializer<'de> {
                     .map_err(|e| Error::new_from_err(e).set_context(self))?;
                 let bytes_start = length_delim + 1;
                 let bytes_end = bytes_start + length;
-                let bytes = &self.buf[bytes_start..bytes_end];
+                let bytes = &self.buf.get(bytes_start..bytes_end).ok_or_else(|| {
+                    Error::custom(format!(
+                        "could not get byte range {}..{}, data in the buffer: {:?}",
+                        bytes_start, bytes_end, &self.buf
+                    ))
+                    .set_context(self)
+                })?;
                 let rem = self.buf.get(bytes_end..).unwrap_or_default();
                 self.buf = rem;
                 Ok(bytes)
@@ -86,7 +92,14 @@ where
     T: serde::de::Deserialize<'a>,
 {
     let mut de = BencodeDeserializer::new_from_buf(buf);
-    Ok(T::deserialize(&mut de)?)
+    let v = T::deserialize(&mut de)?;
+    if !de.buf.is_empty() {
+        anyhow::bail!(
+            "deserialized successfully, but {} bytes remaining",
+            de.buf.len()
+        )
+    }
+    Ok(v)
 }
 
 #[derive(Debug)]
