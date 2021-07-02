@@ -8,6 +8,7 @@ pub mod http_api;
 pub mod lengths;
 pub mod peer_binary_protocol;
 pub mod peer_connection;
+pub mod peer_handler;
 pub mod peer_id;
 pub mod peer_state;
 pub mod serde_bencode_de;
