@@ -19,8 +19,11 @@ use crate::{
 pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
-    fn on_handshake(&self, handshake: Handshake);
-    fn on_extended_handshake(&self, extended_handshake: &ExtendedHandshake<ByteBuf>);
+    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
+    fn on_extended_handshake(
+        &self,
+        extended_handshake: &ExtendedHandshake<ByteBuf>,
+    ) -> anyhow::Result<()>;
     fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -146,7 +149,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut extended_handshake: Option<ExtendedHandshake<ByteString>> = None;
         let supports_extended = h.supports_extended();
 
-        self.handler.on_handshake(h);
+        self.handler.on_handshake(h)?;
         if read_so_far > size {
             read_buf.copy_within(size..read_so_far, 0);
         }
@@ -165,7 +168,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             match extended {
                 Message::Extended(ExtendedMessage::Handshake(h)) => {
                     trace!("received from {}: {:?}", self.addr, &h);
-                    self.handler.on_extended_handshake(&h);
+                    self.handler.on_extended_handshake(&h)?;
                     extended_handshake = Some(h.clone_to_owned())
                 }
                 other => anyhow::bail!("expected extended handshake, but got {:?}", other),

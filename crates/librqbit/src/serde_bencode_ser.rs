@@ -245,7 +245,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'s
     fn end(self) -> Result<Self::Ok, Self::Error> {
         for (key, value) in self.tmp {
             self.ser.write_bytes(key.as_bytes())?;
-            self.ser.write_raw(&dbg!(value))?;
+            self.ser.write_raw(&value)?;
         }
         self.ser.write_byte(b'e')
     }

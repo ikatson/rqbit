@@ -3,7 +3,6 @@ name = "librqbit"
 version = "0.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
-default-features = ["sha1-system"]
 
 [features]
 default = ["sha1-openssl"]

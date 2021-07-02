@@ -505,8 +505,9 @@ impl PeerConnectionHandler for PeerHandler {
         Some(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake) {
-        self.state.set_peer_live(self.addr, handshake)
+    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
+        self.state.set_peer_live(self.addr, handshake);
+        Ok(())
     }
 
     fn on_uploaded_bytes(&self, bytes: u32) {
@@ -520,7 +521,9 @@ impl PeerConnectionHandler for PeerHandler {
         self.state.file_ops().read_chunk(self.addr, chunk, buf)
     }
 
-    fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) {}
+    fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl PeerHandler {
