@@ -1,5 +1,3 @@
-use std::io::Write;
-
 // Wrapper for sha1 libraries.
 // Sha1 computation is the majority of CPU usage of this library.
 // openssl seems 2-3x faster, so using it for now, but
@@ -70,6 +68,7 @@ impl ISha1 for Sha1System {
     }
 
     fn update(&mut self, buf: &[u8]) {
+        use std::io::Write;
         self.inner.write_all(buf).unwrap();
     }
 

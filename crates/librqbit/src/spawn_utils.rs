@@ -35,6 +35,6 @@ impl BlockingSpawner {
             return tokio::task::block_in_place(f);
         }
 
-        return f();
+        f()
     }
 }

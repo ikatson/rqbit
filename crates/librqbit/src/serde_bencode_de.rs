@@ -1,15 +1,7 @@
-use serde::de::Deserializer;
-use serde::de::Error as DeError;
-use serde::Deserialize;
-use serde::Serializer;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-
 use crate::buffers::ByteBuf;
-use crate::buffers::ByteString;
-use crate::clone_to_owned::CloneToOwned;
 use crate::sha1w::ISha1;
 use crate::type_aliases::Sha1;
+use serde::de::Error as DeError;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],

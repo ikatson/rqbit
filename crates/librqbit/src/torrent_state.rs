@@ -13,10 +13,7 @@ use anyhow::Context;
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::{debug, info, trace, warn};
 use parking_lot::{Mutex, RwLock};
-use tokio::{
-    sync::mpsc::{channel, Sender, UnboundedSender},
-    time::timeout,
-};
+use tokio::{sync::mpsc::UnboundedSender, time::timeout};
 
 use crate::{
     buffers::{ByteBuf, ByteString},

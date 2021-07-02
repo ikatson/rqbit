@@ -1,4 +1,4 @@
-use std::{collections::HashMap, marker::PhantomData};
+use std::collections::HashMap;
 
 use bincode::Options;
 use byteorder::{ByteOrder, BE};
@@ -212,7 +212,7 @@ where
             Message::KeepAlive => Message::KeepAlive,
             Message::Have(v) => Message::Have(*v),
             Message::NotInterested => Message::NotInterested,
-            Message::Extended(e) => unimplemented!(),
+            Message::Extended(_) => unimplemented!(),
         }
     }
 }
@@ -618,7 +618,7 @@ pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, net::SocketAddr, ptr::read, str::FromStr};
+    use std::{net::SocketAddr, str::FromStr};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

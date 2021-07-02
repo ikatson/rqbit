@@ -157,6 +157,6 @@ impl ChunkTracker {
         if chunk_range.all() {
             return Some(ChunkMarkingResult::Completed);
         }
-        return Some(ChunkMarkingResult::NotCompleted);
+        Some(ChunkMarkingResult::NotCompleted)
     }
 }

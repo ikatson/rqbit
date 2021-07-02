@@ -77,7 +77,7 @@ impl TorrentManagerBuilder {
             self.overwrite,
             self.only_files,
             self.force_tracker_interval,
-            self.spawner.unwrap_or(BlockingSpawner::new(true)),
+            self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
         )
     }
 }
@@ -207,7 +207,6 @@ impl TorrentManager {
         );
         spawn("speed estimator updater", {
             let state = mgr.state.clone();
-            let estimator = estimator.clone();
             async move {
                 loop {
                     let downloaded = state.stats.downloaded_and_checked.load(Ordering::Relaxed);
@@ -295,14 +294,11 @@ impl TorrentManager {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
         let bytes = response.bytes().await?;
-        match crate::serde_bencode_de::from_bytes::<TrackerError>(&bytes) {
-            Ok(error) => anyhow::bail!(
+        if let Ok(error) = crate::serde_bencode_de::from_bytes::<TrackerError>(&bytes) {
+            anyhow::bail!(
                 "tracker returned failure. Failure reason: {}",
                 error.failure_reason
-            ),
-            Err(_) => {
-                // ignore, assume ok response
-            }
+            )
         };
         let response = crate::serde_bencode_de::from_bytes::<TrackerResponse>(&bytes)?;
 
@@ -340,7 +336,7 @@ impl TorrentManager {
                     event = None;
                     let interval = self
                         .force_tracker_interval
-                        .unwrap_or(Duration::from_secs(interval));
+                        .unwrap_or_else(|| Duration::from_secs(interval));
                     debug!(
                         "sleeping for {:?} after calling tracker {}",
                         interval,

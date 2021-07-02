@@ -240,8 +240,6 @@ where
 mod tests {
     use std::io::Read;
 
-    use crate::serde_bencode_de::from_bytes;
-
     use super::*;
 
     #[test]

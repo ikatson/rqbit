@@ -39,8 +39,8 @@ pub struct PeerConnection<H> {
 impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(addr: SocketAddr, info_hash: [u8; 20], peer_id: [u8; 20], handler: H) -> Self {
         PeerConnection {
-            addr,
             handler,
+            addr,
             info_hash,
             peer_id,
         }
@@ -103,13 +103,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         .context("error writing bitfield to peer")?;
                     debug!("sent bitfield to {}", self.addr);
                 }
-                // let len = {
-                // let bitfield = self.handler.get_have_bitfield();
-                // let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
-                // let len = msg.serialize(&mut buf);
-                // debug!("sending to {}: {:?}, length={}", self.addr, &msg, len);
-                // len
-                // };
             }
 
             loop {
