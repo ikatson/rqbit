@@ -14,7 +14,7 @@ use crate::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     peer_binary_protocol::Piece,
     sha1w::ISha1,
-    torrent_metainfo::{FileIteratorName, TorrentMetaV1Owned},
+    torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
     type_aliases::{PeerHandle, BF},
 };
 
@@ -48,7 +48,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
 }
 
 pub struct FileOps<'a, Sha1> {
-    torrent: &'a TorrentMetaV1Owned,
+    torrent: &'a TorrentMetaV1Info<ByteString>,
     files: &'a [Arc<Mutex<File>>],
     lengths: &'a Lengths,
     phantom_data: PhantomData<Sha1>,
@@ -56,7 +56,7 @@ pub struct FileOps<'a, Sha1> {
 
 impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
     pub fn new(
-        torrent: &'a TorrentMetaV1Owned,
+        torrent: &'a TorrentMetaV1Info<ByteString>,
         files: &'a [Arc<Mutex<File>>],
         lengths: &'a Lengths,
     ) -> Self {
@@ -98,7 +98,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut file_iterator = self
             .files
             .iter()
-            .zip(self.torrent.info.iter_filenames_and_lengths())
+            .zip(self.torrent.iter_filenames_and_lengths())
             .enumerate()
             .map(|(idx, (fd, (name, len)))| {
                 let full_file_required = if let Some(only_files) = only_files {
@@ -183,7 +183,6 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
             if self
                 .torrent
-                .info
                 .compare_hash(piece_info.piece_index.get(), computed_hash.finish())
                 .unwrap()
             {
@@ -229,9 +228,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
         let mut piece_remaining_bytes = piece_length as usize;
 
-        for (file_idx, (name, file_len)) in
-            self.torrent.info.iter_filenames_and_lengths().enumerate()
-        {
+        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths().enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -271,11 +268,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             absolute_offset = 0;
         }
 
-        match self
-            .torrent
-            .info
-            .compare_hash(piece_index.get(), h.finish())
-        {
+        match self.torrent.compare_hash(piece_index.get(), h.finish()) {
             Some(true) => {
                 debug!("piece={} hash matches", piece_index);
                 Ok(true)
@@ -304,7 +297,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
         let mut buf = result_buf;
 
-        for (file_idx, file_len) in self.torrent.info.iter_file_lengths().enumerate() {
+        for (file_idx, file_len) in self.torrent.iter_file_lengths().enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -358,9 +351,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
 
-        for (file_idx, (name, file_len)) in
-            self.torrent.info.iter_filenames_and_lengths().enumerate()
-        {
+        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths().enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;

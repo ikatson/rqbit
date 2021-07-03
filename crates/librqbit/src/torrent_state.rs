@@ -27,7 +27,7 @@ use crate::{
     peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
     peer_state::{InflightRequest, LivePeerState, PeerState},
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_metainfo::TorrentMetaV1Owned,
+    torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
     type_aliases::{PeerHandle, Sha1, BF},
 };
 
@@ -189,7 +189,7 @@ pub struct StatsSnapshot {
 }
 
 pub struct TorrentState {
-    pub torrent: TorrentMetaV1Owned,
+    pub torrent: TorrentMetaV1Info<ByteString>,
     pub locked: Arc<RwLock<TorrentStateLocked>>,
     pub files: Vec<Arc<Mutex<File>>>,
     pub info_hash: [u8; 20],
@@ -411,8 +411,7 @@ impl TorrentState {
             state: self.clone(),
             spawner: self.spawner,
         };
-        let peer_connection =
-            PeerConnection::new(addr, self.torrent.info_hash, self.peer_id, handler);
+        let peer_connection = PeerConnection::new(addr, self.info_hash, self.peer_id, handler);
         spawn(format!("manage_peer({})", handle), async move {
             if let Err(e) = peer_connection.manage_peer(out_rx).await {
                 debug!("error managing peer {}: {:#}", handle, e)

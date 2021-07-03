@@ -159,7 +159,7 @@ impl TorrentManager {
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results = FileOps::<Sha1>::new(&torrent, &files, &lengths)
+        let initial_check_results = FileOps::<Sha1>::new(&torrent.info, &files, &lengths)
             .initial_check(only_files.as_deref())?;
 
         info!(
@@ -176,7 +176,7 @@ impl TorrentManager {
 
         let state = Arc::new(TorrentState {
             info_hash: torrent.info_hash,
-            torrent,
+            torrent: torrent.info,
             peer_id,
             locked: Arc::new(RwLock::new(TorrentStateLocked {
                 peers: Default::default(),
@@ -312,7 +312,7 @@ impl TorrentManager {
         let mut event = Some(TrackerRequestEvent::Started);
         loop {
             let request = TrackerRequest {
-                info_hash: self.state.torrent.info_hash,
+                info_hash: self.state.info_hash,
                 peer_id: self.state.peer_id,
                 port: 6778,
                 uploaded: self.state.get_uploaded(),
