@@ -57,7 +57,7 @@ enum LogLevel {
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Igor Katson <igor.katson@gmail.com>")]
 struct Opts {
-    /// The filename or URL of the .torrent file.
+    /// The filename or URL of the torrent. If URL, http/https/magnet are supported.
     torrent_path: String,
 
     /// The filename of the .torrent file.
@@ -182,7 +182,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 librqbit::dht::inforead::ReadMetainfoResult::Found { info, rx, seen } => {
                     (info, rx, seen)
                 }
-                librqbit::dht::inforead::ReadMetainfoResult::ChannelClosed { seen } => {
+                librqbit::dht::inforead::ReadMetainfoResult::ChannelClosed { .. } => {
                     anyhow::bail!("DHT died, no way to discover torrent metainfo")
                 }
             };
@@ -198,7 +198,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 .filter_map(|url| match reqwest::Url::parse(&url) {
                     Ok(url) => Some(url),
                     Err(e) => {
-                        warn!("error parsing tracker {} as url", url);
+                        warn!("error parsing tracker {} as url: {}", url, e);
                         None
                     }
                 })
@@ -269,7 +269,10 @@ async fn main_info(
         None
     };
     let mut builder = TorrentManagerBuilder::new(info, info_hash, opts.output_folder);
-    builder.overwrite(opts.overwrite).spawner(spawner);
+    builder
+        .overwrite(opts.overwrite)
+        .spawner(spawner)
+        .peer_id(peer_id);
     if let Some(only_files) = only_files {
         builder.only_files(only_files);
     }
@@ -283,7 +286,7 @@ async fn main_info(
     for peer in initial_peers {
         handle.add_peer(peer);
     }
-    spawn("peer adder", {
+    spawn("DHT peer adder", {
         let handle = handle.clone();
         async move {
             while let Some(peer) = dht_peer_rx.recv().await {

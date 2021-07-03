@@ -37,6 +37,7 @@ pub struct TorrentManagerBuilder {
     overwrite: bool,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
+    peer_id: Option<[u8; 20]>,
     force_tracker_interval: Option<Duration>,
     spawner: Option<BlockingSpawner>,
 }
@@ -53,6 +54,7 @@ impl TorrentManagerBuilder {
             overwrite: false,
             output_folder: output_folder.as_ref().into(),
             only_files: None,
+            peer_id: None,
             force_tracker_interval: None,
             spawner: None,
         }
@@ -78,6 +80,11 @@ impl TorrentManagerBuilder {
         self
     }
 
+    pub fn peer_id(&mut self, peer_id: [u8; 20]) -> &mut Self {
+        self.peer_id = Some(peer_id);
+        self
+    }
+
     pub fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
         TorrentManager::start(
             self.info,
@@ -86,6 +93,7 @@ impl TorrentManagerBuilder {
             self.overwrite,
             self.only_files,
             self.force_tracker_interval,
+            self.peer_id,
             self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
         )
     }
@@ -123,6 +131,7 @@ impl TorrentManagerHandle {
 
 struct TorrentManager {
     state: Arc<TorrentState>,
+    #[allow(dead_code)]
     speed_estimator: Arc<SpeedEstimator>,
     trackers: Mutex<HashSet<Url>>,
     force_tracker_interval: Option<Duration>,
@@ -136,13 +145,15 @@ fn make_lengths<ByteBuf: Clone + Deref<Target = [u8]>>(
 }
 
 impl TorrentManager {
-    pub fn start<P: AsRef<Path>>(
+    #[allow(clippy::too_many_arguments)]
+    fn start<P: AsRef<Path>>(
         info: TorrentMetaV1Info<ByteString>,
         info_hash: [u8; 20],
         out: P,
         overwrite: bool,
         only_files: Option<Vec<usize>>,
         force_tracker_interval: Option<Duration>,
+        peer_id: Option<[u8; 20]>,
         spawner: BlockingSpawner,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let files = {
@@ -180,7 +191,7 @@ impl TorrentManager {
             files
         };
 
-        let peer_id = generate_peer_id();
+        let peer_id = peer_id.unwrap_or_else(generate_peer_id);
         let lengths = make_lengths(&info).context("unable to compute Lengths from torrent")?;
         debug!("computed lengths: {:?}", &lengths);
 

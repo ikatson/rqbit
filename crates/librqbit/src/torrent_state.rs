@@ -27,7 +27,7 @@ use crate::{
     peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
     peer_state::{InflightRequest, LivePeerState, PeerState},
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
+    torrent_metainfo::TorrentMetaV1Info,
     type_aliases::{PeerHandle, Sha1, BF},
 };
 

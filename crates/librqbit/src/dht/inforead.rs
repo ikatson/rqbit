@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use futures::{stream::FuturesUnordered, StreamExt};
-use log::warn;
+use log::debug;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{buffers::ByteString, peer_info_reader, torrent_metainfo::TorrentMetaV1Info};
@@ -50,7 +50,7 @@ pub async fn read_metainfo_from_peer_receiver(
                 match done {
                     Some(Ok(info)) => return ReadMetainfoResult::Found { info, seen, rx: addrs },
                     Some(Err(e)) => {
-                        warn!("error in peer_info_reader::read_metainfo_from_peer: {}", e);
+                        debug!("error in peer_info_reader::read_metainfo_from_peer: {}", e);
                     },
                     None => unreachable!()
                 }

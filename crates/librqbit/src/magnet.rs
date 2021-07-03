@@ -27,12 +27,10 @@ impl Magnet {
             }
         }
         match info_hash {
-            Some(info_hash) => {
-                return Ok(Magnet {
-                    info_hash,
-                    trackers,
-                })
-            }
+            Some(info_hash) => Ok(Magnet {
+                info_hash,
+                trackers,
+            }),
             None => {
                 anyhow::bail!("did not find infohash")
             }
