@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
+    net::SocketAddr,
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
@@ -11,14 +12,13 @@ use std::{
 };
 
 use anyhow::Context;
-use futures::{stream::FuturesUnordered, StreamExt};
-use log::{debug, info, warn};
+use log::{debug, info};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
 use size_format::SizeFormatterBinary as SF;
 
 use crate::{
-    buffers::{ByteBuf, ByteString},
+    buffers::ByteString,
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     http_api::make_and_run_http_api,
@@ -26,7 +26,7 @@ use crate::{
     peer_id::generate_peer_id,
     spawn_utils::{spawn, BlockingSpawner},
     speed_estimator::SpeedEstimator,
-    torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
+    torrent_metainfo::TorrentMetaV1Info,
     torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::Sha1,
@@ -107,6 +107,9 @@ impl TorrentManagerHandle {
         } else {
             false
         }
+    }
+    pub fn add_peer(&self, addr: SocketAddr) -> bool {
+        self.manager.state.add_peer_if_not_seen(addr)
     }
     pub async fn cancel(&self) -> anyhow::Result<()> {
         todo!()
