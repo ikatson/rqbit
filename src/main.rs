@@ -7,7 +7,8 @@ use librqbit::{
     torrent_manager::TorrentManagerBuilder,
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Owned},
 };
-use log::info;
+use log::{info, warn};
+use reqwest::Url;
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
@@ -178,7 +179,28 @@ fn main() -> anyhow::Result<()> {
             None
         };
 
-        let mut builder = TorrentManagerBuilder::new(torrent, opts.output_folder);
+        let trackers = torrent
+            .iter_announce()
+            .filter_map(|tracker| {
+                let url = match std::str::from_utf8(tracker.as_ref()) {
+                    Ok(url) => url,
+                    Err(_) => {
+                        warn!("cannot parse tracker url as utf-8, ignoring");
+                        return None;
+                    }
+                };
+                match Url::parse(url) {
+                    Ok(url) => Some(url),
+                    Err(e) => {
+                        warn!("cannot parse tracker URL {}: {}", url, e);
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let mut builder =
+            TorrentManagerBuilder::new(torrent.info, torrent.info_hash, opts.output_folder);
         builder.overwrite(opts.overwrite).spawner(spawner);
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
@@ -188,8 +210,13 @@ fn main() -> anyhow::Result<()> {
             builder.force_tracker_interval(Duration::from_secs(interval));
         }
 
-        let manager_handle = builder.start_manager().await?;
-        manager_handle.wait_until_completed().await?;
+        let handle = builder.start_manager()?;
+
+        for url in trackers {
+            handle.add_tracker(url);
+        }
+
+        handle.wait_until_completed().await?;
         Ok(())
     })
 }
