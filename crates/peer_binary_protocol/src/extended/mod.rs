@@ -1,6 +1,9 @@
+use bencode::bencode_serialize_to_writer;
+use bencode::from_bytes;
+use bencode::BencodeValue;
+use buffers::ByteString;
+use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
-
-use crate::{bencode_value::BencodeValue, buffers::ByteString, clone_to_owned::CloneToOwned};
 
 use self::{handshake::ExtendedHandshake, ut_metadata::UtMetadata};
 
@@ -46,11 +49,11 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
         match self {
             ExtendedMessage::Dyn(msg_id, v) => {
                 out.push(*msg_id);
-                crate::serde_bencode_ser::bencode_serialize_to_writer(v, out)?;
+                bencode_serialize_to_writer(v, out)?;
             }
             ExtendedMessage::Handshake(h) => {
                 out.push(0);
-                crate::serde_bencode_ser::bencode_serialize_to_writer(h, out)?;
+                bencode_serialize_to_writer(h, out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
                 let h = extended_handshake.ok_or_else(|| {
@@ -70,8 +73,6 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
     where
         ByteBuf: Deserialize<'a> + From<&'a [u8]>,
     {
-        use crate::serde_bencode_de::from_bytes;
-
         let emsg_id = buf.get(0).copied().ok_or_else(|| {
             MessageDeserializeError::Other(anyhow::anyhow!(
                 "cannot deserialize extended message: can't read first byte"

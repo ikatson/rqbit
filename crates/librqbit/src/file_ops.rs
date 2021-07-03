@@ -6,17 +6,17 @@ use std::{
 };
 
 use anyhow::Context;
+use buffers::ByteString;
+use librqbit_core::{
+    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
+};
 use log::{debug, trace, warn};
 use parking_lot::Mutex;
+use peer_binary_protocol::Piece;
+use sha1w::ISha1;
 
-use crate::{
-    buffers::ByteString,
-    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    peer_binary_protocol::Piece,
-    sha1w::ISha1,
-    torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
-    type_aliases::{PeerHandle, BF},
-};
+use crate::type_aliases::{PeerHandle, BF};
 
 pub struct InitialCheckResults {
     pub needed_pieces: BF,

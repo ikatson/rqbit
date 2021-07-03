@@ -1,5 +1,17 @@
 [workspace]
 members = [
     "crates/librqbit",
-    "crates/rqbit"
+    "crates/rqbit",
+    "crates/buffers",
+    "crates/clone_to_owned",
+    "crates/bencode",
+    "crates/sha1w",
+    "crates/librqbit_core",
+    "crates/peer_binary_protocol"
 ]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

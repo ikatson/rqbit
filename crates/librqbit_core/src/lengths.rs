@@ -1,4 +1,4 @@
-use crate::{constants::CHUNK_SIZE, peer_binary_protocol::Piece};
+use crate::constants::CHUNK_SIZE;
 
 const fn is_power_of_two(x: u64) -> bool {
     (x != 0) && ((x & (x - 1)) == 0)
@@ -189,18 +189,13 @@ impl Lengths {
         })
     }
 
-    pub fn chunk_info_from_received_piece<ByteBuf>(
+    pub fn chunk_info_from_received_piece(
         &self,
-        piece: &Piece<ByteBuf>,
-    ) -> Option<ChunkInfo>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
-        self.chunk_info_from_received_data(
-            self.validate_piece_index(piece.index)?,
-            piece.begin,
-            piece.block.as_ref().len() as u32,
-        )
+        index: u32,
+        begin: u32,
+        block_len: u32,
+    ) -> Option<ChunkInfo> {
+        self.chunk_info_from_received_data(self.validate_piece_index(index)?, begin, block_len)
     }
     pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
         let start = index.0 * self.chunks_per_piece;

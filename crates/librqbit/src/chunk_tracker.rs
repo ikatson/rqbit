@@ -1,10 +1,8 @@
+use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use log::{debug, info};
+use peer_binary_protocol::Piece;
 
-use crate::{
-    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    peer_binary_protocol::Piece,
-    type_aliases::BF,
-};
+use crate::type_aliases::BF;
 
 pub struct ChunkTracker {
     // This forms the basis of a "queue" to pull from.
@@ -131,7 +129,11 @@ impl ChunkTracker {
     where
         ByteBuf: AsRef<[u8]>,
     {
-        let chunk_info = self.lengths.chunk_info_from_received_piece(piece)?;
+        let chunk_info = self.lengths.chunk_info_from_received_piece(
+            piece.index,
+            piece.begin,
+            piece.block.as_ref().len() as u32,
+        )?;
         let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
         let chunk_range = self.chunk_status.get_mut(chunk_range).unwrap();
         if chunk_range.all() {

@@ -1,12 +1,10 @@
 use std::{collections::HashMap, marker::PhantomData};
 
+use buffers::{ByteBuf, ByteString};
+use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer};
 
-use crate::{
-    buffers::{ByteBuf, ByteString},
-    clone_to_owned::CloneToOwned,
-    serde_bencode_de::from_bytes,
-};
+use crate::serde_bencode_de::from_bytes;
 
 pub fn dyn_from_bytes<'de, ByteBuf>(buf: &'de [u8]) -> anyhow::Result<BencodeValue<ByteBuf>>
 where

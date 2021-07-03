@@ -1,11 +1,12 @@
 use std::io::Write;
 
-use crate::{
-    clone_to_owned::CloneToOwned, peer_binary_protocol::MessageDeserializeError,
-    serde_bencode_de::BencodeDeserializer, serde_bencode_ser::bencode_serialize_to_writer,
-};
+use bencode::bencode_serialize_to_writer;
+use bencode::BencodeDeserializer;
+use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
 use serde::Serialize;
+
+use crate::MessageDeserializeError;
 
 #[derive(Debug)]
 pub enum UtMetadata<ByteBuf> {

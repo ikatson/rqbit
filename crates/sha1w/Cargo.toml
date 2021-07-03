@@ -1,0 +1,22 @@
+[package]
+name = "sha1w"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["default-sha1-openssl"]
+sha1-system = ["crypto-hash"]
+sha1-openssl = ["openssl"]
+sha1-rust = ["sha1"]
+default-sha1-openssl = ["sha1-openssl"]
+default-sha1-rust = ["sha1-rust"]
+default-sha1-system = ["sha1-system"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+openssl = {version="0.10", optional=true}
+crypto-hash = {version="0.3", optional=true}
+sha1 = {version = "0.6", optional=true}

@@ -1,23 +1,22 @@
 use std::net::SocketAddr;
 
-use crate::sha1w::ISha1;
-use log::debug;
-use parking_lot::{Mutex, RwLock};
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::{
-    buffers::{ByteBuf, ByteString},
+use bencode::from_bytes;
+use buffers::{ByteBuf, ByteString};
+use librqbit_core::{
     constants::CHUNK_SIZE,
     lengths::{ceil_div_u64, last_element_size_u64, ChunkInfo},
-    peer_binary_protocol::{
-        extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
-        Handshake, Message,
-    },
-    peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
-    serde_bencode_de::from_bytes,
     torrent_metainfo::TorrentMetaV1Info,
-    type_aliases::Sha1,
 };
+use log::debug;
+use parking_lot::{Mutex, RwLock};
+use peer_binary_protocol::{
+    extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
+    Handshake, Message,
+};
+use sha1w::{ISha1, Sha1};
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest};
 
 pub async fn read_metainfo_from_peer(
     addr: SocketAddr,
@@ -217,7 +216,7 @@ impl PeerConnectionHandler for Handler {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Once};
 
-    use crate::peer_id::generate_peer_id;
+    use librqbit_core::peer_id::generate_peer_id;
 
     use super::read_metainfo_from_peer;
 

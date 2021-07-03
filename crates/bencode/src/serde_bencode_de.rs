@@ -1,14 +1,15 @@
-use crate::buffers::ByteBuf;
-use crate::sha1w::ISha1;
-use crate::type_aliases::Sha1;
+use buffers::ByteBuf;
 use serde::de::Error as DeError;
+use sha1w::{ISha1, Sha1};
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
     field_context: Vec<ByteBuf<'de>>,
     parsing_key: bool,
-    pub(crate) is_torrent_info: bool,
-    pub(crate) torrent_info_digest: Option<[u8; 20]>,
+
+    // This is a f**ing hack
+    pub is_torrent_info: bool,
+    pub torrent_info_digest: Option<[u8; 20]>,
 }
 
 impl<'de> BencodeDeserializer<'de> {

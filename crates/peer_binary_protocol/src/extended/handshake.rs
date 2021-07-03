@@ -3,13 +3,13 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
+use buffers::ByteBuf;
 use byteorder::ByteOrder;
 use byteorder::BE;
+use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{
-    buffers::ByteBuf, clone_to_owned::CloneToOwned, peer_binary_protocol::MY_EXTENDED_UT_METADATA,
-};
+use crate::MY_EXTENDED_UT_METADATA;
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {

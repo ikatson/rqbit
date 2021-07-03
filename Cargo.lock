@@ -41,6 +41,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
 
 [[package]]
+name = "bencode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffers",
+ "clone_to_owned",
+ "serde",
+ "sha1w",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -84,6 +95,14 @@ checksum = "b953a6887648bb07a535631f2bc00fbdb2a2216f135552cb3f534ed136b9c07f"
 dependencies = [
  "memchr",
  "safemem",
+]
+
+[[package]]
+name = "buffers"
+version = "0.1.0"
+dependencies = [
+ "clone_to_owned",
+ "serde",
 ]
 
 [[package]]
@@ -147,6 +166,10 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "clone_to_owned"
+version = "0.1.0"
 
 [[package]]
 name = "commoncrypto"
@@ -643,26 +666,48 @@ name = "librqbit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bencode",
  "bincode",
  "bitvec",
+ "buffers",
  "byteorder",
+ "clone_to_owned",
  "crypto-hash",
  "futures",
  "hex 0.4.3",
+ "librqbit_core",
  "log",
  "openssl",
  "parking_lot",
+ "peer_binary_protocol",
  "pretty_env_logger",
  "rand 0.8.4",
  "reqwest",
  "serde",
  "sha1",
+ "sha1w",
  "size_format",
  "tokio",
  "url",
  "urlencoding",
  "uuid",
  "warp",
+]
+
+[[package]]
+name = "librqbit_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bencode",
+ "buffers",
+ "clone_to_owned",
+ "hex 0.4.3",
+ "log",
+ "parking_lot",
+ "serde",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -926,6 +971,21 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "winapi",
+]
+
+[[package]]
+name = "peer_binary_protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bencode",
+ "bincode",
+ "bitvec",
+ "buffers",
+ "byteorder",
+ "clone_to_owned",
+ "librqbit_core",
+ "serde",
 ]
 
 [[package]]
@@ -1337,6 +1397,15 @@ name = "sha1"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2579985fda508104f7587689507983eadd6a6e84dd35d6d115361f530916fa0d"
+
+[[package]]
+name = "sha1w"
+version = "0.1.0"
+dependencies = [
+ "crypto-hash",
+ "openssl",
+ "sha1",
+]
 
 [[package]]
 name = "size_format"

@@ -1,3 +1,4 @@
+use buffers::ByteBuf;
 use byteorder::ByteOrder;
 use serde::{Deserialize, Deserializer};
 use std::{
@@ -6,8 +7,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     str::FromStr,
 };
-
-use crate::buffers::ByteBuf;
 
 #[derive(Clone, Copy)]
 pub enum TrackerRequestEvent {

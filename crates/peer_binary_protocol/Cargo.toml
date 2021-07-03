@@ -1,0 +1,17 @@
+[package]
+name = "peer_binary_protocol"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = {version = "1", features = ["derive"]}
+bincode = "1"
+byteorder = "1"
+buffers = {path="../buffers"}
+bencode = {path="../bencode"}
+clone_to_owned = {path="../clone_to_owned"}
+librqbit_core = {path="../librqbit_core"}
+bitvec = "0.22"
+anyhow = "1"

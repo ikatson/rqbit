@@ -12,24 +12,25 @@ use std::{
 };
 
 use anyhow::Context;
+use bencode::from_bytes;
+use buffers::ByteString;
+use librqbit_core::{
+    lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
+    torrent_metainfo::TorrentMetaV1Info,
+};
 use log::{debug, info};
 use parking_lot::{Mutex, RwLock};
 use reqwest::Url;
+use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
 
 use crate::{
-    buffers::ByteString,
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     http_api::make_and_run_http_api,
-    lengths::Lengths,
-    peer_id::generate_peer_id,
     spawn_utils::{spawn, BlockingSpawner},
-    speed_estimator::SpeedEstimator,
-    torrent_metainfo::TorrentMetaV1Info,
     torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
-    type_aliases::Sha1,
 };
 pub struct TorrentManagerBuilder {
     info: TorrentMetaV1Info<ByteString>,
@@ -307,13 +308,13 @@ impl TorrentManager {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
         let bytes = response.bytes().await?;
-        if let Ok(error) = crate::serde_bencode_de::from_bytes::<TrackerError>(&bytes) {
+        if let Ok(error) = from_bytes::<TrackerError>(&bytes) {
             anyhow::bail!(
                 "tracker returned failure. Failure reason: {}",
                 error.failure_reason
             )
         };
-        let response = crate::serde_bencode_de::from_bytes::<TrackerResponse>(&bytes)?;
+        let response = from_bytes::<TrackerResponse>(&bytes)?;
 
         for peer in response.peers.iter_sockaddrs() {
             self.state.add_peer_if_not_seen(peer);

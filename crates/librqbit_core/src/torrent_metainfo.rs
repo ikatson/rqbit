@@ -1,12 +1,9 @@
 use std::{fmt::Write, ops::Deref, path::PathBuf};
 
+use bencode::BencodeDeserializer;
+use buffers::{ByteBuf, ByteString};
+use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
-
-use crate::{
-    buffers::{ByteBuf, ByteString},
-    clone_to_owned::CloneToOwned,
-    serde_bencode_de::BencodeDeserializer,
-};
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;

@@ -19,9 +19,3 @@ regex = "1"
 
 [dev-dependencies]
 futures = {version = "0.3"}
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"

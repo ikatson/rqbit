@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Serialize, Serializer};
 
-use crate::buffers::ByteString;
+use buffers::ByteString;
 
 #[derive(Debug)]
 pub enum SerErrorKind {

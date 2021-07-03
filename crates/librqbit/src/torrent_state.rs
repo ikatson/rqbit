@@ -10,25 +10,28 @@ use std::{
 };
 
 use anyhow::Context;
+use buffers::{ByteBuf, ByteString};
+use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
+use librqbit_core::{
+    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    torrent_metainfo::TorrentMetaV1Info,
+};
 use log::{debug, info, trace, warn};
 use parking_lot::{Mutex, RwLock};
+use peer_binary_protocol::{
+    extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
+};
+use sha1w::Sha1;
 use tokio::{sync::mpsc::UnboundedSender, time::timeout};
 
 use crate::{
-    buffers::{ByteBuf, ByteString},
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
-    clone_to_owned::CloneToOwned,
     file_ops::FileOps,
-    lengths::{Lengths, ValidPieceIndex},
-    peer_binary_protocol::{
-        extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
-    },
     peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
     peer_state::{InflightRequest, LivePeerState, PeerState},
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_metainfo::TorrentMetaV1Info,
-    type_aliases::{PeerHandle, Sha1, BF},
+    type_aliases::{PeerHandle, BF},
 };
 
 pub struct InflightPiece {
@@ -516,7 +519,7 @@ impl PeerConnectionHandler for PeerHandler {
             .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
-    fn read_chunk(&self, chunk: &crate::lengths::ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()> {
+    fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()> {
         self.state.file_ops().read_chunk(self.addr, chunk, buf)
     }
 
@@ -764,7 +767,11 @@ impl PeerHandler {
     }
 
     fn on_received_piece(&self, handle: PeerHandle, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
-        let chunk_info = match self.state.lengths.chunk_info_from_received_piece(&piece) {
+        let chunk_info = match self.state.lengths.chunk_info_from_received_piece(
+            piece.index,
+            piece.begin,
+            piece.block.len() as u32,
+        ) {
             Some(i) => i,
             None => {
                 anyhow::bail!(

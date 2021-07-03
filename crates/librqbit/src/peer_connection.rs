@@ -1,20 +1,16 @@
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
+use buffers::{ByteBuf, ByteString};
+use clone_to_owned::CloneToOwned;
+use librqbit_core::{lengths::ChunkInfo, peer_id::try_decode_peer_id};
 use log::{debug, trace};
-use tokio::time::timeout;
-
-use crate::{
-    buffers::{ByteBuf, ByteString},
-    clone_to_owned::CloneToOwned,
-    lengths::ChunkInfo,
-    peer_binary_protocol::{
-        extended::{handshake::ExtendedHandshake, ExtendedMessage},
-        serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
-        MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
-    },
-    peer_id::try_decode_peer_id,
+use peer_binary_protocol::{
+    extended::{handshake::ExtendedHandshake, ExtendedMessage},
+    serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
+    MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
 };
+use tokio::time::timeout;
 
 pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;

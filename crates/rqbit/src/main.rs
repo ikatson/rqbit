@@ -3,14 +3,12 @@ use std::{fs::File, io::Read, net::SocketAddr, time::Duration};
 use anyhow::Context;
 use clap::Clap;
 use librqbit::{
-    buffers::ByteString,
     dht::{inforead::read_metainfo_from_peer_receiver, jsdht::JsDht},
-    info_hash::InfoHash,
-    magnet,
-    peer_id::generate_peer_id,
+    generate_peer_id,
     spawn_utils::{spawn, BlockingSpawner},
+    torrent_from_bytes,
     torrent_manager::TorrentManagerBuilder,
-    torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
+    ByteString, InfoHash, Magnet, TorrentMetaV1Info, TorrentMetaV1Owned,
 };
 use log::{info, warn};
 use reqwest::Url;
@@ -171,11 +169,10 @@ fn main() -> anyhow::Result<()> {
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
     let peer_id = generate_peer_id();
     if opts.torrent_path.starts_with("magnet:") {
-        let magnet::Magnet {
+        let Magnet {
             info_hash,
             trackers,
-        } = magnet::Magnet::parse(&opts.torrent_path)
-            .context("provided path is not a valid magnet URL")?;
+        } = Magnet::parse(&opts.torrent_path).context("provided path is not a valid magnet URL")?;
         let dht_rx = JsDht::new(info_hash).start_peer_discovery()?;
         let (info, dht_rx, initial_peers) =
             match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx).await {

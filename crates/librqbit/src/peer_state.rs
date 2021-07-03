@@ -1,11 +1,9 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
+use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use tokio::sync::{Notify, Semaphore};
 
-use crate::{
-    lengths::{ChunkInfo, ValidPieceIndex},
-    type_aliases::BF,
-};
+use crate::type_aliases::BF;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct InflightRequest {

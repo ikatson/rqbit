@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use librqbit_core::speed_estimator::SpeedEstimator;
 use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 use warp::Filter;
 
-use crate::speed_estimator::SpeedEstimator;
 use crate::torrent_state::TorrentState;
 
 // This is just a stub for debugging, nothing useful here.

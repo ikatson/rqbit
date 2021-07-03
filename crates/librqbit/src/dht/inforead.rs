@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
 
+use buffers::ByteString;
 use futures::{stream::FuturesUnordered, StreamExt};
+use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{buffers::ByteString, peer_info_reader, torrent_metainfo::TorrentMetaV1Info};
+use crate::peer_info_reader;
 
 #[derive(Debug)]
 pub enum ReadMetainfoResult {
@@ -61,9 +63,11 @@ pub async fn read_metainfo_from_peer_receiver(
 
 #[cfg(test)]
 mod tests {
+    use librqbit_core::{info_hash::decode_info_hash, peer_id::generate_peer_id};
+
+    use crate::dht::jsdht::JsDht;
+
     use super::*;
-    use crate::info_hash::decode_info_hash;
-    use crate::{dht::jsdht::JsDht, peer_id::generate_peer_id};
     use std::sync::Once;
 
     static LOG_INIT: Once = Once::new();

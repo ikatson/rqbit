@@ -1,15 +1,11 @@
 pub mod extended;
 
 use bincode::Options;
+use buffers::{ByteBuf, ByteString};
 use byteorder::{ByteOrder, BE};
+use clone_to_owned::CloneToOwned;
+use librqbit_core::{constants::CHUNK_SIZE, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    buffers::{ByteBuf, ByteString},
-    clone_to_owned::CloneToOwned,
-    constants::CHUNK_SIZE,
-    lengths::ChunkInfo,
-};
 
 use self::extended::{handshake::ExtendedHandshake, ExtendedMessage};
 

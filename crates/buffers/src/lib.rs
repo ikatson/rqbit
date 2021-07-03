@@ -1,6 +1,6 @@
 use serde::{Deserialize, Deserializer};
 
-use crate::clone_to_owned::CloneToOwned;
+use clone_to_owned::CloneToOwned;
 
 #[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub struct ByteString(pub Vec<u8>);
@@ -69,7 +69,15 @@ impl std::fmt::Display for ByteString {
     }
 }
 
-impl<B: ByteBufT> CloneToOwned for B {
+impl<'a> CloneToOwned for ByteBuf<'a> {
+    type Target = ByteString;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        ByteString(self.as_slice().to_owned())
+    }
+}
+
+impl CloneToOwned for ByteString {
     type Target = ByteString;
 
     fn clone_to_owned(&self) -> Self::Target {
