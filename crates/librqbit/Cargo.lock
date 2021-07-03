@@ -618,6 +618,7 @@ dependencies = [
  "sha1",
  "size_format",
  "tokio",
+ "url",
  "urlencoding",
  "uuid",
  "warp",

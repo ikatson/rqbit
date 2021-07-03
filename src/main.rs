@@ -1,14 +1,20 @@
-use std::{fs::File, io::Read, time::Duration};
+use std::{fs::File, io::Read, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
 use librqbit::{
-    spawn_utils::BlockingSpawner,
+    buffers::ByteString,
+    dht::{inforead::read_metainfo_from_peer_receiver, jsdht::JsDht},
+    info_hash::InfoHash,
+    magnet,
+    peer_id::generate_peer_id,
+    spawn_utils::{spawn, BlockingSpawner},
     torrent_manager::TorrentManagerBuilder,
-    torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Owned},
+    torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
 };
 use log::{info, warn};
 use reqwest::Url;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
@@ -87,13 +93,13 @@ struct Opts {
     single_thread_runtime: bool,
 }
 
-fn compute_only_files(
-    torrent: &TorrentMetaV1Owned,
+fn compute_only_files<ByteBuf: Clone + std::ops::Deref<Target = [u8]> + AsRef<[u8]>>(
+    torrent: &TorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
 ) -> anyhow::Result<Vec<usize>> {
     let filename_re = regex::Regex::new(&filename_re).context("filename regex is incorrect")?;
     let mut only_files = Vec::new();
-    for (idx, (filename, _)) in torrent.info.iter_filenames_and_lengths().enumerate() {
+    for (idx, (filename, _)) in torrent.iter_filenames_and_lengths().enumerate() {
         let full_path = filename
             .to_pathbuf()
             .with_context(|| format!("filename of file {} is not valid utf8", idx))?;
@@ -159,7 +165,48 @@ fn main() -> anyhow::Result<()> {
         .max_blocking_threads(8)
         .build()?;
 
-    rt.block_on(async move {
+    rt.block_on(async_main(opts, spawner))
+}
+
+async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
+    let peer_id = generate_peer_id();
+    if opts.torrent_path.starts_with("magnet:") {
+        let magnet::Magnet {
+            info_hash,
+            trackers,
+        } = magnet::Magnet::parse(&opts.torrent_path)
+            .context("provided path is not a valid magnet URL")?;
+        let dht_rx = JsDht::new(info_hash).start_peer_discovery()?;
+        let (info, dht_rx, initial_peers) =
+            match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx).await {
+                librqbit::dht::inforead::ReadMetainfoResult::Found { info, rx, seen } => {
+                    (info, rx, seen)
+                }
+                librqbit::dht::inforead::ReadMetainfoResult::ChannelClosed { seen } => {
+                    anyhow::bail!("DHT died, no way to discover torrent metainfo")
+                }
+            };
+        main_info(
+            opts,
+            info_hash,
+            info,
+            peer_id,
+            dht_rx,
+            initial_peers,
+            trackers
+                .into_iter()
+                .filter_map(|url| match reqwest::Url::parse(&url) {
+                    Ok(url) => Some(url),
+                    Err(e) => {
+                        warn!("error parsing tracker {} as url", url);
+                        None
+                    }
+                })
+                .collect(),
+            spawner,
+        )
+        .await
+    } else {
         let torrent = if opts.torrent_path.starts_with("http://")
             || opts.torrent_path.starts_with("https://")
         {
@@ -167,18 +214,7 @@ fn main() -> anyhow::Result<()> {
         } else {
             torrent_from_file(&opts.torrent_path)?
         };
-
-        info!("Torrent metadata: {:#?}", &torrent);
-        if opts.list {
-            return Ok(());
-        }
-
-        let only_files = if let Some(filename_re) = opts.only_files_matching_regex {
-            Some(compute_only_files(&torrent, &filename_re)?)
-        } else {
-            None
-        };
-
+        let dht_rx = JsDht::new(torrent.info_hash).start_peer_discovery()?;
         let trackers = torrent
             .iter_announce()
             .filter_map(|tracker| {
@@ -198,25 +234,65 @@ fn main() -> anyhow::Result<()> {
                 }
             })
             .collect::<Vec<_>>();
+        main_info(
+            opts,
+            torrent.info_hash,
+            torrent.info,
+            peer_id,
+            dht_rx,
+            Vec::new(),
+            trackers,
+            spawner,
+        )
+        .await
+    }
+}
 
-        let mut builder =
-            TorrentManagerBuilder::new(torrent.info, torrent.info_hash, opts.output_folder);
-        builder.overwrite(opts.overwrite).spawner(spawner);
-        if let Some(only_files) = only_files {
-            builder.only_files(only_files);
+#[allow(clippy::too_many_arguments)]
+async fn main_info(
+    opts: Opts,
+    info_hash: InfoHash,
+    info: TorrentMetaV1Info<ByteString>,
+    peer_id: [u8; 20],
+    mut dht_peer_rx: UnboundedReceiver<SocketAddr>,
+    initial_peers: Vec<SocketAddr>,
+    trackers: Vec<reqwest::Url>,
+    spawner: BlockingSpawner,
+) -> anyhow::Result<()> {
+    info!("Torrent info: {:#?}", &info);
+    if opts.list {
+        return Ok(());
+    }
+    let only_files = if let Some(filename_re) = opts.only_files_matching_regex {
+        Some(compute_only_files(&info, &filename_re)?)
+    } else {
+        None
+    };
+    let mut builder = TorrentManagerBuilder::new(info, info_hash, opts.output_folder);
+    builder.overwrite(opts.overwrite).spawner(spawner);
+    if let Some(only_files) = only_files {
+        builder.only_files(only_files);
+    }
+    if let Some(interval) = opts.force_tracker_interval {
+        builder.force_tracker_interval(Duration::from_secs(interval));
+    }
+    let handle = builder.start_manager()?;
+    for url in trackers {
+        handle.add_tracker(url);
+    }
+    for peer in initial_peers {
+        handle.add_peer(peer);
+    }
+    spawn("peer adder", {
+        let handle = handle.clone();
+        async move {
+            while let Some(peer) = dht_peer_rx.recv().await {
+                handle.add_peer(peer);
+            }
+            warn!("dht was closed");
+            Ok(())
         }
-
-        if let Some(interval) = opts.force_tracker_interval {
-            builder.force_tracker_interval(Duration::from_secs(interval));
-        }
-
-        let handle = builder.start_manager()?;
-
-        for url in trackers {
-            handle.add_tracker(url);
-        }
-
-        handle.wait_until_completed().await?;
-        Ok(())
-    })
+    });
+    handle.wait_until_completed().await?;
+    Ok(())
 }
