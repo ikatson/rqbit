@@ -158,6 +158,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         if supports_extended {
             let my_extended =
                 Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
+            trace!(
+                "sending extended handshake to {}: {:?}",
+                self.addr,
+                &my_extended
+            );
             my_extended.serialize(&mut write_buf, None).unwrap();
             conn.write_all(&write_buf)
                 .await
