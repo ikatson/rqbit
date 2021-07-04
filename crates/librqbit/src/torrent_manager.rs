@@ -4,7 +4,7 @@ use std::{
     net::SocketAddr,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -116,6 +116,10 @@ impl TorrentManagerHandle {
     }
     pub fn add_peer(&self, addr: SocketAddr) -> bool {
         self.manager.state.add_peer_if_not_seen(addr)
+    }
+    // Not sure why anyone would need that, but as this is a library...
+    pub fn torrent_state(&self) -> &TorrentState {
+        &self.manager.state
     }
     pub async fn cancel(&self) -> anyhow::Result<()> {
         todo!()
@@ -256,8 +260,8 @@ impl TorrentManager {
 
     async fn stats_printer(&self) -> anyhow::Result<()> {
         loop {
-            let live_peer_stats = self.state.locked.read().peers.stats();
-            let seen_peers_count = self.state.locked.read().peers.seen().len();
+            let live_peer_stats = self.state.lock_read().peers.stats();
+            let seen_peers_count = self.state.lock_read().peers.seen().len();
             let stats = self.state.stats_snapshot();
             let needed = self.state.initially_needed();
             let downloaded_pct = if stats.remaining_bytes == 0 {

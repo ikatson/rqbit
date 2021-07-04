@@ -7,14 +7,15 @@ use warp::Filter;
 
 use crate::torrent_state::TorrentState;
 
-// This is just a stub for debugging, nothing useful here.
+// This is just a stub for debugging.
+// A real http api would know about ALL torrents we are downloading, not just one.
 pub async fn make_and_run_http_api(
     state: Arc<TorrentState>,
     estimator: Arc<SpeedEstimator>,
 ) -> anyhow::Result<()> {
     let dump_haves = warp::path("haves").map({
         let state = state.clone();
-        move || format!("{:?}", state.locked.read().chunks.get_have_pieces())
+        move || format!("{:?}", state.lock_read().chunks.get_have_pieces())
     });
 
     let dump_stats = warp::path("stats").map({

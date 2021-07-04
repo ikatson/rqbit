@@ -19,7 +19,7 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use log::{debug, info, trace, warn};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
@@ -215,7 +215,7 @@ impl StatsSnapshot {
 
 pub struct TorrentState {
     info: TorrentMetaV1Info<ByteString>,
-    pub locked: Arc<RwLock<TorrentStateLocked>>,
+    locked: Arc<RwLock<TorrentStateLocked>>,
     files: Vec<Arc<Mutex<File>>>,
     info_hash: [u8; 20],
     peer_id: [u8; 20],
@@ -313,6 +313,9 @@ impl TorrentState {
     }
     pub fn initially_needed(&self) -> u64 {
         self.needed
+    }
+    pub fn lock_read(&self) -> RwLockReadGuard<TorrentStateLocked> {
+        self.locked.read()
     }
 
     fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
@@ -532,7 +535,7 @@ impl TorrentState {
             downloaded_and_checked_bytes: downloaded,
             downloaded_and_checked_pieces: self.stats.downloaded_pieces.load(Relaxed),
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
-            uploaded_bytes: self.stats.fetched_bytes.load(Relaxed),
+            uploaded_bytes: self.stats.uploaded.load(Relaxed),
             live_peers: peer_stats.live as u32,
             seen_peers: g.peers.seen.len() as u32,
             connecting_peers: peer_stats.connecting as u32,

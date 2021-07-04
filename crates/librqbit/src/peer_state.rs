@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use tokio::sync::{Notify, Semaphore};

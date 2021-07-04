@@ -518,7 +518,12 @@ impl<'a> Handshake<'a> {
                 expected_len,
                 "handshake",
             ))?;
-        Ok((Self::bopts().deserialize(&hbuf).unwrap(), expected_len))
+        Ok((
+            Self::bopts()
+                .deserialize(&hbuf)
+                .map_err(|e| MessageDeserializeError::Other(e.into()))?,
+            expected_len,
+        ))
     }
     pub fn serialize(&self, buf: &mut Vec<u8>) {
         Self::bopts().serialize_into(buf, &self).unwrap()
