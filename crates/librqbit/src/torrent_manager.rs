@@ -266,11 +266,12 @@ impl TorrentManager {
                 (stats.downloaded_and_checked_bytes as f64 / needed as f64) * 100f64
             };
             info!(
-                "Stats: downloaded {:.2}% ({:.2}), peers {{live: {}, connecting: {}, seen: {}}}, fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, total have {:.2}",
+                "Stats: downloaded {:.2}% ({:.2}), peers {{live: {}, connecting: {}, queued: {}, seen: {}}}, fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, total have {:.2}",
                 downloaded_pct,
                 SF::new(stats.downloaded_and_checked_bytes),
                 live_peer_stats.live,
                 live_peer_stats.connecting,
+                live_peer_stats.queued,
                 seen_peers_count,
                 SF::new(stats.fetched_bytes),
                 SF::new(stats.remaining_bytes),

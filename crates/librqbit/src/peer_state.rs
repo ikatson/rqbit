@@ -21,6 +21,7 @@ impl From<&ChunkInfo> for InflightRequest {
 }
 
 pub enum PeerState {
+    Queued(SocketAddr),
     Connecting(SocketAddr),
     Live(LivePeerState),
 }
