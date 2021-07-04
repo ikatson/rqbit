@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
     net::SocketAddr,
-    ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -139,7 +138,7 @@ struct TorrentManager {
     force_tracker_interval: Option<Duration>,
 }
 
-fn make_lengths<ByteBuf: Clone + Deref<Target = [u8]>>(
+fn make_lengths<ByteBuf: AsRef<[u8]>>(
     torrent: &TorrentMetaV1Info<ByteBuf>,
 ) -> anyhow::Result<Lengths> {
     let total_length = torrent.iter_file_lengths().sum();

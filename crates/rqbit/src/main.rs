@@ -91,7 +91,7 @@ struct Opts {
     single_thread_runtime: bool,
 }
 
-fn compute_only_files<ByteBuf: Clone + std::ops::Deref<Target = [u8]> + AsRef<[u8]>>(
+fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     torrent: &TorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
 ) -> anyhow::Result<Vec<usize>> {

@@ -1,4 +1,4 @@
-use std::{fmt::Write, ops::Deref, path::PathBuf};
+use std::{fmt::Write, path::PathBuf};
 
 use bencode::BencodeDeserializer;
 use buffers::{ByteBuf, ByteString};
@@ -8,7 +8,7 @@ use serde::Deserialize;
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
 
-pub fn torrent_from_bytes<'de, ByteBuf: Clone + Deserialize<'de>>(
+pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     buf: &'de [u8],
 ) -> anyhow::Result<TorrentMetaV1<ByteBuf>> {
     let mut de = BencodeDeserializer::new_from_buf(buf);
@@ -19,7 +19,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Clone + Deserialize<'de>>(
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct TorrentMetaV1<BufType: Clone> {
+pub struct TorrentMetaV1<BufType> {
     pub announce: BufType,
     #[serde(rename = "announce-list")]
     pub announce_list: Vec<Vec<BufType>>,
@@ -38,14 +38,14 @@ pub struct TorrentMetaV1<BufType: Clone> {
     pub info_hash: [u8; 20],
 }
 
-impl<BufType: Clone> TorrentMetaV1<BufType> {
+impl<BufType> TorrentMetaV1<BufType> {
     pub fn iter_announce(&self) -> impl Iterator<Item = &BufType> {
         std::iter::once(&self.announce).chain(self.announce_list.iter().flatten())
     }
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct TorrentMetaV1Info<BufType: Clone> {
+pub struct TorrentMetaV1Info<BufType> {
     pub name: Option<BufType>,
     pub pieces: BufType,
     #[serde(rename = "piece length")]
@@ -116,17 +116,17 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
     }
 }
 
-impl<BufType: Clone + Deref<Target = [u8]>> TorrentMetaV1Info<BufType> {
+impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn get_hash(&self, piece: u32) -> Option<&[u8]> {
         let start = piece as usize * 20;
         let end = start + 20;
-        let expected_hash = self.pieces.deref().get(start..end)?;
+        let expected_hash = self.pieces.as_ref().get(start..end)?;
         Some(expected_hash)
     }
     pub fn compare_hash(&self, piece: u32, hash: [u8; 20]) -> Option<bool> {
         let start = piece as usize * 20;
         let end = start + 20;
-        let expected_hash = self.pieces.deref().get(start..end)?;
+        let expected_hash = self.pieces.as_ref().get(start..end)?;
         Some(expected_hash == hash)
     }
     pub fn iter_filenames_and_lengths(
@@ -158,14 +158,14 @@ impl<BufType: Clone + Deref<Target = [u8]>> TorrentMetaV1Info<BufType> {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct TorrentMetaV1File<BufType: Clone> {
+pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
 }
 
 impl<BufType> TorrentMetaV1File<BufType>
 where
-    BufType: Clone + AsRef<[u8]>,
+    BufType: AsRef<[u8]>,
 {
     pub fn full_path(&self, parent: &mut PathBuf) -> anyhow::Result<()> {
         for p in self.path.iter() {
@@ -178,8 +178,7 @@ where
 
 impl<ByteBuf> CloneToOwned for TorrentMetaV1File<ByteBuf>
 where
-    ByteBuf: CloneToOwned + Clone,
-    <ByteBuf as CloneToOwned>::Target: Clone,
+    ByteBuf: CloneToOwned,
 {
     type Target = TorrentMetaV1File<<ByteBuf as CloneToOwned>::Target>;
 
@@ -193,8 +192,7 @@ where
 
 impl<ByteBuf> CloneToOwned for TorrentMetaV1Info<ByteBuf>
 where
-    ByteBuf: CloneToOwned + Clone,
-    <ByteBuf as CloneToOwned>::Target: Clone,
+    ByteBuf: CloneToOwned,
 {
     type Target = TorrentMetaV1Info<<ByteBuf as CloneToOwned>::Target>;
 
@@ -212,8 +210,7 @@ where
 
 impl<ByteBuf> CloneToOwned for TorrentMetaV1<ByteBuf>
 where
-    ByteBuf: CloneToOwned + Clone,
-    <ByteBuf as CloneToOwned>::Target: Clone,
+    ByteBuf: CloneToOwned,
 {
     type Target = TorrentMetaV1<<ByteBuf as CloneToOwned>::Target>;
 
