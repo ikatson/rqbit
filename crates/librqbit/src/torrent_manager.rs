@@ -4,10 +4,7 @@ use std::{
     net::SocketAddr,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
 
@@ -19,7 +16,7 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use log::{debug, info};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
@@ -29,7 +26,7 @@ use crate::{
     file_ops::FileOps,
     http_api::make_and_run_http_api,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{AtomicStats, TorrentState, TorrentStateLocked},
+    torrent_state::TorrentState,
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
 };
 pub struct TorrentManagerBuilder {
@@ -212,23 +209,18 @@ impl TorrentManager {
             lengths,
         );
 
-        let state = Arc::new(TorrentState {
+        let state = Arc::new(TorrentState::new(
+            info,
             info_hash,
-            torrent: info,
             peer_id,
-            locked: Arc::new(RwLock::new(TorrentStateLocked {
-                peers: Default::default(),
-                chunks: chunk_tracker,
-            })),
             files,
-            stats: AtomicStats {
-                have: AtomicU64::new(initial_check_results.have_bytes),
-                ..Default::default()
-            },
-            needed: initial_check_results.needed_bytes,
+            chunk_tracker,
             lengths,
+            initial_check_results.have_bytes,
+            initial_check_results.needed_bytes,
             spawner,
-        });
+        ));
+
         let estimator = Arc::new(SpeedEstimator::new(5));
 
         let mgr = Arc::new(Self {
@@ -250,8 +242,8 @@ impl TorrentManager {
             let state = mgr.state.clone();
             async move {
                 loop {
-                    let downloaded = state.stats.downloaded_and_checked.load(Ordering::Relaxed);
-                    let needed = state.needed;
+                    let downloaded = state.stats().downloaded_and_checked.load(Ordering::Relaxed);
+                    let needed = state.initially_needed();
                     let remaining = needed - downloaded;
                     estimator.add_snapshot(downloaded, remaining, Instant::now());
                     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -266,16 +258,16 @@ impl TorrentManager {
         loop {
             let live_peer_stats = self.state.locked.read().peers.stats();
             let seen_peers_count = self.state.locked.read().peers.seen().len();
-            let have = self.state.stats.have.load(Ordering::Relaxed);
-            let fetched = self.state.stats.fetched_bytes.load(Ordering::Relaxed);
-            let needed = self.state.needed;
+            let have = self.state.stats().have.load(Ordering::Relaxed);
+            let fetched = self.state.stats().fetched_bytes.load(Ordering::Relaxed);
+            let needed = self.state.initially_needed();
             let downloaded = self
                 .state
-                .stats
+                .stats()
                 .downloaded_and_checked
                 .load(Ordering::Relaxed);
             let remaining = needed - downloaded;
-            let uploaded = self.state.stats.uploaded.load(Ordering::Relaxed);
+            let uploaded = self.state.stats().uploaded.load(Ordering::Relaxed);
             let downloaded_pct = if downloaded == needed {
                 100f64
             } else {
@@ -326,8 +318,8 @@ impl TorrentManager {
         let mut event = Some(TrackerRequestEvent::Started);
         loop {
             let request = TrackerRequest {
-                info_hash: self.state.info_hash,
-                peer_id: self.state.peer_id,
+                info_hash: self.state.info_hash(),
+                peer_id: self.state.peer_id(),
                 port: 6778,
                 uploaded: self.state.get_uploaded(),
                 downloaded: self.state.get_downloaded(),

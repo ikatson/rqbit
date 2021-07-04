@@ -22,20 +22,20 @@ pub async fn make_and_run_http_api(
         let state = state.clone();
         let start_time = Instant::now();
         let initial_downloaded_and_checked =
-            state.stats.downloaded_and_checked.load(Ordering::Relaxed);
+            state.stats().downloaded_and_checked.load(Ordering::Relaxed);
         move || {
             let mut buf = Vec::new();
             writeln!(buf, "{:#?}", state.stats_snapshot()).unwrap();
             writeln!(
                 buf,
                 "Average download time: {:?}",
-                state.stats.average_piece_download_time()
+                state.stats().average_piece_download_time()
             )
             .unwrap();
 
             // Poor mans download speed computation
             let elapsed = start_time.elapsed();
-            let downloaded_bytes = state.stats.downloaded_and_checked.load(Ordering::Relaxed)
+            let downloaded_bytes = state.stats().downloaded_and_checked.load(Ordering::Relaxed)
                 - initial_downloaded_and_checked;
             let downloaded_mb = downloaded_bytes as f64 / 1024f64 / 1024f64;
             writeln!(

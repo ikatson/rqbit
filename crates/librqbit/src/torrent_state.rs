@@ -14,6 +14,7 @@ use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
+    info_hash::InfoHash,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -192,21 +193,66 @@ pub struct StatsSnapshot {
 }
 
 pub struct TorrentState {
-    pub torrent: TorrentMetaV1Info<ByteString>,
+    info: TorrentMetaV1Info<ByteString>,
     pub locked: Arc<RwLock<TorrentStateLocked>>,
-    pub files: Vec<Arc<Mutex<File>>>,
-    pub info_hash: [u8; 20],
-    pub peer_id: [u8; 20],
-    pub lengths: Lengths,
-    pub needed: u64,
-    pub stats: AtomicStats,
+    files: Vec<Arc<Mutex<File>>>,
+    info_hash: [u8; 20],
+    peer_id: [u8; 20],
+    lengths: Lengths,
+    needed: u64,
+    stats: AtomicStats,
 
-    pub spawner: BlockingSpawner,
+    spawner: BlockingSpawner,
 }
 
 impl TorrentState {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        info: TorrentMetaV1Info<ByteString>,
+        info_hash: [u8; 20],
+        peer_id: [u8; 20],
+        files: Vec<Arc<Mutex<File>>>,
+        chunk_tracker: ChunkTracker,
+        lengths: Lengths,
+        have_bytes: u64,
+        needed_bytes: u64,
+        spawner: BlockingSpawner,
+    ) -> Self {
+        TorrentState {
+            info_hash,
+            info,
+            peer_id,
+            locked: Arc::new(RwLock::new(TorrentStateLocked {
+                peers: Default::default(),
+                chunks: chunk_tracker,
+            })),
+            files,
+            stats: AtomicStats {
+                have: AtomicU64::new(have_bytes),
+                ..Default::default()
+            },
+            needed: needed_bytes,
+            lengths,
+            spawner,
+        }
+    }
+    pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
+        &self.info
+    }
+    pub fn info_hash(&self) -> InfoHash {
+        self.info_hash
+    }
+    pub fn peer_id(&self) -> [u8; 20] {
+        self.peer_id
+    }
     pub fn file_ops(&self) -> FileOps<'_, Sha1> {
-        FileOps::new(&self.torrent, &self.files, &self.lengths)
+        FileOps::new(&self.info, &self.files, &self.lengths)
+    }
+    pub fn initially_needed(&self) -> u64 {
+        self.needed
+    }
+    pub fn stats(&self) -> &AtomicStats {
+        &self.stats
     }
 
     pub fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
