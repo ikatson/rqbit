@@ -111,9 +111,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
-        let mut conn = tokio::net::TcpStream::connect(self.addr)
-            .await
-            .context("error connecting")?;
+        let mut conn = match timeout(
+            Duration::from_secs(10),
+            tokio::net::TcpStream::connect(self.addr),
+        )
+        .await
+        {
+            Ok(conn) => conn.context("error connecting")?,
+            Err(_) => anyhow::bail!("timeout connecting to {}", self.addr),
+        };
+
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
         handshake.serialize(&mut write_buf);

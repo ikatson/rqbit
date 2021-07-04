@@ -209,7 +209,7 @@ impl TorrentManager {
             lengths,
         );
 
-        let state = Arc::new(TorrentState::new(
+        let state = TorrentState::new(
             info,
             info_hash,
             peer_id,
@@ -219,7 +219,7 @@ impl TorrentManager {
             initial_check_results.have_bytes,
             initial_check_results.needed_bytes,
             spawner,
-        ));
+        );
 
         let estimator = Arc::new(SpeedEstimator::new(5));
 
@@ -242,7 +242,7 @@ impl TorrentManager {
             let state = mgr.state.clone();
             async move {
                 loop {
-                    let downloaded = state.stats().downloaded_and_checked.load(Ordering::Relaxed);
+                    let downloaded = state.stats_snapshot().downloaded_and_checked_bytes;
                     let needed = state.initially_needed();
                     let remaining = needed - downloaded;
                     estimator.add_snapshot(downloaded, remaining, Instant::now());
@@ -258,33 +258,25 @@ impl TorrentManager {
         loop {
             let live_peer_stats = self.state.locked.read().peers.stats();
             let seen_peers_count = self.state.locked.read().peers.seen().len();
-            let have = self.state.stats().have.load(Ordering::Relaxed);
-            let fetched = self.state.stats().fetched_bytes.load(Ordering::Relaxed);
+            let stats = self.state.stats_snapshot();
             let needed = self.state.initially_needed();
-            let downloaded = self
-                .state
-                .stats()
-                .downloaded_and_checked
-                .load(Ordering::Relaxed);
-            let remaining = needed - downloaded;
-            let uploaded = self.state.stats().uploaded.load(Ordering::Relaxed);
-            let downloaded_pct = if downloaded == needed {
+            let downloaded_pct = if stats.remaining_bytes == 0 {
                 100f64
             } else {
-                (downloaded as f64 / needed as f64) * 100f64
+                (stats.downloaded_and_checked_bytes as f64 / needed as f64) * 100f64
             };
             info!(
                 "Stats: downloaded {:.2}% ({:.2}), peers {{live: {}, connecting: {}, seen: {}}}, fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, total have {:.2}",
                 downloaded_pct,
-                SF::new(downloaded),
+                SF::new(stats.downloaded_and_checked_bytes),
                 live_peer_stats.live,
                 live_peer_stats.connecting,
                 seen_peers_count,
-                SF::new(fetched),
-                SF::new(remaining),
+                SF::new(stats.fetched_bytes),
+                SF::new(stats.remaining_bytes),
                 SF::new(needed),
-                SF::new(uploaded),
-                SF::new(have)
+                SF::new(stats.uploaded_bytes),
+                SF::new(stats.have_bytes)
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }

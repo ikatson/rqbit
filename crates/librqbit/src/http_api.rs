@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use librqbit_core::speed_estimator::SpeedEstimator;
 use std::io::Write;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 use warp::Filter;
 
@@ -21,22 +20,22 @@ pub async fn make_and_run_http_api(
     let dump_stats = warp::path("stats").map({
         let state = state.clone();
         let start_time = Instant::now();
-        let initial_downloaded_and_checked =
-            state.stats().downloaded_and_checked.load(Ordering::Relaxed);
+        let initial_downloaded_and_checked = state.stats_snapshot().downloaded_and_checked_bytes;
         move || {
+            let snapshot = state.stats_snapshot();
             let mut buf = Vec::new();
             writeln!(buf, "{:#?}", state.stats_snapshot()).unwrap();
             writeln!(
                 buf,
                 "Average download time: {:?}",
-                state.stats().average_piece_download_time()
+                snapshot.average_piece_download_time()
             )
             .unwrap();
 
             // Poor mans download speed computation
             let elapsed = start_time.elapsed();
-            let downloaded_bytes = state.stats().downloaded_and_checked.load(Ordering::Relaxed)
-                - initial_downloaded_and_checked;
+            let downloaded_bytes =
+                snapshot.downloaded_and_checked_bytes - initial_downloaded_and_checked;
             let downloaded_mb = downloaded_bytes as f64 / 1024f64 / 1024f64;
             writeln!(
                 buf,

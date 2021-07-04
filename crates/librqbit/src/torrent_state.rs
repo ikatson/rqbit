@@ -24,7 +24,13 @@ use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
 use sha1w::Sha1;
-use tokio::{sync::mpsc::UnboundedSender, time::timeout};
+use tokio::{
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        Semaphore,
+    },
+    time::timeout,
+};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
@@ -164,6 +170,8 @@ pub struct AtomicStats {
 
     pub downloaded_pieces: AtomicU64,
     pub total_piece_download_ms: AtomicU64,
+
+    pub queued_peers: AtomicU64,
 }
 
 impl AtomicStats {
@@ -190,6 +198,19 @@ pub struct StatsSnapshot {
     pub seen_peers: u32,
     pub connecting_peers: u32,
     pub time: Instant,
+    pub queued_peers: u32,
+    total_piece_download_ms: u64,
+}
+
+impl StatsSnapshot {
+    pub fn average_piece_download_time(&self) -> Option<Duration> {
+        let d = self.downloaded_and_checked_pieces;
+        let t = self.total_piece_download_ms;
+        if d == 0 {
+            return None;
+        }
+        Some(Duration::from_secs_f64(t as f64 / d as f64 / 1000f64))
+    }
 }
 
 pub struct TorrentState {
@@ -201,8 +222,9 @@ pub struct TorrentState {
     lengths: Lengths,
     needed: u64,
     stats: AtomicStats,
-
     spawner: BlockingSpawner,
+
+    peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
 }
 
 impl TorrentState {
@@ -217,8 +239,10 @@ impl TorrentState {
         have_bytes: u64,
         needed_bytes: u64,
         spawner: BlockingSpawner,
-    ) -> Self {
-        TorrentState {
+    ) -> Arc<Self> {
+        let (peer_queue_tx, mut peer_queue_rx) = unbounded_channel();
+        let peer_semaphore = Arc::new(Semaphore::new(128));
+        let state = Arc::new(TorrentState {
             info_hash,
             info,
             peer_id,
@@ -234,7 +258,37 @@ impl TorrentState {
             needed: needed_bytes,
             lengths,
             spawner,
-        }
+
+            peer_queue_tx,
+        });
+        spawn("peer adder", {
+            let state = state.clone();
+            async move {
+                loop {
+                    let (addr, out_rx) = peer_queue_rx.recv().await.unwrap();
+                    state.stats.queued_peers.fetch_sub(1, Ordering::Relaxed);
+                    let permit = peer_semaphore.clone().acquire_owned().await.unwrap();
+
+                    let handler = PeerHandler {
+                        addr,
+                        state: state.clone(),
+                        spawner: state.spawner,
+                    };
+                    let peer_connection =
+                        PeerConnection::new(addr, state.info_hash, state.peer_id, handler);
+                    spawn(format!("manage_peer({})", addr), async move {
+                        if let Err(e) = peer_connection.manage_peer(out_rx).await {
+                            debug!("error managing peer {}: {:#}", addr, e)
+                        };
+                        let state = peer_connection.into_handler().state;
+                        state.drop_peer(addr);
+                        drop(permit);
+                        Ok::<_, anyhow::Error>(())
+                    });
+                }
+            }
+        });
+        state
     }
     pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
         &self.info
@@ -251,7 +305,7 @@ impl TorrentState {
     pub fn initially_needed(&self) -> u64 {
         self.needed
     }
-    pub fn stats(&self) -> &AtomicStats {
+    fn stats(&self) -> &AtomicStats {
         &self.stats
     }
 
@@ -450,24 +504,18 @@ impl TorrentState {
 
     pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
         let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
-        let handle = match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
+        match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
             Some(handle) => handle,
             None => return false,
         };
 
-        let handler = PeerHandler {
-            addr,
-            state: self.clone(),
-            spawner: self.spawner,
-        };
-        let peer_connection = PeerConnection::new(addr, self.info_hash, self.peer_id, handler);
-        spawn(format!("manage_peer({})", handle), async move {
-            if let Err(e) = peer_connection.manage_peer(out_rx).await {
-                debug!("error managing peer {}: {:#}", handle, e)
-            };
-            peer_connection.into_handler().state.drop_peer(handle);
-            Ok::<_, anyhow::Error>(())
-        });
+        self.stats.queued_peers.fetch_add(1, Ordering::Relaxed);
+        match self.peer_queue_tx.send((addr, out_rx)) {
+            Ok(_) => {}
+            Err(_) => {
+                warn!("peer adder died, can't add peer")
+            }
+        }
         true
     }
 
@@ -496,6 +544,8 @@ impl TorrentState {
             time: Instant::now(),
             initially_needed_bytes: self.needed,
             remaining_bytes: remaining,
+            queued_peers: self.stats.queued_peers.load(Relaxed) as u32,
+            total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
         }
     }
 }
