@@ -20,12 +20,14 @@ impl From<&ChunkInfo> for InflightRequest {
     }
 }
 
+#[derive(Debug)]
 pub enum PeerState {
-    Queued(SocketAddr),
-    Connecting(SocketAddr),
+    Queued,
+    Connecting,
     Live(LivePeerState),
 }
 
+#[derive(Debug)]
 pub struct LivePeerState {
     pub peer_id: [u8; 20],
     pub i_am_choked: bool,
