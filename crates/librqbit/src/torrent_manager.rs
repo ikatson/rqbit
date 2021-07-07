@@ -23,7 +23,6 @@ use size_format::SizeFormatterBinary as SF;
 use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
-    http_api::make_and_run_http_api,
     spawn_utils::{spawn, BlockingSpawner},
     torrent_state::TorrentState,
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
@@ -116,9 +115,11 @@ impl TorrentManagerHandle {
     pub fn add_peer(&self, addr: SocketAddr) -> bool {
         self.manager.state.add_peer_if_not_seen(addr)
     }
-    // Not sure why anyone would need that, but as this is a library...
     pub fn torrent_state(&self) -> &TorrentState {
         &self.manager.state
+    }
+    pub fn speed_estimator(&self) -> &Arc<SpeedEstimator> {
+        &self.manager.speed_estimator
     }
     pub async fn cancel(&self) -> anyhow::Result<()> {
         todo!()
@@ -237,10 +238,6 @@ impl TorrentManager {
             let this = mgr.clone();
             async move { this.stats_printer().await }
         });
-        spawn(
-            "http api",
-            make_and_run_http_api(mgr.state.clone(), estimator.clone()),
-        );
         spawn("speed estimator updater", {
             let state = mgr.state.clone();
             async move {

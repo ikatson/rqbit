@@ -84,6 +84,10 @@ struct Opts {
     #[clap(short = 'i', long = "tracker-refresh-interval")]
     force_tracker_interval: Option<u64>,
 
+    /// The listen address for (debugging) HTTP API
+    #[clap(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
+    http_api_listen_addr: SocketAddr,
+
     /// Set this flag if you want to use tokio's single threaded runtime.
     /// It MAY perform better, but the main purpose is easier debugging, as time
     /// profilers work better with this one.
@@ -101,11 +105,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
         let full_path = filename
             .to_pathbuf()
             .with_context(|| format!("filename of file {} is not valid utf8", idx))?;
-        if filename_re.is_match(
-            full_path
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("filename of file {} is not valid utf8", idx))?,
-        ) {
+        if filename_re.is_match(full_path.to_str().unwrap()) {
             only_files.push(idx);
         }
     }
@@ -265,6 +265,9 @@ async fn main_info(
     } else {
         None
     };
+
+    let http_api_listen_addr = opts.http_api_listen_addr;
+
     let mut builder = TorrentManagerBuilder::new(info, info_hash, opts.output_folder);
     builder
         .overwrite(opts.overwrite)
@@ -276,7 +279,16 @@ async fn main_info(
     if let Some(interval) = opts.force_tracker_interval {
         builder.force_tracker_interval(Duration::from_secs(interval));
     }
+
+    let http_api = librqbit::http_api::HttpApi::new();
+    spawn("HTTP API", {
+        let http_api = http_api.clone();
+        async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
+    });
+
     let handle = builder.start_manager()?;
+    http_api.add_mgr(handle.clone());
+
     for url in trackers {
         handle.add_tracker(url);
     }
