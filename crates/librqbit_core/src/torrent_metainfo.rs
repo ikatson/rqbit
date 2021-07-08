@@ -85,6 +85,26 @@ where
 }
 
 impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
+    pub fn to_string(&self) -> anyhow::Result<String>
+    where
+        ByteBuf: AsRef<[u8]>,
+    {
+        let mut it = self.iter_components();
+        let mut buf = it
+            .next()
+            .and_then(|v| v)
+            .map(|v| std::str::from_utf8(v.as_ref()))
+            .ok_or_else(|| anyhow::anyhow!("empty filename"))??
+            .to_string();
+        for bit in it {
+            buf.push('/');
+            let bit = bit
+                .map(|v| std::str::from_utf8(v.as_ref()))
+                .ok_or_else(|| anyhow::anyhow!("empty filename"))??;
+            buf.push_str(bit);
+        }
+        Ok(buf)
+    }
     pub fn to_pathbuf(&self) -> anyhow::Result<PathBuf>
     where
         ByteBuf: AsRef<[u8]>,

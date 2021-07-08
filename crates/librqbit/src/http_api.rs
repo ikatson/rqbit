@@ -3,52 +3,11 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::Serialize;
-use std::io::Write;
 use std::time::{Duration, Instant};
 use warp::Filter;
 
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
-
-// enum Response<T, B> {
-//     NotFound(usize),
-//     OkJson(T),
-//     Ok(B),
-// }
-
-// impl<T, B> warp::Reply for Response<T, B>
-// where T: Serialize + Send,
-//               B: Into<warp::hyper::Body> + Send
-//  {
-//     fn into_response(self) -> warp::reply::Response
-
-//     {
-//         match self {
-//             Response::NotFound(idx) => {
-//                 let mut response = warp::reply::Response::new(warp::hyper::Body::from(format!(
-//                     "torrent {} not found",
-//                     idx
-//                 )));
-//                 *response.status_mut() = warp::http::StatusCode::NOT_FOUND;
-//                 response
-//             }
-//             Response::OkJson(body) => {
-//                 match serde_json::to_vec_pretty(&body) {
-//                     Ok(body) => {
-//                         let mut response = warp::reply::Response::new(warp::hyper::Body::from(body));
-//                         response.headers_mut().insert("content-type", warp::http::HeaderValue::from_static("application/json"));
-//                         response
-//                     }
-//                     Err(e) => {
-//                         todo!()
-//                     }
-//                 }
-
-//             },
-//             Response::Ok(body) => warp::reply::Response::new(body.into()),
-//         }
-//     }
-// }
 
 struct Inner {
     startup_time: Instant,
@@ -97,6 +56,18 @@ struct TorrentListResponse {
 }
 
 #[derive(Serialize)]
+struct TorrentDetailsResponseFile {
+    name: Option<String>,
+    length: u64,
+}
+
+#[derive(Serialize)]
+struct TorrentDetailsResponse {
+    info_hash: String,
+    files: Vec<TorrentDetailsResponseFile>,
+}
+
+#[derive(Serialize)]
 struct StatsResponse {
     snapshot: StatsSnapshot,
     average_piece_download_time: Option<Duration>,
@@ -123,6 +94,21 @@ impl Inner {
                 })
                 .collect(),
         }
+    }
+
+    fn api_torrent_details(&self, idx: usize) -> Option<TorrentDetailsResponse> {
+        let handle = self.mgr_handle(idx)?;
+        let info_hash = hex::encode(handle.torrent_state().info_hash());
+        let files = handle
+            .torrent_state()
+            .info()
+            .iter_filenames_and_lengths()
+            .map(|(filename_it, length)| {
+                let name = filename_it.to_string().ok();
+                TorrentDetailsResponseFile { name, length }
+            })
+            .collect();
+        Some(TorrentDetailsResponse { info_hash, files })
     }
 
     fn api_stats(&self, idx: usize) -> Option<StatsResponse> {
@@ -204,6 +190,11 @@ impl HttpApi {
             move || json_response(inner.api_torrent_list())
         });
 
+        let torrent_details = warp::path!(usize).map({
+            let inner = inner.clone();
+            move |idx| json_or_404(idx, inner.api_torrent_details(idx))
+        });
+
         let dump_haves = warp::path!(usize / "haves").map({
             let inner = inner.clone();
             move |idx| json_or_404(idx, inner.api_dump_haves(idx))
@@ -214,9 +205,15 @@ impl HttpApi {
             move |idx| json_or_404(idx, inner.api_stats(idx))
         });
 
-        let router = list.or(dump_haves).or(dump_stats);
+        let router = list.or(torrent_details).or(dump_haves).or(dump_stats);
 
         warp::serve(router).run(addr).await;
         Ok(())
+    }
+}
+
+impl Default for HttpApi {
+    fn default() -> Self {
+        Self::new()
     }
 }
