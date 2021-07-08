@@ -23,6 +23,7 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
+use serde::Serialize;
 use sha1w::Sha1;
 use tokio::{
     sync::{
@@ -185,7 +186,7 @@ impl AtomicStats {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatsSnapshot {
     pub have_bytes: u64,
     pub downloaded_and_checked_bytes: u64,
@@ -197,6 +198,7 @@ pub struct StatsSnapshot {
     pub live_peers: u32,
     pub seen_peers: u32,
     pub connecting_peers: u32,
+    #[serde(skip)]
     pub time: Instant,
     pub queued_peers: u32,
     total_piece_download_ms: u64,
