@@ -2,18 +2,18 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
-use serde::{Deserialize, Deserializer};
+use serde::Deserializer;
 
 use crate::serde_bencode_de::from_bytes;
 
-pub fn dyn_from_bytes<'de, ByteBuf>(buf: &'de [u8]) -> anyhow::Result<BencodeValue<ByteBuf>>
+pub fn dyn_from_bytes<'de, BufT>(buf: &'de [u8]) -> anyhow::Result<BencodeValue<BufT>>
 where
-    ByteBuf: From<&'de [u8]> + Deserialize<'de> + std::hash::Hash + Eq,
+    BufT: From<&'de [u8]> + std::hash::Hash + Eq,
 {
     from_bytes(buf)
 }
 
-impl<ByteBuf: serde::Serialize + Eq + std::hash::Hash> serde::Serialize for BencodeValue<ByteBuf> {
+impl<BufT: serde::Serialize + Eq + std::hash::Hash> serde::Serialize for BencodeValue<BufT> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -27,23 +27,23 @@ impl<ByteBuf: serde::Serialize + Eq + std::hash::Hash> serde::Serialize for Benc
     }
 }
 
-impl<'de, ByteBuf> serde::de::Deserialize<'de> for BencodeValue<ByteBuf>
+impl<'de, BufT> serde::de::Deserialize<'de> for BencodeValue<BufT>
 where
-    ByteBuf: From<&'de [u8]> + Deserialize<'de> + std::hash::Hash + Eq,
+    BufT: From<&'de [u8]> + std::hash::Hash + Eq,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct Visitor<ByteBuf> {
-            buftype: PhantomData<ByteBuf>,
+        struct Visitor<BufT> {
+            buftype: PhantomData<BufT>,
         }
 
-        impl<'de, ByteBuf> serde::de::Visitor<'de> for Visitor<ByteBuf>
+        impl<'de, BufT> serde::de::Visitor<'de> for Visitor<BufT>
         where
-            ByteBuf: From<&'de [u8]> + Deserialize<'de> + std::hash::Hash + Eq,
+            BufT: From<&'de [u8]> + std::hash::Hash + Eq,
         {
-            type Value = BencodeValue<ByteBuf>;
+            type Value = BencodeValue<BufT>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(formatter, "a bencode value")
@@ -71,7 +71,7 @@ where
             where
                 E: serde::de::Error,
             {
-                Ok(BencodeValue::Bytes(ByteBuf::from(v)))
+                Ok(BencodeValue::Bytes(BufT::from(v)))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -79,9 +79,9 @@ where
                 A: serde::de::MapAccess<'de>,
             {
                 let mut hmap = HashMap::new();
-                while let Some(key) = map.next_key()? {
+                while let Some(key) = map.next_key::<&'de [u8]>()? {
                     let value = map.next_value()?;
-                    hmap.insert(key, value);
+                    hmap.insert(BufT::from(key), value);
                 }
                 Ok(BencodeValue::Dict(hmap))
             }
@@ -97,14 +97,14 @@ where
 // Useful for debugging.
 
 #[derive(PartialEq, Eq)]
-pub enum BencodeValue<ByteBuf: std::hash::Hash + Eq> {
-    Bytes(ByteBuf),
+pub enum BencodeValue<BufT: std::hash::Hash + Eq> {
+    Bytes(BufT),
     Integer(i64),
-    List(Vec<BencodeValue<ByteBuf>>),
-    Dict(HashMap<ByteBuf, BencodeValue<ByteBuf>>),
+    List(Vec<BencodeValue<BufT>>),
+    Dict(HashMap<BufT, BencodeValue<BufT>>),
 }
 
-impl<ByteBuf: std::fmt::Debug + std::hash::Hash + Eq> std::fmt::Debug for BencodeValue<ByteBuf> {
+impl<BufT: std::fmt::Debug + std::hash::Hash + Eq> std::fmt::Debug for BencodeValue<BufT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BencodeValue::Bytes(b) => std::fmt::Debug::fmt(b, f),
@@ -115,12 +115,12 @@ impl<ByteBuf: std::fmt::Debug + std::hash::Hash + Eq> std::fmt::Debug for Bencod
     }
 }
 
-impl<ByteBuf> CloneToOwned for BencodeValue<ByteBuf>
+impl<BufT> CloneToOwned for BencodeValue<BufT>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
-    <ByteBuf as CloneToOwned>::Target: Eq + std::hash::Hash,
+    BufT: CloneToOwned + std::hash::Hash + Eq,
+    <BufT as CloneToOwned>::Target: Eq + std::hash::Hash,
 {
-    type Target = BencodeValue<<ByteBuf as CloneToOwned>::Target>;
+    type Target = BencodeValue<<BufT as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         match self {
