@@ -256,11 +256,12 @@ mod tests {
 
     use super::*;
 
+    const TORRENT_FILENAME: &str = "../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent";
+
     #[test]
     fn test_deserialize_torrent_owned() {
         let mut buf = Vec::new();
-        let filename = "resources/ubuntu-21.04-desktop-amd64.iso.torrent";
-        std::fs::File::open(filename)
+        std::fs::File::open(TORRENT_FILENAME)
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();
@@ -272,8 +273,7 @@ mod tests {
     #[test]
     fn test_deserialize_torrent_borrowed() {
         let mut buf = Vec::new();
-        let filename = "resources/ubuntu-21.04-desktop-amd64.iso.torrent";
-        std::fs::File::open(filename)
+        std::fs::File::open(TORRENT_FILENAME)
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();
@@ -285,8 +285,7 @@ mod tests {
     #[test]
     fn test_deserialize_torrent_with_info_hash() {
         let mut buf = Vec::new();
-        let filename = "resources/ubuntu-21.04-desktop-amd64.iso.torrent";
-        std::fs::File::open(filename)
+        std::fs::File::open(TORRENT_FILENAME)
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();

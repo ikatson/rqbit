@@ -8,4 +8,3 @@ edition = "2018"
 [dependencies]
 serde = {version = "1", features=["derive"]}
 clone_to_owned = {path="../clone_to_owned"}
-hex = "0.4"

@@ -25,47 +25,63 @@ impl<'a> ByteBufT for ByteBuf<'a> {
     }
 }
 
-fn debug_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    if b.iter().all(|b| *b == 0) {
-        return write!(f, "<{} bytes, all zeroes>", b.len());
-    }
-    match std::str::from_utf8(b) {
-        Ok(s) => write!(f, "{:?}", s),
-        Err(_e) => write!(f, "<{} bytes>", b.len()),
+struct HexBytes<'a>(&'a [u8]);
+impl<'a> std::fmt::Display for HexBytes<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{:02x?}", byte)?;
+        }
+        Ok(())
     }
 }
 
-fn display_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+fn debug_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>, debug_strings: bool) -> std::fmt::Result {
     if b.iter().all(|b| *b == 0) {
         return write!(f, "<{} bytes, all zeroes>", b.len());
     }
     match std::str::from_utf8(b) {
-        Ok(s) => write!(f, "{}", s),
-        Err(_e) => write!(f, "<{} bytes>", b.len()),
+        Ok(s) => {
+            // A test if all chars are "printable".
+            if s.chars().all(|c| c.escape_debug().len() == 1) {
+                if debug_strings {
+                    return write!(f, "{:?}", s);
+                } else {
+                    return write!(f, "{}", s);
+                }
+            }
+        }
+        Err(_e) => {}
+    };
+
+    // up to 20 bytes, display hex
+    if b.len() <= 20 {
+        return write!(f, "<{} bytes, 0x{}>", b.len(), HexBytes(b));
     }
+
+    write!(f, "<{} bytes>", b.len())
 }
 
 impl<'a> std::fmt::Debug for ByteBuf<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        debug_bytes(self.0, f)
+        debug_bytes(self.0, f, true)
     }
 }
 
 impl<'a> std::fmt::Display for ByteBuf<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        display_bytes(self.0, f)
+        debug_bytes(self.0, f, false)
     }
 }
 
 impl std::fmt::Debug for ByteString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        debug_bytes(&self.0, f)
+        debug_bytes(&self.0, f, true)
     }
 }
 
 impl std::fmt::Display for ByteString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        display_bytes(&self.0, f)
+        debug_bytes(&self.0, f, false)
     }
 }
 

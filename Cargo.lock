@@ -122,7 +122,6 @@ name = "buffers"
 version = "0.1.0"
 dependencies = [
  "clone_to_owned",
- "hex 0.4.3",
  "serde",
 ]
 
