@@ -17,6 +17,7 @@ enum MessageType {
     Error,
 }
 
+#[derive(Clone, Copy)]
 pub struct Id20(pub [u8; 20]);
 
 impl std::fmt::Debug for Id20 {
@@ -110,9 +111,9 @@ impl Serialize for MessageType {
 }
 
 #[derive(Debug)]
-struct ErrorDescription<BufT> {
-    code: i32,
-    description: BufT,
+pub struct ErrorDescription<BufT> {
+    pub code: i32,
+    pub description: BufT,
 }
 
 impl<BufT> Serialize for ErrorDescription<BufT>
@@ -325,7 +326,7 @@ pub struct FindNodeRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Response<BufT> {
+pub struct Response<BufT> {
     pub id: Id20,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nodes: Option<CompactNodeInfo>,
@@ -437,7 +438,7 @@ pub fn deserialize_message<'de, BufT>(buf: &'de [u8]) -> anyhow::Result<Message<
 where
     BufT: Deserialize<'de> + AsRef<[u8]>,
 {
-    let de: RawMessage<BufT> = bencode::from_bytes(buf)?;
+    let de: RawMessage<ByteBuf> = bencode::from_bytes(buf)?;
     match de.message_type {
         MessageType::Request => match (de.arguments, de.method_name, de.response, de.error) {
             (Some(_), Some(method_name), None, None) => match method_name.as_ref() {
@@ -480,12 +481,15 @@ where
             ),
         },
         MessageType::Error => match (de.arguments, de.method_name, de.response, de.error) {
-            (None, None, None, Some(e)) => Ok(Message {
-                transaction_id: de.transaction_id,
-                version: de.version,
-                ip: de.ip.map(|c| c.addr),
-                kind: MessageKind::Error(e),
-            }),
+            (None, None, None, Some(e)) => {
+                let de: RawMessage<BufT, IgnoredAny, Response<BufT>> = bencode::from_bytes(buf)?;
+                Ok(Message {
+                    transaction_id: de.transaction_id,
+                    version: de.version,
+                    ip: de.ip.map(|c| c.addr),
+                    kind: MessageKind::Error(de.error.unwrap()),
+                })
+            }
             _ => anyhow::bail!(
                 "cannot deserialize message as response, expected exactly \"r\" to be set"
             ),
@@ -499,6 +503,7 @@ mod tests {
 
     use crate::bprotocol;
     use bencode::ByteBuf;
+    use librqbit_core::peer_id::generate_peer_id;
 
     // Dumped with wireshark.
     const FIND_NODE_REQUEST: &[u8] = b"64313a6164323a696432303abd7b477cfbcd10f30b705da20201e7101d8df155363a74617267657432303abd7b477cfbcd10f30b705da20201e7101d8df15565313a71393a66696e645f6e6f6465313a74323a0005313a79313a7165";

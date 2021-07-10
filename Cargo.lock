@@ -278,6 +278,10 @@ dependencies = [
  "bencode",
  "hex 0.4.3",
  "kad",
+ "librqbit_core",
+ "log",
+ "parking_lot",
+ "pretty_env_logger",
  "serde",
  "tokio",
 ]
