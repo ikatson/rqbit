@@ -479,7 +479,17 @@ where
                 "cannot deserialize message as response, expected exactly \"r\" to be set"
             ),
         },
-        MessageType::Error => todo!(),
+        MessageType::Error => match (de.arguments, de.method_name, de.response, de.error) {
+            (None, None, None, Some(e)) => Ok(Message {
+                transaction_id: de.transaction_id,
+                version: de.version,
+                ip: de.ip.map(|c| c.addr),
+                kind: MessageKind::Error(e),
+            }),
+            _ => anyhow::bail!(
+                "cannot deserialize message as response, expected exactly \"r\" to be set"
+            ),
+        },
     }
 }
 
@@ -499,6 +509,16 @@ mod tests {
 
     const WHAT_IS_THAT: &[u8]= b"64313a6164323a696432303abd7b477cfbcd10f30b705da20201e7101d8df155393a696e666f5f6861736832303acab507494d02ebb1178b38f2e9d7be299c86b86265313a71393a6765745f7065657273313a74323a0007313a79313a7165";
 
+    fn write(filename: &str, data: &[u8]) {
+        let full = format!("/tmp/{}.bin", filename);
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(full)
+            .unwrap();
+        f.write_all(data).unwrap()
+    }
+
     fn debug_hex_bencode(name: &str, data: &[u8]) {
         println!("{}", name);
         let data = hex::decode(data).unwrap();
@@ -513,7 +533,7 @@ mod tests {
         test_deserialize_then_serialize(&hex::decode(data).unwrap(), name);
     }
 
-    fn test_deserialize_then_serialize<'a>(data: &'a [u8], name: &'static str) {
+    fn test_deserialize_then_serialize(data: &[u8], name: &'static str) {
         dbg!(bencode::dyn_from_bytes::<ByteBuf>(data).unwrap());
         let bprotocol::Message {
             kind,
@@ -524,23 +544,45 @@ mod tests {
         let mut buf = Vec::new();
         bprotocol::serialize_message(&mut buf, transaction_id, version, ip, kind).unwrap();
 
-        let write = |filename, data| {
-            let full = format!("/tmp/{}.bin", filename);
-            let mut f = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .open(full)
-                .unwrap();
-            f.write_all(data).unwrap()
-        };
-
         if buf.as_slice() != data {
-            write(format!("{}-serialized", name), buf.as_slice());
-            write(format!("{}-expected", name), data);
+            write(&format!("{}-serialized", name), buf.as_slice());
+            write(&format!("{}-expected", name), data);
             panic!(
                 "{} results don't match, dumped to /tmp/{}-*.bin",
                 name, name
             )
+        }
+    }
+
+    #[test]
+    fn serialize_then_deserialize_then_serialize_error() {
+        let mut buf = Vec::new();
+        let transaction_id = ByteBuf(b"123");
+        bprotocol::serialize_message(
+            &mut buf,
+            transaction_id,
+            None,
+            None,
+            bprotocol::MessageKind::Error(bprotocol::ErrorDescription {
+                code: 201,
+                description: ByteBuf(b"Some error"),
+            }),
+        )
+        .unwrap();
+
+        let bprotocol::Message {
+            transaction_id,
+            kind,
+            ..
+        } = bprotocol::deserialize_message::<ByteBuf>(&buf).unwrap();
+
+        let mut buf2 = Vec::new();
+        bprotocol::serialize_message(&mut buf2, transaction_id, None, None, kind).unwrap();
+
+        if buf.as_slice() != buf2.as_slice() {
+            write("error-serialized", buf.as_slice());
+            write("error-serialized-again", buf2.as_slice());
+            panic!("results don't match, dumped to /tmp/error-serialized-*.bin",)
         }
     }
 
