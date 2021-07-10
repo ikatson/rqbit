@@ -274,9 +274,11 @@ dependencies = [
 name = "dht"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bencode",
  "hex 0.4.3",
  "kad",
+ "serde",
  "tokio",
 ]
 

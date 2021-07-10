@@ -8,5 +8,7 @@ edition = "2018"
 [dependencies]
 kad = "0.6"
 tokio = {version = "1", features = ["macros", "rt"]}
+serde = {version = "1", features = ["derive"]}
 hex = "0.4"
 bencode = {path = "../bencode"}
+anyhow = "1"
