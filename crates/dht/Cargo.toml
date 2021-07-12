@@ -19,6 +19,7 @@ pretty_env_logger = "0.4"
 futures = "0.3"
 rand = "0.8"
 
+clone_to_owned = {path="../clone_to_owned"}
 librqbit_core = {path="../librqbit_core"}
 
 [dev-dependencies]

@@ -3,6 +3,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use log::debug;
+
+use crate::id20::Id20;
+
 #[derive(Debug)]
 enum BucketTreeNode {
     Leaf(Vec<RoutingTableNode>),
@@ -248,6 +252,8 @@ impl BucketTree {
             .find(|r| matches!(r.status(), NodeStatus::Bad))
         {
             std::mem::swap(bad_node, &mut new_node);
+            nodes.sort_by_key(|n| n.id);
+            debug!("replaced bad node {:?}", new_node);
             return InsertResult::ReplacedBad(new_node);
         }
 
@@ -297,8 +303,6 @@ impl Default for BucketTree {
     }
 }
 
-use crate::id20::Id20;
-
 #[derive(Debug)]
 pub struct RoutingTableNode {
     id: Id20,
@@ -344,7 +348,11 @@ impl RoutingTableNode {
     }
 
     pub fn mark_response(&mut self) {
-        self.last_response = Some(Instant::now());
+        let now = Instant::now();
+        self.last_response = Some(now);
+        if self.last_request.is_none() {
+            self.last_request = Some(now);
+        }
         self.outstanding_queries_in_a_row = 0;
     }
 }
@@ -386,7 +394,7 @@ impl RoutingTable {
         let res = self.buckets.add_node(&self.id, id, addr);
         let replaced = match &res {
             InsertResult::WasExisting => false,
-            InsertResult::ReplacedBad(_) => true,
+            InsertResult::ReplacedBad(..) => true,
             InsertResult::Added => true,
             InsertResult::Ignored => false,
         };

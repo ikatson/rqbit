@@ -5,6 +5,7 @@ use std::{
 };
 
 use bencode::ByteBuf;
+use clone_to_owned::CloneToOwned;
 use serde::{
     de::{IgnoredAny, Unexpected},
     Deserialize, Deserializer, Serialize,
@@ -65,6 +66,20 @@ impl Serialize for MessageType {
 pub struct ErrorDescription<BufT> {
     pub code: i32,
     pub description: BufT,
+}
+
+impl<BufT> CloneToOwned for ErrorDescription<BufT>
+where
+    BufT: CloneToOwned,
+{
+    type Target = ErrorDescription<<BufT as CloneToOwned>::Target>;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        ErrorDescription {
+            code: self.code,
+            description: self.description.clone_to_owned(),
+        }
+    }
 }
 
 impl<BufT> Serialize for ErrorDescription<BufT>
@@ -294,6 +309,11 @@ pub struct GetPeersRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PingRequest {
+    id: Id20,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(bound(serialize = "BufT: AsRef<[u8]> + Serialize"))]
 #[serde(bound(deserialize = "BufT: From<&'de [u8]> + Deserialize<'de>"))]
 pub struct GetPeersResponse<BufT> {
@@ -319,6 +339,7 @@ pub enum MessageKind<BufT> {
     GetPeersRequest(GetPeersRequest),
     FindNodeRequest(FindNodeRequest),
     Response(Response<BufT>),
+    PingRequest(PingRequest),
 }
 
 pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(
@@ -382,6 +403,19 @@ pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(
             };
             Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
         }
+        MessageKind::PingRequest(ping) => {
+            let msg: RawMessage<BufT, _, ()> = RawMessage {
+                message_type: MessageType::Request,
+                transaction_id,
+                error: None,
+                response: None,
+                method_name: Some(BufT::from(b"ping")),
+                arguments: Some(ping),
+                ip,
+                version,
+            };
+            Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
+        }
     }
 }
 
@@ -391,7 +425,7 @@ where
 {
     let de: RawMessage<ByteBuf> = bencode::from_bytes(buf)?;
     match de.message_type {
-        MessageType::Request => match (de.arguments, de.method_name, de.response, de.error) {
+        MessageType::Request => match (&de.arguments, &de.method_name, &de.response, &de.error) {
             (Some(_), Some(method_name), None, None) => match method_name.as_ref() {
                 b"find_node" => {
                     let de: RawMessage<BufT, FindNodeRequest> = bencode::from_bytes(buf)?;
@@ -411,14 +445,24 @@ where
                         kind: MessageKind::GetPeersRequest(de.arguments.unwrap()),
                     })
                 }
+                b"ping" => {
+                    let de: RawMessage<BufT, PingRequest> = bencode::from_bytes(buf)?;
+                    Ok(Message {
+                        transaction_id: de.transaction_id,
+                        version: de.version,
+                        ip: de.ip.map(|c| c.addr),
+                        kind: MessageKind::PingRequest(de.arguments.unwrap()),
+                    })
+                }
                 other => anyhow::bail!("unsupported method {:?}", ByteBuf(other)),
             },
             _ => anyhow::bail!(
-                "cannot deserialize message as request, expected exactly \"a\" and \"q\" to be set"
+                "cannot deserialize message as request, expected exactly \"a\" and \"q\" to be set. Message: {:?}", de
             ),
         },
-        MessageType::Response => match (de.arguments, de.method_name, de.response, de.error) {
-            (None, None, Some(_), None) => {
+        MessageType::Response => match (&de.arguments, &de.method_name, &de.response, &de.error) {
+            // some peers are sending method name against the protocol, so ignore it.
+            (None, _, Some(_), None) => {
                 let de: RawMessage<BufT, IgnoredAny, Response<BufT>> = bencode::from_bytes(buf)?;
                 Ok(Message {
                     transaction_id: de.transaction_id,
@@ -428,11 +472,12 @@ where
                 })
             }
             _ => anyhow::bail!(
-                "cannot deserialize message as response, expected exactly \"r\" to be set"
+                "cannot deserialize message as response, expected exactly \"r\" to be set. Message: {:?}", de
             ),
         },
-        MessageType::Error => match (de.arguments, de.method_name, de.response, de.error) {
-            (None, None, None, Some(e)) => {
+        MessageType::Error => match (&de.arguments, &de.method_name, &de.response, &de.error) {
+            // some peers are sending method name against the protocol, so ignore it.
+            (None, _, None, Some(_)) => {
                 let de: RawMessage<BufT, IgnoredAny, Response<BufT>> = bencode::from_bytes(buf)?;
                 Ok(Message {
                     transaction_id: de.transaction_id,
@@ -442,7 +487,7 @@ where
                 })
             }
             _ => anyhow::bail!(
-                "cannot deserialize message as response, expected exactly \"r\" to be set"
+                "cannot deserialize message as error, expected exactly \"e\" to be set. Message: {:?}", de
             ),
         },
     }
@@ -454,7 +499,6 @@ mod tests {
 
     use crate::bprotocol;
     use bencode::ByteBuf;
-    use librqbit_core::peer_id::generate_peer_id;
 
     // Dumped with wireshark.
     const FIND_NODE_REQUEST: &[u8] = b"64313a6164323a696432303abd7b477cfbcd10f30b705da20201e7101d8df155363a74617267657432303abd7b477cfbcd10f30b705da20201e7101d8df15565313a71393a66696e645f6e6f6465313a74323a0005313a79313a7165";

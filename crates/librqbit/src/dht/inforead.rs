@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use buffers::ByteString;
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -23,10 +23,10 @@ pub enum ReadMetainfoResult {
 pub async fn read_metainfo_from_peer_receiver(
     peer_id: [u8; 20],
     info_hash: [u8; 20],
-    mut addrs: UnboundedReceiver<SocketAddr>,
+    mut addrs: impl StreamExt<Item = SocketAddr> + Unpin,
 ) -> ReadMetainfoResult {
     let mut seen = Vec::<SocketAddr>::new();
-    let first_addr = match addrs.recv().await {
+    let first_addr = match addrs.next().await {
         Some(addr) => addr,
         None => return ReadMetainfoResult::ChannelClosed { seen },
     };
@@ -39,7 +39,7 @@ pub async fn read_metainfo_from_peer_receiver(
 
     loop {
         tokio::select! {
-            next_addr = addrs.recv() => {
+            next_addr = addrs.next() => {
                 match next_addr {
                     Some(addr) => {
                         seen.push(addr);

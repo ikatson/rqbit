@@ -1,9 +1,22 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id20(pub [u8; 20]);
+
+impl FromStr for Id20 {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut out = [0u8; 20];
+        if s.len() != 40 {
+            anyhow::bail!("expected a hex string of length 40")
+        };
+        hex::decode_to_slice(s, &mut out)?;
+        Ok(Id20(out))
+    }
+}
 
 impl std::fmt::Debug for Id20 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
