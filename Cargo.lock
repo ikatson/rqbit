@@ -283,6 +283,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_env_logger",
+ "rand 0.8.4",
  "serde",
  "tokio",
  "tokio-stream",

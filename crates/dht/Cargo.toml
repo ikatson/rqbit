@@ -17,6 +17,7 @@ parking_lot = "0.11"
 log = "0.4"
 pretty_env_logger = "0.4"
 futures = "0.3"
+rand = "0.8"
 
 librqbit_core = {path="../librqbit_core"}
 
