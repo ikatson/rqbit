@@ -276,6 +276,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bencode",
+ "futures 0.3.15",
  "hex 0.4.3",
  "kad",
  "librqbit_core",
@@ -284,6 +285,7 @@ dependencies = [
  "pretty_env_logger",
  "serde",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

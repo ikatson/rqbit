@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 kad = "0.6"
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "net", "sync"]}
+tokio-stream = "0.1"
 serde = {version = "1", features = ["derive"]}
 hex = "0.4"
 bencode = {path = "../bencode"}
@@ -15,6 +16,7 @@ anyhow = "1"
 parking_lot = "0.11"
 log = "0.4"
 pretty_env_logger = "0.4"
+futures = "0.3"
 
 librqbit_core = {path="../librqbit_core"}
 
