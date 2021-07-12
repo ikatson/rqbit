@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, time::Instant};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 enum BucketTreeNode {
@@ -56,6 +59,55 @@ impl<'a> Iterator for BucketTreeNodeIterator<'a> {
                 BucketTreeNode::LeftRight(left, right) => {
                     self.queue.push(right.as_ref());
                     self.queue.push(left.as_ref());
+                    continue;
+                }
+            }
+        }
+    }
+}
+
+pub struct BucketTreeNodeIteratorMut<'a> {
+    current: std::slice::IterMut<'a, RoutingTableNode>,
+    queue: Vec<&'a mut BucketTree>,
+}
+
+impl<'a> BucketTreeNodeIteratorMut<'a> {
+    fn new(mut tree: &'a mut BucketTree) -> Self {
+        let mut queue = Vec::new();
+        let current = loop {
+            match &mut tree.data {
+                BucketTreeNode::Leaf(nodes) => break nodes.iter_mut(),
+                BucketTreeNode::LeftRight(left, right) => {
+                    queue.push(right.as_mut());
+                    tree = left.as_mut()
+                }
+            }
+        };
+        BucketTreeNodeIteratorMut { current, queue }
+    }
+}
+
+impl<'a> Iterator for BucketTreeNodeIteratorMut<'a> {
+    type Item = &'a mut RoutingTableNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(v) = self.current.next() {
+            return Some(v);
+        };
+
+        loop {
+            let tree = self.queue.pop()?;
+            match &mut tree.data {
+                BucketTreeNode::Leaf(nodes) => {
+                    self.current = nodes.iter_mut();
+                    match self.current.next() {
+                        Some(v) => return Some(v),
+                        None => continue,
+                    }
+                }
+                BucketTreeNode::LeftRight(left, right) => {
+                    self.queue.push(right.as_mut());
+                    self.queue.push(left.as_mut());
                     continue;
                 }
             }
@@ -129,6 +181,23 @@ impl BucketTree {
     pub fn iter(&self) -> BucketTreeNodeIterator<'_> {
         BucketTreeNodeIterator::new(self)
     }
+
+    pub fn iter_mut(&mut self) -> BucketTreeNodeIteratorMut<'_> {
+        BucketTreeNodeIteratorMut::new(self)
+    }
+
+    pub fn get_mut(&mut self, id: &Id20) -> Option<&mut RoutingTableNode> {
+        if !(*id >= self.start && *id <= self.end_inclusive) {
+            return None;
+        }
+        match &mut self.data {
+            BucketTreeNode::Leaf(nodes) => nodes.iter_mut().find(|b| b.id == *id),
+            BucketTreeNode::LeftRight(left, right) => {
+                left.get_mut(id).or_else(move || right.get_mut(id))
+            }
+        }
+    }
+
     pub fn add_node(&mut self, self_id: &Id20, id: Id20, addr: SocketAddr) -> InsertResult {
         let mut tree = self;
         loop {
@@ -259,10 +328,24 @@ impl RoutingTableNode {
             Some(v) => v,
             None => return NodeStatus::Unknown,
         };
+        if self.outstanding_queries_in_a_row > 0 && last_request.elapsed() > Duration::from_secs(10)
+        {
+            return NodeStatus::Bad;
+        }
         if self.last_response.is_some() {
             return NodeStatus::Good;
         }
         NodeStatus::Questionable
+    }
+
+    pub fn mark_outgoing_request(&mut self) {
+        self.last_request = Some(Instant::now());
+        self.outstanding_queries_in_a_row += 1;
+    }
+
+    pub fn mark_response(&mut self) {
+        self.last_response = Some(Instant::now());
+        self.outstanding_queries_in_a_row = 0;
     }
 }
 
@@ -289,6 +372,16 @@ impl RoutingTable {
         result.sort_by_key(|n| id.distance(&n.id));
         result
     }
+
+    pub fn sorted_by_distance_from_mut(&mut self, id: Id20) -> Vec<&mut RoutingTableNode> {
+        let mut result = Vec::with_capacity(self.size);
+        for node in self.buckets.iter_mut() {
+            result.push(node);
+        }
+        result.sort_by_key(|n| id.distance(&n.id));
+        result
+    }
+
     pub fn add_node(&mut self, id: Id20, addr: SocketAddr) -> InsertResult {
         let res = self.buckets.add_node(&self.id, id, addr);
         let replaced = match &res {
@@ -301,6 +394,23 @@ impl RoutingTable {
             self.size += 1;
         }
         res
+    }
+    pub fn mark_outgoing_request(&mut self, id: &Id20) -> bool {
+        let r = match self.buckets.get_mut(id) {
+            Some(r) => r,
+            None => return false,
+        };
+        r.mark_outgoing_request();
+        true
+    }
+
+    pub fn mark_response(&mut self, id: &Id20) -> bool {
+        let r = match self.buckets.get_mut(id) {
+            Some(r) => r,
+            None => return false,
+        };
+        r.mark_response();
+        true
     }
 }
 
@@ -410,6 +520,7 @@ mod tests {
             let addr = std::net::SocketAddr::V4(SocketAddrV4::new("0.0.0.0".parse().unwrap(), i));
             rtable.add_node(other_id, addr);
         }
-        dbg!(rtable);
+        dbg!(&rtable);
+        assert_eq!(rtable.sorted_by_distance_from(my_id).len(), rtable.size);
     }
 }
