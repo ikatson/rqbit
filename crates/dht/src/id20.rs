@@ -67,6 +67,20 @@ impl Id20 {
         }
         Id20(xor)
     }
+    pub fn set_bit(&mut self, bit: u8, value: bool) {
+        let n = &mut self.0[(bit / 8) as usize];
+        if value {
+            *n |= 1 << (7 - bit % 8)
+        } else {
+            let mask = !(1 << (7 - bit % 8));
+            *n &= mask;
+        }
+    }
+    pub fn set_bits_range(&mut self, r: std::ops::Range<u8>, value: bool) {
+        for bit in r {
+            self.set_bit(bit, value)
+        }
+    }
 }
 
 impl Ord for Id20 {
@@ -85,5 +99,20 @@ impl Ord for Id20 {
 impl PartialOrd<Id20> for Id20 {
     fn partial_cmp(&self, other: &Id20) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Id20;
+
+    #[test]
+    fn test_set_bit_range() {
+        let mut id = Id20([0u8; 20]);
+        id.set_bits_range(9..17, true);
+        assert_eq!(
+            id,
+            Id20([0, 127, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        )
     }
 }

@@ -130,12 +130,12 @@ impl DhtState {
                 let nodes = response
                     .nodes
                     .ok_or_else(|| anyhow::anyhow!("expected nodes for find_node requests"))?;
-                let pn = match (response.nodes, response.values) {
-                    (Some(nodes), None) => PeersOrNodes::Nodes(nodes),
-                    (None, Some(peers)) => PeersOrNodes::Peers(peers),
-                    _ => anyhow::bail!("expected nodes or values to be set in find_peers response"),
-                };
-                self.on_found_peers_or_nodes(id, pn)
+                // let pn = match (response.nodes, response.values) {
+                //     (Some(nodes), None) => PeersOrNodes::Nodes(nodes),
+                //     (None, Some(peers)) => PeersOrNodes::Peers(peers),
+                //     _ => anyhow::bail!("expected nodes or values to be set in find_peers response"),
+                // };
+                // self.on_found_peers_or_nodes(id, pn)
             }
         };
         Ok(())
@@ -222,31 +222,31 @@ impl DhtWorker {
             // bootstrap
             for addr in bootstrap_addrs {
                 for addr in tokio::net::lookup_host(addr).await.unwrap() {
-                    let msg = MessageKind::FindNodeRequest(FindNodeRequest {
-                        id: self.peer_id,
-                        target: self.peer_id,
-                    });
-                    in_tx.send((msg, addr)).await.unwrap();
+                    // let msg = MessageKind::FindNodeRequest(FindNodeRequest {
+                    //     id: self.peer_id,
+                    //     target: self.peer_id,
+                    // });
+                    // in_tx.send((msg, addr)).await.unwrap();
                 }
             }
         };
         let mut bootstrap_done = false;
 
-        let request_reader = async {
-            while let Some((request, sender)) = self.request_rx.recv().await {
-                self.on_request(request, sender)
-            }
-        };
+        // let request_reader = async {
+        //     while let Some((request, sender)) = self.request_rx.recv().await {
+        //         self.on_request(request, sender)
+        //     }
+        // };
 
-        tokio::select! {
-            _ = framer => {
-                anyhow::bail!("framer quit")
-            },
-            _ = bootstrap, if !bootstrap_done => {
-                bootstrap_done = true
-            },
-            _ = request_reader => {}
-        }
+        // tokio::select! {
+        //     _ = framer => {
+        //         anyhow::bail!("framer quit")
+        //     },
+        //     _ = bootstrap, if !bootstrap_done => {
+        //         bootstrap_done = true
+        //     },
+        //     _ = request_reader => {}
+        // }
 
         todo!()
     }
