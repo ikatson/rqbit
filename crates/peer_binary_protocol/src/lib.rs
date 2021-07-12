@@ -4,7 +4,7 @@ use bincode::Options;
 use buffers::{ByteBuf, ByteString};
 use byteorder::{ByteOrder, BE};
 use clone_to_owned::CloneToOwned;
-use librqbit_core::{constants::CHUNK_SIZE, lengths::ChunkInfo};
+use librqbit_core::{constants::CHUNK_SIZE, id20::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
 
 use self::extended::{handshake::ExtendedHandshake, ExtendedMessage};
@@ -474,8 +474,8 @@ where
 pub struct Handshake<'a> {
     pub pstr: &'a str,
     pub reserved: [u8; 8],
-    pub info_hash: [u8; 20],
-    pub peer_id: [u8; 20],
+    pub info_hash: Id20,
+    pub peer_id: Id20,
 }
 
 fn bopts() -> impl bincode::Options {
@@ -485,7 +485,7 @@ fn bopts() -> impl bincode::Options {
 }
 
 impl<'a> Handshake<'a> {
-    pub fn new(info_hash: [u8; 20], peer_id: [u8; 20]) -> Handshake<'static> {
+    pub fn new(info_hash: Id20, peer_id: Id20) -> Handshake<'static> {
         debug_assert_eq!(PSTR_BT1.len(), 19);
 
         let mut reserved: u64 = 0;
@@ -552,12 +552,12 @@ mod tests {
     use super::*;
     #[test]
     fn test_handshake_serialize() {
-        let info_hash = [
+        let info_hash = Id20([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        ];
-        let peer_id = [
+        ]);
+        let peer_id = Id20([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        ];
+        ]);
         let mut buf = Vec::new();
         Handshake::new(info_hash, peer_id).serialize(&mut buf);
         assert_eq!(buf.len(), 20 + 20 + 8 + 19 + 1);

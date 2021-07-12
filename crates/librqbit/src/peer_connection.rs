@@ -3,7 +3,7 @@ use std::{net::SocketAddr, time::Duration};
 use anyhow::Context;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
-use librqbit_core::{lengths::ChunkInfo, peer_id::try_decode_peer_id};
+use librqbit_core::{id20::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
 use log::{debug, trace};
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ExtendedMessage},
@@ -34,8 +34,8 @@ pub enum WriterRequest {
 pub struct PeerConnection<H> {
     handler: H,
     addr: SocketAddr,
-    info_hash: [u8; 20],
-    peer_id: [u8; 20],
+    info_hash: Id20,
+    peer_id: Id20,
 }
 
 // async fn read_one<'a, R: AsyncReadExt + Unpin>(
@@ -94,7 +94,7 @@ macro_rules! read_one {
 }
 
 impl<H: PeerConnectionHandler> PeerConnection<H> {
-    pub fn new(addr: SocketAddr, info_hash: [u8; 20], peer_id: [u8; 20], handler: H) -> Self {
+    pub fn new(addr: SocketAddr, info_hash: Id20, peer_id: Id20, handler: H) -> Self {
         PeerConnection {
             handler,
             addr,
@@ -112,7 +112,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
         let mut conn = match timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(2),
             tokio::net::TcpStream::connect(self.addr),
         )
         .await

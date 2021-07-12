@@ -1,5 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
+use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use tokio::sync::{Notify, Semaphore};
 
@@ -29,7 +30,7 @@ pub enum PeerState {
 
 #[derive(Debug)]
 pub struct LivePeerState {
-    pub peer_id: [u8; 20],
+    pub peer_id: Id20,
     pub i_am_choked: bool,
     pub peer_interested: bool,
     pub requests_sem: Arc<Semaphore>,
@@ -39,7 +40,7 @@ pub struct LivePeerState {
 }
 
 impl LivePeerState {
-    pub fn new(peer_id: [u8; 20]) -> Self {
+    pub fn new(peer_id: Id20) -> Self {
         LivePeerState {
             peer_id,
             i_am_choked: true,

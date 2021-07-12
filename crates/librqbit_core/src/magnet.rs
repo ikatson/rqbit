@@ -1,8 +1,11 @@
-use crate::info_hash::{decode_info_hash, InfoHash};
+use std::str::FromStr;
+
 use anyhow::Context;
 
+use crate::id20::Id20;
+
 pub struct Magnet {
-    pub info_hash: InfoHash,
+    pub info_hash: Id20,
     pub trackers: Vec<String>,
 }
 
@@ -12,13 +15,13 @@ impl Magnet {
         if url.scheme() != "magnet" {
             anyhow::bail!("expected scheme magnet");
         }
-        let mut info_hash: Option<InfoHash> = None;
+        let mut info_hash: Option<Id20> = None;
         let mut trackers = Vec::<String>::new();
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
                 "xt" => match value.as_ref().strip_prefix("urn:btih:") {
                     Some(infohash) => {
-                        info_hash.replace(decode_info_hash(infohash)?);
+                        info_hash.replace(Id20::from_str(infohash)?);
                     }
                     None => anyhow::bail!("expected xt to start with urn:btih:"),
                 },

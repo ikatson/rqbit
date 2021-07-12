@@ -14,7 +14,7 @@ use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
-    info_hash::InfoHash,
+    id20::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -219,8 +219,8 @@ pub struct TorrentState {
     info: TorrentMetaV1Info<ByteString>,
     locked: Arc<RwLock<TorrentStateLocked>>,
     files: Vec<Arc<Mutex<File>>>,
-    info_hash: [u8; 20],
-    peer_id: [u8; 20],
+    info_hash: Id20,
+    peer_id: Id20,
     lengths: Lengths,
     needed: u64,
     stats: AtomicStats,
@@ -234,8 +234,8 @@ impl TorrentState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         info: TorrentMetaV1Info<ByteString>,
-        info_hash: [u8; 20],
-        peer_id: [u8; 20],
+        info_hash: Id20,
+        peer_id: Id20,
         files: Vec<Arc<Mutex<File>>>,
         chunk_tracker: ChunkTracker,
         lengths: Lengths,
@@ -304,10 +304,10 @@ impl TorrentState {
     pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
         &self.info
     }
-    pub fn info_hash(&self) -> InfoHash {
+    pub fn info_hash(&self) -> Id20 {
         self.info_hash
     }
-    pub fn peer_id(&self) -> [u8; 20] {
+    pub fn peer_id(&self) -> Id20 {
         self.peer_id
     }
     pub fn file_ops(&self) -> FileOps<'_, Sha1> {

@@ -11,7 +11,7 @@ use anyhow::Context;
 use bencode::from_bytes;
 use buffers::ByteString;
 use librqbit_core::{
-    lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
+    id20::Id20, lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
 };
 use log::{debug, info};
@@ -29,11 +29,11 @@ use crate::{
 };
 pub struct TorrentManagerBuilder {
     info: TorrentMetaV1Info<ByteString>,
-    info_hash: [u8; 20],
+    info_hash: Id20,
     overwrite: bool,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
-    peer_id: Option<[u8; 20]>,
+    peer_id: Option<Id20>,
     force_tracker_interval: Option<Duration>,
     spawner: Option<BlockingSpawner>,
 }
@@ -41,7 +41,7 @@ pub struct TorrentManagerBuilder {
 impl TorrentManagerBuilder {
     pub fn new<P: AsRef<Path>>(
         info: TorrentMetaV1Info<ByteString>,
-        info_hash: [u8; 20],
+        info_hash: Id20,
         output_folder: P,
     ) -> Self {
         Self {
@@ -76,7 +76,7 @@ impl TorrentManagerBuilder {
         self
     }
 
-    pub fn peer_id(&mut self, peer_id: [u8; 20]) -> &mut Self {
+    pub fn peer_id(&mut self, peer_id: Id20) -> &mut Self {
         self.peer_id = Some(peer_id);
         self
     }
@@ -150,12 +150,12 @@ impl TorrentManager {
     #[allow(clippy::too_many_arguments)]
     fn start<P: AsRef<Path>>(
         info: TorrentMetaV1Info<ByteString>,
-        info_hash: [u8; 20],
+        info_hash: Id20,
         out: P,
         overwrite: bool,
         only_files: Option<Vec<usize>>,
         force_tracker_interval: Option<Duration>,
-        peer_id: Option<[u8; 20]>,
+        peer_id: Option<Id20>,
         spawner: BlockingSpawner,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let files = {

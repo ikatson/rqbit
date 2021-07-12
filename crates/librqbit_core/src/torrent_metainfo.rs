@@ -5,6 +5,8 @@ use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
 
+use crate::id20::Id20;
+
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
 
@@ -14,7 +16,10 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     let mut de = BencodeDeserializer::new_from_buf(buf);
     de.is_torrent_info = true;
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
-    t.info_hash = de.torrent_info_digest.unwrap();
+    t.info_hash = Id20(
+        de.torrent_info_digest
+            .ok_or_else(|| anyhow::anyhow!("programming error"))?,
+    );
     Ok(t)
 }
 
@@ -35,7 +40,7 @@ pub struct TorrentMetaV1<BufType> {
     pub creation_date: Option<usize>,
 
     #[serde(skip)]
-    pub info_hash: [u8; 20],
+    pub info_hash: Id20,
 }
 
 impl<BufType> TorrentMetaV1<BufType> {
@@ -292,8 +297,8 @@ mod tests {
 
         let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
         assert_eq!(
-            torrent.info_hash,
-            *b"\x64\xa9\x80\xab\xe6\xe4\x48\x22\x6b\xb9\x30\xba\x06\x15\x92\xe4\x4c\x37\x81\xa1"
+            torrent.info_hash.to_string(),
+            "64a980abe6e448226bb930ba061592e44c3781a1"
         );
     }
 }

@@ -2,7 +2,7 @@ use std::{cmp::Ordering, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Id20(pub [u8; 20]);
 
 impl FromStr for Id20 {
@@ -67,6 +67,9 @@ impl<'de> Deserialize<'de> for Id20 {
 }
 
 impl Id20 {
+    pub fn to_string(&self) -> String {
+        hex::encode(self.0)
+    }
     pub fn distance(&self, other: &Id20) -> Id20 {
         let mut xor = [0u8; 20];
         for (idx, (s, o)) in self

@@ -1,5 +1,5 @@
 pub mod chunk_tracker;
-pub mod dht;
+pub mod dht_utils;
 pub mod file_ops;
 pub mod http_api;
 pub mod peer_connection;
@@ -14,7 +14,6 @@ pub mod type_aliases;
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;
-pub use librqbit_core::info_hash::*;
 pub use librqbit_core::magnet::*;
 pub use librqbit_core::peer_id::*;
 pub use librqbit_core::torrent_metainfo::*;

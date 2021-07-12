@@ -4,6 +4,7 @@ use bencode::from_bytes;
 use buffers::{ByteBuf, ByteString};
 use librqbit_core::{
     constants::CHUNK_SIZE,
+    id20::Id20,
     lengths::{ceil_div_u64, last_element_size_u64, ChunkInfo},
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -20,8 +21,8 @@ use crate::peer_connection::{PeerConnection, PeerConnectionHandler, WriterReques
 
 pub async fn read_metainfo_from_peer(
     addr: SocketAddr,
-    peer_id: [u8; 20],
-    info_hash: [u8; 20],
+    peer_id: Id20,
+    info_hash: Id20,
 ) -> anyhow::Result<TorrentMetaV1Info<ByteString>> {
     let (result_tx, result_rx) =
         tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteString>>>();
@@ -77,12 +78,7 @@ impl HandlerLocked {
             CHUNK_SIZE as usize
         }
     }
-    fn record_piece(
-        &mut self,
-        index: u32,
-        data: &[u8],
-        info_hash: [u8; 20],
-    ) -> anyhow::Result<bool> {
+    fn record_piece(&mut self, index: u32, data: &[u8], info_hash: Id20) -> anyhow::Result<bool> {
         if index as usize >= self.total_pieces {
             anyhow::bail!("wrong index");
         }
@@ -107,7 +103,7 @@ impl HandlerLocked {
             // check metadata
             let mut hash = Sha1::new();
             hash.update(&self.buffer);
-            if hash.finish() != info_hash {
+            if hash.finish() != info_hash.0 {
                 anyhow::bail!("info checksum invalid");
             }
             Ok(true)
@@ -119,7 +115,7 @@ impl HandlerLocked {
 
 struct Handler {
     addr: SocketAddr,
-    info_hash: [u8; 20],
+    info_hash: Id20,
     writer_tx: UnboundedSender<WriterRequest>,
     result_tx:
         Mutex<Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentMetaV1Info<ByteString>>>>>,
@@ -216,6 +212,7 @@ impl PeerConnectionHandler for Handler {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Once};
 
+    use librqbit_core::id20::Id20;
     use librqbit_core::peer_id::generate_peer_id;
 
     use super::read_metainfo_from_peer;
@@ -226,19 +223,13 @@ mod tests {
         LOG_INIT.call_once(pretty_env_logger::init)
     }
 
-    fn decode_info_hash(hash_str: &str) -> [u8; 20] {
-        let mut hash_arr = [0u8; 20];
-        hex::decode_to_slice(hash_str, &mut hash_arr).unwrap();
-        hash_arr
-    }
-
     #[tokio::test]
     async fn test_get_torrent_metadata_from_localhost_bittorrent_client() {
         init_logging();
 
         let addr = SocketAddr::from_str("127.0.0.1:27311").unwrap();
         let peer_id = generate_peer_id();
-        let info_hash = decode_info_hash("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7");
+        let info_hash = Id20::from_str("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
         dbg!(read_metainfo_from_peer(addr, peer_id, info_hash)
             .await
             .unwrap());

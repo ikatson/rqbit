@@ -5,12 +5,12 @@ use clap::Clap;
 use dht::{Dht, Id20};
 use futures::StreamExt;
 use librqbit::{
-    dht::inforead::read_metainfo_from_peer_receiver,
+    dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     generate_peer_id,
     spawn_utils::{spawn, BlockingSpawner},
     torrent_from_bytes,
     torrent_manager::TorrentManagerBuilder,
-    ByteString, InfoHash, Magnet, TorrentMetaV1Info, TorrentMetaV1Owned,
+    ByteString, Magnet, TorrentMetaV1Info, TorrentMetaV1Owned,
 };
 use log::{info, warn};
 use reqwest::Url;
@@ -169,22 +169,18 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
     let peer_id = generate_peer_id();
-    let dht = Dht::new(&["dht.transmissionbt.com:6881", "dht.libtorrent.org:25401"])
-        .await
-        .context("error initializing DHT")?;
+    let dht = Dht::new().await.context("error initializing DHT")?;
 
     if opts.torrent_path.starts_with("magnet:") {
         let Magnet {
             info_hash,
             trackers,
         } = Magnet::parse(&opts.torrent_path).context("provided path is not a valid magnet URL")?;
-        let dht_rx = dht.get_peers(Id20(info_hash)).await;
+        let dht_rx = dht.get_peers(info_hash).await;
         let (info, dht_rx, initial_peers) =
             match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx).await {
-                librqbit::dht::inforead::ReadMetainfoResult::Found { info, rx, seen } => {
-                    (info, rx, seen)
-                }
-                librqbit::dht::inforead::ReadMetainfoResult::ChannelClosed { .. } => {
+                ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
+                ReadMetainfoResult::ChannelClosed { .. } => {
                     anyhow::bail!("DHT died, no way to discover torrent metainfo")
                 }
             };
@@ -216,7 +212,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         } else {
             torrent_from_file(&opts.torrent_path)?
         };
-        let dht_rx = dht.get_peers(Id20(torrent.info_hash)).await;
+        let dht_rx = dht.get_peers(torrent.info_hash).await;
         let trackers = torrent
             .iter_announce()
             .filter_map(|tracker| {
@@ -253,9 +249,9 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
 #[allow(clippy::too_many_arguments)]
 async fn main_info(
     opts: Opts,
-    info_hash: InfoHash,
+    info_hash: Id20,
     info: TorrentMetaV1Info<ByteString>,
-    peer_id: [u8; 20],
+    peer_id: Id20,
     mut dht_peer_rx: impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static,
     initial_peers: Vec<SocketAddr>,
     trackers: Vec<reqwest::Url>,

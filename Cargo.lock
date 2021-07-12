@@ -692,6 +692,7 @@ dependencies = [
  "byteorder",
  "clone_to_owned",
  "crypto-hash",
+ "dht",
  "futures",
  "hex 0.4.3",
  "librqbit_core",

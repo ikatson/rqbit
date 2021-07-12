@@ -6,6 +6,7 @@ use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
 
 use crate::peer_info_reader;
+use librqbit_core::id20::Id20;
 
 #[derive(Debug)]
 pub enum ReadMetainfoResult<Rx> {
@@ -20,8 +21,8 @@ pub enum ReadMetainfoResult<Rx> {
 }
 
 pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + Unpin>(
-    peer_id: [u8; 20],
-    info_hash: [u8; 20],
+    peer_id: Id20,
+    info_hash: Id20,
     mut addrs: A,
 ) -> ReadMetainfoResult<A> {
     let mut seen = HashSet::<SocketAddr>::new();
@@ -63,13 +64,11 @@ pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + 
 
 #[cfg(test)]
 mod tests {
-    use librqbit_core::{info_hash::decode_info_hash, peer_id::generate_peer_id};
-    use tokio_stream::wrappers::UnboundedReceiverStream;
-
-    use crate::dht::jsdht::JsDht;
+    use dht::{Dht, Id20};
+    use librqbit_core::peer_id::generate_peer_id;
 
     use super::*;
-    use std::sync::Once;
+    use std::{str::FromStr, sync::Once};
 
     static LOG_INIT: Once = Once::new();
 
@@ -81,16 +80,13 @@ mod tests {
     async fn read_metainfo_from_dht() {
         init_logging();
 
-        let info_hash = decode_info_hash("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
-        let peer_rx = JsDht::new(info_hash).start_peer_discovery().unwrap();
+        let info_hash = Id20::from_str("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
+        let dht = Dht::new().await.unwrap();
+        let peer_rx = dht.get_peers(info_hash).await;
         let peer_id = generate_peer_id();
-        dbg!(
-            read_metainfo_from_peer_receiver(
-                peer_id,
-                info_hash,
-                UnboundedReceiverStream::new(peer_rx)
-            )
-            .await
-        );
+        match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx).await {
+            ReadMetainfoResult::Found { info, rx, seen } => dbg!(info),
+            ReadMetainfoResult::ChannelClosed { seen } => todo!("should not have happened"),
+        };
     }
 }

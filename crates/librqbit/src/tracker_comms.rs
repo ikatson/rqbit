@@ -8,6 +8,8 @@ use std::{
     str::FromStr,
 };
 
+use librqbit_core::id20::Id20;
+
 #[derive(Clone, Copy)]
 pub enum TrackerRequestEvent {
     Started,
@@ -16,8 +18,8 @@ pub enum TrackerRequestEvent {
 }
 
 pub struct TrackerRequest {
-    pub info_hash: [u8; 20],
-    pub peer_id: [u8; 20],
+    pub info_hash: Id20,
+    pub peer_id: Id20,
     pub event: Option<TrackerRequestEvent>,
     pub port: u16,
     pub uploaded: u64,
@@ -159,9 +161,9 @@ impl TrackerRequest {
         use urlencoding as u;
         let mut s = String::new();
         s.push_str("info_hash=");
-        s.push_str(u::encode_binary(&self.info_hash).as_ref());
+        s.push_str(u::encode_binary(&self.info_hash.0).as_ref());
         s.push_str("&peer_id=");
-        s.push_str(u::encode_binary(&self.peer_id).as_ref());
+        s.push_str(u::encode_binary(&self.peer_id.0).as_ref());
         if let Some(event) = self.event {
             write!(
                 s,
@@ -201,12 +203,12 @@ mod tests {
     use super::*;
     #[test]
     fn test_serialize() {
-        let info_hash = [
+        let info_hash = Id20([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        ];
-        let peer_id = [
+        ]);
+        let peer_id = Id20([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        ];
+        ]);
         let request = TrackerRequest {
             info_hash,
             peer_id,

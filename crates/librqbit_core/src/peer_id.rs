@@ -1,3 +1,5 @@
+use crate::id20::Id20;
+
 #[derive(Debug)]
 pub enum AzureusStyleKind {
     Deluge,
@@ -23,7 +25,8 @@ impl AzureusStyleKind {
     }
 }
 
-fn try_decode_azureus_style(p: &[u8; 20]) -> Option<AzureusStyle> {
+fn try_decode_azureus_style(p: &Id20) -> Option<AzureusStyle> {
+    let p = p.0;
     if !(p[0] == b'-' && p[7] == b'-') {
         return None;
     }
@@ -40,11 +43,11 @@ pub enum PeerId {
     AzureusStyle(AzureusStyle),
 }
 
-pub fn try_decode_peer_id(p: [u8; 20]) -> Option<PeerId> {
+pub fn try_decode_peer_id(p: Id20) -> Option<PeerId> {
     Some(PeerId::AzureusStyle(try_decode_azureus_style(&p)?))
 }
 
-pub fn generate_peer_id() -> [u8; 20] {
+pub fn generate_peer_id() -> Id20 {
     let mut peer_id = [0u8; 20];
 
     let u = uuid::Uuid::new_v4();
@@ -52,5 +55,5 @@ pub fn generate_peer_id() -> [u8; 20] {
 
     (&mut peer_id[..8]).copy_from_slice(b"-rQ0001-");
 
-    peer_id
+    Id20(peer_id)
 }

@@ -19,6 +19,7 @@ librqbit_core = {path = "../librqbit_core"}
 clone_to_owned = {path = "../clone_to_owned"}
 peer_binary_protocol = {path = "../peer_binary_protocol"}
 sha1w = {path = "../sha1w"}
+dht = {path = "../dht"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 tokio-stream = "0.1"

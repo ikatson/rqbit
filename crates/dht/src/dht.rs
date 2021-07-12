@@ -8,6 +8,7 @@ use crate::{
         self, CompactNodeInfo, FindNodeRequest, GetPeersRequest, Message, MessageKind, Node,
     },
     routing_table::{InsertResult, RoutingTable},
+    DHT_BOOTSTRAP,
 };
 use anyhow::Context;
 use bencode::ByteString;
@@ -495,12 +496,15 @@ impl DhtWorker {
 }
 
 impl Dht {
-    pub async fn new(bootstrap_addrs: &[&str]) -> anyhow::Result<Self> {
+    pub async fn new() -> anyhow::Result<Self> {
+        Self::with_bootstrap_addrs(DHT_BOOTSTRAP).await
+    }
+    pub async fn with_bootstrap_addrs(bootstrap_addrs: &[&str]) -> anyhow::Result<Self> {
         let (request_tx, request_rx) = channel(1);
         let socket = UdpSocket::bind("0.0.0.0:0")
             .await
             .context("error binding socket")?;
-        let peer_id = Id20(generate_peer_id());
+        let peer_id = generate_peer_id();
         info!("starting up DHT with peer id {:?}", peer_id);
         let bootstrap_addrs = bootstrap_addrs
             .iter()
