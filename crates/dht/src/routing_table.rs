@@ -408,6 +408,7 @@ mod tests {
         for i in 0..u16::MAX {
             let other_id = random_id_20();
             let addr = std::net::SocketAddr::V4(SocketAddrV4::new("0.0.0.0".parse().unwrap(), i));
+            rtable.add_node(other_id, addr);
         }
         dbg!(rtable);
     }
