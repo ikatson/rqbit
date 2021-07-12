@@ -3,9 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use librqbit_core::id20::Id20;
 use log::debug;
-
-use crate::id20::Id20;
 
 #[derive(Debug)]
 enum BucketTreeNode {
@@ -426,9 +425,10 @@ impl RoutingTable {
 mod tests {
     use std::net::SocketAddrV4;
 
+    use librqbit_core::id20::Id20;
     use rand::Rng;
 
-    use crate::{id20::Id20, routing_table::compute_split_start_end};
+    use crate::routing_table::compute_split_start_end;
 
     use super::RoutingTable;
 

@@ -1,4 +1,6 @@
-pub mod bprotocol;
-pub mod dht;
-pub mod id20;
-pub mod routing_table;
+mod bprotocol;
+mod dht;
+mod routing_table;
+
+pub use dht::Dht;
+pub use librqbit_core::id20::Id20;

@@ -1,36 +1,35 @@
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr};
 
 use buffers::ByteString;
-use futures::{stream::FuturesUnordered, Stream, StreamExt};
+use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
-use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::peer_info_reader;
 
 #[derive(Debug)]
-pub enum ReadMetainfoResult {
+pub enum ReadMetainfoResult<Rx> {
     Found {
         info: TorrentMetaV1Info<ByteString>,
-        rx: UnboundedReceiver<SocketAddr>,
-        seen: Vec<SocketAddr>,
+        rx: Rx,
+        seen: HashSet<SocketAddr>,
     },
     ChannelClosed {
-        seen: Vec<SocketAddr>,
+        seen: HashSet<SocketAddr>,
     },
 }
 
-pub async fn read_metainfo_from_peer_receiver(
+pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + Unpin>(
     peer_id: [u8; 20],
     info_hash: [u8; 20],
-    mut addrs: impl StreamExt<Item = SocketAddr> + Unpin,
-) -> ReadMetainfoResult {
-    let mut seen = Vec::<SocketAddr>::new();
+    mut addrs: A,
+) -> ReadMetainfoResult<A> {
+    let mut seen = HashSet::<SocketAddr>::new();
     let first_addr = match addrs.next().await {
         Some(addr) => addr,
         None => return ReadMetainfoResult::ChannelClosed { seen },
     };
-    seen.push(first_addr);
+    seen.insert(first_addr);
 
     let mut unordered = FuturesUnordered::new();
     unordered.push(peer_info_reader::read_metainfo_from_peer(
@@ -42,8 +41,9 @@ pub async fn read_metainfo_from_peer_receiver(
             next_addr = addrs.next() => {
                 match next_addr {
                     Some(addr) => {
-                        seen.push(addr);
-                        unordered.push(peer_info_reader::read_metainfo_from_peer(addr, peer_id, info_hash));
+                        if seen.insert(addr) {
+                            unordered.push(peer_info_reader::read_metainfo_from_peer(addr, peer_id, info_hash));
+                        }
                     },
                     None => return ReadMetainfoResult::ChannelClosed { seen },
                 }
@@ -64,6 +64,7 @@ pub async fn read_metainfo_from_peer_receiver(
 #[cfg(test)]
 mod tests {
     use librqbit_core::{info_hash::decode_info_hash, peer_id::generate_peer_id};
+    use tokio_stream::wrappers::UnboundedReceiverStream;
 
     use crate::dht::jsdht::JsDht;
 
@@ -83,6 +84,13 @@ mod tests {
         let info_hash = decode_info_hash("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
         let peer_rx = JsDht::new(info_hash).start_peer_discovery().unwrap();
         let peer_id = generate_peer_id();
-        dbg!(read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx).await);
+        dbg!(
+            read_metainfo_from_peer_receiver(
+                peer_id,
+                info_hash,
+                UnboundedReceiverStream::new(peer_rx)
+            )
+            .await
+        );
     }
 }

@@ -2,8 +2,10 @@ use std::{fs::File, io::Read, net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
+use dht::{Dht, Id20};
+use futures::StreamExt;
 use librqbit::{
-    dht::{inforead::read_metainfo_from_peer_receiver, jsdht::JsDht},
+    dht::inforead::read_metainfo_from_peer_receiver,
     generate_peer_id,
     spawn_utils::{spawn, BlockingSpawner},
     torrent_from_bytes,
@@ -12,7 +14,6 @@ use librqbit::{
 };
 use log::{info, warn};
 use reqwest::Url;
-use tokio::sync::mpsc::UnboundedReceiver;
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
@@ -168,12 +169,16 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
     let peer_id = generate_peer_id();
+    let dht = Dht::new(&["dht.transmissionbt.com:6881", "dht.libtorrent.org:25401"])
+        .await
+        .context("error initializing DHT")?;
+
     if opts.torrent_path.starts_with("magnet:") {
         let Magnet {
             info_hash,
             trackers,
         } = Magnet::parse(&opts.torrent_path).context("provided path is not a valid magnet URL")?;
-        let dht_rx = JsDht::new(info_hash).start_peer_discovery()?;
+        let dht_rx = dht.get_peers(Id20(info_hash)).await;
         let (info, dht_rx, initial_peers) =
             match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx).await {
                 librqbit::dht::inforead::ReadMetainfoResult::Found { info, rx, seen } => {
@@ -189,7 +194,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             info,
             peer_id,
             dht_rx,
-            initial_peers,
+            initial_peers.into_iter().collect(),
             trackers
                 .into_iter()
                 .filter_map(|url| match reqwest::Url::parse(&url) {
@@ -211,7 +216,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         } else {
             torrent_from_file(&opts.torrent_path)?
         };
-        let dht_rx = JsDht::new(torrent.info_hash).start_peer_discovery()?;
+        let dht_rx = dht.get_peers(Id20(torrent.info_hash)).await;
         let trackers = torrent
             .iter_announce()
             .filter_map(|tracker| {
@@ -251,7 +256,7 @@ async fn main_info(
     info_hash: InfoHash,
     info: TorrentMetaV1Info<ByteString>,
     peer_id: [u8; 20],
-    mut dht_peer_rx: UnboundedReceiver<SocketAddr>,
+    mut dht_peer_rx: impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static,
     initial_peers: Vec<SocketAddr>,
     trackers: Vec<reqwest::Url>,
     spawner: BlockingSpawner,
@@ -298,7 +303,7 @@ async fn main_info(
     spawn("DHT peer adder", {
         let handle = handle.clone();
         async move {
-            while let Some(peer) = dht_peer_rx.recv().await {
+            while let Some(peer) = dht_peer_rx.next().await {
                 handle.add_peer(peer);
             }
             warn!("dht was closed");

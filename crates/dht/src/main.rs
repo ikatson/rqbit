@@ -1,7 +1,7 @@
-use std::{collections::HashSet, str::FromStr, time::Duration};
+use std::{collections::HashSet, str::FromStr};
 
 use anyhow::Context;
-use dht::{dht::Dht, id20::Id20};
+use dht::{Dht, Id20};
 use tokio_stream::StreamExt;
 
 #[tokio::main]

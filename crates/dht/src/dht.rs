@@ -7,13 +7,12 @@ use crate::{
     bprotocol::{
         self, CompactNodeInfo, FindNodeRequest, GetPeersRequest, Message, MessageKind, Node,
     },
-    id20::Id20,
     routing_table::{InsertResult, RoutingTable},
 };
 use anyhow::Context;
 use bencode::ByteString;
 use futures::{stream::FuturesUnordered, StreamExt};
-use librqbit_core::peer_id::generate_peer_id;
+use librqbit_core::{id20::Id20, peer_id::generate_peer_id};
 use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{

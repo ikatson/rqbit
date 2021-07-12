@@ -6,12 +6,11 @@ use std::{
 
 use bencode::ByteBuf;
 use clone_to_owned::CloneToOwned;
+use librqbit_core::id20::Id20;
 use serde::{
     de::{IgnoredAny, Unexpected},
     Deserialize, Deserializer, Serialize,
 };
-
-use crate::id20::Id20;
 
 #[derive(Debug)]
 enum MessageType {

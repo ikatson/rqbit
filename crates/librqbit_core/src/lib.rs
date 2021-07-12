@@ -1,4 +1,5 @@
 pub mod constants;
+pub mod id20;
 pub mod info_hash;
 pub mod lengths;
 pub mod magnet;
