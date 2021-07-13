@@ -24,17 +24,24 @@ use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::TorrentState,
+    torrent_state::{TorrentState, TorrentStateOptions},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
 };
+
+#[derive(Default)]
+struct TorrentManagerOptions {
+    force_tracker_interval: Option<Duration>,
+    peer_connect_timeout: Option<Duration>,
+    only_files: Option<Vec<usize>>,
+    peer_id: Option<Id20>,
+    overwrite: bool,
+}
+
 pub struct TorrentManagerBuilder {
     info: TorrentMetaV1Info<ByteString>,
     info_hash: Id20,
-    overwrite: bool,
     output_folder: PathBuf,
-    only_files: Option<Vec<usize>>,
-    peer_id: Option<Id20>,
-    force_tracker_interval: Option<Duration>,
+    options: TorrentManagerOptions,
     spawner: Option<BlockingSpawner>,
 }
 
@@ -47,27 +54,24 @@ impl TorrentManagerBuilder {
         Self {
             info,
             info_hash,
-            overwrite: false,
             output_folder: output_folder.as_ref().into(),
-            only_files: None,
-            peer_id: None,
-            force_tracker_interval: None,
             spawner: None,
+            options: TorrentManagerOptions::default(),
         }
     }
 
     pub fn only_files(&mut self, only_files: Vec<usize>) -> &mut Self {
-        self.only_files = Some(only_files);
+        self.options.only_files = Some(only_files);
         self
     }
 
     pub fn overwrite(&mut self, overwrite: bool) -> &mut Self {
-        self.overwrite = overwrite;
+        self.options.overwrite = overwrite;
         self
     }
 
     pub fn force_tracker_interval(&mut self, force_tracker_interval: Duration) -> &mut Self {
-        self.force_tracker_interval = Some(force_tracker_interval);
+        self.options.force_tracker_interval = Some(force_tracker_interval);
         self
     }
 
@@ -77,7 +81,12 @@ impl TorrentManagerBuilder {
     }
 
     pub fn peer_id(&mut self, peer_id: Id20) -> &mut Self {
-        self.peer_id = Some(peer_id);
+        self.options.peer_id = Some(peer_id);
+        self
+    }
+
+    pub fn peer_connect_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.options.peer_connect_timeout = Some(timeout);
         self
     }
 
@@ -86,11 +95,8 @@ impl TorrentManagerBuilder {
             self.info,
             self.info_hash,
             self.output_folder,
-            self.overwrite,
-            self.only_files,
-            self.force_tracker_interval,
-            self.peer_id,
             self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
+            Some(self.options),
         )
     }
 }
@@ -136,7 +142,7 @@ struct TorrentManager {
     #[allow(dead_code)]
     speed_estimator: Arc<SpeedEstimator>,
     trackers: Mutex<HashSet<Url>>,
-    force_tracker_interval: Option<Duration>,
+    options: TorrentManagerOptions,
 }
 
 fn make_lengths<ByteBuf: AsRef<[u8]>>(
@@ -147,17 +153,14 @@ fn make_lengths<ByteBuf: AsRef<[u8]>>(
 }
 
 impl TorrentManager {
-    #[allow(clippy::too_many_arguments)]
     fn start<P: AsRef<Path>>(
         info: TorrentMetaV1Info<ByteString>,
         info_hash: Id20,
         out: P,
-        overwrite: bool,
-        only_files: Option<Vec<usize>>,
-        force_tracker_interval: Option<Duration>,
-        peer_id: Option<Id20>,
         spawner: BlockingSpawner,
+        options: Option<TorrentManagerOptions>,
     ) -> anyhow::Result<TorrentManagerHandle> {
+        let options = options.unwrap_or_default();
         let files = {
             let mut files =
                 Vec::<Arc<Mutex<File>>>::with_capacity(info.iter_file_lengths().count());
@@ -173,7 +176,7 @@ impl TorrentManager {
                 }
 
                 std::fs::create_dir_all(full_path.parent().unwrap())?;
-                let file = if overwrite {
+                let file = if options.overwrite {
                     OpenOptions::new()
                         .create(true)
                         .read(true)
@@ -193,13 +196,13 @@ impl TorrentManager {
             files
         };
 
-        let peer_id = peer_id.unwrap_or_else(generate_peer_id);
+        let peer_id = options.peer_id.unwrap_or_else(generate_peer_id);
         let lengths = make_lengths(&info).context("unable to compute Lengths from torrent")?;
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results =
-            FileOps::<Sha1>::new(&info, &files, &lengths).initial_check(only_files.as_deref())?;
+        let initial_check_results = FileOps::<Sha1>::new(&info, &files, &lengths)
+            .initial_check(options.only_files.as_deref())?;
 
         info!(
             "Initial check results: have {}, needed {}",
@@ -213,6 +216,11 @@ impl TorrentManager {
             lengths,
         );
 
+        let state_options = TorrentStateOptions {
+            peer_connect_timeout: options.peer_connect_timeout,
+            ..Default::default()
+        };
+
         let state = TorrentState::new(
             info,
             info_hash,
@@ -223,6 +231,7 @@ impl TorrentManager {
             initial_check_results.have_bytes,
             initial_check_results.needed_bytes,
             spawner,
+            Some(state_options),
         );
 
         let estimator = Arc::new(SpeedEstimator::new(5));
@@ -231,7 +240,7 @@ impl TorrentManager {
             state,
             speed_estimator: estimator.clone(),
             trackers: Mutex::new(HashSet::new()),
-            force_tracker_interval,
+            options,
         });
 
         spawn("stats printer", {
@@ -333,6 +342,7 @@ impl TorrentManager {
                 Ok(interval) => {
                     event = None;
                     let interval = self
+                        .options
                         .force_tracker_interval
                         .unwrap_or_else(|| Duration::from_secs(interval));
                     debug!(

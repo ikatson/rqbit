@@ -9,12 +9,12 @@ use warp::Filter;
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
-struct Inner {
+struct ApiInternal {
     startup_time: Instant,
     torrent_managers: RwLock<Vec<TorrentManagerHandle>>,
 }
 
-impl Inner {
+impl ApiInternal {
     fn new() -> Self {
         Self {
             startup_time: Instant::now(),
@@ -76,7 +76,7 @@ struct StatsResponse {
     time_remaining: Option<Duration>,
 }
 
-impl Inner {
+impl ApiInternal {
     fn mgr_handle(&self, idx: usize) -> Option<TorrentManagerHandle> {
         self.torrent_managers.read().get(idx).cloned()
     }
@@ -141,7 +141,7 @@ impl Inner {
 
 #[derive(Clone)]
 pub struct HttpApi {
-    inner: Arc<Inner>,
+    inner: Arc<ApiInternal>,
 }
 
 fn json_response<T: Serialize>(v: T) -> warp::reply::Response {
@@ -170,7 +170,7 @@ fn json_or_404<T: Serialize>(idx: usize, v: Option<T>) -> warp::reply::Response 
 impl HttpApi {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Inner::new()),
+            inner: Arc::new(ApiInternal::new()),
         }
     }
     pub fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
@@ -180,8 +180,6 @@ impl HttpApi {
         idx
     }
 
-    // TODO: this is all for debugging, not even JSON.
-    // After using this for a bit, not a big fan of warp.
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let inner = self.inner;
 

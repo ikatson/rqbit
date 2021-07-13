@@ -36,7 +36,9 @@ use tokio::{
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
     file_ops::FileOps,
-    peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest},
+    peer_connection::{
+        PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
+    },
     peer_state::{InflightRequest, LivePeerState, PeerState},
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
@@ -215,6 +217,11 @@ impl StatsSnapshot {
     }
 }
 
+#[derive(Default)]
+pub struct TorrentStateOptions {
+    pub peer_connect_timeout: Option<Duration>,
+}
+
 pub struct TorrentState {
     info: TorrentMetaV1Info<ByteString>,
     locked: Arc<RwLock<TorrentStateLocked>>,
@@ -225,6 +232,8 @@ pub struct TorrentState {
     needed: u64,
     stats: AtomicStats,
     spawner: BlockingSpawner,
+
+    options: TorrentStateOptions,
 
     peer_semaphore: Semaphore,
     peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
@@ -242,7 +251,9 @@ impl TorrentState {
         have_bytes: u64,
         needed_bytes: u64,
         spawner: BlockingSpawner,
+        options: Option<TorrentStateOptions>,
     ) -> Arc<Self> {
+        let options = options.unwrap_or_default();
         let (peer_queue_tx, mut peer_queue_rx) = unbounded_channel();
         let state = Arc::new(TorrentState {
             info_hash,
@@ -260,6 +271,7 @@ impl TorrentState {
             needed: needed_bytes,
             lengths,
             spawner,
+            options,
 
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
@@ -285,8 +297,17 @@ impl TorrentState {
                         state: state.clone(),
                         spawner: state.spawner,
                     };
-                    let peer_connection =
-                        PeerConnection::new(addr, state.info_hash, state.peer_id, handler);
+                    let options = PeerConnectionOptions {
+                        connect_timeout: state.options.peer_connect_timeout,
+                        ..Default::default()
+                    };
+                    let peer_connection = PeerConnection::new(
+                        addr,
+                        state.info_hash,
+                        state.peer_id,
+                        handler,
+                        Some(options),
+                    );
                     spawn(format!("manage_peer({})", addr), async move {
                         if let Err(e) = peer_connection.manage_peer(out_rx).await {
                             debug!("error managing peer {}: {:#}", addr, e)

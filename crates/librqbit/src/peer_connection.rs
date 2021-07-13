@@ -31,11 +31,18 @@ pub enum WriterRequest {
     ReadChunkRequest(ChunkInfo),
 }
 
+#[derive(Default, Copy, Clone)]
+pub struct PeerConnectionOptions {
+    pub connect_timeout: Option<Duration>,
+    pub keep_alive_interval: Option<Duration>,
+}
+
 pub struct PeerConnection<H> {
     handler: H,
     addr: SocketAddr,
     info_hash: Id20,
     peer_id: Id20,
+    options: PeerConnectionOptions,
 }
 
 // async fn read_one<'a, R: AsyncReadExt + Unpin>(
@@ -94,12 +101,19 @@ macro_rules! read_one {
 }
 
 impl<H: PeerConnectionHandler> PeerConnection<H> {
-    pub fn new(addr: SocketAddr, info_hash: Id20, peer_id: Id20, handler: H) -> Self {
+    pub fn new(
+        addr: SocketAddr,
+        info_hash: Id20,
+        peer_id: Id20,
+        handler: H,
+        options: Option<PeerConnectionOptions>,
+    ) -> Self {
         PeerConnection {
             handler,
             addr,
             info_hash,
             peer_id,
+            options: options.unwrap_or_default(),
         }
     }
     pub fn into_handler(self) -> H {
@@ -112,7 +126,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
         let mut conn = match timeout(
-            Duration::from_secs(2),
+            self.options
+                .connect_timeout
+                .unwrap_or_else(|| Duration::from_secs(2)),
             tokio::net::TcpStream::connect(self.addr),
         )
         .await
@@ -191,7 +207,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let (mut read_half, mut write_half) = tokio::io::split(conn);
 
         let writer = async move {
-            let keep_alive_interval = Duration::from_secs(120);
+            let keep_alive_interval = self
+                .options
+                .keep_alive_interval
+                .unwrap_or_else(|| Duration::from_secs(120));
 
             if self.handler.get_have_bytes() > 0 {
                 if let Some(len) = self

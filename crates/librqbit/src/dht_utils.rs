@@ -6,7 +6,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
 
-use crate::peer_info_reader;
+use crate::{peer_connection::PeerConnectionOptions, peer_info_reader};
 use librqbit_core::id20::Id20;
 
 #[derive(Debug)]
@@ -25,6 +25,7 @@ pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + 
     peer_id: Id20,
     info_hash: Id20,
     mut addrs: A,
+    peer_connection_options: Option<PeerConnectionOptions>,
 ) -> ReadMetainfoResult<A> {
     let mut seen = HashSet::<SocketAddr>::new();
     let first_addr = match addrs.next().await {
@@ -39,9 +40,14 @@ pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + 
         let semaphore = &semaphore;
         async move {
             let token = semaphore.acquire().await?;
-            let ret = peer_info_reader::read_metainfo_from_peer(addr, peer_id, info_hash)
-                .await
-                .with_context(|| format!("error reading metainfo from {}", addr));
+            let ret = peer_info_reader::read_metainfo_from_peer(
+                addr,
+                peer_id,
+                info_hash,
+                peer_connection_options,
+            )
+            .await
+            .with_context(|| format!("error reading metainfo from {}", addr));
             drop(token);
             ret
         }
@@ -97,7 +103,7 @@ mod tests {
         let dht = Dht::new().await.unwrap();
         let peer_rx = dht.get_peers(info_hash).await;
         let peer_id = generate_peer_id();
-        match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx).await {
+        match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx, None).await {
             ReadMetainfoResult::Found { info, .. } => dbg!(info),
             ReadMetainfoResult::ChannelClosed { .. } => todo!("should not have happened"),
         };

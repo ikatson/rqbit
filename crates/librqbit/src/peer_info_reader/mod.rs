@@ -17,12 +17,15 @@ use peer_binary_protocol::{
 use sha1w::{ISha1, Sha1};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::peer_connection::{PeerConnection, PeerConnectionHandler, WriterRequest};
+use crate::peer_connection::{
+    PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
+};
 
 pub async fn read_metainfo_from_peer(
     addr: SocketAddr,
     peer_id: Id20,
     info_hash: Id20,
+    peer_connection_options: Option<PeerConnectionOptions>,
 ) -> anyhow::Result<TorrentMetaV1Info<ByteString>> {
     let (result_tx, result_rx) =
         tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteString>>>();
@@ -34,7 +37,8 @@ pub async fn read_metainfo_from_peer(
         result_tx: Mutex::new(Some(result_tx)),
         locked: RwLock::new(None),
     };
-    let connection = PeerConnection::new(addr, info_hash, peer_id, handler);
+    let connection =
+        PeerConnection::new(addr, info_hash, peer_id, handler, peer_connection_options);
 
     let result_reader = async move { result_rx.await? };
     let connection_runner = async move { connection.manage_peer(writer_rx).await };
@@ -230,7 +234,7 @@ mod tests {
         let addr = SocketAddr::from_str("127.0.0.1:27311").unwrap();
         let peer_id = generate_peer_id();
         let info_hash = Id20::from_str("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
-        dbg!(read_metainfo_from_peer(addr, peer_id, info_hash)
+        dbg!(read_metainfo_from_peer(addr, peer_id, info_hash, None)
             .await
             .unwrap());
     }

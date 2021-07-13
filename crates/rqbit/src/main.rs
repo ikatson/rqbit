@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, net::SocketAddr, time::Duration};
+use std::{fs::File, io::Read, net::SocketAddr, str::FromStr, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
@@ -7,6 +7,7 @@ use futures::StreamExt;
 use librqbit::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     generate_peer_id,
+    peer_connection::PeerConnectionOptions,
     spawn_utils::{spawn, BlockingSpawner},
     torrent_from_bytes,
     torrent_manager::TorrentManagerBuilder,
@@ -53,6 +54,16 @@ enum LogLevel {
     Error,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ParsedDuration(Duration);
+impl FromStr for ParsedDuration {
+    type Err = parse_duration::parse::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_duration::parse(s).map(ParsedDuration)
+    }
+}
+
 #[derive(Clap)]
 #[clap(version = "1.0", author = "Igor Katson <igor.katson@gmail.com>")]
 struct Opts {
@@ -85,7 +96,7 @@ struct Opts {
     #[clap(short = 'i', long = "tracker-refresh-interval")]
     force_tracker_interval: Option<u64>,
 
-    /// The listen address for (debugging) HTTP API
+    /// The listen address for HTTP API
     #[clap(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
     http_api_listen_addr: SocketAddr,
 
@@ -97,6 +108,10 @@ struct Opts {
 
     #[clap(long = "disable-dht")]
     disable_dht: bool,
+
+    /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
+    #[clap(long = "peer-connect-timeout")]
+    peer_connect_timeout: Option<ParsedDuration>,
 }
 
 fn compute_only_files<ByteBuf: AsRef<[u8]>>(
@@ -178,6 +193,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         Some(Dht::new().await.context("error initializing DHT")?)
     };
 
+    let peer_opts = PeerConnectionOptions {
+        connect_timeout: opts.peer_connect_timeout.map(|p| p.0),
+        ..Default::default()
+    };
+
     if opts.torrent_path.starts_with("magnet:") {
         let Magnet {
             info_hash,
@@ -188,7 +208,9 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             .get_peers(info_hash)
             .await;
         let (info, dht_rx, initial_peers) =
-            match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx).await {
+            match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx, Some(peer_opts))
+                .await
+            {
                 ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
                 ReadMetainfoResult::ChannelClosed { .. } => {
                     anyhow::bail!("DHT died, no way to discover torrent metainfo")
@@ -292,6 +314,9 @@ async fn main_info(
     }
     if let Some(interval) = opts.force_tracker_interval {
         builder.force_tracker_interval(Duration::from_secs(interval));
+    }
+    if let Some(t) = opts.peer_connect_timeout {
+        builder.peer_connect_timeout(t.0);
     }
 
     let http_api = librqbit::http_api::HttpApi::new();
