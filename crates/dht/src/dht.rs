@@ -44,6 +44,12 @@ struct DhtState {
     next_transaction_id: u16,
     outstanding_requests: Vec<OutstandingRequest>,
     routing_table: RoutingTable,
+
+    // This sender sends requests to the worker.
+    // It is unbounded so that the methods on Dht state don't need to be async.
+    // If the methods on Dht state were async, we would have a problem, as it's behind
+    // a lock.
+    // Alternatively, we can lock only the parts that change, and use that internally inside DhtState...
     sender: UnboundedSender<(Message<ByteString>, SocketAddr)>,
 
     seen_peers: HashMap<Id20, HashSet<SocketAddr>>,
@@ -420,7 +426,6 @@ impl DhtWorker {
         self,
         in_tx: UnboundedSender<(Message<ByteString>, SocketAddr)>,
         in_rx: UnboundedReceiver<(Message<ByteString>, SocketAddr)>,
-        mut request_rx: Receiver<(Request, UnboundedSender<Response>)>,
         bootstrap_addrs: &[String],
     ) -> anyhow::Result<()> {
         let (out_tx, mut out_rx) = channel(1);
@@ -501,7 +506,6 @@ impl Dht {
         Self::with_bootstrap_addrs(DHT_BOOTSTRAP).await
     }
     pub async fn with_bootstrap_addrs(bootstrap_addrs: &[&str]) -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = channel(1);
         let socket = UdpSocket::bind("0.0.0.0:0")
             .await
             .context("error binding socket")?;
@@ -523,9 +527,7 @@ impl Dht {
                     peer_id,
                     state,
                 };
-                let result = worker
-                    .start(in_tx, in_rx, request_rx, &bootstrap_addrs)
-                    .await;
+                let result = worker.start(in_tx, in_rx, &bootstrap_addrs).await;
                 warn!("DHT worker finished with {:?}", result);
             }
         });

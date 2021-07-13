@@ -1,9 +1,9 @@
-use std::{fs::File, io::Read, net::SocketAddr, str::FromStr, time::Duration};
+use std::{fs::File, io::Read, net::SocketAddr, pin::Pin, str::FromStr, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
 use dht::{Dht, Id20};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use librqbit::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     generate_peer_id,
@@ -209,15 +209,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             .ok_or_else(|| anyhow::anyhow!("magnet links without DHT are not supported"))?
             .get_peers(info_hash)
             .await?;
-        let dht_rx = Box::pin(dht_rx.filter_map(|addr| async move {
-            match addr {
-                Ok(addr) => Some(addr),
-                Err(e) => {
-                    warn!("DHT peer receiver got an error: {:#}", e);
-                    None
-                }
-            }
-        }));
+        let dht_rx = flatten_dht_peers_stream(dht_rx);
 
         let trackers = trackers
             .into_iter()
@@ -259,18 +251,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             torrent_from_file(&opts.torrent_path)?
         };
         let dht_rx = match dht {
-            Some(dht) => Some(Box::pin(
-                dht.get_peers(torrent.info_hash)
-                    .await?
-                    .filter_map(|r| async move {
-                        match r {
-                            Ok(addr) => Some(addr),
-                            Err(e) => {
-                                warn!("DHT peer receiver got an error: {:#}", e);
-                                None
-                            }
-                        }
-                    }),
+            Some(dht) => Some(flatten_dht_peers_stream(
+                dht.get_peers(torrent.info_hash).await?,
             )),
             None => None,
         };
@@ -305,6 +287,21 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         )
         .await
     }
+}
+
+fn flatten_dht_peers_stream(
+    rx: impl Stream<Item = Result<SocketAddr, anyhow::Error>> + Unpin,
+) -> impl Stream<Item = SocketAddr> + Unpin {
+    let rx = rx.filter_map(|addr| async move {
+        match addr {
+            Ok(addr) => Some(addr),
+            Err(e) => {
+                warn!("DHT peer receiver got an error: {:#}", e);
+                None
+            }
+        }
+    });
+    Box::pin(rx)
 }
 
 #[allow(clippy::too_many_arguments)]
