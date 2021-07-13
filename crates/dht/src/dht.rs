@@ -179,6 +179,7 @@ impl DhtState {
             MessageKind::Response(r) => r,
             _ => unreachable!(),
         };
+        self.routing_table.mark_response(&response.id);
         match outstanding.request {
             Request::FindNode(id) => {
                 let nodes = response
@@ -243,9 +244,6 @@ impl DhtState {
                     }
                 }
             }
-            InsertResult::WasExisting => {
-                self.routing_table.mark_response(&source);
-            }
             _ => {}
         };
         for node in nodes.nodes {
@@ -276,6 +274,8 @@ impl DhtState {
         data: bprotocol::Response<ByteString>,
     ) -> anyhow::Result<()> {
         self.routing_table.add_node(source, source_addr);
+        self.routing_table.mark_response(&source);
+
         if let Some(peers) = data.values {
             let subscribers = match self.subscribers.get(&target) {
                 Some(subscribers) => subscribers,

@@ -474,8 +474,8 @@ where
 pub struct Handshake<'a> {
     pub pstr: &'a str,
     pub reserved: [u8; 8],
-    pub info_hash: Id20,
-    pub peer_id: Id20,
+    pub info_hash: [u8; 20],
+    pub peer_id: [u8; 20],
 }
 
 fn bopts() -> impl bincode::Options {
@@ -497,8 +497,8 @@ impl<'a> Handshake<'a> {
         Handshake {
             pstr: PSTR_BT1,
             reserved: reserved_arr,
-            info_hash,
-            peer_id,
+            info_hash: info_hash.0,
+            peer_id: peer_id.0,
         }
     }
     pub fn supports_extended(&self) -> bool {

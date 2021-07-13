@@ -30,7 +30,7 @@ pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_size: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub complete_ago: Option<u32>,
+    pub complete_ago: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upload_only: Option<u32>,
 }

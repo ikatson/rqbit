@@ -143,9 +143,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         debug!(
             "connected peer {}: {:?}",
             self.addr,
-            try_decode_peer_id(h.peer_id)
+            try_decode_peer_id(Id20(h.peer_id))
         );
-        if h.info_hash != self.info_hash {
+        if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
         }
 

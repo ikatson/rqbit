@@ -1,5 +1,6 @@
 use std::{collections::HashSet, net::SocketAddr};
 
+use anyhow::Context;
 use buffers::ByteString;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
@@ -32,10 +33,22 @@ pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + 
     };
     seen.insert(first_addr);
 
+    let semaphore = tokio::sync::Semaphore::new(128);
+
+    let read_info_guarded = |addr| {
+        let semaphore = &semaphore;
+        async move {
+            let token = semaphore.acquire().await?;
+            let ret = peer_info_reader::read_metainfo_from_peer(addr, peer_id, info_hash)
+                .await
+                .with_context(|| format!("error reading metainfo from {}", addr));
+            drop(token);
+            ret
+        }
+    };
+
     let mut unordered = FuturesUnordered::new();
-    unordered.push(peer_info_reader::read_metainfo_from_peer(
-        first_addr, peer_id, info_hash,
-    ));
+    unordered.push(read_info_guarded(first_addr));
 
     loop {
         tokio::select! {
@@ -43,7 +56,7 @@ pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + 
                 match next_addr {
                     Some(addr) => {
                         if seen.insert(addr) {
-                            unordered.push(peer_info_reader::read_metainfo_from_peer(addr, peer_id, info_hash));
+                            unordered.push(read_info_guarded(addr));
                         }
                     },
                     None => return ReadMetainfoResult::ChannelClosed { seen },
@@ -53,7 +66,7 @@ pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + 
                 match done {
                     Some(Ok(info)) => return ReadMetainfoResult::Found { info, seen, rx: addrs },
                     Some(Err(e)) => {
-                        debug!("error in peer_info_reader::read_metainfo_from_peer: {}", e);
+                        debug!("{:#}", e);
                     },
                     None => unreachable!()
                 }
@@ -85,8 +98,8 @@ mod tests {
         let peer_rx = dht.get_peers(info_hash).await;
         let peer_id = generate_peer_id();
         match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx).await {
-            ReadMetainfoResult::Found { info, rx, seen } => dbg!(info),
-            ReadMetainfoResult::ChannelClosed { seen } => todo!("should not have happened"),
+            ReadMetainfoResult::Found { info, .. } => dbg!(info),
+            ReadMetainfoResult::ChannelClosed { .. } => todo!("should not have happened"),
         };
     }
 }
