@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "net", "sync"]}
-tokio-stream = "0.1"
+tokio-stream = {version = "0.1", features = ["sync"]}
 serde = {version = "1", features = ["derive"]}
 hex = "0.4"
 bencode = {path = "../bencode"}

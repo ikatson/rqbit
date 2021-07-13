@@ -208,7 +208,16 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         let dht_rx = dht
             .ok_or_else(|| anyhow::anyhow!("magnet links without DHT are not supported"))?
             .get_peers(info_hash)
-            .await;
+            .await?;
+        let dht_rx = Box::pin(dht_rx.filter_map(|addr| async move {
+            match addr {
+                Ok(addr) => Some(addr),
+                Err(e) => {
+                    warn!("DHT peer receiver got an error: {:#}", e);
+                    None
+                }
+            }
+        }));
 
         let trackers = trackers
             .into_iter()
@@ -250,7 +259,19 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             torrent_from_file(&opts.torrent_path)?
         };
         let dht_rx = match dht {
-            Some(dht) => Some(dht.get_peers(torrent.info_hash).await),
+            Some(dht) => Some(Box::pin(
+                dht.get_peers(torrent.info_hash)
+                    .await?
+                    .filter_map(|r| async move {
+                        match r {
+                            Ok(addr) => Some(addr),
+                            Err(e) => {
+                                warn!("DHT peer receiver got an error: {:#}", e);
+                                None
+                            }
+                        }
+                    }),
+            )),
             None => None,
         };
         let trackers = torrent

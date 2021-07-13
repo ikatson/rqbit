@@ -2,7 +2,7 @@ use std::{collections::HashSet, net::SocketAddr};
 
 use anyhow::Context;
 use buffers::ByteString;
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
 
@@ -21,7 +21,7 @@ pub enum ReadMetainfoResult<Rx> {
     },
 }
 
-pub async fn read_metainfo_from_peer_receiver<A: StreamExt<Item = SocketAddr> + Unpin>(
+pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unpin>(
     peer_id: Id20,
     info_hash: Id20,
     mut addrs: A,
@@ -101,8 +101,10 @@ mod tests {
 
         let info_hash = Id20::from_str("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
         let dht = Dht::new().await.unwrap();
-        let peer_rx = dht.get_peers(info_hash).await;
+        let peer_rx = dht.get_peers(info_hash).await.unwrap();
         let peer_id = generate_peer_id();
+        let peer_rx = peer_rx.filter_map(|r| async move { r.ok() });
+        tokio::pin!(peer_rx);
         match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx, None).await {
             ReadMetainfoResult::Found { info, .. } => dbg!(info),
             ReadMetainfoResult::ChannelClosed { .. } => todo!("should not have happened"),
