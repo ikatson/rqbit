@@ -1,7 +1,8 @@
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::HashSet, str::FromStr, time::Duration};
 
 use anyhow::Context;
 use dht::{Dht, Id20};
+use log::info;
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -12,11 +13,28 @@ async fn main() -> anyhow::Result<()> {
     let dht = Dht::new().await.context("error initializing DHT")?;
     let mut stream = dht.get_peers(info_hash).await?;
     let mut seen = HashSet::new();
-    while let Some(peer) = stream.next().await {
-        let peer = peer.context("error reading peer stream")?;
-        if seen.insert(peer) {
-            log::info!("peer found: {}", peer)
+
+    let stats_printer = async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            info!("DHT stats: {:?}", dht.stats());
         }
-    }
-    Ok(())
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let peer_printer = async move {
+        while let Some(peer) = stream.next().await {
+            let peer = peer.context("error reading peer stream")?;
+            if seen.insert(peer) {
+                log::info!("peer found: {}", peer)
+            }
+        }
+        Ok(())
+    };
+
+    let res = tokio::select! {
+        res = stats_printer => res,
+        res = peer_printer => res,
+    };
+    res
 }

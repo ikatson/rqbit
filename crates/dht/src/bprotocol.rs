@@ -290,7 +290,7 @@ pub struct FindNodeRequest {
     pub target: Id20,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Response<BufT> {
     pub id: Id20,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -6,13 +6,13 @@ use std::{
 use librqbit_core::id20::Id20;
 use log::debug;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum BucketTreeNode {
     Leaf(Vec<RoutingTableNode>),
     LeftRight(Box<BucketTree>, Box<BucketTree>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BucketTree {
     bits: u8,
     start: Id20,
@@ -302,7 +302,7 @@ impl Default for BucketTree {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoutingTableNode {
     id: Id20,
     addr: SocketAddr,
@@ -356,7 +356,7 @@ impl RoutingTableNode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoutingTable {
     id: Id20,
     size: usize,
@@ -370,6 +370,9 @@ impl RoutingTable {
             buckets: BucketTree::new(),
             size: 0,
         }
+    }
+    pub fn len(&self) -> usize {
+        self.size
     }
     pub fn sorted_by_distance_from(&self, id: Id20) -> Vec<&RoutingTableNode> {
         let mut result = Vec::with_capacity(self.size);
