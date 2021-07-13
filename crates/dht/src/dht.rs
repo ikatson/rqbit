@@ -527,6 +527,13 @@ impl Dht {
     }
     pub async fn get_peers(&self, info_hash: Id20) -> impl StreamExt<Item = SocketAddr> {
         let (tx, rx) = unbounded_channel::<Response>();
+
+        // This is a hack to test localhost speeds, uncomment to test that quickly.
+        //
+        // tx.send(Response::Peer("127.0.0.1:27311".parse().unwrap()))
+        //     .unwrap();
+        // std::mem::forget(tx);
+
         self.request_tx
             .send((Request::GetPeers(info_hash), tx))
             .await

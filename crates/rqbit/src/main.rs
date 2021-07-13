@@ -94,6 +94,9 @@ struct Opts {
     /// profilers work better with this one.
     #[clap(short, long)]
     single_thread_runtime: bool,
+
+    #[clap(long = "disable-dht")]
+    disable_dht: bool,
 }
 
 fn compute_only_files<ByteBuf: AsRef<[u8]>>(
@@ -169,14 +172,21 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
     let peer_id = generate_peer_id();
-    let dht = Dht::new().await.context("error initializing DHT")?;
+    let dht = if opts.disable_dht {
+        None
+    } else {
+        Some(Dht::new().await.context("error initializing DHT")?)
+    };
 
     if opts.torrent_path.starts_with("magnet:") {
         let Magnet {
             info_hash,
             trackers,
         } = Magnet::parse(&opts.torrent_path).context("provided path is not a valid magnet URL")?;
-        let dht_rx = dht.get_peers(info_hash).await;
+        let dht_rx = dht
+            .ok_or_else(|| anyhow::anyhow!("magnet links without DHT are not supported"))?
+            .get_peers(info_hash)
+            .await;
         let (info, dht_rx, initial_peers) =
             match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx).await {
                 ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
@@ -189,7 +199,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             info_hash,
             info,
             peer_id,
-            dht_rx,
+            Some(dht_rx),
             initial_peers.into_iter().collect(),
             trackers
                 .into_iter()
@@ -212,7 +222,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         } else {
             torrent_from_file(&opts.torrent_path)?
         };
-        let dht_rx = dht.get_peers(torrent.info_hash).await;
+        let dht_rx = match dht {
+            Some(dht) => Some(dht.get_peers(torrent.info_hash).await),
+            None => None,
+        };
         let trackers = torrent
             .iter_announce()
             .filter_map(|tracker| {
@@ -252,7 +265,7 @@ async fn main_info(
     info_hash: Id20,
     info: TorrentMetaV1Info<ByteString>,
     peer_id: Id20,
-    mut dht_peer_rx: impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static,
+    dht_peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
     initial_peers: Vec<SocketAddr>,
     trackers: Vec<reqwest::Url>,
     spawner: BlockingSpawner,
@@ -296,16 +309,19 @@ async fn main_info(
     for peer in initial_peers {
         handle.add_peer(peer);
     }
-    spawn("DHT peer adder", {
-        let handle = handle.clone();
-        async move {
-            while let Some(peer) = dht_peer_rx.next().await {
-                handle.add_peer(peer);
+    if let Some(mut dht_peer_rx) = dht_peer_rx {
+        spawn("DHT peer adder", {
+            let handle = handle.clone();
+            async move {
+                while let Some(peer) = dht_peer_rx.next().await {
+                    handle.add_peer(peer);
+                }
+                warn!("dht was closed");
+                Ok(())
             }
-            warn!("dht was closed");
-            Ok(())
-        }
-    });
+        });
+    }
+
     handle.wait_until_completed().await?;
     Ok(())
 }
