@@ -19,11 +19,9 @@ use log::{debug, info, trace, warn};
 use parking_lot::Mutex;
 use tokio::{
     net::UdpSocket,
-    sync::mpsc::{
-        channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
-    },
+    sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
 };
-use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
+use tokio_stream::wrappers::BroadcastStream;
 
 struct OutstandingRequest {
     transaction_id: u16,
@@ -220,7 +218,7 @@ impl DhtState {
                     .map(|c| c.iter().copied().collect())
                     .unwrap_or_default();
                 let rx = o.get().subscribe();
-                return Ok((existing_peers, rx));
+                Ok((existing_peers, rx))
             }
             Entry::Vacant(v) => {
                 let (tx, rx) = tokio::sync::broadcast::channel(100);
@@ -243,7 +241,7 @@ impl DhtState {
                         .context("DhtState: error sending to self.sender")?;
                 }
 
-                return Ok((Vec::new(), rx));
+                Ok((Vec::new(), rx))
             }
         }
     }
@@ -385,7 +383,7 @@ async fn run_framer(
             }
         }
         Err::<(), _>(anyhow::anyhow!(
-            "DHT UDP socket reader over, nowhere to read messages from"
+            "DHT UDP socket reader over, nowhere to send responses to"
         ))
     };
     let result = tokio::select! {
@@ -399,11 +397,6 @@ async fn run_framer(
 enum Request {
     GetPeers(Id20),
     FindNode(Id20),
-}
-
-#[derive(Debug)]
-enum Response {
-    Peer(SocketAddr),
 }
 
 #[derive(Clone)]

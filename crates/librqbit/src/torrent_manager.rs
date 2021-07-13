@@ -216,6 +216,7 @@ impl TorrentManager {
             lengths,
         );
 
+        #[allow(clippy::needless_update)]
         let state_options = TorrentStateOptions {
             peer_connect_timeout: options.peer_connect_timeout,
             ..Default::default()

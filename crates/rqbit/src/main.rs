@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, net::SocketAddr, pin::Pin, str::FromStr, time::Duration};
+use std::{fs::File, io::Read, net::SocketAddr, str::FromStr, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
