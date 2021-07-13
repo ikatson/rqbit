@@ -65,12 +65,12 @@ impl FromStr for ParsedDuration {
 }
 
 #[derive(Clap)]
-#[clap(version = "1.0", author = "Igor Katson <igor.katson@gmail.com>")]
+#[clap(version, author, about)]
 struct Opts {
     /// The filename or URL of the torrent. If URL, http/https/magnet are supported.
     torrent_path: String,
 
-    /// The filename of the .torrent file.
+    /// The output folder to write to. If not exists, it will be created.
     output_folder: String,
 
     /// If set, only the file whose filename matching this regex will
@@ -90,11 +90,11 @@ struct Opts {
     #[clap(arg_enum, short = 'v')]
     log_level: Option<LogLevel>,
 
-    /// The interval in seconds to poll trackers.
+    /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
     /// pretty big, e.g. 30 minutes. This can force a certain value.
     #[clap(short = 'i', long = "tracker-refresh-interval")]
-    force_tracker_interval: Option<u64>,
+    force_tracker_interval: Option<ParsedDuration>,
 
     /// The listen address for HTTP API
     #[clap(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
@@ -198,15 +198,29 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         ..Default::default()
     };
 
+    // Magnet links are different in that we first need to discover the metadata.
     if opts.torrent_path.starts_with("magnet:") {
         let Magnet {
             info_hash,
             trackers,
         } = Magnet::parse(&opts.torrent_path).context("provided path is not a valid magnet URL")?;
+
         let dht_rx = dht
             .ok_or_else(|| anyhow::anyhow!("magnet links without DHT are not supported"))?
             .get_peers(info_hash)
             .await;
+
+        let trackers = trackers
+            .into_iter()
+            .filter_map(|url| match reqwest::Url::parse(&url) {
+                Ok(url) => Some(url),
+                Err(e) => {
+                    warn!("error parsing tracker {} as url: {}", url, e);
+                    None
+                }
+            })
+            .collect();
+
         let (info, dht_rx, initial_peers) =
             match read_metainfo_from_peer_receiver(peer_id, info_hash, dht_rx, Some(peer_opts))
                 .await
@@ -216,23 +230,14 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     anyhow::bail!("DHT died, no way to discover torrent metainfo")
                 }
             };
-        main_info(
+        main_torrent_info(
             opts,
             info_hash,
             info,
             peer_id,
             Some(dht_rx),
             initial_peers.into_iter().collect(),
-            trackers
-                .into_iter()
-                .filter_map(|url| match reqwest::Url::parse(&url) {
-                    Ok(url) => Some(url),
-                    Err(e) => {
-                        warn!("error parsing tracker {} as url: {}", url, e);
-                        None
-                    }
-                })
-                .collect(),
+            trackers,
             spawner,
         )
         .await
@@ -267,7 +272,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 }
             })
             .collect::<Vec<_>>();
-        main_info(
+        main_torrent_info(
             opts,
             torrent.info_hash,
             torrent.info,
@@ -282,7 +287,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn main_info(
+async fn main_torrent_info(
     opts: Opts,
     info_hash: Id20,
     info: TorrentMetaV1Info<ByteString>,
@@ -313,7 +318,7 @@ async fn main_info(
         builder.only_files(only_files);
     }
     if let Some(interval) = opts.force_tracker_interval {
-        builder.force_tracker_interval(Duration::from_secs(interval));
+        builder.force_tracker_interval(interval.0);
     }
     if let Some(t) = opts.peer_connect_timeout {
         builder.peer_connect_timeout(t.0);

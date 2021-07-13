@@ -1,5 +1,6 @@
 [package]
 name = "rqbit"
+description = "A bittorent client"
 version = "0.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
