@@ -297,7 +297,7 @@ mod tests {
 
         let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
         assert_eq!(
-            torrent.info_hash.to_string(),
+            torrent.info_hash.as_string(),
             "64a980abe6e448226bb930ba061592e44c3781a1"
         );
     }

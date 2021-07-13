@@ -67,7 +67,7 @@ impl<'de> Deserialize<'de> for Id20 {
 }
 
 impl Id20 {
-    pub fn to_string(&self) -> String {
+    pub fn as_string(&self) -> String {
         hex::encode(self.0)
     }
     pub fn distance(&self, other: &Id20) -> Id20 {

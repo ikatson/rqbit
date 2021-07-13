@@ -90,7 +90,7 @@ impl Inner {
                 .enumerate()
                 .map(|(id, mgr)| TorrentListResponseItem {
                     id,
-                    info_hash: hex::encode(mgr.torrent_state().info_hash().0),
+                    info_hash: mgr.torrent_state().info_hash().as_string(),
                 })
                 .collect(),
         }
@@ -98,7 +98,7 @@ impl Inner {
 
     fn api_torrent_details(&self, idx: usize) -> Option<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
-        let info_hash = hex::encode(handle.torrent_state().info_hash().0);
+        let info_hash = handle.torrent_state().info_hash().as_string();
         let files = handle
             .torrent_state()
             .info()
