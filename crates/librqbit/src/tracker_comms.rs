@@ -56,21 +56,17 @@ impl<'a> DictPeer<'a> {
 }
 
 #[derive(Debug)]
-pub enum Peers<'a> {
-    Full(Vec<DictPeer<'a>>),
-    Compact(Vec<SocketAddrV4>),
+pub struct Peers {
+    addrs: Vec<SocketAddr>,
 }
 
-impl<'a> Peers<'a> {
-    pub fn iter_sockaddrs(&self) -> Box<dyn Iterator<Item = std::net::SocketAddr> + '_> {
-        match self {
-            Peers::Full(d) => Box::new(d.iter().map(DictPeer::as_sockaddr)),
-            Peers::Compact(c) => Box::new(c.iter().copied().map(SocketAddr::V4)),
-        }
+impl Peers {
+    pub fn iter_sockaddrs(&self) -> impl Iterator<Item = std::net::SocketAddr> + '_ {
+        self.addrs.iter().copied()
     }
 }
 
-impl<'de: 'a, 'a> serde::de::Deserialize<'de> for Peers<'a> {
+impl<'de> serde::de::Deserialize<'de> for Peers {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -79,7 +75,7 @@ impl<'de: 'a, 'a> serde::de::Deserialize<'de> for Peers<'a> {
             phantom: std::marker::PhantomData<&'de ()>,
         }
         impl<'de> serde::de::Visitor<'de> for Visitor<'de> {
-            type Value = Peers<'de>;
+            type Value = Peers;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a list of peers in dict or binary format")
@@ -91,16 +87,21 @@ impl<'de: 'a, 'a> serde::de::Deserialize<'de> for Peers<'a> {
             {
                 let mut peers = Vec::new();
                 while let Some(peer) = seq.next_element::<DictPeer>()? {
-                    peers.push(peer)
+                    peers.push(peer.as_sockaddr())
                 }
-                Ok(Peers::Full(peers))
+                Ok(Peers { addrs: peers })
             }
 
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                Ok(Peers::Compact(parse_compact_peers(v)))
+                Ok(Peers {
+                    addrs: parse_compact_peers(v)
+                        .into_iter()
+                        .map(|v| v.into())
+                        .collect(),
+                })
             }
         }
         deserializer.deserialize_any(Visitor {
@@ -153,7 +154,7 @@ pub struct TrackerResponse<'a> {
     pub min_interval: Option<u64>,
     pub tracker_id: Option<ByteBuf<'a>>,
     pub incomplete: u64,
-    pub peers: Peers<'a>,
+    pub peers: Peers,
 }
 
 impl TrackerRequest {
