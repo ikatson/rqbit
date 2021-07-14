@@ -209,6 +209,9 @@ impl HttpApi {
 
         let dht_routing_table = warp::path!("dht" / "table").map({
             let inner = inner.clone();
+
+            // clippy suggests something that doesn't work here.
+            #[allow(clippy::redundant_closure)]
             move || match inner.dht.as_ref() {
                 Some(dht) => dht.with_routing_table(|r| json_response(r)),
                 None => not_found_response("DHT is off".into()),
