@@ -370,6 +370,10 @@ impl DhtState {
             let seen = self.seen_peers.entry(target).or_default();
 
             for peer in peers.iter() {
+                if peer.addr.port() < 1024 {
+                    debug!("bad peer port, ignoring: {}", peer.addr);
+                    continue;
+                }
                 let addr = SocketAddr::V4(peer.addr);
                 if seen.insert(addr) {
                     bsender
@@ -591,7 +595,7 @@ impl Stream for PeerStream {
                 }
                 Err(e) => match e {
                     tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(lagged_by) => {
-                        warn!("peer stream is lagged by {}", lagged_by);
+                        debug!("peer stream is lagged by {}", lagged_by);
                         let s = self.absolute_stream_pos;
                         let e = s + lagged_by as usize;
                         self.initial_peers_pos = Some((s, e));
@@ -639,16 +643,14 @@ impl Dht {
         &self,
         info_hash: Id20,
     ) -> anyhow::Result<impl Stream<Item = SocketAddr> + Unpin> {
-        // TODO: we don't need the vec here.
         let (pos, rx) = self.state.lock().get_peers(info_hash)?;
-        let stream = PeerStream {
+        Ok(PeerStream {
             info_hash,
             state: self.state.clone(),
             absolute_stream_pos: 0,
             initial_peers_pos: pos,
             broadcast_rx: BroadcastStream::new(rx),
-        };
-        Ok(stream)
+        })
     }
 
     pub fn stats(&self) -> DhtStats {

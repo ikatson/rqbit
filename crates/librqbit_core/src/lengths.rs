@@ -67,9 +67,11 @@ impl Lengths {
         chunk_length: Option<u32>,
     ) -> anyhow::Result<Self> {
         let chunk_length = chunk_length.unwrap_or(CHUNK_SIZE);
-        if !(is_power_of_two(piece_length as u64)) {
-            anyhow::bail!("piece length {} is not a power of 2", piece_length);
-        }
+        // I guess this is not needed? Don't recall why I put this check here.
+        //
+        // if !(is_power_of_two(piece_length as u64)) {
+        //     anyhow::bail!("piece length {} is not a power of 2", piece_length);
+        // }
         if !(is_power_of_two(chunk_length as u64)) {
             anyhow::bail!("chunk length {} is not a power of 2", chunk_length);
         }
@@ -84,7 +86,7 @@ impl Lengths {
             chunk_length,
             piece_length,
             total_length,
-            chunks_per_piece: piece_length / chunk_length,
+            chunks_per_piece: ceil_div_u64(piece_length as u64, chunk_length as u64) as u32,
             last_piece_id: ((total_length + 1) / piece_length as u64) as u32,
             last_piece_length: last_element_size_u64(total_length, piece_length as u64) as u32,
         })
