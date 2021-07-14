@@ -5,7 +5,14 @@ use std::{
 
 use librqbit_core::id20::Id20;
 use log::debug;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
+
+fn serialize_id20<S>(id: &Id20, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    ser.serialize_str(&id.as_string())
+}
 
 #[derive(Debug, Clone, Serialize)]
 enum BucketTreeNode {
@@ -16,7 +23,9 @@ enum BucketTreeNode {
 #[derive(Debug, Clone, Serialize)]
 pub struct BucketTree {
     bits: u8,
+    #[serde(serialize_with = "serialize_id20")]
     start: Id20,
+    #[serde(serialize_with = "serialize_id20")]
     end_inclusive: Id20,
     data: BucketTreeNode,
 }
@@ -305,6 +314,7 @@ impl Default for BucketTree {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RoutingTableNode {
+    #[serde(serialize_with = "serialize_id20")]
     id: Id20,
     addr: SocketAddr,
     #[serde(skip)]
@@ -362,6 +372,7 @@ impl RoutingTableNode {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RoutingTable {
+    #[serde(serialize_with = "serialize_id20")]
     id: Id20,
     size: usize,
     buckets: BucketTree,
