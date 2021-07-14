@@ -62,11 +62,13 @@ pub struct AggregatePeerStats {
     pub queued: usize,
     pub connecting: usize,
     pub live: usize,
+    pub seen: usize,
 }
 
 impl PeerStates {
     pub fn stats(&self) -> AggregatePeerStats {
-        self.states
+        let mut stats = self
+            .states
             .values()
             .fold(AggregatePeerStats::default(), |mut s, p| {
                 match p {
@@ -75,7 +77,9 @@ impl PeerStates {
                     PeerState::Queued => s.queued += 1,
                 };
                 s
-            })
+            });
+        stats.seen = self.seen.len();
+        stats
     }
     pub fn add_if_not_seen(
         &mut self,
@@ -545,6 +549,10 @@ impl TorrentState {
             }
         }
         true
+    }
+
+    pub fn peer_stats_snapshot(&self) -> AggregatePeerStats {
+        self.locked.read().peers.stats()
     }
 
     pub fn stats_snapshot(&self) -> StatsSnapshot {

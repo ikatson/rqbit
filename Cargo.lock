@@ -1325,6 +1325,7 @@ dependencies = [
  "pretty_env_logger",
  "regex",
  "reqwest",
+ "size_format",
  "tokio",
 ]
 

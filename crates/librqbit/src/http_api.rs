@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use dht::{Dht, DhtStats};
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -10,13 +11,15 @@ use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
 struct ApiInternal {
+    dht: Option<Dht>,
     startup_time: Instant,
     torrent_managers: RwLock<Vec<TorrentManagerHandle>>,
 }
 
 impl ApiInternal {
-    fn new() -> Self {
+    fn new(dht: Option<Dht>) -> Self {
         Self {
+            dht,
             startup_time: Instant::now(),
             torrent_managers: RwLock::new(Vec::new()),
         }
@@ -111,6 +114,10 @@ impl ApiInternal {
         Some(TorrentDetailsResponse { info_hash, files })
     }
 
+    fn api_dht_stats(&self) -> Option<DhtStats> {
+        self.dht.as_ref().map(|d| d.stats())
+    }
+
     fn api_stats(&self, idx: usize) -> Option<StatsResponse> {
         let mgr = self.mgr_handle(idx)?;
         let snapshot = mgr.torrent_state().stats_snapshot();
@@ -154,23 +161,27 @@ fn json_response<T: Serialize>(v: T) -> warp::reply::Response {
     response
 }
 
-fn not_found_response(idx: usize) -> warp::reply::Response {
-    let mut response = warp::reply::Response::new(format!("torrent {} not found", idx).into());
+fn not_found_response(body: String) -> warp::reply::Response {
+    let mut response = warp::reply::Response::new(body.into());
     *response.status_mut() = warp::http::StatusCode::NOT_FOUND;
     response
+}
+
+fn torrent_not_found_response(idx: usize) -> warp::reply::Response {
+    not_found_response(format!("torrent {} not found", idx))
 }
 
 fn json_or_404<T: Serialize>(idx: usize, v: Option<T>) -> warp::reply::Response {
     match v {
         Some(v) => json_response(v),
-        None => not_found_response(idx),
+        None => torrent_not_found_response(idx),
     }
 }
 
 impl HttpApi {
-    pub fn new() -> Self {
+    pub fn new(dht: Option<Dht>) -> Self {
         Self {
-            inner: Arc::new(ApiInternal::new()),
+            inner: Arc::new(ApiInternal::new(dht)),
         }
     }
     pub fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
@@ -188,6 +199,22 @@ impl HttpApi {
             move || json_response(inner.api_torrent_list())
         });
 
+        let dht_stats = warp::path!("dht" / "stats").map({
+            let inner = inner.clone();
+            move || match inner.api_dht_stats() {
+                Some(stats) => json_response(stats),
+                None => not_found_response("DHT is off".into()),
+            }
+        });
+
+        let dht_routing_table = warp::path!("dht" / "table").map({
+            let inner = inner.clone();
+            move || match inner.dht.as_ref() {
+                Some(dht) => dht.with_routing_table(|r| json_response(r)),
+                None => not_found_response("DHT is off".into()),
+            }
+        });
+
         let torrent_details = warp::path!(usize).map({
             let inner = inner.clone();
             move |idx| json_or_404(idx, inner.api_torrent_details(idx))
@@ -203,15 +230,14 @@ impl HttpApi {
             move |idx| json_or_404(idx, inner.api_stats(idx))
         });
 
-        let router = list.or(torrent_details).or(dump_haves).or(dump_stats);
+        let router = list
+            .or(dht_stats)
+            .or(dht_routing_table)
+            .or(torrent_details)
+            .or(dump_haves)
+            .or(dump_stats);
 
         warp::serve(router).run(addr).await;
         Ok(())
-    }
-}
-
-impl Default for HttpApi {
-    fn default() -> Self {
-        Self::new()
     }
 }

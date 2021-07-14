@@ -15,6 +15,7 @@ use librqbit::{
 };
 use log::{info, warn};
 use reqwest::Url;
+use size_format::SizeFormatterBinary as SF;
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
@@ -206,6 +207,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         } = Magnet::parse(&opts.torrent_path).context("provided path is not a valid magnet URL")?;
 
         let dht_rx = dht
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("magnet links without DHT are not supported"))?
             .get_peers(info_hash)
             .await?;
@@ -236,6 +238,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             info_hash,
             info,
             peer_id,
+            dht,
             Some(dht_rx),
             initial_peers.into_iter().collect(),
             trackers,
@@ -250,7 +253,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         } else {
             torrent_from_file(&opts.torrent_path)?
         };
-        let dht_rx = match dht {
+        let dht_rx = match dht.as_ref() {
             Some(dht) => Some(flatten_dht_peers_stream(
                 dht.get_peers(torrent.info_hash).await?,
             )),
@@ -280,6 +283,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             torrent.info_hash,
             torrent.info,
             peer_id,
+            dht,
             dht_rx,
             Vec::new(),
             trackers,
@@ -310,6 +314,7 @@ async fn main_torrent_info(
     info_hash: Id20,
     info: TorrentMetaV1Info<ByteString>,
     peer_id: Id20,
+    dht: Option<Dht>,
     dht_peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
     initial_peers: Vec<SocketAddr>,
     trackers: Vec<reqwest::Url>,
@@ -342,7 +347,7 @@ async fn main_torrent_info(
         builder.peer_connect_timeout(t.0);
     }
 
-    let http_api = librqbit::http_api::HttpApi::new();
+    let http_api = librqbit::http_api::HttpApi::new(dht.clone());
     spawn("HTTP API", {
         let http_api = http_api.clone();
         async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
@@ -357,6 +362,37 @@ async fn main_torrent_info(
     for peer in initial_peers {
         handle.add_peer(peer);
     }
+
+    spawn("Stats printer", {
+        let handle = handle.clone();
+        async move {
+            loop {
+                let dht_stats = dht.as_ref().map(|d| d.stats());
+                let peer_stats = handle.torrent_state().peer_stats_snapshot();
+                let stats = handle.torrent_state().stats_snapshot();
+                let needed = stats.initially_needed_bytes;
+                let downloaded_pct = if stats.remaining_bytes == 0 {
+                    100f64
+                } else {
+                    (stats.downloaded_and_checked_bytes as f64 / needed as f64) * 100f64
+                };
+                info!(
+                    "Stats: downloaded {:.2}% ({:.2}), fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, have {:.2}, peers: {:?}, dht: {:?}",
+                    downloaded_pct,
+                    SF::new(stats.downloaded_and_checked_bytes),
+                    SF::new(stats.fetched_bytes),
+                    SF::new(stats.remaining_bytes),
+                    SF::new(needed),
+                    SF::new(stats.uploaded_bytes),
+                    SF::new(stats.have_bytes),
+                    peer_stats,
+                    dht_stats,
+                );
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    });
+
     if let Some(mut dht_peer_rx) = dht_peer_rx {
         spawn("DHT peer adder", {
             let handle = handle.clone();

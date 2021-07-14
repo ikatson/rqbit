@@ -244,10 +244,11 @@ impl TorrentManager {
             options,
         });
 
-        spawn("stats printer", {
-            let this = mgr.clone();
-            async move { this.stats_printer().await }
-        });
+        // spawn("stats printer", {
+        //     let this = mgr.clone();
+        //     async move { this.stats_printer().await }
+        // });
+
         spawn("speed estimator updater", {
             let state = mgr.state.clone();
             async move {
@@ -262,35 +263,6 @@ impl TorrentManager {
         });
 
         Ok(mgr.into_handle())
-    }
-
-    async fn stats_printer(&self) -> anyhow::Result<()> {
-        loop {
-            let live_peer_stats = self.state.lock_read().peers.stats();
-            let seen_peers_count = self.state.lock_read().peers.seen().len();
-            let stats = self.state.stats_snapshot();
-            let needed = self.state.initially_needed();
-            let downloaded_pct = if stats.remaining_bytes == 0 {
-                100f64
-            } else {
-                (stats.downloaded_and_checked_bytes as f64 / needed as f64) * 100f64
-            };
-            info!(
-                "Stats: downloaded {:.2}% ({:.2}), peers {{live: {}, connecting: {}, queued: {}, seen: {}}}, fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, total have {:.2}",
-                downloaded_pct,
-                SF::new(stats.downloaded_and_checked_bytes),
-                live_peer_stats.live,
-                live_peer_stats.connecting,
-                live_peer_stats.queued,
-                seen_peers_count,
-                SF::new(stats.fetched_bytes),
-                SF::new(stats.remaining_bytes),
-                SF::new(needed),
-                SF::new(stats.uploaded_bytes),
-                SF::new(stats.have_bytes)
-            );
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
     }
 
     fn into_handle(self: Arc<Self>) -> TorrentManagerHandle {

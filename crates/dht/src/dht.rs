@@ -28,6 +28,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
+    #[serde(serialize_with = "crate::utils::serialize_id20")]
     pub id: Id20,
     pub outstanding_requests: usize,
     pub seen_peers: usize,

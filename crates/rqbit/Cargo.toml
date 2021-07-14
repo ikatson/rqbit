@@ -20,6 +20,7 @@ reqwest = "0.11"
 regex = "1"
 futures = "0.3"
 parse_duration = "2"
+size_format = "1"
 
 [dev-dependencies]
 futures = {version = "0.3"}
