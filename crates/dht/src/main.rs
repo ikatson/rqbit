@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = dht.get_peers(info_hash).await?;
     let mut seen = HashSet::new();
 
-    let stats_printer = async move {
+    let stats_printer = async {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             info!("DHT stats: {:?}", dht.stats());
@@ -22,7 +22,24 @@ async fn main() -> anyhow::Result<()> {
         Ok::<_, anyhow::Error>(())
     };
 
-    let peer_printer = async move {
+    let routing_table_dumper = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(15)).await;
+            dht.with_routing_table(|r| {
+                let filename = "/tmp/routing-table.json";
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open(filename)
+                    .unwrap();
+                serde_json::to_writer_pretty(&mut f, r).unwrap();
+                info!("Dumped DHT routing table to {}", filename);
+            });
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+
+    let peer_printer = async {
         while let Some(peer) = stream.next().await {
             let peer = peer.context("error reading peer stream")?;
             if seen.insert(peer) {
@@ -35,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let res = tokio::select! {
         res = stats_printer => res,
         res = peer_printer => res,
+        res = routing_table_dumper => res,
     };
     res
 }

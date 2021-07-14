@@ -5,14 +5,15 @@ use std::{
 
 use librqbit_core::id20::Id20;
 use log::debug;
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 enum BucketTreeNode {
     Leaf(Vec<RoutingTableNode>),
     LeftRight(Box<BucketTree>, Box<BucketTree>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BucketTree {
     bits: u8,
     start: Id20,
@@ -302,12 +303,15 @@ impl Default for BucketTree {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RoutingTableNode {
     id: Id20,
     addr: SocketAddr,
+    #[serde(skip)]
     last_request: Option<Instant>,
+    #[serde(skip)]
     last_response: Option<Instant>,
+    #[serde(skip)]
     outstanding_queries_in_a_row: usize,
 }
 
@@ -356,7 +360,7 @@ impl RoutingTableNode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RoutingTable {
     id: Id20,
     size: usize,
