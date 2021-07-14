@@ -251,7 +251,9 @@ impl DhtState {
             Entry::Vacant(v) => {
                 // DHT sends peers REALLY fast, so the consumer of this broadcast should not lag behind.
                 // That's why capacity is so high.
-                let (tx, rx) = tokio::sync::broadcast::channel(1000);
+                //
+                // What could be done is we could re-send all known peers once someone lags. Maybe do that...
+                let (tx, rx) = tokio::sync::broadcast::channel(20000);
                 v.insert(tx);
 
                 // We don't need to allocate/collect here, but the borrow checker is not happy otherwise.
