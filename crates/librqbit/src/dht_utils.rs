@@ -103,8 +103,6 @@ mod tests {
         let dht = Dht::new().await.unwrap();
         let peer_rx = dht.get_peers(info_hash).await.unwrap();
         let peer_id = generate_peer_id();
-        let peer_rx = peer_rx.filter_map(|r| async move { r.ok() });
-        tokio::pin!(peer_rx);
         match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx, None).await {
             ReadMetainfoResult::Found { info, .. } => dbg!(info),
             ReadMetainfoResult::ChannelClosed { .. } => todo!("should not have happened"),

@@ -235,6 +235,7 @@ dependencies = [
  "clone_to_owned",
  "futures",
  "hex 0.4.3",
+ "indexmap",
  "librqbit_core",
  "log",
  "parking_lot",

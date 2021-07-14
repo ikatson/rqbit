@@ -1,4 +1,4 @@
-use std::{collections::HashSet, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use anyhow::Context;
 use dht::{Dht, Id20};
@@ -12,13 +12,13 @@ async fn main() -> anyhow::Result<()> {
     let info_hash = Id20::from_str("64a980abe6e448226bb930ba061592e44c3781a1").unwrap();
     let dht = Dht::new().await.context("error initializing DHT")?;
     let mut stream = dht.get_peers(info_hash).await?;
-    let mut seen = HashSet::new();
 
     let stats_printer = async {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
             info!("DHT stats: {:?}", dht.stats());
         }
+        #[allow(unreachable_code)]
         Ok::<_, anyhow::Error>(())
     };
 
@@ -36,15 +36,13 @@ async fn main() -> anyhow::Result<()> {
                 info!("Dumped DHT routing table to {}", filename);
             });
         }
+        #[allow(unreachable_code)]
         Ok::<_, anyhow::Error>(())
     };
 
     let peer_printer = async {
         while let Some(peer) = stream.next().await {
-            let peer = peer.context("error reading peer stream")?;
-            if seen.insert(peer) {
-                log::info!("peer found: {}", peer)
-            }
+            log::info!("peer found: {}", peer)
         }
         Ok(())
     };
