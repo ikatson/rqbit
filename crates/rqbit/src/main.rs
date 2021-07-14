@@ -367,7 +367,6 @@ async fn main_torrent_info(
         let handle = handle.clone();
         async move {
             loop {
-                let dht_stats = dht.as_ref().map(|d| d.stats());
                 let peer_stats = handle.torrent_state().peer_stats_snapshot();
                 let stats = handle.torrent_state().stats_snapshot();
                 let needed = stats.initially_needed_bytes;
@@ -377,7 +376,7 @@ async fn main_torrent_info(
                     (stats.downloaded_and_checked_bytes as f64 / needed as f64) * 100f64
                 };
                 info!(
-                    "Stats: downloaded {:.2}% ({:.2}), fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, have {:.2}, peers: {:?}, dht: {:?}",
+                    "Stats: downloaded {:.2}% ({:.2}), fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, have {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
                     downloaded_pct,
                     SF::new(stats.downloaded_and_checked_bytes),
                     SF::new(stats.fetched_bytes),
@@ -385,8 +384,10 @@ async fn main_torrent_info(
                     SF::new(needed),
                     SF::new(stats.uploaded_bytes),
                     SF::new(stats.have_bytes),
-                    peer_stats,
-                    dht_stats,
+                    peer_stats.live,
+                    peer_stats.connecting,
+                    peer_stats.queued,
+                    peer_stats.seen,
                 );
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }

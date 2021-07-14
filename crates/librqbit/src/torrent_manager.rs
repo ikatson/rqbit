@@ -244,11 +244,6 @@ impl TorrentManager {
             options,
         });
 
-        // spawn("stats printer", {
-        //     let this = mgr.clone();
-        //     async move { this.stats_printer().await }
-        // });
-
         spawn("speed estimator updater", {
             let state = mgr.state.clone();
             async move {

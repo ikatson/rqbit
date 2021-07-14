@@ -231,10 +231,6 @@ impl DhtState {
         }
     }
 
-    pub fn get_routing_table(&self) -> &RoutingTable {
-        &self.routing_table
-    }
-
     pub fn get_peers(
         &mut self,
         info_hash: Id20,
