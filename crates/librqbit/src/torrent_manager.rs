@@ -148,7 +148,7 @@ struct TorrentManager {
 fn make_lengths<ByteBuf: AsRef<[u8]>>(
     torrent: &TorrentMetaV1Info<ByteBuf>,
 ) -> anyhow::Result<Lengths> {
-    let total_length = torrent.iter_file_lengths().sum();
+    let total_length = torrent.iter_file_lengths()?.sum();
     Lengths::new(total_length, torrent.piece_length, None)
 }
 
@@ -163,9 +163,9 @@ impl TorrentManager {
         let options = options.unwrap_or_default();
         let files = {
             let mut files =
-                Vec::<Arc<Mutex<File>>>::with_capacity(info.iter_file_lengths().count());
+                Vec::<Arc<Mutex<File>>>::with_capacity(info.iter_file_lengths()?.count());
 
-            for (path_bits, _) in info.iter_filenames_and_lengths() {
+            for (path_bits, _) in info.iter_filenames_and_lengths()? {
                 let mut full_path = out.as_ref().to_owned();
                 for bit in path_bits.iter_components() {
                     full_path.push(

@@ -98,7 +98,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut file_iterator = self
             .files
             .iter()
-            .zip(self.torrent.iter_filenames_and_lengths())
+            .zip(self.torrent.iter_filenames_and_lengths()?)
             .enumerate()
             .map(|(idx, (fd, (name, len)))| {
                 let full_file_required = if let Some(only_files) = only_files {
@@ -228,7 +228,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
         let mut piece_remaining_bytes = piece_length as usize;
 
-        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths().enumerate() {
+        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths()?.enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -297,7 +297,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
         let mut buf = result_buf;
 
-        for (file_idx, file_len) in self.torrent.iter_file_lengths().enumerate() {
+        for (file_idx, file_len) in self.torrent.iter_file_lengths()?.enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -351,7 +351,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
 
-        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths().enumerate() {
+        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths()?.enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;

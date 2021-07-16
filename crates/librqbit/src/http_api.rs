@@ -106,6 +106,7 @@ impl ApiInternal {
             .torrent_state()
             .info()
             .iter_filenames_and_lengths()
+            .unwrap()
             .map(|(filename_it, length)| {
                 let name = filename_it.to_string().ok();
                 TorrentDetailsResponseFile { name, length }

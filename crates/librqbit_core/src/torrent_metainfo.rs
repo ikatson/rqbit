@@ -1,5 +1,6 @@
-use std::{fmt::Write, path::PathBuf};
+use std::path::PathBuf;
 
+use anyhow::Context;
 use bencode::BencodeDeserializer;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
@@ -74,18 +75,10 @@ where
     ByteBuf: AsRef<[u8]>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (idx, item) in self.iter_components().enumerate() {
-            if idx > 0 {
-                f.write_char(std::path::MAIN_SEPARATOR)?;
-            }
-            match item {
-                Some(bit) => {
-                    f.write_str(std::str::from_utf8(bit.as_ref()).unwrap_or("<INVALID UTF-8>"))?;
-                }
-                None => f.write_str("output")?,
-            }
+        match self.to_string() {
+            Ok(s) => write!(f, "{:?}", s),
+            Err(e) => write!(f, "<{:?}>", e),
         }
-        Ok(())
     }
 }
 
@@ -94,19 +87,13 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
     where
         ByteBuf: AsRef<[u8]>,
     {
-        let mut it = self.iter_components();
-        let mut buf = it
-            .next()
-            .and_then(|v| v)
-            .map(|v| std::str::from_utf8(v.as_ref()))
-            .ok_or_else(|| anyhow::anyhow!("empty filename"))??
-            .to_string();
-        for bit in it {
-            buf.push('/');
-            let bit = bit
-                .map(|v| std::str::from_utf8(v.as_ref()))
-                .ok_or_else(|| anyhow::anyhow!("empty filename"))??;
-            buf.push_str(bit);
+        let mut buf = String::new();
+        for (idx, bit) in self.iter_components().enumerate() {
+            let bit = bit?;
+            if idx > 0 {
+                buf.push(std::path::MAIN_SEPARATOR);
+            }
+            buf.push_str(bit)
         }
         Ok(buf)
     }
@@ -115,17 +102,16 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
         ByteBuf: AsRef<[u8]>,
     {
         let mut buf = PathBuf::new();
-        for part in self.iter_components() {
-            if let Some(part) = part {
-                buf.push(std::str::from_utf8(part.as_ref())?)
-            } else {
-                buf.push("output");
-                break;
-            }
+        for bit in self.iter_components() {
+            let bit = bit?;
+            buf.push(bit)
         }
         Ok(buf)
     }
-    pub fn iter_components(&self) -> impl Iterator<Item = Option<&'a ByteBuf>> {
+    pub fn iter_components(&self) -> impl Iterator<Item = anyhow::Result<&'a str>>
+    where
+        ByteBuf: AsRef<[u8]>,
+    {
         let single_it = std::iter::once(match self {
             FileIteratorName::Single(n) => Some(*n),
             FileIteratorName::Tree(_) => None,
@@ -137,7 +123,27 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
         .iter()
         .map(|p| Some(Some(p)));
 
-        single_it.chain(multi_it).flatten()
+        let it = single_it.chain(multi_it).flatten();
+
+        it.map(|part| {
+            let part = match part {
+                Some(part) => part,
+                None => return Ok("torrent-content"),
+            };
+            let bit = std::str::from_utf8(part.as_ref())
+                .context("cannot decode filename bit as UTF-8")?;
+            if bit.contains("..") {
+                anyhow::bail!("path traversal detected, \"..\" in filename bit {:?}", bit);
+            }
+            if bit.contains(std::path::MAIN_SEPARATOR) {
+                anyhow::bail!(
+                    "suspicios separator {:?} in filename bit {:?}",
+                    std::path::MAIN_SEPARATOR,
+                    bit
+                );
+            }
+            Ok(bit)
+        })
     }
 }
 
@@ -154,11 +160,27 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         let expected_hash = self.pieces.as_ref().get(start..end)?;
         Some(expected_hash == hash)
     }
+
+    fn is_single_file(&self) -> anyhow::Result<bool> {
+        match (self.length, self.files.as_ref()) {
+            (None, Some(files)) => {
+                if files.is_empty() {
+                    anyhow::bail!("expected multi-file torrent to have at least one file")
+                }
+                Ok(false)
+            }
+            (Some(_), None) => Ok(true),
+            _ => anyhow::bail!("torrent can't be both in single and multi-file mode"),
+        }
+    }
+
     pub fn iter_filenames_and_lengths(
         &self,
-    ) -> impl Iterator<Item = (FileIteratorName<'_, BufType>, u64)> {
+    ) -> anyhow::Result<impl Iterator<Item = (FileIteratorName<'_, BufType>, u64)>> {
+        self.is_single_file()?;
+
         let single_it = std::iter::once(match (self.name.as_ref(), self.length) {
-            (Some(n), Some(l)) => Some((FileIteratorName::Single(Some(n)), l)),
+            (n, Some(l)) => Some((FileIteratorName::Single(n), l)),
             _ => None,
         });
         let multi_it = self
@@ -167,10 +189,11 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             .unwrap_or_default()
             .iter()
             .map(|f| Some((FileIteratorName::Tree(&f.path), f.length)));
-        single_it.chain(multi_it).flatten()
+        Ok(single_it.chain(multi_it).flatten())
     }
-    pub fn iter_file_lengths(&self) -> impl Iterator<Item = u64> + '_ {
-        std::iter::once(self.length)
+    pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
+        self.is_single_file()?;
+        let it = std::iter::once(self.length)
             .chain(
                 self.files
                     .as_deref()
@@ -178,7 +201,8 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
                     .iter()
                     .map(|f| Some(f.length)),
             )
-            .flatten()
+            .flatten();
+        Ok(it)
     }
 }
 

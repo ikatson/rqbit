@@ -3,7 +3,7 @@ use std::{fs::File, io::Read, net::SocketAddr, str::FromStr, time::Duration};
 use anyhow::Context;
 use clap::Clap;
 use dht::{Dht, Id20};
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use librqbit::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     generate_peer_id,
@@ -121,7 +121,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
 ) -> anyhow::Result<Vec<usize>> {
     let filename_re = regex::Regex::new(&filename_re).context("filename regex is incorrect")?;
     let mut only_files = Vec::new();
-    for (idx, (filename, _)) in torrent.iter_filenames_and_lengths().enumerate() {
+    for (idx, (filename, _)) in torrent.iter_filenames_and_lengths()?.enumerate() {
         let full_path = filename
             .to_pathbuf()
             .with_context(|| format!("filename of file {} is not valid utf8", idx))?;
@@ -303,14 +303,23 @@ async fn main_torrent_info(
     spawner: BlockingSpawner,
 ) -> anyhow::Result<()> {
     info!("Torrent info: {:#?}", &info);
-    if opts.list {
-        return Ok(());
-    }
     let only_files = if let Some(filename_re) = opts.only_files_matching_regex {
-        Some(compute_only_files(&info, &filename_re)?)
+        let only_files = compute_only_files(&info, &filename_re)?;
+        for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
+            if !only_files.contains(&idx) {
+                continue;
+            }
+            info!("Will download {:?}", filename);
+        }
+        Some(only_files)
     } else {
         None
     };
+
+    if opts.list {
+        info!("--list was passed, nothing to do, exiting.");
+        return Ok(());
+    }
 
     let http_api_listen_addr = opts.http_api_listen_addr;
 
