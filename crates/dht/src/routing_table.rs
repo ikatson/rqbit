@@ -210,6 +210,12 @@ impl BucketTree {
         id: Id20,
         addr: SocketAddr,
     ) -> InsertResult {
+        // The loop here is for this case:
+        // in case we split a node into two, and it degenerates into all the leaves
+        // being on one side, we'll need to split again "recursively" until there's space
+        // for the new node.
+        // The loop is to remove the recursion. NOTE: it might have compiled to tail recursion
+        // anyway, but whatever, did not check.
         loop {
             let leaf = &mut self.data[idx];
             let nodes = match &mut leaf.data {
