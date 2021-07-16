@@ -6,45 +6,58 @@ use std::{
 use librqbit_core::id20::Id20;
 use log::debug;
 use serde::Serialize;
+use smallvec::SmallVec;
 
 #[derive(Debug, Clone, Serialize)]
-enum BucketTreeNode {
-    Leaf(Vec<RoutingTableNode>),
-    LeftRight(Box<BucketTree>, Box<BucketTree>),
+enum BucketTreeNodeData {
+    // TODO: maybe replace that with SmallVec<8>?
+    Leaf(SmallVec<[RoutingTableNode; 8]>),
+    LeftRight(usize, usize),
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BucketTree {
+struct BucketTreeNode {
     bits: u8,
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     start: Id20,
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     end_inclusive: Id20,
-    data: BucketTreeNode,
+    data: BucketTreeNodeData,
 }
 
-pub struct BucketTreeNodeIterator<'a> {
+#[derive(Debug, Clone, Serialize)]
+pub struct BucketTree {
+    data: Vec<BucketTreeNode>,
+}
+
+pub struct BucketTreeIterator<'a> {
+    tree: &'a BucketTree,
     current: std::slice::Iter<'a, RoutingTableNode>,
-    queue: Vec<&'a BucketTree>,
+    queue: Vec<usize>,
 }
 
-impl<'a> BucketTreeNodeIterator<'a> {
-    fn new(mut tree: &'a BucketTree) -> Self {
+impl<'a> BucketTreeIterator<'a> {
+    fn new(tree: &'a BucketTree) -> Self {
         let mut queue = Vec::new();
-        let current = loop {
-            match &tree.data {
-                BucketTreeNode::Leaf(nodes) => break nodes.iter(),
-                BucketTreeNode::LeftRight(left, right) => {
-                    queue.push(right.as_ref());
-                    tree = left.as_ref()
+        let mut current = 0;
+        let current_slice = loop {
+            match &tree.data[current].data {
+                BucketTreeNodeData::Leaf(nodes) => break nodes.iter(),
+                BucketTreeNodeData::LeftRight(left, right) => {
+                    queue.push(*right);
+                    current = *left;
                 }
             }
         };
-        BucketTreeNodeIterator { current, queue }
+        BucketTreeIterator {
+            tree,
+            current: current_slice,
+            queue,
+        }
     }
 }
 
-impl<'a> Iterator for BucketTreeNodeIterator<'a> {
+impl<'a> Iterator for BucketTreeIterator<'a> {
     type Item = &'a RoutingTableNode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -53,67 +66,18 @@ impl<'a> Iterator for BucketTreeNodeIterator<'a> {
         };
 
         loop {
-            let tree = self.queue.pop()?;
-            match &tree.data {
-                BucketTreeNode::Leaf(nodes) => {
+            let idx = self.queue.pop()?;
+            match &self.tree.data[idx].data {
+                BucketTreeNodeData::Leaf(nodes) => {
                     self.current = nodes.iter();
                     match self.current.next() {
                         Some(v) => return Some(v),
                         None => continue,
                     }
                 }
-                BucketTreeNode::LeftRight(left, right) => {
-                    self.queue.push(right.as_ref());
-                    self.queue.push(left.as_ref());
-                    continue;
-                }
-            }
-        }
-    }
-}
-
-pub struct BucketTreeNodeIteratorMut<'a> {
-    current: std::slice::IterMut<'a, RoutingTableNode>,
-    queue: Vec<&'a mut BucketTree>,
-}
-
-impl<'a> BucketTreeNodeIteratorMut<'a> {
-    fn new(mut tree: &'a mut BucketTree) -> Self {
-        let mut queue = Vec::new();
-        let current = loop {
-            match &mut tree.data {
-                BucketTreeNode::Leaf(nodes) => break nodes.iter_mut(),
-                BucketTreeNode::LeftRight(left, right) => {
-                    queue.push(right.as_mut());
-                    tree = left.as_mut()
-                }
-            }
-        };
-        BucketTreeNodeIteratorMut { current, queue }
-    }
-}
-
-impl<'a> Iterator for BucketTreeNodeIteratorMut<'a> {
-    type Item = &'a mut RoutingTableNode;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(v) = self.current.next() {
-            return Some(v);
-        };
-
-        loop {
-            let tree = self.queue.pop()?;
-            match &mut tree.data {
-                BucketTreeNode::Leaf(nodes) => {
-                    self.current = nodes.iter_mut();
-                    match self.current.next() {
-                        Some(v) => return Some(v),
-                        None => continue,
-                    }
-                }
-                BucketTreeNode::LeftRight(left, right) => {
-                    self.queue.push(right.as_mut());
-                    self.queue.push(left.as_mut());
+                BucketTreeNodeData::LeftRight(left, right) => {
+                    self.queue.push(*right);
+                    self.queue.push(*left);
                     continue;
                 }
             }
@@ -177,125 +141,159 @@ pub enum InsertResult {
 
 impl BucketTree {
     pub fn new() -> Self {
-        BucketTree {
+        let mut data = Vec::with_capacity(64);
+        data.push(BucketTreeNode {
             bits: 160,
             start: Id20([0u8; 20]),
             end_inclusive: Id20([0xff; 20]),
-            data: BucketTreeNode::Leaf(Vec::with_capacity(8)),
-        }
+            data: BucketTreeNodeData::Leaf(SmallVec::with_capacity(8)),
+        });
+        BucketTree { data }
     }
-    pub fn iter(&self) -> BucketTreeNodeIterator<'_> {
-        BucketTreeNodeIterator::new(self)
-    }
-
-    pub fn iter_mut(&mut self) -> BucketTreeNodeIteratorMut<'_> {
-        BucketTreeNodeIteratorMut::new(self)
+    pub fn iter(&self) -> BucketTreeIterator<'_> {
+        BucketTreeIterator::new(self)
     }
 
     pub fn get_mut(&mut self, id: &Id20) -> Option<&mut RoutingTableNode> {
-        if !(*id >= self.start && *id <= self.end_inclusive) {
-            return None;
-        }
-        match &mut self.data {
-            BucketTreeNode::Leaf(nodes) => nodes.iter_mut().find(|b| b.id == *id),
-            BucketTreeNode::LeftRight(left, right) => {
-                left.get_mut(id).or_else(move || right.get_mut(id))
+        let mut idx = 0;
+        loop {
+            let node = &self.data[idx];
+            if !(*id >= node.start && *id <= node.end_inclusive) {
+                return None;
+            };
+            match &node.data {
+                BucketTreeNodeData::Leaf(_) => {
+                    // re-borrow mutably
+                    if let BucketTreeNodeData::Leaf(nodes) = &mut self.data[idx].data {
+                        return nodes.iter_mut().find(|b| b.id == *id);
+                    }
+                    unreachable!()
+                }
+                BucketTreeNodeData::LeftRight(left_idx, right_idx) => {
+                    let left_idx = *left_idx;
+                    let right_idx = *right_idx;
+                    let left = &self.data[left_idx];
+                    if *id >= left.start && *id <= left.end_inclusive {
+                        idx = left_idx;
+                        continue;
+                    };
+                    idx = right_idx;
+                }
             }
         }
     }
 
     pub fn add_node(&mut self, self_id: &Id20, id: Id20, addr: SocketAddr) -> InsertResult {
-        let mut tree = self;
+        let mut current = 0;
         loop {
-            match &mut tree.data {
-                BucketTreeNode::Leaf(_) => {
-                    assert!(id >= tree.start && id <= tree.end_inclusive);
-                    return tree.insert_into_leaf(self_id, id, addr);
+            let node = &self.data[current];
+            debug_assert!(id >= node.start && id <= node.end_inclusive);
+            match &node.data {
+                BucketTreeNodeData::Leaf(_) => {
+                    return self.insert_into_leaf(current, self_id, id, addr);
                 }
-                BucketTreeNode::LeftRight(left, right) => {
-                    if id >= right.start {
-                        // Erase lifetime.
-                        // Safety: this is safe as it's a tree, not a DAG or Graph.
-                        tree = unsafe { &mut *(right.as_mut() as *mut _) };
+                BucketTreeNodeData::LeftRight(left_idx, right_idx) => {
+                    let left = &self.data[*left_idx];
+                    if id <= left.end_inclusive {
+                        current = *left_idx;
                         continue;
                     }
-                    tree = unsafe { &mut *(left.as_mut() as *mut _) };
+                    current = *right_idx;
                 }
             }
         }
     }
-    fn insert_into_leaf(&mut self, self_id: &Id20, id: Id20, addr: SocketAddr) -> InsertResult {
-        let nodes = match &mut self.data {
-            BucketTreeNode::Leaf(nodes) => nodes,
-            BucketTreeNode::LeftRight(_, _) => unreachable!(),
-        };
-        // if already found, quit
-        if nodes.iter().any(|r| r.id == id) {
-            return InsertResult::WasExisting;
-        }
+    fn insert_into_leaf(
+        &mut self,
+        mut idx: usize,
+        self_id: &Id20,
+        id: Id20,
+        addr: SocketAddr,
+    ) -> InsertResult {
+        loop {
+            let leaf = &mut self.data[idx];
+            let nodes = match &mut leaf.data {
+                BucketTreeNodeData::Leaf(nodes) => nodes,
+                BucketTreeNodeData::LeftRight(_, _) => unreachable!(),
+            };
+            // if already found, quit
+            if nodes.iter().any(|r| r.id == id) {
+                return InsertResult::WasExisting;
+            }
 
-        let mut new_node = RoutingTableNode {
-            id,
-            addr,
-            last_request: None,
-            last_response: None,
-            outstanding_queries_in_a_row: 0,
-        };
+            let mut new_node = RoutingTableNode {
+                id,
+                addr,
+                last_request: None,
+                last_response: None,
+                outstanding_queries_in_a_row: 0,
+            };
 
-        if nodes.len() < 8 {
-            nodes.push(new_node);
-            nodes.sort_by_key(|n| n.id);
-            return InsertResult::Added;
-        }
+            if nodes.len() < 8 {
+                nodes.push(new_node);
+                nodes.sort_by_key(|n| n.id);
+                return InsertResult::Added;
+            }
 
-        // Try replace a bad node
-        if let Some(bad_node) = nodes
-            .iter_mut()
-            .find(|r| matches!(r.status(), NodeStatus::Bad))
-        {
-            std::mem::swap(bad_node, &mut new_node);
-            nodes.sort_by_key(|n| n.id);
-            debug!("replaced bad node {:?}", new_node);
-            return InsertResult::ReplacedBad(new_node);
-        }
+            // Try replace a bad node
+            if let Some(bad_node) = nodes
+                .iter_mut()
+                .find(|r| matches!(r.status(), NodeStatus::Bad))
+            {
+                std::mem::swap(bad_node, &mut new_node);
+                nodes.sort_by_key(|n| n.id);
+                debug!("replaced bad node {:?}", new_node);
+                return InsertResult::ReplacedBad(new_node);
+            }
 
-        // if our id is not inside, don't bother.
-        if *self_id < self.start || *self_id > self.end_inclusive {
-            return InsertResult::Ignored;
-        }
+            // if our id is not inside, don't bother.
+            if *self_id < leaf.start || *self_id > leaf.end_inclusive {
+                return InsertResult::Ignored;
+            }
 
-        // Split
-        let ((ls, le), (rs, re)) =
-            compute_split_start_end(self.start, self.end_inclusive, self.bits);
-        let (mut ld, mut rd) = (Vec::with_capacity(8), Vec::with_capacity(8));
-        for node in nodes.drain(0..) {
-            if node.id < rs {
-                ld.push(node);
+            // Split
+            let ((ls, le), (rs, re)) =
+                compute_split_start_end(leaf.start, leaf.end_inclusive, leaf.bits);
+            let (mut ld, mut rd) = (SmallVec::with_capacity(8), SmallVec::with_capacity(8));
+            for node in nodes.drain(0..) {
+                if node.id < rs {
+                    ld.push(node);
+                } else {
+                    rd.push(node)
+                }
+            }
+
+            let left = BucketTreeNode {
+                bits: leaf.bits - 1,
+                start: ls,
+                end_inclusive: le,
+                data: BucketTreeNodeData::Leaf(ld),
+            };
+            let right = BucketTreeNode {
+                bits: leaf.bits - 1,
+                start: rs,
+                end_inclusive: re,
+                data: BucketTreeNodeData::Leaf(rd),
+            };
+
+            let left_idx = {
+                let l = self.data.len();
+                self.data.push(left);
+                l
+            };
+            let right_idx = {
+                let l = self.data.len();
+                self.data.push(right);
+                l
+            };
+
+            self.data[idx].data = BucketTreeNodeData::LeftRight(left_idx, right_idx);
+            if id < rs {
+                idx = left_idx
             } else {
-                rd.push(node)
+                idx = right_idx
             }
         }
-        let mut left = BucketTree {
-            bits: self.bits - 1,
-            start: ls,
-            end_inclusive: le,
-            data: BucketTreeNode::Leaf(ld),
-        };
-        let mut right = BucketTree {
-            bits: self.bits - 1,
-            start: rs,
-            end_inclusive: re,
-            data: BucketTreeNode::Leaf(rd),
-        };
-
-        let result = if id < rs {
-            left.add_node(self_id, id, addr)
-        } else {
-            right.add_node(self_id, id, addr)
-        };
-
-        self.data = BucketTreeNode::LeftRight(Box::new(left), Box::new(right));
-        result
     }
 }
 
@@ -385,15 +383,6 @@ impl RoutingTable {
     pub fn sorted_by_distance_from(&self, id: Id20) -> Vec<&RoutingTableNode> {
         let mut result = Vec::with_capacity(self.size);
         for node in self.buckets.iter() {
-            result.push(node);
-        }
-        result.sort_by_key(|n| id.distance(&n.id));
-        result
-    }
-
-    pub fn sorted_by_distance_from_mut(&mut self, id: Id20) -> Vec<&mut RoutingTableNode> {
-        let mut result = Vec::with_capacity(self.size);
-        for node in self.buckets.iter_mut() {
             result.push(node);
         }
         result.sort_by_key(|n| id.distance(&n.id));
