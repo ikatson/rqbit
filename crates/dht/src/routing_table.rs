@@ -5,13 +5,12 @@ use std::{
 
 use librqbit_core::id20::Id20;
 use log::debug;
-use serde::Serialize;
-use smallvec::SmallVec;
+use serde::{ser::SerializeMap, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 enum BucketTreeNodeData {
     // TODO: maybe replace that with SmallVec<8>?
-    Leaf(SmallVec<[RoutingTableNode; 8]>),
+    Leaf(Vec<RoutingTableNode>),
     LeftRight(usize, usize),
 }
 
@@ -25,9 +24,68 @@ struct BucketTreeNode {
     data: BucketTreeNodeData,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct BucketTree {
     data: Vec<BucketTreeNode>,
+}
+
+impl Serialize for BucketTree {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        struct Node<'a> {
+            tree: &'a BucketTree,
+            idx: usize,
+        }
+
+        impl<'a> Serialize for Node<'a> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut map = serializer.serialize_map(None)?;
+                let node = &self.tree.data[self.idx];
+                map.serialize_entry("bits", &node.bits)?;
+                map.serialize_entry("start", &node.start.as_string())?;
+                map.serialize_entry("end", &node.end_inclusive.as_string())?;
+                match &node.data {
+                    BucketTreeNodeData::Leaf(nodes) => {
+                        map.serialize_entry("nodes", &nodes)?;
+                    }
+                    BucketTreeNodeData::LeftRight(l, r) => {
+                        map.serialize_entry(
+                            "left",
+                            &(Node {
+                                idx: *l,
+                                tree: self.tree,
+                            }),
+                        )?;
+                        map.serialize_entry(
+                            "right",
+                            &(Node {
+                                idx: *r,
+                                tree: self.tree,
+                            }),
+                        )?;
+                    }
+                }
+                map.end()
+            }
+        }
+
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("nodes_len", &self.data.len())?;
+        map.serialize_entry("nodes_capacity", &self.data.capacity())?;
+        map.serialize_entry("node_memory_bytes", &std::mem::size_of::<BucketTreeNode>())?;
+        map.serialize_entry(
+            "nodes_memory_bytes",
+            &(std::mem::size_of::<BucketTreeNode>() * self.data.capacity()),
+        )?;
+        map.serialize_entry("tree", &Node { tree: self, idx: 0 })?;
+        map.serialize_entry("flat", &self.data)?;
+        map.end()
+    }
 }
 
 pub struct BucketTreeIterator<'a> {
@@ -141,14 +199,14 @@ pub enum InsertResult {
 
 impl BucketTree {
     pub fn new() -> Self {
-        let mut data = Vec::with_capacity(64);
-        data.push(BucketTreeNode {
-            bits: 160,
-            start: Id20([0u8; 20]),
-            end_inclusive: Id20([0xff; 20]),
-            data: BucketTreeNodeData::Leaf(SmallVec::with_capacity(8)),
-        });
-        BucketTree { data }
+        BucketTree {
+            data: vec![BucketTreeNode {
+                bits: 160,
+                start: Id20([0u8; 20]),
+                end_inclusive: Id20([0xff; 20]),
+                data: BucketTreeNodeData::Leaf(Vec::new()),
+            }],
+        }
     }
     pub fn iter(&self) -> BucketTreeIterator<'_> {
         BucketTreeIterator::new(self)
@@ -260,7 +318,7 @@ impl BucketTree {
             // Split
             let ((ls, le), (rs, re)) =
                 compute_split_start_end(leaf.start, leaf.end_inclusive, leaf.bits);
-            let (mut ld, mut rd) = (SmallVec::with_capacity(8), SmallVec::with_capacity(8));
+            let (mut ld, mut rd) = (Vec::new(), Vec::new());
             for node in nodes.drain(0..) {
                 if node.id < rs {
                     ld.push(node);
@@ -429,7 +487,7 @@ impl RoutingTable {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddrV4;
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
     use librqbit_core::id20::Id20;
     use rand::Rng;
@@ -525,16 +583,40 @@ mod tests {
         Id20(id20)
     }
 
-    #[test]
-    fn simulate_tree() {
+    fn generate_socket_addr() -> SocketAddr {
+        let mut ipv4_addr = [0u8; 6];
+        rand::thread_rng().fill(&mut ipv4_addr);
+        let ip = Ipv4Addr::new(ipv4_addr[0], ipv4_addr[1], ipv4_addr[2], ipv4_addr[3]);
+        let port = ((ipv4_addr[4] as u16) << 8) + (ipv4_addr[5] as u16);
+        SocketAddrV4::new(ip, port).into()
+    }
+
+    fn generate_table(length: Option<usize>) -> RoutingTable {
         let my_id = random_id_20();
         let mut rtable = RoutingTable::new(my_id);
-        for i in 0..u16::MAX {
+        for _ in 0..length.unwrap_or(16536) {
             let other_id = random_id_20();
-            let addr = std::net::SocketAddr::V4(SocketAddrV4::new("0.0.0.0".parse().unwrap(), i));
+            let addr = generate_socket_addr();
             rtable.add_node(other_id, addr);
         }
-        dbg!(&rtable);
-        assert_eq!(rtable.sorted_by_distance_from(my_id).len(), rtable.size);
+        rtable
+    }
+
+    #[test]
+    fn test_iter_is_ordered() {
+        let table = generate_table(None);
+        let mut it = table.buckets.iter();
+        let mut previous = it.next().unwrap();
+        for node in it {
+            assert!(node.id() > previous.id());
+            previous = node;
+        }
+    }
+
+    #[test]
+    fn test_sorted_by_distance_from() {
+        let id = random_id_20();
+        let rtable = generate_table(None);
+        assert_eq!(rtable.sorted_by_distance_from(id).len(), rtable.size);
     }
 }
