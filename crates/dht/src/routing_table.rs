@@ -516,6 +516,7 @@ mod tests {
     use std::{
         io::Cursor,
         net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+        str::FromStr,
     };
 
     use librqbit_core::id20::Id20;
@@ -534,16 +535,10 @@ mod tests {
             (
                 (
                     start,
-                    Id20([
-                        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-                    ])
+                    Id20::from_str("7fffffffffffffffffffffffffffffffffffffff").unwrap()
                 ),
                 (
-                    Id20([
-                        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                    ]),
+                    Id20::from_str("8000000000000000000000000000000000000000").unwrap(),
                     end
                 )
             )
@@ -552,26 +547,17 @@ mod tests {
 
     #[test]
     fn compute_split_start_end_second_split() {
-        let start = Id20([
-            0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]);
+        let start = Id20::from_str("8000000000000000000000000000000000000000").unwrap();
         let end = Id20([0xff; 20]);
         assert_eq!(
             compute_split_start_end(start, end, 159),
             (
                 (
                     start,
-                    Id20([
-                        0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-                    ])
+                    Id20::from_str("bfffffffffffffffffffffffffffffffffffffff").unwrap()
                 ),
                 (
-                    Id20([
-                        0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                    ]),
+                    Id20::from_str("c000000000000000000000000000000000000000").unwrap(),
                     end
                 )
             )
@@ -580,26 +566,17 @@ mod tests {
 
     #[test]
     fn compute_split_start_end_3() {
-        let start = Id20([
-            0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]);
+        let start = Id20::from_str("8000000000000000000000000000000000000000").unwrap();
         let end = Id20([0xff; 20]);
         assert_eq!(
             compute_split_start_end(start, end, 159),
             (
                 (
                     start,
-                    Id20([
-                        0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-                        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
-                    ])
+                    Id20::from_str("bfffffffffffffffffffffffffffffffffffffff").unwrap()
                 ),
                 (
-                    Id20([
-                        0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                    ]),
+                    Id20::from_str("c000000000000000000000000000000000000000").unwrap(),
                     end
                 )
             )
