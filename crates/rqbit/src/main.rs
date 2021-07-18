@@ -136,23 +136,23 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
 }
 
 fn init_logging(opts: &Opts) {
-    match opts.log_level.as_ref() {
-        Some(level) => {
-            let level_str = match level {
-                LogLevel::Trace => "trace",
-                LogLevel::Debug => "debug",
-                LogLevel::Info => "info",
-                LogLevel::Warn => "warn",
-                LogLevel::Error => "error",
-            };
-            std::env::set_var("RUST_LOG", level_str);
-        }
-        None => {
-            if std::env::var_os("RUST_LOG").is_none() {
+    if std::env::var_os("RUST_LOG").is_none() {
+        match opts.log_level.as_ref() {
+            Some(level) => {
+                let level_str = match level {
+                    LogLevel::Trace => "trace",
+                    LogLevel::Debug => "debug",
+                    LogLevel::Info => "info",
+                    LogLevel::Warn => "warn",
+                    LogLevel::Error => "error",
+                };
+                std::env::set_var("RUST_LOG", level_str);
+            }
+            None => {
                 std::env::set_var("RUST_LOG", "info");
-            };
-        }
-    };
+            }
+        };
+    }
     pretty_env_logger::init();
 }
 

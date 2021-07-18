@@ -1,11 +1,13 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use tokio::spawn;
 
 use crate::dht::{Dht, DhtConfig};
@@ -15,6 +17,12 @@ use crate::routing_table::RoutingTable;
 pub struct PersistentDhtConfig {
     pub dump_interval: Option<Duration>,
     pub config_filename: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DhtSerialize<Table> {
+    addr: SocketAddr,
+    table: Table,
 }
 
 pub struct PersistentDht {
@@ -29,7 +37,10 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
         .open(&tempfile_name)
         .with_context(|| format!("error opening {:?}", tempfile_name))?;
 
-    match dht.with_routing_table(|r| serde_json::to_writer(&mut file, r)) {
+    let addr = dht.listen_addr();
+    match dht
+        .with_routing_table(|r| serde_json::to_writer(&mut file, &DhtSerialize { addr, table: r }))
+    {
         Ok(_) => {
             debug!("dumped DHT to {:?}", &tempfile_name);
         }
@@ -63,29 +74,35 @@ impl PersistentDht {
                 .with_context(|| format!("error creating dir {:?}", &parent))?;
         }
 
-        let routing_table = match OpenOptions::new().read(true).open(&config_filename) {
-            Ok(dht_json) => match serde_json::from_reader::<_, RoutingTable>(&dht_json) {
-                Ok(r) => {
-                    info!("loaded DHT routing table from {:?}", &config_filename);
-                    Some(r)
+        let de = match OpenOptions::new().read(true).open(&config_filename) {
+            Ok(dht_json) => {
+                match serde_json::from_reader::<_, DhtSerialize<RoutingTable>>(&dht_json) {
+                    Ok(r) => {
+                        info!("loaded DHT routing table from {:?}", &config_filename);
+                        Some(r)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "cannot deserialize routing table from file {:?}: {:#}",
+                            &config_filename, e
+                        );
+                        None
+                    }
                 }
-                Err(e) => {
-                    warn!(
-                        "cannot deserialize routing table from file {:?}: {:#}",
-                        &config_filename, e
-                    );
-                    None
-                }
-            },
+            }
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => None,
                 _ => return Err(e).with_context(|| format!("error reading {:?}", config_filename)),
             },
         };
+        let (listen_addr, routing_table) = de
+            .map(|de| (Some(de.addr), Some(de.table)))
+            .unwrap_or((None, None));
         let peer_id = routing_table.as_ref().map(|r| r.id());
         let dht_config = DhtConfig {
             peer_id,
             routing_table,
+            listen_addr,
             ..Default::default()
         };
         let dht = Dht::with_config(dht_config).await?;
@@ -104,8 +121,8 @@ impl PersistentDht {
                 };
 
                 loop {
+                    trace!("sleeping for {:?}", &dump_interval);
                     tokio::time::sleep(dump_interval).await;
-                    debug!("dumping DHT to {:?}", &config_filename);
 
                     match dump_dht(&dht, &config_filename, &tempfile_name) {
                         Ok(_) => debug!("dumped DHT to {:?}", &config_filename),

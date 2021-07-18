@@ -42,6 +42,7 @@ struct DhtState {
     next_transaction_id: u16,
     outstanding_requests: HashMap<(u16, SocketAddr), Request>,
     routing_table: RoutingTable,
+    listen_addr: SocketAddr,
 
     // This sender sends requests to the worker.
     // It is unbounded so that the methods on Dht state don't need to be async.
@@ -61,6 +62,7 @@ impl DhtState {
         id: Id20,
         sender: UnboundedSender<(Message<ByteString>, SocketAddr)>,
         routing_table: Option<RoutingTable>,
+        listen_addr: SocketAddr,
     ) -> Self {
         let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id));
         Self {
@@ -69,6 +71,7 @@ impl DhtState {
             outstanding_requests: Default::default(),
             routing_table,
             sender,
+            listen_addr,
             seen_peers: Default::default(),
             get_peers_subscribers: Default::default(),
             made_requests: Default::default(),
@@ -612,6 +615,7 @@ pub struct DhtConfig {
     pub peer_id: Option<Id20>,
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
+    pub listen_addr: Option<SocketAddr>,
 }
 
 impl Dht {
@@ -619,9 +623,17 @@ impl Dht {
         Self::with_config(DhtConfig::default()).await
     }
     pub async fn with_config(config: DhtConfig) -> anyhow::Result<Self> {
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .await
-            .context("error binding socket")?;
+        let socket = match config.listen_addr {
+            Some(addr) => UdpSocket::bind(addr).await,
+            None => UdpSocket::bind("0.0.0.0:0").await,
+        }
+        .context("error binding socket")?;
+
+        let listen_addr = socket
+            .local_addr()
+            .context("cannot determine UDP listen addr")?;
+        info!("DHT listening on {:?}", listen_addr);
+
         let peer_id = config.peer_id.unwrap_or_else(generate_peer_id);
         info!("starting up DHT with peer id {:?}", peer_id);
         let bootstrap_addrs = config
@@ -633,6 +645,7 @@ impl Dht {
             peer_id,
             in_tx.clone(),
             config.routing_table,
+            listen_addr,
         )));
 
         tokio::spawn({
@@ -661,6 +674,10 @@ impl Dht {
             initial_peers_pos: pos,
             broadcast_rx: BroadcastStream::new(rx),
         })
+    }
+
+    pub fn listen_addr(&self) -> SocketAddr {
+        self.state.lock().listen_addr
     }
 
     pub fn stats(&self) -> DhtStats {
