@@ -11,7 +11,6 @@ use crate::{
         MessageKind, Node,
     },
     routing_table::{InsertResult, RoutingTable},
-    DHT_BOOTSTRAP,
 };
 use anyhow::Context;
 use bencode::ByteString;
@@ -26,7 +25,7 @@ use tokio::{
     net::UdpSocket,
     sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
 };
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
@@ -58,12 +57,17 @@ struct DhtState {
 }
 
 impl DhtState {
-    fn new(id: Id20, sender: UnboundedSender<(Message<ByteString>, SocketAddr)>) -> Self {
+    fn new(
+        id: Id20,
+        sender: UnboundedSender<(Message<ByteString>, SocketAddr)>,
+        routing_table: Option<RoutingTable>,
+    ) -> Self {
+        let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id));
         Self {
             id,
             next_transaction_id: 0,
             outstanding_requests: Default::default(),
-            routing_table: RoutingTable::new(id),
+            routing_table,
             sender,
             seen_peers: Default::default(),
             get_peers_subscribers: Default::default(),
@@ -569,10 +573,14 @@ impl Stream for PeerStream {
     ) -> Poll<Option<Self::Item>> {
         loop {
             if let Some((pos, end)) = self.initial_peers_pos.take() {
-                let g = self.state.lock();
-                let seen = g.seen_peers.get(&self.info_hash).unwrap();
-                let addr = *seen.get_index(pos).unwrap();
-                drop(g);
+                let addr = *self
+                    .state
+                    .lock()
+                    .seen_peers
+                    .get(&self.info_hash)
+                    .unwrap()
+                    .get_index(pos)
+                    .unwrap();
                 if pos < end {
                     self.initial_peers_pos = Some((pos + 1, end));
                 }
@@ -580,50 +588,52 @@ impl Stream for PeerStream {
                 return Poll::Ready(Some(addr));
             }
 
-            let r = match self.broadcast_rx.poll_next_unpin(cx) {
-                Poll::Ready(r) => match r {
-                    Some(r) => r,
-                    None => return Poll::Ready(None),
-                },
-                Poll::Pending => return Poll::Pending,
-            };
-
-            match r {
-                Ok(v) => {
+            match self.broadcast_rx.poll_next_unpin(cx) {
+                Poll::Ready(Some(Ok(v))) => {
                     self.absolute_stream_pos += 1;
                     return Poll::Ready(Some(v));
                 }
-                Err(e) => match e {
-                    tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(lagged_by) => {
-                        debug!("peer stream is lagged by {}", lagged_by);
-                        let s = self.absolute_stream_pos;
-                        let e = s + lagged_by as usize;
-                        self.initial_peers_pos = Some((s, e));
-                        continue;
-                    }
-                },
-            }
+                Poll::Ready(Some(Err(BroadcastStreamRecvError::Lagged(lagged_by)))) => {
+                    debug!("peer stream is lagged by {}", lagged_by);
+                    let s = self.absolute_stream_pos;
+                    let e = s + lagged_by as usize;
+                    self.initial_peers_pos = Some((s, e));
+                    continue;
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            };
         }
     }
 }
 
+#[derive(Default)]
+pub struct DhtConfig {
+    pub peer_id: Option<Id20>,
+    pub bootstrap_addrs: Option<Vec<String>>,
+    pub routing_table: Option<RoutingTable>,
+}
+
 impl Dht {
     pub async fn new() -> anyhow::Result<Self> {
-        Self::with_bootstrap_addrs(DHT_BOOTSTRAP).await
+        Self::with_config(DhtConfig::default()).await
     }
-    pub async fn with_bootstrap_addrs(bootstrap_addrs: &[&str]) -> anyhow::Result<Self> {
+    pub async fn with_config(config: DhtConfig) -> anyhow::Result<Self> {
         let socket = UdpSocket::bind("0.0.0.0:0")
             .await
             .context("error binding socket")?;
-        let peer_id = generate_peer_id();
+        let peer_id = config.peer_id.unwrap_or_else(generate_peer_id);
         info!("starting up DHT with peer id {:?}", peer_id);
-        let bootstrap_addrs = bootstrap_addrs
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
+        let bootstrap_addrs = config
+            .bootstrap_addrs
+            .unwrap_or_else(|| crate::DHT_BOOTSTRAP.iter().map(|v| v.to_string()).collect());
 
         let (in_tx, in_rx) = unbounded_channel();
-        let state = Arc::new(Mutex::new(DhtState::new(peer_id, in_tx.clone())));
+        let state = Arc::new(Mutex::new(DhtState::new(
+            peer_id,
+            in_tx.clone(),
+            config.routing_table,
+        )));
 
         tokio::spawn({
             let state = state.clone();

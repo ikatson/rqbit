@@ -5,16 +5,16 @@ use std::{
 
 use librqbit_core::id20::Id20;
 use log::debug;
-use serde::{ser::SerializeMap, Serialize};
+use serde::{ser::SerializeMap, Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum BucketTreeNodeData {
     // TODO: maybe replace that with SmallVec<8>?
     Leaf(Vec<RoutingTableNode>),
     LeftRight(usize, usize),
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BucketTreeNode {
     bits: u8,
     #[serde(serialize_with = "crate::utils::serialize_id20")]
@@ -27,6 +27,48 @@ struct BucketTreeNode {
 #[derive(Debug, Clone)]
 pub struct BucketTree {
     data: Vec<BucketTreeNode>,
+}
+
+impl<'de> Deserialize<'de> for BucketTree {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = BucketTree;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "a map with key \"flat\"")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut data: Option<Vec<BucketTreeNode>> = None;
+                loop {
+                    match map.next_key::<String>()?.as_deref() {
+                        Some("flat") => {
+                            let buckets = map.next_value::<Vec<BucketTreeNode>>()?;
+                            data = Some(buckets)
+                        }
+                        Some(_) => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                        None => {
+                            use serde::de::Error;
+                            match data.take() {
+                                Some(data) => return Ok(BucketTree { data }),
+                                None => return Err(A::Error::missing_field("flat")),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        deserializer.deserialize_map(Visitor)
+    }
 }
 
 impl Serialize for BucketTree {
@@ -212,24 +254,13 @@ impl BucketTree {
         BucketTreeIterator::new(self)
     }
 
-    pub fn get_mut(&mut self, id: &Id20) -> Option<&mut RoutingTableNode> {
+    fn get_leaf(&self, id: &Id20) -> usize {
         let mut idx = 0;
         loop {
             let node = &self.data[idx];
-            if !(*id >= node.start && *id <= node.end_inclusive) {
-                return None;
-            };
-            match &node.data {
-                BucketTreeNodeData::Leaf(_) => {
-                    // re-borrow mutably
-                    if let BucketTreeNodeData::Leaf(nodes) = &mut self.data[idx].data {
-                        return nodes.iter_mut().find(|b| b.id == *id);
-                    }
-                    unreachable!()
-                }
+            match node.data {
+                BucketTreeNodeData::Leaf(_) => return idx,
                 BucketTreeNodeData::LeftRight(left_idx, right_idx) => {
-                    let left_idx = *left_idx;
-                    let right_idx = *right_idx;
                     let left = &self.data[left_idx];
                     if *id >= left.start && *id <= left.end_inclusive {
                         idx = left_idx;
@@ -241,25 +272,17 @@ impl BucketTree {
         }
     }
 
-    pub fn add_node(&mut self, self_id: &Id20, id: Id20, addr: SocketAddr) -> InsertResult {
-        let mut current = 0;
-        loop {
-            let node = &self.data[current];
-            debug_assert!(id >= node.start && id <= node.end_inclusive);
-            match &node.data {
-                BucketTreeNodeData::Leaf(_) => {
-                    return self.insert_into_leaf(current, self_id, id, addr);
-                }
-                BucketTreeNodeData::LeftRight(left_idx, right_idx) => {
-                    let left = &self.data[*left_idx];
-                    if id <= left.end_inclusive {
-                        current = *left_idx;
-                        continue;
-                    }
-                    current = *right_idx;
-                }
-            }
+    pub fn get_mut(&mut self, id: &Id20) -> Option<&mut RoutingTableNode> {
+        let idx = self.get_leaf(id);
+        match &mut self.data[idx].data {
+            BucketTreeNodeData::Leaf(nodes) => nodes.iter_mut().find(|b| b.id == *id),
+            BucketTreeNodeData::LeftRight(_, _) => unreachable!(),
         }
+    }
+
+    pub fn add_node(&mut self, self_id: &Id20, id: Id20, addr: SocketAddr) -> InsertResult {
+        let idx = self.get_leaf(&id);
+        self.insert_into_leaf(idx, self_id, id, addr)
     }
     fn insert_into_leaf(
         &mut self,
@@ -367,7 +390,7 @@ impl Default for BucketTree {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingTableNode {
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     id: Id20,
@@ -425,7 +448,7 @@ impl RoutingTableNode {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingTable {
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     id: Id20,
@@ -440,6 +463,9 @@ impl RoutingTable {
             buckets: BucketTree::new(),
             size: 0,
         }
+    }
+    pub fn id(&self) -> Id20 {
+        self.id
     }
     pub fn len(&self) -> usize {
         self.size
@@ -487,7 +513,10 @@ impl RoutingTable {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::{
+        io::Cursor,
+        net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    };
 
     use librqbit_core::id20::Id20;
     use rand::Rng;
@@ -618,5 +647,12 @@ mod tests {
         let id = random_id_20();
         let rtable = generate_table(None);
         assert_eq!(rtable.sorted_by_distance_from(id).len(), rtable.size);
+    }
+
+    #[test]
+    fn serialize_deserialize_routing_table() {
+        let table = generate_table(Some(1000));
+        let v = serde_json::to_vec(&table).unwrap();
+        let detable: RoutingTable = serde_json::from_reader(Cursor::new(v)).unwrap();
     }
 }

@@ -2,7 +2,7 @@ use std::{fs::File, io::Read, net::SocketAddr, str::FromStr, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
-use dht::{Dht, Id20};
+use dht::{Dht, Id20, PersistentDht};
 use futures::StreamExt;
 use librqbit::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
@@ -191,7 +191,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     let dht = if opts.disable_dht {
         None
     } else {
-        Some(Dht::new().await.context("error initializing DHT")?)
+        Some(
+            PersistentDht::create(None)
+                .await
+                .context("error initializing DHT")?,
+        )
     };
 
     let peer_opts = PeerConnectionOptions {

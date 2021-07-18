@@ -48,7 +48,26 @@ impl<'de> Deserialize<'de> for Id20 {
             type Value = Id20;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "a 20 byte slice")
+                write!(formatter, "a 20 byte slice or a 40 byte string")
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                if v.len() != 40 {
+                    return Err(E::invalid_length(40, &self));
+                }
+                let mut out = [0u8; 20];
+                match hex::decode_to_slice(v, &mut out) {
+                    Ok(_) => Ok(Id20(out)),
+                    Err(e) => Err(E::custom(e)),
+                }
+            }
+            fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_bytes(v)
             }
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
             where
@@ -62,7 +81,7 @@ impl<'de> Deserialize<'de> for Id20 {
                 Ok(Id20(buf))
             }
         }
-        deserializer.deserialize_bytes(Visitor {})
+        deserializer.deserialize_any(Visitor {})
     }
 }
 
