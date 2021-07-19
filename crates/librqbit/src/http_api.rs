@@ -5,6 +5,7 @@ use dht::{Dht, DhtStats};
 use parking_lot::RwLock;
 use serde::Serialize;
 use std::time::{Duration, Instant};
+use warp::hyper::Body;
 use warp::Filter;
 
 use crate::torrent_manager::TorrentManagerHandle;
@@ -162,6 +163,10 @@ fn json_response<T: Serialize>(v: T) -> warp::reply::Response {
     response
 }
 
+fn plaintext_response<B: Into<Body>>(body: B) -> warp::reply::Response {
+    warp::reply::Response::new(body.into())
+}
+
 fn not_found_response(body: String) -> warp::reply::Response {
     let mut response = warp::reply::Response::new(body.into());
     *response.status_mut() = warp::http::StatusCode::NOT_FOUND;
@@ -195,9 +200,19 @@ impl HttpApi {
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let inner = self.inner;
 
-        let list = warp::path::end().map({
-            let inner = inner.clone();
-            move || json_response(inner.api_torrent_list())
+        let api_list = warp::path::end().map({
+            let api_list = serde_json::json!({
+                "apis": {
+                    "GET /": "list all available APIs",
+                    "GET /dht/stats": "DHT stats",
+                    "GET /dht/table": "DHT routing table",
+                    "GET /torrents": "List torrents (default torrent is 0)",
+                    "GET /torrents/{index}": "Torrent details",
+                    "GET /torrents/{index}/haves": "The bitfield of have pieces",
+                    "GET /torrents/{index}/stats": "Torrent stats"
+                }
+            });
+            move || json_response(&api_list)
         });
 
         let dht_stats = warp::path!("dht" / "stats").map({
@@ -219,27 +234,36 @@ impl HttpApi {
             }
         });
 
-        let torrent_details = warp::path!(usize).map({
+        let torrent_list = warp::path!("torrents").map({
+            let inner = inner.clone();
+            move || json_response(inner.api_torrent_list())
+        });
+
+        let torrent_details = warp::path!("torrents" / usize).map({
             let inner = inner.clone();
             move |idx| json_or_404(idx, inner.api_torrent_details(idx))
         });
 
-        let dump_haves = warp::path!(usize / "haves").map({
+        let torrent_dump_haves = warp::path!("torrents" / usize / "haves").map({
             let inner = inner.clone();
-            move |idx| json_or_404(idx, inner.api_dump_haves(idx))
+            move |idx| match inner.api_dump_haves(idx) {
+                Some(haves) => plaintext_response(haves),
+                None => torrent_not_found_response(idx),
+            }
         });
 
-        let dump_stats = warp::path!(usize / "stats").map({
+        let torrent_dump_stats = warp::path!("torrents" / usize / "stats").map({
             let inner = inner.clone();
             move |idx| json_or_404(idx, inner.api_stats(idx))
         });
 
-        let router = list
+        let router = api_list
+            .or(torrent_list)
             .or(dht_stats)
             .or(dht_routing_table)
             .or(torrent_details)
-            .or(dump_haves)
-            .or(dump_stats);
+            .or(torrent_dump_haves)
+            .or(torrent_dump_stats);
 
         warp::serve(router).run(addr).await;
         Ok(())
