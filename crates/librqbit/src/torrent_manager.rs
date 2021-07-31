@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
+use warp::path::full;
 
 use crate::{
     chunk_tracker::ChunkTracker,
@@ -167,13 +168,10 @@ impl TorrentManager {
 
             for (path_bits, _) in info.iter_filenames_and_lengths()? {
                 let mut full_path = out.as_ref().to_owned();
-                for bit in path_bits.iter_components() {
-                    full_path.push(
-                        bit.as_ref()
-                            .map(|b| std::str::from_utf8(b.as_ref()))
-                            .unwrap_or(Ok("output"))?,
-                    );
-                }
+                let relative_path = path_bits
+                    .to_pathbuf()
+                    .context("error converting file to path")?;
+                full_path.push(relative_path);
 
                 std::fs::create_dir_all(full_path.parent().unwrap())?;
                 let file = if options.overwrite {

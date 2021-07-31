@@ -321,6 +321,18 @@ async fn main_torrent_info(
     };
 
     if opts.list {
+        for (idx, (filename, len)) in info.iter_filenames_and_lengths()?.enumerate() {
+            let included = match &only_files {
+                Some(files) => files.contains(&idx),
+                None => true,
+            };
+            info!(
+                "File {}, size {}{}",
+                filename.to_string()?,
+                SF::new(len),
+                if included { "" } else { "will skip" }
+            )
+        }
         info!("--list was passed, nothing to do, exiting.");
         return Ok(());
     }

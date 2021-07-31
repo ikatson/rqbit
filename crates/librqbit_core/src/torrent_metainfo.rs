@@ -132,7 +132,7 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
             };
             let bit = std::str::from_utf8(part.as_ref())
                 .context("cannot decode filename bit as UTF-8")?;
-            if bit.contains("..") {
+            if bit == ".." {
                 anyhow::bail!("path traversal detected, \"..\" in filename bit {:?}", bit);
             }
             if bit.contains(std::path::MAIN_SEPARATOR) {
@@ -192,17 +192,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         Ok(single_it.chain(multi_it).flatten())
     }
     pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
-        self.is_single_file()?;
-        let it = std::iter::once(self.length)
-            .chain(
-                self.files
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|f| Some(f.length)),
-            )
-            .flatten();
-        Ok(it)
+        Ok(self.iter_filenames_and_lengths()?.map(|(_, l)| l))
     }
 }
 
