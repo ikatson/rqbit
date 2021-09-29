@@ -624,10 +624,13 @@ impl Dht {
     }
     pub async fn with_config(config: DhtConfig) -> anyhow::Result<Self> {
         let socket = match config.listen_addr {
-            Some(addr) => UdpSocket::bind(addr).await,
-            None => UdpSocket::bind("0.0.0.0:0").await,
-        }
-        .context("error binding socket")?;
+            Some(addr) => UdpSocket::bind(addr)
+                .await
+                .with_context(|| format!("error binding socket, address {}", addr)),
+            None => UdpSocket::bind("0.0.0.0:0")
+                .await
+                .context("error binding socket, address 0.0.0.0:0"),
+        }?;
 
         let listen_addr = socket
             .local_addr()

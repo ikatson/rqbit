@@ -69,7 +69,7 @@ Use a regex here to select files by their names.
 Below points are all easily fixable, PRs welcome.
 
 - The CLI support only one mode of operation: download one torrent to a given folder.
-- If you try to run multiple instances, there's some port conflicts (already listening on port)
+- If you try to run multiple instances, there's some port conflicts (already listening on port). This happens because DHT stores persistence information on disk, and that includes the port it last listened on. So all instances try to listen on the same port. Which means we need to add support for managing multiple torrents rather than trying to run the client multiple times. Or at least add a switch like --disable-dht-persistence.
 - HTTP API is rudimentary, mostly for looking at stats. E.g. you can't add a torrent through it.
 - Only supports BitTorrent V1 over TCP
 - As this was created for personal needs, and for educational purposes, documentation, commit message quality etc. leave a lot to be desired.
