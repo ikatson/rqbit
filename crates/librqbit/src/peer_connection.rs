@@ -12,6 +12,8 @@ use peer_binary_protocol::{
 };
 use tokio::time::timeout;
 
+use crate::spawn_utils::BlockingSpawner;
+
 pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
@@ -43,6 +45,7 @@ pub struct PeerConnection<H> {
     info_hash: Id20,
     peer_id: Id20,
     options: PeerConnectionOptions,
+    spawner: BlockingSpawner,
 }
 
 // async fn read_one<'a, R: AsyncReadExt + Unpin>(
@@ -107,12 +110,14 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         peer_id: Id20,
         handler: H,
         options: Option<PeerConnectionOptions>,
+        spawner: BlockingSpawner,
     ) -> Self {
         PeerConnection {
             handler,
             addr,
             info_hash,
             peer_id,
+            spawner,
             options: options.unwrap_or_default(),
         }
     }
@@ -243,12 +248,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     WriterRequest::ReadChunkRequest(chunk) => {
                         // this whole section is an optimization
                         write_buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
-                        let preamble_len = serialize_piece_preamble(&chunk, &mut write_buf);
+                        let preamble_len = serialize_piece_preamble(chunk, &mut write_buf);
                         let full_len = preamble_len + chunk.size as usize;
                         write_buf.resize(full_len, 0);
-                        self.handler
-                            .read_chunk(chunk, &mut write_buf[preamble_len..])
+                        self.spawner
+                            .spawn_block_in_place(|| {
+                                self.handler
+                                    .read_chunk(chunk, &mut write_buf[preamble_len..])
+                            })
                             .with_context(|| format!("error reading chunk {:?}", chunk))?;
+
                         uploaded_add = Some(chunk.size);
                         full_len
                     }

@@ -235,8 +235,6 @@ pub struct TorrentState {
     lengths: Lengths,
     needed: u64,
     stats: AtomicStats,
-    spawner: BlockingSpawner,
-
     options: TorrentStateOptions,
 
     peer_semaphore: Semaphore,
@@ -274,7 +272,6 @@ impl TorrentState {
             },
             needed: needed_bytes,
             lengths,
-            spawner,
             options,
 
             peer_semaphore: Semaphore::new(128),
@@ -299,7 +296,7 @@ impl TorrentState {
                     let handler = PeerHandler {
                         addr,
                         state: state.clone(),
-                        spawner: state.spawner,
+                        spawner,
                     };
                     let options = PeerConnectionOptions {
                         connect_timeout: state.options.peer_connect_timeout,
@@ -311,6 +308,7 @@ impl TorrentState {
                         state.peer_id,
                         handler,
                         Some(options),
+                        spawner,
                     );
                     spawn(format!("manage_peer({})", addr), async move {
                         if let Err(e) = peer_connection.manage_peer(out_rx).await {

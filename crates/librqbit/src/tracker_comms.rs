@@ -45,6 +45,7 @@ pub struct DictPeer<'a> {
     #[serde(deserialize_with = "deserialize_ip_string")]
     ip: IpAddr,
     #[serde(borrow)]
+    #[allow(dead_code)]
     peer_id: Option<ByteBuf<'a>>,
     port: u16,
 }
