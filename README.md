@@ -8,9 +8,9 @@ First of all, I love Rust. The project was created purely for the fun of the pro
 
 I was not satisfied with my regular bittorrent client, and was wondering how much work would it be to create a new one from scratch.
 
-I got it to the point where it downloads torrents reliably and pretty fast, and I was using for a few months myself. It works good enough for me, and at the momnent of writing this I'm not planning to extend it further, as it works for me.
+Got it to the point where it downloads torrents reliably and pretty fast, and I was using for a few months myself. It works good enough for me, and at the moment of writing this I'm not planning to extend it further.
 
-So in short, it's not "feature complete", but rather "good enough for me".
+So in short, it's not "feature complete", but rather "good enough for my use-cases".
 
 Open sourced it just in case anyone might find it useful and/or wants to contribute.
 
@@ -52,7 +52,7 @@ Use a regex here to select files by their names.
 ## Features and missing features
 
 ### Some supported features
-- Sequential downloading
+- Sequential downloading (the default and only option)
 - Resume downloading file(s) if they already exist on disk
 - Selective downloading using a regular expression for filename
 - DHT support. Allows magnet links to work, and makes more peers available.
@@ -88,4 +88,18 @@ Below points are all easily fixable, PRs welcome.
 
 ## HTTP API
 
-By default it listens on http://127.0.0.1:3030, just curl it to see what methods are available.
+By default it listens on http://127.0.0.1:3030.
+
+    curl -s 'http://127.0.0.1:3030/'
+
+    {
+        "apis": {
+            "GET /": "list all available APIs",
+            "GET /dht/stats": "DHT stats",
+            "GET /dht/table": "DHT routing table",
+            "GET /torrents": "List torrents (default torrent is 0)",
+            "GET /torrents/{index}": "Torrent details",
+            "GET /torrents/{index}/haves": "The bitfield of have pieces",
+            "GET /torrents/{index}/stats": "Torrent stats"
+        }
+    }
