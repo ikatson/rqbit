@@ -6,13 +6,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["default-sha1-openssl"]
+default = ["sha1-openssl"]
 sha1-system = ["crypto-hash"]
 sha1-openssl = ["openssl"]
 sha1-rust = ["sha1"]
-default-sha1-openssl = ["sha1-openssl"]
-default-sha1-rust = ["sha1-rust"]
-default-sha1-system = ["sha1-system"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

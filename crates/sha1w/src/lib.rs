@@ -4,13 +4,13 @@
 // leaving the pure-rust impl here too. Maybe someday make them
 // runtime swappable or enabled with a feature.
 
-#[cfg(feature = "default-sha1-openssl")]
+#[cfg(feature = "sha1-openssl")]
 pub type Sha1 = Sha1Openssl;
 
-#[cfg(feature = "default-sha1-rust")]
+#[cfg(feature = "sha1-rust")]
 pub type Sha1 = Sha1Rust;
 
-#[cfg(feature = "default-sha1-system")]
+#[cfg(feature = "sha1-system")]
 pub type Sha1 = Sha1System;
 
 pub trait ISha1 {

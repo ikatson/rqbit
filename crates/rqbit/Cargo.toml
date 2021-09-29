@@ -6,7 +6,10 @@ authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
 
 [features]
-rt-single-thread = []
+default = ["sha1-openssl"]
+sha1-system = ["librqbit/crypto-hash"]
+sha1-openssl = ["librqbit/openssl"]
+sha1-rust = ["librqbit/sha1"]
 
 [dependencies]
 librqbit = {path="../librqbit"}

@@ -6,9 +6,9 @@ edition = "2018"
 
 [features]
 default = ["sha1-openssl"]
-sha1-system = ["crypto-hash"]
-sha1-openssl = ["openssl"]
-sha1-rust = ["sha1"]
+sha1-system = ["sha1w/sha1-system"]
+sha1-openssl = ["sha1w/sha1-openssl"]
+sha1-rust = ["sha1w/sha1-openssl"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
