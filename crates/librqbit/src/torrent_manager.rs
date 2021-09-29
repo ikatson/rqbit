@@ -19,7 +19,6 @@ use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
-use warp::path::full;
 
 use crate::{
     chunk_tracker::ChunkTracker,

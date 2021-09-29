@@ -32,6 +32,9 @@ or
 
 ## Useful options
 
+### -v <log-level>
+Increase verbosity. Possible values: trace, debug, info, warn, error.
+
 ### --list
 Will print the contents of the torrent file or the magnet link.
 
@@ -40,7 +43,7 @@ If you want to resume downloading a file that already exists, you'll need to add
 
 ### --peer-connect-timeout=10s
 
-This will increase the default peer connect timeout
+This will increase the default peer connect timeout. The default one is 2 seconds, and it's sometimes not enough.
 
 ### -r / --filename-re
 
@@ -50,24 +53,27 @@ Use a regex here to select files by their names.
 
 ### Some supported features
 - Sequential downloading
-- Resume downloading the same file
-- Selective downloading (only certain files)
-- DHT support. Allows magnet links to work, and also gets peers from the DHT in addition to trackers.
+- Resume downloading file(s) if they already exist on disk
+- Selective downloading using a regular expression for filename
+- DHT support. Allows magnet links to work, and makes more peers available.
 - HTTP API
 
 ### Code features
 - Serde-based bencode serializer/deserializer
-- Custom code for all binary protocol serialization/deserialization
-- Custom code for everything else too :)
+- Custom code for binary protocol serialization/deserialization. And for everything else too :)
 - Supports several SHA1 implementations, as this seems to be the biggest performance bottleneck. Default is openssl as it's the fastest in my benchmarks.
 - In theory, the libraries that rqbit is made of are re-usable.
+- No unsafe
 
 ### Bugs, missing features and other caveats
 Below points are all easily fixable, PRs welcome.
 
-- If you try to run multiple instances, there's some port conflicts (already listening on port)
 - The CLI support only one mode of operation: download one torrent to a given folder.
+- If you try to run multiple instances, there's some port conflicts (already listening on port)
 - HTTP API is rudimentary, mostly for looking at stats. E.g. you can't add a torrent through it.
+- Only supports BitTorrent V1 over TCP
+- As this was created for personal needs, and for educational purposes, documentation, commit message quality etc. leave a lot to be desired.
+- Doesn't survive switching networks, i.e. doesn't reconnect to a peer once the TCP connection is closed.
 
 ## Code organization
 - crates/rqbit - main binary
