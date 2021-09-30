@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use async_trait::async_trait;
 use bencode::from_bytes;
 use buffers::{ByteBuf, ByteString};
 use librqbit_core::{
@@ -9,19 +10,16 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use log::debug;
-use parking_lot::{Mutex, RwLock};
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
     Handshake, Message,
 };
 use sha1w::{ISha1, Sha1};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{Mutex, RwLock};
 
-use crate::{
-    peer_connection::{
-        PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
-    },
-    spawn_utils::BlockingSpawner,
+use crate::peer_connection::{
+    PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
 };
 
 pub async fn read_metainfo_from_peer(
@@ -29,7 +27,6 @@ pub async fn read_metainfo_from_peer(
     peer_id: Id20,
     info_hash: Id20,
     peer_connection_options: Option<PeerConnectionOptions>,
-    spawner: BlockingSpawner,
 ) -> anyhow::Result<TorrentMetaV1Info<ByteString>> {
     let (result_tx, result_rx) =
         tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteString>>>();
@@ -41,14 +38,8 @@ pub async fn read_metainfo_from_peer(
         result_tx: Mutex::new(Some(result_tx)),
         locked: RwLock::new(None),
     };
-    let connection = PeerConnection::new(
-        addr,
-        info_hash,
-        peer_id,
-        handler,
-        peer_connection_options,
-        spawner,
-    );
+    let connection =
+        PeerConnection::new(addr, info_hash, peer_id, handler, peer_connection_options);
 
     let result_reader = async move { result_rx.await? };
     let connection_runner = async move { connection.manage_peer(writer_rx).await };
@@ -136,23 +127,24 @@ struct Handler {
     locked: RwLock<Option<HandlerLocked>>,
 }
 
+#[async_trait]
 impl PeerConnectionHandler for Handler {
     fn get_have_bytes(&self) -> u64 {
         0
     }
 
-    fn serialize_bitfield_message_to_buf(&self, _buf: &mut Vec<u8>) -> Option<usize> {
+    async fn serialize_bitfield_message_to_buf(&self, _buf: &mut Vec<u8>) -> Option<usize> {
         None
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
+    async fn on_handshake(&self, handshake: Handshake<'_>) -> anyhow::Result<()> {
         if !handshake.supports_extended() {
             anyhow::bail!("this peer does not support extended handshaking, which is a prerequisite to download metadata")
         }
         Ok(())
     }
 
-    fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
         debug!("{}: received message: {:?}", self.addr, msg);
 
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
@@ -161,17 +153,17 @@ impl PeerConnectionHandler for Handler {
             data,
         })) = msg
         {
-            let piece_ready =
-                self.locked
-                    .write()
-                    .as_mut()
-                    .unwrap()
-                    .record_piece(piece, &data, self.info_hash)?;
+            let piece_ready = self.locked.write().await.as_mut().unwrap().record_piece(
+                piece,
+                &data,
+                self.info_hash,
+            )?;
             if piece_ready {
-                let buf = self.locked.write().take().unwrap().buffer;
+                let buf = self.locked.write().await.take().unwrap().buffer;
                 let info = from_bytes::<TorrentMetaV1Info<ByteString>>(&buf);
                 self.result_tx
                     .lock()
+                    .await
                     .take()
                     .ok_or_else(|| anyhow::anyhow!("oneshot is consumed"))?
                     .send(info)
@@ -185,11 +177,11 @@ impl PeerConnectionHandler for Handler {
 
     fn on_uploaded_bytes(&self, _bytes: u32) {}
 
-    fn read_chunk(&self, _chunk: &ChunkInfo, _buf: &mut [u8]) -> anyhow::Result<()> {
+    async fn read_chunk(&self, _chunk: &ChunkInfo, _buf: &mut [u8]) -> anyhow::Result<()> {
         anyhow::bail!("the peer is not supposed to be requesting chunks")
     }
 
-    fn on_extended_handshake(
+    async fn on_extended_handshake(
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
@@ -210,7 +202,7 @@ impl PeerConnectionHandler for Handler {
         let inner = HandlerLocked::new(metadata_size)?;
         let total_pieces = inner.total_pieces;
 
-        self.locked.write().replace(inner);
+        self.locked.write().await.replace(inner);
 
         for i in 0..total_pieces {
             self.writer_tx

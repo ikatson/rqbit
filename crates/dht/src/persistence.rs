@@ -29,7 +29,7 @@ pub struct PersistentDht {
     // config_filename: PathBuf,
 }
 
-fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<()> {
+async fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<()> {
     let mut file = OpenOptions::new()
         .truncate(true)
         .create(true)
@@ -37,9 +37,10 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
         .open(&tempfile_name)
         .with_context(|| format!("error opening {:?}", tempfile_name))?;
 
-    let addr = dht.listen_addr();
+    let addr = dht.listen_addr().await;
     match dht
         .with_routing_table(|r| serde_json::to_writer(&mut file, &DhtSerialize { addr, table: r }))
+        .await
     {
         Ok(_) => {
             debug!("dumped DHT to {:?}", &tempfile_name);
@@ -124,7 +125,7 @@ impl PersistentDht {
                     trace!("sleeping for {:?}", &dump_interval);
                     tokio::time::sleep(dump_interval).await;
 
-                    match dump_dht(&dht, &config_filename, &tempfile_name) {
+                    match dump_dht(&dht, &config_filename, &tempfile_name).await {
                         Ok(_) => debug!("dumped DHT to {:?}", &config_filename),
                         Err(e) => error!("error dumping DHT to {:?}: {:#}", &config_filename, e),
                     }

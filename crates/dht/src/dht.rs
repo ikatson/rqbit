@@ -18,9 +18,9 @@ use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexSet;
 use librqbit_core::{id20::Id20, peer_id::generate_peer_id};
 use log::{debug, info, trace, warn};
-use parking_lot::Mutex;
 use rand::Rng;
 use serde::Serialize;
+use tokio::sync::Mutex;
 use tokio::{
     net::UdpSocket,
     sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
@@ -476,8 +476,8 @@ struct DhtWorker {
 }
 
 impl DhtWorker {
-    fn on_response(&self, msg: Message<ByteString>, addr: SocketAddr) -> anyhow::Result<()> {
-        self.state.lock().on_incoming_from_remote(msg, addr)
+    async fn on_response(&self, msg: Message<ByteString>, addr: SocketAddr) -> anyhow::Result<()> {
+        self.state.lock().await.on_incoming_from_remote(msg, addr)
     }
 
     async fn start(
@@ -503,6 +503,7 @@ impl DhtWorker {
                                 let request = this
                                     .state
                                     .lock()
+                                    .await
                                     .create_request(Request::FindNode(this.peer_id), addr);
                                 in_tx.send((request, addr))?;
                             }
@@ -530,7 +531,7 @@ impl DhtWorker {
             let this = &self;
             async move {
                 while let Some((response, addr)) = out_rx.recv().await {
-                    if let Err(e) = this.on_response(response, addr) {
+                    if let Err(e) = this.on_response(response, addr).await {
                         debug!("error in on_response, addr={:?}: {}", addr, e)
                     }
                 }
@@ -576,14 +577,14 @@ impl Stream for PeerStream {
     ) -> Poll<Option<Self::Item>> {
         loop {
             if let Some((pos, end)) = self.initial_peers_pos.take() {
-                let addr = *self
-                    .state
-                    .lock()
+                use futures::executor::block_on;
+                let addr = *block_on(self.state.lock())
                     .seen_peers
                     .get(&self.info_hash)
                     .unwrap()
                     .get_index(pos)
                     .unwrap();
+
                 if pos < end {
                     self.initial_peers_pos = Some((pos + 1, end));
                 }
@@ -669,7 +670,7 @@ impl Dht {
         &self,
         info_hash: Id20,
     ) -> anyhow::Result<impl Stream<Item = SocketAddr> + Unpin> {
-        let (pos, rx) = self.state.lock().get_peers(info_hash)?;
+        let (pos, rx) = self.state.lock().await.get_peers(info_hash)?;
         Ok(PeerStream {
             info_hash,
             state: self.state.clone(),
@@ -679,19 +680,19 @@ impl Dht {
         })
     }
 
-    pub fn listen_addr(&self) -> SocketAddr {
-        self.state.lock().listen_addr
+    pub async fn listen_addr(&self) -> SocketAddr {
+        self.state.lock().await.listen_addr
     }
 
-    pub fn stats(&self) -> DhtStats {
-        self.state.lock().get_stats()
+    pub async fn stats(&self) -> DhtStats {
+        self.state.lock().await.get_stats()
     }
 
-    pub fn with_routing_table<R, F: FnOnce(&RoutingTable) -> R>(&self, f: F) -> R {
-        f(&self.state.lock().routing_table)
+    pub async fn with_routing_table<R, F: FnOnce(&RoutingTable) -> R>(&self, f: F) -> R {
+        f(&self.state.lock().await.routing_table)
     }
 
-    pub fn clone_routing_table(&self) -> RoutingTable {
-        self.state.lock().routing_table.clone()
+    pub async fn clone_routing_table(&self) -> RoutingTable {
+        self.state.lock().await.routing_table.clone()
     }
 }

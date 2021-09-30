@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
+use async_trait::async_trait;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{id20::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
@@ -12,19 +13,18 @@ use peer_binary_protocol::{
 };
 use tokio::time::timeout;
 
-use crate::spawn_utils::BlockingSpawner;
-
+#[async_trait]
 pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
-    fn on_extended_handshake(
+    async fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
+    async fn on_handshake(&self, handshake: Handshake<'_>) -> anyhow::Result<()>;
+    async fn on_extended_handshake(
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()>;
-    fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
+    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
     fn on_uploaded_bytes(&self, bytes: u32);
-    fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
+    async fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
 }
 
 #[derive(Debug)]
@@ -45,7 +45,6 @@ pub struct PeerConnection<H> {
     info_hash: Id20,
     peer_id: Id20,
     options: PeerConnectionOptions,
-    spawner: BlockingSpawner,
 }
 
 // async fn read_one<'a, R: AsyncReadExt + Unpin>(
@@ -110,14 +109,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         peer_id: Id20,
         handler: H,
         options: Option<PeerConnectionOptions>,
-        spawner: BlockingSpawner,
     ) -> Self {
         PeerConnection {
             handler,
             addr,
             info_hash,
             peer_id,
-            spawner,
             options: options.unwrap_or_default(),
         }
     }
@@ -173,7 +170,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut extended_handshake: Option<ExtendedHandshake<ByteString>> = None;
         let supports_extended = h.supports_extended();
 
-        self.handler.on_handshake(h)?;
+        self.handler.on_handshake(h).await?;
         if read_so_far > size {
             read_buf.copy_within(size..read_so_far, 0);
         }
@@ -197,7 +194,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             match extended {
                 Message::Extended(ExtendedMessage::Handshake(h)) => {
                     trace!("received from {}: {:?}", self.addr, &h);
-                    self.handler.on_extended_handshake(&h)?;
+                    self.handler.on_extended_handshake(&h).await?;
                     extended_handshake = Some(h.clone_to_owned())
                 }
                 other => anyhow::bail!("expected extended handshake, but got {:?}", other),
@@ -221,6 +218,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 if let Some(len) = self
                     .handler
                     .serialize_bitfield_message_to_buf(&mut write_buf)
+                    .await
                 {
                     write_half
                         .write_all(&write_buf[..len])
@@ -251,11 +249,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         let preamble_len = serialize_piece_preamble(chunk, &mut write_buf);
                         let full_len = preamble_len + chunk.size as usize;
                         write_buf.resize(full_len, 0);
-                        self.spawner
-                            .spawn_block_in_place(|| {
-                                self.handler
-                                    .read_chunk(chunk, &mut write_buf[preamble_len..])
-                            })
+                        self.handler
+                            .read_chunk(chunk, &mut write_buf[preamble_len..])
+                            .await
                             .with_context(|| format!("error reading chunk {:?}", chunk))?;
 
                         uploaded_add = Some(chunk.size);
@@ -288,6 +284,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 self.handler
                     .on_received_message(message)
+                    .await
                     .context("error in handler.on_received_message()")?;
 
                 if read_so_far > size {

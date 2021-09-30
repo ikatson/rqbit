@@ -8,7 +8,7 @@ use librqbit::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     generate_peer_id,
     peer_connection::PeerConnectionOptions,
-    spawn_utils::{spawn, BlockingSpawner},
+    spawn_utils::spawn,
     torrent_from_bytes,
     torrent_manager::TorrentManagerBuilder,
     ByteString, Magnet, TorrentMetaV1Info, TorrentMetaV1Owned,
@@ -161,15 +161,9 @@ fn main() -> anyhow::Result<()> {
 
     init_logging(&opts);
 
-    let (mut rt_builder, spawner) = match opts.single_thread_runtime {
-        true => (
-            tokio::runtime::Builder::new_current_thread(),
-            BlockingSpawner::new(false),
-        ),
-        false => (
-            tokio::runtime::Builder::new_multi_thread(),
-            BlockingSpawner::new(true),
-        ),
+    let mut rt_builder = match opts.single_thread_runtime {
+        true => (tokio::runtime::Builder::new_current_thread()),
+        false => (tokio::runtime::Builder::new_multi_thread()),
     };
 
     let rt = rt_builder
@@ -183,10 +177,10 @@ fn main() -> anyhow::Result<()> {
         .max_blocking_threads(8)
         .build()?;
 
-    rt.block_on(async_main(opts, spawner))
+    rt.block_on(async_main(opts))
 }
 
-async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
+async fn async_main(opts: Opts) -> anyhow::Result<()> {
     let peer_id = generate_peer_id();
     let dht = if opts.disable_dht {
         None
@@ -245,7 +239,6 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             Some(dht_rx),
             initial_peers.into_iter().collect(),
             trackers,
-            spawner,
         )
         .await
     } else {
@@ -288,7 +281,6 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             dht_rx,
             Vec::new(),
             trackers,
-            spawner,
         )
         .await
     }
@@ -304,7 +296,6 @@ async fn main_torrent_info(
     dht_peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
     initial_peers: Vec<SocketAddr>,
     trackers: Vec<reqwest::Url>,
-    spawner: BlockingSpawner,
 ) -> anyhow::Result<()> {
     info!("Torrent info: {:#?}", &info);
     let only_files = if let Some(filename_re) = opts.only_files_matching_regex {
@@ -340,10 +331,7 @@ async fn main_torrent_info(
     let http_api_listen_addr = opts.http_api_listen_addr;
 
     let mut builder = TorrentManagerBuilder::new(info, info_hash, opts.output_folder);
-    builder
-        .overwrite(opts.overwrite)
-        .spawner(spawner)
-        .peer_id(peer_id);
+    builder.overwrite(opts.overwrite).peer_id(peer_id);
     if let Some(only_files) = only_files {
         builder.only_files(only_files);
     }
@@ -360,22 +348,22 @@ async fn main_torrent_info(
         async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
     });
 
-    let handle = builder.start_manager()?;
-    http_api.add_mgr(handle.clone());
+    let handle = builder.start_manager().await?;
+    http_api.add_mgr(handle.clone()).await;
 
     for url in trackers {
-        handle.add_tracker(url);
+        handle.add_tracker(url).await;
     }
     for peer in initial_peers {
-        handle.add_peer(peer);
+        handle.add_peer(peer).await;
     }
 
     spawn("Stats printer", {
         let handle = handle.clone();
         async move {
             loop {
-                let peer_stats = handle.torrent_state().peer_stats_snapshot();
-                let stats = handle.torrent_state().stats_snapshot();
+                let peer_stats = handle.torrent_state().peer_stats_snapshot().await;
+                let stats = handle.torrent_state().stats_snapshot().await;
                 let needed = stats.initially_needed_bytes;
                 let downloaded_pct = if stats.remaining_bytes == 0 {
                     100f64
@@ -406,7 +394,7 @@ async fn main_torrent_info(
             let handle = handle.clone();
             async move {
                 while let Some(peer) = dht_peer_rx.next().await {
-                    handle.add_peer(peer);
+                    handle.add_peer(peer).await;
                 }
                 warn!("dht was closed");
                 Ok(())

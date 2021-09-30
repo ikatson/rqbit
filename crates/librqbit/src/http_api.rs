@@ -1,12 +1,13 @@
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use dht::{Dht, DhtStats};
-use parking_lot::RwLock;
 use serde::Serialize;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use warp::hyper::Body;
-use warp::Filter;
+use warp::{Filter, Reply};
 
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
@@ -81,15 +82,16 @@ struct StatsResponse {
 }
 
 impl ApiInternal {
-    fn mgr_handle(&self, idx: usize) -> Option<TorrentManagerHandle> {
-        self.torrent_managers.read().get(idx).cloned()
+    async fn mgr_handle(&self, idx: usize) -> Option<TorrentManagerHandle> {
+        self.torrent_managers.read().await.get(idx).cloned()
     }
 
-    fn api_torrent_list(&self) -> TorrentListResponse {
+    async fn api_torrent_list(&self) -> TorrentListResponse {
         TorrentListResponse {
             torrents: self
                 .torrent_managers
                 .read()
+                .await
                 .iter()
                 .enumerate()
                 .map(|(id, mgr)| TorrentListResponseItem {
@@ -100,8 +102,8 @@ impl ApiInternal {
         }
     }
 
-    fn api_torrent_details(&self, idx: usize) -> Option<TorrentDetailsResponse> {
-        let handle = self.mgr_handle(idx)?;
+    async fn api_torrent_details(&self, idx: usize) -> Option<TorrentDetailsResponse> {
+        let handle = self.mgr_handle(idx).await?;
         let info_hash = handle.torrent_state().info_hash().as_string();
         let files = handle
             .torrent_state()
@@ -116,13 +118,17 @@ impl ApiInternal {
         Some(TorrentDetailsResponse { info_hash, files })
     }
 
-    fn api_dht_stats(&self) -> Option<DhtStats> {
-        self.dht.as_ref().map(|d| d.stats())
+    async fn api_dht_stats(&self) -> Option<DhtStats> {
+        if let Some(d) = self.dht.as_ref() {
+            Some(d.stats().await)
+        } else {
+            None
+        }
     }
 
-    fn api_stats(&self, idx: usize) -> Option<StatsResponse> {
-        let mgr = self.mgr_handle(idx)?;
-        let snapshot = mgr.torrent_state().stats_snapshot();
+    async fn api_stats(&self, idx: usize) -> Option<StatsResponse> {
+        let mgr = self.mgr_handle(idx).await?;
+        let snapshot = mgr.torrent_state().stats_snapshot().await;
         let estimator = mgr.speed_estimator();
 
         // Poor mans download speed computation
@@ -139,11 +145,15 @@ impl ApiInternal {
         })
     }
 
-    fn api_dump_haves(&self, idx: usize) -> Option<String> {
-        let mgr = self.mgr_handle(idx)?;
+    async fn api_dump_haves(&self, idx: usize) -> Option<String> {
+        let mgr = self.mgr_handle(idx).await?;
         Some(format!(
             "{:?}",
-            mgr.torrent_state().lock_read().chunks.get_have_pieces(),
+            mgr.torrent_state()
+                .lock_read()
+                .await
+                .chunks
+                .get_have_pieces(),
         ))
     }
 }
@@ -154,21 +164,15 @@ pub struct HttpApi {
 }
 
 fn json_response<T: Serialize>(v: T) -> warp::reply::Response {
-    let body = serde_json::to_string_pretty(&v).unwrap();
-    let mut response = warp::reply::Response::new(body.into());
-    response.headers_mut().insert(
-        "content-type",
-        warp::http::HeaderValue::from_static("application/json"),
-    );
-    response
+    warp::reply::json(&v).into_response()
 }
 
 fn plaintext_response<B: Into<Body>>(body: B) -> warp::reply::Response {
     warp::reply::Response::new(body.into())
 }
 
-fn not_found_response(body: String) -> warp::reply::Response {
-    let mut response = warp::reply::Response::new(body.into());
+fn not_found_response<T: ToString>(body: T) -> warp::reply::Response {
+    let mut response = warp::reply::Response::new(body.to_string().into());
     *response.status_mut() = warp::http::StatusCode::NOT_FOUND;
     response
 }
@@ -190,8 +194,8 @@ impl HttpApi {
             inner: Arc::new(ApiInternal::new(dht)),
         }
     }
-    pub fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
-        let mut g = self.inner.torrent_managers.write();
+    pub async fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
+        let mut g = self.inner.torrent_managers.write().await;
         let idx = g.len();
         g.push(handle);
         idx
@@ -199,6 +203,13 @@ impl HttpApi {
 
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let inner = self.inner;
+
+        fn with_api(
+            api: Arc<ApiInternal>,
+        ) -> impl Filter<Extract = (Arc<ApiInternal>,), Error = std::convert::Infallible> + Clone
+        {
+            warp::any().map(move || api.clone())
+        }
 
         let api_list = warp::path::end().map({
             let api_list = serde_json::json!({
@@ -215,47 +226,50 @@ impl HttpApi {
             move || json_response(&api_list)
         });
 
-        let dht_stats = warp::path!("dht" / "stats").map({
-            let inner = inner.clone();
-            move || match inner.api_dht_stats() {
-                Some(stats) => json_response(stats),
-                None => not_found_response("DHT is off".into()),
-            }
-        });
+        let dht_stats = warp::path!("dht" / "stats")
+            .and(with_api(inner.clone()))
+            .and_then(|api: Arc<ApiInternal>| async move {
+                Result::<_, Infallible>::Ok(match api.api_dht_stats().await {
+                    Some(stats) => json_response(stats),
+                    None => not_found_response("DHT is off"),
+                })
+            });
 
-        let dht_routing_table = warp::path!("dht" / "table").map({
-            let inner = inner.clone();
+        let dht_routing_table = warp::path!("dht" / "table")
+            .and(with_api(inner.clone()))
+            .and_then(|api: Arc<ApiInternal>| async move {
+                Result::<_, Infallible>::Ok(match api.dht.as_ref() {
+                    Some(dht) => dht.with_routing_table(|r| json_response(r)).await,
+                    None => not_found_response("DHT is off"),
+                })
+            });
 
-            // clippy suggests something that doesn't work here.
-            #[allow(clippy::redundant_closure)]
-            move || match inner.dht.as_ref() {
-                Some(dht) => dht.with_routing_table(|r| json_response(r)),
-                None => not_found_response("DHT is off".into()),
-            }
-        });
+        let torrent_list = warp::path!("torrents")
+            .and(with_api(inner.clone()))
+            .and_then(|api: Arc<ApiInternal>| async move {
+                Result::<_, Infallible>::Ok(json_response(api.api_torrent_list().await))
+            });
 
-        let torrent_list = warp::path!("torrents").map({
-            let inner = inner.clone();
-            move || json_response(inner.api_torrent_list())
-        });
+        let torrent_details = warp::path!("torrents" / usize)
+            .and(with_api(inner.clone()))
+            .and_then(|idx: usize, api: Arc<ApiInternal>| async move {
+                Result::<_, Infallible>::Ok(json_or_404(idx, api.api_torrent_details(idx).await))
+            });
 
-        let torrent_details = warp::path!("torrents" / usize).map({
-            let inner = inner.clone();
-            move |idx| json_or_404(idx, inner.api_torrent_details(idx))
-        });
+        let torrent_dump_haves = warp::path!("torrents" / usize / "haves")
+            .and(with_api(inner.clone()))
+            .and_then(|idx: usize, api: Arc<ApiInternal>| async move {
+                Result::<_, Infallible>::Ok(match api.api_dump_haves(idx).await {
+                    Some(haves) => plaintext_response(haves),
+                    None => torrent_not_found_response(idx),
+                })
+            });
 
-        let torrent_dump_haves = warp::path!("torrents" / usize / "haves").map({
-            let inner = inner.clone();
-            move |idx| match inner.api_dump_haves(idx) {
-                Some(haves) => plaintext_response(haves),
-                None => torrent_not_found_response(idx),
-            }
-        });
-
-        let torrent_dump_stats = warp::path!("torrents" / usize / "stats").map({
-            let inner = inner.clone();
-            move |idx| json_or_404(idx, inner.api_stats(idx))
-        });
+        let torrent_dump_stats = warp::path!("torrents" / usize / "stats")
+            .and(with_api(inner.clone()))
+            .and_then(|idx: usize, api: Arc<ApiInternal>| async move {
+                Result::<_, Infallible>::Ok(json_or_404(idx, api.api_stats(idx).await))
+            });
 
         let router = api_list
             .or(torrent_list)

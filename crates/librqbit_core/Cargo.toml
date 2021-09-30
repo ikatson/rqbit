@@ -11,8 +11,8 @@ anyhow = "1"
 url = "2"
 uuid = {version = "0.8", features = ["v4"]}
 log = "0.4"
-parking_lot = "0.11"
 serde = {version = "1", features=["derive"]}
 buffers = {path="../buffers"}
 bencode = {path = "../bencode", default-features=false}
 clone_to_owned = {path="../clone_to_owned"}
+tokio = {version = "1", features = ["sync"], default-features=false}

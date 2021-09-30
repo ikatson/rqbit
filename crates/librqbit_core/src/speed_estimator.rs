@@ -3,8 +3,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
-
-use parking_lot::Mutex;
+use tokio::sync::Mutex;
 
 struct ProgressSnapshot {
     downloaded_bytes: u64,
@@ -43,8 +42,13 @@ impl SpeedEstimator {
         self.download_bps() as f64 / 1024f64 / 1024f64
     }
 
-    pub fn add_snapshot(&self, downloaded_bytes: u64, remaining_bytes: u64, instant: Instant) {
-        let mut g = self.latest_per_second_snapshots.lock();
+    pub async fn add_snapshot(
+        &self,
+        downloaded_bytes: u64,
+        remaining_bytes: u64,
+        instant: Instant,
+    ) {
+        let mut g = self.latest_per_second_snapshots.lock().await;
         if g.len() < g.capacity() {
             g.push_back(ProgressSnapshot {
                 downloaded_bytes,

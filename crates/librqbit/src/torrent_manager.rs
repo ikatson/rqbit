@@ -15,15 +15,15 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use log::{debug, info};
-use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
+use tokio::sync::Mutex;
 
 use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
-    spawn_utils::{spawn, BlockingSpawner},
+    spawn_utils::spawn,
     torrent_state::{TorrentState, TorrentStateOptions},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
 };
@@ -42,7 +42,6 @@ pub struct TorrentManagerBuilder {
     info_hash: Id20,
     output_folder: PathBuf,
     options: TorrentManagerOptions,
-    spawner: Option<BlockingSpawner>,
 }
 
 impl TorrentManagerBuilder {
@@ -55,7 +54,6 @@ impl TorrentManagerBuilder {
             info,
             info_hash,
             output_folder: output_folder.as_ref().into(),
-            spawner: None,
             options: TorrentManagerOptions::default(),
         }
     }
@@ -75,11 +73,6 @@ impl TorrentManagerBuilder {
         self
     }
 
-    pub fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
-        self.spawner = Some(spawner);
-        self
-    }
-
     pub fn peer_id(&mut self, peer_id: Id20) -> &mut Self {
         self.options.peer_id = Some(peer_id);
         self
@@ -90,14 +83,14 @@ impl TorrentManagerBuilder {
         self
     }
 
-    pub fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
+    pub async fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
         TorrentManager::start(
             self.info,
             self.info_hash,
             self.output_folder,
-            self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
             Some(self.options),
         )
+        .await
     }
 }
 
@@ -107,9 +100,9 @@ pub struct TorrentManagerHandle {
 }
 
 impl TorrentManagerHandle {
-    pub fn add_tracker(&self, url: Url) -> bool {
+    pub async fn add_tracker(&self, url: Url) -> bool {
         let mgr = self.manager.clone();
-        if mgr.trackers.lock().insert(url.clone()) {
+        if mgr.trackers.lock().await.insert(url.clone()) {
             spawn(format!("tracker monitor {}", url), async move {
                 mgr.single_tracker_monitor(url).await
             });
@@ -118,8 +111,8 @@ impl TorrentManagerHandle {
             false
         }
     }
-    pub fn add_peer(&self, addr: SocketAddr) -> bool {
-        self.manager.state.add_peer_if_not_seen(addr)
+    pub async fn add_peer(&self, addr: SocketAddr) -> bool {
+        self.manager.state.add_peer_if_not_seen(addr).await
     }
     pub fn torrent_state(&self) -> &TorrentState {
         &self.manager.state
@@ -153,11 +146,10 @@ fn make_lengths<ByteBuf: AsRef<[u8]>>(
 }
 
 impl TorrentManager {
-    fn start<P: AsRef<Path>>(
+    async fn start<P: AsRef<Path>>(
         info: TorrentMetaV1Info<ByteString>,
         info_hash: Id20,
         out: P,
-        spawner: BlockingSpawner,
         options: Option<TorrentManagerOptions>,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let options = options.unwrap_or_default();
@@ -199,7 +191,8 @@ impl TorrentManager {
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = FileOps::<Sha1>::new(&info, &files, &lengths)
-            .initial_check(options.only_files.as_deref())?;
+            .initial_check(options.only_files.as_deref())
+            .await?;
 
         info!(
             "Initial check results: have {}, needed {}",
@@ -228,7 +221,6 @@ impl TorrentManager {
             lengths,
             initial_check_results.have_bytes,
             initial_check_results.needed_bytes,
-            spawner,
             Some(state_options),
         );
 
@@ -245,10 +237,10 @@ impl TorrentManager {
             let state = mgr.state.clone();
             async move {
                 loop {
-                    let downloaded = state.stats_snapshot().downloaded_and_checked_bytes;
+                    let downloaded = state.stats_snapshot().await.downloaded_and_checked_bytes;
                     let needed = state.initially_needed();
                     let remaining = needed - downloaded;
-                    estimator.add_snapshot(downloaded, remaining, Instant::now());
+                    estimator.add_snapshot(downloaded, remaining, Instant::now()).await;
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }
@@ -276,7 +268,7 @@ impl TorrentManager {
         let response = from_bytes::<TrackerResponse>(&bytes)?;
 
         for peer in response.peers.iter_sockaddrs() {
-            self.state.add_peer_if_not_seen(peer);
+            self.state.add_peer_if_not_seen(peer).await;
         }
         Ok(response.interval)
     }

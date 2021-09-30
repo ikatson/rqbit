@@ -12,9 +12,9 @@ use librqbit_core::{
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
 };
 use log::{debug, trace, warn};
-use parking_lot::Mutex;
 use peer_binary_protocol::Piece;
 use sha1w::ISha1;
+use tokio::sync::Mutex;
 
 use crate::type_aliases::{PeerHandle, BF};
 
@@ -68,7 +68,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         }
     }
 
-    pub fn initial_check(
+    pub async fn initial_check(
         &self,
         only_files: Option<&[usize]>,
     ) -> anyhow::Result<InitialCheckResults> {
@@ -152,7 +152,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                     continue;
                 }
 
-                let mut fd = current_file.fd.lock();
+                let mut fd = current_file.fd.lock().await;
 
                 fd.seek(SeekFrom::Start(pos)).unwrap();
                 if let Err(err) = update_hash_from_file(
@@ -215,7 +215,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         })
     }
 
-    pub fn check_piece(
+    pub async fn check_piece(
         &self,
         who_sent: PeerHandle,
         piece_index: ValidPieceIndex,
@@ -237,7 +237,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
             let to_read_in_file =
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64) as usize;
-            let mut file_g = self.files[file_idx].lock();
+            let mut file_g = self.files[file_idx].lock().await;
             debug!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
                 piece_index, who_sent, file_idx, absolute_offset, &last_received_chunk
@@ -285,7 +285,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         }
     }
 
-    pub fn read_chunk(
+    pub async fn read_chunk(
         &self,
         who_sent: PeerHandle,
         chunk_info: &ChunkInfo,
@@ -305,7 +305,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             let file_remaining_len = file_len - absolute_offset;
             let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64) as usize;
 
-            let mut file_g = self.files[file_idx].lock();
+            let mut file_g = self.files[file_idx].lock().await;
             debug!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
                 chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
@@ -339,7 +339,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         Ok(())
     }
 
-    pub fn write_chunk<ByteBuf>(
+    pub async fn write_chunk<ByteBuf>(
         &self,
         who_sent: PeerHandle,
         data: &Piece<ByteBuf>,
@@ -360,7 +360,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             let remaining_len = file_len - absolute_offset;
             let to_write = std::cmp::min(buf.len(), remaining_len as usize);
 
-            let mut file_g = self.files[file_idx].lock();
+            let mut file_g = self.files[file_idx].lock().await;
             debug!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
                 chunk_info.piece_index,

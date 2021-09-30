@@ -6,9 +6,7 @@ use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use log::debug;
 
-use crate::{
-    peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,
-};
+use crate::{peer_connection::PeerConnectionOptions, peer_info_reader};
 use librqbit_core::id20::Id20;
 
 #[derive(Debug)]
@@ -47,7 +45,6 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
                 peer_id,
                 info_hash,
                 peer_connection_options,
-                BlockingSpawner::new(true),
             )
             .await
             .with_context(|| format!("error reading metainfo from {}", addr));

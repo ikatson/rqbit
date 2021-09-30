@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::Context;
+use async_trait::async_trait;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -19,12 +20,12 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use log::{debug, info, trace, warn};
-use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
 use serde::Serialize;
 use sha1w::Sha1;
+use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -40,7 +41,7 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     peer_state::{InflightRequest, LivePeerState, PeerState},
-    spawn_utils::{spawn, BlockingSpawner},
+    spawn_utils::spawn,
     type_aliases::{PeerHandle, BF},
 };
 
@@ -252,7 +253,6 @@ impl TorrentState {
         lengths: Lengths,
         have_bytes: u64,
         needed_bytes: u64,
-        spawner: BlockingSpawner,
         options: Option<TorrentStateOptions>,
     ) -> Arc<Self> {
         let options = options.unwrap_or_default();
@@ -283,7 +283,7 @@ impl TorrentState {
                 loop {
                     let (addr, out_rx) = peer_queue_rx.recv().await.unwrap();
 
-                    match state.locked.write().peers.states.get_mut(&addr) {
+                    match state.locked.write().await.peers.states.get_mut(&addr) {
                         Some(s @ PeerState::Queued) => *s = PeerState::Connecting,
                         s => {
                             warn!("did not expect to see the peer in state {:?}", s);
@@ -296,7 +296,6 @@ impl TorrentState {
                     let handler = PeerHandler {
                         addr,
                         state: state.clone(),
-                        spawner,
                     };
                     let options = PeerConnectionOptions {
                         connect_timeout: state.options.peer_connect_timeout,
@@ -308,14 +307,13 @@ impl TorrentState {
                         state.peer_id,
                         handler,
                         Some(options),
-                        spawner,
                     );
                     spawn(format!("manage_peer({})", addr), async move {
                         if let Err(e) = peer_connection.manage_peer(out_rx).await {
                             debug!("error managing peer {}: {:#}", addr, e)
                         };
                         let state = peer_connection.into_handler().state;
-                        state.drop_peer(addr);
+                        state.drop_peer(addr).await;
                         state.peer_semaphore.add_permits(1);
                         Ok::<_, anyhow::Error>(())
                     });
@@ -339,12 +337,12 @@ impl TorrentState {
     pub fn initially_needed(&self) -> u64 {
         self.needed
     }
-    pub fn lock_read(&self) -> RwLockReadGuard<TorrentStateLocked> {
-        self.locked.read()
+    pub async fn lock_read(&self) -> RwLockReadGuard<'_, TorrentStateLocked> {
+        self.locked.read().await
     }
 
-    fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
-        let g = self.locked.read();
+    async fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
+        let g = self.locked.read().await;
         let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
         for n in g.chunks.get_needed_pieces().iter_ones() {
             if bf.get(n).map(|v| *v) == Some(true) {
@@ -355,20 +353,21 @@ impl TorrentState {
         None
     }
 
-    fn am_i_choked(&self, peer_handle: PeerHandle) -> Option<bool> {
+    async fn am_i_choked(&self, peer_handle: PeerHandle) -> Option<bool> {
         self.locked
             .read()
+            .await
             .peers
             .get_live(peer_handle)
             .map(|l| l.i_am_choked)
     }
 
-    fn reserve_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
-        if self.am_i_choked(peer_handle)? {
+    async fn reserve_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
+        if self.am_i_choked(peer_handle).await? {
             warn!("we are choked by {}, can't reserve next piece", peer_handle);
             return None;
         }
-        let mut g = self.locked.write();
+        let mut g = self.locked.write().await;
         let n = {
             let mut n_opt = None;
             let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
@@ -392,11 +391,11 @@ impl TorrentState {
         Some(n)
     }
 
-    fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
-        self.get_next_needed_piece(handle).is_some()
+    async fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
+        self.get_next_needed_piece(handle).await.is_some()
     }
 
-    fn try_steal_old_slow_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
+    async fn try_steal_old_slow_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
         let total = self.stats.downloaded_pieces.load(Ordering::Relaxed);
 
         // heuristic for not enough precision in average time
@@ -405,7 +404,7 @@ impl TorrentState {
         }
         let avg_time = self.stats.average_piece_download_time()?;
 
-        let mut g = self.locked.write();
+        let mut g = self.locked.write().await;
         let (idx, elapsed, piece_req) = g
             .peers
             .inflight_pieces
@@ -428,21 +427,20 @@ impl TorrentState {
         None
     }
 
-    fn try_steal_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
-        let mut rng = rand::thread_rng();
+    async fn try_steal_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
         use rand::seq::IteratorRandom;
-        let g = self.locked.read();
+        let g = self.locked.read().await;
         let pl = g.peers.get_live(handle)?;
         g.peers
             .inflight_pieces
             .keys()
             .filter(|p| !pl.inflight_requests.iter().any(|req| req.piece == **p))
-            .choose(&mut rng)
+            .choose(&mut rand::thread_rng())
             .copied()
     }
 
-    fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
-        let mut g = self.locked.write();
+    async fn set_peer_live(&self, handle: PeerHandle, h: Handshake<'_>) {
+        let mut g = self.locked.write().await;
         match g.peers.states.get_mut(&handle) {
             Some(s @ &mut PeerState::Connecting) => {
                 *s = PeerState::Live(LivePeerState::new(Id20(h.peer_id)));
@@ -453,8 +451,8 @@ impl TorrentState {
         }
     }
 
-    fn drop_peer(&self, handle: PeerHandle) -> bool {
-        let mut g = self.locked.write();
+    async fn drop_peer(&self, handle: PeerHandle) -> bool {
+        let mut g = self.locked.write().await;
         let peer = match g.peers.drop_peer(handle) {
             Some(peer) => peer,
             None => return false,
@@ -478,10 +476,10 @@ impl TorrentState {
         self.needed - self.get_downloaded()
     }
 
-    fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
+    async fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
         let mut futures = Vec::new();
 
-        let g = self.locked.read();
+        let g = self.locked.read().await;
         for (handle, peer_state) in g.peers.states.iter() {
             match peer_state {
                 PeerState::Live(live) => {
@@ -533,9 +531,15 @@ impl TorrentState {
         );
     }
 
-    pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
+    pub async fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
         let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
-        match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
+        match self
+            .locked
+            .write()
+            .await
+            .peers
+            .add_if_not_seen(addr, out_tx)
+        {
             Some(handle) => handle,
             None => return false,
         };
@@ -549,12 +553,12 @@ impl TorrentState {
         true
     }
 
-    pub fn peer_stats_snapshot(&self) -> AggregatePeerStats {
-        self.locked.read().peers.stats()
+    pub async fn peer_stats_snapshot(&self) -> AggregatePeerStats {
+        self.locked.read().await.peers.stats()
     }
 
-    pub fn stats_snapshot(&self) -> StatsSnapshot {
-        let g = self.locked.read();
+    pub async fn stats_snapshot(&self) -> StatsSnapshot {
+        let g = self.locked.read().await;
         use Ordering::*;
         let peer_stats = g.peers.stats();
         let downloaded = self.stats.downloaded_and_checked.load(Relaxed);
@@ -581,30 +585,32 @@ impl TorrentState {
 struct PeerHandler {
     state: Arc<TorrentState>,
     addr: SocketAddr,
-    spawner: BlockingSpawner,
 }
 
+#[async_trait]
 impl PeerConnectionHandler for PeerHandler {
-    fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+    async fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
         match message {
             Message::Request(request) => {
                 self.on_download_request(self.addr, request)
+                    .await
                     .with_context(|| {
                         format!("error handling download request from {}", self.addr)
                     })?;
             }
-            Message::Bitfield(b) => self.on_bitfield(self.addr, b.clone_to_owned())?,
-            Message::Choke => self.on_i_am_choked(self.addr),
-            Message::Unchoke => self.on_i_am_unchoked(self.addr),
-            Message::Interested => self.on_peer_interested(self.addr),
+            Message::Bitfield(b) => self.on_bitfield(self.addr, b.clone_to_owned()).await?,
+            Message::Choke => self.on_i_am_choked(self.addr).await,
+            Message::Unchoke => self.on_i_am_unchoked(self.addr).await,
+            Message::Interested => self.on_peer_interested(self.addr).await,
             Message::Piece(piece) => {
                 self.on_received_piece(self.addr, piece)
+                    .await
                     .context("error in on_received_piece()")?;
             }
             Message::KeepAlive => {
                 debug!("keepalive received from {}", self.addr);
             }
-            Message::Have(h) => self.on_have(self.addr, h),
+            Message::Have(h) => self.on_have(self.addr, h).await,
             Message::NotInterested => {
                 info!("received \"not interested\", but we don't care yet")
             }
@@ -622,16 +628,16 @@ impl PeerConnectionHandler for PeerHandler {
         self.state.stats.have.load(Ordering::Relaxed)
     }
 
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize> {
-        let g = self.state.locked.read();
+    async fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize> {
+        let g = self.state.locked.read().await;
         let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
         let len = msg.serialize(buf, None).unwrap();
         debug!("sending to {}: {:?}, length={}", self.addr, &msg, len);
         Some(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
-        self.state.set_peer_live(self.addr, handshake);
+    async fn on_handshake(&self, handshake: Handshake<'_>) -> anyhow::Result<()> {
+        self.state.set_peer_live(self.addr, handshake).await;
         Ok(())
     }
 
@@ -642,17 +648,24 @@ impl PeerConnectionHandler for PeerHandler {
             .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
-    fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.state.file_ops().read_chunk(self.addr, chunk, buf)
+    async fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()> {
+        self.state
+            .file_ops()
+            .read_chunk(self.addr, chunk, buf)
+            .await
     }
 
-    fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
+    async fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
 impl PeerHandler {
-    fn on_download_request(&self, peer_handle: PeerHandle, request: Request) -> anyhow::Result<()> {
+    async fn on_download_request(
+        &self,
+        peer_handle: PeerHandle,
+        request: Request,
+    ) -> anyhow::Result<()> {
         let piece_index = match self.state.lengths.validate_piece_index(request.index) {
             Some(p) => p,
             None => {
@@ -677,7 +690,7 @@ impl PeerHandler {
         };
 
         let tx = {
-            let g = self.state.locked.read();
+            let g = self.state.locked.read().await;
             if !g.chunks.is_chunk_ready_to_upload(&chunk_info) {
                 anyhow::bail!(
                     "got request for a chunk that is not ready to upload. chunk {:?}",
@@ -701,11 +714,12 @@ impl PeerHandler {
         Ok::<_, anyhow::Error>(tx.send(request)?)
     }
 
-    fn on_have(&self, handle: PeerHandle, have: u32) {
+    async fn on_have(&self, handle: PeerHandle, have: u32) {
         if let Some(bitfield) = self
             .state
             .locked
             .write()
+            .await
             .peers
             .get_live_mut(handle)
             .and_then(|l| l.bitfield.as_mut())
@@ -715,7 +729,7 @@ impl PeerHandler {
         }
     }
 
-    fn on_bitfield(&self, handle: PeerHandle, bitfield: ByteString) -> anyhow::Result<()> {
+    async fn on_bitfield(&self, handle: PeerHandle, bitfield: ByteString) -> anyhow::Result<()> {
         if bitfield.len() != self.state.lengths.piece_bitfield_bytes() as usize {
             anyhow::bail!(
                 "dropping {} as its bitfield has unexpected size. Got {}, expected {}",
@@ -727,14 +741,16 @@ impl PeerHandler {
         self.state
             .locked
             .write()
+            .await
             .peers
             .update_bitfield_from_vec(handle, bitfield.0);
 
-        if !self.state.am_i_interested_in_peer(handle) {
+        if !self.state.am_i_interested_in_peer(handle).await {
             let tx = self
                 .state
                 .locked
                 .read()
+                .await
                 .peers
                 .clone_tx(handle)
                 .ok_or_else(|| anyhow::anyhow!("peer closed"))?;
@@ -754,7 +770,7 @@ impl PeerHandler {
     }
 
     async fn task_peer_chunk_requester(self, handle: PeerHandle) -> anyhow::Result<()> {
-        let tx = match self.state.locked.read().peers.clone_tx(handle) {
+        let tx = match self.state.locked.read().await.peers.clone_tx(handle) {
             Some(tx) => tx,
             None => return Ok(()),
         };
@@ -767,26 +783,28 @@ impl PeerHandler {
         Ok::<_, anyhow::Error>(())
     }
 
-    fn on_i_am_choked(&self, handle: PeerHandle) {
+    async fn on_i_am_choked(&self, handle: PeerHandle) {
         warn!("we are choked by {}", handle);
         self.state
             .locked
             .write()
+            .await
             .peers
             .mark_i_am_choked(handle, true);
     }
 
-    fn on_peer_interested(&self, handle: PeerHandle) {
+    async fn on_peer_interested(&self, handle: PeerHandle) {
         debug!("peer {} is interested", handle);
         self.state
             .locked
             .write()
+            .await
             .peers
             .mark_peer_interested(handle, true);
     }
 
     async fn requester(self, handle: PeerHandle) -> anyhow::Result<()> {
-        let notify = match self.state.locked.read().peers.get_live(handle) {
+        let notify = match self.state.locked.read().await.peers.get_live(handle) {
             Some(l) => l.have_notify.clone(),
             None => return Ok(()),
         };
@@ -798,7 +816,7 @@ impl PeerHandler {
         }
 
         loop {
-            match self.state.am_i_choked(handle) {
+            match self.state.am_i_choked(handle).await {
                 Some(true) => {
                     warn!("we are choked by {}, can't reserve next piece", handle);
                     #[allow(unused_must_use)]
@@ -811,9 +829,9 @@ impl PeerHandler {
                 None => return Ok(()),
             }
 
-            let next = match self.state.try_steal_old_slow_piece(handle) {
+            let next = match self.state.try_steal_old_slow_piece(handle).await {
                 Some(next) => next,
-                None => match self.state.reserve_next_needed_piece(handle) {
+                None => match self.state.reserve_next_needed_piece(handle).await {
                     Some(next) => next,
                     None => {
                         if self.state.get_left_to_download() == 0 {
@@ -821,7 +839,7 @@ impl PeerHandler {
                             return Ok(());
                         }
 
-                        if let Some(piece) = self.state.try_steal_piece(handle) {
+                        if let Some(piece) = self.state.try_steal_piece(handle).await {
                             debug!("{}: stole a piece {}", handle, piece);
                             piece
                         } else {
@@ -836,22 +854,30 @@ impl PeerHandler {
                 },
             };
 
-            let tx = match self.state.locked.read().peers.clone_tx(handle) {
+            let tx = match self.state.locked.read().await.peers.clone_tx(handle) {
                 Some(tx) => tx,
                 None => return Ok(()),
             };
-            let sem = match self.state.locked.read().peers.get_live(handle) {
+            let sem = match self.state.locked.read().await.peers.get_live(handle) {
                 Some(live) => live.requests_sem.clone(),
                 None => return Ok(()),
             };
             for chunk in self.state.lengths.iter_chunk_infos(next) {
-                if self.state.locked.read().chunks.is_chunk_downloaded(&chunk) {
+                if self
+                    .state
+                    .locked
+                    .read()
+                    .await
+                    .chunks
+                    .is_chunk_downloaded(&chunk)
+                {
                     continue;
                 }
                 if !self
                     .state
                     .locked
                     .write()
+                    .await
                     .peers
                     .try_get_live_mut(handle)?
                     .inflight_requests
@@ -877,9 +903,9 @@ impl PeerHandler {
         }
     }
 
-    fn on_i_am_unchoked(&self, handle: PeerHandle) {
+    async fn on_i_am_unchoked(&self, handle: PeerHandle) {
         debug!("we are unchoked by {}", handle);
-        let mut g = self.state.locked.write();
+        let mut g = self.state.locked.write().await;
         let live = match g.peers.get_live_mut(handle) {
             Some(live) => live,
             None => return,
@@ -889,7 +915,11 @@ impl PeerHandler {
         live.requests_sem.add_permits(16);
     }
 
-    fn on_received_piece(&self, handle: PeerHandle, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
+    async fn on_received_piece(
+        &self,
+        handle: PeerHandle,
+        piece: Piece<ByteBuf<'_>>,
+    ) -> anyhow::Result<()> {
         let chunk_info = match self.state.lengths.chunk_info_from_received_piece(
             piece.index,
             piece.begin,
@@ -905,7 +935,7 @@ impl PeerHandler {
             }
         };
 
-        let mut g = self.state.locked.write();
+        let mut g = self.state.locked.write().await;
         let h = g.peers.try_get_live_mut(handle)?;
         h.requests_sem.add_permits(1);
 
@@ -955,81 +985,86 @@ impl PeerHandler {
         // to prevent deadlocks.
         drop(g);
 
-        self.spawner
-            .spawn_block_in_place(move || {
-                let index = piece.index;
+        {
+            let index = piece.index;
 
-                // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what
-                // should we really do? If we unmark it, it will get requested forever...
-                //
-                // So let's just unwrap and abort.
-                self.state
-                    .file_ops()
-                    .write_chunk(handle, &piece, &chunk_info)
-                    .expect("expected to be able to write to disk");
+            // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what
+            // should we really do? If we unmark it, it will get requested forever...
+            //
+            // So let's just unwrap and abort.
+            self.state
+                .file_ops()
+                .write_chunk(handle, &piece, &chunk_info)
+                .await
+                .expect("expected to be able to write to disk");
 
-                let full_piece_download_time = match full_piece_download_time {
-                    Some(t) => t,
-                    None => return Ok(()),
-                };
+            let full_piece_download_time = match full_piece_download_time {
+                Some(t) => t,
+                None => return Ok(()),
+            };
 
-                match self
-                    .state
-                    .file_ops()
-                    .check_piece(handle, chunk_info.piece_index, &chunk_info)
-                    .with_context(|| format!("error checking piece={}", index))?
-                {
-                    true => {
-                        let piece_len =
-                            self.state.lengths.piece_length(chunk_info.piece_index) as u64;
-                        self.state
-                            .stats
-                            .downloaded_and_checked
-                            .fetch_add(piece_len, Ordering::Relaxed);
-                        self.state
-                            .stats
-                            .have
-                            .fetch_add(piece_len, Ordering::Relaxed);
-                        self.state
-                            .stats
-                            .downloaded_pieces
-                            .fetch_add(1, Ordering::Relaxed);
-                        self.state
-                            .stats
-                            .downloaded_pieces
-                            .fetch_add(1, Ordering::Relaxed);
-                        self.state.stats.total_piece_download_ms.fetch_add(
-                            full_piece_download_time.as_millis() as u64,
-                            Ordering::Relaxed,
-                        );
-                        self.state
-                            .locked
-                            .write()
-                            .chunks
-                            .mark_piece_downloaded(chunk_info.piece_index);
+            match self
+                .state
+                .file_ops()
+                .check_piece(handle, chunk_info.piece_index, &chunk_info)
+                .await
+                .with_context(|| format!("error checking piece={}", index))?
+            {
+                true => {
+                    let piece_len = self.state.lengths.piece_length(chunk_info.piece_index) as u64;
+                    self.state
+                        .stats
+                        .downloaded_and_checked
+                        .fetch_add(piece_len, Ordering::Relaxed);
+                    self.state
+                        .stats
+                        .have
+                        .fetch_add(piece_len, Ordering::Relaxed);
+                    self.state
+                        .stats
+                        .downloaded_pieces
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.state
+                        .stats
+                        .downloaded_pieces
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.state.stats.total_piece_download_ms.fetch_add(
+                        full_piece_download_time.as_millis() as u64,
+                        Ordering::Relaxed,
+                    );
+                    self.state
+                        .locked
+                        .write()
+                        .await
+                        .chunks
+                        .mark_piece_downloaded(chunk_info.piece_index);
 
-                        debug!(
-                            "piece={} successfully downloaded and verified from {}",
-                            index, handle
-                        );
+                    debug!(
+                        "piece={} successfully downloaded and verified from {}",
+                        index, handle
+                    );
 
-                        self.state.maybe_transmit_haves(chunk_info.piece_index);
-                    }
-                    false => {
-                        warn!(
-                            "checksum for piece={} did not validate, came from {}",
-                            index, handle
-                        );
-                        self.state
-                            .locked
-                            .write()
-                            .chunks
-                            .mark_piece_broken(chunk_info.piece_index);
-                    }
-                };
-                Ok::<_, anyhow::Error>(())
-            })
-            .with_context(|| format!("error processing received chunk {:?}", chunk_info))?;
+                    self.state
+                        .maybe_transmit_haves(chunk_info.piece_index)
+                        .await;
+                }
+                false => {
+                    warn!(
+                        "checksum for piece={} did not validate, came from {}",
+                        index, handle
+                    );
+                    self.state
+                        .locked
+                        .write()
+                        .await
+                        .chunks
+                        .mark_piece_broken(chunk_info.piece_index);
+                }
+            };
+            Ok::<_, anyhow::Error>(())
+        }
+        .with_context(|| format!("error processing received chunk {:?}", chunk_info))?;
+
         Ok(())
     }
 }
