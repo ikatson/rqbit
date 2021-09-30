@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -8,6 +7,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use tokio::fs::File;
 
 use anyhow::Context;
 use async_trait::async_trait;

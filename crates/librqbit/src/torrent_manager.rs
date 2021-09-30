@@ -1,11 +1,12 @@
 use std::{
     collections::HashSet,
-    fs::{File, OpenOptions},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
+
+use tokio::fs::{File, OpenOptions};
 
 use anyhow::Context;
 use bencode::from_bytes;
@@ -170,15 +171,17 @@ impl TorrentManager {
                         .create(true)
                         .read(true)
                         .write(true)
-                        .open(&full_path)?
+                        .open(&full_path)
+                        .await?
                 } else {
                     // TODO: create_new does not seem to work with read(true), so calling this twice.
                     OpenOptions::new()
                         .create_new(true)
                         .write(true)
                         .open(&full_path)
+                        .await
                         .with_context(|| format!("error creating {:?}", &full_path))?;
-                    OpenOptions::new().read(true).write(true).open(&full_path)?
+                    OpenOptions::new().read(true).write(true).open(&full_path).await?
                 };
                 files.push(Arc::new(Mutex::new(file)))
             }

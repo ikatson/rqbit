@@ -1,9 +1,6 @@
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{marker::PhantomData, sync::Arc};
+
+use tokio::fs::File;
 
 use anyhow::Context;
 use buffers::ByteString;
@@ -14,6 +11,7 @@ use librqbit_core::{
 use log::{debug, trace, warn};
 use peer_binary_protocol::Piece;
 use sha1w::ISha1;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::Mutex;
 
 use crate::type_aliases::{PeerHandle, BF};
@@ -25,7 +23,7 @@ pub struct InitialCheckResults {
     pub needed_bytes: u64,
 }
 
-pub fn update_hash_from_file<Sha1: ISha1>(
+pub async fn update_hash_from_file<Sha1: ISha1>(
     file: &mut File,
     hash: &mut Sha1,
     buf: &mut [u8],
@@ -34,7 +32,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     let mut read = 0;
     while bytes_to_read > 0 {
         let chunk = std::cmp::min(buf.len(), bytes_to_read);
-        file.read_exact(&mut buf[..chunk]).with_context(|| {
+        file.read_exact(&mut buf[..chunk]).await.with_context(|| {
             format!(
                 "failed reading chunk of size {}, read so far {}",
                 chunk, read
@@ -154,13 +152,15 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
                 let mut fd = current_file.fd.lock().await;
 
-                fd.seek(SeekFrom::Start(pos)).unwrap();
+                fd.seek(SeekFrom::Start(pos)).await.unwrap();
                 if let Err(err) = update_hash_from_file(
                     &mut fd,
                     &mut computed_hash,
                     &mut read_buffer,
                     to_read_in_file,
-                ) {
+                )
+                .await
+                {
                     debug!(
                         "error reading from file {} ({:?}) at {}: {:#}",
                         current_file.index, current_file.name, pos, &err
@@ -244,20 +244,21 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             );
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
+                .await
                 .with_context(|| {
                     format!(
                         "error seeking to {}, file id: {}",
                         absolute_offset, file_idx
                     )
                 })?;
-            update_hash_from_file(&mut file_g, &mut h, &mut buf, to_read_in_file).with_context(
-                || {
+            update_hash_from_file(&mut file_g, &mut h, &mut buf, to_read_in_file)
+                .await
+                .with_context(|| {
                     format!(
                         "error reading {} bytes, file_id: {} (\"{:?}\")",
                         to_read_in_file, file_idx, name
                     )
-                },
-            )?;
+                })?;
 
             piece_remaining_bytes -= to_read_in_file;
 
@@ -312,6 +313,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             );
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
+                .await
                 .with_context(|| {
                     format!(
                         "error seeking to {}, file id: {}",
@@ -320,6 +322,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                 })?;
             file_g
                 .read_exact(&mut buf[..to_read_in_file])
+                .await
                 .with_context(|| {
                     format!(
                         "error reading {} bytes, file_id: {}",
@@ -373,6 +376,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             );
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
+                .await
                 .with_context(|| {
                     format!(
                         "error seeking to {} in file {} (\"{:?}\")",
@@ -381,6 +385,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                 })?;
             file_g
                 .write_all(&buf[..to_write])
+                .await
                 .with_context(|| format!("error writing to file {} (\"{:?}\")", file_idx, name))?;
             buf = &buf[to_write..];
             if buf.is_empty() {

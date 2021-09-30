@@ -1,5 +1,3 @@
-use std::{fs::File, io::Read, net::SocketAddr, str::FromStr, time::Duration};
-
 use anyhow::Context;
 use clap::Clap;
 use dht::{Dht, Id20, PersistentDht};
@@ -16,6 +14,9 @@ use librqbit::{
 use log::{info, warn};
 use reqwest::Url;
 use size_format::SizeFormatterBinary as SF;
+use std::{net::SocketAddr, str::FromStr, time::Duration};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
@@ -31,16 +32,19 @@ async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     torrent_from_bytes(&b).context("error decoding torrent")
 }
 
-fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
+async fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let mut buf = Vec::new();
     if filename == "-" {
-        std::io::stdin()
+        tokio::io::stdin()
             .read_to_end(&mut buf)
+            .await
             .context("error reading stdin")?;
     } else {
         File::open(filename)
+            .await
             .with_context(|| format!("error opening {}", filename))?
             .read_to_end(&mut buf)
+            .await
             .with_context(|| format!("error reading {}", filename))?;
     }
     torrent_from_bytes(&buf).context("error decoding torrent")
@@ -247,7 +251,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         {
             torrent_from_url(&opts.torrent_path).await?
         } else {
-            torrent_from_file(&opts.torrent_path)?
+            torrent_from_file(&opts.torrent_path).await?
         };
         let dht_rx = match dht.as_ref() {
             Some(dht) => Some(dht.get_peers(torrent.info_hash).await?),
