@@ -7,12 +7,12 @@ edition = "2018"
 
 [features]
 default = ["sha1-openssl"]
-sha1-system = ["librqbit/crypto-hash"]
-sha1-openssl = ["librqbit/openssl"]
-sha1-rust = ["librqbit/sha1"]
+sha1-system = ["librqbit/sha1-system"]
+sha1-openssl = ["librqbit/sha1-openssl"]
+sha1-rust = ["librqbit/sha1-rust"]
 
 [dependencies]
-librqbit = {path="../librqbit"}
+librqbit = {path="../librqbit", default-features=false}
 dht = {path="../dht"}
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 anyhow = "1"

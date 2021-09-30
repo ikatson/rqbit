@@ -10,7 +10,7 @@ serde = {version = "1", features = ["derive"]}
 bincode = "1"
 byteorder = "1"
 buffers = {path="../buffers"}
-bencode = {path="../bencode"}
+bencode = {path = "../bencode", default-features=false}
 clone_to_owned = {path="../clone_to_owned"}
 librqbit_core = {path="../librqbit_core"}
 bitvec = "0.22"

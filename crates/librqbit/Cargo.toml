@@ -13,12 +13,12 @@ sha1-rust = ["sha1w/sha1-openssl"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bencode = {path = "../bencode"}
+bencode = {path = "../bencode", default-features=false}
 buffers = {path = "../buffers"}
 librqbit_core = {path = "../librqbit_core"}
 clone_to_owned = {path = "../clone_to_owned"}
 peer_binary_protocol = {path = "../peer_binary_protocol"}
-sha1w = {path = "../sha1w"}
+sha1w = {path = "../sha1w", default-features=false}
 dht = {path = "../dht"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
