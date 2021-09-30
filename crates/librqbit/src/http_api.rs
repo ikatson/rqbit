@@ -229,7 +229,7 @@ impl HttpApi {
         let dht_stats = warp::path!("dht" / "stats")
             .and(with_api(inner.clone()))
             .and_then(|api: Arc<ApiInternal>| async move {
-                Result::<_, Infallible>::Ok(match api.api_dht_stats().await {
+                Ok::<_, Infallible>(match api.api_dht_stats().await {
                     Some(stats) => json_response(stats),
                     None => not_found_response("DHT is off"),
                 })
@@ -238,8 +238,11 @@ impl HttpApi {
         let dht_routing_table = warp::path!("dht" / "table")
             .and(with_api(inner.clone()))
             .and_then(|api: Arc<ApiInternal>| async move {
-                Result::<_, Infallible>::Ok(match api.dht.as_ref() {
-                    Some(dht) => dht.with_routing_table(|r| json_response(r)).await,
+                Ok::<_, Infallible>(match api.dht.as_ref() {
+                    Some(dht) => {
+                        dht.with_routing_table(|r| async move { json_response(&r) })
+                            .await
+                    }
                     None => not_found_response("DHT is off"),
                 })
             });
@@ -247,19 +250,19 @@ impl HttpApi {
         let torrent_list = warp::path!("torrents")
             .and(with_api(inner.clone()))
             .and_then(|api: Arc<ApiInternal>| async move {
-                Result::<_, Infallible>::Ok(json_response(api.api_torrent_list().await))
+                Ok::<_, Infallible>(json_response(api.api_torrent_list().await))
             });
 
         let torrent_details = warp::path!("torrents" / usize)
             .and(with_api(inner.clone()))
             .and_then(|idx: usize, api: Arc<ApiInternal>| async move {
-                Result::<_, Infallible>::Ok(json_or_404(idx, api.api_torrent_details(idx).await))
+                Ok::<_, Infallible>(json_or_404(idx, api.api_torrent_details(idx).await))
             });
 
         let torrent_dump_haves = warp::path!("torrents" / usize / "haves")
             .and(with_api(inner.clone()))
             .and_then(|idx: usize, api: Arc<ApiInternal>| async move {
-                Result::<_, Infallible>::Ok(match api.api_dump_haves(idx).await {
+                Ok::<_, Infallible>(match api.api_dump_haves(idx).await {
                     Some(haves) => plaintext_response(haves),
                     None => torrent_not_found_response(idx),
                 })
@@ -268,7 +271,7 @@ impl HttpApi {
         let torrent_dump_stats = warp::path!("torrents" / usize / "stats")
             .and(with_api(inner.clone()))
             .and_then(|idx: usize, api: Arc<ApiInternal>| async move {
-                Result::<_, Infallible>::Ok(json_or_404(idx, api.api_stats(idx).await))
+                Ok::<_, Infallible>(json_or_404(idx, api.api_stats(idx).await))
             });
 
         let router = api_list

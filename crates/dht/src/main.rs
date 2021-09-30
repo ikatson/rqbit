@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     let stats_printer = async {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            info!("DHT stats: {:?}", dht.stats());
+            info!("DHT stats: {:?}", dht.stats().await);
         }
         #[allow(unreachable_code)]
         Ok::<_, anyhow::Error>(())
@@ -25,9 +25,9 @@ async fn main() -> anyhow::Result<()> {
     let routing_table_dumper = async {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
-            dht.with_routing_table(|r| {
+            dht.with_routing_table(async |r| {
                 let filename = "/tmp/routing-table.json";
-                let mut f = std::fs::OpenOptions::new()
+                let mut f = tokio::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
                     .open(filename)

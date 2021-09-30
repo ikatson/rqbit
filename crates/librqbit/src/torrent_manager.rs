@@ -164,7 +164,7 @@ impl TorrentManager {
                     .context("error converting file to path")?;
                 full_path.push(relative_path);
 
-                std::fs::create_dir_all(full_path.parent().unwrap())?;
+                tokio::fs::create_dir_all(full_path.parent().unwrap()).await?;
                 let file = if options.overwrite {
                     OpenOptions::new()
                         .create(true)
@@ -240,7 +240,9 @@ impl TorrentManager {
                     let downloaded = state.stats_snapshot().await.downloaded_and_checked_bytes;
                     let needed = state.initially_needed();
                     let remaining = needed - downloaded;
-                    estimator.add_snapshot(downloaded, remaining, Instant::now()).await;
+                    estimator
+                        .add_snapshot(downloaded, remaining, Instant::now())
+                        .await;
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }

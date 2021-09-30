@@ -1,13 +1,14 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio::fs::OpenOptions;
 
 use anyhow::Context;
 use log::{debug, error, info, trace, warn};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::spawn;
 
 use crate::dht::{Dht, DhtConfig};
@@ -35,11 +36,15 @@ async fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::R
         .create(true)
         .write(true)
         .open(&tempfile_name)
+        .await
         .with_context(|| format!("error opening {:?}", tempfile_name))?;
 
     let addr = dht.listen_addr().await;
     match dht
-        .with_routing_table(|r| serde_json::to_writer(&mut file, &DhtSerialize { addr, table: r }))
+        .with_routing_table(|r| async move {
+            let bytes = serde_json::to_vec(&DhtSerialize { addr, table: r }).unwrap();
+            file.write_all(&bytes).await
+        })
         .await
     {
         Ok(_) => {
@@ -52,7 +57,8 @@ async fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::R
         }
     }
 
-    std::fs::rename(tempfile_name, filename)
+    tokio::fs::rename(tempfile_name, filename)
+        .await
         .with_context(|| format!("error renaming {:?} to {:?}", tempfile_name, filename))
 }
 
@@ -71,13 +77,18 @@ impl PersistentDht {
         };
 
         if let Some(parent) = config_filename.parent() {
-            std::fs::create_dir_all(parent)
+            tokio::fs::create_dir_all(parent)
+                .await
                 .with_context(|| format!("error creating dir {:?}", &parent))?;
         }
 
-        let de = match OpenOptions::new().read(true).open(&config_filename) {
-            Ok(dht_json) => {
-                match serde_json::from_reader::<_, DhtSerialize<RoutingTable>>(&dht_json) {
+        let de = match OpenOptions::new().read(true).open(&config_filename).await {
+            Ok(mut dht_json) => {
+                match serde_json::from_slice::<DhtSerialize<RoutingTable>>(&{
+                    let mut bytes = Vec::new();
+                    dht_json.read_to_end(&mut bytes).await?;
+                    bytes
+                }) {
                     Ok(r) => {
                         info!("loaded DHT routing table from {:?}", &config_filename);
                         Some(r)

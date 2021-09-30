@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     net::SocketAddr,
@@ -688,8 +689,12 @@ impl Dht {
         self.state.lock().await.get_stats()
     }
 
-    pub async fn with_routing_table<R, F: FnOnce(&RoutingTable) -> R>(&self, f: F) -> R {
-        f(&self.state.lock().await.routing_table)
+    pub async fn with_routing_table<R, T: Future<Output = R>, F: FnOnce(RoutingTable) -> T>(
+        &self,
+        f: F,
+    ) -> R {
+        let lock = self.state.lock().await;
+        f(lock.routing_table.clone()).await
     }
 
     pub async fn clone_routing_table(&self) -> RoutingTable {
