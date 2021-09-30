@@ -181,7 +181,11 @@ impl TorrentManager {
                         .open(&full_path)
                         .await
                         .with_context(|| format!("error creating {:?}", &full_path))?;
-                    OpenOptions::new().read(true).write(true).open(&full_path).await?
+                    OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&full_path)
+                        .await?
                 };
                 files.push(Arc::new(Mutex::new(file)))
             }

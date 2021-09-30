@@ -3,6 +3,7 @@ use std::{str::FromStr, time::Duration};
 use anyhow::Context;
 use dht::{Dht, Id20};
 use log::info;
+use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -25,16 +26,19 @@ async fn main() -> anyhow::Result<()> {
     let routing_table_dumper = async {
         loop {
             tokio::time::sleep(Duration::from_secs(15)).await;
-            dht.with_routing_table(async |r| {
+            dht.with_routing_table(|r| async move {
                 let filename = "/tmp/routing-table.json";
                 let mut f = tokio::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
                     .open(filename)
+                    .await
                     .unwrap();
-                serde_json::to_writer_pretty(&mut f, r).unwrap();
+                f.write_all(serde_json::to_string_pretty(&r).unwrap().as_bytes())
+                    .await
+                    .unwrap();
                 info!("Dumped DHT routing table to {}", filename);
-            });
+            }).await;
         }
         #[allow(unreachable_code)]
         Ok::<_, anyhow::Error>(())
