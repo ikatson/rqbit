@@ -14,7 +14,7 @@ sha1-rust = ["librqbit/sha1-rust"]
 [dependencies]
 librqbit = {path="../librqbit", default-features=false}
 dht = {path="../dht"}
-tokio = {version = "1", features = ["macros", "sync", "rt-multi-thread"]}
+tokio = {version = "1", features = ["macros", "sync", "rt-multi-thread", "io-std"]}
 anyhow = "1"
 clap = "3.0.0-beta.2"
 log = "0.4"
