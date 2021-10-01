@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::pin::Pin;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     net::SocketAddr,
@@ -21,7 +22,7 @@ use librqbit_core::{id20::Id20, peer_id::generate_peer_id};
 use log::{debug, info, trace, warn};
 use rand::Rng;
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 use tokio::{
     net::UdpSocket,
     sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
@@ -578,13 +579,32 @@ impl Stream for PeerStream {
     ) -> Poll<Option<Self::Item>> {
         loop {
             if let Some((pos, end)) = self.initial_peers_pos.take() {
-                use futures::executor::block_on;
-                let addr = *block_on(self.state.lock())
-                    .seen_peers
-                    .get(&self.info_hash)
-                    .unwrap()
-                    .get_index(pos)
-                    .unwrap();
+                enum Tmp {
+                    Addr(SocketAddr),
+                    PosEnd(usize, usize),
+                }
+                let tmp = {
+                    let state = self.state.lock();
+                    tokio::pin!(state);
+                    match state.poll(cx) {
+                        Poll::Ready(guard) => Tmp::Addr(
+                            *guard
+                                .seen_peers
+                                .get(&self.info_hash)
+                                .unwrap()
+                                .get_index(pos)
+                                .unwrap(),
+                        ),
+                        Poll::Pending => Tmp::PosEnd(pos, end),
+                    }
+                };
+                let addr = match tmp {
+                    Tmp::Addr(addr) => addr,
+                    Tmp::PosEnd(pos, end) => {
+                        self.initial_peers_pos = Some((pos, end));
+                        return Poll::Pending;
+                    }
+                };
 
                 if pos < end {
                     self.initial_peers_pos = Some((pos + 1, end));

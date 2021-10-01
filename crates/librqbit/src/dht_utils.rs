@@ -39,6 +39,8 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
     let read_info_guarded = |addr| {
         let semaphore = &semaphore;
         async move {
+            use log::trace;
+            trace!("let token = semaphore.acquire().await?;");
             let token = semaphore.acquire().await?;
             let ret = peer_info_reader::read_metainfo_from_peer(
                 addr,

@@ -292,6 +292,8 @@ impl TorrentState {
                         }
                     };
 
+                    trace!("state.peer_semaphore.acquire().await.unwrap().forget();");
+
                     state.peer_semaphore.acquire().await.unwrap().forget();
 
                     let handler = PeerHandler {
@@ -896,6 +898,8 @@ impl PeerHandler {
                     begin: chunk.offset,
                     length: chunk.size,
                 };
+
+                trace!("sem.acquire().await?.forget();");
                 sem.acquire().await?.forget();
 
                 tx.send(WriterRequest::Message(MessageOwned::Request(request)))
