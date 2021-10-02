@@ -376,21 +376,23 @@ async fn main_torrent_info(
             loop {
                 let peer_stats = handle.torrent_state().peer_stats_snapshot();
                 let stats = handle.torrent_state().stats_snapshot();
-                let needed = stats.initially_needed_bytes;
+                let speed = handle.speed_estimator();
+                let total = stats.total_bytes;
+                let progress = stats.total_bytes - stats.remaining_bytes;
                 let downloaded_pct = if stats.remaining_bytes == 0 {
                     100f64
                 } else {
-                    (stats.downloaded_and_checked_bytes as f64 / needed as f64) * 100f64
+                    (progress as f64 / total as f64) * 100f64
                 };
                 info!(
-                    "Stats: downloaded {:.2}% ({:.2}), fetched {}, remaining {:.2} out of {:.2}, uploaded {:.2}, have {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
+                    "Stats: {:.2}% ({:.2}), down speed {:.2} Mbps, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
                     downloaded_pct,
-                    SF::new(stats.downloaded_and_checked_bytes),
+                    SF::new(progress),
+                    speed.download_mbps(),
                     SF::new(stats.fetched_bytes),
                     SF::new(stats.remaining_bytes),
-                    SF::new(needed),
+                    SF::new(total),
                     SF::new(stats.uploaded_bytes),
-                    SF::new(stats.have_bytes),
                     peer_stats.live,
                     peer_stats.connecting,
                     peer_stats.queued,

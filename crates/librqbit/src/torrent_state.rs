@@ -201,6 +201,7 @@ pub struct StatsSnapshot {
     pub uploaded_bytes: u64,
     pub initially_needed_bytes: u64,
     pub remaining_bytes: u64,
+    pub total_bytes: u64,
     pub live_peers: u32,
     pub seen_peers: u32,
     pub connecting_peers: u32,
@@ -234,6 +235,7 @@ pub struct TorrentState {
     peer_id: Id20,
     lengths: Lengths,
     needed: u64,
+    have_plus_needed: u64,
     stats: AtomicStats,
     options: TorrentStateOptions,
 
@@ -271,6 +273,7 @@ impl TorrentState {
                 ..Default::default()
             },
             needed: needed_bytes,
+            have_plus_needed: needed_bytes + have_bytes,
             lengths,
             options,
 
@@ -565,6 +568,7 @@ impl TorrentState {
             downloaded_and_checked_pieces: self.stats.downloaded_pieces.load(Relaxed),
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded.load(Relaxed),
+            total_bytes: self.have_plus_needed,
             live_peers: peer_stats.live as u32,
             seen_peers: g.peers.seen.len() as u32,
             connecting_peers: peer_stats.connecting as u32,

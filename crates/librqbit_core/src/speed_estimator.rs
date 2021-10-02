@@ -6,6 +6,7 @@ use std::{
 
 use parking_lot::Mutex;
 
+#[derive(Clone, Copy)]
 struct ProgressSnapshot {
     downloaded_bytes: u64,
     instant: Instant,
@@ -44,15 +45,26 @@ impl SpeedEstimator {
     }
 
     pub fn add_snapshot(&self, downloaded_bytes: u64, remaining_bytes: u64, instant: Instant) {
-        let mut g = self.latest_per_second_snapshots.lock();
-        if g.len() < g.capacity() {
-            g.push_back(ProgressSnapshot {
+        let first = {
+            let mut g = self.latest_per_second_snapshots.lock();
+
+            let current = ProgressSnapshot {
                 downloaded_bytes,
                 instant,
-            });
-            return;
-        }
-        let first = g.pop_front().unwrap();
+            };
+
+            if g.is_empty() {
+                g.push_back(current);
+                return;
+            } else if g.len() < g.capacity() {
+                g.push_back(current);
+                g.front().copied().unwrap()
+            } else {
+                let first = g.pop_front().unwrap();
+                g.push_back(current);
+                first
+            }
+        };
 
         let downloaded_bytes_diff = downloaded_bytes - first.downloaded_bytes;
         let elapsed = instant - first.instant;
@@ -68,10 +80,5 @@ impl SpeedEstimator {
             .store(time_remaining_millis_rounded, Ordering::Relaxed);
         self.download_bytes_per_second
             .store(bps as u64, Ordering::Relaxed);
-
-        g.push_back(ProgressSnapshot {
-            downloaded_bytes,
-            instant,
-        });
     }
 }
