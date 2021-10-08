@@ -110,6 +110,12 @@ struct Opts {
     #[clap(long = "disable-dht")]
     disable_dht: bool,
 
+    /// Set this to disable DHT reading and storing it's state.
+    /// For now this is a useful workaround if you want to launch multiple rqbit instances,
+    /// otherwise DHT port will conflict.
+    #[clap(long = "disable-dht-persistence")]
+    disable_dht_persistence: bool,
+
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
     #[clap(long = "peer-connect-timeout")]
     peer_connect_timeout: Option<ParsedDuration>,
@@ -119,7 +125,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     torrent: &TorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
 ) -> anyhow::Result<Vec<usize>> {
-    let filename_re = regex::Regex::new(&filename_re).context("filename regex is incorrect")?;
+    let filename_re = regex::Regex::new(filename_re).context("filename regex is incorrect")?;
     let mut only_files = Vec::new();
     for (idx, (filename, _)) in torrent.iter_filenames_and_lengths()?.enumerate() {
         let full_path = filename
@@ -191,11 +197,13 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     let dht = if opts.disable_dht {
         None
     } else {
-        Some(
-            PersistentDht::create(None)
-                .await
-                .context("error initializing DHT")?,
-        )
+        let dht = if opts.disable_dht_persistence {
+            Dht::new().await
+        } else {
+            PersistentDht::create(None).await
+        }
+        .context("error initializing DHT")?;
+        Some(dht)
     };
 
     let peer_opts = PeerConnectionOptions {
