@@ -133,7 +133,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut conn = match timeout(
             self.options
                 .connect_timeout
-                .unwrap_or_else(|| Duration::from_secs(2)),
+                .unwrap_or_else(|| Duration::from_secs(10)),
             tokio::net::TcpStream::connect(self.addr),
         )
         .await
