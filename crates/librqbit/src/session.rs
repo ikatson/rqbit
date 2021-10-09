@@ -321,39 +321,6 @@ impl Session {
             handle.add_peer(peer);
         }
 
-        spawn("Stats printer", {
-            let handle = handle.clone();
-            async move {
-                loop {
-                    let peer_stats = handle.torrent_state().peer_stats_snapshot();
-                    let stats = handle.torrent_state().stats_snapshot();
-                    let speed = handle.speed_estimator();
-                    let total = stats.total_bytes;
-                    let progress = stats.total_bytes - stats.remaining_bytes;
-                    let downloaded_pct = if stats.remaining_bytes == 0 {
-                        100f64
-                    } else {
-                        (progress as f64 / total as f64) * 100f64
-                    };
-                    info!(
-                        "Stats: {:.2}% ({:.2}), down speed {:.2} Mbps, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
-                        downloaded_pct,
-                        SF::new(progress),
-                        speed.download_mbps(),
-                        SF::new(stats.fetched_bytes),
-                        SF::new(stats.remaining_bytes),
-                        SF::new(total),
-                        SF::new(stats.uploaded_bytes),
-                        peer_stats.live,
-                        peer_stats.connecting,
-                        peer_stats.queued,
-                        peer_stats.seen,
-                    );
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-        });
-
         if let Some(mut dht_peer_rx) = dht_peer_rx {
             spawn("DHT peer adder", {
                 let handle = handle.clone();

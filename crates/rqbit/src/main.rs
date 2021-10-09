@@ -5,8 +5,10 @@ use clap::Clap;
 use librqbit::{
     peer_connection::PeerConnectionOptions,
     session::{AddTorrentOptions, Session, SessionOptions},
-    spawn_utils::BlockingSpawner,
+    spawn_utils::{spawn, BlockingSpawner},
 };
+use log::info;
+use size_format::SizeFormatterBinary as SF;
 
 #[derive(Debug, Clap)]
 enum LogLevel {
@@ -158,15 +160,52 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         force_tracker_interval: opts.force_tracker_interval.map(|d| d.0),
         ..Default::default()
     };
-    if let Some(handle) = session
+
+    let handle = match session
         .add_torrent(opts.torrent_path, Some(torrent_opts))
         .await
         .context("error adding torrent to session")?
     {
-        handle
-            .wait_until_completed()
-            .await
-            .context("error waiting for torrent completion")?;
-    }
+        Some(handle) => handle,
+        None => return Ok(()),
+    };
+
+    spawn("Stats printer", {
+        let handle = handle.clone();
+        async move {
+            loop {
+                let peer_stats = handle.torrent_state().peer_stats_snapshot();
+                let stats = handle.torrent_state().stats_snapshot();
+                let speed = handle.speed_estimator();
+                let total = stats.total_bytes;
+                let progress = stats.total_bytes - stats.remaining_bytes;
+                let downloaded_pct = if stats.remaining_bytes == 0 {
+                    100f64
+                } else {
+                    (progress as f64 / total as f64) * 100f64
+                };
+                info!(
+                    "Stats: {:.2}% ({:.2}), down speed {:.2} Mbps, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
+                    downloaded_pct,
+                    SF::new(progress),
+                    speed.download_mbps(),
+                    SF::new(stats.fetched_bytes),
+                    SF::new(stats.remaining_bytes),
+                    SF::new(total),
+                    SF::new(stats.uploaded_bytes),
+                    peer_stats.live,
+                    peer_stats.connecting,
+                    peer_stats.queued,
+                    peer_stats.seen,
+                );
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    });
+
+    handle
+        .wait_until_completed()
+        .await
+        .context("error waiting for torrent completion")?;
     Ok(())
 }

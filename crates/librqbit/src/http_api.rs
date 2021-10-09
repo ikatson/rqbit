@@ -209,7 +209,8 @@ impl HttpApi {
                     "GET /torrents": "List torrents (default torrent is 0)",
                     "GET /torrents/{index}": "Torrent details",
                     "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{index}/stats": "Torrent stats"
+                    "GET /torrents/{index}/stats": "Torrent stats",
+                    "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file."
                 }
             });
             move || json_response(&api_list)
