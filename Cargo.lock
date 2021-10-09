@@ -725,6 +725,7 @@ dependencies = [
  "peer_binary_protocol",
  "pretty_env_logger",
  "rand 0.8.4",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
