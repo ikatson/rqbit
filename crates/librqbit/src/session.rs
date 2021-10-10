@@ -16,7 +16,6 @@ use size_format::SizeFormatterBinary as SF;
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
-    http_api::HttpApi,
     peer_connection::PeerConnectionOptions,
     spawn_utils::{spawn, BlockingSpawner},
     torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
