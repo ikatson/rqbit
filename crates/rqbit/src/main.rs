@@ -155,14 +155,6 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             .context("error initializing rqbit session")?,
     );
 
-    {
-        let http_api = HttpApi::new(session.clone());
-        spawn("HTTP API", {
-            let http_api_listen_addr = opts.http_api_listen_addr;
-            async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
-        });
-    };
-
     let torrent_opts = AddTorrentOptions {
         only_files_regex: opts.only_files_matching_regex,
         overwrite: opts.overwrite,
@@ -178,6 +170,15 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     {
         Some(handle) => handle,
         None => return Ok(()),
+    };
+
+    {
+        let http_api = HttpApi::new(session.clone());
+        http_api.add_mgr(handle.clone());
+        spawn("HTTP API", {
+            let http_api_listen_addr = opts.http_api_listen_addr;
+            async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
+        });
     };
 
     spawn("Stats printer", {

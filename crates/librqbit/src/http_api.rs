@@ -287,7 +287,7 @@ impl HttpApi {
                             Ok(idx) => {
                                 return Ok(make_response(200, format!("{}", idx)));
                             }
-                            Err(e) => return Ok(make_response(400, format!("{}", e))),
+                            Err(e) => return Ok(make_response(400, format!("{:#}", e))),
                         }
                     }
                 }
@@ -312,13 +312,13 @@ impl HttpApi {
         });
 
         let router = api_list
-            .or(torrent_list)
             .or(dht_stats)
             .or(dht_routing_table)
             .or(torrent_details)
             .or(torrent_dump_haves)
             .or(torrent_dump_stats)
-            .or(torrent_add);
+            .or(torrent_add)
+            .or(torrent_list);
 
         warp::serve(router).run(addr).await;
         Ok(())
