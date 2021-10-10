@@ -9,6 +9,7 @@ use librqbit_core::{
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
 };
 use log::{info, warn};
+use parking_lot::RwLock;
 use reqwest::Url;
 use tokio_stream::StreamExt;
 
@@ -21,11 +22,45 @@ use crate::{
     torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
 };
 
+pub enum ManagedTorrentState {
+    Initializing,
+    Running(TorrentManagerHandle),
+}
+
+pub struct ManagedTorrent {
+    info_hash: Id20,
+    output_folder: PathBuf,
+    state: ManagedTorrentState,
+}
+
+impl PartialEq for ManagedTorrent {
+    fn eq(&self, other: &Self) -> bool {
+        self.info_hash == other.info_hash && self.output_folder == other.output_folder
+    }
+}
+
+#[derive(Default)]
+pub struct SessionLocked {
+    torrents: Vec<ManagedTorrent>,
+}
+
+impl SessionLocked {
+    fn add_torrent(&mut self, torrent: ManagedTorrent) -> Option<usize> {
+        if self.torrents.contains(&torrent) {
+            return None;
+        }
+        let idx = self.torrents.len();
+        self.torrents.push(torrent);
+        Some(idx)
+    }
+}
+
 pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
+    locked: RwLock<SessionLocked>,
     output_folder: PathBuf,
 }
 
@@ -126,6 +161,7 @@ impl Session {
             peer_opts,
             spawner,
             output_folder,
+            locked: RwLock::new(SessionLocked::default()),
         })
     }
     pub fn get_dht(&self) -> Option<Dht> {
@@ -271,7 +307,21 @@ impl Session {
             .map(PathBuf::from)
             .unwrap_or_else(|| self.output_folder.clone());
 
-        let mut builder = TorrentManagerBuilder::new(info, info_hash, output_folder);
+        let managed_torrent = ManagedTorrent {
+            info_hash,
+            output_folder: output_folder.clone(),
+            state: ManagedTorrentState::Initializing,
+        };
+
+        if self.locked.write().add_torrent(managed_torrent).is_none() {
+            anyhow::bail!(
+                "torrent with info_hash {:?} that is downloaded to {:?} is already managed",
+                info_hash,
+                &output_folder
+            );
+        };
+
+        let mut builder = TorrentManagerBuilder::new(info, info_hash, output_folder.clone());
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
@@ -287,7 +337,40 @@ impl Session {
             builder.peer_connect_timeout(t);
         }
 
-        let handle = builder.start_manager()?;
+        let handle = match builder
+            .start_manager()
+            .context("error starting torrent manager")
+        {
+            Ok(handle) => {
+                let mut g = self.locked.write();
+                let m = g
+                    .torrents
+                    .iter_mut()
+                    .find(|t| t.info_hash == info_hash && t.output_folder == output_folder)
+                    .unwrap();
+                m.state = ManagedTorrentState::Running(handle.clone());
+                handle
+            }
+            Err(error) => {
+                let mut g = self.locked.write();
+                let idx = g
+                    .torrents
+                    .iter()
+                    .position(|t| t.info_hash == info_hash && t.output_folder == output_folder)
+                    .unwrap();
+                g.torrents.remove(idx);
+                return Err(error);
+            }
+        };
+        {
+            let mut g = self.locked.write();
+            let m = g
+                .torrents
+                .iter_mut()
+                .find(|t| t.info_hash == info_hash && t.output_folder == output_folder)
+                .unwrap();
+            m.state = ManagedTorrentState::Running(handle.clone());
+        }
 
         for url in trackers {
             handle.add_tracker(url);

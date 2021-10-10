@@ -1,7 +1,7 @@
 use anyhow::Context;
 use dht::{Dht, DhtStats};
 use parking_lot::RwLock;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ use warp::hyper::body::Bytes;
 use warp::hyper::Body;
 use warp::Filter;
 
-use crate::session::Session;
+use crate::session::{AddTorrentOptions, Session};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
@@ -127,10 +127,14 @@ impl ApiInternal {
         Some(TorrentDetailsResponse { info_hash, files })
     }
 
-    async fn api_add_torrent(&self, url: String) -> anyhow::Result<usize> {
+    async fn api_add_torrent(
+        &self,
+        url: String,
+        opts: Option<AddTorrentOptions>,
+    ) -> anyhow::Result<usize> {
         let handle = self
             .session
-            .add_torrent(url, None)
+            .add_torrent(url, opts)
             .await
             .context("error adding torrent")?
             .context("expected session.add_torrent() to return a handle")?;
@@ -258,16 +262,22 @@ impl HttpApi {
             move || json_response(inner.api_torrent_list())
         });
 
+        #[derive(Deserialize)]
+        struct TorrentAddQueryParams {
+            overwrite: Option<bool>,
+        }
+
         let torrent_add = warp::post()
             .and(warp::path("torrents"))
             .and(warp::body::bytes())
+            .and(warp::query())
             .and_then({
                 let inner = inner.clone();
                 use warp::http::Response;
                 fn make_response(status: u16, body: String) -> Response<String> {
                     Response::builder().status(status).body(body).unwrap()
                 }
-                move |body: Bytes| {
+                move |body: Bytes, params: TorrentAddQueryParams| {
                     let inner = inner.clone();
                     async move {
                         let url = match String::from_utf8(body.to_vec()) {
@@ -279,8 +289,12 @@ impl HttpApi {
                                 ))
                             }
                         };
+                        let opts = AddTorrentOptions {
+                            overwrite: params.overwrite.unwrap_or(false),
+                            ..Default::default()
+                        };
                         let idx = inner
-                            .api_add_torrent(url)
+                            .api_add_torrent(url, Some(opts))
                             .await
                             .context("error calling HttpApi::api_add_torrent");
                         match idx {
