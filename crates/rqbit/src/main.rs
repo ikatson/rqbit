@@ -1,8 +1,9 @@
-use std::{net::SocketAddr, str::FromStr, time::Duration};
+use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::Clap;
 use librqbit::{
+    http_api::HttpApi,
     peer_connection::PeerConnectionOptions,
     session::{AddTorrentOptions, Session, SessionOptions},
     spawn_utils::{spawn, BlockingSpawner},
@@ -141,17 +142,26 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
-        disable_http_api: false,
-        http_api_listen_addr: Some(opts.http_api_listen_addr),
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: opts.peer_connect_timeout.map(|d| d.0),
             ..Default::default()
         }),
     };
-    let session = Session::new_with_opts(opts.output_folder.into(), spawner, sopts)
-        .await
-        .context("error initializing rqbit session")?;
+
+    let session = Arc::new(
+        Session::new_with_opts(opts.output_folder.into(), spawner, sopts)
+            .await
+            .context("error initializing rqbit session")?,
+    );
+
+    {
+        let http_api = HttpApi::new(session.clone());
+        spawn("HTTP API", {
+            let http_api_listen_addr = opts.http_api_listen_addr;
+            async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
+        });
+    };
 
     let torrent_opts = AddTorrentOptions {
         only_files_regex: opts.only_files_matching_regex,

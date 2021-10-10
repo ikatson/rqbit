@@ -25,7 +25,6 @@ use crate::{
 pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
-    http_api: Option<HttpApi>,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
     output_folder: PathBuf,
@@ -95,8 +94,6 @@ pub struct SessionOptions {
     pub disable_dht: bool,
     pub disable_dht_persistence: bool,
     pub dht_config: Option<PersistentDhtConfig>,
-    pub disable_http_api: bool,
-    pub http_api_listen_addr: Option<SocketAddr>,
     pub peer_id: Option<Id20>,
     pub peer_opts: Option<PeerConnectionOptions>,
 }
@@ -124,28 +121,16 @@ impl Session {
         };
         let peer_opts = opts.peer_opts.unwrap_or_default();
 
-        let http_api = if opts.disable_http_api {
-            None
-        } else {
-            let http_api_listen_addr = opts
-                .http_api_listen_addr
-                .unwrap_or_else(|| "127.0.0.1:3001".parse().unwrap());
-            let http_api = HttpApi::new(dht.clone());
-            spawn("HTTP API", {
-                let http_api = http_api.clone();
-                async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
-            });
-            Some(http_api)
-        };
-
         Ok(Self {
             peer_id,
             dht,
-            http_api,
             peer_opts,
             spawner,
             output_folder,
         })
+    }
+    pub fn get_dht(&self) -> Option<Dht> {
+        self.dht.clone()
     }
     pub async fn add_torrent(
         &self,
@@ -303,16 +288,7 @@ impl Session {
             builder.peer_connect_timeout(t);
         }
 
-        // let http_api = HttpApi::new(self.dht.clone());
-        // spawn("HTTP API", {
-        //     let http_api = http_api.clone();
-        //     async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
-        // });
-
         let handle = builder.start_manager()?;
-        if let Some(http_api) = self.http_api.as_ref() {
-            http_api.add_mgr(handle.clone());
-        }
 
         for url in trackers {
             handle.add_tracker(url);
