@@ -232,6 +232,8 @@ impl HttpApi {
                     "GET /torrents/{index}": "Torrent details",
                     "GET /torrents/{index}/haves": "The bitfield of have pieces",
                     "GET /torrents/{index}/stats": "Torrent stats",
+                    // This is kind of not secure as it just reads any local file that it has access to,
+                    // or any URL, but whatever, ok for our purposes / thread model.
                     "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file."
                 }
             });
