@@ -198,8 +198,10 @@ impl TorrentManager {
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results = FileOps::<Sha1>::new(&info, &files, &lengths)
-            .initial_check(options.only_files.as_deref())?;
+        let initial_check_results = spawner.spawn_block_in_place(|| {
+            FileOps::<Sha1>::new(&info, &files, &lengths)
+                .initial_check(options.only_files.as_deref())
+        })?;
 
         info!(
             "Initial check results: have {}, needed {}",
