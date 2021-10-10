@@ -22,15 +22,17 @@ use crate::{
     torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
 };
 
+#[derive(Clone)]
 pub enum ManagedTorrentState {
     Initializing,
     Running(TorrentManagerHandle),
 }
 
+#[derive(Clone)]
 pub struct ManagedTorrent {
-    info_hash: Id20,
-    output_folder: PathBuf,
-    state: ManagedTorrentState,
+    pub info_hash: Id20,
+    pub output_folder: PathBuf,
+    pub state: ManagedTorrentState,
 }
 
 impl PartialEq for ManagedTorrent {
@@ -166,6 +168,12 @@ impl Session {
     }
     pub fn get_dht(&self) -> Option<Dht> {
         self.dht.clone()
+    }
+    pub fn with_torrents<F>(&self, callback: F)
+    where
+        F: Fn(&[ManagedTorrent]),
+    {
+        callback(&self.locked.read().torrents)
     }
     pub async fn add_torrent(
         &self,
