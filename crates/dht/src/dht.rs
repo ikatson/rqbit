@@ -584,7 +584,7 @@ impl Stream for PeerStream {
                     .unwrap()
                     .get_index(pos)
                     .unwrap();
-                if pos < end {
+                if pos + 1 < end {
                     self.initial_peers_pos = Some((pos + 1, end));
                 }
                 self.absolute_stream_pos += 1;
