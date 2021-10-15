@@ -245,10 +245,14 @@ impl TorrentManager {
             let state = mgr.state.clone();
             async move {
                 loop {
-                    let downloaded = state.stats_snapshot().downloaded_and_checked_bytes;
+                    let stats = state.stats_snapshot();
+                    let fetched = state.stats_snapshot().fetched_bytes;
                     let needed = state.initially_needed();
-                    let remaining = needed - downloaded;
-                    estimator.add_snapshot(downloaded, remaining, Instant::now());
+                    // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
+                    let remaining = needed
+                        .wrapping_sub(fetched)
+                        .min(needed - stats.downloaded_and_checked_bytes);
+                    estimator.add_snapshot(fetched, remaining, Instant::now());
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }
