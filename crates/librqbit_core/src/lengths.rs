@@ -118,6 +118,9 @@ impl Lengths {
     pub const fn total_chunks(&self) -> u32 {
         ceil_div_u64(self.total_length, self.chunk_length as u64) as u32
     }
+    pub const fn last_piece_id(&self) -> ValidPieceIndex {
+        ValidPieceIndex(self.last_piece_id)
+    }
     pub const fn total_pieces(&self) -> u32 {
         self.last_piece_id + 1
     }
