@@ -349,7 +349,7 @@ impl TorrentState {
     fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
         let g = self.locked.read();
         let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
-        for n in g.chunks.get_needed_pieces().iter_ones() {
+        for n in g.chunks.iter_needed_pieces() {
             if bf.get(n).map(|v| *v) == Some(true) {
                 // in theory it should be safe without validation, but whatever.
                 return self.lengths.validate_piece_index(n as u32);
@@ -375,7 +375,7 @@ impl TorrentState {
         let n = {
             let mut n_opt = None;
             let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
-            for n in g.chunks.get_needed_pieces().iter_ones() {
+            for n in g.chunks.iter_needed_pieces() {
                 if bf.get(n).map(|v| *v) == Some(true) {
                     n_opt = Some(n);
                     break;

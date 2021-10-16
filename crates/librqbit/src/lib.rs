@@ -6,6 +6,7 @@ pub mod peer_connection;
 pub mod peer_handler;
 pub mod peer_info_reader;
 pub mod peer_state;
+pub mod session;
 pub mod spawn_utils;
 pub mod torrent_manager;
 pub mod torrent_state;

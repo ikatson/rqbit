@@ -1,13 +1,15 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-
+use anyhow::Context;
 use dht::{Dht, DhtStats};
 use parking_lot::RwLock;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use warp::hyper::body::Bytes;
 use warp::hyper::Body;
 use warp::Filter;
 
+use crate::session::{AddTorrentOptions, Session};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
@@ -15,15 +17,24 @@ struct ApiInternal {
     dht: Option<Dht>,
     startup_time: Instant,
     torrent_managers: RwLock<Vec<TorrentManagerHandle>>,
+    session: Arc<Session>,
 }
 
 impl ApiInternal {
-    fn new(dht: Option<Dht>) -> Self {
+    fn new(session: Arc<Session>) -> Self {
         Self {
-            dht,
+            dht: session.get_dht(),
             startup_time: Instant::now(),
             torrent_managers: RwLock::new(Vec::new()),
+            session,
         }
+    }
+
+    fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
+        let mut g = self.torrent_managers.write();
+        let idx = g.len();
+        g.push(handle);
+        idx
     }
 }
 
@@ -116,6 +127,20 @@ impl ApiInternal {
         Some(TorrentDetailsResponse { info_hash, files })
     }
 
+    async fn api_add_torrent(
+        &self,
+        url: String,
+        opts: Option<AddTorrentOptions>,
+    ) -> anyhow::Result<usize> {
+        let handle = self
+            .session
+            .add_torrent(url, opts)
+            .await
+            .context("error adding torrent")?
+            .context("expected session.add_torrent() to return a handle")?;
+        Ok(self.add_mgr(handle))
+    }
+
     fn api_dht_stats(&self) -> Option<DhtStats> {
         self.dht.as_ref().map(|d| d.stats())
     }
@@ -185,16 +210,13 @@ fn json_or_404<T: Serialize>(idx: usize, v: Option<T>) -> warp::reply::Response 
 }
 
 impl HttpApi {
-    pub fn new(dht: Option<Dht>) -> Self {
+    pub fn new(session: Arc<Session>) -> Self {
         Self {
-            inner: Arc::new(ApiInternal::new(dht)),
+            inner: Arc::new(ApiInternal::new(session)),
         }
     }
     pub fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
-        let mut g = self.inner.torrent_managers.write();
-        let idx = g.len();
-        g.push(handle);
-        idx
+        self.inner.add_mgr(handle)
     }
 
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
@@ -209,7 +231,10 @@ impl HttpApi {
                     "GET /torrents": "List torrents (default torrent is 0)",
                     "GET /torrents/{index}": "Torrent details",
                     "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{index}/stats": "Torrent stats"
+                    "GET /torrents/{index}/stats": "Torrent stats",
+                    // This is kind of not secure as it just reads any local file that it has access to,
+                    // or any URL, but whatever, ok for our purposes / thread model.
+                    "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file."
                 }
             });
             move || json_response(&api_list)
@@ -234,10 +259,55 @@ impl HttpApi {
             }
         });
 
-        let torrent_list = warp::path!("torrents").map({
+        let torrent_list = warp::get().and(warp::path("torrents")).map({
             let inner = inner.clone();
             move || json_response(inner.api_torrent_list())
         });
+
+        #[derive(Deserialize)]
+        struct TorrentAddQueryParams {
+            overwrite: Option<bool>,
+        }
+
+        let torrent_add = warp::post()
+            .and(warp::path("torrents"))
+            .and(warp::body::bytes())
+            .and(warp::query())
+            .and_then({
+                let inner = inner.clone();
+                use warp::http::Response;
+                fn make_response(status: u16, body: String) -> Response<String> {
+                    Response::builder().status(status).body(body).unwrap()
+                }
+                move |body: Bytes, params: TorrentAddQueryParams| {
+                    let inner = inner.clone();
+                    async move {
+                        let url = match String::from_utf8(body.to_vec()) {
+                            Ok(str) => str,
+                            Err(_) => {
+                                return Ok::<_, warp::Rejection>(make_response(
+                                    400,
+                                    "invalid utf-8".into(),
+                                ))
+                            }
+                        };
+                        let opts = AddTorrentOptions {
+                            overwrite: params.overwrite.unwrap_or(false),
+                            ..Default::default()
+                        };
+                        let idx = inner
+                            .api_add_torrent(url, Some(opts))
+                            .await
+                            .context("error calling HttpApi::api_add_torrent");
+                        match idx {
+                            Ok(idx) => {
+                                return Ok(make_response(200, format!("{}", idx)));
+                            }
+                            Err(e) => return Ok(make_response(400, format!("{:#}", e))),
+                        }
+                    }
+                }
+            });
 
         let torrent_details = warp::path!("torrents" / usize).map({
             let inner = inner.clone();
@@ -258,12 +328,13 @@ impl HttpApi {
         });
 
         let router = api_list
-            .or(torrent_list)
             .or(dht_stats)
             .or(dht_routing_table)
             .or(torrent_details)
             .or(torrent_dump_haves)
-            .or(torrent_dump_stats);
+            .or(torrent_dump_stats)
+            .or(torrent_add)
+            .or(torrent_list);
 
         warp::serve(router).run(addr).await;
         Ok(())

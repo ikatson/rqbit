@@ -72,6 +72,18 @@ impl ChunkTracker {
         self.needed_pieces.set(index.get() as usize, false)
     }
 
+    pub fn iter_needed_pieces(&self) -> impl Iterator<Item = usize> + '_ {
+        // Try the last piece first. Often important information is stored in the last piece.
+        // Then sequentially one by one. This is not super sophisticated but sometimes helps.
+        let last_piece_id = self.lengths.last_piece_id().get() as usize;
+        self.needed_pieces
+            .get(last_piece_id..)
+            .unwrap()
+            .iter_ones()
+            .map(move |n| n + last_piece_id)
+            .chain(self.needed_pieces.get(..last_piece_id).unwrap().iter_ones())
+    }
+
     // None if wrong chunk
     // true if did something
     // false if didn't do anything

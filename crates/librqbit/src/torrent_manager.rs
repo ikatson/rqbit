@@ -14,7 +14,7 @@ use librqbit_core::{
     id20::Id20, lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
 };
-use log::{debug, info};
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
@@ -152,6 +152,10 @@ fn make_lengths<ByteBuf: AsRef<[u8]>>(
     Lengths::new(total_length, torrent.piece_length, None)
 }
 
+fn ensure_file_length(file: &mut File, length: u64) -> anyhow::Result<()> {
+    Ok(file.set_len(length)?)
+}
+
 impl TorrentManager {
     fn start<P: AsRef<Path>>(
         info: TorrentMetaV1Info<ByteString>,
@@ -198,14 +202,37 @@ impl TorrentManager {
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results = FileOps::<Sha1>::new(&info, &files, &lengths)
-            .initial_check(options.only_files.as_deref())?;
+        let initial_check_results = spawner.spawn_block_in_place(|| {
+            FileOps::<Sha1>::new(&info, &files, &lengths)
+                .initial_check(options.only_files.as_deref())
+        })?;
 
         info!(
             "Initial check results: have {}, needed {}",
             SF::new(initial_check_results.have_bytes),
             SF::new(initial_check_results.needed_bytes)
         );
+
+        spawner.spawn_block_in_place(|| {
+            for (file, (name, length)) in
+                files.iter().zip(info.iter_filenames_and_lengths().unwrap())
+            {
+                let now = Instant::now();
+                if let Err(err) = ensure_file_length(&mut file.lock(), length) {
+                    warn!(
+                        "Error setting length for file {:?} to {}: {:#?}",
+                        name, length, err
+                    );
+                } else {
+                    info!(
+                        "Set length for file {:?} to {} in {:?}",
+                        name,
+                        SF::new(length),
+                        now.elapsed()
+                    );
+                }
+            }
+        });
 
         let chunk_tracker = ChunkTracker::new(
             initial_check_results.needed_pieces,
