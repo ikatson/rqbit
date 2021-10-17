@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::Context;
-use clap::Clap;
+use clap::{ArgEnum, Clap};
 use librqbit::{
     http_api::HttpApi,
     peer_connection::PeerConnectionOptions,
@@ -11,7 +11,7 @@ use librqbit::{
 use log::info;
 use size_format::SizeFormatterBinary as SF;
 
-#[derive(Debug, Clap)]
+#[derive(Debug, ArgEnum)]
 enum LogLevel {
     Trace,
     Debug,
