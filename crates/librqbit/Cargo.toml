@@ -5,7 +5,7 @@ authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
 
 [features]
-default = ["sha1-openssl"]
+default = ["sha1-system"]
 sha1-system = ["sha1w/sha1-system"]
 sha1-openssl = ["sha1w/sha1-openssl"]
 sha1-rust = ["sha1w/sha1-openssl"]

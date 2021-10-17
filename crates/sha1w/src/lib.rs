@@ -83,7 +83,7 @@ impl ISha1 for Sha1System {
 
     fn finish(mut self) -> [u8; 20] {
         let result = self.inner.finish();
-        assert_eq!(result.len(), 20);
+        debug_assert_eq!(result.len(), 20);
         let mut result_arr = [0u8; 20];
         result_arr.copy_from_slice(&result);
         result_arr
