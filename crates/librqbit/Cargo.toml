@@ -5,10 +5,12 @@ authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
 
 [features]
-default = ["sha1-system"]
+default = ["sha1-system", "default-tls"]
 sha1-system = ["sha1w/sha1-system"]
 sha1-openssl = ["sha1w/sha1-openssl"]
-sha1-rust = ["sha1w/sha1-openssl"]
+sha1-rust = ["sha1w/sha1-rust"]
+default-tls = ["reqwest/default-tls"]
+rust-tls = ["reqwest/rustls-tls"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -28,7 +30,7 @@ serde_json = "1"
 anyhow = "1"
 
 regex = "1"
-reqwest = "0.11"
+reqwest = {version="0.11", default-features=false}
 urlencoding = "1"
 byteorder = "1"
 bincode = "1"

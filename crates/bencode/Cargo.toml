@@ -9,7 +9,7 @@ edition = "2018"
 default = ["sha1-system"]
 sha1-system = ["sha1w/sha1-system"]
 sha1-openssl = ["sha1w/sha1-openssl"]
-sha1-rust = ["sha1w/sha1-openssl"]
+sha1-rust = ["sha1w/sha1-rust"]
 
 [dependencies]
 serde = {version = "1", features=["derive"]}
