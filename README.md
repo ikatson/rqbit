@@ -14,8 +14,13 @@ So in short, it's not "feature complete", but rather "good enough for my use-cas
 
 Open sourced it just in case anyone might find it useful and/or wants to contribute.
 
-## Build
+## Installation
 
+Preferred method is to build yourself to get the latest changes, but there are pre-built binaries in [releases](https://github.com/ikatson/rqbit/releases).
+
+If someone wants to put rqbit into e.g. homebrew, PRs welcome :)
+
+## Build
 Just a regular Rust binary build process.
 
     cargo build --release
