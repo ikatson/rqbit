@@ -79,18 +79,18 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
             ))
         })?;
 
-        buf = &buf.get(1..).ok_or_else(|| {
+        buf = buf.get(1..).ok_or_else(|| {
             MessageDeserializeError::Other(anyhow::anyhow!(
                 "cannot deserialize extended message: buffer empty"
             ))
         })?;
 
         match emsg_id {
-            0 => Ok(ExtendedMessage::Handshake(from_bytes(&buf)?)),
+            0 => Ok(ExtendedMessage::Handshake(from_bytes(buf)?)),
             MY_EXTENDED_UT_METADATA => {
-                Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(&buf)?))
+                Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(buf)?))
             }
-            _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(&buf)?)),
+            _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(buf)?)),
         }
     }
 }

@@ -539,7 +539,7 @@ mod tests {
             transaction_id,
             version,
             ip,
-        } = dbg!(bprotocol::deserialize_message::<ByteBuf>(&data).unwrap());
+        } = dbg!(bprotocol::deserialize_message::<ByteBuf>(data).unwrap());
         let mut buf = Vec::new();
         bprotocol::serialize_message(&mut buf, transaction_id, version, ip, kind).unwrap();
 

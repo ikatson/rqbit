@@ -103,7 +103,7 @@ impl CloneToOwned for ByteString {
 
 impl<'a> std::convert::AsRef<[u8]> for ByteBuf<'a> {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        self.0
     }
 }
 
@@ -117,7 +117,7 @@ impl<'a> std::ops::Deref for ByteBuf<'a> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.0
     }
 }
 

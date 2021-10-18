@@ -4,8 +4,8 @@ mod persistence;
 mod routing_table;
 mod utils;
 
-pub use dht::DhtStats;
-pub use dht::{Dht, DhtConfig};
+pub use crate::dht::DhtStats;
+pub use crate::dht::{Dht, DhtConfig};
 pub use librqbit_core::id20::Id20;
 pub use persistence::{PersistentDht, PersistentDhtConfig};
 

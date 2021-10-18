@@ -630,6 +630,6 @@ mod tests {
     fn serialize_deserialize_routing_table() {
         let table = generate_table(Some(1000));
         let v = serde_json::to_vec(&table).unwrap();
-        let detable: RoutingTable = serde_json::from_reader(Cursor::new(v)).unwrap();
+        let _: RoutingTable = serde_json::from_reader(Cursor::new(v)).unwrap();
     }
 }

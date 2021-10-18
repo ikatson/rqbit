@@ -73,12 +73,12 @@ impl<W: std::io::Write> BencodeSerializer<W> {
     fn write_raw(&mut self, buf: &[u8]) -> Result<(), SerError> {
         self.writer
             .write_all(buf)
-            .map_err(|e| SerError::from_err_with_ser(e, &self))
+            .map_err(|e| SerError::from_err_with_ser(e, self))
     }
     fn write_fmt(&mut self, fmt: core::fmt::Arguments<'_>) -> Result<(), SerError> {
         self.writer
             .write_fmt(fmt)
-            .map_err(|e| SerError::from_err_with_ser(e, &self))
+            .map_err(|e| SerError::from_err_with_ser(e, self))
     }
     fn write_byte(&mut self, byte: u8) -> Result<(), SerError> {
         self.write_raw(&[byte])
@@ -299,7 +299,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     fn serialize_bool(self, _: bool) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
             "bencode doesn't support booleans",
-            &self,
+            self,
         ))
     }
 
@@ -338,21 +338,21 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     fn serialize_f32(self, _: f32) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
             "bencode doesn't support f32",
-            &self,
+            self,
         ))
     }
 
     fn serialize_f64(self, _: f64) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
             "bencode doesn't support f32",
-            &self,
+            self,
         ))
     }
 
     fn serialize_char(self, _: char) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
             "bencode doesn't support chars",
-            &self,
+            self,
         ))
     }
 
@@ -367,7 +367,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
             "bencode doesn't support None",
-            &self,
+            self,
         ))
     }
 
@@ -381,7 +381,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
             "bencode doesn't support Rust unit ()",
-            &self,
+            self,
         ))
     }
 

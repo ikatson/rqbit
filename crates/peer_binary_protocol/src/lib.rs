@@ -576,7 +576,7 @@ mod tests {
         use std::fs::File;
         use std::io::Read;
         let mut buf = Vec::new();
-        File::open("resources/test/extended-handshake.bin")
+        File::open("../librqbit/resources/test/extended-handshake.bin")
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();

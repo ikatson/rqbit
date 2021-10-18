@@ -95,7 +95,10 @@ mod tests {
     static LOG_INIT: Once = Once::new();
 
     fn init_logging() {
-        LOG_INIT.call_once(pretty_env_logger::init)
+        #[allow(unused_must_use)]
+        LOG_INIT.call_once(|| {
+            pretty_env_logger::try_init();
+        })
     }
 
     #[tokio::test]

@@ -294,7 +294,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         if result_buf.len() < chunk_info.size as usize {
             anyhow::bail!("read_chunk(): not enough capacity in the provided buffer")
         }
-        let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
+        let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
         let mut buf = result_buf;
 
         for (file_idx, file_len) in self.torrent.iter_file_lengths()?.enumerate() {
@@ -349,7 +349,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         ByteBuf: AsRef<[u8]>,
     {
         let mut buf = data.block.as_ref();
-        let mut absolute_offset = self.lengths.chunk_absolute_offset(&chunk_info);
+        let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
 
         for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths()?.enumerate() {
             if absolute_offset > file_len {

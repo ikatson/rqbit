@@ -77,7 +77,7 @@ impl<'de> Deserialize<'de> for Id20 {
                     return Err(E::invalid_length(20, &self));
                 }
                 let mut buf = [0u8; 20];
-                buf.copy_from_slice(&v);
+                buf.copy_from_slice(v);
                 Ok(Id20(buf))
             }
         }
