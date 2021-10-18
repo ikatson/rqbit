@@ -1,0 +1,53 @@
+name: Rust
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build release
+      run:
+        cargo build --release
+    - uses: softprops/action-gh-release@v1
+      with:
+        body: This release and its artifacts were built with a GitHub action
+        files: |
+          target/release/rqbit.exe
+
+  cross-compile-on-macos:
+    runs-on: macos-11
+    steps:
+    - uses: actions/checkout@v2
+    - name: install linux cross compiler
+      run:
+        brew tap messense/macos-cross-toolchains &&
+        brew install x86_64-unknown-linux-gnu
+
+    - name: Build release linux x86_64 binary
+      run:
+        rustup target install x86_64-unknown-linux-gnu &&
+        make release-linux &&
+        mv target/x86_64-unknown-linux-gnu/release/rqbit target/release/rqbit-linux-static-x86_64
+
+    - name: Build release OSX universal binary
+      run:
+        rustup target install aarch64-apple-darwin &&
+        cargo build --release &&
+        cargo build --release --target aarch64-apple-darwin &&
+        lipo ./target/release/rqbit ./target/aarch64-apple-darwin/release/rqbit -create -output ./target/release/rqbit-osx-universal
+
+    - uses: softprops/action-gh-release@v1
+      with:
+        body: This release and its artifacts were built with a GitHub action
+        files: |
+          target/release/rqbit-osx-universal
+          target/release/rqbit-linux-static-x86_64
+

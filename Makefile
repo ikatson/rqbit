@@ -34,18 +34,29 @@ release-windows:
 	# brew install mingw-w64
 	cargo build --target x86_64-pc-windows-gnu --release
 
+target/openssl-linux/lib/libssl.a:
+	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/ && \
+	mkdir -p "$${OPENSSL_ROOT}"/src && \
+	cd "$${OPENSSL_ROOT}"/src/ && \
+	curl -LO https://www.openssl.org/source/openssl-3.0.0.tar.gz && \
+	tar xf openssl-3.0.0.tar.gz && \
+	cd openssl-3.0.0 && \
+	./Configure linux-generic64 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=x86_64-unknown-linux-gnu- && \
+	make -j && \
+	make install_sw
+
 @PHONY: release-linux
-release-linux:
+release-linux: target/openssl-linux/lib/libssl.a
     # prereqs:
     # brew tap messense/macos-cross-toolchains
 	# brew install x86_64-unknown-linux-gnu
 	# cross-compile openssl with "no-shared", e.g.
-	# ./Configure linux-generic64 --prefix=$HOME/projects/2021-18-linux-cross/prefix/ --openssldir=$HOME/projects/2021-18-linux-cross/prefix/ --cross-compile-prefix=x86_64-unknown-linux-gnu- no-shared
+	# ./Configure linux-generic64 --prefix=$(PWD)/target/openssl-linux/ --openssldir=$(PWD)/target/openssl-linux/ --cross-compile-prefix=x86_64-unknown-linux-gnu- no-shared
 	CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc \
 	CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++ \
 	AR_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-ar \
 	CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-unknown-linux-gnu-gcc \
-	OPENSSL_DIR=/Users/igor/projects/2021-18-linux-cross/prefix \
+	OPENSSL_DIR=$(PWD)/target/openssl-linux/ \
 	cargo build --release --target=x86_64-unknown-linux-gnu
 
 
