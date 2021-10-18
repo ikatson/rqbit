@@ -74,8 +74,8 @@ Use a regex here to select files by their names.
 Below points are all easily fixable, PRs welcome.
 
 - The CLI support only one mode of operation: download one torrent to a given folder.
-- If you try to run multiple instances, there's some port conflicts (already listening on port). This happens because DHT stores persistence information on disk, and that includes the port it last listened on. So all instances try to listen on the same port. Which means we need to add support for managing multiple torrents rather than trying to run the client multiple times. Or at least add a switch like --disable-dht-persistence.
-- HTTP API is rudimentary, mostly for looking at stats. E.g. you can't add a torrent through it.
+- If you try to run multiple instances, there's some port conflicts (already listening on port). This happens because DHT stores persistence information on disk, and that includes the port it last listened on.
+  To work around this either use ```--disable-dht-persistence``` flag on the second (3rd, etc) instance of rqbit, or add the other torrent with HTTP API like this ```curl -d 'magnet:?...' http://127.0.0.1:3030/torrents```
 - Only supports BitTorrent V1 over TCP
 - As this was created for personal needs, and for educational purposes, documentation, commit message quality etc. leave a lot to be desired.
 - Doesn't survive switching networks, i.e. doesn't reconnect to a peer once the TCP connection is closed.
@@ -105,6 +105,22 @@ By default it listens on http://127.0.0.1:3030.
             "GET /torrents": "List torrents (default torrent is 0)",
             "GET /torrents/{index}": "Torrent details",
             "GET /torrents/{index}/haves": "The bitfield of have pieces",
-            "GET /torrents/{index}/stats": "Torrent stats"
+            "GET /torrents/{index}/stats": "Torrent stats",
+            "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file."
         }
     }
+
+### Add torrent through HTTP API
+
+```curl -d 'magnet:?...' http://127.0.0.1:3030/torrents```
+
+OR
+
+```curl -d 'http://.../file.torrent' http://127.0.0.1:3030/torrents```
+
+OR
+
+```curl -d '/some/local/file.torrent' http://127.0.0.1:3030/torrents```
+
+Supported query parameters:
+- overwrite=true|false

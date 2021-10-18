@@ -383,7 +383,7 @@ where
             MSGID_HAVE => {
                 let expected_len = 4;
                 match rest.get(..expected_len as usize) {
-                    Some(h) => Ok((Message::Have(BE::read_u32(&h)), PREAMBLE_LEN + expected_len)),
+                    Some(h) => Ok((Message::Have(BE::read_u32(h)), PREAMBLE_LEN + expected_len)),
                     None => {
                         let missing = expected_len - rest.len();
                         Err(MessageDeserializeError::NotEnoughData(missing, "have"))
@@ -414,7 +414,7 @@ where
                 let expected_len = 12;
                 match rest.get(..expected_len as usize) {
                     Some(b) => {
-                        let request = decoder_config.deserialize::<Request>(&b).unwrap();
+                        let request = decoder_config.deserialize::<Request>(b).unwrap();
                         Ok((Message::Request(request), PREAMBLE_LEN + expected_len))
                     }
                     None => {
@@ -435,7 +435,7 @@ where
                 let expected_len = len_prefix as usize - 9 + 8;
                 match rest.get(..expected_len) {
                     Some(b) => Ok((
-                        Message::Piece(Piece::deserialize(&b)),
+                        Message::Piece(Piece::deserialize(b)),
                         PREAMBLE_LEN + expected_len,
                     )),
                     None => Err(MessageDeserializeError::NotEnoughData(
@@ -456,7 +456,7 @@ where
                 let expected_len = len_prefix as usize - 1;
                 match rest.get(..expected_len) {
                     Some(b) => Ok((
-                        Message::Extended(ExtendedMessage::deserialize(&b)?),
+                        Message::Extended(ExtendedMessage::deserialize(b)?),
                         PREAMBLE_LEN + expected_len,
                     )),
                     None => Err(MessageDeserializeError::NotEnoughData(
@@ -520,7 +520,7 @@ impl<'a> Handshake<'a> {
             ))?;
         Ok((
             Self::bopts()
-                .deserialize(&hbuf)
+                .deserialize(hbuf)
                 .map_err(|e| MessageDeserializeError::Other(e.into()))?,
             expected_len,
         ))
