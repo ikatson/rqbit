@@ -17,6 +17,7 @@ jobs:
     - name: Build
       run: cargo build --release
     - name: Run tests
+      run: cargo test --verbose
     
   build-osx:
     runs-on: macos-11
