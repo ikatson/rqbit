@@ -24,7 +24,8 @@ jobs:
     - uses: actions/checkout@v2
     - name: Build
       run: cargo build --release
-    - name: Run tests    
+    - name: Run tests   
+      run: cargo test --verbose
     
   build-linux:
 
