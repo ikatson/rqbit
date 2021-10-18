@@ -14,19 +14,15 @@ jobs:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --release
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
     
   build-osx:
     runs-on: macos-11
     steps:
     - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --release
-    - name: Run tests   
-      run: cargo test --verbose
+    - name: Run tests
+      run: cargo test
     
   build-linux:
 
@@ -34,7 +30,5 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --release
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
