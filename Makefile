@@ -39,13 +39,14 @@ release-linux:
     # prereqs:
     # brew tap messense/macos-cross-toolchains
 	# brew install x86_64-unknown-linux-gnu
-	# features are so that we don't need to cross-compile openssl
-	export CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc && \
-	export CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++ && \
-	export AR_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-ar && \
-	export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-unknown-linux-gnu-gcc && \
-	cargo build --release --target=x86_64-unknown-linux-gnu --no-default-features \
-		--features=sha1-rust,rust-tls
+	# cross-compile openssl with "no-shared", e.g.
+	# ./Configure linux-generic64 --prefix=$HOME/projects/2021-18-linux-cross/prefix/ --openssldir=$HOME/projects/2021-18-linux-cross/prefix/ --cross-compile-prefix=x86_64-unknown-linux-gnu- no-shared
+	CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc \
+	CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++ \
+	AR_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-ar \
+	CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-unknown-linux-gnu-gcc \
+	OPENSSL_DIR=/Users/igor/projects/2021-18-linux-cross/prefix \
+	cargo build --release --target=x86_64-unknown-linux-gnu
 
 
 @PHONY: release-all
