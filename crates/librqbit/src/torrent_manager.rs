@@ -214,9 +214,19 @@ impl TorrentManager {
         );
 
         spawner.spawn_block_in_place(|| {
-            for (file, (name, length)) in
-                files.iter().zip(info.iter_filenames_and_lengths().unwrap())
+            for (idx, (file, (name, length))) in files
+                .iter()
+                .zip(info.iter_filenames_and_lengths().unwrap())
+                .enumerate()
             {
+                if options
+                    .only_files
+                    .as_ref()
+                    .map(|v| !v.contains(&idx))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
                 let now = Instant::now();
                 if let Err(err) = ensure_file_length(&mut file.lock(), length) {
                     warn!(

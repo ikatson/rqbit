@@ -20,6 +20,8 @@ pub struct ChunkTracker {
     have: BF,
 
     lengths: Lengths,
+
+    priority_piece_ids: Vec<usize>,
 }
 
 // TODO: this should be redone from "have" pieces, not from "needed" pieces.
@@ -55,11 +57,20 @@ pub enum ChunkMarkingResult {
 
 impl ChunkTracker {
     pub fn new(needed_pieces: BF, have_pieces: BF, lengths: Lengths) -> Self {
+        // TODO: ideally this needs to be a list based on needed files, e.g.
+        // last needed piece for each file. But let's keep simple for now.
+        let last_needed_piece_id = needed_pieces.iter_ones().rev().next();
+
+        // The last pieces first. Often important information is stored in the last piece.
+        // E.g. if it's a video file, than the last piece often contains some index, or just
+        // players look into it, and it's better be there.
+        let priority_piece_ids = last_needed_piece_id.into_iter().collect();
         Self {
             chunk_status: compute_chunk_status(&lengths, &needed_pieces),
             needed_pieces,
             lengths,
             have: have_pieces,
+            priority_piece_ids,
         }
     }
     pub fn get_needed_pieces(&self) -> &BF {
@@ -73,15 +84,15 @@ impl ChunkTracker {
     }
 
     pub fn iter_needed_pieces(&self) -> impl Iterator<Item = usize> + '_ {
-        // Try the last piece first. Often important information is stored in the last piece.
-        // Then sequentially one by one. This is not super sophisticated but sometimes helps.
-        let last_piece_id = self.lengths.last_piece_id().get() as usize;
-        self.needed_pieces
-            .get(last_piece_id..)
-            .unwrap()
-            .iter_ones()
-            .map(move |n| n + last_piece_id)
-            .chain(self.needed_pieces.get(..last_piece_id).unwrap().iter_ones())
+        self.priority_piece_ids
+            .iter()
+            .copied()
+            .filter(move |piece_id| self.needed_pieces[*piece_id])
+            .chain(
+                self.needed_pieces
+                    .iter_ones()
+                    .filter(move |id| !self.priority_piece_ids.contains(id)),
+            )
     }
 
     // None if wrong chunk
