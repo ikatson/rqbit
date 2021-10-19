@@ -1,4 +1,4 @@
-name: Rust
+name: Release binaries for all platforms
 
 on:
   push:
