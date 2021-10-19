@@ -49,7 +49,7 @@ struct Opts {
     overwrite: bool,
 
     /// Only list the torrent metadata contents, don't do anything else.
-    #[clap(short, long)]
+    #[clap(short = "l", long)]
     list: bool,
 
     /// The loglevel
