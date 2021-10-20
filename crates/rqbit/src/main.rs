@@ -163,6 +163,16 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         ..Default::default()
     };
 
+    let http_api = {
+        let http_api = HttpApi::new(session.clone());
+        spawn("HTTP API", {
+            let http_api_listen_addr = opts.http_api_listen_addr;
+            let http_api = http_api.clone();
+            async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
+        });
+        http_api
+    };
+
     let handle = match session
         .add_torrent(opts.torrent_path, Some(torrent_opts))
         .await
@@ -172,14 +182,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         None => return Ok(()),
     };
 
-    {
-        let http_api = HttpApi::new(session.clone());
-        http_api.add_mgr(handle.clone());
-        spawn("HTTP API", {
-            let http_api_listen_addr = opts.http_api_listen_addr;
-            async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
-        });
-    };
+    http_api.add_mgr(handle.clone());
 
     spawn("Stats printer", {
         let session = session.clone();
