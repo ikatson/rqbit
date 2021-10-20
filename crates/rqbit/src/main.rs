@@ -84,6 +84,10 @@ struct Opts {
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
     #[clap(long = "peer-connect-timeout")]
     peer_connect_timeout: Option<ParsedDuration>,
+
+    /// How many threads to spawn for the executor.
+    #[clap(short = 't', long)]
+    worker_threads: Option<usize>,
 }
 
 fn init_logging(opts: &Opts) {
@@ -118,7 +122,13 @@ fn main() -> anyhow::Result<()> {
             BlockingSpawner::new(false),
         ),
         false => (
-            tokio::runtime::Builder::new_multi_thread(),
+            {
+                let mut b = tokio::runtime::Builder::new_multi_thread();
+                if let Some(e) = opts.worker_threads {
+                    b.worker_threads(e);
+                }
+                b
+            },
             BlockingSpawner::new(true),
         ),
     };
