@@ -2,6 +2,7 @@ pub mod chunk_tracker;
 pub mod dht_utils;
 pub mod file_ops;
 pub mod http_api;
+pub mod http_api_client;
 pub mod peer_connection;
 pub mod peer_handler;
 pub mod peer_info_reader;

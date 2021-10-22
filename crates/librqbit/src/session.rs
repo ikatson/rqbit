@@ -115,7 +115,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     Ok(only_files)
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AddTorrentOptions {
     pub only_files_regex: Option<String>,
     pub overwrite: bool,
@@ -177,7 +177,7 @@ impl Session {
     }
     pub async fn add_torrent(
         &self,
-        url: String,
+        url: &str,
         opts: Option<AddTorrentOptions>,
     ) -> anyhow::Result<Option<TorrentManagerHandle>> {
         // Magnet links are different in that we first need to discover the metadata.
@@ -186,7 +186,7 @@ impl Session {
             let Magnet {
                 info_hash,
                 trackers,
-            } = Magnet::parse(&url).context("provided path is not a valid magnet URL")?;
+            } = Magnet::parse(url).context("provided path is not a valid magnet URL")?;
 
             let dht_rx = self
                 .dht
@@ -230,9 +230,9 @@ impl Session {
             .await
         } else {
             let torrent = if url.starts_with("http://") || url.starts_with("https://") {
-                torrent_from_url(&url).await?
+                torrent_from_url(url).await?
             } else {
-                torrent_from_file(&url)?
+                torrent_from_file(url)?
             };
             let dht_rx = match self.dht.as_ref() {
                 Some(dht) => Some(dht.get_peers(torrent.info_hash).await?),

@@ -27,13 +27,17 @@ Just a regular Rust binary build process.
 
 ## Usage quick start
 
-Assuming you are downloading to ~/Downloads
+### Optional - start the server
 
-    rqbit 'magnet:?....' ~/Downloads
+Assuming you are downloading to ~/Downloads.
 
-or
+    rqbit server start ~/Downloads
 
-    rqbit /some/file.torrent ~/Downloads
+### Download torrents
+
+Assuming you are downloading to ~/Downloads. If the server is already started, ```-o ~/Downloads``` can be omitted.
+
+    rqbit download -o ~/Downloads 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
 
 ## Useful options
 
@@ -73,12 +77,9 @@ Use a regex here to select files by their names.
 ### Bugs, missing features and other caveats
 Below points are all easily fixable, PRs welcome.
 
-- The CLI support only one mode of operation: download one torrent to a given folder.
-- If you try to run multiple instances, there's some port conflicts (already listening on port). This happens because DHT stores persistence information on disk, and that includes the port it last listened on.
-  To work around this either use ```--disable-dht-persistence``` flag on the second (3rd, etc) instance of rqbit, or add the other torrent with HTTP API like this ```curl -d 'magnet:?...' http://127.0.0.1:3030/torrents```
+- Doesn't survive switching networks, i.e. doesn't reconnect to a peer once the TCP connection is closed.
 - Only supports BitTorrent V1 over TCP
 - As this was created for personal needs, and for educational purposes, documentation, commit message quality etc. leave a lot to be desired.
-- Doesn't survive switching networks, i.e. doesn't reconnect to a peer once the TCP connection is closed.
 
 ## Code organization
 - crates/rqbit - main binary

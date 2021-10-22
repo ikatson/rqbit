@@ -1,17 +1,18 @@
-use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::Context;
-use clap::{ArgEnum, Clap};
+use clap::{ArgEnum, Parser};
 use librqbit::{
     http_api::HttpApi,
+    http_api_client,
     peer_connection::PeerConnectionOptions,
     session::{AddTorrentOptions, ManagedTorrentState, Session, SessionOptions},
     spawn_utils::{spawn, BlockingSpawner},
 };
-use log::info;
+use log::{error, info, warn};
 use size_format::SizeFormatterBinary as SF;
 
-#[derive(Debug, ArgEnum)]
+#[derive(Debug, Clone, Copy, ArgEnum)]
 enum LogLevel {
     Trace,
     Debug,
@@ -30,28 +31,9 @@ impl FromStr for ParsedDuration {
     }
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version, author, about)]
 struct Opts {
-    /// The filename or URL of the torrent. If URL, http/https/magnet are supported.
-    torrent_path: String,
-
-    /// The output folder to write to. If not exists, it will be created.
-    output_folder: String,
-
-    /// If set, only the file whose filename matching this regex will
-    /// be downloaded
-    #[clap(short = 'r', long = "filename-re")]
-    only_files_matching_regex: Option<String>,
-
-    /// Set if you are ok to write on top of existing files
-    #[clap(long)]
-    overwrite: bool,
-
-    /// Only list the torrent metadata contents, don't do anything else.
-    #[clap(short, long)]
-    list: bool,
-
     /// The loglevel
     #[clap(arg_enum, short = 'v')]
     log_level: Option<LogLevel>,
@@ -88,6 +70,58 @@ struct Opts {
     /// How many threads to spawn for the executor.
     #[clap(short = 't', long)]
     worker_threads: Option<usize>,
+
+    #[clap(subcommand)]
+    subcommand: SubCommand,
+}
+
+#[derive(Parser)]
+struct ServerStartOptions {
+    /// The output folder to write to. If not exists, it will be created.
+    output_folder: String,
+}
+
+#[derive(Parser)]
+struct ServerOpts {
+    #[clap(subcommand)]
+    subcommand: ServerSubcommand,
+}
+
+#[derive(Parser)]
+enum ServerSubcommand {
+    Start(ServerStartOptions),
+}
+
+#[derive(Parser)]
+struct DownloadOpts {
+    /// The filename or URL of the torrent. If URL, http/https/magnet are supported.
+    torrent_path: Vec<String>,
+
+    /// The output folder to write to. If not exists, it will be created.
+    #[clap(short = 'o', long)]
+    output_folder: Option<String>,
+
+    /// If set, only the file whose filename matching this regex will
+    /// be downloaded
+    #[clap(short = 'r', long = "filename-re")]
+    only_files_matching_regex: Option<String>,
+
+    /// Only list the torrent metadata contents, don't do anything else.
+    #[clap(short, long)]
+    list: bool,
+
+    /// Set if you are ok to write on top of existing files
+    #[clap(long)]
+    overwrite: bool,
+}
+
+// server start
+// download [--connect-to-existing] --output-folder(required) [file1] [file2]
+
+#[derive(Parser)]
+enum SubCommand {
+    Server(ServerOpts),
+    Download(DownloadOpts),
 }
 
 fn init_logging(opts: &Opts) {
@@ -159,46 +193,9 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         }),
     };
 
-    let session = Arc::new(
-        Session::new_with_opts(opts.output_folder.into(), spawner, sopts)
-            .await
-            .context("error initializing rqbit session")?,
-    );
-
-    let torrent_opts = AddTorrentOptions {
-        only_files_regex: opts.only_files_matching_regex,
-        overwrite: opts.overwrite,
-        list_only: opts.list,
-        force_tracker_interval: opts.force_tracker_interval.map(|d| d.0),
-        ..Default::default()
-    };
-
-    let http_api = {
-        let http_api = HttpApi::new(session.clone());
-        spawn("HTTP API", {
-            let http_api_listen_addr = opts.http_api_listen_addr;
-            let http_api = http_api.clone();
-            async move { http_api.make_http_api_and_run(http_api_listen_addr).await }
-        });
-        http_api
-    };
-
-    let handle = match session
-        .add_torrent(opts.torrent_path, Some(torrent_opts))
-        .await
-        .context("error adding torrent to session")?
-    {
-        Some(handle) => handle,
-        None => return Ok(()),
-    };
-
-    http_api.add_mgr(handle.clone());
-
-    spawn("Stats printer", {
-        let session = session.clone();
-        async move {
-            loop {
-                session.with_torrents(|torrents| {
+    let stats_printer = |session: Arc<Session>| async move {
+        loop {
+            session.with_torrents(|torrents| {
                     for (idx, torrent) in torrents.iter().enumerate() {
                         match &torrent.state {
                             ManagedTorrentState::Initializing => {
@@ -234,14 +231,114 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         }
                     }
                 });
-                tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    };
+
+    match &opts.subcommand {
+        SubCommand::Server(server_opts) => match &server_opts.subcommand {
+            ServerSubcommand::Start(start_opts) => {
+                let session = Arc::new(
+                    Session::new_with_opts(
+                        PathBuf::from(&start_opts.output_folder),
+                        spawner,
+                        sopts,
+                    )
+                    .await
+                    .context("error initializing rqbit session")?,
+                );
+                spawn("Stats printer", stats_printer(session.clone()));
+                let http_api = HttpApi::new(session);
+                let http_api_listen_addr = opts.http_api_listen_addr;
+                http_api.make_http_api_and_run(http_api_listen_addr).await
+            }
+        },
+        SubCommand::Download(download_opts) => {
+            if download_opts.torrent_path.is_empty() {
+                anyhow::bail!("you must provide at least one URL to download")
+            }
+            let http_api_url = format!("http://{}", opts.http_api_listen_addr);
+            let client = http_api_client::HttpApiClient::new(&http_api_url)?;
+            let torrent_opts = AddTorrentOptions {
+                only_files_regex: download_opts.only_files_matching_regex.clone(),
+                overwrite: download_opts.overwrite,
+                list_only: download_opts.list,
+                force_tracker_interval: opts.force_tracker_interval.map(|d| d.0),
+                output_folder: download_opts.output_folder.clone(),
+                ..Default::default()
+            };
+            let connect_to_existing = match client.validate_rqbit_server().await {
+                Ok(_) => {
+                    info!("Connected to HTTP API at {}, will call it instead of downloading within this process", client.base_url());
+                    true
+                }
+                Err(err) => {
+                    info!(
+                        "HTTP API at {} returned {:?}, will start the server within this process",
+                        client.base_url(),
+                        err
+                    );
+                    false
+                }
+            };
+            if connect_to_existing {
+                for torrent_url in &download_opts.torrent_path {
+                    match client.add_torrent(torrent_url, Some(torrent_opts.clone())).await {
+                        Ok(id) => info!("{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details", torrent_url, id, http_api_url, id),
+                        Err(err) => warn!("error adding {}: {:?}", torrent_url, err),
+                    }
+                }
+                Ok(())
+            } else {
+                let session = Arc::new(
+                    Session::new_with_opts(
+                        download_opts
+                            .output_folder
+                            .as_ref()
+                            .map(PathBuf::from)
+                            .context(
+                                "output_folder is required if can't connect to an existing server",
+                            )?,
+                        spawner,
+                        sopts,
+                    )
+                    .await
+                    .context("error initializing rqbit session")?,
+                );
+                spawn("Stats printer", stats_printer(session.clone()));
+                let http_api = HttpApi::new(session.clone());
+                let http_api_listen_addr = opts.http_api_listen_addr;
+                spawn(
+                    "HTTP API",
+                    http_api.clone().make_http_api_and_run(http_api_listen_addr),
+                );
+
+                let mut added = false;
+
+                for path in &download_opts.torrent_path {
+                    let handle = match session.add_torrent(path, Some(torrent_opts.clone())).await {
+                        Ok(Some(handle)) => {
+                            added = true;
+                            handle
+                        }
+                        Ok(None) => continue,
+                        Err(err) => {
+                            error!("error adding {:?}: {:?}", &path, err);
+                            continue;
+                        }
+                    };
+
+                    http_api.add_mgr(handle.clone());
+                }
+
+                if added {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                    }
+                } else {
+                    anyhow::bail!("no torrents were added")
+                }
             }
         }
-    });
-
-    handle
-        .wait_until_completed()
-        .await
-        .context("error waiting for torrent completion")?;
-    Ok(())
+    }
 }

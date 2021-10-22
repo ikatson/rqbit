@@ -134,7 +134,7 @@ impl ApiInternal {
     ) -> anyhow::Result<usize> {
         let handle = self
             .session
-            .add_torrent(url, opts)
+            .add_torrent(&url, opts)
             .await
             .context("error adding torrent")?
             .context("expected session.add_torrent() to return a handle")?;
@@ -209,6 +209,13 @@ fn json_or_404<T: Serialize>(idx: usize, v: Option<T>) -> warp::reply::Response 
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct TorrentAddQueryParams {
+    pub overwrite: Option<bool>,
+    pub output_folder: Option<String>,
+    pub only_files_regex: Option<String>,
+}
+
 impl HttpApi {
     pub fn new(session: Arc<Session>) -> Self {
         Self {
@@ -235,7 +242,8 @@ impl HttpApi {
                     // This is kind of not secure as it just reads any local file that it has access to,
                     // or any URL, but whatever, ok for our purposes / thread model.
                     "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file."
-                }
+                },
+                "server": "rqbit",
             });
             move || json_response(&api_list)
         });
@@ -264,11 +272,6 @@ impl HttpApi {
             move || json_response(inner.api_torrent_list())
         });
 
-        #[derive(Deserialize)]
-        struct TorrentAddQueryParams {
-            overwrite: Option<bool>,
-        }
-
         let torrent_add = warp::post()
             .and(warp::path("torrents"))
             .and(warp::body::bytes())
@@ -293,6 +296,8 @@ impl HttpApi {
                         };
                         let opts = AddTorrentOptions {
                             overwrite: params.overwrite.unwrap_or(false),
+                            only_files_regex: params.only_files_regex,
+                            output_folder: params.output_folder,
                             ..Default::default()
                         };
                         let idx = inner
