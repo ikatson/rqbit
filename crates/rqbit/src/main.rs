@@ -3,10 +3,13 @@ use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duratio
 use anyhow::Context;
 use clap::{ArgEnum, Parser};
 use librqbit::{
-    http_api::HttpApi,
+    http_api::{ApiAddTorrentResponse, HttpApi},
     http_api_client,
     peer_connection::PeerConnectionOptions,
-    session::{AddTorrentOptions, ManagedTorrentState, Session, SessionOptions},
+    session::{
+        AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState, Session,
+        SessionOptions,
+    },
     spawn_utils::{spawn, BlockingSpawner},
 };
 use log::{error, info, warn};
@@ -273,18 +276,29 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     true
                 }
                 Err(err) => {
-                    info!(
-                        "HTTP API at {} returned {:?}, will start the server within this process",
-                        client.base_url(),
-                        err
-                    );
+                    warn!("Error checking HTTP API at {}: {:}", client.base_url(), err);
                     false
                 }
             };
             if connect_to_existing {
                 for torrent_url in &download_opts.torrent_path {
-                    match client.add_torrent(torrent_url, Some(torrent_opts.clone())).await {
-                        Ok(id) => info!("{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details", torrent_url, id, http_api_url, id),
+                    match client
+                        .add_torrent(torrent_url, Some(torrent_opts.clone()))
+                        .await
+                    {
+                        Ok(ApiAddTorrentResponse { id, details }) => {
+                            if let Some(id) = id {
+                                info!("{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details", details.info_hash, id, http_api_url, id)
+                            }
+                            for file in details.files {
+                                info!(
+                                    "file {:?}, size {}{}",
+                                    file.name,
+                                    SF::new(file.length),
+                                    if file.included { "" } else { ", will skip" }
+                                )
+                            }
+                        }
                         Err(err) => warn!("error adding {}: {:?}", torrent_url, err),
                     }
                 }
@@ -317,11 +331,40 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
 
                 for path in &download_opts.torrent_path {
                     let handle = match session.add_torrent(path, Some(torrent_opts.clone())).await {
-                        Ok(Some(handle)) => {
-                            added = true;
-                            handle
-                        }
-                        Ok(None) => continue,
+                        Ok(v) => match v {
+                            AddTorrentResponse::AlreadyManaged(handle) => {
+                                info!(
+                                    "torrent {:?} is already managed, downloaded to {:?}",
+                                    handle.info_hash, handle.output_folder
+                                );
+                                continue;
+                            }
+                            AddTorrentResponse::ListOnly(ListOnlyResponse {
+                                info_hash: _,
+                                info,
+                                only_files,
+                            }) => {
+                                for (idx, (filename, len)) in
+                                    info.iter_filenames_and_lengths()?.enumerate()
+                                {
+                                    let included = match &only_files {
+                                        Some(files) => files.contains(&idx),
+                                        None => true,
+                                    };
+                                    info!(
+                                        "File {}, size {}{}",
+                                        filename.to_string()?,
+                                        SF::new(len),
+                                        if included { "" } else { ", will skip" }
+                                    )
+                                }
+                                continue;
+                            }
+                            AddTorrentResponse::Added(handle) => {
+                                added = true;
+                                handle
+                            }
+                        },
                         Err(err) => {
                             error!("error adding {:?}: {:?}", &path, err);
                             continue;
@@ -331,7 +374,9 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     http_api.add_mgr(handle.clone());
                 }
 
-                if added {
+                if download_opts.list {
+                    Ok(())
+                } else if added {
                     loop {
                         tokio::time::sleep(Duration::from_secs(60)).await;
                     }

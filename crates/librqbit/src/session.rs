@@ -8,12 +8,10 @@ use librqbit_core::{
     peer_id::generate_peer_id,
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
 };
-use log::{info, warn};
+use log::{debug, info, warn};
 use parking_lot::RwLock;
 use reqwest::Url;
 use tokio_stream::StreamExt;
-
-use size_format::SizeFormatterBinary as SF;
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
@@ -46,14 +44,19 @@ pub struct SessionLocked {
     torrents: Vec<ManagedTorrent>,
 }
 
+enum SessionLockedAddTorrentResult {
+    AlreadyManaged(ManagedTorrent),
+    Added(usize),
+}
+
 impl SessionLocked {
-    fn add_torrent(&mut self, torrent: ManagedTorrent) -> Option<usize> {
-        if self.torrents.contains(&torrent) {
-            return None;
+    fn add_torrent(&mut self, torrent: ManagedTorrent) -> SessionLockedAddTorrentResult {
+        if let Some(handle) = self.torrents.iter().find(|t| **t == torrent) {
+            return SessionLockedAddTorrentResult::AlreadyManaged(handle.clone());
         }
         let idx = self.torrents.len();
         self.torrents.push(torrent);
-        Some(idx)
+        SessionLockedAddTorrentResult::Added(idx)
     }
 }
 
@@ -125,6 +128,18 @@ pub struct AddTorrentOptions {
     pub force_tracker_interval: Option<Duration>,
 }
 
+pub struct ListOnlyResponse {
+    pub info_hash: Id20,
+    pub info: TorrentMetaV1Info<ByteString>,
+    pub only_files: Option<Vec<usize>>,
+}
+
+pub enum AddTorrentResponse {
+    AlreadyManaged(ManagedTorrent),
+    ListOnly(ListOnlyResponse),
+    Added(TorrentManagerHandle),
+}
+
 #[derive(Default)]
 pub struct SessionOptions {
     pub disable_dht: bool,
@@ -179,7 +194,7 @@ impl Session {
         &self,
         url: &str,
         opts: Option<AddTorrentOptions>,
-    ) -> anyhow::Result<Option<TorrentManagerHandle>> {
+    ) -> anyhow::Result<AddTorrentResponse> {
         // Magnet links are different in that we first need to discover the metadata.
         let opts = opts.unwrap_or_default();
         if url.starts_with("magnet:") {
@@ -278,15 +293,17 @@ impl Session {
         initial_peers: Vec<SocketAddr>,
         trackers: Vec<reqwest::Url>,
         opts: AddTorrentOptions,
-    ) -> anyhow::Result<Option<TorrentManagerHandle>> {
-        info!("Torrent info: {:#?}", &info);
+    ) -> anyhow::Result<AddTorrentResponse> {
+        debug!("Torrent info: {:#?}", &info);
         let only_files = if let Some(filename_re) = opts.only_files_regex {
             let only_files = compute_only_files(&info, &filename_re)?;
             for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
                 if !only_files.contains(&idx) {
                     continue;
                 }
-                info!("Will download {:?}", filename);
+                if !opts.list_only {
+                    info!("Will download {:?}", filename);
+                }
             }
             Some(only_files)
         } else {
@@ -294,20 +311,11 @@ impl Session {
         };
 
         if opts.list_only {
-            for (idx, (filename, len)) in info.iter_filenames_and_lengths()?.enumerate() {
-                let included = match &only_files {
-                    Some(files) => files.contains(&idx),
-                    None => true,
-                };
-                info!(
-                    "File {}, size {}{}",
-                    filename.to_string()?,
-                    SF::new(len),
-                    if included { "" } else { "will skip" }
-                )
-            }
-            info!("--list was passed, nothing to do, exiting.");
-            return Ok(None);
+            return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
+                info_hash,
+                info,
+                only_files,
+            }));
         }
 
         let output_folder = opts
@@ -321,13 +329,12 @@ impl Session {
             state: ManagedTorrentState::Initializing,
         };
 
-        if self.locked.write().add_torrent(managed_torrent).is_none() {
-            anyhow::bail!(
-                "torrent with info_hash {:?} that is downloaded to {:?} is already managed",
-                info_hash,
-                &output_folder
-            );
-        };
+        match self.locked.write().add_torrent(managed_torrent) {
+            SessionLockedAddTorrentResult::AlreadyManaged(managed) => {
+                return Ok(AddTorrentResponse::AlreadyManaged(managed))
+            }
+            SessionLockedAddTorrentResult::Added(_) => {}
+        }
 
         let mut builder = TorrentManagerBuilder::new(info, info_hash, output_folder.clone());
         builder
@@ -400,6 +407,6 @@ impl Session {
             });
         }
 
-        Ok(Some(handle))
+        Ok(AddTorrentResponse::Added(handle))
     }
 }

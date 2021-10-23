@@ -118,6 +118,9 @@ impl TorrentManagerHandle {
             false
         }
     }
+    pub fn only_files(&self) -> Option<&[usize]> {
+        self.manager.options.only_files.as_deref()
+    }
     pub fn add_peer(&self, addr: SocketAddr) -> bool {
         self.manager.state.add_peer_if_not_seen(addr)
     }
@@ -234,7 +237,7 @@ impl TorrentManager {
                         name, length, err
                     );
                 } else {
-                    info!(
+                    debug!(
                         "Set length for file {:?} to {} in {:?}",
                         name,
                         SF::new(length),

@@ -1,5 +1,9 @@
 use anyhow::Context;
+use buffers::ByteString;
 use dht::{Dht, DhtStats};
+use librqbit_core::id20::Id20;
+use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
+use log::warn;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -9,7 +13,7 @@ use warp::hyper::body::Bytes;
 use warp::hyper::Body;
 use warp::Filter;
 
-use crate::session::{AddTorrentOptions, Session};
+use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
@@ -70,16 +74,17 @@ struct TorrentListResponse {
     torrents: Vec<TorrentListResponseItem>,
 }
 
-#[derive(Serialize)]
-struct TorrentDetailsResponseFile {
-    name: Option<String>,
-    length: u64,
+#[derive(Serialize, Deserialize)]
+pub struct TorrentDetailsResponseFile {
+    pub name: String,
+    pub length: u64,
+    pub included: bool,
 }
 
-#[derive(Serialize)]
-struct TorrentDetailsResponse {
-    info_hash: String,
-    files: Vec<TorrentDetailsResponseFile>,
+#[derive(Serialize, Deserialize)]
+pub struct TorrentDetailsResponse {
+    pub info_hash: String,
+    pub files: Vec<TorrentDetailsResponseFile>,
 }
 
 #[derive(Serialize)]
@@ -89,6 +94,43 @@ struct StatsResponse {
     download_speed: Speed,
     all_time_download_speed: Speed,
     time_remaining: Option<Duration>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ApiAddTorrentResponse {
+    pub id: Option<usize>,
+    pub details: TorrentDetailsResponse,
+}
+
+fn make_torrent_details(
+    info_hash: &Id20,
+    info: &TorrentMetaV1Info<ByteString>,
+    only_files: Option<&[usize]>,
+) -> TorrentDetailsResponse {
+    let files = info
+        .iter_filenames_and_lengths()
+        .unwrap()
+        .enumerate()
+        .map(|(idx, (filename_it, length))| {
+            let name = match filename_it.to_string() {
+                Ok(s) => s,
+                Err(err) => {
+                    warn!("error reading filename: {:?}", err);
+                    "<INVALID NAME>".to_string()
+                }
+            };
+            let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
+            TorrentDetailsResponseFile {
+                name,
+                length,
+                included,
+            }
+        })
+        .collect();
+    TorrentDetailsResponse {
+        info_hash: info_hash.as_string(),
+        files,
+    }
 }
 
 impl ApiInternal {
@@ -113,32 +155,53 @@ impl ApiInternal {
 
     fn api_torrent_details(&self, idx: usize) -> Option<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
-        let info_hash = handle.torrent_state().info_hash().as_string();
-        let files = handle
-            .torrent_state()
-            .info()
-            .iter_filenames_and_lengths()
-            .unwrap()
-            .map(|(filename_it, length)| {
-                let name = filename_it.to_string().ok();
-                TorrentDetailsResponseFile { name, length }
-            })
-            .collect();
-        Some(TorrentDetailsResponse { info_hash, files })
+        let info_hash = handle.torrent_state().info_hash();
+        let only_files = handle.only_files();
+        Some(make_torrent_details(
+            &info_hash,
+            handle.torrent_state().info(),
+            only_files,
+        ))
     }
 
     async fn api_add_torrent(
         &self,
         url: String,
         opts: Option<AddTorrentOptions>,
-    ) -> anyhow::Result<usize> {
-        let handle = self
+    ) -> anyhow::Result<ApiAddTorrentResponse> {
+        let response = match self
             .session
             .add_torrent(&url, opts)
             .await
             .context("error adding torrent")?
-            .context("expected session.add_torrent() to return a handle")?;
-        Ok(self.add_mgr(handle))
+        {
+            AddTorrentResponse::AlreadyManaged(managed) => anyhow::bail!(
+                "{:?} is already managed, downloaded to {:?}",
+                managed.info_hash,
+                managed.output_folder
+            ),
+            AddTorrentResponse::ListOnly(ListOnlyResponse {
+                info_hash,
+                info,
+                only_files,
+            }) => ApiAddTorrentResponse {
+                id: None,
+                details: make_torrent_details(&info_hash, &info, only_files.as_deref()),
+            },
+            AddTorrentResponse::Added(handle) => {
+                let details = make_torrent_details(
+                    &handle.torrent_state().info_hash(),
+                    handle.torrent_state().info(),
+                    handle.only_files(),
+                );
+                let id = self.add_mgr(handle);
+                ApiAddTorrentResponse {
+                    id: Some(id),
+                    details,
+                }
+            }
+        };
+        Ok(response)
     }
 
     fn api_dht_stats(&self) -> Option<DhtStats> {
@@ -214,6 +277,7 @@ pub struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,
     pub output_folder: Option<String>,
     pub only_files_regex: Option<String>,
+    pub list_only: Option<bool>,
 }
 
 impl HttpApi {
@@ -279,7 +343,7 @@ impl HttpApi {
             .and_then({
                 let inner = inner.clone();
                 use warp::http::Response;
-                fn make_response(status: u16, body: String) -> Response<String> {
+                fn make_response<T>(status: u16, body: T) -> Response<T> {
                     Response::builder().status(status).body(body).unwrap()
                 }
                 move |body: Bytes, params: TorrentAddQueryParams| {
@@ -298,17 +362,16 @@ impl HttpApi {
                             overwrite: params.overwrite.unwrap_or(false),
                             only_files_regex: params.only_files_regex,
                             output_folder: params.output_folder,
+                            list_only: params.list_only.unwrap_or(false),
                             ..Default::default()
                         };
-                        let idx = inner
+                        match inner
                             .api_add_torrent(url, Some(opts))
                             .await
-                            .context("error calling HttpApi::api_add_torrent");
-                        match idx {
-                            Ok(idx) => {
-                                return Ok(make_response(200, format!("{}", idx)));
-                            }
-                            Err(e) => return Ok(make_response(400, format!("{:#}", e))),
+                            .context("error calling HttpApi::api_add_torrent")
+                        {
+                            Ok(response) => Ok(json_response(response)),
+                            Err(err) => Ok(make_response(400, format!("{:#?}", err).into())),
                         }
                     }
                 }

@@ -30,9 +30,9 @@ struct ApiRoot {
 }
 
 async fn json_response<T: serde::de::DeserializeOwned + std::any::Any>(
-    url: &reqwest::Url,
     response: reqwest::Response,
 ) -> anyhow::Result<T> {
+    let url = response.url().clone();
     let response = check_response(response).await?;
     let body = response.bytes().await?;
     let response: T = serde_json::from_slice(&body).with_context(|| {
@@ -59,7 +59,7 @@ impl HttpApiClient {
 
     pub async fn validate_rqbit_server(&self) -> anyhow::Result<()> {
         let response = self.client.get(self.base_url.clone()).send().await?;
-        let root: ApiRoot = json_response(&self.base_url, response).await?;
+        let root: ApiRoot = json_response(response).await?;
         if root.server == "rqbit" {
             return Ok(());
         }
@@ -70,12 +70,13 @@ impl HttpApiClient {
         &self,
         torrent: &str,
         opts: Option<AddTorrentOptions>,
-    ) -> anyhow::Result<usize> {
+    ) -> anyhow::Result<crate::http_api::ApiAddTorrentResponse> {
         let opts = opts.unwrap_or_default();
         let params = TorrentAddQueryParams {
             overwrite: Some(opts.overwrite),
             only_files_regex: opts.only_files_regex,
             output_folder: opts.output_folder,
+            list_only: Some(opts.list_only),
         };
         let qs = serde_urlencoded::to_string(&params).unwrap();
         let url = format!("{}torrents?{}", &self.base_url, qs);
@@ -87,6 +88,6 @@ impl HttpApiClient {
                 .await?,
         )
         .await?;
-        Ok(response.text().await?.parse::<usize>()?)
+        json_response(response).await
     }
 }
