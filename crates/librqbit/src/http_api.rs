@@ -52,7 +52,7 @@ impl Speed {
     fn new(mbps: f64) -> Self {
         Self {
             mbps,
-            human_readable: format!("{:.2}Mbps", mbps),
+            human_readable: format!("{:.2} MiB/s", mbps),
         }
     }
 }
@@ -221,7 +221,7 @@ impl ApiInternal {
         Some(StatsResponse {
             average_piece_download_time: snapshot.average_piece_download_time(),
             snapshot,
-            all_time_download_speed: (downloaded_mb * 8f64 / elapsed.as_secs_f64()).into(),
+            all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
             download_speed: estimator.download_mbps().into(),
             time_remaining: estimator.time_remaining(),
         })
