@@ -122,5 +122,8 @@ OR
 
 ```curl -d '/some/local/file.torrent' http://127.0.0.1:3030/torrents```
 
-Supported query parameters:
+Supported query parameters, all optional:
 - overwrite=true|false
+- only_files_regex - the regular expression string to match filenames
+- output_folder - the folder to download to. If not specified, defaults to the one that rqbit server started with
+- list_only=true|false - if you want to just list the files in the torrent instead of downloading
