@@ -276,6 +276,7 @@ fn json_or_404<T: Serialize>(idx: usize, v: Option<T>) -> warp::reply::Response 
 pub struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,
     pub output_folder: Option<String>,
+    pub sub_folder: Option<String>,
     pub only_files_regex: Option<String>,
     pub list_only: Option<bool>,
 }
@@ -362,6 +363,7 @@ impl HttpApi {
                             overwrite: params.overwrite.unwrap_or(false),
                             only_files_regex: params.only_files_regex,
                             output_folder: params.output_folder,
+                            sub_folder: params.sub_folder,
                             list_only: params.list_only.unwrap_or(false),
                             ..Default::default()
                         };

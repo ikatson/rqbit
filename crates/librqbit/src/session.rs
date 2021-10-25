@@ -124,6 +124,7 @@ pub struct AddTorrentOptions {
     pub overwrite: bool,
     pub list_only: bool,
     pub output_folder: Option<String>,
+    pub sub_folder: Option<String>,
     pub peer_opts: Option<PeerConnectionOptions>,
     pub force_tracker_interval: Option<Duration>,
 }
@@ -318,10 +319,12 @@ impl Session {
             }));
         }
 
+        let sub_folder = opts.sub_folder.map(PathBuf::from).unwrap_or_default();
         let output_folder = opts
             .output_folder
             .map(PathBuf::from)
-            .unwrap_or_else(|| self.output_folder.clone());
+            .unwrap_or_else(|| self.output_folder.clone())
+            .join(sub_folder.as_path());
 
         let managed_torrent = ManagedTorrent {
             info_hash,
