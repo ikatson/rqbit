@@ -181,10 +181,10 @@ impl ApiInternal {
                 managed.output_folder
             ),
             AddTorrentResponse::ListOnly(ListOnlyResponse {
-                                             info_hash,
-                                             info,
-                                             only_files,
-                                         }) => ApiAddTorrentResponse {
+                info_hash,
+                info,
+                only_files,
+            }) => ApiAddTorrentResponse {
                 id: None,
                 details: make_torrent_details(&info_hash, &info, only_files.as_deref()),
             },
@@ -325,7 +325,7 @@ impl HttpApi {
 
             // clippy suggests something that doesn't work here.
             #[allow(clippy::redundant_closure)]
-                move || match inner.dht.as_ref() {
+            move || match inner.dht.as_ref() {
                 Some(dht) => dht.with_routing_table(|r| json_response(r)),
                 None => not_found_response("DHT is off".into()),
             }
