@@ -68,7 +68,7 @@ impl SpeedEstimator {
 
         let downloaded_bytes_diff = downloaded_bytes - first.downloaded_bytes;
         let elapsed = instant - first.instant;
-        let bps = downloaded_bytes_diff as f64 / elapsed.as_secs_f64();
+        let bps = downloaded_bytes_diff as f64 * 8f64 / elapsed.as_secs_f64();
 
         let time_remaining_millis_rounded: u64 = if downloaded_bytes_diff > 0 {
             let time_remaining_secs = remaining_bytes as f64 / bps;

@@ -181,10 +181,10 @@ impl ApiInternal {
                 managed.output_folder
             ),
             AddTorrentResponse::ListOnly(ListOnlyResponse {
-                info_hash,
-                info,
-                only_files,
-            }) => ApiAddTorrentResponse {
+                                             info_hash,
+                                             info,
+                                             only_files,
+                                         }) => ApiAddTorrentResponse {
                 id: None,
                 details: make_torrent_details(&info_hash, &info, only_files.as_deref()),
             },
@@ -221,7 +221,7 @@ impl ApiInternal {
         Some(StatsResponse {
             average_piece_download_time: snapshot.average_piece_download_time(),
             snapshot,
-            all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
+            all_time_download_speed: (downloaded_mb * 8f64 / elapsed.as_secs_f64()).into(),
             download_speed: estimator.download_mbps().into(),
             time_remaining: estimator.time_remaining(),
         })
@@ -325,7 +325,7 @@ impl HttpApi {
 
             // clippy suggests something that doesn't work here.
             #[allow(clippy::redundant_closure)]
-            move || match inner.dht.as_ref() {
+                move || match inner.dht.as_ref() {
                 Some(dht) => dht.with_routing_table(|r| json_response(r)),
                 None => not_found_response("DHT is off".into()),
             }
@@ -355,7 +355,7 @@ impl HttpApi {
                                 return Ok::<_, warp::Rejection>(make_response(
                                     400,
                                     "invalid utf-8".into(),
-                                ))
+                                ));
                             }
                         };
                         let opts = AddTorrentOptions {
