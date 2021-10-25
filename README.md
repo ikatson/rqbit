@@ -16,8 +16,7 @@ Open sourced it just in case anyone might find it useful and/or wants to contrib
 
 ## Installation
 
-Preferred method is to build yourself to get the latest changes, but there are pre-built binaries in [releases](https://github.com/ikatson/rqbit/releases).
-
+There are pre-built binaries in [releases](https://github.com/ikatson/rqbit/releases).
 If someone wants to put rqbit into e.g. homebrew, PRs welcome :)
 
 ## Build
