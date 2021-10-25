@@ -52,7 +52,7 @@ impl Speed {
     fn new(mbps: f64) -> Self {
         Self {
             mbps,
-            human_readable: format!("{:.2}Mbps", mbps),
+            human_readable: format!("{:.2} MiB/s", mbps),
         }
     }
 }
@@ -355,7 +355,7 @@ impl HttpApi {
                                 return Ok::<_, warp::Rejection>(make_response(
                                     400,
                                     "invalid utf-8".into(),
-                                ))
+                                ));
                             }
                         };
                         let opts = AddTorrentOptions {
