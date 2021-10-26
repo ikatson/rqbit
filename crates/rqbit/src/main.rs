@@ -101,8 +101,16 @@ struct DownloadOpts {
     torrent_path: Vec<String>,
 
     /// The output folder to write to. If not exists, it will be created.
+    /// If not specified, would use the server's output folder. If there's no server
+    /// running, this is required.
     #[clap(short = 'o', long)]
     output_folder: Option<String>,
+
+    /// The sub folder within output folder to write to. Useful when you have
+    /// a server running with output_folder configured, and don't want to specify
+    /// the full path every time.
+    #[clap(short = 's', long)]
+    sub_folder: Option<String>,
 
     /// If set, only the file whose filename matching this regex will
     /// be downloaded
@@ -268,6 +276,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 list_only: download_opts.list,
                 force_tracker_interval: opts.force_tracker_interval.map(|d| d.0),
                 output_folder: download_opts.output_folder.clone(),
+                sub_folder: download_opts.sub_folder.clone(),
                 ..Default::default()
             };
             let connect_to_existing = match client.validate_rqbit_server().await {

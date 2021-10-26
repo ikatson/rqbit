@@ -324,7 +324,7 @@ impl Session {
             .output_folder
             .map(PathBuf::from)
             .unwrap_or_else(|| self.output_folder.clone())
-            .join(sub_folder.as_path());
+            .join(sub_folder);
 
         let managed_torrent = ManagedTorrent {
             info_hash,
