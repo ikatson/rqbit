@@ -82,12 +82,16 @@ impl Lengths {
                 piece_length
             );
         }
+        if total_length == 0 {
+            anyhow::bail!("torrent with 0 length")
+        }
+        let total_pieces = ceil_div_u64(total_length as u64, piece_length as u64) as u32;
         Ok(Self {
             chunk_length,
             piece_length,
             total_length,
             chunks_per_piece: ceil_div_u64(piece_length as u64, chunk_length as u64) as u32,
-            last_piece_id: ((total_length + 1) / piece_length as u64) as u32,
+            last_piece_id: total_pieces - 1,
             last_piece_length: last_element_size_u64(total_length, piece_length as u64) as u32,
         })
     }
@@ -246,6 +250,12 @@ mod tests {
     fn test_total_pieces() {
         let l = make_lengths();
         assert_eq!(l.total_pieces(), 4480);
+    }
+
+    #[test]
+    fn test_total_pieces_2() {
+        let l = Lengths::new(4148166656, 2097152, None).unwrap();
+        assert_eq!(l.total_pieces(), 1978);
     }
 
     #[test]

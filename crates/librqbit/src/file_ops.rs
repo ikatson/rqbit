@@ -78,6 +78,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut have_bytes = 0u64;
         let mut needed_bytes = 0u64;
 
+        #[derive(Debug)]
         struct CurrentFile<'a> {
             index: usize,
             fd: &'a Arc<Mutex<File>>,
@@ -132,6 +133,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             while piece_remaining > 0 {
                 let mut to_read_in_file =
                     std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
+
                 while to_read_in_file == 0 {
                     current_file = file_iterator
                         .next()
