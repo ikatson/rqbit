@@ -368,7 +368,7 @@ impl TorrentState {
 
     fn reserve_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
         if self.am_i_choked(peer_handle)? {
-            warn!("we are choked by {}, can't reserve next piece", peer_handle);
+            debug!("we are choked by {}, can't reserve next piece", peer_handle);
             return None;
         }
         let mut g = self.locked.write();
@@ -772,7 +772,7 @@ impl PeerHandler {
     }
 
     fn on_i_am_choked(&self, handle: PeerHandle) {
-        warn!("we are choked by {}", handle);
+        debug!("we are choked by {}", handle);
         self.state
             .locked
             .write()
@@ -804,7 +804,7 @@ impl PeerHandler {
         loop {
             match self.state.am_i_choked(handle) {
                 Some(true) => {
-                    warn!("we are choked by {}, can't reserve next piece", handle);
+                    debug!("we are choked by {}, can't reserve next piece", handle);
                     #[allow(unused_must_use)]
                     {
                         timeout(Duration::from_secs(60), notify.notified()).await;
