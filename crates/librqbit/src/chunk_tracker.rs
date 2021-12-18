@@ -14,7 +14,7 @@ pub struct ChunkTracker {
 
     // This has a bit set per each chunk (block) that we have written to the output file.
     // It doesn't mean it's valid yet. Used to track how much is left in each piece.
-    chunk_status: BF,
+    written_chunks: BF,
 
     // These are the pieces that we actually have, fully checked and downloaded.
     have: BF,
@@ -28,14 +28,14 @@ pub struct ChunkTracker {
 // Needed pieces are the ones we need to download, not necessarily the ones we have.
 // E.g. we might have more pieces, but the client asks to download only some files
 // partially.
-fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
+fn compute_written_chunks(lengths: &Lengths, have_pieces: &BF) -> BF {
     let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
     let mut chunk_bf = BF::from_vec(vec);
-    for piece_index in needed_pieces
+    for piece_index in have_pieces
         .get(0..lengths.total_pieces() as usize)
         .unwrap()
-        .iter_zeros()
+        .iter_ones()
     {
         let offset = piece_index * lengths.default_chunks_per_piece() as usize;
         let chunks_per_piece = lengths
@@ -66,7 +66,7 @@ impl ChunkTracker {
         // players look into it, and it's better be there.
         let priority_piece_ids = last_needed_piece_id.into_iter().collect();
         Self {
-            chunk_status: compute_chunk_status(&lengths, &needed_pieces),
+            written_chunks: compute_written_chunks(&lengths, &have_pieces),
             needed_pieces,
             lengths,
             have: have_pieces,
@@ -108,7 +108,7 @@ impl ChunkTracker {
         }
         // This will trigger the requesters to re-check each chunk in this piece.
         let chunk_range = self.lengths.chunk_range(index);
-        if !self.chunk_status.get(chunk_range)?.all() {
+        if !self.written_chunks.get(chunk_range)?.all() {
             self.needed_pieces.set(index.get() as usize, true);
         }
         Some(true)
@@ -117,7 +117,7 @@ impl ChunkTracker {
     pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) -> bool {
         info!("remarking piece={} as broken", index);
         self.needed_pieces.set(index.get() as usize, true);
-        self.chunk_status
+        self.written_chunks
             .get_mut(self.lengths.chunk_range(index))
             .map(|s| {
                 s.set_all(false);
@@ -132,7 +132,7 @@ impl ChunkTracker {
 
     pub fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {
         *self
-            .chunk_status
+            .written_chunks
             .get(chunk.absolute_index as usize)
             .unwrap()
     }
@@ -158,7 +158,7 @@ impl ChunkTracker {
             piece.block.as_ref().len() as u32,
         )?;
         let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
-        let chunk_range = self.chunk_status.get_mut(chunk_range).unwrap();
+        let chunk_range = self.written_chunks.get_mut(chunk_range).unwrap();
         if chunk_range.all() {
             return Some(ChunkMarkingResult::PreviouslyCompleted);
         }
