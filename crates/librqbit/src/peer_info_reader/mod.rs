@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use anyhow::Context;
 use bencode::from_bytes;
 use buffers::{ByteBuf, ByteString};
 use librqbit_core::{
@@ -173,7 +174,7 @@ impl PeerConnectionHandler for Handler {
                 self.result_tx
                     .lock()
                     .take()
-                    .ok_or_else(|| anyhow::anyhow!("oneshot is consumed"))?
+                    .context("oneshot is consumed")?
                     .send(info)
                     .map_err(|_| {
                         anyhow::anyhow!("torrent info deserialized, but consumer closed")

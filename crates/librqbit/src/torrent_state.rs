@@ -4,7 +4,7 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -28,10 +28,12 @@ use sha1w::Sha1;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Semaphore,
+        Notify, Semaphore,
     },
     time::timeout,
 };
+
+static PD: &str = "peer dropped";
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
@@ -109,8 +111,7 @@ impl PeerStates {
         None
     }
     pub fn try_get_live_mut(&mut self, handle: PeerHandle) -> anyhow::Result<&mut LivePeerState> {
-        self.get_live_mut(handle)
-            .ok_or_else(|| anyhow::anyhow!("peer dropped"))
+        self.get_live_mut(handle).context(PD)
     }
     pub fn add(
         &mut self,
@@ -689,8 +690,8 @@ impl PeerHandler {
                 );
             }
 
-            g.peers.clone_tx(peer_handle).ok_or_else(|| {
-                anyhow::anyhow!(
+            g.peers.clone_tx(peer_handle).with_context(|| {
+                format!(
                     "peer {} died, dropping chunk that it requested",
                     peer_handle
                 )
@@ -741,11 +742,11 @@ impl PeerHandler {
                 .read()
                 .peers
                 .clone_tx(handle)
-                .ok_or_else(|| anyhow::anyhow!("peer closed"))?;
+                .context(PD)?;
             tx.send(WriterRequest::Message(MessageOwned::Unchoke))
-                .context("peer dropped")?;
+                .context(PD)?;
             tx.send(WriterRequest::Message(MessageOwned::NotInterested))
-                .context("peer dropped")?;
+                .context(PD)?;
             return Ok(());
         }
 
@@ -763,9 +764,9 @@ impl PeerHandler {
             None => return Ok(()),
         };
         tx.send(WriterRequest::Message(MessageOwned::Unchoke))
-            .context("peer dropped")?;
+            .context(PD)?;
         tx.send(WriterRequest::Message(MessageOwned::Interested))
-            .context("peer dropped")?;
+            .context(PD)?;
 
         self.requester(handle).await?;
         Ok::<_, anyhow::Error>(())
@@ -791,24 +792,34 @@ impl PeerHandler {
 
     async fn requester(self, handle: PeerHandle) -> anyhow::Result<()> {
         let notify = match self.state.locked.read().peers.get_live(handle) {
-            Some(l) => l.have_notify.clone(),
+            Some(l) => Arc::downgrade(&l.have_notify),
             None => return Ok(()),
         };
 
-        // TODO: this might dangle, same below.
-        #[allow(unused_must_use)]
-        {
-            timeout(Duration::from_secs(60), notify.notified()).await;
+        async fn sleep_until_notified(n: Weak<Notify>) -> anyhow::Result<()> {
+            loop {
+                let n = n.upgrade().context(PD)?;
+                if timeout(Duration::from_secs(10), n.notified()).await.is_ok() {
+                    return Ok(());
+                }
+            }
         }
+
+        sleep_until_notified(notify.clone()).await?;
+
+        let (tx, sem) = {
+            let g = self.state.locked.read();
+            (
+                g.peers.clone_tx(handle).context(PD)?,
+                g.peers.get_live(handle).context(PD)?.requests_sem.clone(),
+            )
+        };
 
         loop {
             match self.state.am_i_choked(handle) {
                 Some(true) => {
                     debug!("we are choked by {}, can't reserve next piece", handle);
-                    #[allow(unused_must_use)]
-                    {
-                        timeout(Duration::from_secs(60), notify.notified()).await;
-                    }
+                    sleep_until_notified(notify.clone()).await?;
                     continue;
                 }
                 Some(false) => {}
@@ -830,24 +841,13 @@ impl PeerHandler {
                             piece
                         } else {
                             debug!("no pieces to request from {}", handle);
-                            #[allow(unused_must_use)]
-                            {
-                                timeout(Duration::from_secs(60), notify.notified()).await;
-                            }
+                            sleep_until_notified(notify.clone()).await?;
                             continue;
                         }
                     }
                 },
             };
 
-            let tx = match self.state.locked.read().peers.clone_tx(handle) {
-                Some(tx) => tx,
-                None => return Ok(()),
-            };
-            let sem = match self.state.locked.read().peers.get_live(handle) {
-                Some(live) => live.requests_sem.clone(),
-                None => return Ok(()),
-            };
             for chunk in self.state.lengths.iter_chunk_infos(next) {
                 if self.state.locked.read().chunks.is_chunk_downloaded(&chunk) {
                     continue;
@@ -876,7 +876,7 @@ impl PeerHandler {
                 sem.acquire().await?.forget();
 
                 tx.send(WriterRequest::Message(MessageOwned::Request(request)))
-                    .context("peer dropped")?;
+                    .context(PD)?;
             }
         }
     }

@@ -154,9 +154,9 @@ impl DhtState {
                 self.routing_table.mark_response(&response.id);
                 match request {
                     Request::FindNode(id) => {
-                        let nodes = response.nodes.ok_or_else(|| {
-                            anyhow::anyhow!("expected nodes for find_node requests")
-                        })?;
+                        let nodes = response
+                            .nodes
+                            .with_context(|| "expected nodes for find_node requests")?;
                         self.on_found_nodes(response.id, addr, id, nodes)
                     }
                     Request::GetPeers(id) => {

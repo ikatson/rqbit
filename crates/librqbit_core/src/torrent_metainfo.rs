@@ -17,10 +17,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     let mut de = BencodeDeserializer::new_from_buf(buf);
     de.is_torrent_info = true;
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
-    t.info_hash = Id20(
-        de.torrent_info_digest
-            .ok_or_else(|| anyhow::anyhow!("programming error"))?,
-    );
+    t.info_hash = Id20(de.torrent_info_digest.context("programming error")?);
     Ok(t)
 }
 

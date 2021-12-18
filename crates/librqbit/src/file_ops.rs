@@ -118,9 +118,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                 }
             });
 
-        let mut current_file = file_iterator
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("empty input file list"))?;
+        let mut current_file = file_iterator.next().context("empty input file list")?;
 
         let mut read_buffer = vec![0u8; 65536];
 
@@ -135,9 +133,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                     std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
 
                 while to_read_in_file == 0 {
-                    current_file = file_iterator
-                        .next()
-                        .ok_or_else(|| anyhow::anyhow!("broken torrent metadata"))?;
+                    current_file = file_iterator.next().context("broken torrent metadata")?;
 
                     at_least_one_file_required |= current_file.full_file_required;
 

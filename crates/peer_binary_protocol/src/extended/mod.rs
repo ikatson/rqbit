@@ -1,3 +1,4 @@
+use anyhow::Context;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use bencode::BencodeValue;
@@ -56,12 +57,11 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
                 bencode_serialize_to_writer(h, out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
-                let h = extended_handshake.ok_or_else(|| {
-                    anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
-                })?;
+                let h =
+                    extended_handshake.context("need peer's handshake to serialize ut_metadata")?;
                 let emsg_id = h
                     .get_msgid(b"ut_metadata")
-                    .ok_or_else(|| anyhow::anyhow!("peer doesn't support ut_metadata"))?;
+                    .context("peer doesn't support ut_metadata")?;
                 out.push(emsg_id);
                 u.serialize(out);
             }
