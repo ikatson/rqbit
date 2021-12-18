@@ -240,7 +240,7 @@ pub struct TorrentState {
     stats: AtomicStats,
     options: TorrentStateOptions,
 
-    peer_semaphore: Semaphore,
+    peer_semaphore: Arc<Semaphore>,
     peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
 }
 
@@ -256,6 +256,7 @@ impl TorrentState {
         have_bytes: u64,
         needed_bytes: u64,
         spawner: BlockingSpawner,
+        peer_semaphore: Arc<Semaphore>,
         options: Option<TorrentStateOptions>,
     ) -> Arc<Self> {
         let options = options.unwrap_or_default();
@@ -277,8 +278,7 @@ impl TorrentState {
             have_plus_needed: needed_bytes + have_bytes,
             lengths,
             options,
-
-            peer_semaphore: Semaphore::new(128),
+            peer_semaphore,
             peer_queue_tx,
         });
         spawn("peer adder", {

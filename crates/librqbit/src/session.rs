@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{fs::File, io::Read, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use buffers::ByteString;
@@ -11,6 +11,7 @@ use librqbit_core::{
 use log::{debug, info, warn};
 use parking_lot::RwLock;
 use reqwest::Url;
+use tokio::sync::Semaphore;
 use tokio_stream::StreamExt;
 
 use crate::{
@@ -66,6 +67,7 @@ pub struct Session {
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
     locked: RwLock<SessionLocked>,
+    peer_semaphore: Arc<Semaphore>,
     output_folder: PathBuf,
 }
 
@@ -148,6 +150,7 @@ pub struct SessionOptions {
     pub dht_config: Option<PersistentDhtConfig>,
     pub peer_id: Option<Id20>,
     pub peer_opts: Option<PeerConnectionOptions>,
+    pub max_peers: Option<usize>,
 }
 
 impl Session {
@@ -180,6 +183,7 @@ impl Session {
             spawner,
             output_folder,
             locked: RwLock::new(SessionLocked::default()),
+            peer_semaphore: Arc::new(Semaphore::new(opts.max_peers.unwrap_or(128))),
         })
     }
     pub fn get_dht(&self) -> Option<Dht> {
@@ -339,7 +343,12 @@ impl Session {
             SessionLockedAddTorrentResult::Added(_) => {}
         }
 
-        let mut builder = TorrentManagerBuilder::new(info, info_hash, output_folder.clone());
+        let mut builder = TorrentManagerBuilder::new(
+            info,
+            info_hash,
+            output_folder.clone(),
+            self.peer_semaphore.clone(),
+        );
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)

@@ -70,6 +70,10 @@ struct Opts {
     #[clap(long = "peer-connect-timeout")]
     peer_connect_timeout: Option<ParsedDuration>,
 
+    /// How many peers to connect to at a time.
+    #[clap(long = "max-peers")]
+    max_peers: Option<usize>,
+
     /// How many threads to spawn for the executor.
     #[clap(short = 't', long)]
     worker_threads: Option<usize>,
@@ -204,6 +208,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             connect_timeout: opts.peer_connect_timeout.map(|d| d.0),
             ..Default::default()
         }),
+        max_peers: opts.max_peers,
     };
 
     let stats_printer = |session: Arc<Session>| async move {

@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
+use tokio::sync::Semaphore;
 
 use crate::{
     chunk_tracker::ChunkTracker,
@@ -43,6 +44,7 @@ pub struct TorrentManagerBuilder {
     output_folder: PathBuf,
     options: TorrentManagerOptions,
     spawner: Option<BlockingSpawner>,
+    peer_semaphore: Arc<Semaphore>,
 }
 
 impl TorrentManagerBuilder {
@@ -50,6 +52,7 @@ impl TorrentManagerBuilder {
         info: TorrentMetaV1Info<ByteString>,
         info_hash: Id20,
         output_folder: P,
+        peer_semaphore: Arc<Semaphore>,
     ) -> Self {
         Self {
             info,
@@ -57,6 +60,7 @@ impl TorrentManagerBuilder {
             output_folder: output_folder.as_ref().into(),
             spawner: None,
             options: TorrentManagerOptions::default(),
+            peer_semaphore,
         }
     }
 
@@ -96,6 +100,7 @@ impl TorrentManagerBuilder {
             self.info_hash,
             self.output_folder,
             self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
+            self.peer_semaphore,
             Some(self.options),
         )
     }
@@ -165,6 +170,7 @@ impl TorrentManager {
         info_hash: Id20,
         out: P,
         spawner: BlockingSpawner,
+        peer_semaphore: Arc<Semaphore>,
         options: Option<TorrentManagerOptions>,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let options = options.unwrap_or_default();
@@ -269,6 +275,7 @@ impl TorrentManager {
             initial_check_results.have_bytes,
             initial_check_results.needed_bytes,
             spawner,
+            peer_semaphore,
             Some(state_options),
         );
 
