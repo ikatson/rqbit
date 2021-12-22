@@ -191,6 +191,20 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
         Ok(self.iter_filenames_and_lengths()?.map(|(_, l)| l))
     }
+
+    pub fn iter_file_piece_ranges(
+        &self,
+    ) -> anyhow::Result<impl Iterator<Item = std::ops::RangeInclusive<usize>> + '_> {
+        let pl = self.piece_length as u64;
+        Ok(self
+            .iter_filenames_and_lengths()?
+            .scan(0u64, move |length_before, (_, length)| {
+                let start_piece = *length_before / pl;
+                *length_before += length;
+                let end_piece = *length_before / pl;
+                Some(start_piece as usize..=end_piece as usize)
+            }))
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]

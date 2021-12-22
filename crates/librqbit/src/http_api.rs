@@ -228,11 +228,23 @@ impl ApiInternal {
     }
 
     fn api_dump_haves(&self, idx: usize) -> Option<String> {
+        use std::fmt::Write;
         let mgr = self.mgr_handle(idx)?;
-        Some(format!(
-            "{:?}",
-            mgr.torrent_state().lock_read().chunks.get_have_pieces(),
-        ))
+        let info = mgr.torrent_state().info();
+        let g = mgr.torrent_state().lock_read();
+        let haves = g.chunks.get_have_pieces();
+        let mut out = String::new();
+        for (filename, range) in info
+            .iter_filenames_and_lengths()
+            .ok()?
+            .map(|f| f.0)
+            .zip(info.iter_file_piece_ranges().ok()?)
+        {
+            let filename = filename.to_string().ok()?;
+            let haves = haves.get(range)?;
+            writeln!(&mut out, "{}: {:?}\n", filename, haves).ok()?;
+        }
+        Some(out)
     }
 }
 
