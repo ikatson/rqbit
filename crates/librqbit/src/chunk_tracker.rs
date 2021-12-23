@@ -24,10 +24,6 @@ pub struct ChunkTracker {
     priority_piece_ids: Vec<usize>,
 }
 
-// TODO: this should be redone from "have" pieces, not from "needed" pieces.
-// Needed pieces are the ones we need to download, not necessarily the ones we have.
-// E.g. we might have more pieces, but the client asks to download only some files
-// partially.
 fn compute_written_chunks(lengths: &Lengths, have_pieces: &BF) -> BF {
     let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
