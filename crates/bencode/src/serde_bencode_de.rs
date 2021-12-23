@@ -427,7 +427,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         }
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor
-            .visit_seq(SeqAccess { de: &mut self })
+            .visit_seq(SeqAccess { de: self })
             .map_err(|e: Self::Error| e.set_context(self))
     }
 
@@ -459,7 +459,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         }
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor
-            .visit_map(MapAccess { de: &mut self })
+            .visit_map(MapAccess { de: self })
             .map_err(|e: Self::Error| e.set_context(self))
     }
 

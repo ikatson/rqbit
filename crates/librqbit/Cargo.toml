@@ -2,7 +2,7 @@
 name = "librqbit"
 version = "0.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [features]
 default = ["sha1-system", "default-tls"]

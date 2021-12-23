@@ -1,10 +1,15 @@
-use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
+use bencode::ByteString;
+use librqbit_core::{
+    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    torrent_metainfo::TorrentMetaV1Info,
+};
 use log::{debug, info};
 use peer_binary_protocol::Piece;
 
 use crate::type_aliases::BF;
 
 pub struct ChunkTracker {
+    info: TorrentMetaV1Info<ByteString>,
     // This forms the basis of a "queue" to pull from.
     // It's set to 1 if we need a piece, but the moment we start requesting a peer,
     // it's set to 0.
@@ -20,8 +25,6 @@ pub struct ChunkTracker {
     have: BF,
 
     lengths: Lengths,
-
-    priority_piece_ids: Vec<usize>,
 }
 
 fn compute_written_chunks(lengths: &Lengths, have_pieces: &BF) -> BF {
@@ -52,21 +55,18 @@ pub enum ChunkMarkingResult {
 }
 
 impl ChunkTracker {
-    pub fn new(needed_pieces: BF, have_pieces: BF, lengths: Lengths) -> Self {
-        // TODO: ideally this needs to be a list based on needed files, e.g.
-        // last needed piece for each file. But let's keep simple for now.
-        let last_needed_piece_id = needed_pieces.iter_ones().rev().next();
-
-        // The last pieces first. Often important information is stored in the last piece.
-        // E.g. if it's a video file, than the last piece often contains some index, or just
-        // players look into it, and it's better be there.
-        let priority_piece_ids = last_needed_piece_id.into_iter().collect();
+    pub fn new(
+        info: TorrentMetaV1Info<ByteString>,
+        needed_pieces: BF,
+        have_pieces: BF,
+        lengths: Lengths,
+    ) -> Self {
         Self {
             written_chunks: compute_written_chunks(&lengths, &have_pieces),
             needed_pieces,
             lengths,
             have: have_pieces,
-            priority_piece_ids,
+            info,
         }
     }
     pub fn get_needed_pieces(&self) -> &BF {
@@ -79,16 +79,32 @@ impl ChunkTracker {
         self.needed_pieces.set(index.get() as usize, false)
     }
 
-    pub fn iter_needed_pieces(&self) -> impl Iterator<Item = usize> + '_ {
-        self.priority_piece_ids
-            .iter()
-            .copied()
-            .filter(move |piece_id| self.needed_pieces[*piece_id])
-            .chain(
+    fn calculate_priority_piece_ids(&self) -> anyhow::Result<Vec<usize>> {
+        // Priority pieces are the first and last piece of the first incomplete file.
+        let first_incomplete_file_range =
+            match self.info.iter_file_piece_ranges()?.find(move |range| {
                 self.needed_pieces
-                    .iter_ones()
-                    .filter(move |id| !self.priority_piece_ids.contains(id)),
-            )
+                    .get(range.clone())
+                    .map(|r| r.any())
+                    .unwrap_or(false)
+            }) {
+                Some(r) => r,
+                None => return Ok(Vec::new()),
+            };
+        let (first, last) = first_incomplete_file_range.into_inner();
+        Ok([first, last]
+            .into_iter()
+            .filter(move |id| self.needed_pieces.get(*id).map(|b| *b).unwrap_or(false))
+            .collect())
+    }
+
+    pub fn iter_needed_pieces(&self) -> impl Iterator<Item = usize> + '_ {
+        let priority_pieces = self.calculate_priority_piece_ids().unwrap_or_default();
+        priority_pieces.clone().into_iter().chain(
+            self.needed_pieces
+                .iter_ones()
+                .filter(move |id| !priority_pieces.contains(id)),
+        )
     }
 
     // None if wrong chunk
