@@ -56,4 +56,5 @@ jobs:
         files: |
           target/release/rqbit-osx-universal
           target/release/rqbit-linux-static-x86_64
+          target/release/rqbit-linux-static-aarch64
 
