@@ -193,8 +193,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
-    console_subscriber::init();
-
     let sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
