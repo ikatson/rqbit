@@ -34,8 +34,14 @@ jobs:
     - name: Build release linux x86_64 binary
       run:
         rustup target install x86_64-unknown-linux-gnu &&
-        make release-linux &&
+        make release-linux-x86_64 &&
         mv target/x86_64-unknown-linux-gnu/release/rqbit target/release/rqbit-linux-static-x86_64
+
+    - name: Build release linux aarch64 binary
+      run:
+        rustup target install aarch64-unknown-linux-gnu &&
+        make release-linux-aarch64 &&
+        mv target/aarch64-unknown-linux-gnu/release/rqbit target/release/rqbit-linux-static-aarch64
 
     - name: Build release OSX universal binary
       run:
