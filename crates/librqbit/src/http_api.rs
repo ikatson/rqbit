@@ -1,4 +1,7 @@
 use anyhow::Context;
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use buffers::ByteString;
 use dht::{Dht, DhtStats};
 use librqbit_core::id20::Id20;
@@ -9,15 +12,14 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use warp::hyper::body::Bytes;
-use warp::hyper::Body;
-use warp::Filter;
+
+use axum::{response, routing, Router};
 
 use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
-struct ApiInternal {
+pub struct ApiInternal {
     dht: Option<Dht>,
     startup_time: Instant,
     torrent_managers: RwLock<Vec<TorrentManagerHandle>>,
@@ -52,7 +54,7 @@ impl Speed {
     fn new(mbps: f64) -> Self {
         Self {
             mbps,
-            human_readable: format!("{:.2} MiB/s", mbps),
+            human_readable: format!("{mbps:.2} MiB/s"),
         }
     }
 }
@@ -236,39 +238,28 @@ impl ApiInternal {
     }
 }
 
+type ApiState = Arc<ApiInternal>;
+
 #[derive(Clone)]
 pub struct HttpApi {
     inner: Arc<ApiInternal>,
 }
 
-fn json_response<T: Serialize>(v: T) -> warp::reply::Response {
-    let body = serde_json::to_string_pretty(&v).unwrap();
-    let mut response = warp::reply::Response::new(body.into());
-    response.headers_mut().insert(
-        "content-type",
-        warp::http::HeaderValue::from_static("application/json"),
-    );
-    response
+fn axum_not_found_response<B: IntoResponse>(body: B) -> (StatusCode, B) {
+    (StatusCode::NOT_FOUND, body)
 }
 
-fn plaintext_response<B: Into<Body>>(body: B) -> warp::reply::Response {
-    warp::reply::Response::new(body.into())
+fn axum_torrent_not_found_response(idx: usize) -> impl IntoResponse {
+    axum_not_found_response(format!("torrent {idx} not found"))
 }
 
-fn not_found_response(body: String) -> warp::reply::Response {
-    let mut response = warp::reply::Response::new(body.into());
-    *response.status_mut() = warp::http::StatusCode::NOT_FOUND;
-    response
-}
-
-fn torrent_not_found_response(idx: usize) -> warp::reply::Response {
-    not_found_response(format!("torrent {} not found", idx))
-}
-
-fn json_or_404<T: Serialize>(idx: usize, v: Option<T>) -> warp::reply::Response {
+fn axum_json_or_torrent_not_found<T: Serialize>(
+    idx: usize,
+    v: Option<T>,
+) -> Result<axum::Json<T>, impl IntoResponse> {
     match v {
-        Some(v) => json_response(v),
-        None => torrent_not_found_response(idx),
+        Some(v) => Ok(axum::Json(v)),
+        None => Err(axum_torrent_not_found_response(idx)),
     }
 }
 
@@ -279,6 +270,29 @@ pub struct TorrentAddQueryParams {
     pub sub_folder: Option<String>,
     pub only_files_regex: Option<String>,
     pub list_only: Option<bool>,
+}
+
+async fn post_torrent(
+    State(inner): State<ApiState>,
+    Query(params): Query<TorrentAddQueryParams>,
+    url: String,
+) -> Result<axum::Json<impl Serialize>, impl IntoResponse> {
+    let opts = AddTorrentOptions {
+        overwrite: params.overwrite.unwrap_or(false),
+        only_files_regex: params.only_files_regex,
+        output_folder: params.output_folder,
+        sub_folder: params.sub_folder,
+        list_only: params.list_only.unwrap_or(false),
+        ..Default::default()
+    };
+    match inner
+        .api_add_torrent(url, Some(opts))
+        .await
+        .context("error calling HttpApi::api_add_torrent")
+    {
+        Ok(response) => Ok(axum::Json(response)),
+        Err(err) => Err((StatusCode::BAD_REQUEST, format!("{err:#?}"))),
+    }
 }
 
 impl HttpApi {
@@ -292,121 +306,94 @@ impl HttpApi {
     }
 
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
-        let inner = self.inner;
-
-        let api_list = warp::path::end().map({
-            let api_list = serde_json::json!({
-                "apis": {
-                    "GET /": "list all available APIs",
-                    "GET /dht/stats": "DHT stats",
-                    "GET /dht/table": "DHT routing table",
-                    "GET /torrents": "List torrents (default torrent is 0)",
-                    "GET /torrents/{index}": "Torrent details",
-                    "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{index}/stats": "Torrent stats",
-                    // This is kind of not secure as it just reads any local file that it has access to,
-                    // or any URL, but whatever, ok for our purposes / thread model.
-                    "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file."
-                },
-                "server": "rqbit",
-            });
-            move || json_response(&api_list)
-        });
-
-        let dht_stats = warp::path!("dht" / "stats").map({
-            let inner = inner.clone();
-            move || match inner.api_dht_stats() {
-                Some(stats) => json_response(stats),
-                None => not_found_response("DHT is off".into()),
-            }
-        });
-
-        let dht_routing_table = warp::path!("dht" / "table").map({
-            let inner = inner.clone();
-
-            // clippy suggests something that doesn't work here.
-            #[allow(clippy::redundant_closure)]
-            move || match inner.dht.as_ref() {
-                Some(dht) => dht.with_routing_table(|r| json_response(r)),
-                None => not_found_response("DHT is off".into()),
-            }
-        });
-
-        let torrent_list = warp::get().and(warp::path("torrents")).map({
-            let inner = inner.clone();
-            move || json_response(inner.api_torrent_list())
-        });
-
-        let torrent_add = warp::post()
-            .and(warp::path("torrents"))
-            .and(warp::body::bytes())
-            .and(warp::query())
-            .and_then({
-                let inner = inner.clone();
-                use warp::http::Response;
-                fn make_response<T>(status: u16, body: T) -> Response<T> {
-                    Response::builder().status(status).body(body).unwrap()
-                }
-                move |body: Bytes, params: TorrentAddQueryParams| {
-                    let inner = inner.clone();
-                    async move {
-                        let url = match String::from_utf8(body.to_vec()) {
-                            Ok(str) => str,
-                            Err(_) => {
-                                return Ok::<_, warp::Rejection>(make_response(
-                                    400,
-                                    "invalid utf-8".into(),
-                                ));
-                            }
-                        };
-                        let opts = AddTorrentOptions {
-                            overwrite: params.overwrite.unwrap_or(false),
-                            only_files_regex: params.only_files_regex,
-                            output_folder: params.output_folder,
-                            sub_folder: params.sub_folder,
-                            list_only: params.list_only.unwrap_or(false),
-                            ..Default::default()
-                        };
-                        match inner
-                            .api_add_torrent(url, Some(opts))
-                            .await
-                            .context("error calling HttpApi::api_add_torrent")
-                        {
-                            Ok(response) => Ok(json_response(response)),
-                            Err(err) => Ok(make_response(400, format!("{:#?}", err).into())),
+        let state = self.inner;
+        let app = Router::new()
+            .route("/", routing::get(|| async move {
+                axum::Json(serde_json::json!({
+                    "apis": {
+                        "GET /": "list all available APIs",
+                        "GET /dht/stats": "DHT stats",
+                        "GET /dht/table": "DHT routing table",
+                        "GET /torrents": "List torrents (default torrent is 0)",
+                        "GET /torrents/{index}": "Torrent details",
+                        "GET /torrents/{index}/haves": "The bitfield of have pieces",
+                        "GET /torrents/{index}/stats": "Torrent stats",
+                        // This is kind of not secure as it just reads any local file that it has access to,
+                        // or any URL, but whatever, ok for our purposes / thread model.
+                        "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
+                    },
+                    "server": "rqbit",
+                }))
+            }))
+            .route(
+                "/dht/stats",
+                routing::get({
+                    let state = state.clone();
+                    move || async move {
+                        match state.api_dht_stats() {
+                            Some(stats) => Ok(axum::Json(stats)),
+                            None => Err(axum_not_found_response("DHT is disabled")),
                         }
                     }
-                }
-            });
+                }),
+            )
+            .route(
+                "/dht/table",
+                routing::get({
+                    let state = state.clone();
+                    move || async move {
+                        match state.dht.as_ref() {
+                            Some(dht) => Ok(dht.with_routing_table(|r| response::Json(r.clone()))),
+                            None => Err(axum_not_found_response("DHT is disabled")),
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/torrents",
+                routing::get({
+                    let state = state.clone();
+                    move || async move { axum::response::Json(state.api_torrent_list()) }
+                }),
+            )
+            .route("/torrents", routing::post(post_torrent))
+            .route(
+                "/torrents/:id",
+                routing::get({
+                    let state = state.clone();
+                    move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
+                        axum_json_or_torrent_not_found(idx, state.api_torrent_details(idx))
+                    }
+                }),
+            )
+            .route(
+                "/torrents/:id/haves",
+                routing::get({
+                    let state = state.clone();
+                    move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
+                        match state.api_dump_haves(idx) {
+                            Some(haves) => Ok(haves),
+                            None => Err(axum_torrent_not_found_response(idx)),
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/torrents/:id/stats",
+                routing::get({
+                    let state = state.clone();
+                    move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
+                        axum_json_or_torrent_not_found(idx, state.api_stats(idx))
+                    }
+                }),
+            )
+            .with_state(state);
 
-        let torrent_details = warp::path!("torrents" / usize).map({
-            let inner = inner.clone();
-            move |idx| json_or_404(idx, inner.api_torrent_details(idx))
-        });
-
-        let torrent_dump_haves = warp::path!("torrents" / usize / "haves").map({
-            let inner = inner.clone();
-            move |idx| match inner.api_dump_haves(idx) {
-                Some(haves) => plaintext_response(haves),
-                None => torrent_not_found_response(idx),
-            }
-        });
-
-        let torrent_dump_stats = warp::path!("torrents" / usize / "stats").map({
-            let inner = inner.clone();
-            move |idx| json_or_404(idx, inner.api_stats(idx))
-        });
-
-        let router = api_list
-            .or(dht_stats)
-            .or(dht_routing_table)
-            .or(torrent_details)
-            .or(torrent_dump_haves)
-            .or(torrent_dump_stats)
-            .or(torrent_add)
-            .or(torrent_list);
-
-        warp::serve(router).run(addr).await;
+        log::info!("starting HTTP server on {}", addr);
+        axum::Server::try_bind(&addr)
+            .with_context(|| format!("error binding to {addr}"))?
+            .serve(app.into_make_service())
+            .await?;
         Ok(())
     }
 }
