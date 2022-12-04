@@ -23,7 +23,7 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha1w::Sha1;
 use tokio::{
     sync::{
@@ -40,6 +40,8 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     peer_state::{InflightRequest, LivePeerState, PeerState},
+    peer_stats::PeerConnectionStats,
+    requeue_manager::RequeueManager,
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
 };
@@ -242,6 +244,7 @@ pub struct TorrentState {
 
     peer_semaphore: Semaphore,
     peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
+    requeue_manager: RequeueManager,
 }
 
 impl TorrentState {
@@ -280,6 +283,7 @@ impl TorrentState {
 
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
+            requeue_manager: RequeueManager::new(),
         });
         spawn("peer adder", {
             let state = state.clone();
@@ -300,6 +304,7 @@ impl TorrentState {
                         addr,
                         state: state.clone(),
                         spawner,
+                        stats: Arc::new(RwLock::new(PeerConnectionStats::new())),
                     };
                     let options = PeerConnectionOptions {
                         connect_timeout: state.options.peer_connect_timeout,
@@ -320,9 +325,17 @@ impl TorrentState {
                         if let Err(e) = peer_connection.manage_peer(out_rx).await {
                             debug!("error managing peer {}: {:#}", addr, e)
                         };
-                        let state = peer_connection.into_handler().state;
-                        state.drop_peer(addr);
-                        state.peer_semaphore.add_permits(1);
+                        let handler = peer_connection.into_handler();
+                        handler.state.drop_peer(addr);
+                        handler.state.peer_semaphore.add_permits(1);
+                        let mut stats = handler.stats.read().clone();
+                        stats.mark_dropped();
+                        if let Some(requeue_time) =
+                            handler.state.requeue_manager.on_peer_dropped(addr, &stats)
+                        {
+                            tokio::time::sleep(requeue_time).await;
+                            handler.state.readd_peer(addr);
+                        }
                         Ok::<_, anyhow::Error>(())
                     });
                 }
@@ -555,6 +568,22 @@ impl TorrentState {
         true
     }
 
+    pub fn readd_peer(self: &Arc<Self>, addr: SocketAddr) -> bool {
+        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
+        match self.locked.write().peers.add(addr, out_tx) {
+            Some(handle) => handle,
+            None => return false,
+        };
+
+        match self.peer_queue_tx.send((addr, out_rx)) {
+            Ok(_) => {}
+            Err(_) => {
+                warn!("peer adder died, can't add peer")
+            }
+        }
+        true
+    }
+
     pub fn peer_stats_snapshot(&self) -> AggregatePeerStats {
         self.locked.read().peers.stats()
     }
@@ -589,9 +618,14 @@ struct PeerHandler {
     state: Arc<TorrentState>,
     addr: SocketAddr,
     spawner: BlockingSpawner,
+    stats: Arc<RwLock<PeerConnectionStats>>,
 }
 
 impl PeerConnectionHandler for PeerHandler {
+    fn on_connected(&self) -> anyhow::Result<()> {
+        self.stats.write().mark_connected();
+        Ok(())
+    }
     fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
         match message {
             Message::Request(request) => {
@@ -605,8 +639,12 @@ impl PeerConnectionHandler for PeerHandler {
             Message::Unchoke => self.on_i_am_unchoked(self.addr),
             Message::Interested => self.on_peer_interested(self.addr),
             Message::Piece(piece) => {
+                let len = piece.block.len();
                 self.on_received_piece(self.addr, piece)
                     .context("error in on_received_piece()")?;
+                self.stats
+                    .read()
+                    .add_received_bytes(len as u64, Ordering::Relaxed);
             }
             Message::KeepAlive => {
                 debug!("keepalive received from {}", self.addr);

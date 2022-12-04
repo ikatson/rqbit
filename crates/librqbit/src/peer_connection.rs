@@ -17,6 +17,9 @@ use crate::spawn_utils::BlockingSpawner;
 pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
+    fn on_connected(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
@@ -129,6 +132,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut conn = with_timeout(connect_timeout, tokio::net::TcpStream::connect(self.addr))
             .await
             .context("error connecting")?;
+        self.handler.on_connected()?;
 
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
