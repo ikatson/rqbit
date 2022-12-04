@@ -36,6 +36,7 @@ pub enum WriterRequest {
 #[derive(Default, Copy, Clone)]
 pub struct PeerConnectionOptions {
     pub connect_timeout: Option<Duration>,
+    pub read_write_timeout: Option<Duration>,
     pub keep_alive_interval: Option<Duration>,
 }
 
@@ -48,36 +49,8 @@ pub struct PeerConnection<H> {
     spawner: BlockingSpawner,
 }
 
-// async fn read_one<'a, R: AsyncReadExt + Unpin>(
-//     mut reader: R,
-//     read_buf: &'a mut Vec<u8>,
-//     read_so_far: &mut usize,
-// ) -> anyhow::Result<(MessageBorrowed<'a>, usize)> {
-//     loop {
-//         match MessageBorrowed::deserialize(&read_buf[..*read_so_far]) {
-//             Ok((msg, size)) => return Ok((msg, size)),
-//             Err(MessageDeserializeError::NotEnoughData(d, _)) => {
-//                 if read_buf.len() < *read_so_far + d {
-//                     read_buf.reserve(d);
-//                     read_buf.resize(read_buf.capacity(), 0);
-//                 }
-
-//                 let size = reader
-//                     .read(&mut read_buf[*read_so_far..])
-//                     .await
-//                     .context("error reading from peer")?;
-//                 if size == 0 {
-//                     anyhow::bail!("disconnected while reading, read so far: {}", *read_so_far)
-//                 }
-//                 *read_so_far += size;
-//             }
-//             Err(e) => return Err(e.into()),
-//         }
-//     }
-// }
-
 macro_rules! read_one {
-    ($conn:ident, $read_buf:ident, $read_so_far:ident) => {{
+    ($conn:ident, $read_buf:ident, $read_so_far:ident, $rwtimeout:ident) => {{
         let (extended, size) = loop {
             match MessageBorrowed::deserialize(&$read_buf[..$read_so_far]) {
                 Ok((msg, size)) => break (msg, size),
@@ -87,9 +60,9 @@ macro_rules! read_one {
                         $read_buf.resize($read_buf.capacity(), 0);
                     }
 
-                    let size = $conn
-                        .read(&mut $read_buf[$read_so_far..])
+                    let size = timeout($rwtimeout, $conn.read(&mut $read_buf[$read_so_far..]))
                         .await
+                        .context("timeout reading from peer")?
                         .context("error reading from peer")?;
                     if size == 0 {
                         anyhow::bail!("disconnected while reading, read so far: {}", $read_so_far)
@@ -130,30 +103,35 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
-        let mut conn = match timeout(
-            self.options
-                .connect_timeout
-                .unwrap_or_else(|| Duration::from_secs(10)),
-            tokio::net::TcpStream::connect(self.addr),
-        )
-        .await
-        {
-            Ok(conn) => conn.context("error connecting")?,
-            Err(_) => anyhow::bail!("timeout connecting to {}", self.addr),
-        };
+
+        let rwtimeout = self
+            .options
+            .read_write_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        let connect_timeout = self
+            .options
+            .connect_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        let mut conn = timeout(connect_timeout, tokio::net::TcpStream::connect(self.addr))
+            .await
+            .context("timeout connecting")?
+            .context("error connecting")?;
 
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
         handshake.serialize(&mut write_buf);
-        conn.write_all(&write_buf)
+        timeout(rwtimeout, conn.write_all(&write_buf))
             .await
+            .context("timeout writing handshake")?
             .context("error writing handshake")?;
         write_buf.clear();
 
         let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
-        let mut read_so_far = conn
-            .read(&mut read_buf)
+        let mut read_so_far = timeout(rwtimeout, conn.read(&mut read_buf))
             .await
+            .context("timeout reading handshake")?
             .context("error reading handshake")?;
         if read_so_far == 0 {
             anyhow::bail!("bad handshake");
@@ -188,12 +166,13 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 &my_extended
             );
             my_extended.serialize(&mut write_buf, None).unwrap();
-            conn.write_all(&write_buf)
+            timeout(rwtimeout, conn.write_all(&write_buf))
                 .await
+                .context("timeout writing extended handshake")?
                 .context("error writing extended handshake")?;
             write_buf.clear();
 
-            let (extended, size) = read_one!(conn, read_buf, read_so_far);
+            let (extended, size) = read_one!(conn, read_buf, read_so_far, rwtimeout);
             match extended {
                 Message::Extended(ExtendedMessage::Handshake(h)) => {
                     trace!("received from {}: {:?}", self.addr, &h);
@@ -222,9 +201,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     .handler
                     .serialize_bitfield_message_to_buf(&mut write_buf)
                 {
-                    write_half
-                        .write_all(&write_buf[..len])
+                    timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                         .await
+                        .context("timeout writing bitfield to peer")?
                         .context("error writing bitfield to peer")?;
                     debug!("sent bitfield to {}", self.addr);
                 }
@@ -256,7 +235,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                                 self.handler
                                     .read_chunk(chunk, &mut write_buf[preamble_len..])
                             })
-                            .with_context(|| format!("error reading chunk {:?}", chunk))?;
+                            .with_context(|| format!("error reading chunk {chunk:?}"))?;
 
                         uploaded_add = Some(chunk.size);
                         full_len
@@ -265,9 +244,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 debug!("sending to {}: {:?}, length={}", self.addr, &req, len);
 
-                write_half
-                    .write_all(&write_buf[..len])
+                timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                     .await
+                    .context("timeout writing the message to peer")?
                     .context("error writing the message to peer")?;
                 write_buf.clear();
 
@@ -283,7 +262,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         let reader = async move {
             loop {
-                let (message, size) = read_one!(read_half, read_buf, read_so_far);
+                let (message, size) = read_one!(read_half, read_buf, read_so_far, rwtimeout);
                 trace!("received from {}: {:?}", self.addr, &message);
 
                 self.handler

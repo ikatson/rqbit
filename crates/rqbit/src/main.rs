@@ -70,6 +70,10 @@ struct Opts {
     #[clap(long = "peer-connect-timeout")]
     peer_connect_timeout: Option<ParsedDuration>,
 
+    /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
+    #[clap(long = "peer-read-write-timeout")]
+    peer_read_write_timeout: Option<ParsedDuration>,
+
     /// How many threads to spawn for the executor.
     #[clap(short = 't', long)]
     worker_threads: Option<usize>,
@@ -200,6 +204,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: opts.peer_connect_timeout.map(|d| d.0),
+            read_write_timeout: opts.peer_read_write_timeout.map(|d| d.0),
             ..Default::default()
         }),
     };

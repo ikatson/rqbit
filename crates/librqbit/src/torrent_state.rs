@@ -225,6 +225,7 @@ impl StatsSnapshot {
 #[derive(Default)]
 pub struct TorrentStateOptions {
     pub peer_connect_timeout: Option<Duration>,
+    pub peer_read_write_timeout: Option<Duration>,
 }
 
 pub struct TorrentState {
@@ -286,6 +287,7 @@ impl TorrentState {
                 loop {
                     let (addr, out_rx) = peer_queue_rx.recv().await.unwrap();
 
+                    let permit = state.peer_semaphore.acquire().await.unwrap();
                     match state.locked.write().peers.states.get_mut(&addr) {
                         Some(s @ PeerState::Queued) => *s = PeerState::Connecting,
                         s => {
@@ -294,8 +296,6 @@ impl TorrentState {
                         }
                     };
 
-                    state.peer_semaphore.acquire().await.unwrap().forget();
-
                     let handler = PeerHandler {
                         addr,
                         state: state.clone(),
@@ -303,6 +303,7 @@ impl TorrentState {
                     };
                     let options = PeerConnectionOptions {
                         connect_timeout: state.options.peer_connect_timeout,
+                        read_write_timeout: state.options.peer_read_write_timeout,
                         ..Default::default()
                     };
                     let peer_connection = PeerConnection::new(
@@ -313,7 +314,9 @@ impl TorrentState {
                         Some(options),
                         spawner,
                     );
-                    spawn(format!("manage_peer({})", addr), async move {
+
+                    permit.forget();
+                    spawn(format!("manage_peer({addr})"), async move {
                         if let Err(e) = peer_connection.manage_peer(out_rx).await {
                             debug!("error managing peer {}: {:#}", addr, e)
                         };
