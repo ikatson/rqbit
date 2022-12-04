@@ -355,6 +355,10 @@ impl Session {
             builder.peer_connect_timeout(t);
         }
 
+        if let Some(t) = opts.peer_opts.unwrap_or(self.peer_opts).read_write_timeout {
+            builder.peer_read_write_timeout(t);
+        }
+
         let handle = match builder
             .start_manager()
             .context("error starting torrent manager")

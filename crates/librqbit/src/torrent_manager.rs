@@ -32,6 +32,7 @@ use crate::{
 struct TorrentManagerOptions {
     force_tracker_interval: Option<Duration>,
     peer_connect_timeout: Option<Duration>,
+    peer_read_write_timeout: Option<Duration>,
     only_files: Option<Vec<usize>>,
     peer_id: Option<Id20>,
     overwrite: bool,
@@ -87,6 +88,11 @@ impl TorrentManagerBuilder {
 
     pub fn peer_connect_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.options.peer_connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn peer_read_write_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.options.peer_read_write_timeout = Some(timeout);
         self
     }
 
@@ -256,6 +262,7 @@ impl TorrentManager {
         #[allow(clippy::needless_update)]
         let state_options = TorrentStateOptions {
             peer_connect_timeout: options.peer_connect_timeout,
+            peer_read_write_timeout: options.peer_read_write_timeout,
             ..Default::default()
         };
 
