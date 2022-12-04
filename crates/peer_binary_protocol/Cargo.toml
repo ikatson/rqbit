@@ -13,5 +13,5 @@ buffers = {path="../buffers"}
 bencode = {path = "../bencode", default-features=false}
 clone_to_owned = {path="../clone_to_owned"}
 librqbit_core = {path="../librqbit_core"}
-bitvec = "0.22"
+bitvec = "1"
 anyhow = "1"

@@ -16,4 +16,4 @@ sha1-rust = ["sha1"]
 [dependencies]
 openssl = {version="0.10", optional=true}
 crypto-hash = {version="0.3", optional=true}
-sha1 = {version = "0.6", optional=true}
+sha1 = {version = "0.10", optional=true}

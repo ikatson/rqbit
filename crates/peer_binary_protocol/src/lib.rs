@@ -182,8 +182,8 @@ pub enum Message<ByteBuf: std::hash::Hash + Eq> {
 pub type MessageBorrowed<'a> = Message<ByteBuf<'a>>;
 pub type MessageOwned = Message<ByteString>;
 
-pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<bitvec::order::Lsb0, u8>;
-pub type BitfieldOwned = bitvec::vec::BitVec<bitvec::order::Lsb0, u8>;
+pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<u8, bitvec::order::Lsb0>;
+pub type BitfieldOwned = bitvec::vec::BitVec<u8, bitvec::order::Lsb0>;
 
 pub struct Bitfield<'a> {
     pub data: BitfieldBorrowed<'a>,
@@ -219,7 +219,7 @@ where
 impl<'a> Bitfield<'a> {
     pub fn new_from_slice(buf: &'a [u8]) -> anyhow::Result<Self> {
         Ok(Self {
-            data: bitvec::slice::BitSlice::from_slice(buf)?,
+            data: bitvec::slice::BitSlice::from_slice(buf),
         })
     }
 }

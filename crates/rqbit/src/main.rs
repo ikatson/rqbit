@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::Context;
-use clap::{ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 use librqbit::{
     http_api::{ApiAddTorrentResponse, HttpApi},
     http_api_client,
@@ -15,7 +15,7 @@ use librqbit::{
 use log::{error, info, warn};
 use size_format::SizeFormatterBinary as SF;
 
-#[derive(Debug, Clone, Copy, ArgEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
     Trace,
     Debug,
@@ -38,7 +38,7 @@ impl FromStr for ParsedDuration {
 #[clap(version, author, about)]
 struct Opts {
     /// The loglevel
-    #[clap(arg_enum, short = 'v')]
+    #[clap(value_enum, short = 'v')]
     log_level: Option<LogLevel>,
 
     /// The interval to poll trackers, e.g. 30s.

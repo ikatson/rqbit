@@ -9,9 +9,9 @@ edition = "2018"
 hex = "0.4"
 anyhow = "1"
 url = "2"
-uuid = {version = "0.8", features = ["v4"]}
+uuid = {version = "1", features = ["v4"]}
 log = "0.4"
-parking_lot = "0.11"
+parking_lot = "0.12"
 serde = {version = "1", features=["derive"]}
 buffers = {path="../buffers"}
 bencode = {path = "../bencode", default-features=false}

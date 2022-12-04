@@ -44,7 +44,7 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
         chunk_bf
             .get_mut(offset..offset + chunks_per_piece)
             .unwrap()
-            .set_all(true);
+            .fill(true);
     }
     chunk_bf
 }
@@ -120,7 +120,7 @@ impl ChunkTracker {
         self.chunk_status
             .get_mut(self.lengths.chunk_range(index))
             .map(|s| {
-                s.set_all(false);
+                s.fill(false);
                 true
             })
             .unwrap_or_default()
