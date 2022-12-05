@@ -23,7 +23,7 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha1w::Sha1;
 use tokio::{
     sync::{

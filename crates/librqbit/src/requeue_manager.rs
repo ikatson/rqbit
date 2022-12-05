@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::Duration,
 };
 
@@ -10,17 +10,16 @@ use crate::{peer_stats::PeerConnectionStats, type_aliases::PeerHandle};
 
 const MAX_LAST_STATES: usize = 3;
 
-type PeerDroppedMsg = (PeerHandle, PeerConnectionStats);
-
 #[derive(Default)]
 struct PeerRequeueInfo {
-    dropped_times: u64,
+    successive_quick_failures: usize,
+    successive_connection_failures: usize,
     last_qualities: VecDeque<f64>,
 }
 
 struct PeerRequeueInfoAggregated {
-    dropped_times: u64,
-    successive_quick_failures: u64,
+    successive_quick_failures: usize,
+    successive_connection_failures: usize,
     avg_connection_quality: f64,
 }
 
@@ -36,13 +35,23 @@ impl PeerRequeueInfo {
             self.last_qualities.pop_front();
         }
         self.last_qualities.push_back(quality);
-        self.dropped_times += 1;
+
+        if stats.received_bytes.load(Ordering::Relaxed) == 0 {
+            self.successive_quick_failures += 1;
+        } else {
+            self.successive_quick_failures = 0;
+        }
+
+        if stats.connected_at.is_none() {
+            self.successive_connection_failures += 1;
+        } else {
+            self.successive_connection_failures = 0;
+        }
 
         let avg_quality = self.avg_quality_unchecked();
         PeerRequeueInfoAggregated {
-            dropped_times: self.dropped_times,
-            // TODO
-            successive_quick_failures: self.dropped_times,
+            successive_quick_failures: self.successive_quick_failures,
+            successive_connection_failures: self.successive_connection_failures,
             avg_connection_quality: avg_quality,
         }
     }
@@ -57,19 +66,6 @@ pub(crate) struct RequeueManager {
     inner: Arc<Mutex<RequeueManagerInner>>,
 }
 
-// For each peer:
-//
-// If peer dropped too quickly (like immediately after connection), increase the time for requeue
-// If peer keeps dropping quickly, stop requeing it (or increase the timeout drastically)
-// The better the peer, the faster it should requeue.
-// Each subsequent requeue should increase the timeout.
-// If couldn't connect at all (ever), increase the timeout.
-//
-// However given all this, if the network changes or whatever, and everyone drops, don't punish everyone
-// too much.
-//
-// Jitter on requeue.
-
 fn jitter(d: f64) -> f64 {
     let r: f64 = rand::random();
     let factor = 0.5 + r * 0.5;
@@ -81,9 +77,6 @@ impl RequeueManager {
         Self {
             inner: Arc::new(Mutex::new(RequeueManagerInner::default())),
         }
-    }
-    pub async fn start(self: Arc<Self>) -> anyhow::Result<()> {
-        Ok(())
     }
 
     // Returns duration to requeue the peer in.
@@ -97,9 +90,19 @@ impl RequeueManager {
             let ps = g.seen_peers.entry(handle).or_default();
             ps.add_stats(stats)
         };
-        let base_reconnect_seconds = f64::min(10f64 / agg_peer_stats.avg_connection_quality, 60f64);
-        let reconnect_seconds = base_reconnect_seconds
-            * (u64::pow(2, agg_peer_stats.successive_quick_failures as u32) as f64);
+        if agg_peer_stats.successive_connection_failures >= 3 {
+            // Give up on peer after 3 connection attempts.
+            return None;
+        }
+        // Calculate reconnect seconds based on peer quality.
+        let reconnect_seconds = f64::min(10f64 / agg_peer_stats.avg_connection_quality, 60f64);
+        // Multiply with exponential backoff based on successive quick failures.
+        let reconnect_seconds = reconnect_seconds
+            * (u64::pow(
+                2,
+                std::cmp::max(agg_peer_stats.successive_quick_failures as u32, 3),
+            ) as f64);
+        // Add jitter.
         let reconnect_seconds = jitter(reconnect_seconds);
         Some(Duration::from_secs_f64(reconnect_seconds))
     }
