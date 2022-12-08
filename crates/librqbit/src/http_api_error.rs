@@ -7,6 +7,7 @@ use serde::{Serialize, Serializer};
 pub struct ApiError {
     status: Option<StatusCode>,
     kind: ApiErrorKind,
+    plaintext: bool,
 }
 
 impl ApiError {
@@ -14,6 +15,7 @@ impl ApiError {
         Self {
             status: Some(StatusCode::NOT_FOUND),
             kind: ApiErrorKind::TorrentNotFound(torrent_id),
+            plaintext: false,
         }
     }
 
@@ -21,6 +23,7 @@ impl ApiError {
         Self {
             status: Some(StatusCode::NOT_FOUND),
             kind: ApiErrorKind::DhtDisabled,
+            plaintext: false,
         }
     }
 
@@ -32,6 +35,15 @@ impl ApiError {
         Self {
             status: Some(status),
             kind: self.kind,
+            plaintext: self.plaintext,
+        }
+    }
+
+    pub fn with_plaintext_error(self, value: bool) -> Self {
+        Self {
+            status: self.status,
+            kind: self.kind,
+            plaintext: value,
         }
     }
 }
@@ -79,6 +91,7 @@ impl From<anyhow::Error> for ApiError {
         Self {
             status,
             kind: ApiErrorKind::Other(value),
+            plaintext: false,
         }
     }
 }
@@ -110,15 +123,20 @@ impl IntoResponse for ApiError {
     }
 }
 
-pub trait WithErrorStatus<T> {
+pub trait ApiErrorExt<T> {
     fn with_error_status_code(self, s: StatusCode) -> Result<T, ApiError>;
+    fn with_plaintext_error(self, value: bool) -> Result<T, ApiError>;
 }
 
-impl<T, E> WithErrorStatus<T> for std::result::Result<T, E>
+impl<T, E> ApiErrorExt<T> for std::result::Result<T, E>
 where
     E: Into<ApiError>,
 {
     fn with_error_status_code(self, s: StatusCode) -> Result<T, ApiError> {
         self.map_err(|e| e.into().with_status(s))
+    }
+
+    fn with_plaintext_error(self, value: bool) -> Result<T, ApiError> {
+        self.map_err(|e| e.into().with_plaintext_error(value))
     }
 }

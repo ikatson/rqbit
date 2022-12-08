@@ -1,5 +1,7 @@
 use anyhow::Context;
 use axum::extract::{Path, Query, State};
+use axum::response::IntoResponse;
+use axum::routing::get;
 use buffers::ByteString;
 use dht::{Dht, DhtStats};
 use http::StatusCode;
@@ -12,9 +14,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::{routing, Router};
+use axum::Router;
 
-use crate::http_api_error::{ApiError, WithErrorStatus};
+use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
@@ -37,80 +39,75 @@ impl HttpApi {
 
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let state = self.inner;
-        let api_description_body = serde_json::json!({
-            "apis": {
-                "GET /": "list all available APIs",
-                "GET /dht/stats": "DHT stats",
-                "GET /dht/table": "DHT routing table",
-                "GET /torrents": "List torrents (default torrent is 0)",
-                "GET /torrents/{index}": "Torrent details",
-                "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                "GET /torrents/{index}/stats": "Torrent stats",
-                // This is kind of not secure as it just reads any local file that it has access to,
-                // or any URL, but whatever, ok for our purposes / threat model.
-                "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
-            },
-            "server": "rqbit",
-        });
+
+        async fn api_root() -> impl IntoResponse {
+            axum::Json(serde_json::json!({
+                "apis": {
+                    "GET /": "list all available APIs",
+                    "GET /dht/stats": "DHT stats",
+                    "GET /dht/table": "DHT routing table",
+                    "GET /torrents": "List torrents (default torrent is 0)",
+                    "GET /torrents/{index}": "Torrent details",
+                    "GET /torrents/{index}/haves": "The bitfield of have pieces",
+                    "GET /torrents/{index}/stats": "Torrent stats",
+                    // This is kind of not secure as it just reads any local file that it has access to,
+                    // or any URL, but whatever, ok for our purposes / threat model.
+                    "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
+                },
+                "server": "rqbit",
+            }))
+        }
+
+        async fn dht_stats(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+            state.api_dht_stats().map(axum::Json)
+        }
+
+        async fn dht_table(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+            state.api_dht_table().map(axum::Json)
+        }
+
+        async fn torrents_list(State(state): State<ApiState>) -> impl IntoResponse {
+            axum::Json(state.api_torrent_list())
+        }
+
+        async fn torrents_post(
+            State(state): State<ApiState>,
+            Query(params): Query<TorrentAddQueryParams>,
+            url: String,
+        ) -> Result<impl IntoResponse> {
+            let opts = params.into_add_torrent_options();
+            state.api_add_torrent(url, Some(opts)).await.map(axum::Json)
+        }
+
+        async fn torrent_details(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_details(idx).map(axum::Json)
+        }
+
+        async fn torrent_haves(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_dump_haves(idx)
+        }
+
+        async fn torrent_stats(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_stats(idx).map(axum::Json)
+        }
 
         let app = Router::new()
-            .route(
-                "/",
-                routing::get(move || async move { axum::Json(api_description_body) }),
-            )
-            .route(
-                "/dht/stats",
-                routing::get(|State(state): State<ApiState>| async move {
-                    state.api_dht_stats().map(axum::Json)
-                }),
-            )
-            .route(
-                "/dht/table",
-                routing::get(|State(state): State<ApiState>| async move {
-                    state.api_dht_table().map(axum::Json)
-                }),
-            )
-            .route(
-                "/torrents",
-                routing::get(|State(state): State<ApiState>| async move {
-                    axum::Json(state.api_torrent_list())
-                }),
-            )
-            .route(
-                "/torrents",
-                routing::post(
-                    |State(state): State<ApiState>,
-                     Query(params): Query<TorrentAddQueryParams>,
-                     url: String| async move {
-                        let opts = params.into_add_torrent_options();
-                        state.api_add_torrent(url, Some(opts)).await.map(axum::Json)
-                    },
-                ),
-            )
-            .route(
-                "/torrents/:id",
-                routing::get(
-                    |State(state): State<ApiState>, Path(idx): Path<usize>| async move {
-                        state.api_torrent_details(idx).map(axum::Json)
-                    },
-                ),
-            )
-            .route(
-                "/torrents/:id/haves",
-                routing::get(
-                    |State(state): State<ApiState>, Path(idx): Path<usize>| async move {
-                        state.api_dump_haves(idx)
-                    },
-                ),
-            )
-            .route(
-                "/torrents/:id/stats",
-                routing::get(
-                    |State(state): State<ApiState>, Path(idx): Path<usize>| async move {
-                        state.api_stats(idx).map(axum::Json)
-                    },
-                ),
-            )
+            .route("/", get(api_root))
+            .route("/dht/stats", get(dht_stats))
+            .route("/dht/table", get(dht_table))
+            .route("/torrents", get(torrents_list).post(torrents_post))
+            .route("/torrents/:id", get(torrent_details))
+            .route("/torrents/:id/haves", get(torrent_haves))
+            .route("/torrents/:id/stats", get(torrent_stats))
             .with_state(state);
 
         log::info!("starting HTTP server on {}", addr);
