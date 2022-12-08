@@ -1,8 +1,6 @@
-use std::ops::Deref;
-
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
-use serde::{ser::SerializeMap, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 
 // Convenience error type.
 #[derive(Debug)]
@@ -45,25 +43,6 @@ enum ApiErrorKind {
     Other(anyhow::Error),
 }
 
-struct ErrWrap<'a, E: ?Sized>(&'a E);
-
-impl<'a, E> Serialize for ErrWrap<'a, E>
-where
-    E: std::error::Error + ?Sized,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut m = serializer.serialize_map(None)?;
-        m.serialize_entry("description", &format!("{}", self.0))?;
-        if let Some(source) = self.0.source() {
-            m.serialize_entry("source", &ErrWrap(source))?;
-        }
-        m.end()
-    }
-}
-
 impl Serialize for ApiError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -76,8 +55,6 @@ impl Serialize for ApiError {
             status: u16,
             #[serde(skip_serializing_if = "Option::is_none")]
             id: Option<usize>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            error_chain: Option<ErrWrap<'a, dyn std::error::Error>>,
         }
         let mut serr: SerializedError = SerializedError {
             error_kind: match self.kind {
@@ -89,10 +66,8 @@ impl Serialize for ApiError {
             status: self.status().as_u16(),
             ..Default::default()
         };
-        match &self.kind {
-            ApiErrorKind::TorrentNotFound(id) => serr.id = Some(*id),
-            ApiErrorKind::Other(err) => serr.error_chain = Some(ErrWrap(err.deref())),
-            _ => {}
+        if let ApiErrorKind::TorrentNotFound(id) = &self.kind {
+            serr.id = Some(*id)
         }
         serr.serialize(serializer)
     }
@@ -100,8 +75,9 @@ impl Serialize for ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(value: anyhow::Error) -> Self {
+        let status = value.downcast_ref::<ApiError>().and_then(|e| e.status);
         Self {
-            status: None,
+            status,
             kind: ApiErrorKind::Other(value),
         }
     }
@@ -120,7 +96,7 @@ impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             ApiErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
-            ApiErrorKind::Other(err) => write!(f, "{err:?}"),
+            ApiErrorKind::Other(err) => write!(f, "{err:#}"),
             ApiErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
         }
     }
