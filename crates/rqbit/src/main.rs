@@ -266,7 +266,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 spawn("Stats printer", stats_printer(session.clone()));
                 let http_api = HttpApi::new(session);
                 let http_api_listen_addr = opts.http_api_listen_addr;
-                http_api.make_http_api_and_run(http_api_listen_addr).await
+                http_api
+                    .make_http_api_and_run(http_api_listen_addr)
+                    .await
+                    .context("error starting HTTP API")
             }
         },
         SubCommand::Download(download_opts) => {
@@ -385,7 +388,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         }
                     };
 
-                    http_api.add_mgr(handle.clone());
+                    http_api.add_torrent_handle(handle.clone());
                 }
 
                 if download_opts.list {

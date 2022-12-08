@@ -1,5 +1,5 @@
 use anyhow::Context;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use buffers::ByteString;
@@ -19,6 +19,9 @@ use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Se
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
+type Result<T> = std::result::Result<T, ApiError>;
+
+// Private HTTP API internals.
 pub struct ApiInternal {
     dht: Option<Dht>,
     startup_time: Instant,
@@ -26,23 +29,24 @@ pub struct ApiInternal {
     session: Arc<Session>,
 }
 
+// Convenience error type.
 #[derive(Debug)]
-struct Error {
+struct ApiError {
     status: Option<StatusCode>,
-    kind: ErrorKind,
+    kind: ApiErrorKind,
 }
 
-impl Error {
+impl ApiError {
     const fn torrent_not_found(torrent_id: usize) -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
-            kind: ErrorKind::TorrentNotFound(torrent_id),
+            kind: ApiErrorKind::TorrentNotFound(torrent_id),
         }
     }
     const fn dht_disabled() -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
-            kind: ErrorKind::DhtDisabled,
+            kind: ApiErrorKind::DhtDisabled,
         }
     }
     fn with_status(self, status: StatusCode) -> Self {
@@ -54,44 +58,49 @@ impl Error {
 }
 
 #[derive(Debug)]
-enum ErrorKind {
+enum ApiErrorKind {
     TorrentNotFound(usize),
     DhtDisabled,
     Other(anyhow::Error),
 }
 
-impl From<anyhow::Error> for Error {
+impl From<anyhow::Error> for ApiError {
     fn from(value: anyhow::Error) -> Self {
         Self {
             status: None,
-            kind: ErrorKind::Other(value),
+            kind: ApiErrorKind::Other(value),
         }
     }
 }
 
-impl std::error::Error for Error {
+impl From<(StatusCode, anyhow::Error)> for ApiError {
+    fn from((code, err): (StatusCode, anyhow::Error)) -> Self {
+        ApiError::from(err).with_status(code)
+    }
+}
+
+impl std::error::Error for ApiError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.kind {
-            ErrorKind::Other(err) => err.source(),
+            ApiErrorKind::Other(err) => err.source(),
             _ => None,
         }
     }
 }
 
-impl std::fmt::Display for Error {
+impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
-            ErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
-            ErrorKind::Other(err) => err.fmt(f),
-            ErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
+            ApiErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
+            ApiErrorKind::Other(err) => write!(f, "{err:?}"),
+            ApiErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
         }
     }
 }
 
-impl IntoResponse for Error {
+impl IntoResponse for ApiError {
     fn into_response(self) -> response::Response {
-        let response_body = format!("{self}");
-        let mut response = response_body.into_response();
+        let mut response = format!("{self}").into_response();
         *response.status_mut() = match self.status {
             Some(s) => s,
             None => StatusCode::INTERNAL_SERVER_ERROR,
@@ -110,7 +119,7 @@ impl ApiInternal {
         }
     }
 
-    fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
+    fn add_torrent_handle(&self, handle: TorrentManagerHandle) -> usize {
         let mut g = self.torrent_managers.write();
         let idx = g.len();
         g.push(handle);
@@ -182,9 +191,10 @@ fn make_torrent_details(
     info_hash: &Id20,
     info: &TorrentMetaV1Info<ByteString>,
     only_files: Option<&[usize]>,
-) -> Result<TorrentDetailsResponse, Error> {
+) -> Result<TorrentDetailsResponse> {
     let files = info
-        .iter_filenames_and_lengths()?
+        .iter_filenames_and_lengths()
+        .context("error iterating filenames and lengths")?
         .enumerate()
         .map(|(idx, (filename_it, length))| {
             let name = match filename_it.to_string() {
@@ -209,12 +219,12 @@ fn make_torrent_details(
 }
 
 impl ApiInternal {
-    fn mgr_handle(&self, idx: usize) -> Result<TorrentManagerHandle, Error> {
+    fn mgr_handle(&self, idx: usize) -> Result<TorrentManagerHandle> {
         self.torrent_managers
             .read()
             .get(idx)
             .cloned()
-            .ok_or(Error::torrent_not_found(idx))
+            .ok_or(ApiError::torrent_not_found(idx))
     }
 
     fn api_torrent_list(&self) -> TorrentListResponse {
@@ -232,7 +242,7 @@ impl ApiInternal {
         }
     }
 
-    fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse, Error> {
+    fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.torrent_state().info_hash();
         let only_files = handle.only_files();
@@ -243,7 +253,7 @@ impl ApiInternal {
         &self,
         url: String,
         opts: Option<AddTorrentOptions>,
-    ) -> Result<ApiAddTorrentResponse, Error> {
+    ) -> Result<ApiAddTorrentResponse> {
         let response = match self
             .session
             .add_torrent(&url, opts)
@@ -251,12 +261,14 @@ impl ApiInternal {
             .context("error adding torrent")?
         {
             AddTorrentResponse::AlreadyManaged(managed) => {
-                return Err(Error::from(anyhow::anyhow!(
-                    "{:?} is already managed, downloaded to {:?}",
-                    managed.info_hash,
-                    managed.output_folder
-                ))
-                .with_status(StatusCode::CONFLICT));
+                return Err(ApiError::from((
+                    StatusCode::CONFLICT,
+                    anyhow::anyhow!(
+                        "{:?} is already managed, downloaded to {:?}",
+                        managed.info_hash,
+                        managed.output_folder
+                    ),
+                )));
             }
             AddTorrentResponse::ListOnly(ListOnlyResponse {
                 info_hash,
@@ -274,7 +286,7 @@ impl ApiInternal {
                     handle.only_files(),
                 )
                 .context("error making torrent details")?;
-                let id = self.add_mgr(handle);
+                let id = self.add_torrent_handle(handle);
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
@@ -288,7 +300,7 @@ impl ApiInternal {
         self.dht.as_ref().map(|d| d.stats())
     }
 
-    fn api_stats(&self, idx: usize) -> Result<StatsResponse, Error> {
+    fn api_stats(&self, idx: usize) -> Result<StatsResponse> {
         let mgr = self.mgr_handle(idx)?;
         let snapshot = mgr.torrent_state().stats_snapshot();
         let estimator = mgr.speed_estimator();
@@ -307,7 +319,7 @@ impl ApiInternal {
         })
     }
 
-    fn api_dump_haves(&self, idx: usize) -> Result<String, Error> {
+    fn api_dump_haves(&self, idx: usize) -> Result<String> {
         let mgr = self.mgr_handle(idx)?;
         Ok(format!(
             "{:?}",
@@ -332,11 +344,11 @@ pub struct TorrentAddQueryParams {
     pub list_only: Option<bool>,
 }
 
-async fn post_torrent(
-    State(inner): State<ApiState>,
+async fn axum_post_torrent(
+    State(state): State<ApiState>,
     Query(params): Query<TorrentAddQueryParams>,
     url: String,
-) -> Result<axum::Json<impl Serialize>, impl IntoResponse> {
+) -> Result<axum::Json<ApiAddTorrentResponse>> {
     let opts = AddTorrentOptions {
         overwrite: params.overwrite.unwrap_or(false),
         only_files_regex: params.only_files_regex,
@@ -345,105 +357,91 @@ async fn post_torrent(
         list_only: params.list_only.unwrap_or(false),
         ..Default::default()
     };
-    match inner
+    state
         .api_add_torrent(url, Some(opts))
         .await
-        .context("error calling HttpApi::api_add_torrent")
-    {
-        Ok(response) => Ok(axum::Json(response)),
-        Err(err) => Err((StatusCode::BAD_REQUEST, format!("{err:#?}"))),
-    }
+        .map(axum::Json)
+        .map_err(|e| e.with_status(StatusCode::BAD_REQUEST))
 }
 
-async fn get_torrent(
-    State(state): State<ApiState>,
-    axum::extract::Path(idx): axum::extract::Path<usize>,
-) -> Result<impl IntoResponse, Error> {
-    Ok(axum::Json(state.api_torrent_details(idx)?))
-}
-
+// Public API
 impl HttpApi {
     pub fn new(session: Arc<Session>) -> Self {
         Self {
             inner: Arc::new(ApiInternal::new(session)),
         }
     }
-    pub fn add_mgr(&self, handle: TorrentManagerHandle) -> usize {
-        self.inner.add_mgr(handle)
+    pub fn add_torrent_handle(&self, handle: TorrentManagerHandle) -> usize {
+        self.inner.add_torrent_handle(handle)
     }
 
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let state = self.inner;
+        let api_description_body = serde_json::json!({
+            "apis": {
+                "GET /": "list all available APIs",
+                "GET /dht/stats": "DHT stats",
+                "GET /dht/table": "DHT routing table",
+                "GET /torrents": "List torrents (default torrent is 0)",
+                "GET /torrents/{index}": "Torrent details",
+                "GET /torrents/{index}/haves": "The bitfield of have pieces",
+                "GET /torrents/{index}/stats": "Torrent stats",
+                // This is kind of not secure as it just reads any local file that it has access to,
+                // or any URL, but whatever, ok for our purposes / threat model.
+                "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
+            },
+            "server": "rqbit",
+        });
+
         let app = Router::new()
-            .route("/", routing::get({
-                let body = serde_json::json!({
-                    "apis": {
-                        "GET /": "list all available APIs",
-                        "GET /dht/stats": "DHT stats",
-                        "GET /dht/table": "DHT routing table",
-                        "GET /torrents": "List torrents (default torrent is 0)",
-                        "GET /torrents/{index}": "Torrent details",
-                        "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                        "GET /torrents/{index}/stats": "Torrent stats",
-                        // This is kind of not secure as it just reads any local file that it has access to,
-                        // or any URL, but whatever, ok for our purposes / thread model.
-                        "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
-                    },
-                    "server": "rqbit",
-                });
-                || async move {
-                    axum::Json(body)
-                }
-            }))
+            .route(
+                "/",
+                routing::get(move || async move { axum::Json(api_description_body) }),
+            )
             .route(
                 "/dht/stats",
-                routing::get({
-                    let state = state.clone();
-                    move || async move {
-                        let dht_stats = state.api_dht_stats().ok_or(Error::dht_disabled())?;
-                        Ok::<_, Error>(axum::Json(dht_stats))
-                    }
+                routing::get(|State(state): State<ApiState>| async move {
+                    let dht_stats = state.api_dht_stats().ok_or(ApiError::dht_disabled())?;
+                    Ok::<_, ApiError>(axum::Json(dht_stats))
                 }),
             )
             .route(
                 "/dht/table",
-                routing::get({
-                    let state = state.clone();
-                    move || async move {
-                        let dht = state.dht.as_ref().ok_or(Error::dht_disabled())?;
-                        Ok::<_, Error>(dht.with_routing_table(|r| axum::Json(r.clone())))
-                    }
+                routing::get(|State(state): State<ApiState>| async move {
+                    let dht = state.dht.as_ref().ok_or(ApiError::dht_disabled())?;
+                    Ok::<_, ApiError>(dht.with_routing_table(|r| axum::Json(r.clone())))
                 }),
             )
             .route(
                 "/torrents",
-                routing::get({
-                    let state = state.clone();
-                    move || async move { axum::Json(state.api_torrent_list()) }
+                routing::get(move |State(state): State<ApiState>| async move {
+                    axum::Json(state.api_torrent_list())
                 }),
             )
-            .route("/torrents", routing::post(post_torrent))
+            .route("/torrents", routing::post(axum_post_torrent))
             .route(
                 "/torrents/:id",
-                routing::get(get_torrent),
+                routing::get(
+                    |State(state): State<ApiState>, Path(idx): Path<usize>| async move {
+                        state.api_torrent_details(idx).map(axum::Json)
+                    },
+                ),
             )
             .route(
                 "/torrents/:id/haves",
-                routing::get({
-                    let state = state.clone();
-                    move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
+                routing::get(
+                    |State(state): State<ApiState>, Path(idx): Path<usize>| async move {
                         state.api_dump_haves(idx)
-                    }
-                }),
+                    },
+                ),
             )
             .route(
                 "/torrents/:id/stats",
-                routing::get({
-                    let state = state.clone();
-                    move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
+                routing::get(
+                    |State(state): State<ApiState>, Path(idx): Path<usize>| async move {
                         state.api_stats(idx).map(axum::Json)
-                    }
-                }),
+                    },
+                ),
             )
             .with_state(state);
 
