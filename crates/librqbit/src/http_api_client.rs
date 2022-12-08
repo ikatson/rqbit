@@ -19,7 +19,18 @@ async fn check_response(r: reqwest::Response) -> anyhow::Result<reqwest::Respons
         .text()
         .await
         .with_context(|| format!("cannot read response body for request to {url} ({status})"))?;
-    anyhow::bail!("{} -> {}: {}", url, status, body)
+
+    #[derive(Deserialize)]
+    struct HumanReadableError<'a> {
+        human_readable: Option<&'a str>,
+    }
+
+    let human_readable_internal_error = serde_json::from_str::<HumanReadableError<'_>>(&body)
+        .ok()
+        .and_then(|e| e.human_readable);
+    let body_display = human_readable_internal_error.unwrap_or(&body);
+
+    anyhow::bail!("{} -> {}: {}", url, status, body_display)
 }
 
 #[derive(Deserialize)]

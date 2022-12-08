@@ -811,6 +811,7 @@ dependencies = [
  "dht",
  "futures",
  "hex 0.4.3",
+ "http",
  "librqbit_core",
  "log",
  "openssl",

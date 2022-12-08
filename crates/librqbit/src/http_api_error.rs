@@ -1,9 +1,7 @@
 use std::ops::Deref;
 
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::response::{IntoResponse, Response};
+use http::StatusCode;
 use serde::{ser::SerializeMap, Serialize, Serializer};
 
 // Convenience error type.
@@ -60,31 +58,40 @@ where
     }
 }
 
-impl Serialize for ApiErrorKind {
+impl Serialize for ApiError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match self {
-            ApiErrorKind::TorrentNotFound(id) => {
-                let mut m = serializer.serialize_map(None)?;
-                m.serialize_entry("error_kind", "torrent_not_found")?;
-                m.serialize_entry("id", id)?;
-                m.end()
-            }
-            ApiErrorKind::DhtDisabled => {
-                let mut m = serializer.serialize_map(None)?;
-                m.serialize_entry("error_kind", "dht_disabled")?;
-                m.end()
-            }
-            ApiErrorKind::Other(err) => {
-                let mut m = serializer.serialize_map(None)?;
-                m.serialize_entry("error_kind", "internal_error")?;
-                m.serialize_entry("human_readable", &format!("{err:#}"))?;
-                m.serialize_entry("error_chain", &ErrWrap(err.deref()))?;
-                m.end()
-            }
+        #[derive(Serialize, Default)]
+        struct SerializedError<'a> {
+            error_kind: &'a str,
+            human_readable: String,
+            status: u16,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            id: Option<usize>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            error_chain: Option<ErrWrap<'a, dyn std::error::Error>>,
         }
+        let mut serr: SerializedError = SerializedError {
+            error_kind: match self.kind {
+                ApiErrorKind::TorrentNotFound(_) => "torrent_not_found",
+                ApiErrorKind::DhtDisabled => "dht_disabled",
+                ApiErrorKind::Other(_) => "internal_error",
+            },
+            human_readable: format!("{self}"),
+            status: self
+                .status
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+                .as_u16(),
+            ..Default::default()
+        };
+        match &self.kind {
+            ApiErrorKind::TorrentNotFound(id) => serr.id = Some(*id),
+            ApiErrorKind::Other(err) => serr.error_chain = Some(ErrWrap(err.deref())),
+            _ => {}
+        }
+        serr.serialize(serializer)
     }
 }
 
@@ -118,7 +125,7 @@ impl std::fmt::Display for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let mut response = axum::Json(&self.kind).into_response();
+        let mut response = axum::Json(&self).into_response();
         *response.status_mut() = match self.status {
             Some(s) => s,
             None => StatusCode::INTERNAL_SERVER_ERROR,
