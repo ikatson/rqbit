@@ -26,6 +26,80 @@ pub struct ApiInternal {
     session: Arc<Session>,
 }
 
+#[derive(Debug)]
+struct Error {
+    status: Option<StatusCode>,
+    kind: ErrorKind,
+}
+
+impl Error {
+    const fn torrent_not_found(torrent_id: usize) -> Self {
+        Self {
+            status: Some(StatusCode::NOT_FOUND),
+            kind: ErrorKind::TorrentNotFound(torrent_id),
+        }
+    }
+    const fn dht_disabled() -> Self {
+        Self {
+            status: Some(StatusCode::NOT_FOUND),
+            kind: ErrorKind::DhtDisabled,
+        }
+    }
+    fn with_status(self, status: StatusCode) -> Self {
+        Self {
+            status: Some(status),
+            kind: self.kind,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ErrorKind {
+    TorrentNotFound(usize),
+    DhtDisabled,
+    Other(anyhow::Error),
+}
+
+impl From<anyhow::Error> for Error {
+    fn from(value: anyhow::Error) -> Self {
+        Self {
+            status: None,
+            kind: ErrorKind::Other(value),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            ErrorKind::Other(err) => err.source(),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            ErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
+            ErrorKind::Other(err) => err.fmt(f),
+            ErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
+        }
+    }
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> response::Response {
+        let response_body = format!("{self}");
+        let mut response = response_body.into_response();
+        *response.status_mut() = match self.status {
+            Some(s) => s,
+            None => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        response
+    }
+}
+
 impl ApiInternal {
     fn new(session: Arc<Session>) -> Self {
         Self {
@@ -108,10 +182,9 @@ fn make_torrent_details(
     info_hash: &Id20,
     info: &TorrentMetaV1Info<ByteString>,
     only_files: Option<&[usize]>,
-) -> TorrentDetailsResponse {
+) -> Result<TorrentDetailsResponse, Error> {
     let files = info
-        .iter_filenames_and_lengths()
-        .unwrap()
+        .iter_filenames_and_lengths()?
         .enumerate()
         .map(|(idx, (filename_it, length))| {
             let name = match filename_it.to_string() {
@@ -129,15 +202,19 @@ fn make_torrent_details(
             }
         })
         .collect();
-    TorrentDetailsResponse {
+    Ok(TorrentDetailsResponse {
         info_hash: info_hash.as_string(),
         files,
-    }
+    })
 }
 
 impl ApiInternal {
-    fn mgr_handle(&self, idx: usize) -> Option<TorrentManagerHandle> {
-        self.torrent_managers.read().get(idx).cloned()
+    fn mgr_handle(&self, idx: usize) -> Result<TorrentManagerHandle, Error> {
+        self.torrent_managers
+            .read()
+            .get(idx)
+            .cloned()
+            .ok_or(Error::torrent_not_found(idx))
     }
 
     fn api_torrent_list(&self) -> TorrentListResponse {
@@ -155,47 +232,48 @@ impl ApiInternal {
         }
     }
 
-    fn api_torrent_details(&self, idx: usize) -> Option<TorrentDetailsResponse> {
+    fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse, Error> {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.torrent_state().info_hash();
         let only_files = handle.only_files();
-        Some(make_torrent_details(
-            &info_hash,
-            handle.torrent_state().info(),
-            only_files,
-        ))
+        make_torrent_details(&info_hash, handle.torrent_state().info(), only_files)
     }
 
     async fn api_add_torrent(
         &self,
         url: String,
         opts: Option<AddTorrentOptions>,
-    ) -> anyhow::Result<ApiAddTorrentResponse> {
+    ) -> Result<ApiAddTorrentResponse, Error> {
         let response = match self
             .session
             .add_torrent(&url, opts)
             .await
             .context("error adding torrent")?
         {
-            AddTorrentResponse::AlreadyManaged(managed) => anyhow::bail!(
-                "{:?} is already managed, downloaded to {:?}",
-                managed.info_hash,
-                managed.output_folder
-            ),
+            AddTorrentResponse::AlreadyManaged(managed) => {
+                return Err(Error::from(anyhow::anyhow!(
+                    "{:?} is already managed, downloaded to {:?}",
+                    managed.info_hash,
+                    managed.output_folder
+                ))
+                .with_status(StatusCode::CONFLICT));
+            }
             AddTorrentResponse::ListOnly(ListOnlyResponse {
                 info_hash,
                 info,
                 only_files,
             }) => ApiAddTorrentResponse {
                 id: None,
-                details: make_torrent_details(&info_hash, &info, only_files.as_deref()),
+                details: make_torrent_details(&info_hash, &info, only_files.as_deref())
+                    .context("error making torrent details")?,
             },
             AddTorrentResponse::Added(handle) => {
                 let details = make_torrent_details(
                     &handle.torrent_state().info_hash(),
                     handle.torrent_state().info(),
                     handle.only_files(),
-                );
+                )
+                .context("error making torrent details")?;
                 let id = self.add_mgr(handle);
                 ApiAddTorrentResponse {
                     id: Some(id),
@@ -210,7 +288,7 @@ impl ApiInternal {
         self.dht.as_ref().map(|d| d.stats())
     }
 
-    fn api_stats(&self, idx: usize) -> Option<StatsResponse> {
+    fn api_stats(&self, idx: usize) -> Result<StatsResponse, Error> {
         let mgr = self.mgr_handle(idx)?;
         let snapshot = mgr.torrent_state().stats_snapshot();
         let estimator = mgr.speed_estimator();
@@ -220,7 +298,7 @@ impl ApiInternal {
         let downloaded_bytes = snapshot.downloaded_and_checked_bytes;
         let downloaded_mb = downloaded_bytes as f64 / 1024f64 / 1024f64;
 
-        Some(StatsResponse {
+        Ok(StatsResponse {
             average_piece_download_time: snapshot.average_piece_download_time(),
             snapshot,
             all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
@@ -229,9 +307,9 @@ impl ApiInternal {
         })
     }
 
-    fn api_dump_haves(&self, idx: usize) -> Option<String> {
+    fn api_dump_haves(&self, idx: usize) -> Result<String, Error> {
         let mgr = self.mgr_handle(idx)?;
-        Some(format!(
+        Ok(format!(
             "{:?}",
             mgr.torrent_state().lock_read().chunks.get_have_pieces(),
         ))
@@ -243,24 +321,6 @@ type ApiState = Arc<ApiInternal>;
 #[derive(Clone)]
 pub struct HttpApi {
     inner: Arc<ApiInternal>,
-}
-
-fn axum_not_found_response<B: IntoResponse>(body: B) -> (StatusCode, B) {
-    (StatusCode::NOT_FOUND, body)
-}
-
-fn axum_torrent_not_found_response(idx: usize) -> impl IntoResponse {
-    axum_not_found_response(format!("torrent {idx} not found"))
-}
-
-fn axum_json_or_torrent_not_found<T: Serialize>(
-    idx: usize,
-    v: Option<T>,
-) -> Result<axum::Json<T>, impl IntoResponse> {
-    match v {
-        Some(v) => Ok(axum::Json(v)),
-        None => Err(axum_torrent_not_found_response(idx)),
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -295,6 +355,13 @@ async fn post_torrent(
     }
 }
 
+async fn get_torrent(
+    State(state): State<ApiState>,
+    axum::extract::Path(idx): axum::extract::Path<usize>,
+) -> Result<impl IntoResponse, Error> {
+    Ok(axum::Json(state.api_torrent_details(idx)?))
+}
+
 impl HttpApi {
     pub fn new(session: Arc<Session>) -> Self {
         Self {
@@ -308,8 +375,8 @@ impl HttpApi {
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let state = self.inner;
         let app = Router::new()
-            .route("/", routing::get(|| async move {
-                axum::Json(serde_json::json!({
+            .route("/", routing::get({
+                let body = serde_json::json!({
                     "apis": {
                         "GET /": "list all available APIs",
                         "GET /dht/stats": "DHT stats",
@@ -323,17 +390,18 @@ impl HttpApi {
                         "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
                     },
                     "server": "rqbit",
-                }))
+                });
+                || async move {
+                    axum::Json(body)
+                }
             }))
             .route(
                 "/dht/stats",
                 routing::get({
                     let state = state.clone();
                     move || async move {
-                        match state.api_dht_stats() {
-                            Some(stats) => Ok(axum::Json(stats)),
-                            None => Err(axum_not_found_response("DHT is disabled")),
-                        }
+                        let dht_stats = state.api_dht_stats().ok_or(Error::dht_disabled())?;
+                        Ok::<_, Error>(axum::Json(dht_stats))
                     }
                 }),
             )
@@ -342,10 +410,8 @@ impl HttpApi {
                 routing::get({
                     let state = state.clone();
                     move || async move {
-                        match state.dht.as_ref() {
-                            Some(dht) => Ok(dht.with_routing_table(|r| response::Json(r.clone()))),
-                            None => Err(axum_not_found_response("DHT is disabled")),
-                        }
+                        let dht = state.dht.as_ref().ok_or(Error::dht_disabled())?;
+                        Ok::<_, Error>(dht.with_routing_table(|r| axum::Json(r.clone())))
                     }
                 }),
             )
@@ -353,28 +419,20 @@ impl HttpApi {
                 "/torrents",
                 routing::get({
                     let state = state.clone();
-                    move || async move { axum::response::Json(state.api_torrent_list()) }
+                    move || async move { axum::Json(state.api_torrent_list()) }
                 }),
             )
             .route("/torrents", routing::post(post_torrent))
             .route(
                 "/torrents/:id",
-                routing::get({
-                    let state = state.clone();
-                    move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
-                        axum_json_or_torrent_not_found(idx, state.api_torrent_details(idx))
-                    }
-                }),
+                routing::get(get_torrent),
             )
             .route(
                 "/torrents/:id/haves",
                 routing::get({
                     let state = state.clone();
                     move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
-                        match state.api_dump_haves(idx) {
-                            Some(haves) => Ok(haves),
-                            None => Err(axum_torrent_not_found_response(idx)),
-                        }
+                        state.api_dump_haves(idx)
                     }
                 }),
             )
@@ -383,7 +441,7 @@ impl HttpApi {
                 routing::get({
                     let state = state.clone();
                     move |axum::extract::Path(idx): axum::extract::Path<usize>| async move {
-                        axum_json_or_torrent_not_found(idx, state.api_stats(idx))
+                        state.api_stats(idx).map(axum::Json)
                     }
                 }),
             )
