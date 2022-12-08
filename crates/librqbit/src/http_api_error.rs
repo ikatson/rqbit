@@ -18,12 +18,18 @@ impl ApiError {
             kind: ApiErrorKind::TorrentNotFound(torrent_id),
         }
     }
+
     pub const fn dht_disabled() -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
             kind: ApiErrorKind::DhtDisabled,
         }
     }
+
+    pub fn status(&self) -> StatusCode {
+        self.status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+    }
+
     pub fn with_status(self, status: StatusCode) -> Self {
         Self {
             status: Some(status),
@@ -80,10 +86,7 @@ impl Serialize for ApiError {
                 ApiErrorKind::Other(_) => "internal_error",
             },
             human_readable: format!("{self}"),
-            status: self
-                .status
-                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
-                .as_u16(),
+            status: self.status().as_u16(),
             ..Default::default()
         };
         match &self.kind {
@@ -126,10 +129,7 @@ impl std::fmt::Display for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = axum::Json(&self).into_response();
-        *response.status_mut() = match self.status {
-            Some(s) => s,
-            None => StatusCode::INTERNAL_SERVER_ERROR,
-        };
+        *response.status_mut() = self.status();
         response
     }
 }
