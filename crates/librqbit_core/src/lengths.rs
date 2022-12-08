@@ -85,7 +85,7 @@ impl Lengths {
         if total_length == 0 {
             anyhow::bail!("torrent with 0 length")
         }
-        let total_pieces = ceil_div_u64(total_length as u64, piece_length as u64) as u32;
+        let total_pieces = ceil_div_u64(total_length, piece_length as u64) as u32;
         Ok(Self {
             chunk_length,
             piece_length,

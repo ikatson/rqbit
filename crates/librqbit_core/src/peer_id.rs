@@ -31,7 +31,7 @@ fn try_decode_azureus_style(p: &Id20) -> Option<AzureusStyle> {
         return None;
     }
     let mut version = ['0'; 4];
-    for (i, c) in (&p[3..7]).iter().copied().enumerate() {
+    for (i, c) in p[3..7].iter().copied().enumerate() {
         version[i] = c as char;
     }
     let kind = AzureusStyleKind::from_bytes(p[1], p[2]);
@@ -51,9 +51,9 @@ pub fn generate_peer_id() -> Id20 {
     let mut peer_id = [0u8; 20];
 
     let u = uuid::Uuid::new_v4();
-    (&mut peer_id[4..20]).copy_from_slice(&u.as_bytes()[..]);
+    peer_id[4..20].copy_from_slice(&u.as_bytes()[..]);
 
-    (&mut peer_id[..8]).copy_from_slice(b"-rQ0001-");
+    peer_id[..8].copy_from_slice(b"-rQ0001-");
 
     Id20(peer_id)
 }

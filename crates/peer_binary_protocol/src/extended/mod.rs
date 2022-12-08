@@ -73,7 +73,7 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
     where
         ByteBuf: Deserialize<'a> + From<&'a [u8]>,
     {
-        let emsg_id = buf.get(0).copied().ok_or_else(|| {
+        let emsg_id = buf.first().copied().ok_or_else(|| {
             MessageDeserializeError::Other(anyhow::anyhow!(
                 "cannot deserialize extended message: can't read first byte"
             ))

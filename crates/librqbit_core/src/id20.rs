@@ -22,7 +22,7 @@ impl std::fmt::Debug for Id20 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "<")?;
         for byte in self.0 {
-            write!(f, "{:02x?}", byte)?;
+            write!(f, "{byte:02x?}")?;
         }
         write!(f, ">")?;
         Ok(())

@@ -29,7 +29,7 @@ struct HexBytes<'a>(&'a [u8]);
 impl<'a> std::fmt::Display for HexBytes<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
-            write!(f, "{:02x?}", byte)?;
+            write!(f, "{byte:02x?}")?;
         }
         Ok(())
     }
@@ -44,9 +44,9 @@ fn debug_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>, debug_strings: bool) -
             // A test if all chars are "printable".
             if s.chars().all(|c| c.escape_debug().len() == 1) {
                 if debug_strings {
-                    return write!(f, "{:?}", s);
+                    return write!(f, "{s:?}");
                 } else {
-                    return write!(f, "{}", s);
+                    return write!(f, "{s}");
                 }
             }
         }

@@ -723,7 +723,7 @@ impl PeerHandler {
     }
 
     fn on_bitfield(&self, handle: PeerHandle, bitfield: ByteString) -> anyhow::Result<()> {
-        if bitfield.len() != self.state.lengths.piece_bitfield_bytes() as usize {
+        if bitfield.len() != self.state.lengths.piece_bitfield_bytes() {
             anyhow::bail!(
                 "dropping {} as its bitfield has unexpected size. Got {}, expected {}",
                 handle,
@@ -754,7 +754,7 @@ impl PeerHandler {
 
         // Additional spawn per peer, not good.
         spawn(
-            format!("peer_chunk_requester({})", handle),
+            format!("peer_chunk_requester({handle})"),
             self.clone().task_peer_chunk_requester(handle),
         );
         Ok(())
@@ -984,7 +984,7 @@ impl PeerHandler {
                     .state
                     .file_ops()
                     .check_piece(handle, chunk_info.piece_index, &chunk_info)
-                    .with_context(|| format!("error checking piece={}", index))?
+                    .with_context(|| format!("error checking piece={index}"))?
                 {
                     true => {
                         let piece_len =
@@ -1036,7 +1036,7 @@ impl PeerHandler {
                 };
                 Ok::<_, anyhow::Error>(())
             })
-            .with_context(|| format!("error processing received chunk {:?}", chunk_info))?;
+            .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         Ok(())
     }
 }

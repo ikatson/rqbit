@@ -116,7 +116,7 @@ impl TorrentManagerHandle {
     pub fn add_tracker(&self, url: Url) -> bool {
         let mgr = self.manager.clone();
         if mgr.trackers.lock().insert(url.clone()) {
-            spawn(format!("tracker monitor {}", url), async move {
+            spawn(format!("tracker monitor {url}"), async move {
                 mgr.single_tracker_monitor(url).await
             });
             true

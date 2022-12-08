@@ -15,12 +15,10 @@ async fn check_response(r: reqwest::Response) -> anyhow::Result<reqwest::Respons
     }
     let status = r.status();
     let url = r.url().clone();
-    let body = r.text().await.with_context(|| {
-        format!(
-            "cannot read response body for request to {} ({})",
-            url, status,
-        )
-    })?;
+    let body = r
+        .text()
+        .await
+        .with_context(|| format!("cannot read response body for request to {url} ({status})"))?;
     anyhow::bail!("{} -> {}: {}", url, status, body)
 }
 

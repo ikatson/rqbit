@@ -509,7 +509,7 @@ mod tests {
     const WHAT_IS_THAT: &[u8]= b"64313a6164323a696432303abd7b477cfbcd10f30b705da20201e7101d8df155393a696e666f5f6861736832303acab507494d02ebb1178b38f2e9d7be299c86b86265313a71393a6765745f7065657273313a74323a0007313a79313a7165";
 
     fn write(filename: &str, data: &[u8]) {
-        let full = format!("/tmp/{}.bin", filename);
+        let full = format!("/tmp/{filename}.bin");
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -519,7 +519,7 @@ mod tests {
     }
 
     fn debug_hex_bencode(name: &str, data: &[u8]) {
-        println!("{}", name);
+        println!("{name}");
         let data = hex::decode(data).unwrap();
 
         println!(
@@ -544,8 +544,8 @@ mod tests {
         bprotocol::serialize_message(&mut buf, transaction_id, version, ip, kind).unwrap();
 
         if buf.as_slice() != data {
-            write(&format!("{}-serialized", name), buf.as_slice());
-            write(&format!("{}-expected", name), data);
+            write(&format!("{name}-serialized"), buf.as_slice());
+            write(&format!("{name}-expected"), data);
             panic!(
                 "{} results don't match, dumped to /tmp/{}-*.bin",
                 name, name

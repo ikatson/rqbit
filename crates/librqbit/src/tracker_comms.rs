@@ -127,7 +127,7 @@ where
         where
             E: serde::de::Error,
         {
-            IpAddr::from_str(v).map_err(|e| E::custom(format!("cannot parse ip: {}", e)))
+            IpAddr::from_str(v).map_err(|e| E::custom(format!("cannot parse ip: {e}")))
         }
     }
     de.deserialize_str(Visitor {})
@@ -185,16 +185,16 @@ impl TrackerRequest {
         write!(s, "&compact={}", if self.compact { 1 } else { 0 }).unwrap();
         write!(s, "&no_peer_id={}", if self.no_peer_id { 1 } else { 0 }).unwrap();
         if let Some(ip) = &self.ip {
-            write!(s, "&ip={}", ip).unwrap();
+            write!(s, "&ip={ip}").unwrap();
         }
         if let Some(numwant) = &self.numwant {
-            write!(s, "&numwant={}", numwant).unwrap();
+            write!(s, "&numwant={numwant}").unwrap();
         }
         if let Some(key) = &self.key {
-            write!(s, "&key={}", key).unwrap();
+            write!(s, "&key={key}").unwrap();
         }
         if let Some(trackerid) = &self.trackerid {
-            write!(s, "&trackerid={}", trackerid).unwrap();
+            write!(s, "&trackerid={trackerid}").unwrap();
         }
         s
     }

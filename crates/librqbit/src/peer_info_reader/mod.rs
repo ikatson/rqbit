@@ -110,7 +110,7 @@ impl HandlerLocked {
             anyhow::bail!("already received piece {}", index);
         }
         let offset_end = offset + size;
-        (&mut self.buffer[offset..offset_end]).copy_from_slice(data);
+        self.buffer[offset..offset_end].copy_from_slice(data);
         self.received_pieces[index as usize] = true;
 
         if self.received_pieces.iter().all(|p| *p) {

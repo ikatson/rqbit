@@ -119,12 +119,11 @@ impl std::fmt::Display for MessageDeserializeError {
             MessageDeserializeError::NotEnoughData(b, name) => {
                 write!(
                     f,
-                    "not enough data to deserialize {}: expected at least {} more bytes",
-                    name, b
+                    "not enough data to deserialize {name}: expected at least {b} more bytes"
                 )
             }
             MessageDeserializeError::UnsupportedMessageId(msg_id) => {
-                write!(f, "unsupported message id {}", msg_id)
+                write!(f, "unsupported message id {msg_id}")
             }
             MessageDeserializeError::IncorrectLenPrefix {
                 received,
@@ -132,8 +131,7 @@ impl std::fmt::Display for MessageDeserializeError {
                 msg_id,
             } => write!(
                 f,
-                "incorrect len prefix for message id {}, expected {}, received {}",
-                msg_id, expected, received
+                "incorrect len prefix for message id {msg_id}, expected {expected}, received {received}"
             ),
             MessageDeserializeError::OtherBincode {
                 error,
@@ -142,10 +140,9 @@ impl std::fmt::Display for MessageDeserializeError {
                 len_prefix,
             } => write!(
                 f,
-                "error deserializing {} (msg_id={}, len_prefix={}): {:?}",
-                name, msg_id, len_prefix, error
+                "error deserializing {name} (msg_id={msg_id}, len_prefix={len_prefix}): {error:?}"
             ),
-            MessageDeserializeError::Other(e) => write!(f, "{}", e),
+            MessageDeserializeError::Other(e) => write!(f, "{e}"),
         }
     }
 }
@@ -272,7 +269,7 @@ where
             Message::Request(request) => {
                 const MSG_LEN: usize = PREAMBLE_LEN + 12;
                 out.resize(MSG_LEN, 0);
-                debug_assert_eq!((&out[PREAMBLE_LEN..]).len(), 12);
+                debug_assert_eq!(out[PREAMBLE_LEN..].len(), 12);
                 ser.serialize_into(&mut out[PREAMBLE_LEN..], request)
                     .unwrap();
                 Ok(MSG_LEN)
@@ -281,7 +278,7 @@ where
                 let block_len = b.as_ref().len();
                 let msg_len = PREAMBLE_LEN + block_len;
                 out.resize(msg_len, 0);
-                (&mut out[PREAMBLE_LEN..PREAMBLE_LEN + block_len]).copy_from_slice(b.as_ref());
+                out[PREAMBLE_LEN..PREAMBLE_LEN + block_len].copy_from_slice(b.as_ref());
                 Ok(msg_len)
             }
             Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested => {
@@ -382,7 +379,7 @@ where
             }
             MSGID_HAVE => {
                 let expected_len = 4;
-                match rest.get(..expected_len as usize) {
+                match rest.get(..expected_len) {
                     Some(h) => Ok((Message::Have(BE::read_u32(h)), PREAMBLE_LEN + expected_len)),
                     None => {
                         let missing = expected_len - rest.len();
@@ -399,7 +396,7 @@ where
                     });
                 }
                 let expected_len = len_prefix as usize - 1;
-                match rest.get(..expected_len as usize) {
+                match rest.get(..expected_len) {
                     Some(bitfield) => Ok((
                         Message::Bitfield(ByteBuf::from(bitfield)),
                         PREAMBLE_LEN + expected_len,
@@ -412,7 +409,7 @@ where
             }
             MSGID_REQUEST => {
                 let expected_len = 12;
-                match rest.get(..expected_len as usize) {
+                match rest.get(..expected_len) {
                     Some(b) => {
                         let request = decoder_config.deserialize::<Request>(b).unwrap();
                         Ok((Message::Request(request), PREAMBLE_LEN + expected_len))
@@ -509,7 +506,7 @@ impl<'a> Handshake<'a> {
     }
     pub fn deserialize(b: &[u8]) -> Result<(Handshake<'_>, usize), MessageDeserializeError> {
         let pstr_len = *b
-            .get(0)
+            .first()
             .ok_or(MessageDeserializeError::NotEnoughData(1, "handshake"))?;
         let expected_len = 1usize + pstr_len as usize + 48;
         let hbuf = b

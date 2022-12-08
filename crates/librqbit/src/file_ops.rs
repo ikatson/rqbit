@@ -34,12 +34,8 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     let mut read = 0;
     while bytes_to_read > 0 {
         let chunk = std::cmp::min(buf.len(), bytes_to_read);
-        file.read_exact(&mut buf[..chunk]).with_context(|| {
-            format!(
-                "failed reading chunk of size {}, read so far {}",
-                chunk, read
-            )
-        })?;
+        file.read_exact(&mut buf[..chunk])
+            .with_context(|| format!("failed reading chunk of size {chunk}, read so far {read}"))?;
         bytes_to_read -= chunk;
         read += chunk;
         hash.update(&buf[..chunk]);
@@ -93,7 +89,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                 self.len - self.processed_bytes
             }
             fn mark_processed_bytes(&mut self, bytes: u64) {
-                self.processed_bytes += bytes as u64
+                self.processed_bytes += bytes
             }
         }
         let mut file_iterator = self
@@ -247,16 +243,12 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
                 .with_context(|| {
-                    format!(
-                        "error seeking to {}, file id: {}",
-                        absolute_offset, file_idx
-                    )
+                    format!("error seeking to {absolute_offset}, file id: {file_idx}")
                 })?;
             update_hash_from_file(&mut file_g, &mut h, &mut buf, to_read_in_file).with_context(
                 || {
                     format!(
-                        "error reading {} bytes, file_id: {} (\"{:?}\")",
-                        to_read_in_file, file_idx, name
+                        "error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{name:?}\")"
                     )
                 },
             )?;
@@ -315,18 +307,12 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
                 .with_context(|| {
-                    format!(
-                        "error seeking to {}, file id: {}",
-                        absolute_offset, file_idx
-                    )
+                    format!("error seeking to {absolute_offset}, file id: {file_idx}")
                 })?;
             file_g
                 .read_exact(&mut buf[..to_read_in_file])
                 .with_context(|| {
-                    format!(
-                        "error reading {} bytes, file_id: {}",
-                        file_idx, to_read_in_file
-                    )
+                    format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
                 })?;
 
             buf = &mut buf[to_read_in_file..];
@@ -376,14 +362,11 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
                 .with_context(|| {
-                    format!(
-                        "error seeking to {} in file {} (\"{:?}\")",
-                        absolute_offset, file_idx, name
-                    )
+                    format!("error seeking to {absolute_offset} in file {file_idx} (\"{name:?}\")")
                 })?;
             file_g
                 .write_all(&buf[..to_write])
-                .with_context(|| format!("error writing to file {} (\"{:?}\")", file_idx, name))?;
+                .with_context(|| format!("error writing to file {file_idx} (\"{name:?}\")"))?;
             buf = &buf[to_write..];
             if buf.is_empty() {
                 break;

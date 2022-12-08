@@ -50,7 +50,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
                 BlockingSpawner::new(true),
             )
             .await
-            .with_context(|| format!("error reading metainfo from {}", addr));
+            .with_context(|| format!("error reading metainfo from {addr}"));
             drop(token);
             ret
         }

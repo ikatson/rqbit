@@ -113,12 +113,12 @@ impl std::fmt::Display for ErrorContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut it = self.field_stack.iter();
         if let Some(field) = it.next() {
-            write!(f, "\"{}\"", field)?;
+            write!(f, "\"{field}\"")?;
         } else {
             return Ok(());
         }
         for field in self.field_stack.iter().skip(1) {
-            write!(f, " -> \"{}\"", field)?;
+            write!(f, " -> \"{field}\"")?;
         }
         f.write_str(": ")
     }
@@ -134,7 +134,7 @@ impl std::fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ErrorKind::Other(err) => err.fmt(f),
-            ErrorKind::NotSupported(s) => write!(f, "{} is not supported by bencode", s),
+            ErrorKind::NotSupported(s) => write!(f, "{s} is not supported by bencode"),
         }
     }
 }
@@ -183,7 +183,7 @@ impl Error {
     }
     fn set_context(mut self, de: &BencodeDeserializer<'_>) -> Self {
         self.context = ErrorContext {
-            field_stack: de.field_context.iter().map(|s| format!("{}", s)).collect(),
+            field_stack: de.field_context.iter().map(|s| format!("{s}")).collect(),
         };
         self
     }
@@ -427,7 +427,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         }
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor
-            .visit_seq(SeqAccess { de: &mut self })
+            .visit_seq(SeqAccess { de: self })
             .map_err(|e: Self::Error| e.set_context(self))
     }
 
@@ -459,7 +459,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         }
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor
-            .visit_map(MapAccess { de: &mut self })
+            .visit_map(MapAccess { de: self })
             .map_err(|e: Self::Error| e.set_context(self))
     }
 

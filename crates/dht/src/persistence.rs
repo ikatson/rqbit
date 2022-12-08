@@ -34,8 +34,8 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
         .truncate(true)
         .create(true)
         .write(true)
-        .open(&tempfile_name)
-        .with_context(|| format!("error opening {:?}", tempfile_name))?;
+        .open(tempfile_name)
+        .with_context(|| format!("error opening {tempfile_name:?}"))?;
 
     let addr = dht.listen_addr();
     match dht
@@ -46,13 +46,13 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
         }
         Err(e) => {
             return Err(e).with_context(|| {
-                format!("error serializing DHT routing table to {:?}", tempfile_name)
+                format!("error serializing DHT routing table to {tempfile_name:?}")
             })
         }
     }
 
     std::fs::rename(tempfile_name, filename)
-        .with_context(|| format!("error renaming {:?} to {:?}", tempfile_name, filename))
+        .with_context(|| format!("error renaming {tempfile_name:?} to {filename:?}"))
 }
 
 impl PersistentDht {
@@ -92,7 +92,7 @@ impl PersistentDht {
             }
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => None,
-                _ => return Err(e).with_context(|| format!("error reading {:?}", config_filename)),
+                _ => return Err(e).with_context(|| format!("error reading {config_filename:?}")),
             },
         };
         let (listen_addr, routing_table) = de

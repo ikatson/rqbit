@@ -72,14 +72,14 @@ pub struct Session {
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
         .await
-        .with_context(|| format!("error downloading torrent metadata from {}", url))?;
+        .with_context(|| format!("error downloading torrent metadata from {url}"))?;
     if !response.status().is_success() {
         anyhow::bail!("GET {} returned {}", url, response.status())
     }
     let b = response
         .bytes()
         .await
-        .with_context(|| format!("error reading repsonse body from {}", url))?;
+        .with_context(|| format!("error reading repsonse body from {url}"))?;
     torrent_from_bytes(&b).context("error decoding torrent")
 }
 
@@ -91,9 +91,9 @@ fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
             .context("error reading stdin")?;
     } else {
         File::open(filename)
-            .with_context(|| format!("error opening {}", filename))?
+            .with_context(|| format!("error opening {filename}"))?
             .read_to_end(&mut buf)
-            .with_context(|| format!("error reading {}", filename))?;
+            .with_context(|| format!("error reading {filename}"))?;
     }
     torrent_from_bytes(&buf).context("error decoding torrent")
 }
@@ -107,7 +107,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     for (idx, (filename, _)) in torrent.iter_filenames_and_lengths()?.enumerate() {
         let full_path = filename
             .to_pathbuf()
-            .with_context(|| format!("filename of file {} is not valid utf8", idx))?;
+            .with_context(|| format!("filename of file {idx} is not valid utf8"))?;
         if filename_re.is_match(full_path.to_str().unwrap()) {
             only_files.push(idx);
         }

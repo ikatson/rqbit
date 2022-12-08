@@ -12,7 +12,7 @@ pub enum SerErrorKind {
 impl std::fmt::Display for SerErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SerErrorKind::Other(e) => write!(f, "{}", e),
+            SerErrorKind::Other(e) => write!(f, "{e}"),
         }
     }
 }
@@ -84,7 +84,7 @@ impl<W: std::io::Write> BencodeSerializer<W> {
         self.write_raw(&[byte])
     }
     fn write_number<N: std::fmt::Display>(&mut self, number: N) -> Result<(), SerError> {
-        self.write_fmt(format_args!("i{}e", number))
+        self.write_fmt(format_args!("i{number}e"))
     }
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerError> {
         if !self.hack_no_bytestring_prefix {
