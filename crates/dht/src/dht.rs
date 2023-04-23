@@ -81,7 +81,12 @@ impl DhtState {
     fn create_request(&mut self, request: Request, addr: SocketAddr) -> Message<ByteString> {
         let transaction_id = self.next_transaction_id;
         let transaction_id_buf = [(transaction_id >> 8) as u8, (transaction_id & 0xff) as u8];
-        self.next_transaction_id += 1;
+
+        self.next_transaction_id = if transaction_id == u16::MAX {
+            0
+        } else {
+            transaction_id + 1
+        };
         let message = match request {
             Request::GetPeers(info_hash) => Message {
                 transaction_id: ByteString::from(transaction_id_buf.as_ref()),
