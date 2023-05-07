@@ -64,6 +64,16 @@ target/openssl-linux/aarch64/lib/libssl.a: target/openssl-linux/openssl-$(OPENSS
 	make -j && \
 	make install_sw
 
+target/openssl-linux/armv6/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
+	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/armv6/ && \
+	mkdir -p $${OPENSSL_ROOT}/src && \
+	cd $${OPENSSL_ROOT}/src/ && \
+	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
+	cd openssl-$(OPENSSL_VERSION) && \
+	LDFLAGS=-latomic ./Configure linux-generic32 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=arm-linux-gnueabihf- && \
+	make -j && \
+	make install_sw
+
 @PHONY: release-linux
 release-linux: release-linux-x86_64 release-linux-aarch64
 
@@ -88,6 +98,12 @@ release-linux-aarch64: target/openssl-linux/aarch64/lib/libssl.a
 	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-unknown-linux-gnu-gcc \
 	OPENSSL_DIR=$(PWD)/target/openssl-linux/aarch64/ \
 	cargo build --release --target=aarch64-unknown-linux-gnu
+
+@PHONY: release-linux-armv6
+release-linux-armv6: target/openssl-linux/armv6/lib/libssl.a
+	CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc \
+	OPENSSL_DIR=$(PWD)/target/openssl-linux/armv6/ \
+	cargo build --release --target=arm-unknown-linux-gnueabihf
 
 
 @PHONY: release-all

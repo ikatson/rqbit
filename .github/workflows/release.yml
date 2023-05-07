@@ -29,13 +29,19 @@ jobs:
     - name: install linux cross compiler
       run:
         brew tap messense/macos-cross-toolchains &&
-        brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+        brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabi
 
     - name: Build release linux x86_64 binary
       run:
         rustup target install x86_64-unknown-linux-gnu &&
         make release-linux-x86_64 &&
         mv target/x86_64-unknown-linux-gnu/release/rqbit target/release/rqbit-linux-static-x86_64
+      
+    - name: Build release linux arm32bit binary
+      run:
+        rustup target install arm-unknown-linux-gnueabi &&
+        make release-linux-armv6 &&
+        mv target/arm-unknown-linux-gnueabihf/release/rqbit target/release/rqbit-linux-static-arm32
 
     - name: Build release linux aarch64 binary
       run:
@@ -57,4 +63,5 @@ jobs:
           target/release/rqbit-osx-universal
           target/release/rqbit-linux-static-x86_64
           target/release/rqbit-linux-static-aarch64
+          target/release/rqbit-linux-static-arm32
 
