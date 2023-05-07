@@ -214,7 +214,7 @@ pub struct ApiInternal {
 type ApiState = Arc<ApiInternal>;
 
 impl ApiInternal {
-    fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>) -> Self {
         Self {
             dht: session.get_dht(),
             startup_time: Instant::now(),
@@ -260,7 +260,7 @@ impl ApiInternal {
         make_torrent_details(&info_hash, handle.torrent_state().info(), only_files)
     }
 
-    async fn api_add_torrent(
+    pub async fn api_add_torrent(
         &self,
         url: String,
         opts: Option<AddTorrentOptions>,
