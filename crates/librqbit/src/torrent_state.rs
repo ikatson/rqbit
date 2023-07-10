@@ -28,7 +28,7 @@ use sha1w::Sha1;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Semaphore,
+        Notify, Semaphore,
     },
     time::timeout,
 };
@@ -242,6 +242,8 @@ pub struct TorrentState {
 
     peer_semaphore: Semaphore,
     peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
+
+    finished_notify: Notify,
 }
 
 impl TorrentState {
@@ -280,6 +282,7 @@ impl TorrentState {
 
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
+            finished_notify: Notify::new(),
         });
         spawn("peer adder", {
             let state = state.clone();
@@ -581,6 +584,13 @@ impl TorrentState {
             queued_peers: peer_stats.queued as u32,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
         }
+    }
+
+    pub async fn wait_until_completed(&self) {
+        if self.get_left_to_download() == 0 {
+            return;
+        }
+        self.finished_notify.notified().await;
     }
 }
 
@@ -1019,6 +1029,10 @@ impl PeerHandler {
                             "piece={} successfully downloaded and verified from {}",
                             index, handle
                         );
+
+                        if self.state.get_left_to_download() == 0 {
+                            self.state.finished_notify.notify_waiters();
+                        }
 
                         self.state.maybe_transmit_haves(chunk_info.piece_index);
                     }

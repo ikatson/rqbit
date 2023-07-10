@@ -140,9 +140,8 @@ impl TorrentManagerHandle {
         todo!()
     }
     pub async fn wait_until_completed(&self) -> anyhow::Result<()> {
-        loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-        }
+        self.manager.state.wait_until_completed().await;
+        Ok(())
     }
 }
 

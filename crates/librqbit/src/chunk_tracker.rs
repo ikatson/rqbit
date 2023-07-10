@@ -127,7 +127,7 @@ impl ChunkTracker {
     }
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
-        self.have.set(idx.get() as usize, true)
+        self.have.set(idx.get() as usize, true);
     }
 
     pub fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {

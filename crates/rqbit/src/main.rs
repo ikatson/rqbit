@@ -128,6 +128,10 @@ struct DownloadOpts {
     /// Set if you are ok to write on top of existing files
     #[clap(long)]
     overwrite: bool,
+
+    /// Exit the program once the torrents complete download.
+    #[clap(short = 'e', long)]
+    exit_on_finish: bool,
 }
 
 // server start
@@ -346,6 +350,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
 
                 let mut added = false;
 
+                let mut handles = Vec::new();
+
                 for path in &download_opts.torrent_path {
                     let handle = match session.add_torrent(path, Some(torrent_opts.clone())).await {
                         Ok(v) => match v {
@@ -389,13 +395,24 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     };
 
                     http_api.add_torrent_handle(handle.clone());
+                    handles.push(handle);
                 }
 
                 if download_opts.list {
                     Ok(())
                 } else if added {
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
+                    if download_opts.exit_on_finish {
+                        let results = futures::future::join_all(
+                            handles.iter().map(|h| h.wait_until_completed()),
+                        );
+                        results.await;
+                        info!("All downloads completed, exiting");
+                        Ok(())
+                    } else {
+                        // Sleep forever.
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(60)).await;
+                        }
                     }
                 } else {
                     anyhow::bail!("no torrents were added")
