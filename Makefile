@@ -81,7 +81,7 @@ release-linux: release-linux-x86_64 release-linux-aarch64
 release-linux-x86_64: target/openssl-linux/x86_64/lib/libssl.a
 	# prereqs:
 	# brew tap messense/macos-cross-toolchains
-	# brew install x86_64-unknown-linux-gnu armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
+	# brew install x86_64-unknown-linux-gnu arm-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
 	# cross-compile openssl with "no-shared", see above
 	CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc \
 	CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++ \
