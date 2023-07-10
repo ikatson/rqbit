@@ -16,3 +16,4 @@ serde = {version = "1", features=["derive"]}
 buffers = {path="../buffers"}
 bencode = {path = "../bencode", default-features=false}
 clone_to_owned = {path="../clone_to_owned"}
+itertools = "0.11.0"
