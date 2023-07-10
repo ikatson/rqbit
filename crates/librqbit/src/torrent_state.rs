@@ -42,7 +42,7 @@ use crate::{
     },
     peer_state::{InflightRequest, LivePeerState, PeerState},
     spawn_utils::{spawn, BlockingSpawner},
-    type_aliases::{PeerHandle, BF},
+    type_aliases::{PeerHandle, RateLimit, BF},
 };
 
 pub struct InflightPiece {
@@ -246,6 +246,7 @@ pub struct TorrentState {
     peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
 
     finished_notify: Notify,
+    chunk_request_rate_limiter: Option<Arc<RateLimit>>,
 }
 
 impl TorrentState {
@@ -262,6 +263,7 @@ impl TorrentState {
         needed_bytes: u64,
         spawner: BlockingSpawner,
         options: Option<TorrentStateOptions>,
+        chunk_request_rate_limiter: Option<Arc<RateLimit>>,
     ) -> Arc<Self> {
         let options = options.unwrap_or_default();
         let (peer_queue_tx, mut peer_queue_rx) = unbounded_channel();
@@ -287,6 +289,7 @@ impl TorrentState {
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
             finished_notify: Notify::new(),
+            chunk_request_rate_limiter,
         });
         spawn("peer adder", {
             let state = state.clone();
@@ -320,6 +323,7 @@ impl TorrentState {
                         handler,
                         Some(options),
                         spawner,
+                        state.chunk_request_rate_limiter.clone(),
                     );
 
                     permit.forget();

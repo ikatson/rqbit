@@ -51,6 +51,7 @@ uuid = {version = "1.2", features = ["v4"]}
 futures = "0.3"
 url = "2"
 hex = "0.4"
+governor = "0.5.1"
 
 [dev-dependencies]
 futures = {version = "0.3"}

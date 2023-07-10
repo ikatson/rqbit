@@ -48,6 +48,7 @@ pub async fn read_metainfo_from_peer(
         handler,
         peer_connection_options,
         spawner,
+        None,
     );
 
     let result_reader = async move { result_rx.await? };

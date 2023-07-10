@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, num::NonZeroU32, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use buffers::{ByteBuf, ByteString};
@@ -12,7 +12,7 @@ use peer_binary_protocol::{
 };
 use tokio::time::timeout;
 
-use crate::spawn_utils::BlockingSpawner;
+use crate::{spawn_utils::BlockingSpawner, type_aliases::RateLimit};
 
 pub trait PeerConnectionHandler {
     fn get_have_bytes(&self) -> u64;
@@ -47,6 +47,9 @@ pub struct PeerConnection<H> {
     peer_id: Id20,
     options: PeerConnectionOptions,
     spawner: BlockingSpawner,
+
+    // rate limiters
+    chunk_request_rate_limiter: Option<Arc<RateLimit>>,
 }
 
 async fn with_timeout<T, E>(
@@ -62,6 +65,7 @@ where
         .map_err(|e| e.into())
 }
 
+// This can't be made into a function because of https://github.com/rust-lang/rust/issues/54663.
 macro_rules! read_one {
     ($conn:ident, $read_buf:ident, $read_so_far:ident, $rwtimeout:ident) => {{
         let (extended, size) = loop {
@@ -96,6 +100,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         handler: H,
         options: Option<PeerConnectionOptions>,
         spawner: BlockingSpawner,
+        chunk_request_rate_limiter: Option<Arc<RateLimit>>,
     ) -> Self {
         PeerConnection {
             handler,
@@ -104,6 +109,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             peer_id,
             spawner,
             options: options.unwrap_or_default(),
+            chunk_request_rate_limiter,
         }
     }
     pub fn into_handler(self) -> H {
@@ -229,6 +235,13 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 let len = match &req {
                     WriterRequest::Message(msg) => {
+                        if let Message::Request(r) = msg {
+                            self.chunk_request_rate_limiter
+                                .as_ref()
+                                .unwrap()
+                                .until_n_ready(NonZeroU32::new(r.length + 1).unwrap())
+                                .await;
+                        };
                         msg.serialize(&mut write_buf, extended_handshake.as_ref())?
                     }
                     WriterRequest::ReadChunkRequest(chunk) => {

@@ -1,8 +1,11 @@
-use std::{fs::File, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    fs::File, io::Read, net::SocketAddr, num::NonZeroU32, path::PathBuf, sync::Arc, time::Duration,
+};
 
 use anyhow::Context;
 use buffers::ByteString;
 use dht::{Dht, Id20, PersistentDht, PersistentDhtConfig};
+use governor::Quota;
 use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_peer_id,
@@ -18,6 +21,7 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     spawn_utils::{spawn, BlockingSpawner},
     torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
+    type_aliases::RateLimit,
 };
 
 #[derive(Clone)]
@@ -67,6 +71,7 @@ pub struct Session {
     spawner: BlockingSpawner,
     locked: RwLock<SessionLocked>,
     output_folder: PathBuf,
+    rate_limiter: Option<Arc<RateLimit>>,
 }
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
@@ -180,6 +185,11 @@ impl Session {
             spawner,
             output_folder,
             locked: RwLock::new(SessionLocked::default()),
+
+            // TODO: this is a hack
+            rate_limiter: Some(Arc::new(RateLimit::direct(Quota::per_second(
+                NonZeroU32::new(1024 * 1024).unwrap(),
+            )))),
         })
     }
     pub fn get_dht(&self) -> Option<Dht> {
@@ -343,6 +353,7 @@ impl Session {
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
+            .rate_limiter(self.rate_limiter.clone())
             .peer_id(self.peer_id);
         if let Some(only_files) = only_files {
             builder.only_files(only_files);

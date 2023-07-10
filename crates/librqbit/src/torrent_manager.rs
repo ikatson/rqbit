@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
     net::SocketAddr,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -10,6 +11,7 @@ use std::{
 use anyhow::Context;
 use bencode::from_bytes;
 use buffers::ByteString;
+use governor::Quota;
 use librqbit_core::{
     id20::Id20, lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
@@ -26,6 +28,7 @@ use crate::{
     spawn_utils::{spawn, BlockingSpawner},
     torrent_state::{TorrentState, TorrentStateOptions},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
+    type_aliases::RateLimit,
 };
 
 #[derive(Default)]
@@ -44,6 +47,7 @@ pub struct TorrentManagerBuilder {
     output_folder: PathBuf,
     options: TorrentManagerOptions,
     spawner: Option<BlockingSpawner>,
+    chunk_request_rate_limiter: Option<Arc<RateLimit>>,
 }
 
 impl TorrentManagerBuilder {
@@ -58,6 +62,7 @@ impl TorrentManagerBuilder {
             output_folder: output_folder.as_ref().into(),
             spawner: None,
             options: TorrentManagerOptions::default(),
+            chunk_request_rate_limiter: None,
         }
     }
 
@@ -96,6 +101,11 @@ impl TorrentManagerBuilder {
         self
     }
 
+    pub fn rate_limiter(&mut self, ratelimiter: Option<Arc<RateLimit>>) -> &mut Self {
+        self.chunk_request_rate_limiter = ratelimiter;
+        self
+    }
+
     pub fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
         TorrentManager::start(
             self.info,
@@ -103,6 +113,7 @@ impl TorrentManagerBuilder {
             self.output_folder,
             self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
             Some(self.options),
+            self.chunk_request_rate_limiter,
         )
     }
 }
@@ -171,6 +182,7 @@ impl TorrentManager {
         out: P,
         spawner: BlockingSpawner,
         options: Option<TorrentManagerOptions>,
+        chunk_request_rate_limiter: Option<Arc<RateLimit>>,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let options = options.unwrap_or_default();
         let (files, filenames) = {
@@ -278,6 +290,7 @@ impl TorrentManager {
             initial_check_results.needed_bytes,
             spawner,
             Some(state_options),
+            chunk_request_rate_limiter,
         );
 
         let estimator = Arc::new(SpeedEstimator::new(5));
