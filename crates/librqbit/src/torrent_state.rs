@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     net::SocketAddr,
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -232,6 +233,7 @@ pub struct TorrentState {
     info: TorrentMetaV1Info<ByteString>,
     locked: Arc<RwLock<TorrentStateLocked>>,
     files: Vec<Arc<Mutex<File>>>,
+    filenames: Vec<PathBuf>,
     info_hash: Id20,
     peer_id: Id20,
     lengths: Lengths,
@@ -253,6 +255,7 @@ impl TorrentState {
         info_hash: Id20,
         peer_id: Id20,
         files: Vec<Arc<Mutex<File>>>,
+        filenames: Vec<PathBuf>,
         chunk_tracker: ChunkTracker,
         lengths: Lengths,
         have_bytes: u64,
@@ -271,6 +274,7 @@ impl TorrentState {
                 chunks: chunk_tracker,
             })),
             files,
+            filenames,
             stats: AtomicStats {
                 have: AtomicU64::new(have_bytes),
                 ..Default::default()
@@ -894,6 +898,35 @@ impl PeerHandler {
         }
     }
 
+    fn reopen_read_only(&self) -> anyhow::Result<()> {
+        fn dummy_file() -> anyhow::Result<std::fs::File> {
+            #[cfg(target_os = "windows")]
+            const DEVNULL: &str = "NUL";
+            #[cfg(not(target_os = "windows"))]
+            const DEVNULL: &str = "/dev/null";
+
+            std::fs::OpenOptions::new()
+                .read(true)
+                .open(DEVNULL)
+                .with_context(|| format!("error opening {}", DEVNULL))
+        }
+
+        for (file, filename) in self.state.files.iter().zip(self.state.filenames.iter()) {
+            let mut g = file.lock();
+            // this should close the original file
+            // putting in a block just in case to guarantee drop.
+            {
+                *g = dummy_file()?;
+            }
+            *g = std::fs::OpenOptions::new()
+                .read(true)
+                .open(filename)
+                .with_context(|| format!("error re-opening {:?} readonly", filename))?;
+            debug!("reopened {:?} read-only", filename);
+        }
+        Ok(())
+    }
+
     fn on_i_am_unchoked(&self, handle: PeerHandle) {
         debug!("we are unchoked by {}", handle);
         let mut g = self.state.locked.write();
@@ -1032,6 +1065,7 @@ impl PeerHandler {
 
                         if self.state.get_left_to_download() == 0 {
                             self.state.finished_notify.notify_waiters();
+                            self.reopen_read_only()?;
                         }
 
                         self.state.maybe_transmit_haves(chunk_info.piece_index);

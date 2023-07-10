@@ -173,10 +173,10 @@ impl TorrentManager {
         options: Option<TorrentManagerOptions>,
     ) -> anyhow::Result<TorrentManagerHandle> {
         let options = options.unwrap_or_default();
-        let files = {
+        let (files, filenames) = {
             let mut files =
                 Vec::<Arc<Mutex<File>>>::with_capacity(info.iter_file_lengths()?.count());
-
+            let mut filenames = Vec::new();
             for (path_bits, _) in info.iter_filenames_and_lengths()? {
                 let mut full_path = out.as_ref().to_owned();
                 let relative_path = path_bits
@@ -200,9 +200,10 @@ impl TorrentManager {
                         .with_context(|| format!("error creating {:?}", &full_path))?;
                     OpenOptions::new().read(true).write(true).open(&full_path)?
                 };
+                filenames.push(full_path);
                 files.push(Arc::new(Mutex::new(file)))
             }
-            files
+            (files, filenames)
         };
 
         let peer_id = options.peer_id.unwrap_or_else(generate_peer_id);
@@ -270,6 +271,7 @@ impl TorrentManager {
             info_hash,
             peer_id,
             files,
+            filenames,
             chunk_tracker,
             lengths,
             initial_check_results.have_bytes,
