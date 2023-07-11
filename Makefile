@@ -1,4 +1,4 @@
-OPENSSL_VERSION=3.0.3
+OPENSSL_VERSION=3.1.1
 
 all: sign-release sign-debug
 
@@ -44,63 +44,55 @@ target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz:
 	mkdir -p target/openssl-linux
 	curl -L https://www.openssl.org/source/openssl-$(OPENSSL_VERSION).tar.gz -o $@
 
-target/openssl-linux/x86_64/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
-	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/x86_64/ && \
+target/openssl-linux/$(TARGET)/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
+	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/$(TARGET)/ && \
 	mkdir -p $${OPENSSL_ROOT}/src && \
 	cd $${OPENSSL_ROOT}/src/ && \
 	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
 	cd openssl-$(OPENSSL_VERSION) && \
-	./Configure linux-generic64 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=x86_64-unknown-linux-gnu- && \
+	./Configure $(OPENSSL_CONFIGURE_NAME) --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared \
+		--cross-compile-prefix=$(CROSS_COMPILE_PREFIX)- && \
 	make install_dev -j
 
-target/openssl-linux/aarch64/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
-	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/aarch64/ && \
-	mkdir -p $${OPENSSL_ROOT}/src && \
-	cd $${OPENSSL_ROOT}/src/ && \
-	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
-	cd openssl-$(OPENSSL_VERSION) && \
-	./Configure linux-aarch64 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=aarch64-unknown-linux-gnu- && \
-	make install_dev -j
-
-target/openssl-linux/armv6/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
-	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/armv6/ && \
-	mkdir -p $${OPENSSL_ROOT}/src && \
-	cd $${OPENSSL_ROOT}/src/ && \
-	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
-	cd openssl-$(OPENSSL_VERSION) && \
-	LDFLAGS=-latomic ./Configure linux-generic32 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=arm-linux-gnueabihf- && \
-	make install_dev -j
+@PHONY: release-linux-current-target
+release-linux-current-target: target/openssl-linux/$(TARGET)/lib/libssl.a
+	CC_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-gcc \
+	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
+	AR_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-ar \
+	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
+	OPENSSL_DIR=$(PWD)/target/openssl-linux/$(TARGET)/ \
+	cargo build --release --target=$(TARGET)
 
 @PHONY: release-linux
-release-linux: release-linux-x86_64 release-linux-aarch64
+release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6
 
 @PHONY: release-linux-x86_64
-release-linux-x86_64: target/openssl-linux/x86_64/lib/libssl.a
-	# prereqs:
-	# brew tap messense/macos-cross-toolchains
-	# brew install x86_64-unknown-linux-gnu arm-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
-	# cross-compile openssl with "no-shared", see above
-	CC_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-gcc \
-	CXX_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-g++ \
-	AR_x86_64_unknown_linux_gnu=x86_64-unknown-linux-gnu-ar \
-	CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-unknown-linux-gnu-gcc \
-	OPENSSL_DIR=$(PWD)/target/openssl-linux/x86_64/ \
-	cargo build --release --target=x86_64-unknown-linux-gnu
+release-linux-x86_64:
+	TARGET=x86_64-unknown-linux-gnu \
+	TARGET_SNAKE_CASE=x86_64_unknown_linux_gnu \
+	TARGET_SNAKE_UPPER_CASE=X86_64_UNKNOWN_LINUX_GNU \
+	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-gnu \
+	OPENSSL_CONFIGURE_NAME=linux-generic64 \
+	$(MAKE) release-linux-current-target
 
 @PHONY: release-linux-aarch64
-release-linux-aarch64: target/openssl-linux/aarch64/lib/libssl.a
-	CC_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-gcc \
-	CXX_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-g++ \
-	AR_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-ar \
-	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-unknown-linux-gnu-gcc \
-	OPENSSL_DIR=$(PWD)/target/openssl-linux/aarch64/ \
-	cargo build --release --target=aarch64-unknown-linux-gnu
+release-linux-aarch64:
+	TARGET=aarch64-unknown-linux-gnu \
+	TARGET_SNAKE_CASE=aarch64_unknown_linux_gnu \
+	TARGET_SNAKE_UPPER_CASE=AARCH64_UNKNOWN_LINUX_GNU \
+	CROSS_COMPILE_PREFIX=aarch64-unknown-linux-gnu \
+	OPENSSL_CONFIGURE_NAME=linux-aarch64 \
+	$(MAKE) release-linux-current-target
 
 @PHONY: release-linux-armv6
-release-linux-armv6: target/openssl-linux/armv6/lib/libssl.a
-	CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc \
-	OPENSSL_DIR=$(PWD)/target/openssl-linux/armv6/ \
-	cargo build --release --target=arm-unknown-linux-gnueabihf
+release-linux-armv6:
+	TARGET=arm-unknown-linux-gnueabihf \
+	TARGET_SNAKE_CASE=arm_unknown_linux_gnueabihf \
+	TARGET_SNAKE_UPPER_CASE=ARM_UNKNOWN_LINUX_GNUEABIHF \
+	CROSS_COMPILE_PREFIX=arm-linux-gnueabihf \
+	OPENSSL_CONFIGURE_NAME=linux-generic32 \
+	LDFLAGS=-latomic \
+	$(MAKE) release-linux-current-target
 
 
 @PHONY: release-all
