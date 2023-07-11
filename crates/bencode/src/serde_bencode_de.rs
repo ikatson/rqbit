@@ -415,7 +415,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         )
     }
 
-    fn deserialize_seq<V>(mut self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
@@ -450,7 +450,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         self.deserialize_seq(visitor)
     }
 
-    fn deserialize_map<V>(mut self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
