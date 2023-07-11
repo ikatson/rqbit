@@ -28,7 +28,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
 #[derive(Deserialize, Debug, Clone)]
 pub struct TorrentMetaV1<BufType> {
     pub announce: BufType,
-    #[serde(rename = "announce-list")]
+    #[serde(rename = "announce-list", default = "Vec::new")]
     pub announce_list: Vec<Vec<BufType>>,
     pub info: TorrentMetaV1Info<BufType>,
     pub comment: Option<BufType>,
