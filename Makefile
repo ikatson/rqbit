@@ -51,8 +51,7 @@ target/openssl-linux/x86_64/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL
 	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
 	cd openssl-$(OPENSSL_VERSION) && \
 	./Configure linux-generic64 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=x86_64-unknown-linux-gnu- && \
-	make -j && \
-	make install_sw
+	make install_dev -j
 
 target/openssl-linux/aarch64/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
 	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/aarch64/ && \
@@ -61,8 +60,7 @@ target/openssl-linux/aarch64/lib/libssl.a: target/openssl-linux/openssl-$(OPENSS
 	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
 	cd openssl-$(OPENSSL_VERSION) && \
 	./Configure linux-aarch64 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=aarch64-unknown-linux-gnu- && \
-	make -j && \
-	make install_sw
+	make install_dev -j
 
 target/openssl-linux/armv6/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
 	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/armv6/ && \
@@ -71,8 +69,7 @@ target/openssl-linux/armv6/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_
 	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
 	cd openssl-$(OPENSSL_VERSION) && \
 	LDFLAGS=-latomic ./Configure linux-generic32 --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared --cross-compile-prefix=arm-linux-gnueabihf- && \
-	make -j && \
-	make install_sw
+	make install_dev -j
 
 @PHONY: release-linux
 release-linux: release-linux-x86_64 release-linux-aarch64
