@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
+use std::io::{BufReader, BufWriter};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -30,12 +31,13 @@ pub struct PersistentDht {
 }
 
 fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<()> {
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .truncate(true)
         .create(true)
         .write(true)
         .open(tempfile_name)
         .with_context(|| format!("error opening {tempfile_name:?}"))?;
+    let mut file = BufWriter::new(file);
 
     let addr = dht.listen_addr();
     match dht
@@ -76,7 +78,8 @@ impl PersistentDht {
 
         let de = match OpenOptions::new().read(true).open(&config_filename) {
             Ok(dht_json) => {
-                match serde_json::from_reader::<_, DhtSerialize<RoutingTable>>(&dht_json) {
+                let reader = BufReader::new(dht_json);
+                match serde_json::from_reader::<_, DhtSerialize<RoutingTable>>(reader) {
                     Ok(r) => {
                         info!("loaded DHT routing table from {:?}", &config_filename);
                         Some(r)
