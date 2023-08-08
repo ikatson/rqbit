@@ -132,12 +132,10 @@ impl<'a, ByteBuf: 'a> UtMetadata<ByteBuf> {
                 }
                 Ok(UtMetadata::Reject(message.piece))
             }
-            other => {
-                return Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                    "unrecognized ut_metadata message type {}",
-                    other
-                )))
-            }
+            other => Err(MessageDeserializeError::Other(anyhow::anyhow!(
+                "unrecognized ut_metadata message type {}",
+                other
+            ))),
         }
     }
 }
