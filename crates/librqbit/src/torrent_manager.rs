@@ -160,7 +160,7 @@ fn make_lengths<ByteBuf: AsRef<[u8]>>(
     Lengths::new(total_length, torrent.piece_length, None)
 }
 
-fn ensure_file_length(file: &mut File, length: u64) -> anyhow::Result<()> {
+fn ensure_file_length(file: &File, length: u64) -> anyhow::Result<()> {
     Ok(file.set_len(length)?)
 }
 
