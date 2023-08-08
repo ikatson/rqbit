@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
@@ -24,16 +24,6 @@ enum LogLevel {
     Error,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ParsedDuration(Duration);
-impl FromStr for ParsedDuration {
-    type Err = parse_duration::parse::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        parse_duration::parse(s).map(ParsedDuration)
-    }
-}
-
 #[derive(Parser)]
 #[clap(version, author, about)]
 struct Opts {
@@ -44,8 +34,8 @@ struct Opts {
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
     /// pretty big, e.g. 30 minutes. This can force a certain value.
-    #[clap(short = 'i', long = "tracker-refresh-interval")]
-    force_tracker_interval: Option<ParsedDuration>,
+    #[clap(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse)]
+    force_tracker_interval: Option<Duration>,
 
     /// The listen address for HTTP API
     #[clap(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
@@ -67,12 +57,12 @@ struct Opts {
     disable_dht_persistence: bool,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[clap(long = "peer-connect-timeout")]
-    peer_connect_timeout: Option<ParsedDuration>,
+    #[clap(long = "peer-connect-timeout", value_parser = parse_duration::parse)]
+    peer_connect_timeout: Option<Duration>,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[clap(long = "peer-read-write-timeout")]
-    peer_read_write_timeout: Option<ParsedDuration>,
+    #[clap(long = "peer-read-write-timeout" , value_parser = parse_duration::parse)]
+    peer_read_write_timeout: Option<Duration>,
 
     /// How many threads to spawn for the executor.
     #[clap(short = 't', long)]
@@ -207,8 +197,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         dht_config: None,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
-            connect_timeout: opts.peer_connect_timeout.map(|d| d.0),
-            read_write_timeout: opts.peer_read_write_timeout.map(|d| d.0),
+            connect_timeout: opts.peer_connect_timeout,
+            read_write_timeout: opts.peer_read_write_timeout,
             ..Default::default()
         }),
     };
@@ -286,7 +276,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 only_files_regex: download_opts.only_files_matching_regex.clone(),
                 overwrite: download_opts.overwrite,
                 list_only: download_opts.list,
-                force_tracker_interval: opts.force_tracker_interval.map(|d| d.0),
+                force_tracker_interval: opts.force_tracker_interval,
                 output_folder: download_opts.output_folder.clone(),
                 sub_folder: download_opts.sub_folder.clone(),
                 ..Default::default()
