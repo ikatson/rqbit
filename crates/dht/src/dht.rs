@@ -498,7 +498,6 @@ impl DhtWorker {
             let mut futs = FuturesUnordered::new();
             // bootstrap
             for addr in bootstrap_addrs.iter() {
-                let addr = addr;
                 let this = &self;
                 let in_tx = &in_tx;
                 futs.push(async move {
