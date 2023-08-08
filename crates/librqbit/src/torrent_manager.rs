@@ -237,7 +237,7 @@ impl TorrentManager {
                     continue;
                 }
                 let now = Instant::now();
-                if let Err(err) = ensure_file_length(&mut file.lock(), length) {
+                if let Err(err) = ensure_file_length(&file.lock(), length) {
                     warn!(
                         "Error setting length for file {:?} to {}: {:#?}",
                         name, length, err
