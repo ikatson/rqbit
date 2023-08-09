@@ -28,16 +28,20 @@ pub struct Sha1Rust {
 impl ISha1 for Sha1Rust {
     fn new() -> Self {
         Sha1Rust {
-            inner: sha1::Sha1::new(),
+            inner: sha1::Sha1::default(),
         }
     }
 
     fn update(&mut self, buf: &[u8]) {
-        self.inner.update(buf)
+        use sha1::Digest;
+        sha1::Sha1::update(&mut self.inner, buf)
     }
 
     fn finish(self) -> [u8; 20] {
-        self.inner.digest().bytes()
+        use sha1::Digest;
+        let mut output = [0u8; 20];
+        sha1::Sha1::finalize_into(self.inner, (&mut output[..]).into());
+        output
     }
 }
 
