@@ -25,50 +25,50 @@ enum LogLevel {
 }
 
 #[derive(Parser)]
-#[clap(version, author, about)]
+#[command(version, author, about)]
 struct Opts {
     /// The loglevel
-    #[clap(value_enum, short = 'v')]
+    #[arg(value_enum, short = 'v')]
     log_level: Option<LogLevel>,
 
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
     /// pretty big, e.g. 30 minutes. This can force a certain value.
-    #[clap(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse)]
+    #[arg(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse)]
     force_tracker_interval: Option<Duration>,
 
     /// The listen address for HTTP API
-    #[clap(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
+    #[arg(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
     http_api_listen_addr: SocketAddr,
 
     /// Set this flag if you want to use tokio's single threaded runtime.
     /// It MAY perform better, but the main purpose is easier debugging, as time
     /// profilers work better with this one.
-    #[clap(short, long)]
+    #[arg(short, long)]
     single_thread_runtime: bool,
 
-    #[clap(long = "disable-dht")]
+    #[arg(long = "disable-dht")]
     disable_dht: bool,
 
     /// Set this to disable DHT reading and storing it's state.
     /// For now this is a useful workaround if you want to launch multiple rqbit instances,
     /// otherwise DHT port will conflict.
-    #[clap(long = "disable-dht-persistence")]
+    #[arg(long = "disable-dht-persistence")]
     disable_dht_persistence: bool,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[clap(long = "peer-connect-timeout", value_parser = parse_duration::parse)]
+    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse)]
     peer_connect_timeout: Option<Duration>,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[clap(long = "peer-read-write-timeout" , value_parser = parse_duration::parse)]
+    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse)]
     peer_read_write_timeout: Option<Duration>,
 
     /// How many threads to spawn for the executor.
-    #[clap(short = 't', long)]
+    #[arg(short = 't', long)]
     worker_threads: Option<usize>,
 
-    #[clap(subcommand)]
+    #[command(subcommand)]
     subcommand: SubCommand,
 }
 
@@ -97,30 +97,30 @@ struct DownloadOpts {
     /// The output folder to write to. If not exists, it will be created.
     /// If not specified, would use the server's output folder. If there's no server
     /// running, this is required.
-    #[clap(short = 'o', long)]
+    #[arg(short = 'o', long)]
     output_folder: Option<String>,
 
     /// The sub folder within output folder to write to. Useful when you have
     /// a server running with output_folder configured, and don't want to specify
     /// the full path every time.
-    #[clap(short = 's', long)]
+    #[arg(short = 's', long)]
     sub_folder: Option<String>,
 
     /// If set, only the file whose filename matching this regex will
     /// be downloaded
-    #[clap(short = 'r', long = "filename-re")]
+    #[arg(short = 'r', long = "filename-re")]
     only_files_matching_regex: Option<String>,
 
     /// Only list the torrent metadata contents, don't do anything else.
-    #[clap(short, long)]
+    #[arg(short, long)]
     list: bool,
 
     /// Set if you are ok to write on top of existing files
-    #[clap(long)]
+    #[arg(long)]
     overwrite: bool,
 
     /// Exit the program once the torrents complete download.
-    #[clap(short = 'e', long)]
+    #[arg(short = 'e', long)]
     exit_on_finish: bool,
 }
 
