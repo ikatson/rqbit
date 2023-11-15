@@ -1,9 +1,20 @@
 [package]
-name = "dht"
-version = "0.1.0"
+name = "librqbit-dht"
+version = "2.2.1"
 edition = "2018"
+description = "DHT implementation, used in rqbit torrent client."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-dht"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["sha1-system"]
+sha1-system = ["bencode/sha1-system", "librqbit-core/sha1-system"]
+sha1-openssl = ["bencode/sha1-openssl", "librqbit-core/sha1-openssl"]
+sha1-rust = ["bencode/sha1-rust", "librqbit-core/sha1-rust"]
 
 [dependencies]
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "net", "sync"]}
@@ -11,7 +22,7 @@ tokio-stream = {version = "0.1", features = ["sync"]}
 serde = {version = "1", features = ["derive"]}
 serde_json = "1"
 hex = "0.4"
-bencode = {path = "../bencode", default-features=false}
+bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
 anyhow = "1"
 parking_lot = "0.12"
 log = "0.4"
@@ -21,7 +32,7 @@ rand = "0.8"
 indexmap = "1.7"
 directories = "4"
 
-clone_to_owned = {path="../clone_to_owned"}
-librqbit_core = {path="../librqbit_core"}
+clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
+librqbit-core = {path="../librqbit_core", version = "2.2.1"}
 
 [dev-dependencies]

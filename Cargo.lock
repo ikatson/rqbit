@@ -180,17 +180,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
 
 [[package]]
-name = "bencode"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "buffers",
- "clone_to_owned",
- "serde",
- "sha1w",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -230,14 +219,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array 0.14.7",
-]
-
-[[package]]
-name = "buffers"
-version = "0.1.0"
-dependencies = [
- "clone_to_owned",
- "serde",
 ]
 
 [[package]]
@@ -312,10 +293,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2da6da31387c7e4ef160ffab6d5e7f00c42626fe39aea70a7b0f1773f7dd6c1b"
 
 [[package]]
-name = "clone_to_owned"
-version = "0.1.0"
-
-[[package]]
 name = "colorchoice"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -384,28 +361,6 @@ dependencies = [
  "hex 0.3.2",
  "openssl",
  "winapi",
-]
-
-[[package]]
-name = "dht"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bencode",
- "clone_to_owned",
- "directories",
- "futures",
- "hex 0.4.3",
- "indexmap",
- "librqbit_core",
- "log",
- "parking_lot",
- "pretty_env_logger",
- "rand",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -904,26 +859,27 @@ checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
 name = "librqbit"
-version = "0.1.0"
+version = "2.2.1"
 dependencies = [
  "anyhow",
  "axum",
- "bencode",
  "bincode",
  "bitvec",
- "buffers",
  "byteorder",
- "clone_to_owned",
  "crypto-hash",
- "dht",
  "futures",
  "hex 0.4.3",
  "http",
- "librqbit_core",
+ "librqbit-bencode",
+ "librqbit-buffers",
+ "librqbit-clone-to-owned",
+ "librqbit-core",
+ "librqbit-dht",
+ "librqbit-peer-protocol",
+ "librqbit-sha1-wrapper",
  "log",
  "openssl",
  "parking_lot",
- "peer_binary_protocol",
  "pretty_env_logger",
  "rand",
  "regex",
@@ -932,7 +888,6 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha1",
- "sha1w",
  "size_format",
  "tokio",
  "tokio-stream",
@@ -942,20 +897,89 @@ dependencies = [
 ]
 
 [[package]]
-name = "librqbit_core"
-version = "0.1.0"
+name = "librqbit-bencode"
+version = "2.2.1"
 dependencies = [
  "anyhow",
- "bencode",
- "buffers",
- "clone_to_owned",
+ "librqbit-buffers",
+ "librqbit-clone-to-owned",
+ "librqbit-sha1-wrapper",
+ "serde",
+]
+
+[[package]]
+name = "librqbit-buffers"
+version = "2.2.1"
+dependencies = [
+ "librqbit-clone-to-owned",
+ "serde",
+]
+
+[[package]]
+name = "librqbit-clone-to-owned"
+version = "2.2.1"
+
+[[package]]
+name = "librqbit-core"
+version = "2.2.1"
+dependencies = [
+ "anyhow",
  "hex 0.4.3",
  "itertools",
+ "librqbit-bencode",
+ "librqbit-buffers",
+ "librqbit-clone-to-owned",
  "log",
  "parking_lot",
  "serde",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "librqbit-dht"
+version = "2.2.1"
+dependencies = [
+ "anyhow",
+ "directories",
+ "futures",
+ "hex 0.4.3",
+ "indexmap",
+ "librqbit-bencode",
+ "librqbit-clone-to-owned",
+ "librqbit-core",
+ "log",
+ "parking_lot",
+ "pretty_env_logger",
+ "rand",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
+name = "librqbit-peer-protocol"
+version = "2.2.1"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bitvec",
+ "byteorder",
+ "librqbit-bencode",
+ "librqbit-buffers",
+ "librqbit-clone-to-owned",
+ "librqbit-core",
+ "serde",
+]
+
+[[package]]
+name = "librqbit-sha1-wrapper"
+version = "2.2.1"
+dependencies = [
+ "crypto-hash",
+ "openssl",
+ "sha1",
 ]
 
 [[package]]
@@ -1223,21 +1247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "peer_binary_protocol"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bencode",
- "bincode",
- "bitvec",
- "buffers",
- "byteorder",
- "clone_to_owned",
- "librqbit_core",
- "serde",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1478,9 +1487,9 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "dht",
  "futures",
  "librqbit",
+ "librqbit-dht",
  "log",
  "parse_duration",
  "pretty_env_logger",
@@ -1678,15 +1687,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "sha1w"
-version = "0.1.0"
-dependencies = [
- "crypto-hash",
- "openssl",
- "sha1",
 ]
 
 [[package]]

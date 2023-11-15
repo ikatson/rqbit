@@ -1,8 +1,15 @@
 [package]
 name = "librqbit"
-version = "0.1.0"
+version = "2.2.1"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
+description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-dht"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
 default = ["sha1-system", "default-tls"]
@@ -12,23 +19,21 @@ sha1-rust = ["sha1w/sha1-rust"]
 default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-bencode = {path = "../bencode", default-features=false}
-buffers = {path = "../buffers"}
-librqbit_core = {path = "../librqbit_core"}
-clone_to_owned = {path = "../clone_to_owned"}
-peer_binary_protocol = {path = "../peer_binary_protocol"}
-sha1w = {path = "../sha1w", default-features=false}
-dht = {path = "../dht"}
+bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
+buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
+librqbit-core = {path = "../librqbit_core", version = "2.2.1"}
+clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
+peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "2.2.1"}
+sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
+dht = {path = "../dht", package="librqbit-dht", version="2.2.1"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 axum = {version = "0.6"}
 tokio-stream = "0.1"
 serde = {version = "1", features=["derive"]}
 serde_json = "1"
-serde_urlencoded = "*"
+serde_urlencoded = "0.7"
 anyhow = "1"
 
 http = "0.2"

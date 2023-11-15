@@ -1,7 +1,12 @@
 [package]
-name = "sha1w"
-version = "0.1.0"
+name = "librqbit-sha1-wrapper"
+version = "2.2.1"
 edition = "2018"
+description = "Common interface around various sha1 implementations used in rqbit torrent client."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-sha1-wrapper"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
