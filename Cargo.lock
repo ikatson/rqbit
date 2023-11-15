@@ -374,7 +374,7 @@ dependencies = [
  "indexmap",
  "librqbit-bencode",
  "librqbit-clone-to-owned",
- "librqbit_core",
+ "librqbit-core",
  "log",
  "parking_lot",
  "pretty_env_logger",
@@ -896,8 +896,8 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
+ "librqbit-core",
  "librqbit-sha1-wrapper",
- "librqbit_core",
  "log",
  "openssl",
  "parking_lot",
@@ -942,17 +942,8 @@ name = "librqbit-clone-to-owned"
 version = "2.2.1"
 
 [[package]]
-name = "librqbit-sha1-wrapper"
+name = "librqbit-core"
 version = "2.2.1"
-dependencies = [
- "crypto-hash",
- "openssl",
- "sha1",
-]
-
-[[package]]
-name = "librqbit_core"
-version = "0.1.0"
 dependencies = [
  "anyhow",
  "hex 0.4.3",
@@ -965,6 +956,15 @@ dependencies = [
  "serde",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "librqbit-sha1-wrapper"
+version = "2.2.1"
+dependencies = [
+ "crypto-hash",
+ "openssl",
+ "sha1",
 ]
 
 [[package]]
@@ -1242,7 +1242,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
- "librqbit_core",
+ "librqbit-core",
  "serde",
 ]
 
