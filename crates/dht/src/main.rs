@@ -1,7 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
 use anyhow::Context;
-use dht::{Dht, Id20};
+use librqbit_dht::{Dht, Id20};
 use log::info;
 use tokio_stream::StreamExt;
 

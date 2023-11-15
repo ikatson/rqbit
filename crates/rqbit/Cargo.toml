@@ -15,7 +15,7 @@ rust-tls = ["librqbit/rust-tls"]
 
 [dependencies]
 librqbit = {path="../librqbit", default-features=false}
-dht = {path="../dht"}
+dht = {path="../dht", package="librqbit-dht", version="2.2.1"}
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 anyhow = "1"
 clap = {version = "4", features = ["derive"]}

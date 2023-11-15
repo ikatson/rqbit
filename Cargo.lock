@@ -364,28 +364,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dht"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "futures",
- "hex 0.4.3",
- "indexmap",
- "librqbit-bencode",
- "librqbit-clone-to-owned",
- "librqbit-core",
- "log",
- "parking_lot",
- "pretty_env_logger",
- "rand",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -889,7 +867,6 @@ dependencies = [
  "bitvec",
  "byteorder",
  "crypto-hash",
- "dht",
  "futures",
  "hex 0.4.3",
  "http",
@@ -897,6 +874,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
+ "librqbit-dht",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
  "log",
@@ -956,6 +934,28 @@ dependencies = [
  "serde",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "librqbit-dht"
+version = "2.2.1"
+dependencies = [
+ "anyhow",
+ "directories",
+ "futures",
+ "hex 0.4.3",
+ "indexmap",
+ "librqbit-bencode",
+ "librqbit-clone-to-owned",
+ "librqbit-core",
+ "log",
+ "parking_lot",
+ "pretty_env_logger",
+ "rand",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -1487,9 +1487,9 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "dht",
  "futures",
  "librqbit",
+ "librqbit-dht",
  "log",
  "parse_duration",
  "pretty_env_logger",
