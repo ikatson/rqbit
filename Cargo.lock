@@ -180,17 +180,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
 
 [[package]]
-name = "bencode"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "librqbit-buffers",
- "librqbit-clone-to-owned",
- "serde",
- "sha1w",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -379,11 +368,11 @@ name = "dht"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bencode",
  "directories",
  "futures",
  "hex 0.4.3",
  "indexmap",
+ "librqbit-bencode",
  "librqbit-clone-to-owned",
  "librqbit_core",
  "log",
@@ -896,7 +885,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "bencode",
  "bincode",
  "bitvec",
  "byteorder",
@@ -905,8 +893,10 @@ dependencies = [
  "futures",
  "hex 0.4.3",
  "http",
+ "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
+ "librqbit-sha1-wrapper",
  "librqbit_core",
  "log",
  "openssl",
@@ -920,13 +910,23 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha1",
- "sha1w",
  "size_format",
  "tokio",
  "tokio-stream",
  "url",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "librqbit-bencode"
+version = "2.2.1"
+dependencies = [
+ "anyhow",
+ "librqbit-buffers",
+ "librqbit-clone-to-owned",
+ "librqbit-sha1-wrapper",
+ "serde",
 ]
 
 [[package]]
@@ -942,13 +942,22 @@ name = "librqbit-clone-to-owned"
 version = "2.2.1"
 
 [[package]]
+name = "librqbit-sha1-wrapper"
+version = "2.2.1"
+dependencies = [
+ "crypto-hash",
+ "openssl",
+ "sha1",
+]
+
+[[package]]
 name = "librqbit_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bencode",
  "hex 0.4.3",
  "itertools",
+ "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "log",
@@ -1227,10 +1236,10 @@ name = "peer_binary_protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bencode",
  "bincode",
  "bitvec",
  "byteorder",
+ "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit_core",
@@ -1678,15 +1687,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "sha1w"
-version = "0.1.0"
-dependencies = [
- "crypto-hash",
- "openssl",
- "sha1",
 ]
 
 [[package]]
