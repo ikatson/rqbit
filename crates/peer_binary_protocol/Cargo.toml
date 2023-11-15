@@ -2,8 +2,19 @@
 name = "librqbit-peer-protocol"
 version = "2.2.1"
 edition = "2018"
+description = "Protocol for working with torrent peers. Used in rqbit torrent client."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-peer-protocol"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["sha1-system"]
+sha1-system = ["bencode/sha1-system", "librqbit-core/sha1-system"]
+sha1-openssl = ["bencode/sha1-openssl", "librqbit-core/sha1-openssl"]
+sha1-rust = ["bencode/sha1-rust", "librqbit-core/sha1-rust"]
 
 [dependencies]
 serde = {version = "1", features = ["derive"]}
