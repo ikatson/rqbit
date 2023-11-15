@@ -10,6 +10,7 @@ This program will just download a simple torrent file with a Magnet link
 use std::error::Error;
 use std::path::PathBuf;
 use librqbit::session::{AddTorrentResponse, Session};
+use librqbit::spawn_utils::BlockingSpawner;
 
 const MAGNET_LINK: &str = "magnet:?..."; // Put your magnet link here
 
