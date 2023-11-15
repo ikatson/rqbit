@@ -19,6 +19,12 @@ Open sourced it just in case anyone might find it useful and/or wants to contrib
 There are pre-built binaries in [releases](https://github.com/ikatson/rqbit/releases).
 If someone wants to put rqbit into e.g. homebrew, PRs welcome :)
 
+If you have rust toolchain installed, this should work:
+
+```
+cargo install rqbit
+```
+
 ## Build
 Just a regular Rust binary build process.
 
