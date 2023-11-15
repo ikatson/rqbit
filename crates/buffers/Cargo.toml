@@ -7,4 +7,4 @@ edition = "2018"
 
 [dependencies]
 serde = {version = "1", features=["derive"]}
-clone_to_owned = {path="../clone_to_owned"}
+clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}

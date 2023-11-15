@@ -18,7 +18,7 @@ rust-tls = ["reqwest/rustls-tls"]
 bencode = {path = "../bencode", default-features=false}
 buffers = {path = "../buffers"}
 librqbit_core = {path = "../librqbit_core"}
-clone_to_owned = {path = "../clone_to_owned"}
+clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 peer_binary_protocol = {path = "../peer_binary_protocol"}
 sha1w = {path = "../sha1w", default-features=false}
 dht = {path = "../dht"}

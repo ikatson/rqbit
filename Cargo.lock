@@ -185,7 +185,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "buffers",
- "clone_to_owned",
+ "librqbit-clone-to-owned",
  "serde",
  "sha1w",
 ]
@@ -236,7 +236,7 @@ dependencies = [
 name = "buffers"
 version = "0.1.0"
 dependencies = [
- "clone_to_owned",
+ "librqbit-clone-to-owned",
  "serde",
 ]
 
@@ -310,10 +310,6 @@ name = "clap_lex"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2da6da31387c7e4ef160ffab6d5e7f00c42626fe39aea70a7b0f1773f7dd6c1b"
-
-[[package]]
-name = "clone_to_owned"
-version = "0.1.0"
 
 [[package]]
 name = "colorchoice"
@@ -392,11 +388,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bencode",
- "clone_to_owned",
  "directories",
  "futures",
  "hex 0.4.3",
  "indexmap",
+ "librqbit-clone-to-owned",
  "librqbit_core",
  "log",
  "parking_lot",
@@ -913,12 +909,12 @@ dependencies = [
  "bitvec",
  "buffers",
  "byteorder",
- "clone_to_owned",
  "crypto-hash",
  "dht",
  "futures",
  "hex 0.4.3",
  "http",
+ "librqbit-clone-to-owned",
  "librqbit_core",
  "log",
  "openssl",
@@ -942,15 +938,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "librqbit-clone-to-owned"
+version = "2.2.1"
+
+[[package]]
 name = "librqbit_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bencode",
  "buffers",
- "clone_to_owned",
  "hex 0.4.3",
  "itertools",
+ "librqbit-clone-to-owned",
  "log",
  "parking_lot",
  "serde",
@@ -1232,7 +1232,7 @@ dependencies = [
  "bitvec",
  "buffers",
  "byteorder",
- "clone_to_owned",
+ "librqbit-clone-to-owned",
  "librqbit_core",
  "serde",
 ]
