@@ -2,6 +2,11 @@
 name = "librqbit-bencode"
 version = "2.2.1"
 edition = "2018"
+description = "Bencode serialization and deserialization using Serde"
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-bencode"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
