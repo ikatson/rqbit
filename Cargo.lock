@@ -897,11 +897,11 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
+ "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
  "log",
  "openssl",
  "parking_lot",
- "peer_binary_protocol",
  "pretty_env_logger",
  "rand",
  "regex",
@@ -956,6 +956,21 @@ dependencies = [
  "serde",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "librqbit-peer-protocol"
+version = "2.2.1"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bitvec",
+ "byteorder",
+ "librqbit-bencode",
+ "librqbit-buffers",
+ "librqbit-clone-to-owned",
+ "librqbit-core",
+ "serde",
 ]
 
 [[package]]
@@ -1229,21 +1244,6 @@ dependencies = [
  "lazy_static",
  "num",
  "regex",
-]
-
-[[package]]
-name = "peer_binary_protocol"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "bitvec",
- "byteorder",
- "librqbit-bencode",
- "librqbit-buffers",
- "librqbit-clone-to-owned",
- "librqbit-core",
- "serde",
 ]
 
 [[package]]

@@ -19,7 +19,7 @@ bencode = {path = "../bencode", default-features=false, package="librqbit-bencod
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
 librqbit-core = {path = "../librqbit_core", version = "2.2.1"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-peer_binary_protocol = {path = "../peer_binary_protocol"}
+peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "2.2.1"}
 sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
 dht = {path = "../dht"}
 
