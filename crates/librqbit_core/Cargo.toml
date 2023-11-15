@@ -2,6 +2,11 @@
 name = "librqbit-core"
 version = "2.2.1"
 edition = "2018"
+description = "Important utilities used throughout librqbit useful for working with torrents."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-core"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
