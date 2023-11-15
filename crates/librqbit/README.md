@@ -8,6 +8,7 @@ This program will just download a simple torrent file with a Magnet link
 
 ```rust
 use std::error::Error;
+use std::path::PathBuf;
 use librqbit::session::{AddTorrentResponse, Session};
 
 const MAGNET_LINK: &str = "magnet:?..."; // Put your magnet link here
