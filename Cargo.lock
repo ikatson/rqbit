@@ -184,7 +184,7 @@ name = "bencode"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buffers",
+ "librqbit-buffers",
  "librqbit-clone-to-owned",
  "serde",
  "sha1w",
@@ -230,14 +230,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array 0.14.7",
-]
-
-[[package]]
-name = "buffers"
-version = "0.1.0"
-dependencies = [
- "librqbit-clone-to-owned",
- "serde",
 ]
 
 [[package]]
@@ -907,13 +899,13 @@ dependencies = [
  "bencode",
  "bincode",
  "bitvec",
- "buffers",
  "byteorder",
  "crypto-hash",
  "dht",
  "futures",
  "hex 0.4.3",
  "http",
+ "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit_core",
  "log",
@@ -938,6 +930,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "librqbit-buffers"
+version = "2.2.1"
+dependencies = [
+ "librqbit-clone-to-owned",
+ "serde",
+]
+
+[[package]]
 name = "librqbit-clone-to-owned"
 version = "2.2.1"
 
@@ -947,9 +947,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bencode",
- "buffers",
  "hex 0.4.3",
  "itertools",
+ "librqbit-buffers",
  "librqbit-clone-to-owned",
  "log",
  "parking_lot",
@@ -1230,8 +1230,8 @@ dependencies = [
  "bencode",
  "bincode",
  "bitvec",
- "buffers",
  "byteorder",
+ "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit_core",
  "serde",

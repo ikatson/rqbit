@@ -13,7 +13,7 @@ sha1-rust = ["sha1w/sha1-rust"]
 
 [dependencies]
 serde = {version = "1", features=["derive"]}
-buffers = {path = "../buffers"}
+buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 anyhow = "1"
 sha1w = {path="../sha1w", default-features=false}
