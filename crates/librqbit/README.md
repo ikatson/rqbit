@@ -3,7 +3,7 @@
 A torrent library 100% written in rust
 
 ## Basic example
-This is a simple on how to use this library  
+This is a simple program on how to use this library  
 This program will just download a simple torrent file with a Magnet link
 
 ```rust
@@ -11,7 +11,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use librqbit::{http_api_client, Magnet};
+use librqbit::Magnet;
 use librqbit::session::{AddTorrentResponse, ListOnlyResponse, ManagedTorrentState, Session};
 use librqbit::spawn_utils::BlockingSpawner;
 use size_format::SizeFormatterBinary as SF;
