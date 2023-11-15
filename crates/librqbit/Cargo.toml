@@ -3,6 +3,13 @@ name = "librqbit"
 version = "0.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
+description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-dht"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
 default = ["sha1-system", "default-tls"]
@@ -11,8 +18,6 @@ sha1-openssl = ["sha1w/sha1-openssl"]
 sha1-rust = ["sha1w/sha1-rust"]
 default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
