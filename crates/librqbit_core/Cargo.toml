@@ -10,6 +10,12 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["sha1-system"]
+sha1-system = ["bencode/sha1-system"]
+sha1-openssl = ["bencode/sha1-openssl"]
+sha1-rust = ["bencode/sha1-rust"]
+
 [dependencies]
 hex = "0.4"
 anyhow = "1"
