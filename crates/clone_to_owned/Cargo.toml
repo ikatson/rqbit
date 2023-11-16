@@ -4,6 +4,8 @@ version = "2.2.1"
 edition = "2018"
 description = "Util traits to represent something that can be made owned and change type at the same time."
 license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-clone-to-owned"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

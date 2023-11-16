@@ -5,7 +5,7 @@ authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2018"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
 license = "Apache-2.0"
-documentation = "https://docs.rs/librqbit-dht"
+documentation = "https://docs.rs/librqbit"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
