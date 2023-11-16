@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2018"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
@@ -27,4 +27,4 @@ serde = {version = "1", features=["derive"]}
 buffers = {path="../buffers", package="librqbit-buffers", version = "2.2.1"}
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-itertools = "0.11.0"
+itertools = "0.12"

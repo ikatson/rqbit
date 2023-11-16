@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-dht"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2018"
 description = "DHT implementation, used in rqbit torrent client."
 license = "Apache-2.0"
@@ -26,11 +26,11 @@ bencode = {path = "../bencode", default-features=false, package="librqbit-bencod
 anyhow = "1"
 parking_lot = "0.12"
 log = "0.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 futures = "0.3"
 rand = "0.8"
-indexmap = "1.7"
-directories = "4"
+indexmap = "2"
+directories = "5"
 
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 librqbit-core = {path="../librqbit_core", version = "2.2.1"}
