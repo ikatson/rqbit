@@ -2,8 +2,10 @@ use std::{collections::HashSet, sync::Arc};
 
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{Notify, Semaphore};
 
+use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -21,10 +23,14 @@ impl From<&ChunkInfo> for InflightRequest {
     }
 }
 
-#[derive(Debug)]
+// TODO: Arc can be removed probably, as UnboundedSender should be clone + it can be downgraded to weak.
+pub type PeerTx = Arc<UnboundedSender<WriterRequest>>;
+
+#[derive(Debug, Default)]
 pub enum PeerState {
+    #[default]
     Queued,
-    Connecting,
+    Connecting(PeerTx),
     Live(LivePeerState),
 }
 
@@ -37,10 +43,11 @@ pub struct LivePeerState {
     pub have_notify: Arc<Notify>,
     pub bitfield: Option<BF>,
     pub inflight_requests: HashSet<InflightRequest>,
+    pub tx: PeerTx,
 }
 
 impl LivePeerState {
-    pub fn new(peer_id: Id20) -> Self {
+    pub fn new(peer_id: Id20, tx: PeerTx) -> Self {
         LivePeerState {
             peer_id,
             i_am_choked: true,
@@ -49,6 +56,7 @@ impl LivePeerState {
             have_notify: Arc::new(Notify::new()),
             requests_sem: Arc::new(Semaphore::new(0)),
             inflight_requests: Default::default(),
+            tx,
         }
     }
 }

@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -40,7 +40,7 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    peer_state::{InflightRequest, LivePeerState, PeerState},
+    peer_state::{InflightRequest, LivePeerState, PeerState, PeerTx},
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
 };
@@ -55,7 +55,6 @@ pub struct PeerStates {
     states: HashMap<PeerHandle, PeerState>,
     seen: HashSet<SocketAddr>,
     inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
-    tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::UnboundedSender<WriterRequest>>>,
 }
 
 #[derive(Debug, Default)]
@@ -73,7 +72,7 @@ impl PeerStates {
             .values()
             .fold(AggregatePeerStats::default(), |mut s, p| {
                 match p {
-                    PeerState::Connecting => s.connecting += 1,
+                    PeerState::Connecting(_) => s.connecting += 1,
                     PeerState::Live(_) => s.live += 1,
                     PeerState::Queued => s.queued += 1,
                 };
@@ -82,15 +81,11 @@ impl PeerStates {
         stats.seen = self.seen.len();
         stats
     }
-    pub fn add_if_not_seen(
-        &mut self,
-        addr: SocketAddr,
-        tx: UnboundedSender<WriterRequest>,
-    ) -> Option<PeerHandle> {
+    pub fn add_if_not_seen(&mut self, addr: SocketAddr) -> Option<PeerHandle> {
         if self.seen.contains(&addr) {
             return None;
         }
-        let handle = self.add(addr, tx)?;
+        let handle = self.add(addr)?;
         self.seen.insert(addr);
         Some(handle)
     }
@@ -113,23 +108,16 @@ impl PeerStates {
         self.get_live_mut(handle)
             .ok_or_else(|| anyhow::anyhow!("peer dropped"))
     }
-    pub fn add(
-        &mut self,
-        addr: SocketAddr,
-        tx: UnboundedSender<WriterRequest>,
-    ) -> Option<PeerHandle> {
+    pub fn add(&mut self, addr: SocketAddr) -> Option<PeerHandle> {
         let handle = addr;
         if self.states.contains_key(&addr) {
             return None;
         }
         self.states.insert(handle, PeerState::Queued);
-        self.tx.insert(handle, Arc::new(tx));
         Some(handle)
     }
     pub fn drop_peer(&mut self, handle: PeerHandle) -> Option<PeerState> {
-        let result = self.states.remove(&handle);
-        self.tx.remove(&handle);
-        result
+        self.states.remove(&handle)
     }
     pub fn mark_i_am_choked(&mut self, handle: PeerHandle, is_choked: bool) -> Option<bool> {
         let live = self.get_live_mut(handle)?;
@@ -158,8 +146,8 @@ impl PeerStates {
         live.bitfield = Some(bitfield);
         Some(prev)
     }
-    pub fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<UnboundedSender<WriterRequest>>> {
-        Some(self.tx.get(&handle)?.clone())
+    pub fn clone_tx(&self, handle: PeerHandle) -> Option<PeerTx> {
+        Some(self.get_live(handle)?.tx.clone())
     }
     pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> Option<InflightPiece> {
         self.inflight_pieces.remove(&piece)
@@ -242,8 +230,11 @@ pub struct TorrentState {
     stats: AtomicStats,
     options: TorrentStateOptions,
 
+    // Limits how many active (occupying network resources) peers there are at a moment in time.
     peer_semaphore: Semaphore,
-    peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
+
+    // The queue for peer manager to connect to them.
+    peer_queue_tx: UnboundedSender<SocketAddr>,
 
     finished_notify: Notify,
 }
@@ -292,45 +283,51 @@ impl TorrentState {
             let state = state.clone();
             async move {
                 loop {
-                    let (addr, out_rx) = peer_queue_rx.recv().await.unwrap();
+                    let addr = peer_queue_rx.recv().await.unwrap();
 
                     let permit = state.peer_semaphore.acquire().await.unwrap();
-                    match state.locked.write().peers.states.get_mut(&addr) {
-                        Some(s @ PeerState::Queued) => *s = PeerState::Connecting,
-                        s => {
-                            warn!("did not expect to see the peer in state {:?}", s);
-                            continue;
-                        }
-                    };
-
-                    let handler = PeerHandler {
-                        addr,
-                        state: state.clone(),
-                        spawner,
-                    };
-                    let options = PeerConnectionOptions {
-                        connect_timeout: state.options.peer_connect_timeout,
-                        read_write_timeout: state.options.peer_read_write_timeout,
-                        ..Default::default()
-                    };
-                    let peer_connection = PeerConnection::new(
-                        addr,
-                        state.info_hash,
-                        state.peer_id,
-                        handler,
-                        Some(options),
-                        spawner,
-                    );
-
                     permit.forget();
-                    spawn(format!("manage_peer({addr})"), async move {
-                        if let Err(e) = peer_connection.manage_peer(out_rx).await {
-                            debug!("error managing peer {}: {:#}", addr, e)
-                        };
-                        let state = peer_connection.into_handler().state;
-                        state.drop_peer(addr);
-                        state.peer_semaphore.add_permits(1);
-                        Ok::<_, anyhow::Error>(())
+                    spawn(format!("manage_peer({addr})"), {
+                        let state = state.clone();
+                        async move {
+                            let rx = match state.locked.write().peers.states.get_mut(&addr) {
+                                Some(s @ PeerState::Queued) => {
+                                    let (tx, rx) = unbounded_channel();
+                                    *s = PeerState::Connecting(Arc::new(tx));
+                                    rx
+                                }
+                                s => {
+                                    bail!("did not expect to see the peer in state {:?}", s);
+                                }
+                            };
+
+                            let handler = PeerHandler {
+                                addr,
+                                state: state.clone(),
+                                spawner,
+                            };
+                            let options = PeerConnectionOptions {
+                                connect_timeout: state.options.peer_connect_timeout,
+                                read_write_timeout: state.options.peer_read_write_timeout,
+                                ..Default::default()
+                            };
+                            let peer_connection = PeerConnection::new(
+                                addr,
+                                state.info_hash,
+                                state.peer_id,
+                                handler,
+                                Some(options),
+                                spawner,
+                            );
+
+                            if let Err(e) = peer_connection.manage_peer(rx).await {
+                                debug!("error managing peer {}: {:#}", addr, e)
+                            };
+                            let state = peer_connection.into_handler().state;
+                            state.drop_peer(addr);
+                            state.peer_semaphore.add_permits(1);
+                            Ok::<_, anyhow::Error>(())
+                        }
                     });
                 }
             }
@@ -456,14 +453,18 @@ impl TorrentState {
 
     fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
         let mut g = self.locked.write();
-        match g.peers.states.get_mut(&handle) {
-            Some(s @ &mut PeerState::Connecting) => {
-                *s = PeerState::Live(LivePeerState::new(Id20(h.peer_id)));
-            }
+        let s = match g.peers.states.get_mut(&handle) {
+            Some(s @ PeerState::Connecting(_)) => s,
             _ => {
-                warn!("peer {} was in wrong state", handle);
+                warn!("peer {} was in a wrong state", handle);
+                return;
             }
-        }
+        };
+        let tx = match std::mem::take(s) {
+            PeerState::Connecting(tx) => tx,
+            _ => unreachable!(),
+        };
+        *s = PeerState::Live(LivePeerState::new(Id20(h.peer_id), tx));
     }
 
     fn drop_peer(&self, handle: PeerHandle) -> bool {
@@ -511,11 +512,7 @@ impl TorrentState {
                         continue;
                     }
 
-                    let tx = match g.peers.tx.get(handle) {
-                        Some(tx) => tx,
-                        None => continue,
-                    };
-                    let tx = Arc::downgrade(tx);
+                    let tx = Arc::downgrade(&live.tx);
                     futures.push(async move {
                         if let Some(tx) = tx.upgrade() {
                             if tx
@@ -547,13 +544,13 @@ impl TorrentState {
     }
 
     pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
-        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
-        match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
+        // let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
+        match self.locked.write().peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return false,
         };
 
-        match self.peer_queue_tx.send((addr, out_rx)) {
+        match self.peer_queue_tx.send(addr) {
             Ok(_) => {}
             Err(_) => {
                 warn!("peer adder died, can't add peer")
