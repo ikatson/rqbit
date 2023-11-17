@@ -40,7 +40,7 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    peer_state::{InflightRequest, LivePeerState, PeerState, PeerTx},
+    peer_state::{InflightRequest, LivePeerState, Peer, PeerRx, PeerState, PeerTx},
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
 };
@@ -52,7 +52,7 @@ pub struct InflightPiece {
 
 #[derive(Default)]
 pub struct PeerStates {
-    states: HashMap<PeerHandle, PeerState>,
+    states: HashMap<PeerHandle, Peer>,
     seen: HashSet<SocketAddr>,
     inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
 }
@@ -71,7 +71,7 @@ impl PeerStates {
             .states
             .values()
             .fold(AggregatePeerStats::default(), |mut s, p| {
-                match p {
+                match &p.state {
                     PeerState::Connecting(_) => s.connecting += 1,
                     PeerState::Live(_) => s.live += 1,
                     PeerState::Queued => s.queued += 1,
@@ -93,13 +93,13 @@ impl PeerStates {
         &self.seen
     }
     pub fn get_live(&self, handle: PeerHandle) -> Option<&LivePeerState> {
-        if let PeerState::Live(ref l) = self.states.get(&handle)? {
+        if let PeerState::Live(ref l) = &self.states.get(&handle)?.state {
             return Some(l);
         }
         None
     }
     pub fn get_live_mut(&mut self, handle: PeerHandle) -> Option<&mut LivePeerState> {
-        if let PeerState::Live(ref mut l) = self.states.get_mut(&handle)? {
+        if let PeerState::Live(ref mut l) = &mut self.states.get_mut(&handle)?.state {
             return Some(l);
         }
         None
@@ -113,10 +113,10 @@ impl PeerStates {
         if self.states.contains_key(&addr) {
             return None;
         }
-        self.states.insert(handle, PeerState::Queued);
+        self.states.insert(handle, Default::default());
         Some(handle)
     }
-    pub fn drop_peer(&mut self, handle: PeerHandle) -> Option<PeerState> {
+    pub fn drop_peer(&mut self, handle: PeerHandle) -> Option<Peer> {
         self.states.remove(&handle)
     }
     pub fn mark_i_am_choked(&mut self, handle: PeerHandle, is_choked: bool) -> Option<bool> {
@@ -146,6 +146,23 @@ impl PeerStates {
         live.bitfield = Some(bitfield);
         Some(prev)
     }
+    pub fn mark_peer_connecting(&mut self, h: PeerHandle) -> anyhow::Result<PeerRx> {
+        let peer = self
+            .states
+            .get_mut(&h)
+            .context("peer not found in states")?;
+        match &mut peer.state {
+            s @ PeerState::Queued => {
+                let (tx, rx) = unbounded_channel();
+                *s = PeerState::Connecting(Arc::new(tx));
+                Ok(rx)
+            }
+            s => {
+                bail!("did not expect to see the peer in state {:?}", s);
+            }
+        }
+    }
+
     pub fn clone_tx(&self, handle: PeerHandle) -> Option<PeerTx> {
         Some(self.get_live(handle)?.tx.clone())
     }
@@ -290,16 +307,7 @@ impl TorrentState {
                     spawn(format!("manage_peer({addr})"), {
                         let state = state.clone();
                         async move {
-                            let rx = match state.locked.write().peers.states.get_mut(&addr) {
-                                Some(s @ PeerState::Queued) => {
-                                    let (tx, rx) = unbounded_channel();
-                                    *s = PeerState::Connecting(Arc::new(tx));
-                                    rx
-                                }
-                                s => {
-                                    bail!("did not expect to see the peer in state {:?}", s);
-                                }
-                            };
+                            let rx = state.locked.write().peers.mark_peer_connecting(addr)?;
 
                             let handler = PeerHandler {
                                 addr,
@@ -453,8 +461,15 @@ impl TorrentState {
 
     fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
         let mut g = self.locked.write();
-        let s = match g.peers.states.get_mut(&handle) {
-            Some(s @ PeerState::Connecting(_)) => s,
+        let peer = match g.peers.states.get_mut(&handle) {
+            Some(peer) => peer,
+            None => {
+                warn!("peer {} was in a wrong state", handle);
+                return;
+            }
+        };
+        let s = match &mut peer.state {
+            s @ PeerState::Connecting(_) => s,
             _ => {
                 warn!("peer {} was in a wrong state", handle);
                 return;
@@ -473,7 +488,7 @@ impl TorrentState {
             Some(peer) => peer,
             None => return false,
         };
-        if let PeerState::Live(l) = peer {
+        if let PeerState::Live(l) = peer.state {
             for req in l.inflight_requests {
                 g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
             }
@@ -496,8 +511,8 @@ impl TorrentState {
         let mut futures = Vec::new();
 
         let g = self.locked.read();
-        for (handle, peer_state) in g.peers.states.iter() {
-            match peer_state {
+        for (handle, peer) in g.peers.states.iter() {
+            match &peer.state {
                 PeerState::Live(live) => {
                     if !live.peer_interested {
                         continue;

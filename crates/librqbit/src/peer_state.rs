@@ -2,7 +2,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::peer_connection::WriterRequest;
@@ -24,7 +24,19 @@ impl From<&ChunkInfo> for InflightRequest {
 }
 
 // TODO: Arc can be removed probably, as UnboundedSender should be clone + it can be downgraded to weak.
+pub type PeerRx = UnboundedReceiver<WriterRequest>;
 pub type PeerTx = Arc<UnboundedSender<WriterRequest>>;
+
+#[derive(Debug, Default)]
+pub struct PeerStats {
+    pub unsuccessful_connection_attempts: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct Peer {
+    pub state: PeerState,
+    pub stats: PeerStats,
+}
 
 #[derive(Debug, Default)]
 pub enum PeerState {
