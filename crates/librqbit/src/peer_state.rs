@@ -1,5 +1,7 @@
+use std::time::Duration;
 use std::{collections::HashSet, sync::Arc};
 
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -27,9 +29,22 @@ impl From<&ChunkInfo> for InflightRequest {
 pub type PeerRx = UnboundedReceiver<WriterRequest>;
 pub type PeerTx = Arc<UnboundedSender<WriterRequest>>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PeerStats {
-    pub unsuccessful_connection_attempts: usize,
+    pub backoff: ExponentialBackoff,
+}
+
+impl Default for PeerStats {
+    fn default() -> Self {
+        Self {
+            backoff: ExponentialBackoffBuilder::new()
+                .with_initial_interval(Duration::from_secs(10))
+                .with_multiplier(6.)
+                .with_max_interval(Duration::from_secs(3600))
+                .with_max_elapsed_time(Some(Duration::from_secs(86400)))
+                .build(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -44,6 +59,7 @@ pub enum PeerState {
     Queued,
     Connecting(PeerTx),
     Live(LivePeerState),
+    Dead,
 }
 
 #[derive(Debug)]

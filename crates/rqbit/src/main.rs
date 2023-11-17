@@ -223,7 +223,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     (progress as f64 / total as f64) * 100f64
                                 };
                                 info!(
-                                    "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
+                                    "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
                                     idx,
                                     downloaded_pct,
                                     SF::new(progress),
@@ -236,6 +236,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     peer_stats.connecting,
                                     peer_stats.queued,
                                     peer_stats.seen,
+                                    peer_stats.dead
                                 );
                             },
                         }

@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -28,7 +29,7 @@ use serde::Serialize;
 use sha1w::Sha1;
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedSender},
         Notify, Semaphore,
     },
     time::timeout,
@@ -63,6 +64,7 @@ pub struct AggregatePeerStats {
     pub connecting: usize,
     pub live: usize,
     pub seen: usize,
+    pub dead: usize,
 }
 
 impl PeerStates {
@@ -75,6 +77,7 @@ impl PeerStates {
                     PeerState::Connecting(_) => s.connecting += 1,
                     PeerState::Live(_) => s.live += 1,
                     PeerState::Queued => s.queued += 1,
+                    PeerState::Dead => s.dead += 1,
                 };
                 s
             });
@@ -115,6 +118,13 @@ impl PeerStates {
         }
         self.states.insert(handle, Default::default());
         Some(handle)
+    }
+    pub fn mark_peer_dead(&mut self, handle: PeerHandle) -> Option<LivePeerState> {
+        let peer = self.states.get_mut(&handle)?;
+        match std::mem::replace(&mut peer.state, PeerState::Dead) {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
     }
     pub fn drop_peer(&mut self, handle: PeerHandle) -> Option<Peer> {
         self.states.remove(&handle)
@@ -168,6 +178,14 @@ impl PeerStates {
     }
     pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> Option<InflightPiece> {
         self.inflight_pieces.remove(&piece)
+    }
+
+    fn mark_peer_trustworthy(&mut self, handle: SocketAddr) {
+        let p = match self.states.get_mut(&handle) {
+            Some(p) => p,
+            None => return,
+        };
+        p.stats.backoff.reset();
     }
 }
 
@@ -332,7 +350,7 @@ impl TorrentState {
                                 debug!("error managing peer {}: {:#}", addr, e)
                             };
                             let state = peer_connection.into_handler().state;
-                            state.drop_peer(addr);
+                            state.on_peer_died(addr);
                             state.peer_semaphore.add_permits(1);
                             Ok::<_, anyhow::Error>(())
                         }
@@ -482,18 +500,45 @@ impl TorrentState {
         *s = PeerState::Live(LivePeerState::new(Id20(h.peer_id), tx));
     }
 
-    fn drop_peer(&self, handle: PeerHandle) -> bool {
+    fn on_peer_died(self: &Arc<Self>, handle: PeerHandle) {
         let mut g = self.locked.write();
-        let peer = match g.peers.drop_peer(handle) {
+        let live = match g.peers.mark_peer_dead(handle) {
             Some(peer) => peer,
-            None => return false,
+            None => return,
         };
-        if let PeerState::Live(l) = peer.state {
-            for req in l.inflight_requests {
-                g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
-            }
+        for req in live.inflight_requests {
+            g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
         }
-        true
+        let backoff = g
+            .peers
+            .states
+            .get_mut(&handle)
+            .unwrap()
+            .stats
+            .backoff
+            .next_backoff();
+
+        if let Some(dur) = backoff {
+            let state = self.clone();
+            spawn("wait for peer", async move {
+                tokio::time::sleep(dur).await;
+                {
+                    let mut g = state.locked.write();
+                    let peer = match g.peers.states.get_mut(&handle) {
+                        Some(p) => p,
+                        None => bail!("bug: peer disappeared"),
+                    };
+                    match &peer.state {
+                        PeerState::Dead => peer.state = PeerState::Queued,
+                        _ => bail!("peer in unexpected state"),
+                    }
+                }
+                state.peer_queue_tx.send(handle)?;
+                Ok::<_, anyhow::Error>(())
+            });
+        } else {
+            g.peers.drop_peer(handle);
+        }
     }
 
     pub fn get_uploaded(&self) -> u64 {
@@ -511,7 +556,7 @@ impl TorrentState {
         let mut futures = Vec::new();
 
         let g = self.locked.read();
-        for (handle, peer) in g.peers.states.iter() {
+        for (_, peer) in g.peers.states.iter() {
             match &peer.state {
                 PeerState::Live(live) => {
                     if !live.peer_interested {
@@ -1064,11 +1109,12 @@ impl PeerHandler {
                             full_piece_download_time.as_millis() as u64,
                             Ordering::Relaxed,
                         );
-                        self.state
-                            .locked
-                            .write()
-                            .chunks
-                            .mark_piece_downloaded(chunk_info.piece_index);
+                        {
+                            let mut g = self.state.locked.write();
+
+                            g.chunks.mark_piece_downloaded(chunk_info.piece_index);
+                            g.peers.mark_peer_trustworthy(handle);
+                        }
 
                         debug!(
                             "piece={} successfully downloaded and verified from {}",
