@@ -65,6 +65,7 @@ pub struct AggregatePeerStats {
     pub live: usize,
     pub seen: usize,
     pub dead: usize,
+    pub fully_have_and_we_are_finished: usize,
 }
 
 impl PeerStates {
@@ -78,6 +79,7 @@ impl PeerStates {
                     PeerState::Live(_) => s.live += 1,
                     PeerState::Queued => s.queued += 1,
                     PeerState::Dead => s.dead += 1,
+                    PeerState::FullyHaveNoLongerNeeded => s.fully_have_and_we_are_finished += 1,
                 };
                 s
             });
@@ -121,10 +123,7 @@ impl PeerStates {
     }
     pub fn mark_peer_dead(&mut self, handle: PeerHandle) -> Option<LivePeerState> {
         let peer = self.states.get_mut(&handle)?;
-        match std::mem::replace(&mut peer.state, PeerState::Dead) {
-            PeerState::Live(l) => Some(l),
-            _ => None,
-        }
+        peer.state.to_dead()
     }
     pub fn drop_peer(&mut self, handle: PeerHandle) -> Option<Peer> {
         self.states.remove(&handle)
@@ -161,16 +160,11 @@ impl PeerStates {
             .states
             .get_mut(&h)
             .context("peer not found in states")?;
-        match &mut peer.state {
-            s @ PeerState::Queued => {
-                let (tx, rx) = unbounded_channel();
-                *s = PeerState::Connecting(Arc::new(tx));
-                Ok(rx)
-            }
-            s => {
-                bail!("did not expect to see the peer in state {:?}", s);
-            }
-        }
+        let rx = peer
+            .state
+            .queued_to_connecting()
+            .context("invalid peer state")?;
+        Ok(rx)
     }
 
     pub fn clone_tx(&self, handle: PeerHandle) -> Option<PeerTx> {
@@ -486,29 +480,17 @@ impl TorrentState {
                 return;
             }
         };
-        let s = match &mut peer.state {
-            s @ PeerState::Connecting(_) => s,
-            _ => {
-                warn!("peer {} was in a wrong state", handle);
-                return;
-            }
-        };
-        let tx = match std::mem::take(s) {
-            PeerState::Connecting(tx) => tx,
-            _ => unreachable!(),
-        };
-        *s = PeerState::Live(LivePeerState::new(Id20(h.peer_id), tx));
+        peer.state.connecting_to_live(Id20(h.peer_id));
     }
 
     fn on_peer_died(self: &Arc<Self>, handle: PeerHandle) {
         let mut g = self.locked.write();
-        let live = match g.peers.mark_peer_dead(handle) {
-            Some(peer) => peer,
-            None => return,
-        };
-        for req in live.inflight_requests {
-            g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+        if let Some(live) = g.peers.mark_peer_dead(handle) {
+            for req in live.inflight_requests {
+                g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+            }
         }
+
         let backoff = g
             .peers
             .states
@@ -1123,6 +1105,7 @@ impl PeerHandler {
 
                         if self.state.get_left_to_download() == 0 {
                             self.state.finished_notify.notify_waiters();
+                            self.disconnect_all_peers_that_have_full_torrent();
                             self.reopen_read_only()?;
                         }
 
@@ -1144,5 +1127,20 @@ impl PeerHandler {
             })
             .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         Ok(())
+    }
+
+    fn disconnect_all_peers_that_have_full_torrent(&self) {
+        let mut g = self.state.locked.write();
+        for (_, peer) in g.peers.states.iter_mut() {
+            if let PeerState::Live(l) = &peer.state {
+                if l.has_full_torrent(self.state.lengths.total_pieces() as usize) {
+                    let live = peer
+                        .state
+                        .live_to(PeerState::FullyHaveNoLongerNeeded)
+                        .unwrap();
+                    let _ = live.tx.send(WriterRequest::Disconnect);
+                }
+            }
+        }
     }
 }

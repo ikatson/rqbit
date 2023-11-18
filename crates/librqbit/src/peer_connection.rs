@@ -31,6 +31,7 @@ pub trait PeerConnectionHandler {
 pub enum WriterRequest {
     Message(MessageOwned),
     ReadChunkRequest(ChunkInfo),
+    Disconnect,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -246,6 +247,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                         uploaded_add = Some(chunk.size);
                         full_len
+                    }
+                    WriterRequest::Disconnect => {
+                        return Ok(());
                     }
                 };
 

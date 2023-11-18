@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc};
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::peer_connection::WriterRequest;
@@ -56,10 +56,82 @@ pub struct Peer {
 #[derive(Debug, Default)]
 pub enum PeerState {
     #[default]
+    // Will be tried to be connected as soon as possible.
     Queued,
     Connecting(PeerTx),
     Live(LivePeerState),
+    // There was an error, and it's waiting for exponential backoff.
     Dead,
+    // The peer has the full torrent, and we have the full torrent, so no need
+    // to keep talking to it.
+    FullyHaveNoLongerNeeded,
+}
+
+impl PeerState {
+    fn take_connecting(&mut self) -> Option<PeerTx> {
+        if let PeerState::Connecting(_) = self {
+            match std::mem::take(self) {
+                PeerState::Connecting(tx) => Some(tx),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        }
+    }
+
+    fn take_live(&mut self) -> Option<LivePeerState> {
+        if let PeerState::Live(_) = self {
+            match std::mem::take(self) {
+                PeerState::Live(l) => Some(l),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
+        match self {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn queued_to_connecting(&mut self) -> Option<PeerRx> {
+        if let PeerState::Queued = self {
+            let (tx, rx) = unbounded_channel();
+            *self = PeerState::Connecting(Arc::new(tx));
+            Some(rx)
+        } else {
+            None
+        }
+    }
+    pub fn connecting_to_live(&mut self, peer_id: Id20) -> Option<&mut LivePeerState> {
+        let tx = self.take_connecting()?;
+        *self = PeerState::Live(LivePeerState::new(peer_id, tx));
+        self.get_live_mut()
+    }
+
+    pub fn dead_to_queued(&mut self) -> bool {
+        if let PeerState::Dead = self {
+            *self = PeerState::Queued;
+            return true;
+        }
+        false
+    }
+
+    pub fn to_dead(&mut self) -> Option<LivePeerState> {
+        match std::mem::replace(self, PeerState::Dead) {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn live_to(&mut self, new_state: PeerState) -> Option<LivePeerState> {
+        let l = self.take_live()?;
+        *self = new_state;
+        Some(l)
+    }
 }
 
 #[derive(Debug)]
@@ -86,5 +158,13 @@ impl LivePeerState {
             inflight_requests: Default::default(),
             tx,
         }
+    }
+
+    pub fn has_full_torrent(&self, total_pieces: usize) -> bool {
+        let bf = match self.bitfield.as_ref() {
+            Some(bf) => bf,
+            None => return false,
+        };
+        bf.get(0..total_pieces).map_or(false, |s| s.all())
     }
 }
