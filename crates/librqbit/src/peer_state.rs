@@ -1,6 +1,7 @@
 use std::time::Duration;
 use std::{collections::HashSet, sync::Arc};
 
+use anyhow::Context;
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
@@ -27,7 +28,20 @@ impl From<&ChunkInfo> for InflightRequest {
 
 // TODO: Arc can be removed probably, as UnboundedSender should be clone + it can be downgraded to weak.
 pub type PeerRx = UnboundedReceiver<WriterRequest>;
-pub type PeerTx = Arc<UnboundedSender<WriterRequest>>;
+pub type PeerTx = UnboundedSender<WriterRequest>;
+
+pub trait SendMany {
+    fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()>;
+}
+
+impl SendMany for PeerTx {
+    fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()> {
+        requests
+            .into_iter()
+            .try_for_each(|r| self.send(r))
+            .context("peer dropped")
+    }
+}
 
 #[derive(Debug)]
 pub struct PeerStats {
@@ -64,10 +78,20 @@ pub enum PeerState {
     Dead,
     // The peer has the full torrent, and we have the full torrent, so no need
     // to keep talking to it.
-    FullyHaveNoLongerNeeded,
+    NotNeeded,
 }
 
 impl PeerState {
+    pub fn name(&self) -> &'static str {
+        match self {
+            PeerState::Queued => "queued",
+            PeerState::Connecting(_) => "connecting",
+            PeerState::Live(_) => "live",
+            PeerState::Dead => "dead",
+            PeerState::NotNeeded => "not needed",
+        }
+    }
+
     fn take_connecting(&mut self) -> Option<PeerTx> {
         if let PeerState::Connecting(_) = self {
             match std::mem::take(self) {
@@ -100,7 +124,7 @@ impl PeerState {
     pub fn queued_to_connecting(&mut self) -> Option<PeerRx> {
         if let PeerState::Queued = self {
             let (tx, rx) = unbounded_channel();
-            *self = PeerState::Connecting(Arc::new(tx));
+            *self = PeerState::Connecting(tx);
             Some(rx)
         } else {
             None
@@ -120,9 +144,10 @@ impl PeerState {
         false
     }
 
-    pub fn to_dead(&mut self) -> Option<LivePeerState> {
+    pub fn to_dead(&mut self) -> Option<Option<LivePeerState>> {
         match std::mem::replace(self, PeerState::Dead) {
-            PeerState::Live(l) => Some(l),
+            PeerState::Live(l) => Some(Some(l)),
+            PeerState::Connecting(_) => Some(None),
             _ => None,
         }
     }

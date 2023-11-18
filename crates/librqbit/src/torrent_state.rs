@@ -1,3 +1,6 @@
+// The main logic of rqbit is here - connecting to peers, reading and writing messages
+// to them, tracking peer state etc.
+
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
@@ -41,7 +44,7 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    peer_state::{InflightRequest, LivePeerState, Peer, PeerRx, PeerState, PeerTx},
+    peer_state::{InflightRequest, LivePeerState, Peer, PeerRx, PeerState, PeerTx, SendMany},
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
 };
@@ -79,7 +82,7 @@ impl PeerStates {
                     PeerState::Live(_) => s.live += 1,
                     PeerState::Queued => s.queued += 1,
                     PeerState::Dead => s.dead += 1,
-                    PeerState::FullyHaveNoLongerNeeded => s.fully_have_and_we_are_finished += 1,
+                    PeerState::NotNeeded => s.fully_have_and_we_are_finished += 1,
                 };
                 s
             });
@@ -121,7 +124,7 @@ impl PeerStates {
         self.states.insert(handle, Default::default());
         Some(handle)
     }
-    pub fn mark_peer_dead(&mut self, handle: PeerHandle) -> Option<LivePeerState> {
+    pub fn mark_peer_dead(&mut self, handle: PeerHandle) -> Option<Option<LivePeerState>> {
         let peer = self.states.get_mut(&handle)?;
         peer.state.to_dead()
     }
@@ -174,7 +177,7 @@ impl PeerStates {
         self.inflight_pieces.remove(&piece)
     }
 
-    fn mark_peer_trustworthy(&mut self, handle: SocketAddr) {
+    fn reset_peer_backoff(&mut self, handle: PeerHandle) {
         let p = match self.states.get_mut(&handle) {
             Some(p) => p,
             None => return,
@@ -340,12 +343,20 @@ impl TorrentState {
                                 spawner,
                             );
 
-                            if let Err(e) = peer_connection.manage_peer(rx).await {
-                                debug!("error managing peer {}: {:#}", addr, e)
-                            };
+                            let res = peer_connection.manage_peer(rx).await;
                             let state = peer_connection.into_handler().state;
-                            state.on_peer_died(addr);
                             state.peer_semaphore.add_permits(1);
+
+                            match res {
+                                // We disconnected the peer ourselves as we don't need it
+                                Ok(()) => {
+                                    state.on_peer_died(addr, None);
+                                }
+                                Err(e) => {
+                                    debug!("error managing peer {}: {:#}", addr, e);
+                                    state.on_peer_died(addr, Some(e));
+                                }
+                            }
                             Ok::<_, anyhow::Error>(())
                         }
                     });
@@ -483,12 +494,22 @@ impl TorrentState {
         peer.state.connecting_to_live(Id20(h.peer_id));
     }
 
-    fn on_peer_died(self: &Arc<Self>, handle: PeerHandle) {
+    fn on_peer_died(self: &Arc<Self>, handle: PeerHandle, error: Option<anyhow::Error>) {
         let mut g = self.locked.write();
-        if let Some(live) = g.peers.mark_peer_dead(handle) {
-            for req in live.inflight_requests {
-                g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+        match g.peers.mark_peer_dead(handle) {
+            Some(Some(live)) => {
+                for req in live.inflight_requests {
+                    g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+                }
             }
+            // Other valid state to transition to dead.
+            Some(None) => {}
+            // Peer was in an unexpected state.
+            None => return,
+        }
+
+        if error.is_none() {
+            return;
         }
 
         let backoff = g
@@ -502,17 +523,21 @@ impl TorrentState {
 
         if let Some(dur) = backoff {
             let state = self.clone();
-            spawn("wait for peer", async move {
+            spawn(format!("wait_for_peer({handle}, {dur:?})"), async move {
                 tokio::time::sleep(dur).await;
                 {
                     let mut g = state.locked.write();
                     let peer = match g.peers.states.get_mut(&handle) {
                         Some(p) => p,
-                        None => bail!("bug: peer disappeared"),
+                        None => bail!("bug: peer {} disappeared", handle),
                     };
                     match &peer.state {
                         PeerState::Dead => peer.state = PeerState::Queued,
-                        _ => bail!("peer in unexpected state"),
+                        other => bail!(
+                            "peer {} in unexpected state: {}. Expected dead",
+                            handle,
+                            other.name()
+                        ),
                     }
                 }
                 state.peer_queue_tx.send(handle)?;
@@ -554,7 +579,7 @@ impl TorrentState {
                         continue;
                     }
 
-                    let tx = Arc::downgrade(&live.tx);
+                    let tx = live.tx.downgrade();
                     futures.push(async move {
                         if let Some(tx) = tx.upgrade() {
                             if tx
@@ -586,18 +611,12 @@ impl TorrentState {
     }
 
     pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
-        // let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
         match self.locked.write().peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return false,
         };
 
-        match self.peer_queue_tx.send(addr) {
-            Ok(_) => {}
-            Err(_) => {
-                warn!("peer adder died, can't add peer")
-            }
-        }
+        let _ = self.peer_queue_tx.send(addr);
         true
     }
 
@@ -818,11 +837,10 @@ impl PeerHandler {
             Some(tx) => tx,
             None => return Ok(()),
         };
-        tx.send(WriterRequest::Message(MessageOwned::Unchoke))
-            .context("peer dropped")?;
-        tx.send(WriterRequest::Message(MessageOwned::Interested))
-            .context("peer dropped")?;
-
+        tx.send_many([
+            WriterRequest::Message(MessageOwned::Unchoke),
+            WriterRequest::Message(MessageOwned::Interested),
+        ])?;
         self.requester(handle).await?;
         Ok::<_, anyhow::Error>(())
     }
@@ -1095,7 +1113,7 @@ impl PeerHandler {
                             let mut g = self.state.locked.write();
 
                             g.chunks.mark_piece_downloaded(chunk_info.piece_index);
-                            g.peers.mark_peer_trustworthy(handle);
+                            g.peers.reset_peer_backoff(handle);
                         }
 
                         debug!(
@@ -1134,10 +1152,7 @@ impl PeerHandler {
         for (_, peer) in g.peers.states.iter_mut() {
             if let PeerState::Live(l) = &peer.state {
                 if l.has_full_torrent(self.state.lengths.total_pieces() as usize) {
-                    let live = peer
-                        .state
-                        .live_to(PeerState::FullyHaveNoLongerNeeded)
-                        .unwrap();
+                    let live = peer.state.live_to(PeerState::NotNeeded).unwrap();
                     let _ = live.tx.send(WriterRequest::Disconnect);
                 }
             }
