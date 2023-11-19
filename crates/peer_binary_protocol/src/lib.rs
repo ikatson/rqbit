@@ -1,3 +1,7 @@
+// BitTorrent peer protocol implementation: parsing, serialization etc.
+//
+// Can be used outside of librqbit.
+
 pub mod extended;
 
 use bincode::Options;

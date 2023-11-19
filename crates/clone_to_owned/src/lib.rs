@@ -1,3 +1,11 @@
+// These are helpers for objects that can be borrowed, but can be made owned while changing the type.
+// The difference between e.g. Cow and CloneToOwned, is that we can implement it recursively for owned types.
+//
+// E.g. HashMap<&str, &str> can be converted to HashMap<String, String>.
+//
+// This lets us express types like TorrentMetaInfo<&[u8]> for zero-copy metadata about a bencode buffer in memory,
+// but to have one-line conversion for it into TorrentMetaInfo<Vec<u8>> so that we can store it later somewhere.
+
 use std::collections::HashMap;
 
 pub trait CloneToOwned {

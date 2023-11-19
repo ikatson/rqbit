@@ -1,8 +1,9 @@
-// Wrapper for sha1 libraries.
-// Sha1 computation is the majority of CPU usage of this library.
-// openssl seems 2-3x faster, so using it for now, but
-// leaving the pure-rust impl here too. Maybe someday make them
-// runtime swappable or enabled with a feature.
+// Wrapper for sha1 libraries to be able to swap them easily,
+// e.g. to measure performance, or change implementations depending on platform.
+//
+// Sha1 computation is the majority of CPU usage of librqbit.
+// openssl is 2-3x faster than rust's sha1.
+// system library is the best choice probably (it's the default anyway).
 
 #[cfg(feature = "sha1-openssl")]
 pub type Sha1 = Sha1Openssl;
