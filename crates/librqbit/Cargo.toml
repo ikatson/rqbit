@@ -61,3 +61,4 @@ dashmap = "5.5.3"
 
 [dev-dependencies]
 futures = {version = "0.3"}
+tracing-subscriber = "0.3"

@@ -8,6 +8,8 @@ use tracing::info;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let info_hash = Id20::from_str("64a980abe6e448226bb930ba061592e44c3781a1").unwrap();
+    tracing_subscriber::fmt::init();
+
     let dht = Dht::new().await.context("error initializing DHT")?;
     let mut stream = dht.get_peers(info_hash).await?;
 

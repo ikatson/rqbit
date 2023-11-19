@@ -251,7 +251,10 @@ impl Session {
                 torrent_from_file(url)?
             };
             let dht_rx = match self.dht.as_ref() {
-                Some(dht) => Some(dht.get_peers(torrent.info_hash).await?),
+                Some(dht) => {
+                    debug!("reading peers for {:?} from DHT", torrent.info_hash);
+                    Some(dht.get_peers(torrent.info_hash).await?)
+                }
                 None => None,
             };
             let trackers = torrent

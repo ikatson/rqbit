@@ -38,3 +38,14 @@ impl BlockingSpawner {
         f()
     }
 }
+
+impl Default for BlockingSpawner {
+    fn default() -> Self {
+        let allow_block_in_place = match tokio::runtime::Handle::current().runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::CurrentThread => false,
+            tokio::runtime::RuntimeFlavor::MultiThread => true,
+            _ => true,
+        };
+        Self::new(allow_block_in_place)
+    }
+}

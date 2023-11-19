@@ -35,3 +35,4 @@ clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", v
 librqbit-core = {path="../librqbit_core", version = "2.2.1"}
 
 [dev-dependencies]
+tracing-subscriber = "0.3"
