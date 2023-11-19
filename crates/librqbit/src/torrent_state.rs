@@ -249,6 +249,7 @@ pub struct StatsSnapshot {
     #[serde(skip)]
     pub time: Instant,
     pub queued_peers: u32,
+    pub dead_peers: u32,
     total_piece_download_ms: u64,
 }
 
@@ -322,7 +323,7 @@ mod timed_existence {
     }
 
     #[inline(always)]
-    pub fn timeit<R>(_name: &'static str, f: impl FnOnce() -> R) -> R {
+    pub fn timeit<R>(_n: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
         f()
     }
 }
@@ -377,12 +378,12 @@ mod timed_existence {
         }
     }
 
-    pub fn timeit<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
+    pub fn timeit<R>(name: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
         let now = Instant::now();
         let r = f();
         let elapsed = now.elapsed();
         if elapsed > MAX {
-            warn!("elapsed on {name:?}: {elapsed:?}")
+            warn!("elapsed on \"{name:}\": {elapsed:?}")
         }
         r
     }
@@ -813,10 +814,6 @@ impl TorrentState {
         true
     }
 
-    pub fn peer_stats_snapshot(&self) -> AggregatePeerStats {
-        self.peers.stats()
-    }
-
     pub fn stats_snapshot(&self) -> StatsSnapshot {
         use Ordering::*;
         let peer_stats = self.peers.stats();
@@ -836,6 +833,7 @@ impl TorrentState {
             initially_needed_bytes: self.needed,
             remaining_bytes: remaining,
             queued_peers: peer_stats.queued as u32,
+            dead_peers: peer_stats.dead as u32,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
         }
     }
@@ -857,35 +855,35 @@ struct PeerHandler {
 
 impl PeerConnectionHandler for PeerHandler {
     fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
-        timeit("on_received_message", || {
-            match message {
-                Message::Request(request) => {
-                    self.on_download_request(self.addr, request)
-                        .context("on_download_request")?;
-                }
-                Message::Bitfield(b) => self
-                    .on_bitfield(self.addr, b.clone_to_owned())
-                    .context("on_bitfield")?,
-                Message::Choke => self.on_i_am_choked(self.addr),
-                Message::Unchoke => self.on_i_am_unchoked(self.addr),
-                Message::Interested => self.on_peer_interested(self.addr),
-                Message::Piece(piece) => {
+        match message {
+            Message::Request(request) => {
+                self.on_download_request(self.addr, request)
+                    .context("on_download_request")?;
+            }
+            Message::Bitfield(b) => self
+                .on_bitfield(self.addr, b.clone_to_owned())
+                .context("on_bitfield")?,
+            Message::Choke => self.on_i_am_choked(self.addr),
+            Message::Unchoke => self.on_i_am_unchoked(self.addr),
+            Message::Interested => self.on_peer_interested(self.addr),
+            Message::Piece(piece) => {
+                timeit("on_received_piece", || {
                     self.on_received_piece(self.addr, piece)
-                        .context("on_received_piece")?;
-                }
-                Message::KeepAlive => {
-                    debug!("keepalive received");
-                }
-                Message::Have(h) => self.on_have(self.addr, h),
-                Message::NotInterested => {
-                    info!("received \"not interested\", but we don't care yet")
-                }
-                message => {
-                    warn!("received unsupported message {:?}, ignoring", message);
-                }
-            };
-            Ok(())
-        })
+                        .context("on_received_piece")
+                })?;
+            }
+            Message::KeepAlive => {
+                debug!("keepalive received");
+            }
+            Message::Have(h) => self.on_have(self.addr, h),
+            Message::NotInterested => {
+                info!("received \"not interested\", but we don't care yet")
+            }
+            message => {
+                warn!("received unsupported message {:?}, ignoring", message);
+            }
+        };
+        Ok(())
     }
 
     fn get_have_bytes(&self) -> u64 {

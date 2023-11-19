@@ -11,6 +11,7 @@ use librqbit::{
         SessionOptions,
     },
     spawn_utils::{spawn, BlockingSpawner},
+    torrent_state::timeit,
 };
 use size_format::SizeFormatterBinary as SF;
 use tracing::{error, info, span, warn, Level};
@@ -243,8 +244,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                 info!("[{}] initializing", idx);
                             },
                             ManagedTorrentState::Running(handle) => {
-                                let peer_stats = handle.torrent_state().peer_stats_snapshot();
-                                let stats = handle.torrent_state().stats_snapshot();
+                                let stats = timeit("stats_snapshot", || handle.torrent_state().stats_snapshot());
                                 let speed = handle.speed_estimator();
                                 let total = stats.total_bytes;
                                 let progress = stats.total_bytes - stats.remaining_bytes;
@@ -263,11 +263,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     SF::new(stats.remaining_bytes),
                                     SF::new(total),
                                     SF::new(stats.uploaded_bytes),
-                                    peer_stats.live,
-                                    peer_stats.connecting,
-                                    peer_stats.queued,
-                                    peer_stats.seen,
-                                    peer_stats.dead
+                                    stats.live_peers,
+                                    stats.connecting_peers,
+                                    stats.queued_peers,
+                                    stats.seen_peers,
+                                    stats.dead_peers
                                 );
                             },
                         }
