@@ -1,6 +1,11 @@
 // The main logic of rqbit is here - connecting to peers, reading and writing messages
 // to them, tracking peer state etc.
 
+// NOTE: deadlock notice:
+// peers and stateLocked are behind 2 different locks.
+// if you lock them in different order, this may deadlock.
+// so always lock the peers one first, and unlock it before stateLocked is locked.
+
 use std::{
     collections::HashMap,
     fs::File,
@@ -427,6 +432,7 @@ impl TorrentState {
     }
 
     fn reserve_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
+        // TODO: locking one inside the other in different order results in deadlocks.
         self.peers
             .with_live_mut(peer_handle, |live| {
                 if live.i_am_choked {
@@ -1053,8 +1059,6 @@ impl PeerHandler {
             }
         };
 
-        let mut g = self.state.locked.write();
-
         self.state
             .peers
             .with_live_mut(handle, |h| {
@@ -1079,29 +1083,30 @@ impl PeerHandler {
             })
             .context("peer not found")??;
 
-        let full_piece_download_time = match g.chunks.mark_chunk_downloaded(&piece) {
-            Some(ChunkMarkingResult::Completed) => {
-                debug!("piece={} done, will write and checksum", piece.index,);
-                // This will prevent others from stealing it.
-                g.remove_inflight_piece(chunk_info.piece_index)
-                    .map(|t| t.started.elapsed())
-            }
-            Some(ChunkMarkingResult::PreviouslyCompleted) => {
-                // TODO: we might need to send cancellations here.
-                debug!("piece={} was done by someone else, ignoring", piece.index,);
-                return Ok(());
-            }
-            Some(ChunkMarkingResult::NotCompleted) => None,
-            None => {
-                anyhow::bail!(
-                    "bogus data received: {:?}, cannot map this to a chunk, dropping peer",
-                    piece
-                );
+        let full_piece_download_time = {
+            let mut g = self.state.locked.write();
+
+            match g.chunks.mark_chunk_downloaded(&piece) {
+                Some(ChunkMarkingResult::Completed) => {
+                    debug!("piece={} done, will write and checksum", piece.index,);
+                    // This will prevent others from stealing it.
+                    g.remove_inflight_piece(chunk_info.piece_index)
+                        .map(|t| t.started.elapsed())
+                }
+                Some(ChunkMarkingResult::PreviouslyCompleted) => {
+                    // TODO: we might need to send cancellations here.
+                    debug!("piece={} was done by someone else, ignoring", piece.index,);
+                    return Ok(());
+                }
+                Some(ChunkMarkingResult::NotCompleted) => None,
+                None => {
+                    anyhow::bail!(
+                        "bogus data received: {:?}, cannot map this to a chunk, dropping peer",
+                        piece
+                    );
+                }
             }
         };
-
-        // to prevent deadlocks.
-        drop(g);
 
         self.spawner
             .spawn_block_in_place(move || {

@@ -1,0 +1,389 @@
+
+Analysis of sampling rqbit (pid 41569) every 1 millisecond
+Process:         rqbit [41569]
+Path:            /Users/USER/*/rqbit
+Load Address:    0x10031c000
+Identifier:      rqbit
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  bash [2715]
+
+Date/Time:       2023-11-19 17:11:35.878 +0000
+Launch Time:     2023-11-19 17:02:41.062 +0000
+OS Version:      macOS 14.1 (23B74)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         11.5M
+Physical footprint (peak):  12.0M
+Idle exit:                  untracked
+----
+
+Call graph:
+    8183 Thread_2501818   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 8183 start  (in dyld) + 2360  [0x18bddd0e0]
+    +   8183 main  (in rqbit) + 32  [0x1003b4d10]
+    +     8183 std::rt::lang_start::hc92c8460d670427e  (in rqbit) + 44  [0x1003fc260]  rt.rs:166
+    +       8183 std::rt::lang_start_internal::hea4720c823b0b053  (in rqbit) + 648  [0x1007318d0]
+    +         8183 std::rt::lang_start::_$u7b$$u7b$closure$u7d$$u7d$::hf04eff045c3204ce  (in rqbit) + 24  [0x1003fc284]  rt.rs:167
+    +           8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hc575c434e3c9f843  (in rqbit) + 12  [0x10037a330]  backtrace.rs:154
+    +             8183 rqbit::main::hfdee818328ed2d4e  (in rqbit) + 3604  [0x1003a9f50]  main.rs:221
+    +               8183 tokio::runtime::runtime::Runtime::block_on::h41f524f37dfac32b  (in rqbit) + 484  [0x10040cfbc]  runtime.rs:350
+    +                 8183 tokio::runtime::park::CachedParkThread::block_on::hd6c99b8d2957d23a  (in rqbit) + 248  [0x1003a411c]  park.rs:286
+    +                   8183 (.llvm.1541039607769432884)  (in rqbit) + 256  [0x100681f08]
+    +                     8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                       8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501832: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::ha45a744d0ecf214e  (in rqbit) + 168  [0x100675b44]
+    +               8183 tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h8b38a0b62ce90d26  (in rqbit) + 204  [0x10067c0ec]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+    +                           8183 tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+    +                             8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                               8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501834: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::ha45a744d0ecf214e  (in rqbit) + 168  [0x100675b44]
+    +               8183 tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h8b38a0b62ce90d26  (in rqbit) + 204  [0x10067c0ec]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+    +                           8183 tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+    +                             8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                               8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501835: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::ha45a744d0ecf214e  (in rqbit) + 168  [0x100675b44]
+    +               8183 tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h8b38a0b62ce90d26  (in rqbit) + 204  [0x10067c0ec]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+    +                           8183 tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+    +                             8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                               8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501836: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+    +               8183 std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 1964  [0x100686060]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::run_task::hee4c52d36901d1c0  (in rqbit) + 472  [0x100686720]
+    +                           8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h28a55b4795da996c  (in rqbit) + 124  [0x10047c4b4]
+    +                             8183 _$LT$tracing..instrument..Instrumented$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::h951c8921bc5537f4  (in rqbit) + 6312  [0x100465910]
+    +                               8183 _$LT$tokio..future..poll_fn..PollFn$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll::heaf39ed4d1b44001  (in rqbit) + 3200  [0x1004992cc]
+    +                                 8183 _$LT$librqbit..torrent_state..PeerHandler$u20$as$u20$librqbit..peer_connection..PeerConnectionHandler$GT$::on_received_message::hd1fafc35289e3666  (in rqbit) + 996  [0x10046df8c]
+    +                                   8183 librqbit::torrent_state::PeerHandler::on_received_piece::hf3408148458b4a03  (in rqbit) + 956  [0x100471638]
+    +                                     8183 parking_lot::raw_rwlock::RawRwLock::lock_exclusive_slow::h836aa47d9a7a9313  (in rqbit) + 724  [0x100783348]
+    +                                       8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                                         8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501837: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+    +               8183 std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+    +                           8183 tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+    +                             8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                               8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501838: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+    +               8183 std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+    +                           8183 tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+    +                             8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                               8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501839
+    + 8183 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x18c153e30]
+    +   8183 _pthread_wqthread  (in libsystem_pthread.dylib) + 364  [0x18c155160]
+    +     8183 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x18c11a564]
+    8183 Thread_2501842: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+    +               8183 std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 1964  [0x100686060]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::run_task::hee4c52d36901d1c0  (in rqbit) + 472  [0x100686720]
+    +                           8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h28a55b4795da996c  (in rqbit) + 124  [0x10047c4b4]
+    +                             8183 _$LT$tracing..instrument..Instrumented$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::h951c8921bc5537f4  (in rqbit) + 6312  [0x100465910]
+    +                               8183 _$LT$tokio..future..poll_fn..PollFn$LT$F$GT$$u20$as$u20$core..future..future..Future$GT$::poll::heaf39ed4d1b44001  (in rqbit) + 3200  [0x1004992cc]
+    +                                 8183 _$LT$librqbit..torrent_state..PeerHandler$u20$as$u20$librqbit..peer_connection..PeerConnectionHandler$GT$::on_received_message::hd1fafc35289e3666  (in rqbit) + 996  [0x10046df8c]
+    +                                   8183 librqbit::torrent_state::PeerHandler::on_received_piece::hf3408148458b4a03  (in rqbit) + 168  [0x100471324]
+    +                                     8183 _$LT$dashmap..DashMap$LT$K$C$V$C$S$GT$$u20$as$u20$dashmap..t..Map$LT$K$C$V$C$S$GT$$GT$::_get_mut::ha163c599d0d0a786  (in rqbit) + 588  [0x1004a691c]
+    +                                       8183 dashmap::lock::RawRwLock::lock_exclusive_slow::hebac357c00faad7e  (in rqbit) + 1176  [0x100775444]
+    +                                         8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                                           8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501873: tokio-runtime-worker
+    + 8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+    +   8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+    +     8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+    +       8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+    +         8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+    +           8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+    +             8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+    +               8183 std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+    +                 8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+    +                   8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+    +                     8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+    +                       8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 1964  [0x100686060]
+    +                         8183 tokio::runtime::scheduler::multi_thread::worker::Context::run_task::hee4c52d36901d1c0  (in rqbit) + 472  [0x100686720]
+    +                           8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::hb33feb246c22b65a  (in rqbit) + 120  [0x10047cdfc]
+    +                             8183 _$LT$tracing..instrument..Instrumented$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::he46a59e86a4040f3  (in rqbit) + 2984  [0x100467cb8]
+    +                               8183 librqbit::torrent_state::TorrentState::reserve_next_needed_piece::h4003aa9a864bc6d1  (in rqbit) + 948  [0x10046b290]
+    +                                 8183 parking_lot::raw_rwlock::RawRwLock::lock_exclusive_slow::h836aa47d9a7a9313  (in rqbit) + 724  [0x100783348]
+    +                                   8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+    +                                     8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+    8183 Thread_2501874: tokio-runtime-worker
+      8183 thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+        8183 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+          8183 std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+            8183 core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+              8183 std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+                8183 tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+                  8183 tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+                    8183 std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+                      8183 tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+                        8183 tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+                          8183 tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+                            8183 tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+                              8183 tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+                                8183 tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+                                  8183 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+                                    8183 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18c11c0ac]
+
+Total number in stack (recursive counted multiple, when >=5):
+        10       __psynch_cvwait  (in libsystem_kernel.dylib) + 0  [0x18c11c0a4]
+        10       _pthread_cond_wait  (in libsystem_pthread.dylib) + 1228  [0x18c1595fc]
+        9       _pthread_start  (in libsystem_pthread.dylib) + 136  [0x18c159034]
+        9       core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h25e2987fbbdaf769  (in rqbit) + 120  [0x10068c558]
+        9       std::sys::unix::thread::Thread::new::thread_start::hc8d37e25d4657683  (in rqbit) + 48  [0x10073e654]
+        9       std::sys_common::backtrace::__rust_begin_short_backtrace::hbb6c703cea0006e6  (in rqbit) + 76  [0x10067d624]
+        9       thread_start  (in libsystem_pthread.dylib) + 8  [0x18c153e3c]
+        9       tokio::runtime::blocking::pool::Inner::run::h9d6add31a0a82ba2  (in rqbit) + 392  [0x100680d00]
+        9       tokio::runtime::context::runtime::enter_runtime::he3ddb4baacaf51c1  (in rqbit) + 508  [0x100683ef0]
+        9       tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::he8cfa85676acb630  (in rqbit) + 56  [0x10068a1b0]
+        9       tokio::runtime::scheduler::multi_thread::worker::run::h0ffc87fb75fd16d2  (in rqbit) + 88  [0x10068581c]
+        6       std::panicking::try::h793651e64898b5cd  (in rqbit) + 76  [0x10047f234]
+        6       tokio::runtime::scheduler::multi_thread::park::Parker::park::h0192ef6876d96010  (in rqbit) + 328  [0x10067ea98]
+        6       tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::hd0502377b834d526  (in rqbit) + 276  [0x100686b30]
+        6       tokio::runtime::scheduler::multi_thread::worker::Context::run::h0cbfb80422c14883  (in rqbit) + 2816  [0x1006863b4]
+        6       tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::he970e0ba198f88bf  (in rqbit) + 84  [0x10047d27c]
+
+Sort by top of stack, same collapsed (when >= 5):
+        __psynch_cvwait  (in libsystem_kernel.dylib)        81830
+        __workq_kernreturn  (in libsystem_kernel.dylib)        8183
+
+Binary Images:
+       0x10031c000 -        0x1008dbffb +rqbit (0) <5761B6C8-03EF-3857-ADB1-47469005C346> /Users/*/rqbit
+       0x18bd88000 -        0x18bdd6f08  libobjc.A.dylib (906) <49E2DCB3-F014-3FCF-949B-F5F57B3EF0A8> /usr/lib/libobjc.A.dylib
+       0x18bdd7000 -        0x18be6b317  dyld (1.0.0 - 1122.1.2) <EC7A3BA0-F9BF-3AB8-A0F4-8622E5606B20> /usr/lib/dyld
+       0x18be6c000 -        0x18be70ff8  libsystem_blocks.dylib (90) <A2904D7C-66C8-36E7-BC4B-D30025BA0351> /usr/lib/system/libsystem_blocks.dylib
+       0x18be71000 -        0x18beb7fff  libxpc.dylib (2679.40.6) <212B4ED6-CBB2-33DE-95C0-7F8A405B3EBD> /usr/lib/system/libxpc.dylib
+       0x18beb8000 -        0x18bed2fff  libsystem_trace.dylib (1481.40.16) <91ECA044-8462-3293-AEEA-183BF841CBA2> /usr/lib/system/libsystem_trace.dylib
+       0x18bed3000 -        0x18bf70ff7  libcorecrypto.dylib (1608.40.12) <5258A992-DC2A-3A90-90F1-A64863C450A7> /usr/lib/system/libcorecrypto.dylib
+       0x18bf71000 -        0x18bfa7fff  libsystem_malloc.dylib (474.0.13) <901200AA-1016-3DAA-8816-5032588ED460> /usr/lib/system/libsystem_malloc.dylib
+       0x18bfa8000 -        0x18bfeefff  libdispatch.dylib (1462.0.4) <DC1D0187-7149-3100-BC63-F633AFEBEE6C> /usr/lib/system/libdispatch.dylib
+       0x18bfef000 -        0x18bff1fff  libsystem_featureflags.dylib (85) <3282C86B-3BD7-353A-AC3E-09BCC631BB1F> /usr/lib/system/libsystem_featureflags.dylib
+       0x18bff2000 -        0x18c070ffb  libsystem_c.dylib (1583.40.7) <DECB8685-F34A-3979-AFCB-71FB55747E41> /usr/lib/system/libsystem_c.dylib
+       0x18c071000 -        0x18c0feff7  libc++.1.dylib (1600.151) <3702EEDE-997D-38E6-A6A1-C08EB22C375B> /usr/lib/libc++.1.dylib
+       0x18c0ff000 -        0x18c116fff  libc++abi.dylib (1600.151) <EDBB6DF0-72F9-3BC2-96FA-A86E05D3D305> /usr/lib/libc++abi.dylib
+       0x18c117000 -        0x18c151fef  libsystem_kernel.dylib (10002.41.9) <B7751381-1442-30B5-91B9-AD7BE461BEBE> /usr/lib/system/libsystem_kernel.dylib
+       0x18c152000 -        0x18c15eff3  libsystem_pthread.dylib (519) <DAF95373-5DE6-39A1-A6CE-D87F3F0629CC> /usr/lib/system/libsystem_pthread.dylib
+       0x18c15f000 -        0x18c183fff  libdyld.dylib (1122.1.2) <D9526862-A8B2-3424-98E7-74D5A18F9250> /usr/lib/system/libdyld.dylib
+       0x18c184000 -        0x18c18affb  libsystem_platform.dylib (306.0.1) <FC8CD17B-8769-348C-8DCD-1BFED022F9E4> /usr/lib/system/libsystem_platform.dylib
+       0x18c18b000 -        0x18c1b7ffb  libsystem_info.dylib (583.0.1) <D4F1ECDB-5AA0-3733-81D9-C9529001A13C> /usr/lib/system/libsystem_info.dylib
+       0x18c1b8000 -        0x18c68ffff  com.apple.CoreFoundation (6.9 - 2106) <9F046E36-7286-3A6E-A280-699D6E47CFAF> /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation
+       0x18c690000 -        0x18c942fff  com.apple.LaunchServices (1141.1 - 1141.1) <0C46B08C-2AA0-345C-BF3B-44F28B9DBB86> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/LaunchServices
+       0x18ca8e000 -        0x18ce17fff  libBLAS.dylib (1447) <25959BCE-50A3-3E96-8DB9-C9E15FD822C1> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libBLAS.dylib
+       0x18ce18000 -        0x18cf04ff7  com.apple.Lexicon-framework (1.0 - 134) <FC7205C8-BD91-3ECB-A9BF-9941820AC7D4> /System/Library/PrivateFrameworks/Lexicon.framework/Versions/A/Lexicon
+       0x18cf05000 -        0x18cf6bff7  libSparse.dylib (123) <E49166F6-F30F-33AC-8A95-72A506468607> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libSparse.dylib
+       0x18cf6c000 -        0x18cffeffb  com.apple.SystemConfiguration (1.21 - 1.21) <C4675C71-62CE-3C11-8A7B-57B201E24ECE> /System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration
+       0x18cfff000 -        0x18d033ffb  libCRFSuite.dylib (52) <CB535ED3-867C-3857-8545-FF09265E880D> /usr/lib/libCRFSuite.dylib
+       0x18d2e2000 -        0x18df2ffff  com.apple.Foundation (6.9 - 2106) <2126FD9A-52CE-3EB2-8640-B57535E073B8> /System/Library/Frameworks/Foundation.framework/Versions/C/Foundation
+       0x18df30000 -        0x18e112fff  com.apple.LanguageModeling (1.0 - 366.4.1) <8032B2E5-1A2E-341F-9287-14AD8FE4E8A4> /System/Library/PrivateFrameworks/LanguageModeling.framework/Versions/A/LanguageModeling
+       0x18ee80000 -        0x18f241fff  com.apple.security (7.0 - 61040.41.1) <90771C8F-3085-3511-B628-31A4E990408B> /System/Library/Frameworks/Security.framework/Versions/A/Security
+       0x18f242000 -        0x18f4faff7  libicucore.A.dylib (72123.15) <444D2FE1-A09C-369C-BE2E-929350EA2F0E> /usr/lib/libicucore.A.dylib
+       0x18f4fb000 -        0x18f505ff7  libsystem_darwin.dylib (1583.40.7) <EF617F40-254D-325F-BA6B-382CB7D8BC89> /usr/lib/system/libsystem_darwin.dylib
+       0x18f506000 -        0x18f80afff  com.apple.CoreServices.CarbonCore (1333 - 1333) <049CCD7B-4151-3816-8FA8-A0BAD75AE69B> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/CarbonCore
+       0x18f80b000 -        0x18f84afff  com.apple.CoreServicesInternal (505 - 505) <5774EE20-DF1A-330E-A776-AEC79006908C> /System/Library/PrivateFrameworks/CoreServicesInternal.framework/Versions/A/CoreServicesInternal
+       0x18f84b000 -        0x18f88bfff  com.apple.CSStore (1141.1 - 1141.1) <75A298B2-F273-3922-97E8-94E19D2517CA> /System/Library/PrivateFrameworks/CoreServicesStore.framework/Versions/A/CoreServicesStore
+       0x18f88c000 -        0x18f96cfff  com.apple.framework.IOKit (2.0.2 - 100065.40.4) <029AEE72-3595-3815-B603-22F4AAA2D06F> /System/Library/Frameworks/IOKit.framework/Versions/A/IOKit
+       0x18f96d000 -        0x18f97dfff  libsystem_notify.dylib (317) <D86A0878-9C5C-367C-8A6D-941C5E4C11C2> /usr/lib/system/libsystem_notify.dylib
+       0x1912f5000 -        0x1913bdff7  libboringssl.dylib (480) <1657C102-7B93-3D24-8A87-8E16222EC9EC> /usr/lib/libboringssl.dylib
+       0x1913be000 -        0x1913befff  libnetwork.dylib (3762.41.2) <93791E09-CE36-37DE-8897-C32FC6D23F84> /usr/lib/libnetwork.dylib
+       0x1913bf000 -        0x19178ffff  com.apple.CFNetwork (1.0 - 1485) <1179E11A-65ED-33E1-9278-CC4904207F31> /System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork
+       0x191790000 -        0x1917a9ff7  libsystem_networkextension.dylib (1838.40.8) <11D8A745-1F2F-3493-872E-C58F13BBD4D2> /usr/lib/system/libsystem_networkextension.dylib
+       0x1917aa000 -        0x1917abfff  libenergytrace.dylib (23) <9E6D595D-4E2C-3630-A2DA-1E2586FEF628> /usr/lib/libenergytrace.dylib
+       0x1917ac000 -        0x19181ffdf  libMobileGestalt.dylib (1291.40.8) <952B56CC-68E9-3C78-A816-E44605605DE5> /usr/lib/libMobileGestalt.dylib
+       0x191820000 -        0x191837fff  libsystem_asl.dylib (398) <9833954F-A010-3492-810A-70F96E17266E> /usr/lib/system/libsystem_asl.dylib
+       0x191838000 -        0x191858ffd  com.apple.TCC (1.0 - 1) <C3715C17-3CE9-34B3-A5E7-28BF32CEA401> /System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC
+       0x192dd5000 -        0x192deefff  com.apple.ProtocolBuffer (1 - 300.21.8.9.2) <F1D74636-90ED-3BB1-AC8E-02A1D3CC54FC> /System/Library/PrivateFrameworks/ProtocolBuffer.framework/Versions/A/ProtocolBuffer
+       0x192def000 -        0x192f8bffb  libsqlite3.dylib (349.3) <567CDD63-191D-36E4-959B-7DE47C7AFD7A> /usr/lib/libsqlite3.dylib
+       0x193159000 -        0x1931ccfff  com.apple.AE (944 - 944) <9A97FC75-CB6D-309B-845E-56C54B72D6A8> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/AE.framework/Versions/A/AE
+       0x1931cd000 -        0x1931d6ffc  libdns_services.dylib (2200.40.37.0.1) <DE9C221B-A464-3183-B46A-03B163E19AF9> /usr/lib/libdns_services.dylib
+       0x1931d7000 -        0x1931dfff3  libsystem_symptoms.dylib (1848.40.12) <B9688985-C611-3987-9BD1-23ABCFA25045> /usr/lib/system/libsystem_symptoms.dylib
+       0x1931e0000 -        0x193dc4fff  com.apple.Network (1.0 - 1) <F8A0AACD-1224-39D2-8EC8-E26514CB3E7B> /System/Library/Frameworks/Network.framework/Versions/A/Network
+       0x193dc5000 -        0x193df3fff  com.apple.analyticsd (1.0 - 1) <BB176816-C52E-3891-8871-0167C6C9B115> /System/Library/PrivateFrameworks/CoreAnalytics.framework/Versions/A/CoreAnalytics
+       0x193df4000 -        0x193df5fff  libDiagnosticMessagesClient.dylib (113) <AFCE4D17-381C-36BF-99CC-BC79D5014FFF> /usr/lib/libDiagnosticMessagesClient.dylib
+       0x193df6000 -        0x193e3cfff  com.apple.spotlight.metadata.utilities (1.0 - 2274.3) <0E25C3BA-5220-375A-8F05-6415CA45DD40> /System/Library/PrivateFrameworks/MetadataUtilities.framework/Versions/A/MetadataUtilities
+       0x193e3d000 -        0x193ed7fff  com.apple.Metadata (14.1 - 2274.3) <17D03259-8852-32B4-9B34-BB973F43FEDE> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Metadata
+       0x193ed8000 -        0x193ee0ffb  com.apple.DiskArbitration (2.7 - 2.7) <4219AEC5-B906-3E12-BA8D-6847F52AFA0F> /System/Library/Frameworks/DiskArbitration.framework/Versions/A/DiskArbitration
+       0x193ee1000 -        0x1942c5ff7  com.apple.vImage (8.1 - 584) <E3CE61BF-4C11-3B7A-A112-40D70C18FDF6> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vImage.framework/Versions/A/vImage
+       0x19494b000 -        0x19495afff  com.apple.OpenDirectory (14.1 - 642) <D0E9C0F9-4BCC-33B2-8F57-C23220864FF8> /System/Library/Frameworks/OpenDirectory.framework/Versions/A/OpenDirectory
+       0x19495b000 -        0x19497affb  com.apple.CFOpenDirectory (14.1 - 642) <B52EC9F3-3415-3F01-A43E-CC3FF1F1C42C> /System/Library/Frameworks/OpenDirectory.framework/Versions/A/Frameworks/CFOpenDirectory.framework/Versions/A/CFOpenDirectory
+       0x19497b000 -        0x194987ff7  com.apple.CoreServices.FSEvents (1376 - 1376) <7D24FA70-0DFF-342C-9D88-FCA31213F8F4> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/FSEvents
+       0x194988000 -        0x1949b2fff  com.apple.coreservices.SharedFileList (225 - 225) <CF1073F7-E392-374D-AC71-53F1EA909F88> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/SharedFileList.framework/Versions/A/SharedFileList
+       0x1949b3000 -        0x1949b9fff  libapp_launch_measurement.dylib (17) <3A9DDB7F-800F-3788-A6B5-1B5BCC6343E9> /usr/lib/libapp_launch_measurement.dylib
+       0x1949ba000 -        0x194a03fff  com.apple.CoreAutoLayout (1.0 - 32) <CAAAEB7E-12CD-319E-836A-92404A707568> /System/Library/PrivateFrameworks/CoreAutoLayout.framework/Versions/A/CoreAutoLayout
+       0x194a04000 -        0x194aecffb  libxml2.2.dylib (37.8) <236C8BF2-0800-396C-AF03-B5328CAD1FD6> /usr/lib/libxml2.2.dylib
+       0x196238000 -        0x196261ff7  libsystem_containermanager.dylib (582.40.2.0.1) <444831B7-DB95-3E3A-8C1C-97E49676B185> /usr/lib/system/libsystem_containermanager.dylib
+       0x196262000 -        0x196279fff  com.apple.IOSurface (352.0.3 - 352.0.3) <7D9D9E22-C780-3790-BF2B-30FC1A9BF7CB> /System/Library/Frameworks/IOSurface.framework/Versions/A/IOSurface
+       0x1971b2000 -        0x1971b6fff  libsystem_configuration.dylib (1296.40.6) <389249EB-5A9C-362C-985F-6F470280D6F3> /usr/lib/system/libsystem_configuration.dylib
+       0x1971b7000 -        0x1971bcff3  libsystem_sandbox.dylib (2169.41.1) <893061BE-F3BD-3696-AC8D-4DA5E7477A20> /usr/lib/system/libsystem_sandbox.dylib
+       0x1971bf000 -        0x1971c2fff  com.apple.AppleSystemInfo (3.1.5 - 3.1.5) <011F9762-19FD-3500-AF7E-889D3E193FD3> /System/Library/PrivateFrameworks/AppleSystemInfo.framework/Versions/A/AppleSystemInfo
+       0x1971c3000 -        0x1971c4fff  liblangid.dylib (138) <C1B240F0-F462-31FD-95D9-6C427FB206FC> /usr/lib/liblangid.dylib
+       0x1971c5000 -        0x1972e0fff  com.apple.CoreNLP (1.0 - 313) <CC4F248A-A078-376A-ABDD-805EE9918DCB> /System/Library/PrivateFrameworks/CoreNLP.framework/Versions/A/CoreNLP
+       0x1972e1000 -        0x1972e6fff  com.apple.LinguisticData (1.0 - 483.10) <9E7B9C4C-1E7D-339A-A3A8-A9BB4DCA0255> /System/Library/PrivateFrameworks/LinguisticData.framework/Versions/A/LinguisticData
+       0x1972e7000 -        0x197ac1faf  libBNNS.dylib (830.40.9.0.1) <65FC5752-9068-3F54-ACC6-C7C2F25A9A33> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libBNNS.dylib
+       0x197ac2000 -        0x197bb2f47  libvDSP.dylib (1041) <6A43D803-7871-3FDA-AD48-B1C2F1F50930> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libvDSP.dylib
+       0x197bb3000 -        0x197be5fff  com.apple.CoreEmoji (1.0 - 200.151) <85D6BBAF-FF34-3AC9-903C-571C45856662> /System/Library/PrivateFrameworks/CoreEmoji.framework/Versions/A/CoreEmoji
+       0x197be6000 -        0x197bf5ff7  com.apple.IOMobileFramebuffer (343.0.0 - 343.0.0) <103B98C3-473A-3B24-AC4B-8E5D30062CEF> /System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/Versions/A/IOMobileFramebuffer
+       0x197e16000 -        0x197ea3fff  com.apple.securityfoundation (6.0 - 55282) <53711520-62D0-336D-8A69-75B2B1155261> /System/Library/Frameworks/SecurityFoundation.framework/Versions/A/SecurityFoundation
+       0x197ea4000 -        0x197ec9fff  com.apple.coreservices.BackgroundTaskManagement (1.0 - 104) <77003297-2742-30A1-9F2B-3CB101228720> /System/Library/PrivateFrameworks/BackgroundTaskManagement.framework/Versions/A/BackgroundTaskManagement
+       0x197ed5000 -        0x197ed7ffb  libquarantine.dylib (172.40.1) <FA2FCD51-D2EB-37A7-AE47-66547DBCAB87> /usr/lib/system/libquarantine.dylib
+       0x197ed8000 -        0x197ee3fff  libCheckFix.dylib (32) <FF315593-CF3B-3730-A821-8C0EAC3F0483> /usr/lib/libCheckFix.dylib
+       0x197ee4000 -        0x197efbfff  libcoretls.dylib (186) <9A15527C-37F5-3389-AC30-69372529D496> /usr/lib/libcoretls.dylib
+       0x197efc000 -        0x197f0dffb  libbsm.0.dylib (89) <17824944-FFBE-32C5-AB4E-E433BA62EF4E> /usr/lib/libbsm.0.dylib
+       0x197f0e000 -        0x197f69fff  libmecab.dylib (1062.152) <F3EB13D3-8CBA-34E2-B803-63F3EA10EB07> /usr/lib/libmecab.dylib
+       0x197f6a000 -        0x197f6cffb  libgermantok.dylib (29) <F4D1405C-2C7E-327B-A386-40CE828149F3> /usr/lib/libgermantok.dylib
+       0x197f6d000 -        0x197f81fff  libLinearAlgebra.dylib (1447) <61E860A6-6912-35A8-819C-F1ACDE6C91FF> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libLinearAlgebra.dylib
+       0x19850a000 -        0x1985cdfdf  com.apple.AppleFSCompression (158 - 1.0) <2FC70EFA-CA67-359C-A3E2-88F70403EAEA> /System/Library/PrivateFrameworks/AppleFSCompression.framework/Versions/A/AppleFSCompression
+       0x1985ce000 -        0x1985daffb  libbz2.1.0.dylib (45) <15785738-C3DB-39BA-9AE9-CC522EABBBA8> /usr/lib/libbz2.1.0.dylib
+       0x1985db000 -        0x1985e0fff  libsystem_coreservices.dylib (152.1) <26F9E755-26EC-3974-BEC8-3B706D0254BA> /usr/lib/system/libsystem_coreservices.dylib
+       0x1985e1000 -        0x198612fff  com.apple.CoreServices.OSServices (1141.1 - 1141.1) <FDF1AE1F-D646-37FB-8FC6-631C0628AD41> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/OSServices.framework/Versions/A/OSServices
+       0x1988ee000 -        0x1988fcfff  libz.1.dylib (91.40.1.0.1) <7523CDC8-DA6B-382B-8DDC-F63D156A299B> /usr/lib/libz.1.dylib
+       0x1988fd000 -        0x198933ff3  libsystem_m.dylib (3252.40.2) <072B3C9C-C54E-3F27-B231-88482F485502> /usr/lib/system/libsystem_m.dylib
+       0x198934000 -        0x198937fff  libcharset.1.dylib (86) <D7FE35E8-A866-3BE0-9828-B8D7363641DE> /usr/lib/libcharset.1.dylib
+       0x198938000 -        0x19893fffb  libmacho.dylib (1009) <29C5FB27-B26B-3927-89C1-917051E5D353> /usr/lib/system/libmacho.dylib
+       0x198940000 -        0x19895ffff  libkxld.dylib (10002.41.9) <87786C0C-7D78-3B0B-B6B5-6603B8804253> /usr/lib/system/libkxld.dylib
+       0x198960000 -        0x19896dff7  libcommonCrypto.dylib (600025) <4CF0B406-031F-3BC7-8A97-61DFA262C179> /usr/lib/system/libcommonCrypto.dylib
+       0x19896e000 -        0x198978fff  libunwind.dylib (1600.112) <18A7097B-A9D1-34C6-8333-0D16CF789585> /usr/lib/system/libunwind.dylib
+       0x198979000 -        0x198980fff  liboah.dylib (315.1) <D927DACB-D13E-3976-8065-D41237EC7529> /usr/lib/liboah.dylib
+       0x198981000 -        0x19898aff3  libcopyfile.dylib (196) <CE4F0BED-9109-3557-8B48-45E051D43210> /usr/lib/system/libcopyfile.dylib
+       0x19898b000 -        0x19898efff  libcompiler_rt.dylib (103.1) <A7A07A05-6551-3867-A8AE-2935D8FA1B4E> /usr/lib/system/libcompiler_rt.dylib
+       0x19898f000 -        0x198993ffb  libsystem_collections.dylib (1583.40.7) <985E00EB-F590-3B07-876A-EFE015DB79EF> /usr/lib/system/libsystem_collections.dylib
+       0x198994000 -        0x198996ffb  libsystem_secinit.dylib (143) <A0DAA91D-049F-334F-917F-92DF752CD8F4> /usr/lib/system/libsystem_secinit.dylib
+       0x198997000 -        0x198999ffb  libremovefile.dylib (70) <F4566B6C-20B5-334F-86E6-50E4085DADED> /usr/lib/system/libremovefile.dylib
+       0x19899a000 -        0x19899affb  libkeymgr.dylib (31) <B6E3DE59-7C3B-3403-89FE-38BBFE86BA90> /usr/lib/system/libkeymgr.dylib
+       0x19899b000 -        0x1989a3ff7  libsystem_dnssd.dylib (2200.40.37.0.1) <D922E985-BD3A-3618-9189-5B931F3CD90C> /usr/lib/system/libsystem_dnssd.dylib
+       0x1989a4000 -        0x1989a9fff  libcache.dylib (92) <47B56AFF-F15C-3550-B9B6-560806BC20C5> /usr/lib/system/libcache.dylib
+       0x1989aa000 -        0x1989abfff  libSystem.B.dylib (1336) <1E176743-EDDD-309B-AE12-6369F1A2029B> /usr/lib/libSystem.B.dylib
+       0x1989ac000 -        0x1989affff  libfakelink.dylib (5) <F66ABAF3-160B-3620-A1DA-03A6735B59F2> /usr/lib/libfakelink.dylib
+       0x1989b0000 -        0x1989b0ffb  com.apple.SoftLinking (1.0 - 47) <D4F0F03A-D312-383F-9716-42A16F2EDC03> /System/Library/PrivateFrameworks/SoftLinking.framework/Versions/A/SoftLinking
+       0x1989b1000 -        0x1989e6ffb  libpcap.A.dylib (126.41.1) <494571FE-C8C2-3193-AA67-A17AC286AA4A> /usr/lib/libpcap.A.dylib
+       0x1989e7000 -        0x1989edff3  libiconv.2.dylib (86) <DD44EA63-4DC7-3F2D-9AC4-2C97751077A9> /usr/lib/libiconv.2.dylib
+       0x1989ee000 -        0x1989fffff  libcmph.dylib (8) <615CF8F9-9E63-3C31-A888-73A7C48B702B> /usr/lib/libcmph.dylib
+       0x198a00000 -        0x198a88ff3  libarchive.2.dylib (121.40.3) <010A91A0-9B78-3798-B1D9-F017104C3EE2> /usr/lib/libarchive.2.dylib
+       0x198a89000 -        0x198affff3  com.apple.SearchKit (1.4.1 - 1.4.1) <DF6EA86E-30E2-3DED-9492-6C0FD88ABFDB> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/SearchKit.framework/Versions/A/SearchKit
+       0x198b00000 -        0x198b01ff7  libThaiTokenizer.dylib (15) <67E80E6B-32B4-36BF-921C-D5DA2AEC583D> /usr/lib/libThaiTokenizer.dylib
+       0x198b02000 -        0x198b27fff  com.apple.applesauce (1.0 - 16.55) <C2C35987-5075-36D0-B681-DBA84FECE5A5> /System/Library/PrivateFrameworks/AppleSauce.framework/Versions/A/AppleSauce
+       0x198b28000 -        0x198b41ffb  libapple_nghttp2.dylib (16) <DEDDDBE8-B133-345A-A8EE-F9C6741060A6> /usr/lib/libapple_nghttp2.dylib
+       0x198b42000 -        0x198b54fff  libSparseBLAS.dylib (1447) <AAACBC27-3922-327B-BA91-2DA8E325FF02> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libSparseBLAS.dylib
+       0x198b57000 -        0x198b5cfff  libpam.2.dylib (33) <81CDA9F5-6B0D-300F-B236-BA8141836521> /usr/lib/libpam.2.dylib
+       0x198b5d000 -        0x198c2afcf  libcompression.dylib (166) <0CAB9E05-BF75-3913-A9E0-1D85226274AC> /usr/lib/libcompression.dylib
+       0x198c2b000 -        0x198c2fffb  libQuadrature.dylib (7) <41C54DE8-6D6E-3091-AE3C-8F93FAE80BD1> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libQuadrature.dylib
+       0x198c30000 -        0x199da1fff  libLAPACK.dylib (1447) <ADA423BF-4D71-3725-80C9-B5D4B18CF539> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libLAPACK.dylib
+       0x199da2000 -        0x199df8fff  com.apple.DictionaryServices (1.2 - 355) <FB1984F1-531D-35A3-8914-783C22D98265> /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/DictionaryServices.framework/Versions/A/DictionaryServices
+       0x199df9000 -        0x199e11ff3  liblzma.5.dylib (18) <BC536562-5DAF-36DD-B136-8629CA727660> /usr/lib/liblzma.5.dylib
+       0x199e12000 -        0x199e13ffb  libcoretls_cfhelpers.dylib (186) <F2DFAA8D-95A8-3C31-A141-9B404BA04CD2> /usr/lib/libcoretls_cfhelpers.dylib
+       0x199e14000 -        0x199e82ff3  com.apple.APFS (2235.41.1 - 2235.41.1) <1AC37BDF-F264-3A0E-A5AE-0D98174F8095> /System/Library/PrivateFrameworks/APFS.framework/Versions/A/APFS
+       0x199e83000 -        0x199e91ffb  libxar.1.dylib (498) <22C053D2-5F9A-356A-A3AD-09BD790C6437> /usr/lib/libxar.1.dylib
+       0x199e92000 -        0x199e95ff7  libutil.dylib (72) <AD1A027D-0361-3DAF-B150-29626FAC9552> /usr/lib/libutil.dylib
+       0x199e96000 -        0x199ec1ff3  libxslt.1.dylib (20.3) <215E57F4-CF08-38D9-921F-5AF522C1159A> /usr/lib/libxslt.1.dylib
+       0x199eca000 -        0x199f45fff  libvMisc.dylib (1041) <9FEC3CE5-CBA8-3524-83A1-E10C910E101D> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/libvMisc.dylib
+       0x19a26a000 -        0x19a274fff  libheimdal-asn1.dylib (685) <DAD8D17F-A7B5-3CDC-9D98-50A78E6EFD54> /usr/lib/libheimdal-asn1.dylib
+       0x19b968000 -        0x19b9c5ffa  libusrtcp.dylib (3762.41.2) <0F6EF57C-DEE8-3D4D-9E33-5F451FF4AFB2> /usr/lib/libusrtcp.dylib
+       0x19b9c6000 -        0x19bf05fff  libswiftCore.dylib (5.9 - 5.9.0.123.305) <1FCC7DF4-6B2E-3CBA-9125-EB1ED90943F4> /usr/lib/swift/libswiftCore.dylib
+       0x19de20000 -        0x19df5cfff  com.apple.combine (1.0 - 311) <5E78AE31-70E7-3F20-B41B-F0AD6E39D711> /System/Library/Frameworks/Combine.framework/Versions/A/Combine
+       0x19fefa000 -        0x19fefafff  com.apple.Accelerate.vecLib (3.11 - vecLib 3.11) <84B9B13D-FDCC-3AE6-8979-4F138842CA34> /System/Library/Frameworks/Accelerate.framework/Versions/A/Frameworks/vecLib.framework/Versions/A/vecLib
+       0x19ff23000 -        0x19ff23fff  com.apple.CoreServices (1226 - 1226) <8A75797D-1FDA-32DA-9E90-07F6CF0E512E> /System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices
+       0x1a0227000 -        0x1a0227fff  com.apple.Accelerate (1.11 - Accelerate 1.11) <02B4577F-7DB2-3A40-8800-656D8D30A763> /System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate
+       0x1a158a000 -        0x1a15a2ff7  libswiftDispatch.dylib (34.0.2) <ECD9F4AE-F43A-38A1-BDA4-EB79FABEA3CB> /usr/lib/swift/libswiftDispatch.dylib
+       0x1a3d64000 -        0x1a3d67ff5  libswiftObjectiveC.dylib (8) <DF94001E-2862-3E49-AECA-BF67D0E36A93> /usr/lib/swift/libswiftObjectiveC.dylib
+       0x1a3d68000 -        0x1a3d80fff  libswiftos.dylib (1040) <9B41C748-9156-304D-B221-025E455A9B6D> /usr/lib/swift/libswiftos.dylib
+       0x1aea89000 -        0x1aea92ff7  libswiftDarwin.dylib (??? - 5.9.0.123.305) <05D38AAE-B8B9-3AC5-A653-3597E052AC32> /usr/lib/swift/libswiftDarwin.dylib
+       0x1b0c92000 -        0x1b0ca5fff  libmis.dylib (381) <8AB6E1A0-4242-3689-8B67-59F86F022FE2> /usr/lib/libmis.dylib
+       0x1b0cb3000 -        0x1b0cb9fff  libswiftCoreFoundation.dylib (2000) <C72AD963-EE1A-3C1D-9F61-ADC0B89D7858> /usr/lib/swift/libswiftCoreFoundation.dylib
+       0x1b0cc9000 -        0x1b0cfeff7  libswiftXPC.dylib (29.0.2) <9E6314D3-CE1C-3970-8350-26043FCAA913> /usr/lib/swift/libswiftXPC.dylib
+       0x1b0d00000 -        0x1b0d00fff  libswiftIOKit.dylib (1) <CB259AD3-A67F-3B6F-B371-0B75F7275AEF> /usr/lib/swift/libswiftIOKit.dylib
+       0x1c0782000 -        0x1c0789fff  com.apple.MobileSystemServices (1.0 - 1) <E6E45DDC-53E9-39C1-BFD8-0C2C3791D685> /System/Library/PrivateFrameworks/MobileSystemServices.framework/Versions/A/MobileSystemServices
+       0x1f1469000 -        0x1f146cfff  com.apple.ConfigProfileHelper (16.1 - 1622) <CF4485F8-2BE2-33DA-AD1B-182B3247793A> /System/Library/PrivateFrameworks/ConfigProfileHelper.framework/Versions/A/ConfigProfileHelper
+       0x1fe70f000 -        0x1fe722fff  com.apple.private.AppleMobileFileIntegrity-fmk (1.0 - 1) <8039181A-3E85-3233-B9D9-7563C9E165FD> /System/Library/PrivateFrameworks/AppleMobileFileIntegrity.framework/Versions/A/AppleMobileFileIntegrity
+       0x200b03000 -        0x200c61fff  com.apple.CollectionsInternal (1.1.0 - 19) <6A16A70E-B3E9-3ECE-9485-2192FF0C1506> /System/Library/PrivateFrameworks/CollectionsInternal.framework/Versions/A/CollectionsInternal
+       0x20e5cf000 -        0x20e6a6fff  com.apple.InstalledContentLibrary (1.0 - 1.0) <9920C0DA-5FB7-34CF-A15C-3E753F8DF951> /System/Library/PrivateFrameworks/InstalledContentLibrary.framework/Versions/A/InstalledContentLibrary
+       0x21030c000 -        0x2107e0ffb  com.apple.MIL (5.33 - 5.33.5) <DAADE6DE-6FD3-367B-8B6F-57634CF68CE7> /System/Library/PrivateFrameworks/MIL.framework/Versions/A/MIL
+       0x211ad9000 -        0x211b23fff  com.apple.MessageSecurity (1.0 - 101.40.6) <2F806526-DC8F-3A34-9959-50112A8251D3> /System/Library/PrivateFrameworks/MessageSecurity.framework/Versions/A/MessageSecurity
+       0x216646000 -        0x21664cff7  com.apple.ReflectionInternal (1.0.0 - 19) <3CE1C9E3-0652-3F64-BCB5-8EC03A0FFD99> /System/Library/PrivateFrameworks/ReflectionInternal.framework/Versions/A/ReflectionInternal
+       0x216c32000 -        0x216c48ff7  com.apple.RuntimeInternal (1.0.0 - 19) <01065A3F-0218-3BAE-8832-1FBF07AD6712> /System/Library/PrivateFrameworks/RuntimeInternal.framework/Versions/A/RuntimeInternal
+       0x229daa000 -        0x229db5fff  libCoreEntitlements.dylib (53) <73C57354-D94C-3CC2-99F7-06B75FC7DE4A> /usr/lib/libCoreEntitlements.dylib
+       0x229f93000 -        0x229f9efff  libTLE.dylib (53) <2B0C780B-984D-36DA-938E-7CBE9AA241B2> /usr/lib/libTLE.dylib
+       0x22b30c000 -        0x22b36aff3  libswift_Concurrency.dylib (5.9 - 5.9.0.123.305) <044E4103-2CB6-37B9-9F4B-A53237EA4521> /usr/lib/swift/libswift_Concurrency.dylib
+       0x22b3a9000 -        0x22b454fff  libswift_RegexParser.dylib (??? - 5.9.0.123.305) <B781D884-4E43-3FF6-8EBB-253229EF0F2C> /usr/lib/swift/libswift_RegexParser.dylib
+       0x22b455000 -        0x22b4f5fff  libswift_StringProcessing.dylib (??? - 5.9.0.123.305) <97484081-9BDD-3AD8-8554-1C3E3FA349B4> /usr/lib/swift/libswift_StringProcessing.dylib
+       0x22b636000 -        0x22b639fff  libsystem_darwindirectory.dylib (86.0.2) <8C2C7C2A-F18E-3196-BB40-B4BB95C5BFF9> /usr/lib/system/libsystem_darwindirectory.dylib
+
