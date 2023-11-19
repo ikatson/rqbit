@@ -7,12 +7,12 @@ use dht::{Dht, DhtStats};
 use http::StatusCode;
 use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use tracing::{warn, info};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::{info, warn};
 
 use axum::Router;
 
@@ -341,7 +341,10 @@ impl ApiInternal {
         let mgr = self.mgr_handle(idx)?;
         Ok(format!(
             "{:?}",
-            mgr.torrent_state().lock_read().chunks.get_have_pieces(),
+            mgr.torrent_state()
+                .lock_read("api_dump_haves")
+                .chunks
+                .get_have_pieces(),
         ))
     }
 }

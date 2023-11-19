@@ -115,8 +115,7 @@ impl PeerStates {
         reason: &'static str,
         f: impl FnOnce(&mut Peer) -> R,
     ) -> Option<R> {
-        self.states
-            .get_mut(&addr)
+        timeit(reason, || self.states.get_mut(&addr))
             .map(|e| f(TimedExistence::new(e, reason).value_mut()))
     }
     pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
@@ -521,20 +520,23 @@ impl TorrentState {
     pub fn initially_needed(&self) -> u64 {
         self.needed
     }
-    pub fn lock_read(&self) -> RwLockReadGuard<TorrentStateLocked> {
-        self.locked.read()
+    pub fn lock_read(
+        &self,
+        reason: &'static str,
+    ) -> TimedExistence<RwLockReadGuard<TorrentStateLocked>> {
+        TimedExistence::new(timeit(reason, || self.locked.read()), reason)
     }
     pub fn lock_write(
         &self,
         reason: &'static str,
     ) -> TimedExistence<RwLockWriteGuard<TorrentStateLocked>> {
-        TimedExistence::new(self.locked.write(), reason)
+        TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
     fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
         self.peers
-            .with_live_mut(peer_handle, "get_next_needed_piece", |live| {
-                let g = self.locked.read();
+            .with_live_mut(peer_handle, "l(get_next_needed_piece)", |live| {
+                let g = self.lock_read("g(get_next_needed_piece)");
                 let bf = live.bitfield.as_ref()?;
                 for n in g.chunks.iter_needed_pieces() {
                     if bf.get(n).map(|v| *v) == Some(true) {
@@ -624,7 +626,7 @@ impl TorrentState {
         use rand::seq::IteratorRandom;
         self.peers
             .with_live(handle, |live| {
-                let g = self.locked.read();
+                let g = self.lock_read("try_steal_piece");
                 g.inflight_pieces
                     .keys()
                     .filter(|p| !live.inflight_requests.iter().any(|req| req.piece == **p))
@@ -889,7 +891,7 @@ impl PeerConnectionHandler for PeerHandler {
     }
 
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize> {
-        let g = self.state.locked.read();
+        let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
         let len = msg.serialize(buf, None).unwrap();
         debug!("sending: {:?}, length={}", &msg, len);
@@ -946,7 +948,7 @@ impl PeerHandler {
         let tx = {
             if !self
                 .state
-                .lock_read()
+                .lock_read("is_chunk_ready_to_upload")
                 .chunks
                 .is_chunk_ready_to_upload(&chunk_info)
             {
@@ -1105,7 +1107,12 @@ impl PeerHandler {
             };
 
             for chunk in self.state.lengths.iter_chunk_infos(next) {
-                if self.state.lock_read().chunks.is_chunk_downloaded(&chunk) {
+                if self
+                    .state
+                    .lock_read("is_chunk_downloaded")
+                    .chunks
+                    .is_chunk_downloaded(&chunk)
+                {
                     continue;
                 }
 
