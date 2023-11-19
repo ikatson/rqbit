@@ -8,7 +8,6 @@ use librqbit_core::{
     lengths::{ceil_div_u64, last_element_size_u64, ChunkInfo},
     torrent_metainfo::TorrentMetaV1Info,
 };
-use log::debug;
 use parking_lot::{Mutex, RwLock};
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
@@ -16,6 +15,7 @@ use peer_binary_protocol::{
 };
 use sha1w::{ISha1, Sha1};
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::debug;
 
 use crate::{
     peer_connection::{
@@ -238,7 +238,7 @@ mod tests {
     fn init_logging() {
         #[allow(unused_must_use)]
         LOG_INIT.call_once(|| {
-            pretty_env_logger::try_init();
+            // pretty_env_logger::try_init();
         })
     }
 

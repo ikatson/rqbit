@@ -12,8 +12,8 @@ use librqbit::{
     },
     spawn_utils::{spawn, BlockingSpawner},
 };
-use log::{error, info, warn};
 use size_format::SizeFormatterBinary as SF;
+use tracing::{error, info, span, warn, Level};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -151,7 +151,13 @@ fn init_logging(opts: &Opts) {
             }
         };
     }
-    pretty_env_logger::init();
+
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
 }
 
 fn main() -> anyhow::Result<()> {
@@ -258,7 +264,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     .await
                     .context("error initializing rqbit session")?,
                 );
-                spawn("Stats printer", stats_printer(session.clone()));
+                spawn(
+                    span!(Level::TRACE, "stats_printer"),
+                    stats_printer(session.clone()),
+                );
                 let http_api = HttpApi::new(session);
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
@@ -331,11 +340,14 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     .await
                     .context("error initializing rqbit session")?,
                 );
-                spawn("Stats printer", stats_printer(session.clone()));
+                spawn(
+                    span!(Level::TRACE, "stats_printer"),
+                    stats_printer(session.clone()),
+                );
                 let http_api = HttpApi::new(session.clone());
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 spawn(
-                    "HTTP API",
+                    span!(Level::ERROR, "http_api"),
                     http_api.clone().make_http_api_and_run(http_api_listen_addr),
                 );
 

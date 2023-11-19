@@ -4,8 +4,8 @@ use std::{
 };
 
 use librqbit_core::id20::Id20;
-use log::debug;
 use serde::{ser::SerializeMap, Deserialize, Serialize};
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum BucketTreeNodeData {

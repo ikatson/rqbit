@@ -7,7 +7,7 @@ use dht::{Dht, DhtStats};
 use http::StatusCode;
 use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use log::warn;
+use tracing::{warn, info};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -110,7 +110,7 @@ impl HttpApi {
             .route("/torrents/:id/stats", get(torrent_stats))
             .with_state(state);
 
-        log::info!("starting HTTP server on {}", addr);
+        info!("starting HTTP server on {}", addr);
         axum::Server::try_bind(&addr)
             .with_context(|| format!("error binding to {addr}"))?
             .serve(app.into_make_service())

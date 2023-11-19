@@ -11,7 +11,7 @@ use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
 };
-use log::{debug, trace, warn};
+use tracing::{debug, trace, warn};
 use parking_lot::Mutex;
 use peer_binary_protocol::Piece;
 use sha1w::ISha1;

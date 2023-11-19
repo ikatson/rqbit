@@ -2,13 +2,11 @@ use std::{str::FromStr, time::Duration};
 
 use anyhow::Context;
 use librqbit_dht::{Dht, Id20};
-use log::info;
 use tokio_stream::StreamExt;
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    pretty_env_logger::init();
-
     let info_hash = Id20::from_str("64a980abe6e448226bb930ba061592e44c3781a1").unwrap();
     let dht = Dht::new().await.context("error initializing DHT")?;
     let mut stream = dht.get_peers(info_hash).await?;
@@ -42,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
 
     let peer_printer = async {
         while let Some(peer) = stream.next().await {
-            log::info!("peer found: {}", peer)
+            info!("peer found: {}", peer)
         }
         Ok(())
     };

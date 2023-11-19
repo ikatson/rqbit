@@ -1,6 +1,6 @@
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
-use log::{debug, info};
 use peer_binary_protocol::Piece;
+use tracing::{debug, info};
 
 use crate::type_aliases::BF;
 
