@@ -137,9 +137,6 @@ impl PeerStates {
         .flatten()
     }
 
-    pub fn add(&self, addr: SocketAddr) -> Option<PeerHandle> {
-        self.add_if_not_seen(addr)
-    }
     pub fn mark_peer_dead(&self, handle: PeerHandle) -> Option<Option<LivePeerState>> {
         self.with_peer_mut(handle, "mark_peer_dead", |peer| peer.state.to_dead())
             .flatten()
@@ -810,7 +807,7 @@ impl TorrentState {
             None => return false,
         };
 
-        let _ = self.peer_queue_tx.send(addr);
+        self.peer_queue_tx.send(addr).unwrap();
         true
     }
 

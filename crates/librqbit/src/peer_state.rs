@@ -144,14 +144,6 @@ impl PeerState {
         self.get_live_mut()
     }
 
-    pub fn dead_to_queued(&mut self) -> bool {
-        if let PeerState::Dead = self {
-            *self = PeerState::Queued;
-            return true;
-        }
-        false
-    }
-
     pub fn to_dead(&mut self) -> Option<Option<LivePeerState>> {
         match std::mem::replace(self, PeerState::Dead) {
             PeerState::Live(l) => Some(Some(l)),
