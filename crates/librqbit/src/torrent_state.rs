@@ -866,12 +866,9 @@ impl PeerConnectionHandler for PeerHandler {
             Message::Choke => self.on_i_am_choked(self.addr),
             Message::Unchoke => self.on_i_am_unchoked(self.addr),
             Message::Interested => self.on_peer_interested(self.addr),
-            Message::Piece(piece) => {
-                timeit("on_received_piece", || {
-                    self.on_received_piece(self.addr, piece)
-                        .context("on_received_piece")
-                })?;
-            }
+            Message::Piece(piece) => self
+                .on_received_piece(self.addr, piece)
+                .context("on_received_piece")?,
             Message::KeepAlive => {
                 debug!("keepalive received");
             }
