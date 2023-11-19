@@ -115,6 +115,13 @@ impl PeerState {
         }
     }
 
+    pub fn get_live(&self) -> Option<&LivePeerState> {
+        match self {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
+    }
+
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
         match self {
             PeerState::Live(l) => Some(l),
