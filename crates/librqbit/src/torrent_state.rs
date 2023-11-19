@@ -72,7 +72,7 @@ pub struct AggregatePeerStats {
     pub live: usize,
     pub seen: usize,
     pub dead: usize,
-    pub fully_have_and_we_are_finished: usize,
+    pub not_needed: usize,
 }
 
 impl PeerStates {
@@ -89,7 +89,7 @@ impl PeerStates {
                         PeerState::Live(_) => s.live += 1,
                         PeerState::Queued => s.queued += 1,
                         PeerState::Dead => s.dead += 1,
-                        PeerState::NotNeeded => s.fully_have_and_we_are_finished += 1,
+                        PeerState::NotNeeded => s.not_needed += 1,
                     };
                     s
                 })
@@ -247,7 +247,8 @@ pub struct StatsSnapshot {
     pub time: Instant,
     pub queued_peers: u32,
     pub dead_peers: u32,
-    total_piece_download_ms: u64,
+    pub total_piece_download_ms: u64,
+    pub not_needed_peers: u32,
 }
 
 impl StatsSnapshot {
@@ -331,7 +332,7 @@ mod timed_existence {
     use std::time::{Duration, Instant};
     use tracing::warn;
 
-    const MAX: Duration = Duration::from_millis(5);
+    const MAX: Duration = Duration::from_millis(1);
 
     // Prints if the object exists for too long.
     // This is used to track long-lived locks for debugging.
@@ -833,6 +834,7 @@ impl TorrentState {
             remaining_bytes: remaining,
             queued_peers: peer_stats.queued as u32,
             dead_peers: peer_stats.dead as u32,
+            not_needed_peers: peer_stats.not_needed as u32,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
         }
     }
@@ -1004,6 +1006,7 @@ impl PeerHandler {
         // Additional spawn per peer, not good.
         spawn(
             span!(
+                parent: None,
                 Level::ERROR,
                 "peer_chunk_requester",
                 peer = handle.to_string()
@@ -1123,7 +1126,7 @@ impl PeerHandler {
                         warn!("probably a bug, we already requested {:?}", chunk);
                         continue;
                     }
-                    None => bail!("peer dropped"),
+                    None => return Ok(()),
                 }
 
                 let request = Request {
@@ -1131,10 +1134,20 @@ impl PeerHandler {
                     begin: chunk.offset,
                     length: chunk.size,
                 };
-                sem.acquire().await?.forget();
 
-                tx.send(WriterRequest::Message(MessageOwned::Request(request)))
-                    .context("peer dropped")?;
+                loop {
+                    match timeout(Duration::from_secs(10), sem.acquire()).await {
+                        Ok(acq) => break acq?.forget(),
+                        Err(_) => continue,
+                    };
+                }
+
+                if tx
+                    .send(WriterRequest::Message(MessageOwned::Request(request)))
+                    .is_err()
+                {
+                    return Ok(());
+                }
             }
         }
     }
