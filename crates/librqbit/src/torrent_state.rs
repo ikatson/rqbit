@@ -1287,10 +1287,10 @@ impl PeerHandler {
                         );
                         {
                             let mut g = self.state.lock_write("mark_piece_downloaded");
-
                             g.chunks.mark_piece_downloaded(chunk_info.piece_index);
-                            self.state.peers.reset_peer_backoff(handle);
                         }
+
+                        self.state.peers.reset_peer_backoff(handle);
 
                         debug!("piece={} successfully downloaded and verified", index);
 
