@@ -654,6 +654,11 @@ impl TorrentState {
             }
         };
 
+        // If peer is already set not needed, ignore.
+        if let PeerState::NotNeeded = pe.value().state {
+            return;
+        }
+
         if error.is_none() {
             debug!("peer died without errors, not re-queueing");
             pe.value_mut().state = PeerState::NotNeeded;
