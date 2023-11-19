@@ -667,6 +667,8 @@ impl TorrentState {
                 }
             }
             PeerState::NotNeeded => {
+                // Restore it as std::mem::take() replaced it above.
+                pe.value_mut().state = PeerState::NotNeeded;
                 return;
             }
             s @ PeerState::Queued | s @ PeerState::Dead => {
