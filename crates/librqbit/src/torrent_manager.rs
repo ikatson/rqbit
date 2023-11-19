@@ -294,8 +294,8 @@ impl TorrentManager {
             let state = mgr.state.clone();
             async move {
                 loop {
-                    let stats = state.stats_snapshot();
-                    let fetched = state.stats_snapshot().fetched_bytes;
+                    let stats = state.stats_snapshot(false);
+                    let fetched = stats.fetched_bytes;
                     let needed = state.initially_needed();
                     // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
                     let remaining = needed

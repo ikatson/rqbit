@@ -809,9 +809,13 @@ impl TorrentState {
         true
     }
 
-    pub fn stats_snapshot(&self) -> StatsSnapshot {
+    pub fn stats_snapshot(&self, with_peer_stats: bool) -> StatsSnapshot {
         use Ordering::*;
-        let peer_stats = self.peers.stats();
+        let peer_stats = if with_peer_stats {
+            self.peers.stats()
+        } else {
+            Default::default()
+        };
         let downloaded = self.stats.downloaded_and_checked.load(Relaxed);
         let remaining = self.needed - downloaded;
         StatsSnapshot {

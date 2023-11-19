@@ -244,7 +244,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                 info!("[{}] initializing", idx);
                             },
                             ManagedTorrentState::Running(handle) => {
-                                let stats = timeit("stats_snapshot", || handle.torrent_state().stats_snapshot());
+                                let stats = timeit("stats_snapshot", || handle.torrent_state().stats_snapshot(true));
                                 let speed = handle.speed_estimator();
                                 let total = stats.total_bytes;
                                 let progress = stats.total_bytes - stats.remaining_bytes;

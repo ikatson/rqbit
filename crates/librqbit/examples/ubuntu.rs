@@ -55,7 +55,7 @@ async fn main() -> Result<(), anyhow::Error> {
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let stats = handle.torrent_state().stats_snapshot();
+                let stats = handle.torrent_state().stats_snapshot(true);
                 info!("stats: {stats:?}");
             }
         }
