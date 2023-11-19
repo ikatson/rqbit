@@ -263,11 +263,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     SF::new(stats.remaining_bytes),
                                     SF::new(total),
                                     SF::new(stats.uploaded_bytes),
-                                    stats.live_peers,
-                                    stats.connecting_peers,
-                                    stats.queued_peers,
-                                    stats.seen_peers,
-                                    stats.dead_peers,
+                                    stats.peer_stats.live,
+                                    stats.peer_stats.connecting,
+                                    stats.peer_stats.queued,
+                                    stats.peer_stats.seen,
+                                    stats.peer_stats.dead,
                                 );
                             },
                         }

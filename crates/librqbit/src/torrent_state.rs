@@ -65,7 +65,7 @@ pub struct PeerStates {
     states: DashMap<PeerHandle, Peer>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct AggregatePeerStats {
     pub queued: usize,
     pub connecting: usize,
@@ -240,15 +240,10 @@ pub struct StatsSnapshot {
     pub initially_needed_bytes: u64,
     pub remaining_bytes: u64,
     pub total_bytes: u64,
-    pub live_peers: u32,
-    pub seen_peers: u32,
-    pub connecting_peers: u32,
     #[serde(skip)]
     pub time: Instant,
-    pub queued_peers: u32,
-    pub dead_peers: u32,
     pub total_piece_download_ms: u64,
-    pub not_needed_peers: u32,
+    pub peer_stats: AggregatePeerStats,
 }
 
 impl StatsSnapshot {
@@ -826,16 +821,11 @@ impl TorrentState {
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded.load(Relaxed),
             total_bytes: self.have_plus_needed,
-            live_peers: peer_stats.live as u32,
-            seen_peers: peer_stats.seen as u32,
-            connecting_peers: peer_stats.connecting as u32,
             time: Instant::now(),
             initially_needed_bytes: self.needed,
             remaining_bytes: remaining,
-            queued_peers: peer_stats.queued as u32,
-            dead_peers: peer_stats.dead as u32,
-            not_needed_peers: peer_stats.not_needed as u32,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
+            peer_stats,
         }
     }
 
@@ -918,7 +908,6 @@ impl PeerConnectionHandler for PeerHandler {
 }
 
 impl PeerHandler {
-    #[inline(never)]
     fn on_download_request(&self, peer_handle: PeerHandle, request: Request) -> anyhow::Result<()> {
         let piece_index = match self.state.lengths.validate_piece_index(request.index) {
             Some(p) => p,
@@ -970,7 +959,6 @@ impl PeerHandler {
         Ok::<_, anyhow::Error>(tx.send(request)?)
     }
 
-    #[inline(never)]
     fn on_have(&self, handle: PeerHandle, have: u32) {
         self.state.peers.with_live_mut(handle, "on_have", |live| {
             if let Some(bitfield) = live.bitfield.as_mut() {
@@ -980,7 +968,6 @@ impl PeerHandler {
         });
     }
 
-    #[inline(never)]
     fn on_bitfield(&self, handle: PeerHandle, bitfield: ByteString) -> anyhow::Result<()> {
         if bitfield.len() != self.state.lengths.piece_bitfield_bytes() {
             anyhow::bail!(
@@ -1029,13 +1016,11 @@ impl PeerHandler {
         Ok::<_, anyhow::Error>(())
     }
 
-    #[inline(never)]
     fn on_i_am_choked(&self, handle: PeerHandle) {
         debug!("we are choked");
         self.state.peers.mark_i_am_choked(handle, true);
     }
 
-    #[inline(never)]
     fn on_peer_interested(&self, handle: PeerHandle) {
         debug!("peer is interested");
         self.state.peers.mark_peer_interested(handle, true);
@@ -1181,7 +1166,6 @@ impl PeerHandler {
         Ok(())
     }
 
-    #[inline(never)]
     fn on_i_am_unchoked(&self, handle: PeerHandle) {
         debug!("we are unchoked");
         self.state
@@ -1193,7 +1177,6 @@ impl PeerHandler {
             });
     }
 
-    #[inline(never)]
     fn on_received_piece(&self, handle: PeerHandle, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
         let chunk_info = match self.state.lengths.chunk_info_from_received_piece(
             piece.index,
