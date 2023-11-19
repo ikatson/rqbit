@@ -13,6 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["sha1-system", "default-tls"]
+timed_existence = ["librqbit/timed_existence"]
 sha1-system = ["librqbit/sha1-system"]
 sha1-openssl = ["librqbit/sha1-openssl"]
 sha1-rust = ["librqbit/sha1-rust"]

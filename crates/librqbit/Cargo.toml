@@ -13,6 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["sha1-system", "default-tls"]
+timed_existence = []
 sha1-system = ["sha1w/sha1-system"]
 sha1-openssl = ["sha1w/sha1-openssl"]
 sha1-rust = ["sha1w/sha1-rust"]
