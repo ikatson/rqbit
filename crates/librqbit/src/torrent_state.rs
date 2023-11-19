@@ -543,6 +543,8 @@ impl TorrentState {
             }
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
                 warn!("bug: peer was in a wrong state, ignoring it forever");
+                // Prevent deadlocks.
+                drop(pe);
                 self.peers.drop_peer(handle);
                 return;
             }
@@ -562,6 +564,9 @@ impl TorrentState {
 
         pe.value_mut().state = PeerState::Dead;
         let backoff = pe.value_mut().stats.backoff.next_backoff();
+
+        // Prevent deadlocks.
+        drop(pe);
 
         if let Some(dur) = backoff {
             let state = self.clone();

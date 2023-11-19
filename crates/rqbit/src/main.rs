@@ -160,10 +160,35 @@ fn init_logging(opts: &Opts) {
         .init();
 }
 
+fn _start_deadlock_detector_thread() {
+    use parking_lot::deadlock;
+    use std::thread;
+
+    // Create a background thread which checks for deadlocks every 10s
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(10));
+        let deadlocks = deadlock::check_deadlock();
+        if deadlocks.is_empty() {
+            continue;
+        }
+
+        println!("{} deadlocks detected", deadlocks.len());
+        for (i, threads) in deadlocks.iter().enumerate() {
+            println!("Deadlock #{}", i);
+            for t in threads {
+                println!("Thread Id {:#?}", t.thread_id());
+                println!("{:#?}", t.backtrace());
+            }
+        }
+        std::process::exit(42);
+    });
+}
+
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
     init_logging(&opts);
+    // start_deadlock_detector_thread();
 
     let (mut rt_builder, spawner) = match opts.single_thread_runtime {
         true => (
