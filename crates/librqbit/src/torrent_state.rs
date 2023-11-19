@@ -77,19 +77,23 @@ pub struct AggregatePeerStats {
 
 impl PeerStates {
     pub fn stats(&self) -> AggregatePeerStats {
-        self.states
-            .iter()
-            .fold(AggregatePeerStats::default(), |mut s, p| {
-                s.seen += 1;
-                match &p.value().state {
-                    PeerState::Connecting(_) => s.connecting += 1,
-                    PeerState::Live(_) => s.live += 1,
-                    PeerState::Queued => s.queued += 1,
-                    PeerState::Dead => s.dead += 1,
-                    PeerState::NotNeeded => s.fully_have_and_we_are_finished += 1,
-                };
-                s
-            })
+        // TODO: it would be better to store these as atomic not to lock needlessly.
+        // However this would probably cause even more spaghetti.
+        timeit("PeerStates::stats", || {
+            self.states
+                .iter()
+                .fold(AggregatePeerStats::default(), |mut s, p| {
+                    s.seen += 1;
+                    match &p.value().state {
+                        PeerState::Connecting(_) => s.connecting += 1,
+                        PeerState::Live(_) => s.live += 1,
+                        PeerState::Queued => s.queued += 1,
+                        PeerState::Dead => s.dead += 1,
+                        PeerState::NotNeeded => s.fully_have_and_we_are_finished += 1,
+                    };
+                    s
+                })
+        })
     }
     pub fn add_if_not_seen(&self, addr: SocketAddr) -> Option<PeerHandle> {
         use dashmap::mapref::entry::Entry;
@@ -293,6 +297,8 @@ pub struct TorrentState {
 mod timed_existence {
     use std::ops::{Deref, DerefMut};
 
+    pub struct TimedExistence<T>(T);
+
     impl<T> TimedExistence<T> {
         #[inline(always)]
         pub fn new(object: T, _reason: &'static str) -> Self {
@@ -300,7 +306,6 @@ mod timed_existence {
         }
     }
 
-    pub struct TimedExistence<T>(T);
     impl<T> Deref for TimedExistence<T> {
         type Target = T;
 
@@ -316,6 +321,11 @@ mod timed_existence {
             &mut self.0
         }
     }
+
+    #[inline(always)]
+    pub fn timeit<R>(_name: &'static str, f: impl FnOnce() -> R) -> R {
+        f()
+    }
 }
 
 #[cfg(feature = "timed_existence")]
@@ -323,6 +333,8 @@ mod timed_existence {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
     use tracing::warn;
+
+    const MAX: Duration = Duration::from_millis(5);
 
     // Prints if the object exists for too long.
     // This is used to track long-lived locks for debugging.
@@ -344,7 +356,6 @@ mod timed_existence {
 
     impl<T> Drop for TimedExistence<T> {
         fn drop(&mut self) {
-            const MAX: Duration = Duration::from_millis(1);
             let elapsed = self.started.elapsed();
             let reason = self.reason;
             if elapsed > MAX {
@@ -366,9 +377,19 @@ mod timed_existence {
             &mut self.object
         }
     }
+
+    pub fn timeit<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
+        let now = Instant::now();
+        let r = f();
+        let elapsed = now.elapsed();
+        if elapsed > MAX {
+            warn!("elapsed on {name:?}: {elapsed:?}")
+        }
+        r
+    }
 }
 
-pub use timed_existence::TimedExistence;
+pub use timed_existence::{timeit, TimedExistence};
 
 impl TorrentState {
     #[allow(clippy::too_many_arguments)]
@@ -645,7 +666,10 @@ impl TorrentState {
                     g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
                 }
             }
-            s @ PeerState::Queued | s @ PeerState::Dead | s @ PeerState::NotNeeded => {
+            PeerState::NotNeeded => {
+                return;
+            }
+            s @ PeerState::Queued | s @ PeerState::Dead => {
                 warn!("bug: peer was in a wrong state {s:?}, ignoring it forever");
                 // Prevent deadlocks.
                 drop(pe);
@@ -653,11 +677,6 @@ impl TorrentState {
                 return;
             }
         };
-
-        // If peer is already set not needed, ignore.
-        if let PeerState::NotNeeded = pe.value().state {
-            return;
-        }
 
         if error.is_none() {
             debug!("peer died without errors, not re-queueing");
