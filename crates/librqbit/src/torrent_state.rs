@@ -547,8 +547,8 @@ impl TorrentState {
                     g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
                 }
             }
-            PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
-                warn!("bug: peer was in a wrong state, ignoring it forever");
+            s @ PeerState::Queued | s @ PeerState::Dead | s @ PeerState::NotNeeded => {
+                warn!("bug: peer was in a wrong state {s:?}, ignoring it forever");
                 // Prevent deadlocks.
                 drop(pe);
                 self.peers.drop_peer(handle);
