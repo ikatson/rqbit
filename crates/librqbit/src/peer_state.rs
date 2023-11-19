@@ -76,6 +76,7 @@ pub enum PeerState {
     Live(LivePeerState),
     // There was an error, and it's waiting for exponential backoff.
     Dead,
+    // We don't need to do anything with the peer any longer.
     // The peer has the full torrent, and we have the full torrent, so no need
     // to keep talking to it.
     NotNeeded,
@@ -103,7 +104,7 @@ impl PeerState {
         }
     }
 
-    fn take_live(&mut self) -> Option<LivePeerState> {
+    pub fn take_live(&mut self) -> Option<LivePeerState> {
         if let PeerState::Live(_) = self {
             match std::mem::take(self) {
                 PeerState::Live(l) => Some(l),
@@ -152,10 +153,11 @@ impl PeerState {
         }
     }
 
-    pub fn live_to(&mut self, new_state: PeerState) -> Option<LivePeerState> {
-        let l = self.take_live()?;
-        *self = new_state;
-        Some(l)
+    pub fn to_not_needed(&mut self) -> Option<LivePeerState> {
+        match std::mem::replace(self, PeerState::NotNeeded) {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
     }
 }
 
