@@ -54,6 +54,7 @@ pub struct PeerCounters {
     pub errors: AtomicU32,
     pub fetched_chunks: AtomicU32,
     pub downloaded_and_checked_pieces: AtomicU32,
+    pub downloaded_and_checked_bytes: AtomicU64,
 }
 
 #[derive(Debug)]
