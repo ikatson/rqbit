@@ -44,7 +44,7 @@ use tokio::{
     },
     time::timeout,
 };
-use tracing::{debug, info, span, trace, warn, Level};
+use tracing::{debug, error, info, span, trace, warn, Level};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
@@ -1175,6 +1175,9 @@ impl PeerHandler {
                 .with_context(|| format!("error opening {}", DEVNULL))
         }
 
+        // Lock exclusive just in case to ensure in-flight operations finish.??
+        let _guard = self.state.lock_write("reopen_read_only");
+
         for (file, filename) in self.state.files.iter().zip(self.state.filenames.iter()) {
             let mut g = file.lock();
             // this should close the original file
@@ -1188,6 +1191,7 @@ impl PeerHandler {
                 .with_context(|| format!("error re-opening {:?} readonly", filename))?;
             debug!("reopened {:?} read-only", filename);
         }
+        info!("reopened all torrent files in read-only mode");
         Ok(())
     }
 
@@ -1271,10 +1275,17 @@ impl PeerHandler {
                 // should we really do? If we unmark it, it will get requested forever...
                 //
                 // So let's just unwrap and abort.
-                self.state
+                match self
+                    .state
                     .file_ops()
                     .write_chunk(handle, &piece, &chunk_info)
-                    .expect("expected to be able to write to disk");
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("FATAL: error writing chunk to disk: {:?}", e);
+                        panic!("{:?}", e);
+                    }
+                }
 
                 let full_piece_download_time = match full_piece_download_time {
                     Some(t) => t,
@@ -1322,6 +1333,7 @@ impl PeerHandler {
                         debug!("piece={} successfully downloaded and verified", index);
 
                         if self.state.is_finished() {
+                            info!("torrent finished downloading");
                             self.state.finished_notify.notify_waiters();
                             self.disconnect_all_peers_that_have_full_torrent();
                             self.reopen_read_only()?;
