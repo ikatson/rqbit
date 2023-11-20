@@ -52,27 +52,83 @@ async function getTorrentDetails(index) {
 async function getTorrentStats(index) {
     return makeRequest('GET', `/torrents/${index}/stats`);
 }
-// Function to render HTML for a torrent row
-function renderTorrentRow(torrentId, detailsResponse, statsResponse) {
+// Function to update HTML for a torrent row
+function updateTorrentRow(torrentRow, detailsResponse, statsResponse) {
+    // Calculate download percentage
     const totalBytes = statsResponse.snapshot.total_bytes;
     const downloadedBytes = statsResponse.snapshot.have_bytes;
-    // Calculate download percentage
     const downloadPercentage = (downloadedBytes / totalBytes) * 100;
     // Display basic information about the torrent
     const largestFileName = getLargestFileName(detailsResponse);
     const downloadSpeed = statsResponse.download_speed.human_readable;
     const eta = getCompletionETA(statsResponse);
     const peers = `${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`;
-    // Create a detached element for the torrent row
-    const newTorrentRow = document.createElement('div');
-    newTorrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
-    newTorrentRow.appendChild(createColumn('Name', largestFileName, 'name-column'));
-    newTorrentRow.appendChild(createColumn('Size', `${formatBytesToGB(totalBytes)} GB`, 'size-column'));
-    newTorrentRow.appendChild(createColumnWithProgressBar('Progress', downloadPercentage));
-    newTorrentRow.appendChild(createColumn('Download Speed', downloadSpeed, 'download-speed-column'));
-    newTorrentRow.appendChild(createColumn('ETA', eta, 'eta-column'));
-    newTorrentRow.appendChild(createColumn('Peers', peers, 'peers-column'));
-    return newTorrentRow;
+    // Update or create columns in the torrent row
+    updateOrCreateColumnContent(torrentRow, 'Name', largestFileName);
+    updateOrCreateColumnContent(torrentRow, 'Size', `${formatBytesToGB(totalBytes)} GB`);
+    updateOrCreateColumnWithProgressBar(torrentRow, 'Progress', downloadPercentage);
+    updateOrCreateColumnContent(torrentRow, 'Download Speed', downloadSpeed);
+    updateOrCreateColumnContent(torrentRow, 'ETA', eta);
+    updateOrCreateColumnContent(torrentRow, 'Peers', peers);
+}
+// Function to update or create the content of a column in a torrent row
+function updateOrCreateColumnContent(torrentRow, human_label, value) {
+    let label = human_label.toLowerCase().replace(" ", "-");
+    let column = torrentRow.querySelector(`.column-${label}`);
+    // If the column doesn't exist, create a new one
+    if (!column) {
+        column = document.createElement('div');
+        column.classList.add(`column-${label}`, 'me-3', 'p-2');
+        torrentRow.appendChild(column);
+    }
+    // Update the content of the existing or newly created column
+    const contentParagraph = column.querySelector('p:last-child');
+    if (contentParagraph) {
+        contentParagraph.textContent = value;
+    }
+    else {
+        column.innerHTML = `<p class="font-weight-bold">${human_label}</p><p>${value}</p>`;
+    }
+}
+// Function to update or create the content of a progress bar column in a torrent row
+function updateOrCreateColumnWithProgressBar(torrentRow, label, percentage) {
+    let column = torrentRow.querySelector('.column-progress');
+    // If the column doesn't exist, create a new one
+    if (!column) {
+        column = document.createElement('div');
+        column.classList.add('column-progress', 'me-3', 'p-2');
+        torrentRow.appendChild(column);
+    }
+    // Update the value of the progress bar in the existing or newly created column
+    const progressBar = column.querySelector('.progress-bar');
+    const progressPercentage = column.querySelector('p:last-child');
+    if (progressBar && progressPercentage) {
+        progressBar.style.width = `${percentage}%`;
+        progressPercentage.textContent = `${percentage.toFixed(2)}%`;
+    }
+    else {
+        column.innerHTML = `
+            <p class="font-weight-bold">${label}</p>
+            <div class="progress mb-1">
+                <div class="progress-bar" role="progressbar" style="width: ${percentage}%;"></div>
+            </div>
+            <p class="mb-1">${percentage.toFixed(2)}%</p>`;
+    }
+}
+// Function to render HTML for a torrent row
+function renderTorrentRow(torrentsContainer, torrentId, detailsResponse, statsResponse) {
+    // Check if the torrent row already exists
+    let torrentRow = document.getElementById(`torrent-${torrentId}`);
+    // If the torrent row doesn't exist, create a new one
+    if (!torrentRow) {
+        torrentRow = document.createElement('div');
+        torrentRow.id = `torrent-${torrentId}`;
+        torrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
+        torrentsContainer.appendChild(torrentRow);
+    }
+    // Update columns in the torrent row
+    updateTorrentRow(torrentRow, detailsResponse, statsResponse);
+    return torrentRow;
 }
 // Display function for listing all torrents with concise information (async/await)
 async function displayTorrents() {
@@ -86,19 +142,8 @@ async function displayTorrents() {
             const detailsPromise = getTorrentDetails(torrent.id);
             const statsPromise = getTorrentStats(torrent.id);
             const [detailsResponse, statsResponse] = await Promise.all([detailsPromise, statsPromise]);
-            // Check if the torrent row already exists
-            let torrentRow = document.getElementById(`torrent-${torrent.id}`);
-            if (!torrentRow) {
-                // If the torrent row doesn't exist, create a new one
-                torrentRow = document.createElement('div');
-                torrentRow.id = `torrent-${torrent.id}`;
-                // Append the new torrent row to the torrentsContainer
-                torrentsContainer.appendChild(torrentRow);
-            }
             // Render HTML for the torrent row
-            const newTorrentRow = renderTorrentRow(torrent.id, detailsResponse, statsResponse);
-            // Replace torrentRow.innerHTML with the new content
-            torrentRow.replaceChildren(newTorrentRow);
+            renderTorrentRow(torrentsContainer, torrent.id, detailsResponse, statsResponse);
         });
         // Wait for all promises to resolve
         await Promise.all(promises);
