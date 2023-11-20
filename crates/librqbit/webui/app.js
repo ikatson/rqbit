@@ -1,6 +1,5 @@
 // Define API URL and base path
 const apiUrl = window.origin == 'null' ? 'http://localhost:3030' : '';
-
 // Helper function for making API requests (async/await)
 async function makeRequest(method, path, data) {
     const url = apiUrl + path;
@@ -45,13 +44,6 @@ async function makeRequest(method, path, data) {
         return Promise.reject(`Error: ${error.message}`);
     }
 }
-// Helper function to display the API response
-function displayResult(result) {
-    const outputDiv = document.getElementById('output');
-    if (outputDiv) {
-        outputDiv.innerHTML = `<pre>${result}</pre>`;
-    }
-}
 // Function to get detailed information about a torrent (async/await)
 async function getTorrentDetails(index) {
     return makeRequest('GET', `/torrents/${index}`);
@@ -65,50 +57,57 @@ async function displayTorrents() {
     try {
         const response = await makeRequest('GET', '/torrents');
         const torrents = response.torrents;
-        // Create a container for all torrents using Bootstrap classes
-        const torrentsContainer = document.createElement('div');
-        torrentsContainer.classList.add('d-flex', 'flex-column', 'torrents-container');
-        for (const torrent of torrents) {
-            const detailsResponse = await getTorrentDetails(torrent.id);
-            const statsResponse = await getTorrentStats(torrent.id);
-            const totalBytes = detailsResponse.files.reduce((total, file) => total + file.length, 0);
+        // Get the torrents container
+        const torrentsContainer = document.getElementById('output');
+        // Array to hold promises for torrent details and stats
+        const promises = torrents.map(async (torrent) => {
+            const detailsPromise = getTorrentDetails(torrent.id);
+            const statsPromise = getTorrentStats(torrent.id);
+            const [detailsResponse, statsResponse] = await Promise.all([detailsPromise, statsPromise]);
+            const totalBytes = statsResponse.snapshot.total_bytes;
             const downloadedBytes = statsResponse.snapshot.have_bytes;
             // Calculate download percentage
             const downloadPercentage = (downloadedBytes / totalBytes) * 100;
-            // Create a container for each torrent using Bootstrap classes
-            const torrentContainer = document.createElement('div');
-            torrentContainer.classList.add('torrent-container', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
             // Display basic information about the torrent
             const largestFileName = getLargestFileName(detailsResponse);
             const downloadSpeed = statsResponse.download_speed.human_readable;
             const eta = getCompletionETA(statsResponse);
-            // Create and append divs for concise information as columns
-            const nameColumn = createColumn('Name', largestFileName);
-            const sizeColumn = createColumn('Size', `${formatBytesToGB(totalBytes)} GB`);
-            const progressColumn = createColumnWithProgressBar('Progress', downloadPercentage);
-            const downloadSpeedColumn = createColumn('Download Speed', downloadSpeed);
-            const etaColumn = createColumn('ETA', eta);
-            // Append columns to the torrent container
-            torrentContainer.appendChild(nameColumn);
-            torrentContainer.appendChild(sizeColumn);
-            torrentContainer.appendChild(progressColumn);
-            torrentContainer.appendChild(downloadSpeedColumn);
-            torrentContainer.appendChild(etaColumn);
-            // Append the torrent container to the torrentsContainer
-            torrentsContainer.appendChild(torrentContainer);
-        }
-        // Replace the old content with the new one
-        const outputDiv = document.getElementById('output');
-        outputDiv.replaceChildren(torrentsContainer);
+            const peers = `${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`;
+            // Check if the torrent row already exists
+            let torrentRow = document.getElementById(`torrent-${torrent.id}`);
+            if (!torrentRow) {
+                console.log("not found!");
+                // If the torrent row doesn't exist, create a new one
+                torrentRow = document.createElement('div');
+                torrentRow.id = `torrent-${torrent.id}`;
+                torrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
+                // Append the new torrent row to the torrentsContainer
+                torrentsContainer.appendChild(torrentRow);
+            }
+            // Create a detached element to replace torrentRow.innerHTML atomically
+            const newTorrentRow = document.createElement('div');
+            newTorrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
+            newTorrentRow.appendChild(createColumn('Name', largestFileName, 'name-column'));
+            newTorrentRow.appendChild(createColumn('Size', `${formatBytesToGB(totalBytes)} GB`, 'size-column'));
+            newTorrentRow.appendChild(createColumnWithProgressBar('Progress', downloadPercentage));
+            newTorrentRow.appendChild(createColumn('Download Speed', downloadSpeed, 'download-speed-column'));
+            newTorrentRow.appendChild(createColumn('ETA', eta, 'eta-column'));
+            newTorrentRow.appendChild(createColumn('Peers', peers, 'peers-column'));
+            // Replace torrentRow.innerHTML with the new content
+            torrentRow.replaceChildren(newTorrentRow);
+        });
+        // Wait for all promises to resolve
+        await Promise.all(promises);
     }
     catch (error) {
         console.error(error);
+        // Handle errors as needed
     }
 }
 // Function to create a column div
-function createColumn(label, value) {
+function createColumn(label, value, columnClass) {
     const columnDiv = document.createElement('div');
-    columnDiv.classList.add('me-3', 'p-2');
+    columnDiv.classList.add(columnClass, 'me-3', 'p-2');
     columnDiv.innerHTML = `<p class="font-weight-bold">${label}</p><p>${value}</p>`;
     return columnDiv;
 }
