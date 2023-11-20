@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tower_http::cors::{AllowHeaders, AllowOrigin};
 use tracing::{info, warn};
 
 use axum::Router;
@@ -118,6 +117,7 @@ impl HttpApi {
             state.api_peer_stats(idx, filter).map(axum::Json)
         }
 
+        #[allow(unused_mut)]
         let mut app = Router::new()
             .route("/", get(api_root))
             .route("/dht/stats", get(dht_stats))
@@ -150,18 +150,18 @@ impl HttpApi {
                     }),
                 );
 
-            let cors_layer = {
-                #[cfg(debug_assertions)]
-                {
+            // This is to develop webui by just doing "open index.html && tsc --watch"
+            let cors_layer = std::env::var("CORS_DEBUG")
+                .ok()
+                .map(|_| {
+                    use tower_http::cors::{AllowHeaders, AllowOrigin};
+
+                    warn!("CorsLayer: allowing everything because CORS_DEBUG is set");
                     tower_http::cors::CorsLayer::default()
                         .allow_origin(AllowOrigin::predicate(|_, _| true))
                         .allow_headers(AllowHeaders::any())
-                }
-                #[cfg(not(debug_assertions))]
-                {
-                    tower_http::cors::CorsLayer::default()
-                }
-            };
+                })
+                .unwrap_or_default();
 
             app = app.nest("/web/", webui_router).layer(cors_layer);
         }

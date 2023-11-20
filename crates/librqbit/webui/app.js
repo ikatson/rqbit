@@ -1,5 +1,5 @@
 // Define API URL and base path
-const apiUrl = window.origin == null ? 'http://localhost:3030' : '';
+const apiUrl = window.origin == 'null' ? 'http://localhost:3030' : '';
 
 // Helper function for making API requests (async/await)
 async function makeRequest(method, path, data) {
@@ -99,10 +99,7 @@ async function displayTorrents() {
         }
         // Replace the old content with the new one
         const outputDiv = document.getElementById('output');
-        if (outputDiv) {
-            outputDiv.innerHTML = '';
-            outputDiv.appendChild(torrentsContainer);
-        }
+        outputDiv.replaceChildren(torrentsContainer);
     }
     catch (error) {
         console.error(error);
@@ -170,7 +167,7 @@ function clearErrorAlert() {
 async function init() {
     try {
         await displayTorrents();
-        autoRefreshTorrents(5000); // Set the interval (in milliseconds), e.g., 5000 for every 5 seconds
+        autoRefreshTorrents(500); // Set the interval (in milliseconds), e.g., 5000 for every 5 seconds
     }
     catch (error) {
         console.error(error);

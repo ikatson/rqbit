@@ -1,5 +1,5 @@
 // Define API URL and base path
-const apiUrl = 'http://localhost:3030';
+const apiUrl = window.origin == 'null' ? 'http://localhost:3030' : '';
 
 // Interface for the Torrent API response
 interface Torrent {
@@ -149,10 +149,8 @@ async function displayTorrents(): Promise<void> {
 
         // Replace the old content with the new one
         const outputDiv = document.getElementById('output');
-        if (outputDiv) {
-            outputDiv.innerHTML = '';
-            outputDiv.appendChild(torrentsContainer);
-        }
+        outputDiv.innerHTML = '';
+        outputDiv.appendChild(torrentsContainer);
     } catch (error) {
         console.error(error);
     }

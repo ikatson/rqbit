@@ -2,6 +2,11 @@ OPENSSL_VERSION=3.1.1
 
 all: sign-release sign-debug
 
+@PHONY: webui-dev
+webui-dev:
+	cd crates/librqbit/webui && \
+	tsc --watch
+
 @PHONY: clean
 clean:
 	rm -rf target
