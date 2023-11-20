@@ -224,9 +224,6 @@ pub struct LivePeerState {
     pub i_am_choked: bool,
     pub peer_interested: bool,
 
-    // This is used to limit the number of chunk requests we send to a peer at a time.
-    pub requests_sem: Arc<Semaphore>,
-
     // This is used to track the pieces the peer has.
     pub bitfield: BF,
 
@@ -249,7 +246,6 @@ impl LivePeerState {
             peer_interested: false,
             bitfield: BF::new(),
             previously_requested_pieces: BF::new(),
-            requests_sem: Arc::new(Semaphore::new(0)),
             inflight_requests: Default::default(),
             tx,
         }

@@ -480,6 +480,7 @@ impl TorrentState {
             addr,
             on_bitfield_notify: Default::default(),
             have_notify: Default::default(),
+            requests_sem: Semaphore::new(0),
             state: state.clone(),
             spawner,
         };
@@ -908,8 +909,13 @@ struct PeerHandler {
     // This is used to unpause chunk requester once the bitfield
     // is received.
     on_bitfield_notify: Notify,
+
     // This is used to unpause after we were choked.
     have_notify: Notify,
+
+    // This is used to limit the number of chunk requests we send to a peer at a time.
+    requests_sem: Semaphore,
+
     addr: SocketAddr,
     spawner: BlockingSpawner,
 }
@@ -1119,13 +1125,14 @@ impl PeerHandler {
                 },
             };
 
-            let (tx, sem) =
+            let sem = &self.requests_sem;
+            let tx =
                 match self
                     .state
                     .peers
                     .with_live_mut(handle, "peer_setup_for_piece_request", |l| {
                         l.previously_requested_pieces.set(next.get() as usize, true);
-                        (l.tx.clone(), l.requests_sem.clone())
+                        l.tx.clone()
                     }) {
                     Some(res) => res,
                     None => return Ok(()),
@@ -1222,11 +1229,11 @@ impl PeerHandler {
     fn on_i_am_unchoked(&self, handle: PeerHandle) {
         debug!("we are unchoked");
         self.have_notify.notify_waiters();
+        self.requests_sem.add_permits(16);
         self.state
             .peers
             .with_live_mut(handle, "on_i_am_unchoked", |live| {
                 live.i_am_choked = false;
-                live.requests_sem.add_permits(16);
             });
     }
 
@@ -1242,11 +1249,11 @@ impl PeerHandler {
             }
         };
 
+        self.requests_sem.add_permits(1);
+
         self.state
             .peers
             .with_live_mut(handle, "inflight_requests.remove", |h| {
-                h.requests_sem.add_permits(1);
-
                 self.state
                     .stats
                     .fetched_bytes
