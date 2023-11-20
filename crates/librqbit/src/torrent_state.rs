@@ -866,13 +866,16 @@ impl PeerHandler {
             }
         };
 
-        if error.is_none() {
-            debug!("peer died without errors, not re-queueing");
-            pe.value_mut().state.set(PeerState::NotNeeded, pstats);
-            return;
-        } else {
-            self.counters.errors.fetch_add(1, Ordering::Relaxed);
-        }
+        let _error = match error {
+            Some(e) => e,
+            None => {
+                debug!("peer died without errors, not re-queueing");
+                pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+                return;
+            }
+        };
+
+        self.counters.errors.fetch_add(1, Ordering::Relaxed);
 
         if self.state.is_finished() {
             debug!("torrent finished, not re-queueing");
@@ -881,6 +884,7 @@ impl PeerHandler {
         }
 
         pe.value_mut().state.set(PeerState::Dead, pstats);
+
         let backoff = pe.value_mut().stats.backoff.next_backoff();
 
         // Prevent deadlocks.
