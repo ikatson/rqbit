@@ -1086,7 +1086,7 @@ impl PeerHandler {
                 None => match self.state.reserve_next_needed_piece(handle) {
                     Some(next) => next,
                     None => {
-                        if self.state.get_left_to_download() == 0 {
+                        if self.state.is_finished() {
                             debug!("nothing left to download, closing requester");
                             return Ok(());
                         }
