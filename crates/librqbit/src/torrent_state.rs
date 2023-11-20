@@ -1,5 +1,46 @@
+// The main logic of rqbit is here - connecting to peers, reading and writing messages
+// to them, tracking peer state etc.
+//
+// ## Architecture
+// There are many tasks cooperating to download the torrent. Tasks communicate both with message passing
+// and shared memory.
+//
+// ### Shared locked state
+// Shared state is access by almost all actors through RwLocks.
+//
+// There's one source of truth (TorrentStateLocked) for which chunks we have, need, and what peers are we waiting them from.
+//
+// Peer states that are important to the outsiders (tasks other than manage_peer) are in a sharded hash-map (DashMap)
+//
+// ### Tasks (actors)
+// Peer adder task:
+// - spawns new peers as they become known. It pulls them from a queue. The queue is filled in by DHT and torrent trackers.
+//   Also gets updated when peers are reconnecting after errors.
+//
+// Each peer has at least 2 tasks:
+// - "manage_peer" - this talks to the peer over network and calls callbacks on PeerHandler. The callbacks are not async,
+//   and are supposed to finish quickly (apart from writing to disk, which is accounted for as "spawn_blocking").
+// - "peer_chunk_requester" - this continuously sends requests for chunks to the peer.
+//   it MAY steal chunks/pieces from other peers, which
+//
+// ## Peer lifecycle
+// State transitions:
+// - queued (initial state) -> connected
+// - connected -> live
+// - ANY STATE -> dead (on error)
+// - ANY STATE -> not_needed (when we don't need to talk to the peer anymore)
+//
+// When the peer dies, it's rescheduled with exponential backoff.
+//
+// > NOTE: deadlock notice:
+// > peers and stateLocked are behind 2 different locks.
+// > if you lock them in different order, this may deadlock.
+// >
+// > so don't lock them both at the same time at all, or at the worst lock them in the
+// > same order (peers one first, then the global one).
+
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs::File,
     net::SocketAddr,
     path::PathBuf,
@@ -10,17 +51,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
+use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
+use dashmap::DashMap;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     id20::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
 };
-use log::{debug, info, trace, warn};
-use parking_lot::{Mutex, RwLock, RwLockReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
@@ -33,6 +75,7 @@ use tokio::{
     },
     time::timeout,
 };
+use tracing::{debug, error, info, span, trace, warn, Level};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
@@ -40,7 +83,10 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    peer_state::{InflightRequest, LivePeerState, PeerState},
+    peer_state::{
+        atomic_inc, AggregatePeerStatsAtomic, InflightRequest, LivePeerState, Peer, PeerRx,
+        PeerState, PeerTx, SendMany,
+    },
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
 };
@@ -52,123 +98,149 @@ pub struct InflightPiece {
 
 #[derive(Default)]
 pub struct PeerStates {
-    states: HashMap<PeerHandle, PeerState>,
-    seen: HashSet<SocketAddr>,
-    inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
-    tx: HashMap<PeerHandle, Arc<tokio::sync::mpsc::UnboundedSender<WriterRequest>>>,
+    stats: AggregatePeerStatsAtomic,
+    states: DashMap<PeerHandle, Peer>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, PartialEq, Eq)]
 pub struct AggregatePeerStats {
     pub queued: usize,
     pub connecting: usize,
     pub live: usize,
     pub seen: usize,
+    pub dead: usize,
+    pub not_needed: usize,
+}
+
+impl<'a> From<&'a AggregatePeerStatsAtomic> for AggregatePeerStats {
+    fn from(s: &'a AggregatePeerStatsAtomic) -> Self {
+        let ordering = Ordering::Relaxed;
+        Self {
+            queued: s.queued.load(ordering) as usize,
+            connecting: s.connecting.load(ordering) as usize,
+            live: s.live.load(ordering) as usize,
+            seen: s.seen.load(ordering) as usize,
+            dead: s.dead.load(ordering) as usize,
+            not_needed: s.not_needed.load(ordering) as usize,
+        }
+    }
 }
 
 impl PeerStates {
     pub fn stats(&self) -> AggregatePeerStats {
-        let mut stats = self
-            .states
-            .values()
-            .fold(AggregatePeerStats::default(), |mut s, p| {
-                match p {
-                    PeerState::Connecting => s.connecting += 1,
-                    PeerState::Live(_) => s.live += 1,
-                    PeerState::Queued => s.queued += 1,
-                };
-                s
-            });
-        stats.seen = self.seen.len();
-        stats
+        AggregatePeerStats::from(&self.stats)
     }
-    pub fn add_if_not_seen(
-        &mut self,
-        addr: SocketAddr,
-        tx: UnboundedSender<WriterRequest>,
-    ) -> Option<PeerHandle> {
-        if self.seen.contains(&addr) {
-            return None;
+
+    pub fn add_if_not_seen(&self, addr: SocketAddr) -> Option<PeerHandle> {
+        use dashmap::mapref::entry::Entry;
+        match self.states.entry(addr) {
+            Entry::Occupied(_) => None,
+            Entry::Vacant(vac) => {
+                vac.insert(Default::default());
+                atomic_inc(&self.stats.queued);
+                atomic_inc(&self.stats.seen);
+                Some(addr)
+            }
         }
-        let handle = self.add(addr, tx)?;
-        self.seen.insert(addr);
-        Some(handle)
     }
-    pub fn seen(&self) -> &HashSet<SocketAddr> {
-        &self.seen
+    pub fn with_peer<R>(&self, addr: PeerHandle, f: impl FnOnce(&Peer) -> R) -> Option<R> {
+        self.states.get(&addr).map(|e| f(e.value()))
     }
-    pub fn get_live(&self, handle: PeerHandle) -> Option<&LivePeerState> {
-        if let PeerState::Live(ref l) = self.states.get(&handle)? {
-            return Some(l);
-        }
-        None
+
+    pub fn with_peer_mut<R>(
+        &self,
+        addr: PeerHandle,
+        reason: &'static str,
+        f: impl FnOnce(&mut Peer) -> R,
+    ) -> Option<R> {
+        timeit(reason, || self.states.get_mut(&addr))
+            .map(|e| f(TimedExistence::new(e, reason).value_mut()))
     }
-    pub fn get_live_mut(&mut self, handle: PeerHandle) -> Option<&mut LivePeerState> {
-        if let PeerState::Live(ref mut l) = self.states.get_mut(&handle)? {
-            return Some(l);
-        }
-        None
+    pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
+        self.states
+            .get(&addr)
+            .and_then(|e| match &e.value().state.get() {
+                PeerState::Live(l) => Some(f(l)),
+                _ => None,
+            })
     }
-    pub fn try_get_live_mut(&mut self, handle: PeerHandle) -> anyhow::Result<&mut LivePeerState> {
-        self.get_live_mut(handle)
-            .ok_or_else(|| anyhow::anyhow!("peer dropped"))
+    pub fn with_live_mut<R>(
+        &self,
+        addr: PeerHandle,
+        reason: &'static str,
+        f: impl FnOnce(&mut LivePeerState) -> R,
+    ) -> Option<R> {
+        self.with_peer_mut(addr, reason, |peer| peer.state.get_live_mut().map(f))
+            .flatten()
     }
-    pub fn add(
-        &mut self,
-        addr: SocketAddr,
-        tx: UnboundedSender<WriterRequest>,
-    ) -> Option<PeerHandle> {
-        let handle = addr;
-        if self.states.contains_key(&addr) {
-            return None;
-        }
-        self.states.insert(handle, PeerState::Queued);
-        self.tx.insert(handle, Arc::new(tx));
-        Some(handle)
+
+    pub fn mark_peer_dead(&self, handle: PeerHandle) -> Option<Option<LivePeerState>> {
+        let prev = self.with_peer_mut(handle, "mark_peer_dead", |peer| {
+            peer.state.to_dead(&self.stats)
+        })?;
+        Some(prev.take_live_no_counters())
     }
-    pub fn drop_peer(&mut self, handle: PeerHandle) -> Option<PeerState> {
-        let result = self.states.remove(&handle);
-        self.tx.remove(&handle);
-        result
+    pub fn drop_peer(&self, handle: PeerHandle) -> Option<Peer> {
+        let p = self.states.remove(&handle).map(|r| r.1)?;
+        self.stats.dec(p.state.get());
+        Some(p)
     }
-    pub fn mark_i_am_choked(&mut self, handle: PeerHandle, is_choked: bool) -> Option<bool> {
-        let live = self.get_live_mut(handle)?;
-        let prev = live.i_am_choked;
-        live.i_am_choked = is_choked;
+    pub fn mark_i_am_choked(&self, handle: PeerHandle, is_choked: bool) -> Option<bool> {
+        self.with_live_mut(handle, "mark_i_am_choked", |live| {
+            let prev = live.i_am_choked;
+            live.i_am_choked = is_choked;
+            prev
+        })
+    }
+    pub fn mark_peer_interested(&self, handle: PeerHandle, is_interested: bool) -> Option<bool> {
+        self.with_live_mut(handle, "mark_peer_interested", |live| {
+            let prev = live.peer_interested;
+            live.peer_interested = is_interested;
+            prev
+        })
+    }
+    pub fn update_bitfield_from_vec(&self, handle: PeerHandle, bitfield: Vec<u8>) -> Option<()> {
+        self.with_live_mut(handle, "update_bitfield_from_vec", |live| {
+            live.previously_requested_pieces = BF::from_vec(vec![0; bitfield.len()]);
+            live.bitfield = BF::from_vec(bitfield);
+        })
+    }
+    pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<PeerRx> {
+        let rx = self
+            .with_peer_mut(h, "mark_peer_connecting", |peer| {
+                peer.state
+                    .queued_to_connecting(&self.stats)
+                    .context("invalid peer state")
+            })
+            .context("peer not found in states")??;
+        Ok(rx)
+    }
+
+    pub fn clone_tx(&self, handle: PeerHandle) -> Option<PeerTx> {
+        self.with_live(handle, |live| live.tx.clone())
+    }
+
+    fn reset_peer_backoff(&self, handle: PeerHandle) {
+        self.with_peer_mut(handle, "reset_peer_backoff", |p| {
+            p.stats.backoff.reset();
+        });
+    }
+
+    fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
+        let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
+            peer.state.to_not_needed(&self.stats)
+        })?;
         Some(prev)
-    }
-    pub fn mark_peer_interested(
-        &mut self,
-        handle: PeerHandle,
-        is_interested: bool,
-    ) -> Option<bool> {
-        let live = self.get_live_mut(handle)?;
-        let prev = live.peer_interested;
-        live.peer_interested = is_interested;
-        Some(prev)
-    }
-    pub fn update_bitfield_from_vec(
-        &mut self,
-        handle: PeerHandle,
-        bitfield: Vec<u8>,
-    ) -> Option<Option<BF>> {
-        let live = self.get_live_mut(handle)?;
-        let bitfield = BF::from_vec(bitfield);
-        let prev = live.bitfield.take();
-        live.bitfield = Some(bitfield);
-        Some(prev)
-    }
-    pub fn clone_tx(&self, handle: PeerHandle) -> Option<Arc<UnboundedSender<WriterRequest>>> {
-        Some(self.tx.get(&handle)?.clone())
-    }
-    pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> Option<InflightPiece> {
-        self.inflight_pieces.remove(&piece)
     }
 }
 
 pub struct TorrentStateLocked {
-    pub peers: PeerStates,
+    // What chunks we have and need.
     pub chunks: ChunkTracker,
+
+    // At a moment in time, we are expecting a piece from only one peer.
+    // inflight_pieces stores this information.
+    pub inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
 }
 
 #[derive(Default, Debug)]
@@ -203,13 +275,10 @@ pub struct StatsSnapshot {
     pub initially_needed_bytes: u64,
     pub remaining_bytes: u64,
     pub total_bytes: u64,
-    pub live_peers: u32,
-    pub seen_peers: u32,
-    pub connecting_peers: u32,
     #[serde(skip)]
     pub time: Instant,
-    pub queued_peers: u32,
-    total_piece_download_ms: u64,
+    pub total_piece_download_ms: u64,
+    pub peer_stats: AggregatePeerStats,
 }
 
 impl StatsSnapshot {
@@ -230,6 +299,7 @@ pub struct TorrentStateOptions {
 }
 
 pub struct TorrentState {
+    peers: PeerStates,
     info: TorrentMetaV1Info<ByteString>,
     locked: Arc<RwLock<TorrentStateLocked>>,
     files: Vec<Arc<Mutex<File>>>,
@@ -242,11 +312,113 @@ pub struct TorrentState {
     stats: AtomicStats,
     options: TorrentStateOptions,
 
+    // Limits how many active (occupying network resources) peers there are at a moment in time.
     peer_semaphore: Semaphore,
-    peer_queue_tx: UnboundedSender<(SocketAddr, UnboundedReceiver<WriterRequest>)>,
+
+    // The queue for peer manager to connect to them.
+    peer_queue_tx: UnboundedSender<SocketAddr>,
 
     finished_notify: Notify,
 }
+
+// Used during debugging to see if some locks take too long.
+#[cfg(not(feature = "timed_existence"))]
+mod timed_existence {
+    use std::ops::{Deref, DerefMut};
+
+    pub struct TimedExistence<T>(T);
+
+    impl<T> TimedExistence<T> {
+        #[inline(always)]
+        pub fn new(object: T, _reason: &'static str) -> Self {
+            Self(object)
+        }
+    }
+
+    impl<T> Deref for TimedExistence<T> {
+        type Target = T;
+
+        #[inline(always)]
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl<T> DerefMut for TimedExistence<T> {
+        #[inline(always)]
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+
+    #[inline(always)]
+    pub fn timeit<R>(_n: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
+        f()
+    }
+}
+
+#[cfg(feature = "timed_existence")]
+mod timed_existence {
+    use std::ops::{Deref, DerefMut};
+    use std::time::{Duration, Instant};
+    use tracing::warn;
+
+    const MAX: Duration = Duration::from_millis(1);
+
+    // Prints if the object exists for too long.
+    // This is used to track long-lived locks for debugging.
+    pub struct TimedExistence<T> {
+        object: T,
+        reason: &'static str,
+        started: Instant,
+    }
+
+    impl<T> TimedExistence<T> {
+        pub fn new(object: T, reason: &'static str) -> Self {
+            Self {
+                object,
+                reason,
+                started: Instant::now(),
+            }
+        }
+    }
+
+    impl<T> Drop for TimedExistence<T> {
+        fn drop(&mut self) {
+            let elapsed = self.started.elapsed();
+            let reason = self.reason;
+            if elapsed > MAX {
+                warn!("elapsed on lock {reason:?}: {elapsed:?}")
+            }
+        }
+    }
+
+    impl<T> Deref for TimedExistence<T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            &self.object
+        }
+    }
+
+    impl<T> DerefMut for TimedExistence<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.object
+        }
+    }
+
+    pub fn timeit<R>(name: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
+        let now = Instant::now();
+        let r = f();
+        let elapsed = now.elapsed();
+        if elapsed > MAX {
+            warn!("elapsed on \"{name:}\": {elapsed:?}")
+        }
+        r
+    }
+}
+
+pub use timed_existence::{timeit, TimedExistence};
 
 impl TorrentState {
     #[allow(clippy::too_many_arguments)]
@@ -264,14 +436,15 @@ impl TorrentState {
         options: Option<TorrentStateOptions>,
     ) -> Arc<Self> {
         let options = options.unwrap_or_default();
-        let (peer_queue_tx, mut peer_queue_rx) = unbounded_channel();
+        let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
         let state = Arc::new(TorrentState {
             info_hash,
             info,
             peer_id,
+            peers: Default::default(),
             locked: Arc::new(RwLock::new(TorrentStateLocked {
-                peers: Default::default(),
                 chunks: chunk_tracker,
+                inflight_pieces: Default::default(),
             })),
             files,
             filenames,
@@ -288,55 +461,80 @@ impl TorrentState {
             peer_queue_tx,
             finished_notify: Notify::new(),
         });
-        spawn("peer adder", {
-            let state = state.clone();
-            async move {
-                loop {
-                    let (addr, out_rx) = peer_queue_rx.recv().await.unwrap();
-
-                    let permit = state.peer_semaphore.acquire().await.unwrap();
-                    match state.locked.write().peers.states.get_mut(&addr) {
-                        Some(s @ PeerState::Queued) => *s = PeerState::Connecting,
-                        s => {
-                            warn!("did not expect to see the peer in state {:?}", s);
-                            continue;
-                        }
-                    };
-
-                    let handler = PeerHandler {
-                        addr,
-                        state: state.clone(),
-                        spawner,
-                    };
-                    let options = PeerConnectionOptions {
-                        connect_timeout: state.options.peer_connect_timeout,
-                        read_write_timeout: state.options.peer_read_write_timeout,
-                        ..Default::default()
-                    };
-                    let peer_connection = PeerConnection::new(
-                        addr,
-                        state.info_hash,
-                        state.peer_id,
-                        handler,
-                        Some(options),
-                        spawner,
-                    );
-
-                    permit.forget();
-                    spawn(format!("manage_peer({addr})"), async move {
-                        if let Err(e) = peer_connection.manage_peer(out_rx).await {
-                            debug!("error managing peer {}: {:#}", addr, e)
-                        };
-                        let state = peer_connection.into_handler().state;
-                        state.drop_peer(addr);
-                        state.peer_semaphore.add_permits(1);
-                        Ok::<_, anyhow::Error>(())
-                    });
-                }
-            }
-        });
+        spawn(
+            span!(Level::ERROR, "peer_adder"),
+            state.clone().task_peer_adder(peer_queue_rx, spawner),
+        );
         state
     }
+
+    pub async fn task_manage_peer(
+        self: Arc<Self>,
+        addr: SocketAddr,
+        spawner: BlockingSpawner,
+    ) -> anyhow::Result<()> {
+        let state = self;
+        let rx = state.peers.mark_peer_connecting(addr)?;
+
+        let handler = PeerHandler {
+            addr,
+            state: state.clone(),
+            spawner,
+        };
+        let options = PeerConnectionOptions {
+            connect_timeout: state.options.peer_connect_timeout,
+            read_write_timeout: state.options.peer_read_write_timeout,
+            ..Default::default()
+        };
+        let peer_connection = PeerConnection::new(
+            addr,
+            state.info_hash,
+            state.peer_id,
+            handler,
+            Some(options),
+            spawner,
+        );
+
+        let res = peer_connection.manage_peer(rx).await;
+        let state = peer_connection.into_handler().state;
+        state.peer_semaphore.add_permits(1);
+
+        match res {
+            // We disconnected the peer ourselves as we don't need it
+            Ok(()) => {
+                state.on_peer_died(addr, None);
+            }
+            Err(e) => {
+                debug!("error managing peer: {:#}", e);
+                state.on_peer_died(addr, Some(e));
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+
+    pub async fn task_peer_adder(
+        self: Arc<Self>,
+        mut peer_queue_rx: UnboundedReceiver<SocketAddr>,
+        spawner: BlockingSpawner,
+    ) -> anyhow::Result<()> {
+        let state = self;
+        loop {
+            let addr = peer_queue_rx.recv().await.unwrap();
+            if state.is_finished() {
+                debug!("ignoring peer {} as we are finished", addr);
+                state.peers.mark_peer_not_needed(addr);
+                continue;
+            }
+
+            let permit = state.peer_semaphore.acquire().await.unwrap();
+            permit.forget();
+            spawn(
+                span!(parent: None, Level::ERROR, "manage_peer", peer = addr.to_string()),
+                state.clone().task_manage_peer(addr, spawner),
+            );
+        }
+    }
+
     pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
         &self.info
     }
@@ -352,57 +550,71 @@ impl TorrentState {
     pub fn initially_needed(&self) -> u64 {
         self.needed
     }
-    pub fn lock_read(&self) -> RwLockReadGuard<TorrentStateLocked> {
-        self.locked.read()
+    pub fn lock_read(
+        &self,
+        reason: &'static str,
+    ) -> TimedExistence<RwLockReadGuard<TorrentStateLocked>> {
+        TimedExistence::new(timeit(reason, || self.locked.read()), reason)
+    }
+    pub fn lock_write(
+        &self,
+        reason: &'static str,
+    ) -> TimedExistence<RwLockWriteGuard<TorrentStateLocked>> {
+        TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
     fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
-        let g = self.locked.read();
-        let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
-        for n in g.chunks.iter_needed_pieces() {
-            if bf.get(n).map(|v| *v) == Some(true) {
-                // in theory it should be safe without validation, but whatever.
-                return self.lengths.validate_piece_index(n as u32);
-            }
-        }
-        None
+        self.peers
+            .with_live_mut(peer_handle, "l(get_next_needed_piece)", |live| {
+                let g = self.lock_read("g(get_next_needed_piece)");
+                let bf = &live.bitfield;
+                for n in g.chunks.iter_needed_pieces() {
+                    if bf.get(n).map(|v| *v) == Some(true) {
+                        // in theory it should be safe without validation, but whatever.
+                        return self.lengths.validate_piece_index(n as u32);
+                    }
+                }
+                None
+            })?
     }
 
     fn am_i_choked(&self, peer_handle: PeerHandle) -> Option<bool> {
-        self.locked
-            .read()
-            .peers
-            .get_live(peer_handle)
-            .map(|l| l.i_am_choked)
+        self.peers.with_live(peer_handle, |l| l.i_am_choked)
     }
 
     fn reserve_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
-        if self.am_i_choked(peer_handle)? {
-            debug!("we are choked by {}, can't reserve next piece", peer_handle);
-            return None;
-        }
-        let mut g = self.locked.write();
-        let n = {
-            let mut n_opt = None;
-            let bf = g.peers.get_live(peer_handle)?.bitfield.as_ref()?;
-            for n in g.chunks.iter_needed_pieces() {
-                if bf.get(n).map(|v| *v) == Some(true) {
-                    n_opt = Some(n);
-                    break;
+        // TODO: locking one inside the other in different order results in deadlocks.
+        self.peers
+            .with_live_mut(peer_handle, "reserve_next_needed_piece", |live| {
+                if live.i_am_choked {
+                    debug!("we are choked, can't reserve next piece");
+                    return None;
                 }
-            }
+                let mut g = self.lock_write("reserve_next_needed_piece");
 
-            self.lengths.validate_piece_index(n_opt? as u32)?
-        };
-        g.peers.inflight_pieces.insert(
-            n,
-            InflightPiece {
-                peer: peer_handle,
-                started: Instant::now(),
-            },
-        );
-        g.chunks.reserve_needed_piece(n);
-        Some(n)
+                let n = {
+                    let mut n_opt = None;
+                    let bf = &live.bitfield;
+                    for n in g.chunks.iter_needed_pieces() {
+                        if bf.get(n).map(|v| *v) == Some(true) {
+                            n_opt = Some(n);
+                            break;
+                        }
+                    }
+
+                    self.lengths.validate_piece_index(n_opt? as u32)?
+                };
+                g.inflight_pieces.insert(
+                    n,
+                    InflightPiece {
+                        peer: peer_handle,
+                        started: Instant::now(),
+                    },
+                );
+                g.chunks.reserve_needed_piece(n);
+                Some(n)
+            })
+            .flatten()
     }
 
     fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
@@ -418,9 +630,8 @@ impl TorrentState {
         }
         let avg_time = self.stats.average_piece_download_time()?;
 
-        let mut g = self.locked.write();
+        let mut g = self.lock_write("try_steal_old_slow_piece");
         let (idx, elapsed, piece_req) = g
-            .peers
             .inflight_pieces
             .iter_mut()
             // don't steal from myself
@@ -431,8 +642,8 @@ impl TorrentState {
         // heuristic for "too slow peer"
         if elapsed > avg_time * 10 {
             debug!(
-                "{} will steal piece {} from {}: elapsed time {:?}, avg piece time: {:?}",
-                handle, idx, piece_req.peer, elapsed, avg_time
+                "will steal piece {} from {}: elapsed time {:?}, avg piece time: {:?}",
+                idx, piece_req.peer, elapsed, avg_time
             );
             piece_req.peer = handle;
             piece_req.started = Instant::now();
@@ -441,50 +652,151 @@ impl TorrentState {
         None
     }
 
+    // NOTE: this doesn't actually "steal" it, but only returns an id we might steal.
     fn try_steal_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
         let mut rng = rand::thread_rng();
         use rand::seq::IteratorRandom;
-        let g = self.locked.read();
-        let pl = g.peers.get_live(handle)?;
-        g.peers
-            .inflight_pieces
-            .keys()
-            .filter(|p| !pl.inflight_requests.iter().any(|req| req.piece == **p))
-            .choose(&mut rng)
-            .copied()
+
+        self.peers
+            .with_live(handle, |live| {
+                let g = self.lock_read("try_steal_piece");
+                g.inflight_pieces
+                    .keys()
+                    .filter(|p| {
+                        live.previously_requested_pieces
+                            .get(p.get() as usize)
+                            .map(|r| *r)
+                            == Some(false)
+                    })
+                    .filter(|p| !live.inflight_requests.iter().any(|req| req.piece == **p))
+                    .choose(&mut rng)
+                    .copied()
+            })
+            .flatten()
     }
 
     fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
-        let mut g = self.locked.write();
-        match g.peers.states.get_mut(&handle) {
-            Some(s @ &mut PeerState::Connecting) => {
-                *s = PeerState::Live(LivePeerState::new(Id20(h.peer_id)));
+        let result = self.peers.with_peer_mut(handle, "set_peer_live", |p| {
+            p.state
+                .connecting_to_live(Id20(h.peer_id), &self.peers.stats)
+                .is_some()
+        });
+        match result {
+            Some(true) => {
+                debug!("set peer to live")
             }
-            _ => {
-                warn!("peer {} was in wrong state", handle);
-            }
+            Some(false) => debug!("can't set peer live, it was in wrong state"),
+            None => debug!("can't set peer live, it disappeared"),
         }
     }
 
-    fn drop_peer(&self, handle: PeerHandle) -> bool {
-        let mut g = self.locked.write();
-        let peer = match g.peers.drop_peer(handle) {
-            Some(peer) => peer,
-            None => return false,
-        };
-        if let PeerState::Live(l) = peer {
-            for req in l.inflight_requests {
-                g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+    fn on_peer_died(self: &Arc<Self>, handle: PeerHandle, error: Option<anyhow::Error>) {
+        let mut pe = match self.peers.states.get_mut(&handle) {
+            Some(peer) => TimedExistence::new(peer, "on_peer_died"),
+            None => {
+                warn!("bug: peer not found in table. Forgetting it forever");
+                return;
             }
+        };
+        let prev = pe.value_mut().state.take(&self.peers.stats);
+
+        match prev {
+            PeerState::Connecting(_) => {}
+            PeerState::Live(live) => {
+                let mut g = self.lock_write("mark_chunk_requests_canceled");
+                for req in live.inflight_requests {
+                    debug!(
+                        "peer dead, marking chunk request cancelled, index={}, chunk={}",
+                        req.piece.get(),
+                        req.chunk
+                    );
+                    g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+                }
+            }
+            PeerState::NotNeeded => {
+                // Restore it as std::mem::take() replaced it above.
+                pe.value_mut()
+                    .state
+                    .set(PeerState::NotNeeded, &self.peers.stats);
+                return;
+            }
+            s @ PeerState::Queued | s @ PeerState::Dead => {
+                warn!("bug: peer was in a wrong state {s:?}, ignoring it forever");
+                // Prevent deadlocks.
+                drop(pe);
+                self.peers.drop_peer(handle);
+                return;
+            }
+        };
+
+        if error.is_none() {
+            debug!("peer died without errors, not re-queueing");
+            pe.value_mut()
+                .state
+                .set(PeerState::NotNeeded, &self.peers.stats);
+            return;
         }
-        true
+
+        if self.is_finished() {
+            debug!("torrent finished, not re-queueing");
+            pe.value_mut()
+                .state
+                .set(PeerState::NotNeeded, &self.peers.stats);
+            return;
+        }
+
+        pe.value_mut().state.set(PeerState::Dead, &self.peers.stats);
+        let backoff = pe.value_mut().stats.backoff.next_backoff();
+
+        // Prevent deadlocks.
+        drop(pe);
+
+        if let Some(dur) = backoff {
+            let state = self.clone();
+            spawn(
+                span!(
+                    parent: None,
+                    Level::ERROR,
+                    "wait_for_peer",
+                    peer = handle.to_string(),
+                    duration = format!("{dur:?}")
+                ),
+                async move {
+                    tokio::time::sleep(dur).await;
+                    state
+                        .peers
+                        .with_peer_mut(handle, "dead_to_queued", |peer| {
+                            match peer.state.get() {
+                                PeerState::Dead => {
+                                    peer.state.set(PeerState::Queued, &state.peers.stats)
+                                }
+                                other => bail!(
+                                    "peer is in unexpected state: {}. Expected dead",
+                                    other.name()
+                                ),
+                            };
+                            Ok(())
+                        })
+                        .context("bug: peer disappeared")??;
+                    state.peer_queue_tx.send(handle)?;
+                    Ok::<_, anyhow::Error>(())
+                },
+            );
+        } else {
+            debug!("dropping peer, backoff exhausted");
+            self.peers.drop_peer(handle);
+        }
     }
 
     pub fn get_uploaded(&self) -> u64 {
         self.stats.uploaded.load(Ordering::Relaxed)
     }
     pub fn get_downloaded(&self) -> u64 {
-        self.stats.downloaded_and_checked.load(Ordering::Relaxed)
+        self.stats.downloaded_and_checked.load(Ordering::Acquire)
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.get_left_to_download() == 0
     }
 
     pub fn get_left_to_download(&self) -> u64 {
@@ -494,9 +806,8 @@ impl TorrentState {
     fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
         let mut futures = Vec::new();
 
-        let g = self.locked.read();
-        for (handle, peer_state) in g.peers.states.iter() {
-            match peer_state {
+        for pe in self.peers.states.iter() {
+            match &pe.value().state.get() {
                 PeerState::Live(live) => {
                     if !live.peer_interested {
                         continue;
@@ -504,18 +815,14 @@ impl TorrentState {
 
                     if live
                         .bitfield
-                        .as_ref()
-                        .and_then(|b| b.get(index.get() as usize).map(|v| *v))
+                        .get(index.get() as usize)
+                        .map(|v| *v)
                         .unwrap_or(false)
                     {
                         continue;
                     }
 
-                    let tx = match g.peers.tx.get(handle) {
-                        Some(tx) => tx,
-                        None => continue,
-                    };
-                    let tx = Arc::downgrade(tx);
+                    let tx = live.tx.downgrade();
                     futures.push(async move {
                         if let Some(tx) = tx.upgrade() {
                             if tx
@@ -538,7 +845,12 @@ impl TorrentState {
 
         let mut unordered: FuturesUnordered<_> = futures.into_iter().collect();
         spawn(
-            format!("transmit_haves(piece={}, count={})", index, unordered.len()),
+            span!(
+                Level::ERROR,
+                "transmit_haves",
+                piece = index.get(),
+                count = unordered.len()
+            ),
             async move {
                 while unordered.next().await.is_some() {}
                 Ok(())
@@ -547,29 +859,17 @@ impl TorrentState {
     }
 
     pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
-        let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
-        match self.locked.write().peers.add_if_not_seen(addr, out_tx) {
+        match self.peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return false,
         };
 
-        match self.peer_queue_tx.send((addr, out_rx)) {
-            Ok(_) => {}
-            Err(_) => {
-                warn!("peer adder died, can't add peer")
-            }
-        }
+        self.peer_queue_tx.send(addr).unwrap();
         true
     }
 
-    pub fn peer_stats_snapshot(&self) -> AggregatePeerStats {
-        self.locked.read().peers.stats()
-    }
-
     pub fn stats_snapshot(&self) -> StatsSnapshot {
-        let g = self.locked.read();
         use Ordering::*;
-        let peer_stats = g.peers.stats();
         let downloaded = self.stats.downloaded_and_checked.load(Relaxed);
         let remaining = self.needed - downloaded;
         StatsSnapshot {
@@ -579,19 +879,16 @@ impl TorrentState {
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded.load(Relaxed),
             total_bytes: self.have_plus_needed,
-            live_peers: peer_stats.live as u32,
-            seen_peers: g.peers.seen.len() as u32,
-            connecting_peers: peer_stats.connecting as u32,
             time: Instant::now(),
             initially_needed_bytes: self.needed,
             remaining_bytes: remaining,
-            queued_peers: peer_stats.queued as u32,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
+            peer_stats: self.peers.stats(),
         }
     }
 
     pub async fn wait_until_completed(&self) {
-        if self.get_left_to_download() == 0 {
+        if self.is_finished() {
             return;
         }
         self.finished_notify.notified().await;
@@ -610,32 +907,28 @@ impl PeerConnectionHandler for PeerHandler {
         match message {
             Message::Request(request) => {
                 self.on_download_request(self.addr, request)
-                    .with_context(|| {
-                        format!("error handling download request from {}", self.addr)
-                    })?;
+                    .context("on_download_request")?;
             }
-            Message::Bitfield(b) => self.on_bitfield(self.addr, b.clone_to_owned())?,
+            Message::Bitfield(b) => self
+                .on_bitfield(self.addr, b.clone_to_owned())
+                .context("on_bitfield")?,
             Message::Choke => self.on_i_am_choked(self.addr),
             Message::Unchoke => self.on_i_am_unchoked(self.addr),
             Message::Interested => self.on_peer_interested(self.addr),
-            Message::Piece(piece) => {
-                self.on_received_piece(self.addr, piece)
-                    .context("error in on_received_piece()")?;
-            }
+            Message::Piece(piece) => self
+                .on_received_piece(self.addr, piece)
+                .context("on_received_piece")?,
             Message::KeepAlive => {
-                debug!("keepalive received from {}", self.addr);
+                debug!("keepalive received");
             }
             Message::Have(h) => self.on_have(self.addr, h),
             Message::NotInterested => {
                 info!("received \"not interested\", but we don't care yet")
             }
             message => {
-                warn!(
-                    "{}: received unsupported message {:?}, ignoring",
-                    self.addr, message
-                );
+                warn!("received unsupported message {:?}, ignoring", message);
             }
-        }
+        };
         Ok(())
     }
 
@@ -644,10 +937,10 @@ impl PeerConnectionHandler for PeerHandler {
     }
 
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize> {
-        let g = self.state.locked.read();
+        let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
         let len = msg.serialize(buf, None).unwrap();
-        debug!("sending to {}: {:?}, length={}", self.addr, &msg, len);
+        debug!("sending: {:?}, length={}", &msg, len);
         Some(len)
     }
 
@@ -678,8 +971,8 @@ impl PeerHandler {
             Some(p) => p,
             None => {
                 anyhow::bail!(
-                    "{}: received {:?}, but it is not a valid chunk request (piece index is invalid). Ignoring.",
-                    peer_handle, request
+                    "received {:?}, but it is not a valid chunk request (piece index is invalid). Ignoring.",
+                    request
                 );
             }
         };
@@ -691,124 +984,111 @@ impl PeerHandler {
             Some(d) => d,
             None => {
                 anyhow::bail!(
-                    "{}: received {:?}, but it is not a valid chunk request (chunk data is invalid). Ignoring.",
-                    peer_handle, request
+                    "received {:?}, but it is not a valid chunk request (chunk data is invalid). Ignoring.",
+                    request
                 );
             }
         };
 
         let tx = {
-            let g = self.state.locked.read();
-            if !g.chunks.is_chunk_ready_to_upload(&chunk_info) {
+            if !self
+                .state
+                .lock_read("is_chunk_ready_to_upload")
+                .chunks
+                .is_chunk_ready_to_upload(&chunk_info)
+            {
                 anyhow::bail!(
                     "got request for a chunk that is not ready to upload. chunk {:?}",
                     &chunk_info
                 );
             }
 
-            g.peers.clone_tx(peer_handle).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "peer {} died, dropping chunk that it requested",
-                    peer_handle
-                )
-            })?
+            self.state
+                .peers
+                .clone_tx(peer_handle)
+                .context("peer died, dropping chunk that it requested")?
         };
 
         // TODO: this is not super efficient as it does copying multiple times.
         // Theoretically, this could be done in the sending code, so that it reads straight into
         // the send buffer.
         let request = WriterRequest::ReadChunkRequest(chunk_info);
-        debug!("sending to {}: {:?}", peer_handle, &request);
+        debug!("sending {:?}", &request);
         Ok::<_, anyhow::Error>(tx.send(request)?)
     }
 
     fn on_have(&self, handle: PeerHandle, have: u32) {
-        if let Some(bitfield) = self
-            .state
-            .locked
-            .write()
-            .peers
-            .get_live_mut(handle)
-            .and_then(|l| l.bitfield.as_mut())
-        {
-            debug!("{}: updated bitfield with have={}", handle, have);
-            bitfield.set(have as usize, true)
-        }
+        self.state.peers.with_live_mut(handle, "on_have", |live| {
+            live.bitfield.set(have as usize, true);
+            debug!("updated bitfield with have={}", have);
+        });
     }
 
     fn on_bitfield(&self, handle: PeerHandle, bitfield: ByteString) -> anyhow::Result<()> {
         if bitfield.len() != self.state.lengths.piece_bitfield_bytes() {
             anyhow::bail!(
-                "dropping {} as its bitfield has unexpected size. Got {}, expected {}",
-                handle,
+                "dropping peer as its bitfield has unexpected size. Got {}, expected {}",
                 bitfield.len(),
                 self.state.lengths.piece_bitfield_bytes(),
             );
         }
         self.state
-            .locked
-            .write()
             .peers
             .update_bitfield_from_vec(handle, bitfield.0);
 
         if !self.state.am_i_interested_in_peer(handle) {
-            let tx = self
-                .state
-                .locked
-                .read()
-                .peers
-                .clone_tx(handle)
-                .ok_or_else(|| anyhow::anyhow!("peer closed"))?;
-            tx.send(WriterRequest::Message(MessageOwned::Unchoke))
-                .context("peer dropped")?;
-            tx.send(WriterRequest::Message(MessageOwned::NotInterested))
-                .context("peer dropped")?;
+            let tx = self.state.peers.clone_tx(handle).context("peer dropped")?;
+            tx.send(WriterRequest::Message(MessageOwned::Unchoke))?;
+            tx.send(WriterRequest::Message(MessageOwned::NotInterested))?;
+            if self.state.is_finished() {
+                tx.send(WriterRequest::Disconnect)?;
+            }
             return Ok(());
         }
 
         // Additional spawn per peer, not good.
         spawn(
-            format!("peer_chunk_requester({handle})"),
+            span!(
+                parent: None,
+                Level::ERROR,
+                "peer_chunk_requester",
+                peer = handle.to_string()
+            ),
             self.clone().task_peer_chunk_requester(handle),
         );
         Ok(())
     }
 
     async fn task_peer_chunk_requester(self, handle: PeerHandle) -> anyhow::Result<()> {
-        let tx = match self.state.locked.read().peers.clone_tx(handle) {
+        let tx = match self.state.peers.clone_tx(handle) {
             Some(tx) => tx,
             None => return Ok(()),
         };
-        tx.send(WriterRequest::Message(MessageOwned::Unchoke))
-            .context("peer dropped")?;
-        tx.send(WriterRequest::Message(MessageOwned::Interested))
-            .context("peer dropped")?;
-
+        tx.send_many([
+            WriterRequest::Message(MessageOwned::Unchoke),
+            WriterRequest::Message(MessageOwned::Interested),
+        ])?;
         self.requester(handle).await?;
         Ok::<_, anyhow::Error>(())
     }
 
     fn on_i_am_choked(&self, handle: PeerHandle) {
-        debug!("we are choked by {}", handle);
-        self.state
-            .locked
-            .write()
-            .peers
-            .mark_i_am_choked(handle, true);
+        debug!("we are choked");
+        self.state.peers.mark_i_am_choked(handle, true);
     }
 
     fn on_peer_interested(&self, handle: PeerHandle) {
-        debug!("peer {} is interested", handle);
-        self.state
-            .locked
-            .write()
-            .peers
-            .mark_peer_interested(handle, true);
+        debug!("peer is interested");
+        self.state.peers.mark_peer_interested(handle, true);
     }
 
     async fn requester(self, handle: PeerHandle) -> anyhow::Result<()> {
-        let notify = match self.state.locked.read().peers.get_live(handle) {
-            Some(l) => l.have_notify.clone(),
+        let notify = match self
+            .state
+            .peers
+            .with_live(handle, |l| l.have_notify.clone())
+        {
+            Some(notify) => notify,
             None => return Ok(()),
         };
 
@@ -821,7 +1101,7 @@ impl PeerHandler {
         loop {
             match self.state.am_i_choked(handle) {
                 Some(true) => {
-                    debug!("we are choked by {}, can't reserve next piece", handle);
+                    debug!("we are choked, can't reserve next piece");
                     #[allow(unused_must_use)]
                     {
                         timeout(Duration::from_secs(60), notify.notified()).await;
@@ -832,21 +1112,22 @@ impl PeerHandler {
                 None => return Ok(()),
             }
 
+            // Try steal a pice from a very slow peer first.
             let next = match self.state.try_steal_old_slow_piece(handle) {
                 Some(next) => next,
                 None => match self.state.reserve_next_needed_piece(handle) {
                     Some(next) => next,
                     None => {
-                        if self.state.get_left_to_download() == 0 {
-                            debug!("{}: nothing left to download, closing requester", handle);
+                        if self.state.is_finished() {
+                            debug!("nothing left to download, closing requester");
                             return Ok(());
                         }
 
                         if let Some(piece) = self.state.try_steal_piece(handle) {
-                            debug!("{}: stole a piece {}", handle, piece);
+                            debug!("stole a piece {}", piece);
                             piece
                         } else {
-                            debug!("no pieces to request from {}", handle);
+                            debug!("no pieces to request");
                             #[allow(unused_must_use)]
                             {
                                 timeout(Duration::from_secs(60), notify.notified()).await;
@@ -857,43 +1138,59 @@ impl PeerHandler {
                 },
             };
 
-            let tx = match self.state.locked.read().peers.clone_tx(handle) {
-                Some(tx) => tx,
-                None => return Ok(()),
-            };
-            let sem = match self.state.locked.read().peers.get_live(handle) {
-                Some(live) => live.requests_sem.clone(),
-                None => return Ok(()),
-            };
-            for chunk in self.state.lengths.iter_chunk_infos(next) {
-                if self.state.locked.read().chunks.is_chunk_downloaded(&chunk) {
-                    continue;
-                }
-                if !self
+            let (tx, sem) =
+                match self
                     .state
-                    .locked
-                    .write()
                     .peers
-                    .try_get_live_mut(handle)?
-                    .inflight_requests
-                    .insert(InflightRequest::from(&chunk))
-                {
-                    warn!(
-                        "{}: probably a bug, we already requested {:?}",
-                        handle, chunk
-                    );
-                    continue;
-                }
+                    .with_live_mut(handle, "peer_setup_for_piece_request", |l| {
+                        l.previously_requested_pieces.set(next.get() as usize, true);
+                        (l.tx.clone(), l.requests_sem.clone())
+                    }) {
+                    Some(res) => res,
+                    None => return Ok(()),
+                };
 
+            for chunk in self.state.lengths.iter_chunk_infos(next) {
                 let request = Request {
                     index: next.get(),
                     begin: chunk.offset,
                     length: chunk.size,
                 };
-                sem.acquire().await?.forget();
 
-                tx.send(WriterRequest::Message(MessageOwned::Request(request)))
-                    .context("peer dropped")?;
+                match self
+                    .state
+                    .peers
+                    .with_live_mut(handle, "add chunk request", |live| {
+                        live.inflight_requests.insert(InflightRequest::from(&chunk))
+                    }) {
+                    Some(true) => {}
+                    Some(false) => {
+                        // This request was already in-flight for this peer for this chunk.
+                        // This might happen in theory, but not very likely.
+                        //
+                        // Example:
+                        // someone stole a piece from us, and then died, the piece became "needed" again, and we reserved it
+                        // all before the piece request was processed by us.
+                        warn!("we already requested {:?} previously", chunk);
+                        continue;
+                    }
+                    // peer died
+                    None => return Ok(()),
+                };
+
+                loop {
+                    match timeout(Duration::from_secs(10), sem.acquire()).await {
+                        Ok(acq) => break acq?.forget(),
+                        Err(_) => continue,
+                    };
+                }
+
+                if tx
+                    .send(WriterRequest::Message(MessageOwned::Request(request)))
+                    .is_err()
+                {
+                    return Ok(());
+                }
             }
         }
     }
@@ -911,6 +1208,9 @@ impl PeerHandler {
                 .with_context(|| format!("error opening {}", DEVNULL))
         }
 
+        // Lock exclusive just in case to ensure in-flight operations finish.??
+        let _guard = self.state.lock_write("reopen_read_only");
+
         for (file, filename) in self.state.files.iter().zip(self.state.filenames.iter()) {
             let mut g = file.lock();
             // this should close the original file
@@ -924,19 +1224,19 @@ impl PeerHandler {
                 .with_context(|| format!("error re-opening {:?} readonly", filename))?;
             debug!("reopened {:?} read-only", filename);
         }
+        info!("reopened all torrent files in read-only mode");
         Ok(())
     }
 
     fn on_i_am_unchoked(&self, handle: PeerHandle) {
-        debug!("we are unchoked by {}", handle);
-        let mut g = self.state.locked.write();
-        let live = match g.peers.get_live_mut(handle) {
-            Some(live) => live,
-            None => return,
-        };
-        live.i_am_choked = false;
-        live.have_notify.notify_waiters();
-        live.requests_sem.add_permits(16);
+        debug!("we are unchoked");
+        self.state
+            .peers
+            .with_live_mut(handle, "on_i_am_unchoked", |live| {
+                live.i_am_choked = false;
+                live.have_notify.notify_waiters();
+                live.requests_sem.add_permits(16);
+            });
     }
 
     fn on_received_piece(&self, handle: PeerHandle, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
@@ -947,63 +1247,82 @@ impl PeerHandler {
         ) {
             Some(i) => i,
             None => {
-                anyhow::bail!(
-                    "peer {} sent us a piece that is invalid {:?}",
-                    handle,
-                    &piece,
-                );
+                anyhow::bail!("peer sent us an invalid piece {:?}", &piece,);
             }
         };
-
-        let mut g = self.state.locked.write();
-        let h = g.peers.try_get_live_mut(handle)?;
-        h.requests_sem.add_permits(1);
 
         self.state
-            .stats
-            .fetched_bytes
-            .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
+            .peers
+            .with_live_mut(handle, "inflight_requests.remove", |h| {
+                h.requests_sem.add_permits(1);
 
-        if !h
-            .inflight_requests
-            .remove(&InflightRequest::from(&chunk_info))
-        {
-            anyhow::bail!(
-                "peer {} sent us a piece that we did not ask it for. Requested pieces: {:?}. Got: {:?}", handle, &h.inflight_requests, &piece,
-            );
-        }
+                self.state
+                    .stats
+                    .fetched_bytes
+                    .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
 
-        let full_piece_download_time = match g.chunks.mark_chunk_downloaded(&piece) {
-            Some(ChunkMarkingResult::Completed) => {
-                debug!(
-                    "piece={} done by {}, will write and checksum",
-                    piece.index, handle
-                );
-                // This will prevent others from stealing it.
-                g.peers
-                    .remove_inflight_piece(chunk_info.piece_index)
+                if !h
+                    .inflight_requests
+                    .remove(&InflightRequest::from(&chunk_info))
+                {
+                    anyhow::bail!(
+                        "peer sent us a piece we did not ask. Requested pieces: {:?}. Got: {:?}",
+                        &h.inflight_requests,
+                        &piece,
+                    );
+                }
+                Ok(())
+            })
+            .context("peer not found")??;
+
+        let full_piece_download_time = {
+            let mut g = self.state.lock_write("mark_chunk_downloaded");
+
+            match g.inflight_pieces.get(&chunk_info.piece_index) {
+                Some(InflightPiece { peer, .. }) if *peer == handle => {}
+                Some(InflightPiece { peer, .. }) => {
+                    debug!(
+                        "in-flight piece {} was stolen by {}, ignoring",
+                        chunk_info.piece_index, peer
+                    );
+                    return Ok(());
+                }
+                None => {
+                    debug!(
+                        "in-flight piece {} not found. it was probably completed by someone else",
+                        chunk_info.piece_index
+                    );
+                    return Ok(());
+                }
+            };
+
+            match g.chunks.mark_chunk_downloaded(&piece) {
+                Some(ChunkMarkingResult::Completed) => {
+                    debug!("piece={} done, will write and checksum", piece.index,);
+                    // This will prevent others from stealing it.
+                    {
+                        let piece = chunk_info.piece_index;
+                        g.inflight_pieces.remove(&piece)
+                    }
                     .map(|t| t.started.elapsed())
-            }
-            Some(ChunkMarkingResult::PreviouslyCompleted) => {
-                // TODO: we might need to send cancellations here.
-                debug!(
-                    "piece={} was done by someone else {}, ignoring",
-                    piece.index, handle
-                );
-                return Ok(());
-            }
-            Some(ChunkMarkingResult::NotCompleted) => None,
-            None => {
-                anyhow::bail!(
-                    "bogus data received from {}: {:?}, cannot map this to a chunk, dropping peer",
-                    handle,
-                    piece
-                );
+                }
+                Some(ChunkMarkingResult::PreviouslyCompleted) => {
+                    // TODO: we might need to send cancellations here.
+                    debug!("piece={} was done by someone else, ignoring", piece.index,);
+                    return Ok(());
+                }
+                Some(ChunkMarkingResult::NotCompleted) => None,
+                None => {
+                    anyhow::bail!(
+                        "bogus data received: {:?}, cannot map this to a chunk, dropping peer",
+                        piece
+                    );
+                }
             }
         };
 
-        // to prevent deadlocks.
-        drop(g);
+        // By this time we reach here, no other peer can for this piece. All others, even if they steal pieces would
+        // have fallen off above in one of the defensive checks.
 
         self.spawner
             .spawn_block_in_place(move || {
@@ -1013,10 +1332,17 @@ impl PeerHandler {
                 // should we really do? If we unmark it, it will get requested forever...
                 //
                 // So let's just unwrap and abort.
-                self.state
+                match self
+                    .state
                     .file_ops()
                     .write_chunk(handle, &piece, &chunk_info)
-                    .expect("expected to be able to write to disk");
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("FATAL: error writing chunk to disk: {:?}", e);
+                        panic!("{:?}", e);
+                    }
+                }
 
                 let full_piece_download_time = match full_piece_download_time {
                     Some(t) => t,
@@ -1035,7 +1361,9 @@ impl PeerHandler {
                         self.state
                             .stats
                             .downloaded_and_checked
-                            .fetch_add(piece_len, Ordering::Relaxed);
+                            // This counter is used to compute "is_finished", so using
+                            // stronger ordering.
+                            .fetch_add(piece_len, Ordering::Release);
                         self.state
                             .stats
                             .have
@@ -1052,32 +1380,28 @@ impl PeerHandler {
                             full_piece_download_time.as_millis() as u64,
                             Ordering::Relaxed,
                         );
-                        self.state
-                            .locked
-                            .write()
-                            .chunks
-                            .mark_piece_downloaded(chunk_info.piece_index);
+                        {
+                            let mut g = self.state.lock_write("mark_piece_downloaded");
+                            g.chunks.mark_piece_downloaded(chunk_info.piece_index);
+                        }
 
-                        debug!(
-                            "piece={} successfully downloaded and verified from {}",
-                            index, handle
-                        );
+                        self.state.peers.reset_peer_backoff(handle);
 
-                        if self.state.get_left_to_download() == 0 {
+                        debug!("piece={} successfully downloaded and verified", index);
+
+                        if self.state.is_finished() {
+                            info!("torrent finished downloading");
                             self.state.finished_notify.notify_waiters();
+                            self.disconnect_all_peers_that_have_full_torrent();
                             self.reopen_read_only()?;
                         }
 
                         self.state.maybe_transmit_haves(chunk_info.piece_index);
                     }
                     false => {
-                        warn!(
-                            "checksum for piece={} did not validate, came from {}",
-                            index, handle
-                        );
+                        warn!("checksum for piece={} did not validate", index,);
                         self.state
-                            .locked
-                            .write()
+                            .lock_write("mark_piece_broken")
                             .chunks
                             .mark_piece_broken(chunk_info.piece_index);
                     }
@@ -1086,5 +1410,20 @@ impl PeerHandler {
             })
             .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         Ok(())
+    }
+
+    fn disconnect_all_peers_that_have_full_torrent(&self) {
+        for mut pe in self.state.peers.states.iter_mut() {
+            if let PeerState::Live(l) = pe.value().state.get() {
+                if l.has_full_torrent(self.state.lengths.total_pieces() as usize) {
+                    let prev = pe.value_mut().state.to_not_needed(&self.state.peers.stats);
+                    let _ = prev
+                        .take_live_no_counters()
+                        .unwrap()
+                        .tx
+                        .send(WriterRequest::Disconnect);
+                }
+            }
+        }
     }
 }

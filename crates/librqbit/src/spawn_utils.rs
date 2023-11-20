@@ -1,22 +1,22 @@
-use std::fmt::Display;
+use tracing::{debug, error, trace, Instrument};
 
-use log::{debug, error};
-
-pub fn spawn<N: Display + 'static + Send>(
-    name: N,
+pub fn spawn(
+    span: tracing::Span,
     fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
 ) {
-    debug!("starting task \"{}\"", &name);
-    tokio::spawn(async move {
+    let fut = async move {
+        trace!("started");
         match fut.await {
             Ok(_) => {
-                debug!("task \"{}\" finished", &name);
+                debug!("finished");
             }
             Err(e) => {
-                error!("error in task \"{}\": {:#}", &name, e)
+                error!("{:#}", e)
             }
         }
-    });
+    }
+    .instrument(span.or_current());
+    tokio::spawn(fut);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -36,5 +36,16 @@ impl BlockingSpawner {
         }
 
         f()
+    }
+}
+
+impl Default for BlockingSpawner {
+    fn default() -> Self {
+        let allow_block_in_place = match tokio::runtime::Handle::current().runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::CurrentThread => false,
+            tokio::runtime::RuntimeFlavor::MultiThread => true,
+            _ => true,
+        };
+        Self::new(allow_block_in_place)
     }
 }

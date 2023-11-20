@@ -4,7 +4,7 @@ use anyhow::Context;
 use buffers::ByteString;
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use log::debug;
+use tracing::debug;
 
 use crate::{
     peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,
@@ -97,7 +97,7 @@ mod tests {
     fn init_logging() {
         #[allow(unused_must_use)]
         LOG_INIT.call_once(|| {
-            pretty_env_logger::try_init();
+            // pretty_env_logger::try_init();
         })
     }
 

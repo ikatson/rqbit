@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "2.2.2"
+version = "3.0.0"
 edition = "2018"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
@@ -21,7 +21,6 @@ hex = "0.4"
 anyhow = "1"
 url = "2"
 uuid = {version = "1", features = ["v4"]}
-log = "0.4"
 parking_lot = "0.12"
 serde = {version = "1", features=["derive"]}
 buffers = {path="../buffers", package="librqbit-buffers", version = "2.2.1"}

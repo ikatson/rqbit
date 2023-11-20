@@ -1,6 +1,6 @@
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
-use log::{debug, info};
 use peer_binary_protocol::Piece;
+use tracing::{debug, info};
 
 use crate::type_aliases::BF;
 
@@ -8,8 +8,9 @@ pub struct ChunkTracker {
     // This forms the basis of a "queue" to pull from.
     // It's set to 1 if we need a piece, but the moment we start requesting a peer,
     // it's set to 0.
-
-    // Better to rename into piece_queue or smth, and maybe use some other form of a queue.
+    //
+    // Initially this is the opposite of "have", until we start making requests.
+    // An in-flight request is not in "needed", and not in "have".
     needed_pieces: BF,
 
     // This has a bit set per each chunk (block) that we have written to the output file.
@@ -21,6 +22,7 @@ pub struct ChunkTracker {
 
     lengths: Lengths,
 
+    // What pieces to download first.
     priority_piece_ids: Vec<usize>,
 }
 
@@ -167,17 +169,6 @@ impl ChunkTracker {
             "piece={}, chunk_info={:?}, bits={:?}",
             piece.index, chunk_info, chunk_range,
         );
-
-        // TODO: remove me, it's for debugging
-        // {
-        //     use std::io::Write;
-        //     let mut f = std::fs::OpenOptions::new()
-        //         .write(true)
-        //         .create(true)
-        //         .open("/tmp/chunks")
-        //         .unwrap();
-        //     write!(f, "{:?}", &self.have).unwrap();
-        // }
 
         if chunk_range.all() {
             return Some(ChunkMarkingResult::Completed);

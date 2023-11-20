@@ -8,10 +8,10 @@ use librqbit_core::{
     peer_id::generate_peer_id,
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
 };
-use log::{debug, info, warn};
 use parking_lot::RwLock;
 use reqwest::Url;
 use tokio_stream::StreamExt;
+use tracing::{debug, info, span, warn, Level};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
@@ -251,7 +251,10 @@ impl Session {
                 torrent_from_file(url)?
             };
             let dht_rx = match self.dht.as_ref() {
-                Some(dht) => Some(dht.get_peers(torrent.info_hash).await?),
+                Some(dht) => {
+                    debug!("reading peers for {:?} from DHT", torrent.info_hash);
+                    Some(dht.get_peers(torrent.info_hash).await?)
+                }
                 None => None,
             };
             let trackers = torrent
@@ -402,7 +405,7 @@ impl Session {
         }
 
         if let Some(mut dht_peer_rx) = dht_peer_rx {
-            spawn("DHT peer adder", {
+            spawn(span!(Level::INFO, "dht_peer_adder"), {
                 let handle = handle.clone();
                 async move {
                     while let Some(peer) = dht_peer_rx.next().await {

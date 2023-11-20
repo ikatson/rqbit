@@ -5,7 +5,6 @@ pub mod http_api;
 pub mod http_api_client;
 mod http_api_error;
 pub mod peer_connection;
-pub mod peer_handler;
 pub mod peer_info_reader;
 pub mod peer_state;
 pub mod session;

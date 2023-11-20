@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use log::{debug, error, info, trace, warn};
 use tokio::spawn;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::dht::{Dht, DhtConfig};
 use crate::routing_table::RoutingTable;

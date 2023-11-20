@@ -17,7 +17,6 @@ use bencode::ByteString;
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexSet;
 use librqbit_core::{id20::Id20, peer_id::generate_peer_id};
-use log::{debug, info, trace, warn};
 use parking_lot::RwLock;
 use rand::Rng;
 use serde::Serialize;
@@ -26,6 +25,7 @@ use tokio::{
     sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
 };
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+use tracing::{debug, info, trace, warn};
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
@@ -449,7 +449,7 @@ async fn run_framer(
                         Err(_) => break,
                     }
                 }
-                Err(e) => log::debug!("{}: error deserializing incoming message: {}", addr, e),
+                Err(e) => debug!("{}: error deserializing incoming message: {}", addr, e),
             }
         }
         Err::<(), _>(anyhow::anyhow!(

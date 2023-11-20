@@ -14,11 +14,11 @@ use librqbit_core::{
     id20::Id20, lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
 };
-use log::{debug, info, warn};
 use parking_lot::Mutex;
 use reqwest::Url;
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
+use tracing::{debug, info, span, warn, Level};
 
 use crate::{
     chunk_tracker::ChunkTracker,
@@ -116,9 +116,10 @@ impl TorrentManagerHandle {
     pub fn add_tracker(&self, url: Url) -> bool {
         let mgr = self.manager.clone();
         if mgr.trackers.lock().insert(url.clone()) {
-            spawn(format!("tracker monitor {url}"), async move {
-                mgr.single_tracker_monitor(url).await
-            });
+            spawn(
+                span!(Level::ERROR, "tracker_monitor", url = url.to_string()),
+                async move { mgr.single_tracker_monitor(url).await },
+            );
             true
         } else {
             false
@@ -289,12 +290,12 @@ impl TorrentManager {
             options,
         });
 
-        spawn("speed estimator updater", {
+        spawn(span!(Level::ERROR, "speed_estimator_updater"), {
             let state = mgr.state.clone();
             async move {
                 loop {
                     let stats = state.stats_snapshot();
-                    let fetched = state.stats_snapshot().fetched_bytes;
+                    let fetched = stats.fetched_bytes;
                     let needed = state.initially_needed();
                     // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
                     let remaining = needed

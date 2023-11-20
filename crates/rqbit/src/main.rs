@@ -11,9 +11,10 @@ use librqbit::{
         SessionOptions,
     },
     spawn_utils::{spawn, BlockingSpawner},
+    torrent_state::timeit,
 };
-use log::{error, info, warn};
 use size_format::SizeFormatterBinary as SF;
+use tracing::{error, info, span, warn, Level};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -57,12 +58,12 @@ struct Opts {
     disable_dht_persistence: bool,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse)]
-    peer_connect_timeout: Option<Duration>,
+    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse, default_value="2s")]
+    peer_connect_timeout: Duration,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse)]
-    peer_read_write_timeout: Option<Duration>,
+    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse, default_value="10s")]
+    peer_read_write_timeout: Duration,
 
     /// How many threads to spawn for the executor.
     #[arg(short = 't', long)]
@@ -151,13 +152,44 @@ fn init_logging(opts: &Opts) {
             }
         };
     }
-    pretty_env_logger::init();
+
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+}
+
+fn _start_deadlock_detector_thread() {
+    use parking_lot::deadlock;
+    use std::thread;
+
+    // Create a background thread which checks for deadlocks every 10s
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(10));
+        let deadlocks = deadlock::check_deadlock();
+        if deadlocks.is_empty() {
+            continue;
+        }
+
+        println!("{} deadlocks detected", deadlocks.len());
+        for (i, threads) in deadlocks.iter().enumerate() {
+            println!("Deadlock #{}", i);
+            for t in threads {
+                println!("Thread Id {:#?}", t.thread_id());
+                println!("{:#?}", t.backtrace());
+            }
+        }
+        std::process::exit(42);
+    });
 }
 
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
     init_logging(&opts);
+    // start_deadlock_detector_thread();
 
     let (mut rt_builder, spawner) = match opts.single_thread_runtime {
         true => (
@@ -197,8 +229,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         dht_config: None,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
-            connect_timeout: opts.peer_connect_timeout,
-            read_write_timeout: opts.peer_read_write_timeout,
+            connect_timeout: Some(opts.peer_connect_timeout),
+            read_write_timeout: Some(opts.peer_read_write_timeout),
             ..Default::default()
         }),
     };
@@ -212,8 +244,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                 info!("[{}] initializing", idx);
                             },
                             ManagedTorrentState::Running(handle) => {
-                                let peer_stats = handle.torrent_state().peer_stats_snapshot();
-                                let stats = handle.torrent_state().stats_snapshot();
+                                let stats = timeit("stats_snapshot", || handle.torrent_state().stats_snapshot());
                                 let speed = handle.speed_estimator();
                                 let total = stats.total_bytes;
                                 let progress = stats.total_bytes - stats.remaining_bytes;
@@ -223,7 +254,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     (progress as f64 / total as f64) * 100f64
                                 };
                                 info!(
-                                    "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}}}",
+                                    "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
                                     idx,
                                     downloaded_pct,
                                     SF::new(progress),
@@ -232,10 +263,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     SF::new(stats.remaining_bytes),
                                     SF::new(total),
                                     SF::new(stats.uploaded_bytes),
-                                    peer_stats.live,
-                                    peer_stats.connecting,
-                                    peer_stats.queued,
-                                    peer_stats.seen,
+                                    stats.peer_stats.live,
+                                    stats.peer_stats.connecting,
+                                    stats.peer_stats.queued,
+                                    stats.peer_stats.seen,
+                                    stats.peer_stats.dead,
                                 );
                             },
                         }
@@ -257,7 +289,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     .await
                     .context("error initializing rqbit session")?,
                 );
-                spawn("Stats printer", stats_printer(session.clone()));
+                spawn(
+                    span!(Level::TRACE, "stats_printer"),
+                    stats_printer(session.clone()),
+                );
                 let http_api = HttpApi::new(session);
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
@@ -330,11 +365,14 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     .await
                     .context("error initializing rqbit session")?,
                 );
-                spawn("Stats printer", stats_printer(session.clone()));
+                spawn(
+                    span!(Level::TRACE, "stats_printer"),
+                    stats_printer(session.clone()),
+                );
                 let http_api = HttpApi::new(session.clone());
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 spawn(
-                    "HTTP API",
+                    span!(Level::ERROR, "http_api"),
                     http_api.clone().make_http_api_and_run(http_api_listen_addr),
                 );
 

@@ -4,13 +4,13 @@ use anyhow::Context;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{id20::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
-use log::{debug, trace};
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ExtendedMessage},
     serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
     MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
 };
 use tokio::time::timeout;
+use tracing::{debug, trace};
 
 use crate::spawn_utils::BlockingSpawner;
 
@@ -31,6 +31,7 @@ pub trait PeerConnectionHandler {
 pub enum WriterRequest {
     Message(MessageOwned),
     ReadChunkRequest(ChunkInfo),
+    Disconnect,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -56,10 +57,10 @@ async fn with_timeout<T, E>(
 where
     E: Into<anyhow::Error>,
 {
-    timeout(timeout_value, fut)
-        .await
-        .with_context(|| format!("timeout at {timeout_value:?}"))?
-        .map_err(|e| e.into())
+    match timeout(timeout_value, fut).await {
+        Ok(v) => v.map_err(Into::into),
+        Err(_) => anyhow::bail!("timeout at {timeout_value:?}"),
+    }
 }
 
 macro_rules! read_one {
@@ -148,11 +149,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
             .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
 
-        debug!(
-            "connected peer {}: {:?}",
-            self.addr,
-            try_decode_peer_id(Id20(h.peer_id))
-        );
+        debug!("connected: id={:?}", try_decode_peer_id(Id20(h.peer_id)));
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
         }
@@ -169,11 +166,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         if supports_extended {
             let my_extended =
                 Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
-            trace!(
-                "sending extended handshake to {}: {:?}",
-                self.addr,
-                &my_extended
-            );
+            trace!("sending extended handshake: {:?}", &my_extended);
             my_extended.serialize(&mut write_buf, None).unwrap();
             with_timeout(rwtimeout, conn.write_all(&write_buf))
                 .await
@@ -183,7 +176,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             let (extended, size) = read_one!(conn, read_buf, read_so_far, rwtimeout);
             match extended {
                 Message::Extended(ExtendedMessage::Handshake(h)) => {
-                    trace!("received from {}: {:?}", self.addr, &h);
+                    trace!("received: {:?}", &h);
                     self.handler.on_extended_handshake(&h)?;
                     extended_handshake = Some(h.clone_to_owned())
                 }
@@ -212,7 +205,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                         .await
                         .context("error writing bitfield to peer")?;
-                    debug!("sent bitfield to {}", self.addr);
+                    debug!("sent bitfield");
                 }
             }
 
@@ -247,9 +240,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         uploaded_add = Some(chunk.size);
                         full_len
                     }
+                    WriterRequest::Disconnect => {
+                        return Ok(());
+                    }
                 };
 
-                debug!("sending to {}: {:?}, length={}", self.addr, &req, len);
+                debug!("sending: {:?}, length={}", &req, len);
 
                 with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                     .await
@@ -269,7 +265,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let reader = async move {
             loop {
                 let (message, size) = read_one!(read_half, read_buf, read_so_far, rwtimeout);
-                trace!("received from {}: {:?}", self.addr, &message);
+                trace!("received: {:?}", &message);
 
                 self.handler
                     .on_received_message(message)
@@ -290,7 +286,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             r = reader => {r}
             r = writer => {r}
         };
-        debug!("{}: either reader or writer are done, exiting", self.addr);
+        debug!("either reader or writer are done, exiting");
         r
     }
 }
