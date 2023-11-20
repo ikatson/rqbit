@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use std::{collections::HashSet, sync::Arc};
 
@@ -5,8 +6,10 @@ use anyhow::Context;
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
+use serde::Serialize;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Notify, Semaphore};
+use tracing::trace;
 
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
@@ -63,8 +66,59 @@ impl Default for PeerStats {
 
 #[derive(Debug, Default)]
 pub struct Peer {
-    pub state: PeerState,
+    pub state: PeerStateNoMut,
     pub stats: PeerStats,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct AggregatePeerStatsAtomic {
+    pub queued: AtomicU32,
+    pub connecting: AtomicU32,
+    pub live: AtomicU32,
+    pub seen: AtomicU32,
+    pub dead: AtomicU32,
+    pub not_needed: AtomicU32,
+}
+
+pub fn atomic_inc(c: &AtomicU32) -> u32 {
+    c.fetch_add(1, Ordering::Relaxed)
+}
+
+pub fn atomic_dec(c: &AtomicU32) -> u32 {
+    c.fetch_sub(1, Ordering::Relaxed)
+}
+
+impl AggregatePeerStatsAtomic {
+    pub fn counter(&self, state: &PeerState) -> &AtomicU32 {
+        match state {
+            PeerState::Connecting(_) => &self.connecting,
+            PeerState::Live(_) => &self.live,
+            PeerState::Queued => &self.queued,
+            PeerState::Dead => &self.dead,
+            PeerState::NotNeeded => &self.not_needed,
+        }
+    }
+
+    pub fn inc(&self, state: &PeerState) {
+        trace!(
+            "inc, new value = {}, state = {}",
+            atomic_inc(self.counter(state)),
+            state
+        );
+    }
+
+    pub fn dec(&self, state: &PeerState) {
+        trace!(
+            "dec, new value = {}, state = {}",
+            atomic_dec(self.counter(state)),
+            state
+        );
+    }
+
+    pub fn incdec(&self, old: &PeerState, new: &PeerState) {
+        self.dec(old);
+        self.inc(new);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -82,6 +136,12 @@ pub enum PeerState {
     NotNeeded,
 }
 
+impl std::fmt::Display for PeerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
 impl PeerState {
     pub fn name(&self) -> &'static str {
         match self {
@@ -93,70 +153,77 @@ impl PeerState {
         }
     }
 
-    fn take_connecting(&mut self) -> Option<PeerTx> {
-        if let PeerState::Connecting(_) = self {
-            match std::mem::take(self) {
-                PeerState::Connecting(tx) => Some(tx),
-                _ => unreachable!(),
-            }
-        } else {
-            None
+    pub fn take_live_no_counters(self) -> Option<LivePeerState> {
+        match self {
+            PeerState::Live(l) => Some(l),
+            _ => None,
         }
     }
+}
 
-    pub fn take_live(&mut self) -> Option<LivePeerState> {
-        if let PeerState::Live(_) = self {
-            match std::mem::take(self) {
-                PeerState::Live(l) => Some(l),
-                _ => unreachable!(),
-            }
-        } else {
-            None
-        }
+#[derive(Debug, Default)]
+pub struct PeerStateNoMut(PeerState);
+
+impl PeerStateNoMut {
+    pub fn get(&self) -> &PeerState {
+        &self.0
+    }
+
+    pub fn take(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
+        self.set(Default::default(), counters)
+    }
+
+    pub fn set(&mut self, new: PeerState, counters: &AggregatePeerStatsAtomic) -> PeerState {
+        counters.incdec(&self.0, &new);
+        std::mem::replace(&mut self.0, new)
     }
 
     pub fn get_live(&self) -> Option<&LivePeerState> {
-        match self {
+        match &self.0 {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
     }
 
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
-        match self {
+        match &mut self.0 {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
     }
 
-    pub fn queued_to_connecting(&mut self) -> Option<PeerRx> {
-        if let PeerState::Queued = self {
+    pub fn queued_to_connecting(&mut self, counters: &AggregatePeerStatsAtomic) -> Option<PeerRx> {
+        if let PeerState::Queued = &self.0 {
             let (tx, rx) = unbounded_channel();
-            *self = PeerState::Connecting(tx);
+            self.set(PeerState::Connecting(tx), counters);
             Some(rx)
         } else {
             None
         }
     }
-    pub fn connecting_to_live(&mut self, peer_id: Id20) -> Option<&mut LivePeerState> {
-        let tx = self.take_connecting()?;
-        *self = PeerState::Live(LivePeerState::new(peer_id, tx));
-        self.get_live_mut()
-    }
-
-    pub fn to_dead(&mut self) -> Option<Option<LivePeerState>> {
-        match std::mem::replace(self, PeerState::Dead) {
-            PeerState::Live(l) => Some(Some(l)),
-            PeerState::Connecting(_) => Some(None),
-            _ => None,
+    pub fn connecting_to_live(
+        &mut self,
+        peer_id: Id20,
+        counters: &AggregatePeerStatsAtomic,
+    ) -> Option<&mut LivePeerState> {
+        if let PeerState::Connecting(_) = &self.0 {
+            let tx = match self.take(counters) {
+                PeerState::Connecting(tx) => tx,
+                _ => unreachable!(),
+            };
+            self.set(PeerState::Live(LivePeerState::new(peer_id, tx)), counters);
+            self.get_live_mut()
+        } else {
+            None
         }
     }
 
-    pub fn to_not_needed(&mut self) -> Option<LivePeerState> {
-        match std::mem::replace(self, PeerState::NotNeeded) {
-            PeerState::Live(l) => Some(l),
-            _ => None,
-        }
+    pub fn to_dead(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
+        self.set(PeerState::Dead, counters)
+    }
+
+    pub fn to_not_needed(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
+        self.set(PeerState::NotNeeded, counters)
     }
 }
 
