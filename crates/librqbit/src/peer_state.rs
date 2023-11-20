@@ -1,6 +1,6 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Context;
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
@@ -8,7 +8,6 @@ use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use serde::Serialize;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::{Notify, Semaphore};
 
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
@@ -225,15 +224,10 @@ impl PeerStateNoMut {
 #[derive(Debug)]
 pub struct LivePeerState {
     pub peer_id: Id20,
-    pub i_am_choked: bool,
     pub peer_interested: bool,
 
     // This is used to track the pieces the peer has.
     pub bitfield: BF,
-
-    // This is used to only request a piece from a peer once when stealing from others.
-    // So that you don't steal then re-steal the same piece in a loop.
-    pub previously_requested_pieces: BF,
 
     // When the peer sends us data this is used to track if we asked for it.
     pub inflight_requests: HashSet<InflightRequest>,
@@ -246,10 +240,8 @@ impl LivePeerState {
     pub fn new(peer_id: Id20, tx: PeerTx) -> Self {
         LivePeerState {
             peer_id,
-            i_am_choked: true,
             peer_interested: false,
             bitfield: BF::new(),
-            previously_requested_pieces: BF::new(),
             inflight_requests: Default::default(),
             tx,
         }
