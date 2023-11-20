@@ -58,12 +58,12 @@ struct Opts {
     disable_dht_persistence: bool,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse)]
-    peer_connect_timeout: Option<Duration>,
+    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse, default_value="2s")]
+    peer_connect_timeout: Duration,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse)]
-    peer_read_write_timeout: Option<Duration>,
+    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse, default_value="10s")]
+    peer_read_write_timeout: Duration,
 
     /// How many threads to spawn for the executor.
     #[arg(short = 't', long)]
@@ -229,8 +229,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         dht_config: None,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
-            connect_timeout: opts.peer_connect_timeout,
-            read_write_timeout: opts.peer_read_write_timeout,
+            connect_timeout: Some(opts.peer_connect_timeout),
+            read_write_timeout: Some(opts.peer_read_write_timeout),
             ..Default::default()
         }),
     };
