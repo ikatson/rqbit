@@ -19,7 +19,7 @@ use axum::Router;
 use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
 use crate::torrent_manager::TorrentManagerHandle;
-use crate::torrent_state::StatsSnapshot;
+use crate::torrent_state::{PeerStatsFilter, StatsSnapshot};
 
 // Public API
 #[derive(Clone)]
@@ -50,6 +50,7 @@ impl HttpApi {
                     "GET /torrents/{index}": "Torrent details",
                     "GET /torrents/{index}/haves": "The bitfield of have pieces",
                     "GET /torrents/{index}/stats": "Torrent stats",
+                    "GET /torrents/{index}/peer_stats": "Per peer stats",
                     // This is kind of not secure as it just reads any local file that it has access to,
                     // or any URL, but whatever, ok for our purposes / threat model.
                     "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
@@ -100,6 +101,14 @@ impl HttpApi {
             state.api_stats(idx).map(axum::Json)
         }
 
+        async fn peer_stats(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+            Query(filter): Query<PeerStatsFilter>,
+        ) -> Result<impl IntoResponse> {
+            state.api_peer_stats(idx, filter).map(axum::Json)
+        }
+
         let app = Router::new()
             .route("/", get(api_root))
             .route("/dht/stats", get(dht_stats))
@@ -108,6 +117,7 @@ impl HttpApi {
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))
             .route("/torrents/:id/stats", get(torrent_stats))
+            .route("/torrents/:id/peer_stats", get(peer_stats))
             .with_state(state);
 
         info!("starting HTTP server on {}", addr);
@@ -258,6 +268,15 @@ impl ApiInternal {
         let info_hash = handle.torrent_state().info_hash();
         let only_files = handle.only_files();
         make_torrent_details(&info_hash, handle.torrent_state().info(), only_files)
+    }
+
+    fn api_peer_stats(
+        &self,
+        idx: usize,
+        filter: PeerStatsFilter,
+    ) -> Result<crate::torrent_state::PeerStatsSnapshot> {
+        let handle = self.mgr_handle(idx)?;
+        Ok(handle.torrent_state().per_peer_stats_snapshot(filter))
     }
 
     pub async fn api_add_torrent(
