@@ -9,7 +9,6 @@ use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use serde::Serialize;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Notify, Semaphore};
-use tracing::trace;
 
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
@@ -100,19 +99,11 @@ impl AggregatePeerStatsAtomic {
     }
 
     pub fn inc(&self, state: &PeerState) {
-        trace!(
-            "inc, new value = {}, state = {}",
-            atomic_inc(self.counter(state)),
-            state
-        );
+        atomic_inc(self.counter(state));
     }
 
     pub fn dec(&self, state: &PeerState) {
-        trace!(
-            "dec, new value = {}, state = {}",
-            atomic_dec(self.counter(state)),
-            state
-        );
+        atomic_dec(self.counter(state));
     }
 
     pub fn incdec(&self, old: &PeerState, new: &PeerState) {
