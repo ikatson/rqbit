@@ -101,60 +101,74 @@ async function getTorrentStats(index: number): Promise<TorrentStats> {
 }
 
 // Display function for listing all torrents with concise information (async/await)
-async function displayTorrents(): Promise<void> {
+async function displayTorrents() {
     try {
         const response = await makeRequest('GET', '/torrents');
-        const torrents: Torrent[] = response.torrents;
+        const torrents = response.torrents;
 
         // Create a container for all torrents using Bootstrap classes
         const torrentsContainer = document.createElement('div');
+        torrentsContainer.id = 'torrents-container';
         torrentsContainer.classList.add('d-flex', 'flex-column', 'torrents-container');
 
-        for (const torrent of torrents) {
-            const detailsResponse = await getTorrentDetails(torrent.id);
-            const statsResponse = await getTorrentStats(torrent.id);
+        // Map to store existing elements
+        const existingElementsMap = new Map();
 
-            const totalBytes = detailsResponse.files.reduce((total: number, file: any) => total + file.length, 0);
+        // Array to hold promises for torrent details and stats
+        const promises = torrents.map(async (torrent) => {
+            const detailsPromise = getTorrentDetails(torrent.id);
+            const statsPromise = getTorrentStats(torrent.id);
+            const [detailsResponse, statsResponse] = await Promise.all([detailsPromise, statsPromise]);
+
+            const totalBytes = detailsResponse.files.reduce((total, file) => total + file.length, 0);
             const downloadedBytes = statsResponse.snapshot.have_bytes;
 
             // Calculate download percentage
             const downloadPercentage = (downloadedBytes / totalBytes) * 100;
 
-            // Create a container for each torrent using Bootstrap classes
-            const torrentContainer = document.createElement('div');
-            torrentContainer.classList.add('torrent-container', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
+            // Check if the torrent container already exists
+            let torrentContainer = existingElementsMap.get(torrent.id);
+
+            if (!torrentContainer) {
+                torrentContainer = document.createElement('div');
+                torrentContainer.id = `torrent-${torrent.id}`;
+                torrentContainer.classList.add('torrent-container', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
+                existingElementsMap.set(torrent.id, torrentContainer);
+            }
 
             // Display basic information about the torrent
             const largestFileName = getLargestFileName(detailsResponse);
             const downloadSpeed = statsResponse.download_speed.human_readable;
             const eta = getCompletionETA(statsResponse);
 
-            // Create and append divs for concise information as columns
-            const nameColumn = createColumn('Name', largestFileName);
-            const sizeColumn = createColumn('Size', `${formatBytesToGB(totalBytes)} GB`);
-            const progressColumn = createColumnWithProgressBar('Progress', downloadPercentage);
-            const downloadSpeedColumn = createColumn('Download Speed', downloadSpeed);
-            const etaColumn = createColumn('ETA', eta);
-
-            // Append columns to the torrent container
-            torrentContainer.appendChild(nameColumn);
-            torrentContainer.appendChild(sizeColumn);
-            torrentContainer.appendChild(progressColumn);
-            torrentContainer.appendChild(downloadSpeedColumn);
-            torrentContainer.appendChild(etaColumn);
+            // Update or append columns to the torrent container
+            torrentContainer.innerHTML = ''; // Clear existing content
+            torrentContainer.appendChild(createColumn('Name', largestFileName, 'name-column'));
+            torrentContainer.appendChild(createColumn('Size', `${formatBytesToGB(totalBytes)} GB`, 'size-column'));
+            torrentContainer.appendChild(createColumnWithProgressBar('Progress', downloadPercentage, 'progress-column'));
+            torrentContainer.appendChild(createColumn('Download Speed', downloadSpeed, 'download-speed-column'));
+            torrentContainer.appendChild(createColumn('ETA', eta, 'eta-column'));
 
             // Append the torrent container to the torrentsContainer
             torrentsContainer.appendChild(torrentContainer);
-        }
+        });
 
-        // Replace the old content with the new one
-        const outputDiv = document.getElementById('output');
-        outputDiv.innerHTML = '';
-        outputDiv.appendChild(torrentsContainer);
+        // Replace the old content with loading spinners
+        const outputDiv = document.getElementById('output') || document.createElement('div');
+        outputDiv.id = 'output';
+        outputDiv.innerHTML = `<div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>`;
+
+        // Wait for all promises to resolve
+        await Promise.all(promises);
+
+        // Replace the loading spinners with the new content
+        outputDiv.replaceChildren(torrentsContainer);
     } catch (error) {
         console.error(error);
+        // Handle errors as needed
     }
 }
+
 
 // Function to create a column div
 function createColumn(label: string, value: string): HTMLDivElement {
@@ -224,7 +238,7 @@ function clearErrorAlert(): void {
 async function init(): Promise<void> {
     try {
         await displayTorrents();
-        autoRefreshTorrents(5000); // Set the interval (in milliseconds), e.g., 5000 for every 5 seconds
+        autoRefreshTorrents(500); // Set the interval (in milliseconds), e.g., 5000 for every 5 seconds
     } catch (error) {
         console.error(error);
     }
