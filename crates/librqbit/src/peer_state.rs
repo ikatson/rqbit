@@ -223,10 +223,24 @@ pub struct LivePeerState {
     pub peer_id: Id20,
     pub i_am_choked: bool,
     pub peer_interested: bool,
+
+    // This is used to limit the number of requests we send to a peer at a time.
     pub requests_sem: Arc<Semaphore>,
+
+    // This is used to unpause processes after we were choked.
     pub have_notify: Arc<Notify>,
-    pub bitfield: Option<BF>,
+
+    // This is used to track the pieces the peer has.
+    pub bitfield: BF,
+
+    // This is used to only request a piece from a peer once when stealing from others.
+    // So that you don't steal then re-steal the same piece in a loop.
+    pub previously_requested_pieces: BF,
+
+    // When the peer sends us data this is used to track if we asked for it.
     pub inflight_requests: HashSet<InflightRequest>,
+
+    // The main channel to send requests to peer.
     pub tx: PeerTx,
 }
 
@@ -236,7 +250,8 @@ impl LivePeerState {
             peer_id,
             i_am_choked: true,
             peer_interested: false,
-            bitfield: None,
+            bitfield: BF::new(),
+            previously_requested_pieces: BF::new(),
             have_notify: Arc::new(Notify::new()),
             requests_sem: Arc::new(Semaphore::new(0)),
             inflight_requests: Default::default(),
@@ -245,10 +260,8 @@ impl LivePeerState {
     }
 
     pub fn has_full_torrent(&self, total_pieces: usize) -> bool {
-        let bf = match self.bitfield.as_ref() {
-            Some(bf) => bf,
-            None => return false,
-        };
-        bf.get(0..total_pieces).map_or(false, |s| s.all())
+        self.bitfield
+            .get(0..total_pieces)
+            .map_or(false, |s| s.all())
     }
 }
