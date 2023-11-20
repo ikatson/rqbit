@@ -1,12 +1,6 @@
 # librqbit
 
-A torrent library 100% written in rust
+A fully featured, easy to use torrent downloading library used as a backbone of [rqbit](https://github.com/ikatson/rqbit) CLI.
 
 ## Basic example
-See ```examples``` folder.
-This is a simple program on how to use this library
-This program will just download a simple torrent file with a Magnet link
-
-```rust
-
-```
+See [examples on GitHub](https://github.com/ikatson/rqbit/tree/main/crates/librqbit/examples).
