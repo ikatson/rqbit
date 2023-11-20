@@ -183,11 +183,15 @@ impl PeerStateNoMut {
         }
     }
 
-    pub fn queued_to_connecting(&mut self, counters: &AggregatePeerStatsAtomic) -> Option<PeerRx> {
+    pub fn queued_to_connecting(
+        &mut self,
+        counters: &AggregatePeerStatsAtomic,
+    ) -> Option<(PeerRx, PeerTx)> {
         if let PeerState::Queued = &self.0 {
             let (tx, rx) = unbounded_channel();
+            let tx_2 = tx.clone();
             self.set(PeerState::Connecting(tx), counters);
-            Some(rx)
+            Some((rx, tx_2))
         } else {
             None
         }
