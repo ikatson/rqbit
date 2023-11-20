@@ -118,7 +118,7 @@ impl HttpApi {
             state.api_peer_stats(idx, filter).map(axum::Json)
         }
 
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/", get(api_root))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
@@ -126,19 +126,55 @@ impl HttpApi {
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))
             .route("/torrents/:id/stats", get(torrent_stats))
-            .route("/torrents/:id/peer_stats", get(peer_stats))
-            .layer(
-                tower_http::cors::CorsLayer::default()
-                    .allow_origin(AllowOrigin::predicate(|_, _| true))
-                    .allow_headers(AllowHeaders::any()),
-            )
+            .route("/torrents/:id/peer_stats", get(peer_stats));
+
+        #[cfg(feature = "webui")]
+        {
+            let webui_router = Router::new()
+                .route(
+                    "/",
+                    get(|| async {
+                        (
+                            [("Content-Type", "text/html")],
+                            include_str!("../webui/index.html"),
+                        )
+                    }),
+                )
+                .route(
+                    "/app.js",
+                    get(|| async {
+                        (
+                            [("Content-Type", "application/javascript")],
+                            include_str!("../webui/app.js"),
+                        )
+                    }),
+                );
+
+            let cors_layer = {
+                #[cfg(debug_assertions)]
+                {
+                    tower_http::cors::CorsLayer::default()
+                        .allow_origin(AllowOrigin::predicate(|_, _| true))
+                        .allow_headers(AllowHeaders::any())
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    tower_http::cors::CorsLayer::default()
+                }
+            };
+
+            app = app.nest("/web/", webui_router).layer(cors_layer);
+        }
+
+        let app = app
             .layer(tower_http::trace::TraceLayer::new_for_http())
-            .with_state(state);
+            .with_state(state)
+            .into_make_service();
 
         info!("starting HTTP server on {}", addr);
         axum::Server::try_bind(&addr)
             .with_context(|| format!("error binding to {addr}"))?
-            .serve(app.into_make_service())
+            .serve(app)
             .await?;
         Ok(())
     }
