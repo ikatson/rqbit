@@ -15,12 +15,12 @@ jobs:
     - uses: actions/checkout@v2
     - name: Build release
       run:
-        cargo build --release
+        cargo build --profile release-github
     - uses: softprops/action-gh-release@v1
       with:
         body: This release and its artifacts were built with a GitHub action
         files: |
-          target/release/rqbit.exe
+          target/release-github/rqbit.exe
 
   cross-compile-on-macos:
     runs-on: macos-11
@@ -31,37 +31,41 @@ jobs:
         brew tap messense/macos-cross-toolchains &&
         brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf
 
+    - name: Make a directory for output artifacts
+      run:
+        mkdir -p target/artifacts
+
     - name: Build release linux x86_64 binary
       run:
         rustup target install x86_64-unknown-linux-gnu &&
         make release-linux-x86_64 &&
-        mv target/x86_64-unknown-linux-gnu/release/rqbit target/release/rqbit-linux-static-x86_64
-      
+        mv target/x86_64-unknown-linux-gnu/release-github/rqbit target/artifacts/rqbit-linux-static-x86_64
+
     - name: Build release linux arm32bit binary
       run:
         rustup target install arm-unknown-linux-gnueabihf &&
         make release-linux-armv6 &&
-        mv target/arm-unknown-linux-gnueabihf/release/rqbit target/release/rqbit-linux-static-arm32
+        mv target/arm-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-arm32
 
     - name: Build release linux aarch64 binary
       run:
         rustup target install aarch64-unknown-linux-gnu &&
         make release-linux-aarch64 &&
-        mv target/aarch64-unknown-linux-gnu/release/rqbit target/release/rqbit-linux-static-aarch64
+        mv target/aarch64-unknown-linux-gnu/release-github/rqbit target/artifacts/rqbit-linux-static-aarch64
 
     - name: Build release OSX universal binary
       run:
         rustup target install aarch64-apple-darwin &&
-        cargo build --release &&
-        cargo build --release --target aarch64-apple-darwin &&
-        lipo ./target/release/rqbit ./target/aarch64-apple-darwin/release/rqbit -create -output ./target/release/rqbit-osx-universal
+        cargo build --profile release-github &&
+        cargo build --profile release-github --target aarch64-apple-darwin &&
+        lipo ./target/release-github/rqbit ./target/aarch64-apple-darwin/release-github/rqbit -create -output ./target/artifacts/rqbit-osx-universal
 
     - uses: softprops/action-gh-release@v1
       with:
         body: This release and its artifacts were built with a GitHub action
         files: |
-          target/release/rqbit-osx-universal
-          target/release/rqbit-linux-static-x86_64
-          target/release/rqbit-linux-static-aarch64
-          target/release/rqbit-linux-static-arm32
+          target/artifacts/rqbit-osx-universal
+          target/artifacts/rqbit-linux-static-x86_64
+          target/artifactsrqbit-linux-static-aarch64
+          target/artifacts/rqbit-linux-static-arm32
 

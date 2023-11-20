@@ -26,19 +26,19 @@ install: build-release
 
 @PHONY: release-macos-universal
 release-macos-universal:
-	cargo build --target aarch64-apple-darwin --release
-	cargo build --target x86_64-apple-darwin --release
+	cargo build --target aarch64-apple-darwin --profile release-github
+	cargo build --target x86_64-apple-darwin --profile release-github
 	lipo \
-		./target/aarch64-apple-darwin/release/rqbit \
-		./target/x86_64-apple-darwin/release/rqbit \
+		./target/aarch64-apple-darwin/release-github/rqbit \
+		./target/x86_64-apple-darwin/release-github/rqbit \
 		-create \
-		-output ./target/x86_64-apple-darwin/release/rqbit-osx-universal
+		-output ./target/x86_64-apple-darwin/release-github/rqbit-osx-universal
 
 @PHONY: release-windows
 release-windows:
 	# prereqs:
 	# brew install mingw-w64
-	cargo build --target x86_64-pc-windows-gnu --release
+	cargo build --target x86_64-pc-windows-gnu --profile release-github
 
 target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz:
 	mkdir -p target/openssl-linux
@@ -61,7 +61,7 @@ release-linux-current-target: target/openssl-linux/$(TARGET)/lib/libssl.a
 	AR_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-ar \
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
 	OPENSSL_DIR=$(PWD)/target/openssl-linux/$(TARGET)/ \
-	cargo build --release --target=$(TARGET)
+	cargo build  --profile release-github --target=$(TARGET)
 
 @PHONY: release-linux
 release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6
@@ -99,7 +99,7 @@ release-linux-armv6:
 release-all: release-windows release-linux release-macos-universal
 	rm -rf /tmp/rqbit-release
 	mkdir -p /tmp/rqbit-release
-	cp ./target/x86_64-pc-windows-gnu/release/rqbit.exe /tmp/rqbit-release
-	cp ./target/x86_64-apple-darwin/release/rqbit-osx-universal /tmp/rqbit-release
-	cp ./target/x86_64-unknown-linux-gnu/release/rqbit /tmp/rqbit-release/rqbit-linux-x86_64
+	cp ./target/x86_64-pc-windows-gnu/release-github/rqbit.exe /tmp/rqbit-release
+	cp ./target/x86_64-apple-darwin/release-github/rqbit-osx-universal /tmp/rqbit-release
+	cp ./target/x86_64-unknown-linux-gnu/release-github/rqbit /tmp/rqbit-release/rqbit-linux-x86_64
 	echo "The release was built in /tmp/rqbit-release"

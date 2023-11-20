@@ -17,3 +17,8 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 debug = true
+
+[profile.release-github]
+inherits = "release"
+lto = true
+debug = false
