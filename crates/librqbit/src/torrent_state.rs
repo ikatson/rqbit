@@ -170,9 +170,8 @@ impl PeerStates {
     }
     pub fn update_bitfield_from_vec(&self, handle: PeerHandle, bitfield: Vec<u8>) -> Option<()> {
         self.with_live_mut(handle, "update_bitfield_from_vec", |live| {
-            let bitfield = BF::from_vec(bitfield);
-            live.previously_requested_pieces = BF::with_capacity(bitfield.len());
-            live.bitfield = bitfield;
+            live.previously_requested_pieces = BF::from_vec(vec![0; bitfield.len()]);
+            live.bitfield = BF::from_vec(bitfield);
         })
     }
     pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<PeerRx> {
@@ -205,14 +204,12 @@ impl PeerStates {
 }
 
 pub struct TorrentStateLocked {
+    // What chunks we have and need.
     pub chunks: ChunkTracker,
-    pub inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
-}
 
-impl TorrentStateLocked {
-    pub fn remove_inflight_piece(&mut self, piece: ValidPieceIndex) -> Option<InflightPiece> {
-        self.inflight_pieces.remove(&piece)
-    }
+    // At a moment in time, we are expecting a piece from only one peer.
+    // inflight_pieces stores this information.
+    pub inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
 }
 
 #[derive(Default, Debug)]
@@ -623,15 +620,22 @@ impl TorrentState {
         None
     }
 
-    // TODO: need to throttle this or make it smarter as it may loop and steal pieces forever from each other.
+    // NOTE: this doesn't actually "steal" it, but only returns an id we might steal.
     fn try_steal_piece(&self, handle: PeerHandle) -> Option<ValidPieceIndex> {
         let mut rng = rand::thread_rng();
         use rand::seq::IteratorRandom;
+
         self.peers
             .with_live(handle, |live| {
                 let g = self.lock_read("try_steal_piece");
                 g.inflight_pieces
                     .keys()
+                    .filter(|p| {
+                        live.previously_requested_pieces
+                            .get(p.get() as usize)
+                            .map(|r| *r)
+                            == Some(false)
+                    })
                     .filter(|p| !live.inflight_requests.iter().any(|req| req.piece == **p))
                     .choose(&mut rng)
                     .copied()
@@ -1102,43 +1106,44 @@ impl PeerHandler {
                 },
             };
 
-            let (tx, sem) = match self
-                .state
-                .peers
-                .with_live(handle, |l| (l.tx.clone(), l.requests_sem.clone()))
-            {
-                Some((tx, sem)) => (tx, sem),
-                None => return Ok(()),
-            };
-
-            for chunk in self.state.lengths.iter_chunk_infos(next) {
-                if self
-                    .state
-                    .lock_read("is_chunk_downloaded")
-                    .chunks
-                    .is_chunk_downloaded(&chunk)
-                {
-                    continue;
-                }
-
+            let (tx, sem) =
                 match self
                     .state
                     .peers
-                    .with_live_mut(handle, "inflight_requests.insert", |l| {
-                        l.inflight_requests.insert(InflightRequest::from(&chunk))
+                    .with_live_mut(handle, "peer_setup_for_piece_request", |l| {
+                        l.previously_requested_pieces.set(next.get() as usize, true);
+                        (l.tx.clone(), l.requests_sem.clone())
                     }) {
-                    Some(true) => {}
-                    Some(false) => {
-                        warn!("probably a bug, we already requested {:?}", chunk);
-                        continue;
-                    }
+                    Some(res) => res,
                     None => return Ok(()),
-                }
+                };
 
+            for chunk in self.state.lengths.iter_chunk_infos(next) {
                 let request = Request {
                     index: next.get(),
                     begin: chunk.offset,
                     length: chunk.size,
+                };
+
+                match self
+                    .state
+                    .peers
+                    .with_live_mut(handle, "add chunk request", |live| {
+                        live.inflight_requests.insert(InflightRequest::from(&chunk))
+                    }) {
+                    Some(true) => {}
+                    Some(false) => {
+                        // This request was already in-flight for this peer for this chunk.
+                        // This might happen in theory, but not very likely.
+                        //
+                        // Example:
+                        // someone stole a piece from us, and then died, the piece became "needed" again, and we reserved it
+                        // all before the piece request was processed by us.
+                        warn!("we already requested {:?} previously", chunk);
+                        continue;
+                    }
+                    // peer died
+                    None => return Ok(()),
                 };
 
                 loop {
@@ -1241,12 +1246,33 @@ impl PeerHandler {
         let full_piece_download_time = {
             let mut g = self.state.lock_write("mark_chunk_downloaded");
 
+            match g.inflight_pieces.get(&chunk_info.piece_index) {
+                Some(InflightPiece { peer, .. }) if *peer == handle => {}
+                Some(InflightPiece { peer, .. }) => {
+                    debug!(
+                        "in-flight piece {} was stolen by {}, ignoring",
+                        chunk_info.piece_index, peer
+                    );
+                    return Ok(());
+                }
+                None => {
+                    debug!(
+                        "in-flight piece {} not found. it was probably completed by someone else",
+                        chunk_info.piece_index
+                    );
+                    return Ok(());
+                }
+            };
+
             match g.chunks.mark_chunk_downloaded(&piece) {
                 Some(ChunkMarkingResult::Completed) => {
                     debug!("piece={} done, will write and checksum", piece.index,);
                     // This will prevent others from stealing it.
-                    g.remove_inflight_piece(chunk_info.piece_index)
-                        .map(|t| t.started.elapsed())
+                    {
+                        let piece = chunk_info.piece_index;
+                        g.inflight_pieces.remove(&piece)
+                    }
+                    .map(|t| t.started.elapsed())
                 }
                 Some(ChunkMarkingResult::PreviouslyCompleted) => {
                     // TODO: we might need to send cancellations here.
@@ -1262,6 +1288,9 @@ impl PeerHandler {
                 }
             }
         };
+
+        // By this time we reach here, no other peer can for this piece. All others, even if they steal pieces would
+        // have fallen off above in one of the defensive checks.
 
         self.spawner
             .spawn_block_in_place(move || {

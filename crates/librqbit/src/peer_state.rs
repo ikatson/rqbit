@@ -224,7 +224,7 @@ pub struct LivePeerState {
     pub i_am_choked: bool,
     pub peer_interested: bool,
 
-    // This is used to limit the number of requests we send to a peer at a time.
+    // This is used to limit the number of chunk requests we send to a peer at a time.
     pub requests_sem: Arc<Semaphore>,
 
     // This is used to unpause processes after we were choked.
