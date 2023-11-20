@@ -1,4 +1,5 @@
 use anyhow::Context;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -12,13 +13,16 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tower_http::cors::{AllowHeaders, AllowOrigin};
 use tracing::{info, warn};
 
 use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::peer_state::PeerStatsFilter;
-use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
+use crate::session::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
+};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
@@ -75,10 +79,14 @@ impl HttpApi {
         async fn torrents_post(
             State(state): State<ApiState>,
             Query(params): Query<TorrentAddQueryParams>,
-            url: String,
+            data: Bytes,
         ) -> Result<impl IntoResponse> {
             let opts = params.into_add_torrent_options();
-            state.api_add_torrent(url, Some(opts)).await.map(axum::Json)
+            let add = match String::from_utf8(data.to_vec()) {
+                Ok(s) => AddTorrent::from(s),
+                Err(e) => AddTorrent::from(e.into_bytes()),
+            };
+            state.api_add_torrent(add, Some(opts)).await.map(axum::Json)
         }
 
         async fn torrent_details(
@@ -119,6 +127,12 @@ impl HttpApi {
             .route("/torrents/:id/haves", get(torrent_haves))
             .route("/torrents/:id/stats", get(torrent_stats))
             .route("/torrents/:id/peer_stats", get(peer_stats))
+            .layer(
+                tower_http::cors::CorsLayer::default()
+                    .allow_origin(AllowOrigin::predicate(|_, _| true))
+                    .allow_headers(AllowHeaders::any()),
+            )
+            .layer(tower_http::trace::TraceLayer::new_for_http())
             .with_state(state);
 
         info!("starting HTTP server on {}", addr);
@@ -177,13 +191,33 @@ pub struct TorrentDetailsResponse {
     pub files: Vec<TorrentDetailsResponseFile>,
 }
 
+struct DurationWithHumanReadable(Duration);
+
+impl Serialize for DurationWithHumanReadable {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct Tmp {
+            duration: Duration,
+            human_readable: String,
+        }
+        Tmp {
+            duration: self.0,
+            human_readable: format!("{:?}", self.0),
+        }
+        .serialize(serializer)
+    }
+}
+
 #[derive(Serialize)]
 struct StatsResponse {
     snapshot: StatsSnapshot,
     average_piece_download_time: Option<Duration>,
     download_speed: Speed,
     all_time_download_speed: Speed,
-    time_remaining: Option<Duration>,
+    time_remaining: Option<DurationWithHumanReadable>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -282,12 +316,12 @@ impl ApiInternal {
 
     pub async fn api_add_torrent(
         &self,
-        url: String,
+        add: AddTorrent<'_>,
         opts: Option<AddTorrentOptions>,
     ) -> Result<ApiAddTorrentResponse> {
         let response = match self
             .session
-            .add_torrent(&url, opts)
+            .add_torrent(add, opts)
             .await
             .context("error adding torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?
@@ -353,7 +387,7 @@ impl ApiInternal {
             snapshot,
             all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
             download_speed: estimator.download_mbps().into(),
-            time_remaining: estimator.time_remaining(),
+            time_remaining: estimator.time_remaining().map(DurationWithHumanReadable),
         })
     }
 

@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{borrow::Cow, fs::File, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::Context;
 use buffers::ByteString;
@@ -141,6 +141,29 @@ pub enum AddTorrentResponse {
     Added(TorrentManagerHandle),
 }
 
+pub enum AddTorrent<'a> {
+    Url(Cow<'a, str>),
+    TorrentFileBytes(Vec<u8>),
+}
+
+impl<'a> From<&'a str> for AddTorrent<'a> {
+    fn from(s: &'a str) -> Self {
+        Self::Url(Cow::Borrowed(s))
+    }
+}
+
+impl<'a> From<String> for AddTorrent<'a> {
+    fn from(s: String) -> Self {
+        Self::Url(Cow::Owned(s))
+    }
+}
+
+impl<'a> From<Vec<u8>> for AddTorrent<'a> {
+    fn from(b: Vec<u8>) -> Self {
+        Self::TorrentFileBytes(b)
+    }
+}
+
 #[derive(Default)]
 pub struct SessionOptions {
     pub disable_dht: bool,
@@ -193,99 +216,110 @@ impl Session {
     }
     pub async fn add_torrent(
         &self,
-        url: &str,
+        add: impl Into<AddTorrent<'_>>,
         opts: Option<AddTorrentOptions>,
     ) -> anyhow::Result<AddTorrentResponse> {
         // Magnet links are different in that we first need to discover the metadata.
         let opts = opts.unwrap_or_default();
-        if url.starts_with("magnet:") {
-            let Magnet {
-                info_hash,
-                trackers,
-            } = Magnet::parse(url).context("provided path is not a valid magnet URL")?;
 
-            let dht_rx = self
-                .dht
-                .as_ref()
-                .context("magnet links without DHT are not supported")?
-                .get_peers(info_hash)
-                .await?;
+        let (info_hash, info, dht_rx, trackers, initial_peers) = match add.into() {
+            AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
+                let Magnet {
+                    info_hash,
+                    trackers,
+                } = Magnet::parse(&*magnet).context("provided path is not a valid magnet URL")?;
 
-            let trackers = trackers
-                .into_iter()
-                .filter_map(|url| match reqwest::Url::parse(&url) {
-                    Ok(url) => Some(url),
-                    Err(e) => {
-                        warn!("error parsing tracker {} as url: {}", url, e);
-                        None
-                    }
-                })
-                .collect();
+                let dht_rx = self
+                    .dht
+                    .as_ref()
+                    .context("magnet links without DHT are not supported")?
+                    .get_peers(info_hash)
+                    .await?;
 
-            let (info, dht_rx, initial_peers) = match read_metainfo_from_peer_receiver(
-                self.peer_id,
-                info_hash,
-                dht_rx,
-                Some(self.peer_opts),
-            )
-            .await
-            {
-                ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
-                ReadMetainfoResult::ChannelClosed { .. } => {
-                    anyhow::bail!("DHT died, no way to discover torrent metainfo")
-                }
-            };
-            self.main_torrent_info(
-                info_hash,
-                info,
-                Some(dht_rx),
-                initial_peers.into_iter().collect(),
-                trackers,
-                opts,
-            )
-            .await
-        } else {
-            let torrent = if url.starts_with("http://") || url.starts_with("https://") {
-                torrent_from_url(url).await?
-            } else {
-                torrent_from_file(url)?
-            };
-            let dht_rx = match self.dht.as_ref() {
-                Some(dht) => {
-                    debug!("reading peers for {:?} from DHT", torrent.info_hash);
-                    Some(dht.get_peers(torrent.info_hash).await?)
-                }
-                None => None,
-            };
-            let trackers = torrent
-                .iter_announce()
-                .filter_map(|tracker| {
-                    let url = match std::str::from_utf8(tracker.as_ref()) {
-                        Ok(url) => url,
-                        Err(_) => {
-                            warn!("cannot parse tracker url as utf-8, ignoring");
-                            return None;
-                        }
-                    };
-                    match Url::parse(url) {
+                let trackers = trackers
+                    .into_iter()
+                    .filter_map(|url| match reqwest::Url::parse(&url) {
                         Ok(url) => Some(url),
                         Err(e) => {
-                            warn!("cannot parse tracker URL {}: {}", url, e);
+                            warn!("error parsing tracker {} as url: {}", url, e);
                             None
                         }
+                    })
+                    .collect();
+
+                let (info, dht_rx, initial_peers) = match read_metainfo_from_peer_receiver(
+                    self.peer_id,
+                    info_hash,
+                    dht_rx,
+                    Some(self.peer_opts),
+                )
+                .await
+                {
+                    ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
+                    ReadMetainfoResult::ChannelClosed { .. } => {
+                        anyhow::bail!("DHT died, no way to discover torrent metainfo")
                     }
-                })
-                .collect::<Vec<_>>();
-            self.main_torrent_info(
-                torrent.info_hash,
-                torrent.info,
-                dht_rx,
-                Vec::new(),
-                trackers,
-                opts,
-            )
-            .await
-        }
+                };
+                (info_hash, info, Some(dht_rx), trackers, initial_peers)
+            }
+            other => {
+                let torrent = match other {
+                    AddTorrent::Url(url)
+                        if url.starts_with("http://") || url.starts_with("https://") =>
+                    {
+                        torrent_from_url(&*url).await?
+                    }
+                    AddTorrent::Url(filename) => torrent_from_file(&*filename)?,
+                    AddTorrent::TorrentFileBytes(bytes) => {
+                        torrent_from_bytes(&bytes).context("error decoding torrent")?
+                    }
+                };
+
+                let dht_rx = match self.dht.as_ref() {
+                    Some(dht) => {
+                        debug!("reading peers for {:?} from DHT", torrent.info_hash);
+                        Some(dht.get_peers(torrent.info_hash).await?)
+                    }
+                    None => None,
+                };
+                let trackers = torrent
+                    .iter_announce()
+                    .filter_map(|tracker| {
+                        let url = match std::str::from_utf8(tracker.as_ref()) {
+                            Ok(url) => url,
+                            Err(_) => {
+                                warn!("cannot parse tracker url as utf-8, ignoring");
+                                return None;
+                            }
+                        };
+                        match Url::parse(url) {
+                            Ok(url) => Some(url),
+                            Err(e) => {
+                                warn!("cannot parse tracker URL {}: {}", url, e);
+                                None
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    torrent.info_hash,
+                    torrent.info,
+                    dht_rx,
+                    trackers,
+                    Default::default(),
+                )
+            }
+        };
+
+        self.main_torrent_info(
+            info_hash,
+            info,
+            dht_rx,
+            initial_peers.into_iter().collect(),
+            trackers,
+            opts,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
