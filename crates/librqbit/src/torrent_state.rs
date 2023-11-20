@@ -97,27 +97,9 @@ impl<'a> From<&'a AggregatePeerStatsAtomic> for AggregatePeerStats {
 
 impl PeerStates {
     pub fn stats(&self) -> AggregatePeerStats {
-        // TODO: it would be better to store these as atomic not to lock needlessly.
-        // However this would probably cause even more spaghetti.
-        timeit("PeerStates::stats", || {
-            self.states
-                .iter()
-                .fold(AggregatePeerStats::default(), |mut s, p| {
-                    s.seen += 1;
-                    match &p.value().state.get() {
-                        PeerState::Connecting(_) => s.connecting += 1,
-                        PeerState::Live(_) => s.live += 1,
-                        PeerState::Queued => s.queued += 1,
-                        PeerState::Dead => s.dead += 1,
-                        PeerState::NotNeeded => s.not_needed += 1,
-                    };
-                    s
-                })
-        })
-    }
-    pub fn stats_from_atomic(&self) -> AggregatePeerStats {
         AggregatePeerStats::from(&self.stats)
     }
+
     pub fn add_if_not_seen(&self, addr: SocketAddr) -> Option<PeerHandle> {
         use dashmap::mapref::entry::Entry;
         match self.states.entry(addr) {
@@ -274,7 +256,6 @@ pub struct StatsSnapshot {
     pub time: Instant,
     pub total_piece_download_ms: u64,
     pub peer_stats: AggregatePeerStats,
-    pub new_peer_stats: AggregatePeerStats,
 }
 
 impl StatsSnapshot {
@@ -778,7 +759,7 @@ impl TorrentState {
         self.stats.uploaded.load(Ordering::Relaxed)
     }
     pub fn get_downloaded(&self) -> u64 {
-        self.stats.downloaded_and_checked.load(Ordering::Relaxed)
+        self.stats.downloaded_and_checked.load(Ordering::Acquire)
     }
 
     pub fn is_finished(&self) -> bool {
@@ -854,19 +835,8 @@ impl TorrentState {
         true
     }
 
-    pub fn stats_snapshot(&self, with_peer_stats: bool) -> StatsSnapshot {
+    pub fn stats_snapshot(&self) -> StatsSnapshot {
         use Ordering::*;
-        let new_peer_stats = self.peers.stats_from_atomic();
-        let peer_stats = if with_peer_stats {
-            let old_stats = self.peers.stats();
-            if old_stats != new_peer_stats {
-                warn!("old != new: {old_stats:?} != {new_peer_stats:?}")
-            }
-            old_stats
-        } else {
-            Default::default()
-        };
-
         let downloaded = self.stats.downloaded_and_checked.load(Relaxed);
         let remaining = self.needed - downloaded;
         StatsSnapshot {
@@ -880,8 +850,7 @@ impl TorrentState {
             initially_needed_bytes: self.needed,
             remaining_bytes: remaining,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
-            peer_stats,
-            new_peer_stats,
+            peer_stats: self.peers.stats(),
         }
     }
 
@@ -1324,7 +1293,9 @@ impl PeerHandler {
                         self.state
                             .stats
                             .downloaded_and_checked
-                            .fetch_add(piece_len, Ordering::Relaxed);
+                            // This counter is used to compute "is_finished", so using
+                            // stronger ordering.
+                            .fetch_add(piece_len, Ordering::Release);
                         self.state
                             .stats
                             .have

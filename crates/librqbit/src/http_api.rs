@@ -320,7 +320,7 @@ impl ApiInternal {
 
     fn api_stats(&self, idx: usize) -> Result<StatsResponse> {
         let mgr = self.mgr_handle(idx)?;
-        let snapshot = mgr.torrent_state().stats_snapshot(true);
+        let snapshot = mgr.torrent_state().stats_snapshot();
         let estimator = mgr.speed_estimator();
 
         // Poor mans download speed computation
