@@ -52,6 +52,28 @@ async function getTorrentDetails(index) {
 async function getTorrentStats(index) {
     return makeRequest('GET', `/torrents/${index}/stats`);
 }
+// Function to render HTML for a torrent row
+function renderTorrentRow(torrentId, detailsResponse, statsResponse) {
+    const totalBytes = statsResponse.snapshot.total_bytes;
+    const downloadedBytes = statsResponse.snapshot.have_bytes;
+    // Calculate download percentage
+    const downloadPercentage = (downloadedBytes / totalBytes) * 100;
+    // Display basic information about the torrent
+    const largestFileName = getLargestFileName(detailsResponse);
+    const downloadSpeed = statsResponse.download_speed.human_readable;
+    const eta = getCompletionETA(statsResponse);
+    const peers = `${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`;
+    // Create a detached element for the torrent row
+    const newTorrentRow = document.createElement('div');
+    newTorrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
+    newTorrentRow.appendChild(createColumn('Name', largestFileName, 'name-column'));
+    newTorrentRow.appendChild(createColumn('Size', `${formatBytesToGB(totalBytes)} GB`, 'size-column'));
+    newTorrentRow.appendChild(createColumnWithProgressBar('Progress', downloadPercentage));
+    newTorrentRow.appendChild(createColumn('Download Speed', downloadSpeed, 'download-speed-column'));
+    newTorrentRow.appendChild(createColumn('ETA', eta, 'eta-column'));
+    newTorrentRow.appendChild(createColumn('Peers', peers, 'peers-column'));
+    return newTorrentRow;
+}
 // Display function for listing all torrents with concise information (async/await)
 async function displayTorrents() {
     try {
@@ -64,35 +86,17 @@ async function displayTorrents() {
             const detailsPromise = getTorrentDetails(torrent.id);
             const statsPromise = getTorrentStats(torrent.id);
             const [detailsResponse, statsResponse] = await Promise.all([detailsPromise, statsPromise]);
-            const totalBytes = statsResponse.snapshot.total_bytes;
-            const downloadedBytes = statsResponse.snapshot.have_bytes;
-            // Calculate download percentage
-            const downloadPercentage = (downloadedBytes / totalBytes) * 100;
-            // Display basic information about the torrent
-            const largestFileName = getLargestFileName(detailsResponse);
-            const downloadSpeed = statsResponse.download_speed.human_readable;
-            const eta = getCompletionETA(statsResponse);
-            const peers = `${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`;
             // Check if the torrent row already exists
             let torrentRow = document.getElementById(`torrent-${torrent.id}`);
             if (!torrentRow) {
-                console.log("not found!");
                 // If the torrent row doesn't exist, create a new one
                 torrentRow = document.createElement('div');
                 torrentRow.id = `torrent-${torrent.id}`;
-                torrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
                 // Append the new torrent row to the torrentsContainer
                 torrentsContainer.appendChild(torrentRow);
             }
-            // Create a detached element to replace torrentRow.innerHTML atomically
-            const newTorrentRow = document.createElement('div');
-            newTorrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
-            newTorrentRow.appendChild(createColumn('Name', largestFileName, 'name-column'));
-            newTorrentRow.appendChild(createColumn('Size', `${formatBytesToGB(totalBytes)} GB`, 'size-column'));
-            newTorrentRow.appendChild(createColumnWithProgressBar('Progress', downloadPercentage));
-            newTorrentRow.appendChild(createColumn('Download Speed', downloadSpeed, 'download-speed-column'));
-            newTorrentRow.appendChild(createColumn('ETA', eta, 'eta-column'));
-            newTorrentRow.appendChild(createColumn('Peers', peers, 'peers-column'));
+            // Render HTML for the torrent row
+            const newTorrentRow = renderTorrentRow(torrent.id, detailsResponse, statsResponse);
             // Replace torrentRow.innerHTML with the new content
             torrentRow.replaceChildren(newTorrentRow);
         });
