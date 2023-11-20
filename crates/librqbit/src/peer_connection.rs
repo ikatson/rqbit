@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use buffers::{ByteBuf, ByteString};
@@ -15,6 +18,7 @@ use tracing::{debug, trace};
 use crate::spawn_utils::BlockingSpawner;
 
 pub trait PeerConnectionHandler {
+    fn on_connected(&self, _connection_time: Duration) {}
     fn get_have_bytes(&self) -> u64;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
     fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
@@ -127,9 +131,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .connect_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
+        let now = Instant::now();
         let mut conn = with_timeout(connect_timeout, tokio::net::TcpStream::connect(self.addr))
             .await
             .context("error connecting")?;
+        self.handler.on_connected(now.elapsed());
 
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
