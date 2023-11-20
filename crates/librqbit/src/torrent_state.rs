@@ -1,12 +1,43 @@
 // The main logic of rqbit is here - connecting to peers, reading and writing messages
 // to them, tracking peer state etc.
-
-// NOTE: deadlock notice:
-// peers and stateLocked are behind 2 different locks.
-// if you lock them in different order, this may deadlock.
 //
-// so don't lock them both at the same time at all, or at the worst lock them in the
-// same order (peers one first, then the global one).
+// ## Architecture
+// There are many tasks cooperating to download the torrent. Tasks communicate both with message passing
+// and shared memory.
+//
+// ### Shared locked state
+// Shared state is access by almost all actors through RwLocks.
+//
+// There's one source of truth (TorrentStateLocked) for which chunks we have, need, and what peers are we waiting them from.
+//
+// Peer states that are important to the outsiders (tasks other than manage_peer) are in a sharded hash-map (DashMap)
+//
+// ### Tasks (actors)
+// Peer adder task:
+// - spawns new peers as they become known. It pulls them from a queue. The queue is filled in by DHT and torrent trackers.
+//   Also gets updated when peers are reconnecting after errors.
+//
+// Each peer has at least 2 tasks:
+// - "manage_peer" - this talks to the peer over network and calls callbacks on PeerHandler. The callbacks are not async,
+//   and are supposed to finish quickly (apart from writing to disk, which is accounted for as "spawn_blocking").
+// - "peer_chunk_requester" - this continuously sends requests for chunks to the peer.
+//   it MAY steal chunks/pieces from other peers, which
+//
+// ## Peer lifecycle
+// State transitions:
+// - queued (initial state) -> connected
+// - connected -> live
+// - ANY STATE -> dead (on error)
+// - ANY STATE -> not_needed (when we don't need to talk to the peer anymore)
+//
+// When the peer dies, it's rescheduled with exponential backoff.
+//
+// > NOTE: deadlock notice:
+// > peers and stateLocked are behind 2 different locks.
+// > if you lock them in different order, this may deadlock.
+// >
+// > so don't lock them both at the same time at all, or at the worst lock them in the
+// > same order (peers one first, then the global one).
 
 use std::{
     collections::HashMap,
@@ -290,6 +321,7 @@ pub struct TorrentState {
     finished_notify: Notify,
 }
 
+// Used during debugging to see if some locks take too long.
 #[cfg(not(feature = "timed_existence"))]
 mod timed_existence {
     use std::ops::{Deref, DerefMut};
