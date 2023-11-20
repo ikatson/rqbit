@@ -478,7 +478,8 @@ impl TorrentState {
 
         let handler = PeerHandler {
             addr,
-            on_bitfield_notify: Arc::new(Default::default()),
+            on_bitfield_notify: Default::default(),
+            have_notify: Default::default(),
             state: state.clone(),
             spawner,
         };
@@ -902,10 +903,13 @@ impl TorrentState {
     }
 }
 
-#[derive(Clone)]
 struct PeerHandler {
     state: Arc<TorrentState>,
-    on_bitfield_notify: Arc<Notify>,
+    // This is used to unpause chunk requester once the bitfield
+    // is received.
+    on_bitfield_notify: Notify,
+    // This is used to unpause after we were choked.
+    have_notify: Notify,
     addr: SocketAddr,
     spawner: BlockingSpawner,
 }
@@ -1069,14 +1073,7 @@ impl PeerHandler {
             WriterRequest::Message(MessageOwned::Interested),
         ])?;
 
-        let notify = match self
-            .state
-            .peers
-            .with_live(handle, |l| l.have_notify.clone())
-        {
-            Some(notify) => notify,
-            None => return Ok(()),
-        };
+        let notify = &self.have_notify;
         #[allow(unused_must_use)]
         {
             timeout(Duration::from_secs(60), notify.notified()).await;
@@ -1224,11 +1221,11 @@ impl PeerHandler {
 
     fn on_i_am_unchoked(&self, handle: PeerHandle) {
         debug!("we are unchoked");
+        self.have_notify.notify_waiters();
         self.state
             .peers
             .with_live_mut(handle, "on_i_am_unchoked", |live| {
                 live.i_am_choked = false;
-                live.have_notify.notify_waiters();
                 live.requests_sem.add_permits(16);
             });
     }
