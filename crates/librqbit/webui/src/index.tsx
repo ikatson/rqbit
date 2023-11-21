@@ -194,8 +194,12 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
     if (props.torrents === null && props.loading) {
         return <Spinner />
     }
-    let torrents = props.torrents === null ? [] : props.torrents;
-    if (torrents.length === 0) {
+    // The app either just started, or there was an error loading torrents.
+    if (props.torrents === null) {
+        return <></>
+    }
+
+    if (props.torrents.length === 0) {
         return (
             <div className="text-center">
                 <p>No existing torrents found. Add them through buttons below.</p>
@@ -204,7 +208,7 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
     }
     return (
         <div>
-            {torrents.map((t: TorrentId) =>
+            {props.torrents.map((t: TorrentId) =>
                 <Torrent key={t.id} torrent={t} />
             )}
         </div>

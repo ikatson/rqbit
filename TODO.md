@@ -4,8 +4,10 @@
 - [x] use some concurrent hashmap e.g. flurry or dashmap
 - [x] tracing instead of logging. Debugging peers: RUST_LOG=[{peer=.*}]=debug
   test-log for tests
-- [ ] reopen read only is bugged:
-  expected to be able to write to disk: error writing to file 0 (""The.Creator.2023.D.AMZN.WEB-DLRip.1.46Gb.MegaPeer.avi"")
+- [x] reopen read only is bugged
+- [ ] initializing
+  - [ ] blocks the whole process. Need to break it up. On slower devices (rpi) just hangs for a good while
+  - [ ] initilizating torrents should be visible right away
 
 someday:
 - [ ] cancellation from the client-side for the lib (i.e. stop the torrent manager)
