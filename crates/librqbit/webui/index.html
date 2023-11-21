@@ -25,7 +25,13 @@
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-    <script src="app.js"></script> <!-- Include your TypeScript compiled JS file here -->
+
+    <!-- Include Preact from CDN -->
+    <script src="https://unpkg.com/preact@10.5.7/dist/preact.umd.js"></script>
+    <script src="https://unpkg.com/preact@10.5.7/jsx-runtime/dist/jsxRuntime.umd.js"></script>
+    <script>var exports = {};</script>
+    <script src="https://requirejs.org/docs/release/2.3.6/minified/require.js"></script>
+    <script type="text/jsx" src="dist/app.jsx"></script> <!-- Include your TypeScript compiled JS file here -->
 </body>
 
 </html>

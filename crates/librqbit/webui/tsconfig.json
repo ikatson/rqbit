@@ -1,9 +1,27 @@
 {
     "compilerOptions": {
         "target": "ES2022",
+        "outDir": "dist",
         "lib": [
             "dom",
             "es2015"
         ],
+        "jsx": "preserve",
+        //        "jsxImportSource": "preact",
+        // "skipLibCheck": true,
+        // "baseUrl": "./",
+        // "paths": {
+        //     "react": [
+        //         "./node_modules/preact/compat/"
+        //     ],
+        //     "react-dom": [
+        //         "./node_modules/preact/compat/"
+        //     ],
+        //     "preact": [
+        //         "./node_modules/preact/src/"
+        //     ]
+        // },
+        "moduleResolution": "Node16",
+        "module": "Node16",
     }
 }
