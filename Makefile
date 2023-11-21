@@ -1,6 +1,17 @@
 OPENSSL_VERSION=3.1.1
 
-all: sign-release sign-debug
+# I'm lazy to type "webui-build" so made it default
+all: webui-build
+
+@PHONY: webui-dev
+webui-dev:
+	cd crates/librqbit/webui && \
+	npm run dev
+
+@PHONY: webui-build
+webui-build:
+	cd crates/librqbit/webui && \
+	npm run build
 
 @PHONY: clean
 clean:

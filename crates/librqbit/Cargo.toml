@@ -13,6 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["sha1-system", "default-tls"]
+webui = []
 timed_existence = []
 sha1-system = ["sha1w/sha1-system"]
 sha1-openssl = ["sha1w/sha1-openssl"]
@@ -31,6 +32,7 @@ dht = {path = "../dht", package="librqbit-dht", version="3.0.0"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 axum = {version = "0.6"}
+tower-http = {version = "0.4", features = ["cors", "trace"]}
 tokio-stream = "0.1"
 serde = {version = "1", features=["derive"]}
 serde_json = "1"

@@ -381,7 +381,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 let mut handles = Vec::new();
 
                 for path in &download_opts.torrent_path {
-                    let handle = match session.add_torrent(path, Some(torrent_opts.clone())).await {
+                    let handle = match session
+                        .add_torrent(path.as_str(), Some(torrent_opts.clone()))
+                        .await
+                    {
                         Ok(v) => match v {
                             AddTorrentResponse::AlreadyManaged(handle) => {
                                 info!(

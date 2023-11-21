@@ -1,4 +1,5 @@
 use anyhow::Context;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -18,7 +19,9 @@ use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::peer_state::PeerStatsFilter;
-use crate::session::{AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session};
+use crate::session::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
+};
 use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::StatsSnapshot;
 
@@ -54,7 +57,8 @@ impl HttpApi {
                     "GET /torrents/{index}/peer_stats": "Per peer stats",
                     // This is kind of not secure as it just reads any local file that it has access to,
                     // or any URL, but whatever, ok for our purposes / threat model.
-                    "POST /torrents": "Add a torrent here. magnet: or http:// or a local file."
+                    "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+                    "GET /web/": "Web UI",
                 },
                 "server": "rqbit",
             }))
@@ -75,10 +79,14 @@ impl HttpApi {
         async fn torrents_post(
             State(state): State<ApiState>,
             Query(params): Query<TorrentAddQueryParams>,
-            url: String,
+            data: Bytes,
         ) -> Result<impl IntoResponse> {
             let opts = params.into_add_torrent_options();
-            state.api_add_torrent(url, Some(opts)).await.map(axum::Json)
+            let add = match String::from_utf8(data.to_vec()) {
+                Ok(s) => AddTorrent::from(s),
+                Err(e) => AddTorrent::from(e.into_bytes()),
+            };
+            state.api_add_torrent(add, Some(opts)).await.map(axum::Json)
         }
 
         async fn torrent_details(
@@ -110,7 +118,8 @@ impl HttpApi {
             state.api_peer_stats(idx, filter).map(axum::Json)
         }
 
-        let app = Router::new()
+        #[allow(unused_mut)]
+        let mut app = Router::new()
             .route("/", get(api_root))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
@@ -118,13 +127,55 @@ impl HttpApi {
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))
             .route("/torrents/:id/stats", get(torrent_stats))
-            .route("/torrents/:id/peer_stats", get(peer_stats))
-            .with_state(state);
+            .route("/torrents/:id/peer_stats", get(peer_stats));
+
+        #[cfg(feature = "webui")]
+        {
+            let webui_router = Router::new()
+                .route(
+                    "/",
+                    get(|| async {
+                        (
+                            [("Content-Type", "text/html")],
+                            include_str!("../webui/dist/index.html"),
+                        )
+                    }),
+                )
+                .route(
+                    "/app.js",
+                    get(|| async {
+                        (
+                            [("Content-Type", "application/javascript")],
+                            include_str!("../webui/dist/app.js"),
+                        )
+                    }),
+                );
+
+            // This is to develop webui by just doing "open index.html && tsc --watch"
+            let cors_layer = std::env::var("CORS_DEBUG")
+                .ok()
+                .map(|_| {
+                    use tower_http::cors::{AllowHeaders, AllowOrigin};
+
+                    warn!("CorsLayer: allowing everything because CORS_DEBUG is set");
+                    tower_http::cors::CorsLayer::default()
+                        .allow_origin(AllowOrigin::predicate(|_, _| true))
+                        .allow_headers(AllowHeaders::any())
+                })
+                .unwrap_or_default();
+
+            app = app.nest("/web/", webui_router).layer(cors_layer);
+        }
+
+        let app = app
+            .layer(tower_http::trace::TraceLayer::new_for_http())
+            .with_state(state)
+            .into_make_service();
 
         info!("starting HTTP server on {}", addr);
         axum::Server::try_bind(&addr)
             .with_context(|| format!("error binding to {addr}"))?
-            .serve(app.into_make_service())
+            .serve(app)
             .await?;
         Ok(())
     }
@@ -177,13 +228,33 @@ pub struct TorrentDetailsResponse {
     pub files: Vec<TorrentDetailsResponseFile>,
 }
 
+struct DurationWithHumanReadable(Duration);
+
+impl Serialize for DurationWithHumanReadable {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct Tmp {
+            duration: Duration,
+            human_readable: String,
+        }
+        Tmp {
+            duration: self.0,
+            human_readable: format!("{:?}", self.0),
+        }
+        .serialize(serializer)
+    }
+}
+
 #[derive(Serialize)]
 struct StatsResponse {
     snapshot: StatsSnapshot,
     average_piece_download_time: Option<Duration>,
     download_speed: Speed,
     all_time_download_speed: Speed,
-    time_remaining: Option<Duration>,
+    time_remaining: Option<DurationWithHumanReadable>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -282,12 +353,12 @@ impl ApiInternal {
 
     pub async fn api_add_torrent(
         &self,
-        url: String,
+        add: AddTorrent<'_>,
         opts: Option<AddTorrentOptions>,
     ) -> Result<ApiAddTorrentResponse> {
         let response = match self
             .session
-            .add_torrent(&url, opts)
+            .add_torrent(add, opts)
             .await
             .context("error adding torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?
@@ -353,7 +424,7 @@ impl ApiInternal {
             snapshot,
             all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
             download_speed: estimator.download_mbps().into(),
-            time_remaining: estimator.time_remaining(),
+            time_remaining: estimator.time_remaining().map(DurationWithHumanReadable),
         })
     }
 
