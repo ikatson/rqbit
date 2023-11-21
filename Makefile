@@ -5,7 +5,12 @@ all: sign-release sign-debug
 @PHONY: webui-dev
 webui-dev:
 	cd crates/librqbit/webui && \
-	tsc --watch
+	npm run dev
+
+@PHONY: webui-build
+webui-build:
+	cd crates/librqbit/webui && \
+	npm run build
 
 @PHONY: clean
 clean:
