@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+import os
+import json
+
+os.chdir('dist')
+
+with open('manifest.json', 'r') as f:
+    manifest = json.load(f)
+
+for replacements in manifest.values():
+    js_file = replacements['file']
+    target_file = replacements['src']
+
+    with open(target_file, 'r') as f:
+        target_content = f.read()
+
+    target_content = target_content.replace("/" + js_file, 'app.js')
+    with open(target_file, 'w') as f:
+        f.write(target_content)
+
+    os.rename(js_file, 'app.js')
+
+os.rmdir('assets')
+os.remove('manifest.json')

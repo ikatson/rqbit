@@ -1,8 +1,22 @@
-import { Fragment, h, render, Component } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react';
+import * as ReactDOM from 'react-dom';
 
 // Define API URL and base path
 const apiUrl = (window.origin === 'null' || window.origin === 'http://localhost:3031') ? 'http://localhost:3030' : '';
+
+interface ErrorType {
+	status: number,
+	statusText: number,
+	body: number,
+};
+
+let defaultContext: {
+	setError: any,
+} = {
+	setError: null,
+};
+
+const AppContext = createContext(defaultContext);
 
 // Interface for the Torrent API response
 interface Torrent {
@@ -119,14 +133,13 @@ async function getTorrentStats(index: number): Promise<TorrentStats> {
 	return makeRequest('GET', `/torrents/${index}/stats`);
 }
 
-function TorrentRow(props) {
-	const { detailsResponse, statsResponse } = this.props;
+function TorrentRow({ detailsResponse, statsResponse }) {
 	const totalBytes = statsResponse.snapshot.total_bytes;
 	const downloadedBytes = statsResponse.snapshot.have_bytes;
 	const downloadPercentage = (downloadedBytes / totalBytes) * 100;
 
 	return (
-		<div class="torrent-row d-flex flex-row p-3 bg-light rounded mb-3">
+		<div className="torrent-row d-flex flex-row p-3 bg-light rounded mb-3">
 			{/* Create and render columns */}
 			<Column label="Name" value={getLargestFileName(detailsResponse)} />
 			<Column label="Size" value={`${formatBytesToGB(totalBytes)} GB`} />
@@ -140,21 +153,21 @@ function TorrentRow(props) {
 
 // Define a Preact component for a column
 const Column = ({ label, value }) => (
-	<div class={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-2`}>
-		<p class="font-weight-bold">{label}</p>
+	<div className={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-2`}>
+		<p className="font-weight-bold">{label}</p>
 		<p>{value}</p>
 	</div>
 );
 
 // Define a Preact component for a column with a progress bar
 const ColumnWithProgressBar = ({ label, percentage }) => (
-	<div class="column-progress me-3 p-2">
-		<p class="font-weight-bold">{label}</p>
-		<div class="progress mb-1">
-			<div class="progress-bar" style={`width: ${percentage}%;`}></div>
+	<div className="column-progress me-3 p-2">
+		<p className="font-weight-bold">{label}</p>
+		<div className="progress mb-1">
+			<div className="progress-bar" style={{ width: `${percentage}%` }}></div>
 		</div>
-		<p class="mb-1">{percentage.toFixed(2)}%</p>
-	</div>
+		<p className="mb-1">{percentage.toFixed(2)}%</p>
+	</div >
 );
 
 const DeferredTorrent = ({ torrent }) => {
@@ -209,160 +222,101 @@ const DeferredTorrent = ({ torrent }) => {
 			updateStatsResponse(stats);
 		});
 		await Promise.all([a, b]);
-		// setTimeout(update, 5000);
+		setTimeout(update, 500);
 	};
 
 	useEffect(() => {
 		let timer = setTimeout(update, 0);
 		return () => clearTimeout(timer);
-	});
+	}, []);
 
 	return <TorrentRow detailsResponse={detailsResponse} statsResponse={statsResponse} />
 }
 
-const Root = () => {
+var globalCtx = null;
+
+const TorrentsList = () => {
 	const [torrents, updateTorrents] = useState([]);
+	globalCtx = useContext(AppContext);
 	const update = async () => {
 		let response = await makeRequest('GET', '/torrents');
 		updateTorrents(response.torrents);
-		// setTimeout(update, 500);
+		setTimeout(update, 500);
 	};
+
 	useEffect(() => {
 		let timer = setTimeout(update, 0);
 		return () => clearTimeout(timer);
-	});
+	}, []);
+
+	let torrentsComponents = torrents.map((t: Torrent) =>
+		<DeferredTorrent key={t.id} torrent={t} />
+	);
 
 	return (
-		<>
-			{torrents.map((t: Torrent) => {
-				<Fragment key={t.id}>
-					<DeferredTorrent torrent={t} />
-				</Fragment>
-			})}
-		</>
+		<div>
+			{torrentsComponents}
+		</div>
 	)
 };
+
+const Root = () => {
+	const [error, setError] = useState(null);
+
+	const Error = ({ error }) => {
+		if (error == null) {
+			return null;
+		}
+
+		let ctx = useContext(AppContext);
+
+		return (<div className="alert alert-danger alert-dismissible fade show" role="alert">
+			<strong>Error ${error.status}:</strong> {error.statusText}<br />
+			{error.body}
+			<button type="button" className="btn-close" data-bs-dismiss="alert" aria-label="Close" onClick={() => ctx.setError(null)}>Close</button>
+		</div>);
+	};
+
+	const FileInput = () => {
+		const inputRef = useRef();
+
+		const inputOnChange = (e) => {
+			let file = e.target.files[0];
+			makeRequest('POST', '/torrents?overwrite=true', file);
+			//			e.target.clear();
+		}
+
+		const onClick = (e) => {
+			inputRef.current.click();
+		}
+
+		return (<div>
+			<input type="file" ref={inputRef} id="file-input" accept=".torrent" onChange={inputOnChange} style={{ display: 'none' }} />
+			<button id="upload-file-button" className="btn btn-secondary" onClick={onClick}>Upload .torrent File</button>
+		</div>);
+	};
+
+	const Buttons = () => {
+		return (
+			<div id="buttons-container" className="mt-3">
+				<button id="add-magnet-button" className="btn btn-primary mr-2" onClick={addTorrentFromMagnet}>Add Torrent from Magnet Link</button>
+				<FileInput />
+			</div>
+		);
+	}
+
+	return <AppContext.Provider value={{ setError: setError }}>
+		<Error error={error} />
+		<TorrentsList />
+		<Buttons />
+	</AppContext.Provider >
+}
 
 // Render function to display all torrents
 async function displayTorrents() {
 	// Get the torrents container
 	const torrentsContainer = document.getElementById('output');
-	render(<Root />, torrentsContainer);
-}
-
-// Function to update HTML for a torrent row
-function updateTorrentRow(torrentRow: HTMLDivElement, detailsResponse: TorrentDetails, statsResponse: TorrentStats) {
-	// Calculate download percentage
-	const totalBytes = statsResponse.snapshot.total_bytes;
-	const downloadedBytes = statsResponse.snapshot.have_bytes;
-	const downloadPercentage = (downloadedBytes / totalBytes) * 100;
-
-	// Display basic information about the torrent
-	const largestFileName = getLargestFileName(detailsResponse);
-	const downloadSpeed = statsResponse.download_speed.human_readable;
-	const eta = getCompletionETA(statsResponse);
-	const peers = `${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`;
-
-	// Update or create columns in the torrent row
-	updateOrCreateColumnContent(torrentRow, 'Name', largestFileName);
-	updateOrCreateColumnContent(torrentRow, 'Size', `${formatBytesToGB(totalBytes)} GB`);
-	updateOrCreateColumnWithProgressBar(torrentRow, 'Progress', downloadPercentage);
-	updateOrCreateColumnContent(torrentRow, 'Download Speed', downloadSpeed);
-	updateOrCreateColumnContent(torrentRow, 'ETA', eta);
-	updateOrCreateColumnContent(torrentRow, 'Peers', peers);
-}
-
-// Function to update or create the content of a column in a torrent row
-function updateOrCreateColumnContent(torrentRow: HTMLDivElement, human_label: string, value: string) {
-	let label = human_label.toLowerCase().replace(" ", "-");
-	let column = torrentRow.querySelector(`.column-${label}`);
-
-	// If the column doesn't exist, create a new one
-	if (!column) {
-		column = document.createElement('div');
-		column.classList.add(`column-${label}`, 'me-3', 'p-2');
-		torrentRow.appendChild(column);
-	}
-
-	// Update the content of the existing or newly created column
-	const contentParagraph = column.querySelector('p:last-child');
-	if (contentParagraph) {
-		contentParagraph.textContent = value;
-	} else {
-		column.innerHTML = `<p class="font-weight-bold">${human_label}</p><p>${value}</p>`;
-	}
-}
-
-
-// Function to update or create the content of a progress bar column in a torrent row
-function updateOrCreateColumnWithProgressBar(torrentRow: HTMLDivElement, label: string, percentage: number) {
-	let column = torrentRow.querySelector('.column-progress');
-
-	// If the column doesn't exist, create a new one
-	if (!column) {
-		column = document.createElement('div');
-		column.classList.add('column-progress', 'me-3', 'p-2');
-		torrentRow.appendChild(column);
-	}
-
-	// Update the value of the progress bar in the existing or newly created column
-	const progressBar = column.querySelector('.progress-bar') as HTMLElement;
-	const progressPercentage = column.querySelector('p:last-child') as HTMLElement;
-
-	if (progressBar && progressPercentage) {
-		progressBar.style.width = `${percentage}%`;
-		progressPercentage.textContent = `${percentage.toFixed(2)}%`;
-	} else {
-		column.innerHTML = `
-            <p class="font-weight-bold">${label}</p>
-            <div class="progress mb-1">
-                <div class="progress-bar" role="progressbar" style="width: ${percentage}%;"></div>
-            </div>
-            <p class="mb-1">${percentage.toFixed(2)}%</p>`;
-	}
-}
-
-
-// Function to render HTML for a torrent row
-function renderTorrentRow(torrentsContainer: HTMLElement, torrentId: number, detailsResponse: TorrentDetails, statsResponse: TorrentStats) {
-	// Check if the torrent row already exists
-	let torrentRow = document.getElementById(`torrent-${torrentId}`) as HTMLDivElement;
-
-	// If the torrent row doesn't exist, create a new one
-	if (!torrentRow) {
-		torrentRow = document.createElement('div');
-		torrentRow.id = `torrent-${torrentId}`;
-		torrentRow.classList.add('torrent-row', 'd-flex', 'flex-row', 'p-3', 'bg-light', 'rounded', 'mb-3');
-		torrentsContainer.appendChild(torrentRow);
-	}
-
-	// Update columns in the torrent row
-	updateTorrentRow(torrentRow, detailsResponse, statsResponse);
-
-	return torrentRow;
-}
-
-
-// Function to create a column div
-function createColumn(label: string, value: string, columnClass: string): HTMLDivElement {
-	const columnDiv = document.createElement('div');
-	columnDiv.classList.add(columnClass, 'me-3', 'p-2');
-	columnDiv.innerHTML = `<p class="font-weight-bold">${label}</p><p>${value}</p>`;
-	return columnDiv;
-}
-
-
-// Function to create a column div with a progress bar
-function createColumnWithProgressBar(label: string, percentage: number): HTMLDivElement {
-	const columnDiv = document.createElement('div');
-	columnDiv.classList.add('column', 'me-3', 'p-2');
-	columnDiv.innerHTML = `
-        <p class="font-weight-bold">${label}</p>
-        <div class="progress mb-1">
-            <div class="progress-bar" role="progressbar" style="width: ${percentage}%;"></div>
-        </div>
-        <p class="mb-1">${percentage.toFixed(2)}%</p>`;
-	return columnDiv;
+	ReactDOM.render(<Root />, torrentsContainer);
 }
 
 // Function to format bytes to GB
@@ -391,29 +345,11 @@ function getCompletionETA(stats: TorrentStats): string {
 
 // Helper function to display API errors in an alert
 function displayApiError(error: ApiError): void {
-	const errorAlert = document.getElementById('error-alert');
-	if (errorAlert) {
-		errorAlert.innerHTML = `
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <strong>Error ${error.status}:</strong> ${error.statusText}<br>
-                ${error.body}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close" onclick="clearErrorAlert()"></button>
-            </div>
-        `;
-	}
-}
-
-// Helper function to clear the error alert
-function clearErrorAlert(): void {
-	const errorAlert = document.getElementById('error-alert');
-	if (errorAlert) {
-		errorAlert.innerHTML = ''; // Clear the content
-	}
+	globalCtx.setError(error);
 }
 
 // List all torrents on page load and set up auto-refresh
 async function init(): Promise<void> {
-	console.log('init');
 	await displayTorrents();
 }
 
@@ -435,9 +371,6 @@ async function handleFileInputChange(): Promise<void> {
 		//		await displayTorrents(); // Refresh the torrent list after adding a new torrent
 	}
 }
-
-// Add event listeners for buttons
-document.getElementById('add-magnet-button')?.addEventListener('click', addTorrentFromMagnet);
 
 // Update the event listener for the file input button
 const fileInputButton = document.getElementById('upload-file-button');
