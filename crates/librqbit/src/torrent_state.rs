@@ -1045,7 +1045,18 @@ impl PeerHandler {
         self.state
             .peers
             .with_live_mut(self.addr, "on_have", |live| {
-                live.bitfield.set(have as usize, true);
+                // If bitfield wasn't allocated yet, let's do it. Some clients send haves before bitfield.
+                if live.bitfield.is_empty() {
+                    live.bitfield =
+                        BF::from_vec(vec![0; self.state.lengths.piece_bitfield_bytes()]);
+                }
+                match live.bitfield.get_mut(have as usize) {
+                    Some(mut v) => *v = true,
+                    None => {
+                        warn!("received have {} out of range", have);
+                        return;
+                    }
+                };
                 debug!("updated bitfield with have={}", have);
             });
     }
