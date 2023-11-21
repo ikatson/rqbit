@@ -136,7 +136,7 @@ impl HttpApi {
                     get(|| async {
                         (
                             [("Content-Type", "text/html")],
-                            include_str!("../webui/index.html"),
+                            include_str!("../webui/dist/index.html"),
                         )
                     }),
                 )
@@ -145,7 +145,7 @@ impl HttpApi {
                     get(|| async {
                         (
                             [("Content-Type", "application/javascript")],
-                            include_str!("../webui/app.js"),
+                            include_str!("../webui/dist/app.js"),
                         )
                     }),
                 );
