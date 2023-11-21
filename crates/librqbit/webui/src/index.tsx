@@ -159,20 +159,26 @@ const Torrent = ({ torrent }) => {
 
     let ctx = useContext(AppContext);
 
+    // Update details once
+    useEffect(() => {
+        if (detailsResponse === defaultDetails) {
+            return loopUntilSuccess(async () => {
+                await ctx.requests.getTorrentDetails(torrent.id).then(updateDetailsResponse);
+            }, 1000);
+        }
+    }, [detailsResponse]);
+
+    // Update stats forever.
     const update = async () => {
-        return await Promise.all([
-            ctx.requests.getTorrentDetails(torrent.id).then((details) => {
-                updateDetailsResponse(details);
-                return details;
-            }),
-            ctx.requests.getTorrentStats(torrent.id).then((stats) => {
-                updateStatsResponse(stats);
-                return stats;
-            })
-        ]).then(([_, stats]) => {
-            return torrentIsDone(stats) ? 10000 : 500;
+        const errorInterval = 10000;
+        const liveInterval = 500;
+        const finishedInterval = 5000;
+
+        return ctx.requests.getTorrentStats(torrent.id).then((stats) => {
+            updateStatsResponse(stats);
+            return torrentIsDone(stats) ? finishedInterval : liveInterval;
         }, (e) => {
-            return 5000;
+            return errorInterval
         })
     };
 
@@ -459,6 +465,29 @@ function customSetInterval(asyncCallback: any, interval: number) {
     }
 
     scheduleNext();
+
+    let clearCustomInterval = () => {
+        clearTimeout(timeoutId);
+    }
+
+    return clearCustomInterval;
+}
+
+function loopUntilSuccess(callback, interval: number) {
+    let timeoutId: number;
+
+    const executeCallback = async () => {
+        let retry = await callback().then(() => { false }, () => { true });
+        if (retry) {
+            scheduleNext();
+        }
+    }
+
+    let scheduleNext = (i?: number) => {
+        timeoutId = setTimeout(executeCallback, i !== undefined ? i : interval);
+    }
+
+    scheduleNext(0);
 
     let clearCustomInterval = () => {
         clearTimeout(timeoutId);
