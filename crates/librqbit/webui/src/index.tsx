@@ -93,7 +93,7 @@ interface TorrentStats {
     };
     time_remaining: {
         human_readable: string;
-        duration: {
+        duration?: {
             secs: number,
         }
     } | null;
