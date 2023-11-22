@@ -5,9 +5,14 @@
 - [x] tracing instead of logging. Debugging peers: RUST_LOG=[{peer=.*}]=debug
   test-log for tests
 - [x] reopen read only is bugged
-- [ ] initializing
+- [ ] initializing/checking
   - [ ] blocks the whole process. Need to break it up. On slower devices (rpi) just hangs for a good while
-  - [ ] initilizating torrents should be visible right away
+  - [ ] checking torrents should be visible right away
+- [ ] server persistence
+  - [ ] it would be nice to restart the server and keep the state
+- [ ] torrent actions
+  - [ ] pause/unpause
+  - [ ] remove including from disk
 
 someday:
 - [ ] cancellation from the client-side for the lib (i.e. stop the torrent manager)
