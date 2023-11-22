@@ -6,6 +6,7 @@ use axum::routing::get;
 use buffers::ByteString;
 use dht::{Dht, DhtStats};
 use http::StatusCode;
+use itertools::Itertools;
 use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use parking_lot::RwLock;
@@ -263,37 +264,45 @@ pub struct ApiAddTorrentResponse {
     pub details: TorrentDetailsResponse,
 }
 
-fn deserialize_only_files<'de, D>(
-    deserializer: D,
-) -> core::result::Result<Option<Vec<usize>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
+pub struct OnlyFiles(Vec<usize>);
 
-    let s = Option::<String>::deserialize(deserializer)?;
-    let s = match s {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-    let list = s
-        .split(',')
-        .try_fold(Vec::<usize>::new(), |mut acc, c| match c.parse() {
-            Ok(i) => {
-                acc.push(i);
-                Ok(acc)
-            }
-            Err(_) => Err(D::Error::custom(format!(
-                "only_files: failed to parse {:?} as integer",
-                c
-            ))),
-        })?;
-    if list.is_empty() {
-        return Err(D::Error::custom(
-            "only_files: should contain at least one file id",
-        ));
+impl Serialize for OnlyFiles {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = self.0.iter().map(|id| id.to_string()).join(",");
+        s.serialize(serializer)
     }
-    Ok(Some(list))
+}
+
+impl<'de> Deserialize<'de> for OnlyFiles {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let s = String::deserialize(deserializer)?;
+        let list = s
+            .split(',')
+            .try_fold(Vec::<usize>::new(), |mut acc, c| match c.parse() {
+                Ok(i) => {
+                    acc.push(i);
+                    Ok(acc)
+                }
+                Err(_) => Err(D::Error::custom(format!(
+                    "only_files: failed to parse {:?} as integer",
+                    c
+                ))),
+            })?;
+        if list.is_empty() {
+            return Err(D::Error::custom(
+                "only_files: should contain at least one file id",
+            ));
+        }
+        Ok(OnlyFiles(list))
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -302,8 +311,7 @@ pub struct TorrentAddQueryParams {
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,
     pub only_files_regex: Option<String>,
-    #[serde(deserialize_with = "deserialize_only_files")]
-    pub only_files: Option<Vec<usize>>,
+    pub only_files: Option<OnlyFiles>,
     pub list_only: Option<bool>,
 }
 
@@ -312,7 +320,7 @@ impl TorrentAddQueryParams {
         AddTorrentOptions {
             overwrite: self.overwrite.unwrap_or(false),
             only_files_regex: self.only_files_regex,
-            only_files: self.only_files,
+            only_files: self.only_files.map(|o| o.0),
             output_folder: self.output_folder,
             sub_folder: self.sub_folder,
             list_only: self.list_only.unwrap_or(false),

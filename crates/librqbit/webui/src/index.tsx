@@ -1,6 +1,6 @@
 import { StrictMode, createContext, memo, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { ProgressBar, Button, Container, Row, Col, Alert } from 'react-bootstrap';
+import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
 
 // Define API URL and base path
 const apiUrl = (window.origin === 'null' || window.origin === 'http://localhost:3031') ? 'http://localhost:3030' : '';
@@ -33,13 +33,21 @@ interface TorrentId {
     info_hash: string;
 }
 
+interface TorrentFile {
+    name: string;
+    length: number;
+    included: boolean;
+}
+
 // Interface for the Torrent Details API response
 interface TorrentDetails {
-    files: {
-        name: string;
-        length: number;
-        included: boolean;
-    }[];
+    info_hash: string,
+    files: Array<TorrentFile>;
+}
+
+interface AddTorrentResponse {
+    id: number | null;
+    details: TorrentDetails;
 }
 
 // Interface for the Torrent Stats API response
@@ -113,6 +121,7 @@ const ColumnWithProgressBar = ({ label, percentage }) => (
 
 const Torrent = ({ torrent }) => {
     const defaultDetails: TorrentDetails = {
+        info_hash: '',
         files: []
     };
     const defaultStats: TorrentStats = {
@@ -187,12 +196,6 @@ const Torrent = ({ torrent }) => {
 
     return <TorrentRow detailsResponse={detailsResponse} statsResponse={statsResponse} />
 }
-
-const Spinner = () => (
-    <div className="spinner-border" role="status">
-        <span className="sr-only">Loading...</span>
-    </div>
-);
 
 const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) => {
     if (props.torrents === null && props.loading) {
@@ -347,41 +350,166 @@ const Error = (props: { error: ErrorType, remove?: () => void }) => {
     </Alert>);
 };
 
-const MagnetInput = () => {
-    let ctx = useContext(AppContext);
+const UploadButton = ({ buttonText, onClick, data, setData, variant }) => {
+    const [loading, setLoading] = useState(false);
+    const [fileList, setFileList] = useState(null);
+    const ctx = useContext(AppContext);
+    const showModal = data !== null;
 
-    async function addTorrentFromMagnet(): Promise<void> {
-        const magnetLink = prompt('Enter magnet link:');
-        if (magnetLink) {
-            await ctx.makeRequest('POST', '/torrents?overwrite=true', magnetLink, true);
-            ctx.refreshTorrents();
+    // Get the torrent file list if there's data.
+    useEffect(() => {
+        if (data === null) {
+            return;
         }
+
+        let t = setTimeout(async () => {
+            try {
+                const response: AddTorrentResponse = await ctx.makeRequest('POST', `/torrents?list_only=true&overwrite=true`, data, true);
+                console.log(response);
+                setFileList(response.details.files);
+            } catch (e) {
+                clear();
+            } finally {
+                setLoading(false);
+            }
+        }, 0);
+        return () => clearTimeout(t);
+    }, [data]);
+
+    const clear = () => {
+        setData(null);
+        setFileList(null);
+        setLoading(false);
     }
 
-    return <Button variant="primary" className="mr-2" onClick={addTorrentFromMagnet}>
-        Add Torrent from Magnet Link
-    </Button>;
+    return (
+        <>
+            <Button variant={variant} onClick={onClick}>
+                {buttonText}
+            </Button>
+
+            <FileSelectionModal
+                show={showModal}
+                onHide={clear}
+                fileList={fileList}
+                data={data}
+                fileListLoading={loading}
+            />
+        </>
+    );
+};
+
+const MagnetInput = () => {
+    let [magnet, setMagnet] = useState(null);
+
+    const onClick = () => {
+        const m = prompt('Enter magnet link or HTTP(s) URL');
+        setMagnet(m === '' ? null : m);
+    };
+
+    return (
+        <UploadButton variant='primary' buttonText="Add Torrent from Magnet Link" onClick={onClick} data={magnet} setData={setMagnet} />
+    );
 };
 
 const FileInput = () => {
     const inputRef = useRef<HTMLInputElement>();
-    let ctx = useContext(AppContext);
+    const [file, setFile] = useState(null);
 
-    const inputOnChange = async (e) => {
-        let file = e.target.files[0];
-        await ctx.makeRequest('POST', '/torrents?overwrite=true', file, true);
-        ctx.refreshTorrents();
+    const onFileChange = async () => {
+        const file = inputRef.current.files[0];
+        setFile(file);
     };
 
     const onClick = () => {
         inputRef.current.click();
-    };
+    }
 
     return (
         <>
-            <input type="file" ref={inputRef} id="file-input" accept=".torrent" onChange={inputOnChange} className='d-none' />
-            <Button id="upload-file-button" variant="secondary" onClick={onClick}>Upload .torrent File</Button>
+            <input type="file" ref={inputRef} accept=".torrent" onChange={onFileChange} className='d-none' />
+            <UploadButton variant='secondary' buttonText="Upload .torrent File" onClick={onClick} data={file} setData={setFile} />
         </>
+    );
+};
+
+const FileSelectionModal = (props: { show: boolean, onHide, fileList: Array<TorrentFile> | null, fileListLoading: boolean, data }) => {
+    let { show, onHide, fileList, fileListLoading, data } = props;
+
+
+    const [selectedFiles, setSelectedFiles] = useState([]);
+    const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState(null);
+
+    useEffect(() => {
+        setSelectedFiles((fileList || []).map((_, id) => id));
+    }, [fileList]);
+
+    fileList = fileList || [];
+
+    let ctx = useContext(AppContext);
+
+    const handleToggleFile = (fileIndex: number) => {
+        if (selectedFiles.includes(fileIndex)) {
+            setSelectedFiles(selectedFiles.filter((index) => index !== fileIndex));
+        } else {
+            setSelectedFiles([...selectedFiles, fileIndex]);
+        }
+    };
+
+    const handleUpload = async () => {
+        const getSelectedFilesQueryParam = () => {
+            let allPresent = true;
+            fileList.map((_, id) => {
+                allPresent = allPresent && selectedFiles.includes(id);
+            });
+            return allPresent ? '' : '&only_files=' + selectedFiles.join(',');
+        };
+
+        let url = `/torrents?overwrite=true${getSelectedFilesQueryParam()}`;
+
+        ctx.makeRequest('POST', url, data, false).then(() => { onHide() }, (e) => {
+            setUploadError(e);
+        })
+    };
+
+    return (
+        <Modal show={show} onHide={onHide}>
+            <Modal.Header closeButton>
+                <Modal.Title>Select Files</Modal.Title>
+            </Modal.Header>
+            <Modal.Body>
+                {fileListLoading ? (
+                    <Spinner animation="border" role="status">
+                        <span className="sr-only">Loading...</span>
+                    </Spinner>
+                ) : (
+                    <Container>
+                        {fileList.map((file, index) => (
+                            <Row key={index}>
+                                <Col>
+                                    <Form.Check
+                                        type="checkbox"
+                                        label={`${file.name} ${formatBytesToGB(file.length)}`}
+                                        checked={selectedFiles.includes(index)}
+                                        onChange={() => handleToggleFile(index)}
+                                    />
+                                </Col>
+                            </Row>
+                        ))}
+                        <Error error={uploadError} />
+                    </Container>
+                )}
+            </Modal.Body>
+            <Modal.Footer>
+                <Button variant="secondary" onClick={onHide}>
+                    Cancel
+                </Button>
+                <Button variant="primary" onClick={handleUpload} disabled={fileListLoading || uploading || selectedFiles.length == 0}>
+                    OK
+                </Button>
+            </Modal.Footer>
+        </Modal>
     );
 };
 

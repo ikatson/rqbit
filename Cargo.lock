@@ -849,6 +849,7 @@ dependencies = [
  "futures",
  "hex 0.4.3",
  "http",
+ "itertools",
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
