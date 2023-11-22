@@ -1,5 +1,6 @@
 import { StrictMode, createContext, memo, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
+import { ProgressBar, Button, Container, Row, Col, Alert } from 'react-bootstrap';
 
 // Define API URL and base path
 const apiUrl = (window.origin === 'null' || window.origin === 'http://localhost:3031') ? 'http://localhost:3030' : '';
@@ -97,20 +98,17 @@ function TorrentRow({ detailsResponse, statsResponse }) {
 }
 
 const Column = ({ label, value }) => (
-    <div className={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-2`}>
+    <Col className={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-2`}>
         <p className="font-weight-bold">{label}</p>
         <p>{value}</p>
-    </div>
+    </Col>
 );
 
 const ColumnWithProgressBar = ({ label, percentage }) => (
-    <div className="column-progress me-3 p-2">
+    <Col className="column-progress me-3 p-2">
         <p className="font-weight-bold">{label}</p>
-        <div className="progress mb-1">
-            <div className="progress-bar" style={{ width: `${percentage}%` }}></div>
-        </div>
-        <p className="mb-1">{percentage.toFixed(2)}%</p>
-    </div >
+        <ProgressBar now={percentage} label={`${percentage.toFixed(2)}%`} />
+    </Col>
 );
 
 const Torrent = ({ torrent }) => {
@@ -194,7 +192,7 @@ const Spinner = () => (
     <div className="spinner-border" role="status">
         <span className="sr-only">Loading...</span>
     </div>
-)
+);
 
 const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) => {
     if (props.torrents === null && props.loading) {
@@ -256,7 +254,7 @@ const Root = () => {
         try {
             response = await fetch(url, options);
         } catch (e) {
-            error.text = 'unknown error: ' + e.toString();
+            error.text = 'network error';
             maybeShowError(error);
             return Promise.reject(error);
         }
@@ -331,7 +329,7 @@ const Error = (props: { error: ErrorType, remove?: () => void }) => {
         return null;
     }
 
-    return (<div className="alert alert-danger fade show" role="alert">
+    return (<Alert variant='danger'>
         {error.method && (
             <strong>Error calling {error.method} {error.path}: </strong>
         )}
@@ -346,13 +344,12 @@ const Error = (props: { error: ErrorType, remove?: () => void }) => {
                 </button>
             )
         }
-    </div >);
+    </Alert>);
 };
 
 const MagnetInput = () => {
     let ctx = useContext(AppContext);
 
-    // Function to add a torrent from a magnet link
     async function addTorrentFromMagnet(): Promise<void> {
         const magnetLink = prompt('Enter magnet link:');
         if (magnetLink) {
@@ -361,28 +358,31 @@ const MagnetInput = () => {
         }
     }
 
-    return <button id="add-magnet-button" className="btn btn-primary mr-2" onClick={addTorrentFromMagnet}>Add Torrent from Magnet Link</button>
+    return <Button variant="primary" className="mr-2" onClick={addTorrentFromMagnet}>
+        Add Torrent from Magnet Link
+    </Button>;
 };
 
 const FileInput = () => {
     const inputRef = useRef<HTMLInputElement>();
-
     let ctx = useContext(AppContext);
 
     const inputOnChange = async (e) => {
         let file = e.target.files[0];
         await ctx.makeRequest('POST', '/torrents?overwrite=true', file, true);
         ctx.refreshTorrents();
-    }
+    };
 
     const onClick = () => {
         inputRef.current.click();
-    }
+    };
 
-    return (<>
-        <input type="file" ref={inputRef} id="file-input" accept=".torrent" onChange={inputOnChange} className='d-none' />
-        <button id="upload-file-button" className="btn btn-secondary" onClick={onClick}>Upload .torrent File</button>
-    </>);
+    return (
+        <>
+            <input type="file" ref={inputRef} id="file-input" accept=".torrent" onChange={inputOnChange} className='d-none' />
+            <Button id="upload-file-button" variant="secondary" onClick={onClick}>Upload .torrent File</Button>
+        </>
+    );
 };
 
 const Buttons = () => {
@@ -396,12 +396,12 @@ const Buttons = () => {
 
 const RootContent = (props: { closeableError: ErrorType, otherError: ErrorType, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
     let ctx = useContext(AppContext);
-    return <>
+    return <Container>
         <Error error={props.closeableError} remove={() => ctx.setCloseableError(null)} />
         <Error error={props.otherError} />
         <TorrentsList torrents={props.torrents} loading={props.torrentsLoading} />
         <Buttons />
-    </>
+    </Container>
 };
 
 function torrentIsDone(stats: TorrentStats): boolean {
