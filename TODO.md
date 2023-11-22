@@ -13,6 +13,9 @@
 - [ ] torrent actions
   - [ ] pause/unpause
   - [ ] remove including from disk
+- [ ] DHT
+  - [ ] for torrents with a few seeds might be cool to re-query DHT once in a while
+  - [ ] it's sending many requests now way too fast, locks up Mac OS UI annoyingly
 
 someday:
 - [ ] cancellation from the client-side for the lib (i.e. stop the torrent manager)
