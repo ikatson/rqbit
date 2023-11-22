@@ -394,14 +394,6 @@ const Buttons = () => {
     );
 };
 
-const LastErrors = (props: { lastErrors: Array<ErrorType> }) => {
-    return <div>
-        {props.lastErrors.map((e: ErrorType) => (
-            <div className="alert alert-primary" role="alert"></div>
-        ))}
-    </div>
-}
-
 const RootContent = (props: { closeableError: ErrorType, otherError: ErrorType, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
     let ctx = useContext(AppContext);
     return <>
