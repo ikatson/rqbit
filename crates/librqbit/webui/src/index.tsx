@@ -2,10 +2,13 @@ import { StrictMode, createContext, memo, useContext, useEffect, useRef, useStat
 import ReactDOM from 'react-dom/client';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
 
+import 'bootstrap/dist/css/bootstrap.min.css';
+import './styles.scss';
+
 // Define API URL and base path
 const apiUrl = (window.origin === 'null' || window.origin === 'http://localhost:3031') ? 'http://localhost:3030' : '';
 
-interface ErrorType {
+interface ErrorDetails {
     id?: number,
     method?: string,
     path?: string,
@@ -14,10 +17,15 @@ interface ErrorType {
     text: string,
 };
 
+interface Error {
+    text: string,
+    details?: ErrorDetails,
+}
+
 interface ContextType {
-    setCloseableError: (error: ErrorType) => void,
-    setOtherError: (error: ErrorType) => void,
-    makeRequest: (method: string, path: string, data: any, showError: boolean) => Promise<any>,
+    setCloseableError: (error: Error) => void,
+    setOtherError: (error: Error) => void,
+    makeRequest: (method: string, path: string, data: any) => Promise<any>,
     requests: {
         getTorrentDetails: any,
         getTorrentStats: any,
@@ -94,9 +102,9 @@ function TorrentRow({ detailsResponse, statsResponse }) {
     const downloadPercentage = (downloadedBytes / totalBytes) * 100;
 
     return (
-        <div className="torrent-row d-flex flex-row p-3 bg-light rounded mb-3">
+        <div className="torrent-row d-flex flex-row p-1 bg-light rounded mb-1 text-start">
             <Column label="Name" value={getLargestFileName(detailsResponse)} />
-            <Column label="Size" value={`${formatBytesToGB(totalBytes)} GB`} />
+            <Column label="Size" value={`${formatBytes(totalBytes)}`} />
             <ColumnWithProgressBar label="Progress" percentage={downloadPercentage} />
             <Column label="Download Speed" value={statsResponse.download_speed.human_readable} />
             <Column label="ETA" value={getCompletionETA(statsResponse)} />
@@ -106,15 +114,15 @@ function TorrentRow({ detailsResponse, statsResponse }) {
 }
 
 const Column = ({ label, value }) => (
-    <Col className={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-2`}>
-        <p className="font-weight-bold">{label}</p>
+    <Col className={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-1`}>
+        <p className="fw-bold">{label}</p>
         <p>{value}</p>
     </Col>
 );
 
 const ColumnWithProgressBar = ({ label, percentage }) => (
-    <Col className="column-progress me-3 p-2">
-        <p className="font-weight-bold">{label}</p>
+    <Col className="column-progress me-3 p-1">
+        <p className="fw-bold">{label}</p>
         <ProgressBar now={percentage} label={`${percentage.toFixed(2)}%`} />
     </Col>
 );
@@ -223,13 +231,13 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
 };
 
 const Root = () => {
-    const [closeableError, setCloseableError] = useState<ErrorType>(null);
-    const [otherError, setOtherError] = useState<ErrorType>(null);
+    const [closeableError, setCloseableError] = useState<Error>(null);
+    const [otherError, setOtherError] = useState<Error>(null);
 
     const [torrents, setTorrents] = useState<Array<TorrentId>>(null);
     const [torrentsLoading, setTorrentsLoading] = useState(false);
 
-    const makeRequest = async (method: string, path: string, data: any, showError: boolean): Promise<any> => {
+    const makeRequest = async (method: string, path: string, data: any): Promise<any> => {
         console.log(method, path);
         const url = apiUrl + path;
         const options: RequestInit = {
@@ -240,13 +248,7 @@ const Root = () => {
             body: data,
         };
 
-        const maybeShowError = (e: ErrorType) => {
-            if (showError) {
-                setCloseableError(e);
-            }
-        }
-
-        let error: ErrorType = {
+        let error: ErrorDetails = {
             method: method,
             path: path,
             text: ''
@@ -258,7 +260,6 @@ const Root = () => {
             response = await fetch(url, options);
         } catch (e) {
             error.text = 'network error';
-            maybeShowError(error);
             return Promise.reject(error);
         }
 
@@ -273,7 +274,6 @@ const Root = () => {
             } catch (e) {
                 error.text = errorBody;
             }
-            maybeShowError(error);
             return Promise.reject(error);
         }
         const result = await response.json();
@@ -282,16 +282,16 @@ const Root = () => {
 
     const requests = {
         getTorrentDetails: (index: number): Promise<TorrentDetails> => {
-            return makeRequest('GET', `/torrents/${index}`, null, false);
+            return makeRequest('GET', `/torrents/${index}`, null);
         },
         getTorrentStats: (index: number): Promise<TorrentStats> => {
-            return makeRequest('GET', `/torrents/${index}/stats`, null, false);
+            return makeRequest('GET', `/torrents/${index}/stats`, null);
         }
     };
 
     const refreshTorrents = async () => {
         setTorrentsLoading(true);
-        let torrents: { torrents: Array<TorrentId> } = await makeRequest('GET', '/torrents', null, false).finally(() => setTorrentsLoading(false));
+        let torrents: { torrents: Array<TorrentId> } = await makeRequest('GET', '/torrents', null).finally(() => setTorrentsLoading(false));
         setTorrents(torrents.torrents);
         return torrents;
     };
@@ -304,7 +304,7 @@ const Root = () => {
                 setOtherError(null);
                 return interval;
             } catch (e) {
-                setOtherError(e);
+                setOtherError({ text: 'Error refreshing torrents', details: e });
                 console.error(e);
                 return 5000;
             }
@@ -321,36 +321,48 @@ const Root = () => {
     }
 
     return <AppContext.Provider value={context}>
-        <RootContent closeableError={closeableError} otherError={otherError} torrents={torrents} torrentsLoading={torrentsLoading} />
+        <Container className='text-center'>
+            <h1 className="mt-3 mb-4">rqbit web 0.0.1-alpha</h1>
+            <RootContent
+                closeableError={closeableError}
+                otherError={otherError}
+                torrents={torrents}
+                torrentsLoading={torrentsLoading} />
+        </Container>
     </AppContext.Provider >
 }
 
-const Error = (props: { error: ErrorType, remove?: () => void }) => {
+const ErrorDetails = (props: { details: ErrorDetails }) => {
+    let { details } = props;
+    if (!details) {
+        return null;
+    }
+    return <>
+        {
+            details.status && (
+                <strong>{details.status} {details.statusText}: </strong>
+            )
+        }
+        {details.text}
+    </>
+
+}
+
+const ErrorComponent = (props: { error: Error, remove?: () => void }) => {
     let { error, remove } = props;
 
     if (error == null) {
         return null;
     }
 
-    return (<Alert variant='danger'>
-        {error.method && (
-            <strong>Error calling {error.method} {error.path}: </strong>
-        )}
-        {error.status && (
-            <strong>{error.status} {error.statusText}: </strong>
-        )}
-        {error.text}
-        {
-            remove && (
-                <button type="button" className="close" data-dismiss="alert" aria-label="Close" onClick={remove}>
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            )
-        }
+    return (<Alert variant='danger' onClose={remove} dismissible={!!remove}>
+        <Alert.Heading>{error.text}</Alert.Heading>
+
+        <ErrorDetails details={error.details} />
     </Alert>);
 };
 
-const UploadButton = ({ buttonText, onClick, data, setData, variant }) => {
+const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
     const [loading, setLoading] = useState(false);
     const [fileList, setFileList] = useState(null);
     const ctx = useContext(AppContext);
@@ -363,11 +375,13 @@ const UploadButton = ({ buttonText, onClick, data, setData, variant }) => {
         }
 
         let t = setTimeout(async () => {
+            setLoading(true);
             try {
-                const response: AddTorrentResponse = await ctx.makeRequest('POST', `/torrents?list_only=true&overwrite=true`, data, true);
+                const response: AddTorrentResponse = await ctx.makeRequest('POST', `/torrents?list_only=true&overwrite=true`, data);
                 console.log(response);
                 setFileList(response.details.files);
             } catch (e) {
+                ctx.setCloseableError({ text: 'Error listing torrent', details: e });
                 clear();
             } finally {
                 setLoading(false);
@@ -377,14 +391,14 @@ const UploadButton = ({ buttonText, onClick, data, setData, variant }) => {
     }, [data]);
 
     const clear = () => {
-        setData(null);
+        resetData();
         setFileList(null);
         setLoading(false);
     }
 
     return (
         <>
-            <Button variant={variant} onClick={onClick}>
+            <Button variant={variant} onClick={onClick} className='m-1'>
                 {buttonText}
             </Button>
 
@@ -408,7 +422,7 @@ const MagnetInput = () => {
     };
 
     return (
-        <UploadButton variant='primary' buttonText="Add Torrent from Magnet Link" onClick={onClick} data={magnet} setData={setMagnet} />
+        <UploadButton variant='primary' buttonText="Add Torrent from Magnet Link" onClick={onClick} data={magnet} resetData={() => setMagnet(null)} />
     );
 };
 
@@ -421,6 +435,11 @@ const FileInput = () => {
         setFile(file);
     };
 
+    const reset = () => {
+        inputRef.current.value = '';
+        setFile(null);
+    }
+
     const onClick = () => {
         inputRef.current.click();
     }
@@ -428,7 +447,7 @@ const FileInput = () => {
     return (
         <>
             <input type="file" ref={inputRef} accept=".torrent" onChange={onFileChange} className='d-none' />
-            <UploadButton variant='secondary' buttonText="Upload .torrent File" onClick={onClick} data={file} setData={setFile} />
+            <UploadButton variant='secondary' buttonText="Upload .torrent File" onClick={onClick} data={file} resetData={reset} />
         </>
     );
 };
@@ -436,10 +455,9 @@ const FileInput = () => {
 const FileSelectionModal = (props: { show: boolean, onHide, fileList: Array<TorrentFile> | null, fileListLoading: boolean, data }) => {
     let { show, onHide, fileList, fileListLoading, data } = props;
 
-
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [uploading, setUploading] = useState(false);
-    const [uploadError, setUploadError] = useState(null);
+    const [uploadError, setUploadError] = useState<Error>(null);
 
     useEffect(() => {
         setSelectedFiles((fileList || []).map((_, id) => id));
@@ -448,6 +466,13 @@ const FileSelectionModal = (props: { show: boolean, onHide, fileList: Array<Torr
     fileList = fileList || [];
 
     let ctx = useContext(AppContext);
+
+    const clear = () => {
+        onHide();
+        setSelectedFiles([]);
+        setUploadError(null);
+        setUploading(false);
+    }
 
     const handleToggleFile = (fileIndex: number) => {
         if (selectedFiles.includes(fileIndex)) {
@@ -468,48 +493,49 @@ const FileSelectionModal = (props: { show: boolean, onHide, fileList: Array<Torr
 
         let url = `/torrents?overwrite=true${getSelectedFilesQueryParam()}`;
 
-        ctx.makeRequest('POST', url, data, false).then(() => { onHide() }, (e) => {
-            setUploadError(e);
-        })
+        setUploading(true);
+        ctx.makeRequest('POST', url, data).then(() => { onHide() }, (e) => {
+            setUploadError({ text: 'Error starting torrent', details: e });
+        }).finally(() => setUploading(false));
     };
 
     return (
-        <Modal show={show} onHide={onHide}>
+        <Modal show={show} onHide={clear}>
             <Modal.Header closeButton>
                 <Modal.Title>Select Files</Modal.Title>
             </Modal.Header>
             <Modal.Body>
                 {fileListLoading ? (
-                    <Spinner animation="border" role="status">
-                        <span className="sr-only">Loading...</span>
-                    </Spinner>
+                    <Spinner />
                 ) : (
-                    <Container>
+                    <Container className='fs-6'>
                         {fileList.map((file, index) => (
                             <Row key={index}>
                                 <Col>
                                     <Form.Check
                                         type="checkbox"
-                                        label={`${file.name} ${formatBytesToGB(file.length)}`}
+                                        label={`${file.name} ${formatBytes(file.length)}`}
                                         checked={selectedFiles.includes(index)}
                                         onChange={() => handleToggleFile(index)}
+                                        className='fs-6'
                                     />
                                 </Col>
                             </Row>
                         ))}
-                        <Error error={uploadError} />
+                        <ErrorComponent error={uploadError} />
                     </Container>
                 )}
             </Modal.Body>
             <Modal.Footer>
-                <Button variant="secondary" onClick={onHide}>
+                {uploading && <Spinner />}
+                <Button variant="secondary" onClick={clear}>
                     Cancel
                 </Button>
                 <Button variant="primary" onClick={handleUpload} disabled={fileListLoading || uploading || selectedFiles.length == 0}>
                     OK
                 </Button>
             </Modal.Footer>
-        </Modal>
+        </Modal >
     );
 };
 
@@ -522,11 +548,11 @@ const Buttons = () => {
     );
 };
 
-const RootContent = (props: { closeableError: ErrorType, otherError: ErrorType, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
+const RootContent = (props: { closeableError: ErrorDetails, otherError: ErrorDetails, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
     let ctx = useContext(AppContext);
     return <Container>
-        <Error error={props.closeableError} remove={() => ctx.setCloseableError(null)} />
-        <Error error={props.otherError} />
+        <ErrorComponent error={props.closeableError} remove={() => ctx.setCloseableError(null)} />
+        <ErrorComponent error={props.otherError} />
         <TorrentsList torrents={props.torrents} loading={props.torrentsLoading} />
         <Buttons />
     </Container>
@@ -539,15 +565,20 @@ function torrentIsDone(stats: TorrentStats): boolean {
 // Render function to display all torrents
 async function displayTorrents() {
     // Get the torrents container
-    const torrentsContainer = document.getElementById('output');
-    const RootMemo = memo(Root, (prev, next) => true);
-    ReactDOM.createRoot(torrentsContainer).render(<StrictMode><RootMemo /></StrictMode>);
+    const torrentsContainer = document.getElementById('app');
+    ReactDOM.createRoot(torrentsContainer).render(<StrictMode><Root /></StrictMode>);
 }
 
 // Function to format bytes to GB
-function formatBytesToGB(bytes: number): string {
-    const GB = bytes / (1024 * 1024 * 1024);
-    return GB.toFixed(2);
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 // Function to get the name of the largest file in a torrent
