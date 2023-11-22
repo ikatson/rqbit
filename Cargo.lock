@@ -836,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "anyhow",
  "clap",
