@@ -1,6 +1,6 @@
-![crates.io](https://img.shields.io/crates/v/rqbit.svg)(https://crates.io/crates/rqbit)
-![crates.io](https://img.shields.io/crates/v/librqbit.svg)(https://crates.io/crates/librqbit)
-![docs.rs](https://img.shields.io/docsrs/librqbit.svg)(https://docs.rs/crate/librqbit/latest)
+[![crates.io](https://img.shields.io/crates/v/rqbit.svg)](https://crates.io/crates/rqbit)
+[![crates.io](https://img.shields.io/crates/v/librqbit.svg)](https://crates.io/crates/librqbit)
+[![docs.rs](https://img.shields.io/docsrs/librqbit.svg)](https://docs.rs/crate/librqbit/latest)
 
 # rqbit - bittorrent client in Rust
 
