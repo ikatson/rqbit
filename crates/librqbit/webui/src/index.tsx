@@ -2,8 +2,8 @@ import { StrictMode, createContext, memo, useContext, useEffect, useRef, useStat
 import ReactDOM from 'react-dom/client';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
 
-import 'bootstrap/dist/css/bootstrap.min.css';
-import './styles.scss';
+// import 'bootstrap/dist/css/bootstrap.min.css';
+// import './styles.scss';
 
 // Define API URL and base path
 const apiUrl = (window.origin === 'null' || window.origin === 'http://localhost:3031') ? 'http://localhost:3030' : '';
