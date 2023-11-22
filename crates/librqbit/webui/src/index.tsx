@@ -1,6 +1,6 @@
 import { StrictMode, createContext, memo, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
+import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
 
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './styles.scss';
@@ -96,35 +96,35 @@ interface TorrentStats {
     } | null;
 }
 
-function TorrentRow({ detailsResponse, statsResponse }) {
+const TorrentRow: React.FC<{
+    detailsResponse: TorrentDetails, statsResponse: TorrentStats
+}> = ({ detailsResponse, statsResponse }) => {
     const totalBytes = statsResponse.snapshot.total_bytes;
     const downloadedBytes = statsResponse.snapshot.have_bytes;
+    const finished = totalBytes == downloadedBytes;
     const downloadPercentage = (downloadedBytes / totalBytes) * 100;
 
     return (
-        <div className="torrent-row d-flex flex-row p-1 bg-light rounded mb-1 text-start">
-            <Column label="Name" value={getLargestFileName(detailsResponse)} />
-            <Column label="Size" value={`${formatBytes(totalBytes)}`} />
-            <ColumnWithProgressBar label="Progress" percentage={downloadPercentage} />
-            <Column label="Download Speed" value={statsResponse.download_speed.human_readable} />
-            <Column label="ETA" value={getCompletionETA(statsResponse)} />
-            <Column label="Peers" value={`${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`} />
-        </div>
+        <tr className="torrent-row">
+            <Column label="Name">{getLargestFileName(detailsResponse)}</Column>
+            <Column label="Size">{`${formatBytes(totalBytes)}`}</Column>
+            <Column label="Progress">
+                <ProgressBar now={downloadPercentage} label={`${downloadPercentage.toFixed(2)}%`} animated={!finished} style={{ 'minWidth': '200px' }} />
+            </Column>
+            <Column label="Download Speed">{statsResponse.download_speed.human_readable}</Column>
+            <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
+            <Column label="Peers">{`${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`}</Column>
+        </tr >
     );
 }
 
-const Column = ({ label, value }) => (
-    <Col className={`column-${label.toLowerCase().replace(" ", "-")} me-3 p-1`}>
-        <p className="fw-bold">{label}</p>
-        <p>{value}</p>
-    </Col>
-);
-
-const ColumnWithProgressBar = ({ label, percentage }) => (
-    <Col className="column-progress me-3 p-1">
-        <p className="fw-bold">{label}</p>
-        <ProgressBar now={percentage} label={`${percentage.toFixed(2)}%`} />
-    </Col>
+const Column: React.FC<{
+    label: string,
+    children?: any
+}> = ({ children }) => (
+    <td className='me-3 p-3'>
+        {children}
+    </td>
 );
 
 const Torrent = ({ torrent }) => {
@@ -222,11 +222,24 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
         )
     }
     return (
-        <div>
-            {props.torrents.map((t: TorrentId) =>
-                <Torrent key={t.id} torrent={t} />
-            )}
-        </div>
+        <Table className='text-center table-striped table-hover table-borderless'>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Progress</th>
+                    <th>Download Speed</th>
+                    <th>ETA</th>
+                    <th>Peers</th>
+                </tr>
+            </thead>
+            <tbody>
+                {props.torrents.map((t: TorrentId) =>
+                    <Torrent key={t.id} torrent={t} />
+                )}
+            </tbody>
+
+        </Table>
     )
 };
 
@@ -500,7 +513,7 @@ const FileSelectionModal = (props: { show: boolean, onHide, fileList: Array<Torr
     };
 
     return (
-        <Modal show={show} onHide={clear}>
+        <Modal show={show} onHide={clear} size='lg'>
             <Modal.Header closeButton>
                 <Modal.Title>Select Files</Modal.Title>
             </Modal.Header>
@@ -508,22 +521,25 @@ const FileSelectionModal = (props: { show: boolean, onHide, fileList: Array<Torr
                 {fileListLoading ? (
                     <Spinner />
                 ) : (
-                    <Container className='fs-6'>
-                        {fileList.map((file, index) => (
-                            <Row key={index}>
-                                <Col>
+                    <>
+                        <Form>
+
+                            {fileList.map((file, index) => (
+                                <Form.Group key={index} controlId={`check-${index}`}>
                                     <Form.Check
+
                                         type="checkbox"
-                                        label={`${file.name} ${formatBytes(file.length)}`}
+                                        label={`${file.name}  (${formatBytes(file.length)})`}
                                         checked={selectedFiles.includes(index)}
-                                        onChange={() => handleToggleFile(index)}
-                                        className='fs-6'
-                                    />
-                                </Col>
-                            </Row>
-                        ))}
+                                        onChange={() => handleToggleFile(index)}>
+                                    </Form.Check>
+                                </Form.Group>
+                            ))}
+
+                        </Form>
                         <ErrorComponent error={uploadError} />
-                    </Container>
+                    </>
+
                 )}
             </Modal.Body>
             <Modal.Footer>
