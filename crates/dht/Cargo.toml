@@ -1,7 +1,7 @@
 [package]
 name = "librqbit-dht"
 version = "3.1.0"
-edition = "2018"
+edition = "2021"
 description = "DHT implementation, used in rqbit torrent client."
 license = "Apache-2.0"
 documentation = "https://docs.rs/librqbit-dht"

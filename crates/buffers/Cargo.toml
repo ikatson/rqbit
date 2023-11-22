@@ -1,7 +1,7 @@
 [package]
 name = "librqbit-buffers"
 version = "2.2.1"
-edition = "2018"
+edition = "2021"
 description = "Utils to work with &[u8] and Vec<u8> in librqbit source code."
 license = "Apache-2.0"
 documentation = "https://docs.rs/librqbit-buffers"

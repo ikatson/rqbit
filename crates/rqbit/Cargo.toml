@@ -2,7 +2,7 @@
 name = "rqbit"
 version = "3.3.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
-edition = "2018"
+edition = "2021"
 description = "A bittorrent command line client and server."
 license = "Apache-2.0"
 documentation = "https://github.com/ikatson/rqbit"
