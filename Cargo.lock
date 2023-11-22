@@ -818,6 +818,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
+name = "leaky-bucket"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eb491abd89e9794d50f93c8db610a29509123e3fbbc9c8c67a528e9391cd853"
+dependencies = [
+ "parking_lot",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -836,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -918,13 +929,14 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "directories",
  "futures",
  "hex 0.4.3",
  "indexmap",
+ "leaky-bucket",
  "librqbit-bencode",
  "librqbit-clone-to-owned",
  "librqbit-core",
@@ -1491,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "clap",

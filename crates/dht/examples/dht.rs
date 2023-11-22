@@ -1,13 +1,19 @@
-use std::{str::FromStr, time::Duration};
+use std::time::Duration;
 
 use anyhow::Context;
-use librqbit_dht::{Dht, Id20};
+use librqbit_core::magnet::Magnet;
+use librqbit_dht::Dht;
 use tokio_stream::StreamExt;
 use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let info_hash = Id20::from_str("64a980abe6e448226bb930ba061592e44c3781a1").unwrap();
+    let magnet = std::env::args()
+        .nth(1)
+        .expect("first argument should be a magnet link");
+    let magnet = Magnet::parse(&magnet).unwrap();
+    let info_hash = magnet.info_hash;
+
     tracing_subscriber::fmt::init();
 
     let dht = Dht::new().await.context("error initializing DHT")?;

@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-dht"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2018"
 description = "DHT implementation, used in rqbit torrent client."
 license = "Apache-2.0"
@@ -20,6 +20,7 @@ sha1-rust = ["bencode/sha1-rust", "librqbit-core/sha1-rust"]
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "net", "sync"]}
 tokio-stream = {version = "0.1", features = ["sync"]}
 serde = {version = "1", features = ["derive"]}
+leaky-bucket = "1"
 serde_json = "1"
 hex = "0.4"
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
