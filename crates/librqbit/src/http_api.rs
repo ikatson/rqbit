@@ -263,12 +263,47 @@ pub struct ApiAddTorrentResponse {
     pub details: TorrentDetailsResponse,
 }
 
+fn deserialize_only_files<'de, D>(
+    deserializer: D,
+) -> core::result::Result<Option<Vec<usize>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    let s = Option::<String>::deserialize(deserializer)?;
+    let s = match s {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    let list = s
+        .split(',')
+        .try_fold(Vec::<usize>::new(), |mut acc, c| match c.parse() {
+            Ok(i) => {
+                acc.push(i);
+                Ok(acc)
+            }
+            Err(_) => Err(D::Error::custom(format!(
+                "only_files: failed to parse {:?} as integer",
+                c
+            ))),
+        })?;
+    if list.is_empty() {
+        return Err(D::Error::custom(
+            "only_files: should contain at least one file id",
+        ));
+    }
+    Ok(Some(list))
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,
     pub only_files_regex: Option<String>,
+    #[serde(deserialize_with = "deserialize_only_files")]
+    pub only_files: Option<Vec<usize>>,
     pub list_only: Option<bool>,
 }
 
@@ -277,6 +312,7 @@ impl TorrentAddQueryParams {
         AddTorrentOptions {
             overwrite: self.overwrite.unwrap_or(false),
             only_files_regex: self.only_files_regex,
+            only_files: self.only_files,
             output_folder: self.output_folder,
             sub_folder: self.sub_folder,
             list_only: self.list_only.unwrap_or(false),

@@ -84,6 +84,7 @@ impl HttpApiClient {
         let params = TorrentAddQueryParams {
             overwrite: Some(opts.overwrite),
             only_files_regex: opts.only_files_regex,
+            only_files: None,
             output_folder: opts.output_folder,
             sub_folder: opts.sub_folder,
             list_only: Some(opts.list_only),

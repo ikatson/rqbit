@@ -1,6 +1,6 @@
 use std::{borrow::Cow, fs::File, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use buffers::ByteString;
 use dht::{Dht, Id20, PersistentDht, PersistentDhtConfig};
 use librqbit_core::{
@@ -121,6 +121,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
 #[derive(Default, Clone)]
 pub struct AddTorrentOptions {
     pub only_files_regex: Option<String>,
+    pub only_files: Option<Vec<usize>>,
     pub overwrite: bool,
     pub list_only: bool,
     pub output_folder: Option<String>,
@@ -227,7 +228,7 @@ impl Session {
                 let Magnet {
                     info_hash,
                     trackers,
-                } = Magnet::parse(&*magnet).context("provided path is not a valid magnet URL")?;
+                } = Magnet::parse(&magnet).context("provided path is not a valid magnet URL")?;
 
                 let dht_rx = self
                     .dht
@@ -267,9 +268,9 @@ impl Session {
                     AddTorrent::Url(url)
                         if url.starts_with("http://") || url.starts_with("https://") =>
                     {
-                        torrent_from_url(&*url).await?
+                        torrent_from_url(&url).await?
                     }
-                    AddTorrent::Url(filename) => torrent_from_file(&*filename)?,
+                    AddTorrent::Url(filename) => torrent_from_file(&filename)?,
                     AddTorrent::TorrentFileBytes(bytes) => {
                         torrent_from_bytes(&bytes).context("error decoding torrent")?
                     }
@@ -333,20 +334,39 @@ impl Session {
         opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
         debug!("Torrent info: {:#?}", &info);
-        let only_files = if let Some(filename_re) = opts.only_files_regex {
-            let only_files = compute_only_files(&info, &filename_re)?;
-            for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
-                if !only_files.contains(&idx) {
-                    continue;
+
+        let get_only_files =
+            |only_files: Option<Vec<usize>>, only_files_regex: Option<String>, list_only: bool| {
+                match (only_files, only_files_regex) {
+                    (Some(_), Some(_)) => {
+                        bail!("only_files and only_files_regex are mutually exclusive");
+                    }
+                    (Some(only_files), None) => {
+                        let total_files = info.iter_file_lengths()?.count();
+                        for id in only_files.iter().copied() {
+                            if id >= total_files {
+                                anyhow::bail!("file id {} is out of range", id);
+                            }
+                        }
+                        Ok(Some(only_files))
+                    }
+                    (None, Some(filename_re)) => {
+                        let only_files = compute_only_files(&info, &filename_re)?;
+                        for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
+                            if !only_files.contains(&idx) {
+                                continue;
+                            }
+                            if !list_only {
+                                info!("Will download {:?}", filename);
+                            }
+                        }
+                        Ok(Some(only_files))
+                    }
+                    (None, None) => Ok(None),
                 }
-                if !opts.list_only {
-                    info!("Will download {:?}", filename);
-                }
-            }
-            Some(only_files)
-        } else {
-            None
-        };
+            };
+
+        let only_files = get_only_files(opts.only_files, opts.only_files_regex, opts.list_only)?;
 
         if opts.list_only {
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
