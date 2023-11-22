@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use librqbit::session::{AddTorrentOptions, AddTorrentResponse, Session};
+use librqbit::session::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
 use tracing::info;
 
 // This is ubuntu-21.04-live-server-amd64.iso.torrent
@@ -30,7 +30,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Add the torrent to the session
     let handle = match session
         .add_torrent(
-            MAGNET_LINK,
+            AddTorrent::from_url(MAGNET_LINK),
             Some(AddTorrentOptions {
                 // Set this to true to allow writing on top of existing files.
                 // If the file is partially downloaded, librqbit will only download the

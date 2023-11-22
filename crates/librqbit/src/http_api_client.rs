@@ -1,7 +1,10 @@
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::{http_api::TorrentAddQueryParams, session::AddTorrentOptions};
+use crate::{
+    http_api::TorrentAddQueryParams,
+    session::{AddTorrent, AddTorrentOptions},
+};
 
 #[derive(Clone)]
 pub struct HttpApiClient {
@@ -77,7 +80,7 @@ impl HttpApiClient {
 
     pub async fn add_torrent(
         &self,
-        torrent: &str,
+        torrent: AddTorrent<'_>,
         opts: Option<AddTorrentOptions>,
     ) -> anyhow::Result<crate::http_api::ApiAddTorrentResponse> {
         let opts = opts.unwrap_or_default();
@@ -94,7 +97,7 @@ impl HttpApiClient {
         let response = check_response(
             self.client
                 .post(&url)
-                .body(torrent.to_owned())
+                .body(torrent.into_bytes())
                 .send()
                 .await?,
         )

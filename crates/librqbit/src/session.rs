@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fs::File, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{borrow::Cow, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::{bail, Context};
 use buffers::ByteString;
@@ -19,6 +19,8 @@ use crate::{
     spawn_utils::{spawn, BlockingSpawner},
     torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
 };
+
+pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 #[derive(Clone)]
 pub enum ManagedTorrentState {
@@ -83,21 +85,6 @@ async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     torrent_from_bytes(&b).context("error decoding torrent")
 }
 
-fn torrent_from_file(filename: &str) -> anyhow::Result<TorrentMetaV1Owned> {
-    let mut buf = Vec::new();
-    if filename == "-" {
-        std::io::stdin()
-            .read_to_end(&mut buf)
-            .context("error reading stdin")?;
-    } else {
-        File::open(filename)
-            .with_context(|| format!("error opening {filename}"))?
-            .read_to_end(&mut buf)
-            .with_context(|| format!("error reading {filename}"))?;
-    }
-    torrent_from_bytes(&buf).context("error decoding torrent")
-}
-
 fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     torrent: &TorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
@@ -142,26 +129,55 @@ pub enum AddTorrentResponse {
     Added(TorrentManagerHandle),
 }
 
+pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    if filename == "-" {
+        std::io::stdin()
+            .read_to_end(&mut buf)
+            .context("error reading stdin")?;
+    } else {
+        std::fs::File::open(filename)
+            .context("error opening")?
+            .read_to_end(&mut buf)
+            .context("error reading")?;
+    }
+    Ok(buf)
+}
+
 pub enum AddTorrent<'a> {
     Url(Cow<'a, str>),
-    TorrentFileBytes(Vec<u8>),
+    TorrentFileBytes(Cow<'a, [u8]>),
 }
 
-impl<'a> From<&'a str> for AddTorrent<'a> {
-    fn from(s: &'a str) -> Self {
-        Self::Url(Cow::Borrowed(s))
+impl<'a> AddTorrent<'a> {
+    // Don't call this from HTTP API.
+    pub fn from_cli_argument(path: &'a str) -> anyhow::Result<Self> {
+        if SUPPORTED_SCHEMES.iter().any(|s| path.starts_with(s)) {
+            return Ok(Self::Url(Cow::Borrowed(path)));
+        }
+        Self::from_local_filename(path)
     }
-}
 
-impl<'a> From<String> for AddTorrent<'a> {
-    fn from(s: String) -> Self {
-        Self::Url(Cow::Owned(s))
+    pub fn from_url(url: impl Into<Cow<'a, str>>) -> Self {
+        Self::Url(url.into())
     }
-}
 
-impl<'a> From<Vec<u8>> for AddTorrent<'a> {
-    fn from(b: Vec<u8>) -> Self {
-        Self::TorrentFileBytes(b)
+    pub fn from_bytes(bytes: impl Into<Cow<'a, [u8]>>) -> Self {
+        Self::TorrentFileBytes(bytes.into())
+    }
+
+    // Don't call this from HTTP API.
+    pub fn from_local_filename(filename: &str) -> anyhow::Result<Self> {
+        let file = read_local_file_including_stdin(filename)
+            .with_context(|| format!("error reading local file {filename:?}"))?;
+        Ok(Self::TorrentFileBytes(Cow::Owned(file)))
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Url(s) => s.into_owned().into_bytes(),
+            Self::TorrentFileBytes(b) => b.into_owned(),
+        }
     }
 }
 
@@ -270,7 +286,12 @@ impl Session {
                     {
                         torrent_from_url(&url).await?
                     }
-                    AddTorrent::Url(filename) => torrent_from_file(&filename)?,
+                    AddTorrent::Url(url) => {
+                        bail!(
+                            "unsupported URL {:?}. Supporting magnet:, http:, and https",
+                            url
+                        )
+                    }
                     AddTorrent::TorrentFileBytes(bytes) => {
                         torrent_from_bytes(&bytes).context("error decoding torrent")?
                     }

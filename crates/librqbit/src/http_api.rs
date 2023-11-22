@@ -84,8 +84,8 @@ impl HttpApi {
         ) -> Result<impl IntoResponse> {
             let opts = params.into_add_torrent_options();
             let add = match String::from_utf8(data.to_vec()) {
-                Ok(s) => AddTorrent::from(s),
-                Err(e) => AddTorrent::from(e.into_bytes()),
+                Ok(s) => AddTorrent::Url(s.into()),
+                Err(e) => AddTorrent::TorrentFileBytes(e.into_bytes().into()),
             };
             state.api_add_torrent(add, Some(opts)).await.map(axum::Json)
         }

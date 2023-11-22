@@ -7,8 +7,8 @@ use librqbit::{
     http_api_client,
     peer_connection::PeerConnectionOptions,
     session::{
-        AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState, Session,
-        SessionOptions,
+        AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState,
+        Session, SessionOptions,
     },
     spawn_utils::{spawn, BlockingSpawner},
     torrent_state::timeit,
@@ -329,7 +329,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
             if connect_to_existing {
                 for torrent_url in &download_opts.torrent_path {
                     match client
-                        .add_torrent(torrent_url, Some(torrent_opts.clone()))
+                        .add_torrent(
+                            AddTorrent::from_cli_argument(torrent_url)?,
+                            Some(torrent_opts.clone()),
+                        )
                         .await
                     {
                         Ok(ApiAddTorrentResponse { id, details }) => {
@@ -382,7 +385,10 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
 
                 for path in &download_opts.torrent_path {
                     let handle = match session
-                        .add_torrent(path.as_str(), Some(torrent_opts.clone()))
+                        .add_torrent(
+                            AddTorrent::from_cli_argument(path)?,
+                            Some(torrent_opts.clone()),
+                        )
                         .await
                     {
                         Ok(v) => match v {
