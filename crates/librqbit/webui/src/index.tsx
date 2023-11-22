@@ -93,41 +93,56 @@ interface TorrentStats {
     };
     time_remaining: {
         human_readable: string;
+        duration: {
+            secs: number,
+        }
     } | null;
 }
 
 const TorrentRow: React.FC<{
-    detailsResponse: TorrentDetails, statsResponse: TorrentStats
-}> = ({ detailsResponse, statsResponse }) => {
+    id: number, detailsResponse: TorrentDetails, statsResponse: TorrentStats
+}> = ({ id, detailsResponse, statsResponse }) => {
     const totalBytes = statsResponse.snapshot.total_bytes;
     const downloadedBytes = statsResponse.snapshot.have_bytes;
     const finished = totalBytes == downloadedBytes;
     const downloadPercentage = (downloadedBytes / totalBytes) * 100;
 
+    let classes = [
+    ];
+    if (id % 2 == 0) {
+        classes.push('bg-light');
+    }
+
     return (
-        <tr className="torrent-row">
-            <Column label="Name">{getLargestFileName(detailsResponse)}</Column>
-            <Column label="Size">{`${formatBytes(totalBytes)}`}</Column>
-            <Column label="Progress">
-                <ProgressBar now={downloadPercentage} label={`${downloadPercentage.toFixed(2)}%`} animated={!finished} style={{ 'minWidth': '200px' }} />
+        <Row className={classes.join(' ')}>
+            <Column size={4} label="Name">
+                <div className='text-truncate'>
+                    {getLargestFileName(detailsResponse)}
+                </div>
             </Column>
-            <Column label="Download Speed">{statsResponse.download_speed.human_readable}</Column>
+            <Column label="Size">{`${formatBytes(totalBytes)}`}</Column>
+            <Column size={2} label="Progress">
+                <ProgressBar now={downloadPercentage} label={`${downloadPercentage.toFixed(2)}%`} animated={!finished} />
+            </Column>
+            <Column size={2} label="Down Speed">{statsResponse.download_speed.human_readable}</Column>
             <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
-            <Column label="Peers">{`${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`}</Column>
-        </tr >
+            <Column size={2} label="Peers">{`${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`}</Column>
+        </Row>
     );
 }
 
 const Column: React.FC<{
     label: string,
+    size?: number,
     children?: any
-}> = ({ children }) => (
-    <td className='me-3 p-3'>
+}> = ({ size, label, children }) => (
+    <Col md={size || 1} className='py-3'>
+        <div className='fw-bold'>{label}</div>
         {children}
-    </td>
+    </Col>
 );
 
-const Torrent = ({ torrent }) => {
+const Torrent = ({ id, torrent }) => {
     const defaultDetails: TorrentDetails = {
         info_hash: '',
         files: []
@@ -202,7 +217,7 @@ const Torrent = ({ torrent }) => {
         return clear;
     }, []);
 
-    return <TorrentRow detailsResponse={detailsResponse} statsResponse={statsResponse} />
+    return <TorrentRow id={id} detailsResponse={detailsResponse} statsResponse={statsResponse} />
 }
 
 const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) => {
@@ -222,24 +237,11 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
         )
     }
     return (
-        <Table className='text-center table-striped table-hover table-borderless'>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Size</th>
-                    <th>Progress</th>
-                    <th>Download Speed</th>
-                    <th>ETA</th>
-                    <th>Peers</th>
-                </tr>
-            </thead>
-            <tbody>
-                {props.torrents.map((t: TorrentId) =>
-                    <Torrent key={t.id} torrent={t} />
-                )}
-            </tbody>
-
-        </Table>
+        <>
+            {props.torrents.map((t: TorrentId) =>
+                <Torrent id={t.id} key={t.id} torrent={t} />
+            )}
+        </>
     )
 };
 
@@ -334,14 +336,14 @@ const Root = () => {
     }
 
     return <AppContext.Provider value={context}>
-        <Container className='text-center'>
+        <div className='text-center'>
             <h1 className="mt-3 mb-4">rqbit web 0.0.1-alpha</h1>
             <RootContent
                 closeableError={closeableError}
                 otherError={otherError}
                 torrents={torrents}
                 torrentsLoading={torrentsLoading} />
-        </Container>
+        </div>
     </AppContext.Provider >
 }
 
@@ -608,10 +610,26 @@ function getLargestFileName(torrentDetails: TorrentDetails): string {
 
 // Function to get the completion ETA of a torrent
 function getCompletionETA(stats: TorrentStats): string {
-    if (stats.time_remaining) {
-        return stats.time_remaining.human_readable;
+    if (stats.time_remaining && stats.time_remaining.duration) {
+        return formatSecondsToTime(stats.time_remaining.duration.secs);
     } else {
         return 'N/A';
+    }
+}
+
+function formatSecondsToTime(seconds: number) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const remainingSeconds = seconds % 60;
+
+    const formatUnit = (value, unit) => (value > 0 ? `${value}${unit}` : '');
+
+    if (hours > 0) {
+        return `${formatUnit(hours, 'h')} ${formatUnit(minutes, 'm')}`.trim();
+    } else if (minutes > 0) {
+        return `${formatUnit(minutes, 'm')} ${formatUnit(remainingSeconds, 's')}`.trim();
+    } else {
+        return `${formatUnit(remainingSeconds, 's')}`.trim();
     }
 }
 
