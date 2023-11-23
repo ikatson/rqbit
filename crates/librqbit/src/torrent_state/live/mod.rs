@@ -123,7 +123,7 @@ pub struct TorrentStateOptions {
     pub peer_read_write_timeout: Option<Duration>,
 }
 
-pub struct TorrentState {
+pub struct TorrentStateLive {
     peers: PeerStates,
     info: TorrentMetaV1Info<ByteString>,
     locked: Arc<RwLock<TorrentStateLocked>>,
@@ -146,7 +146,7 @@ pub struct TorrentState {
     finished_notify: Notify,
 }
 
-impl TorrentState {
+impl TorrentStateLive {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         info: TorrentMetaV1Info<ByteString>,
@@ -163,7 +163,7 @@ impl TorrentState {
     ) -> Arc<Self> {
         let options = options.unwrap_or_default();
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
-        let state = Arc::new(TorrentState {
+        let state = Arc::new(TorrentStateLive {
             info_hash,
             info,
             peer_id,
@@ -478,7 +478,7 @@ struct PeerHandlerLocked {
 // All peer state that would never be used by other actors should pe put here.
 // This state tracks a live peer.
 struct PeerHandler {
-    state: Arc<TorrentState>,
+    state: Arc<TorrentStateLive>,
     counters: Arc<AtomicPeerCounters>,
     // Semantically, we don't need an RwLock here, as this is only requested from
     // one future (requester + manage_peer).

@@ -24,7 +24,7 @@ use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{TorrentState, TorrentStateOptions},
+    torrent_state::{TorrentStateLive, TorrentStateOptions},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
 };
 
@@ -131,7 +131,7 @@ impl TorrentManagerHandle {
     pub fn add_peer(&self, addr: SocketAddr) -> bool {
         self.manager.state.add_peer_if_not_seen(addr)
     }
-    pub fn torrent_state(&self) -> &TorrentState {
+    pub fn torrent_state(&self) -> &TorrentStateLive {
         &self.manager.state
     }
     pub fn speed_estimator(&self) -> &Arc<SpeedEstimator> {
@@ -147,7 +147,7 @@ impl TorrentManagerHandle {
 }
 
 struct TorrentManager {
-    state: Arc<TorrentState>,
+    state: Arc<TorrentStateLive>,
     #[allow(dead_code)]
     speed_estimator: Arc<SpeedEstimator>,
     trackers: Mutex<HashSet<Url>>,
@@ -267,7 +267,7 @@ impl TorrentManager {
             ..Default::default()
         };
 
-        let state = TorrentState::new(
+        let state = TorrentStateLive::new(
             info,
             info_hash,
             peer_id,
