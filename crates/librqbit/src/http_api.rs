@@ -19,12 +19,12 @@ use tracing::{info, warn};
 use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
-use crate::peer_state::PeerStatsFilter;
 use crate::session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
 };
 use crate::torrent_manager::TorrentManagerHandle;
-use crate::torrent_state::StatsSnapshot;
+use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
+use crate::torrent_state::stats::snapshot::StatsSnapshot;
 
 // Public API
 #[derive(Clone)]
@@ -386,11 +386,7 @@ impl ApiInternal {
         make_torrent_details(&info_hash, handle.torrent_state().info(), only_files)
     }
 
-    fn api_peer_stats(
-        &self,
-        idx: usize,
-        filter: PeerStatsFilter,
-    ) -> Result<crate::peer_state::PeerStatsSnapshot> {
+    fn api_peer_stats(&self, idx: usize, filter: PeerStatsFilter) -> Result<PeerStatsSnapshot> {
         let handle = self.mgr_handle(idx)?;
         Ok(handle.torrent_state().per_peer_stats_snapshot(filter))
     }

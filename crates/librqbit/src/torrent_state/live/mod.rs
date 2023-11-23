@@ -39,6 +39,10 @@
 // > so don't lock them both at the same time at all, or at the worst lock them in the
 // > same order (peers one first, then the global one).
 
+pub mod peer;
+pub mod peers;
+pub mod stats;
+
 use std::{
     collections::HashMap,
     fs::File,
@@ -55,7 +59,6 @@ use anyhow::{bail, Context};
 use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
-use dashmap::DashMap;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     id20::Id20,
@@ -66,7 +69,6 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
-use serde::Serialize;
 use sha1w::Sha1;
 use tokio::{
     sync::{
@@ -83,138 +85,27 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    peer_state::{
-        atomic_inc, AggregatePeerStatsAtomic, InflightRequest, LivePeerState, Peer, PeerCounters,
-        PeerRx, PeerState, PeerStatsFilter, PeerStatsSnapshot, PeerTx, SendMany,
-    },
     spawn_utils::{spawn, BlockingSpawner},
     type_aliases::{PeerHandle, BF},
 };
 
+use self::{
+    peer::{
+        stats::{
+            atomic::PeerCounters as AtomicPeerCounters,
+            snapshot::{PeerStatsFilter, PeerStatsSnapshot},
+        },
+        InflightRequest, PeerState, PeerTx, SendMany,
+    },
+    peers::PeerStates,
+    stats::{atomic::AtomicStats, snapshot::StatsSnapshot},
+};
+
+use super::utils::{timeit, TimedExistence};
+
 pub struct InflightPiece {
     pub peer: PeerHandle,
     pub started: Instant,
-}
-
-#[derive(Default)]
-pub struct PeerStates {
-    stats: AggregatePeerStatsAtomic,
-    states: DashMap<PeerHandle, Peer>,
-}
-
-#[derive(Debug, Default, Serialize, PartialEq, Eq)]
-pub struct AggregatePeerStats {
-    pub queued: usize,
-    pub connecting: usize,
-    pub live: usize,
-    pub seen: usize,
-    pub dead: usize,
-    pub not_needed: usize,
-}
-
-impl<'a> From<&'a AggregatePeerStatsAtomic> for AggregatePeerStats {
-    fn from(s: &'a AggregatePeerStatsAtomic) -> Self {
-        let ordering = Ordering::Relaxed;
-        Self {
-            queued: s.queued.load(ordering) as usize,
-            connecting: s.connecting.load(ordering) as usize,
-            live: s.live.load(ordering) as usize,
-            seen: s.seen.load(ordering) as usize,
-            dead: s.dead.load(ordering) as usize,
-            not_needed: s.not_needed.load(ordering) as usize,
-        }
-    }
-}
-
-impl PeerStates {
-    pub fn stats(&self) -> AggregatePeerStats {
-        AggregatePeerStats::from(&self.stats)
-    }
-
-    pub fn add_if_not_seen(&self, addr: SocketAddr) -> Option<PeerHandle> {
-        use dashmap::mapref::entry::Entry;
-        match self.states.entry(addr) {
-            Entry::Occupied(_) => None,
-            Entry::Vacant(vac) => {
-                vac.insert(Default::default());
-                atomic_inc(&self.stats.queued);
-                atomic_inc(&self.stats.seen);
-                Some(addr)
-            }
-        }
-    }
-    pub fn with_peer<R>(&self, addr: PeerHandle, f: impl FnOnce(&Peer) -> R) -> Option<R> {
-        self.states.get(&addr).map(|e| f(e.value()))
-    }
-
-    pub fn with_peer_mut<R>(
-        &self,
-        addr: PeerHandle,
-        reason: &'static str,
-        f: impl FnOnce(&mut Peer) -> R,
-    ) -> Option<R> {
-        timeit(reason, || self.states.get_mut(&addr))
-            .map(|e| f(TimedExistence::new(e, reason).value_mut()))
-    }
-    pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
-        self.states
-            .get(&addr)
-            .and_then(|e| match &e.value().state.get() {
-                PeerState::Live(l) => Some(f(l)),
-                _ => None,
-            })
-    }
-    pub fn with_live_mut<R>(
-        &self,
-        addr: PeerHandle,
-        reason: &'static str,
-        f: impl FnOnce(&mut LivePeerState) -> R,
-    ) -> Option<R> {
-        self.with_peer_mut(addr, reason, |peer| peer.state.get_live_mut().map(f))
-            .flatten()
-    }
-
-    pub fn drop_peer(&self, handle: PeerHandle) -> Option<Peer> {
-        let p = self.states.remove(&handle).map(|r| r.1)?;
-        self.stats.dec(p.state.get());
-        Some(p)
-    }
-
-    pub fn mark_peer_interested(&self, handle: PeerHandle, is_interested: bool) -> Option<bool> {
-        self.with_live_mut(handle, "mark_peer_interested", |live| {
-            let prev = live.peer_interested;
-            live.peer_interested = is_interested;
-            prev
-        })
-    }
-    pub fn update_bitfield_from_vec(&self, handle: PeerHandle, bitfield: Vec<u8>) -> Option<()> {
-        self.with_live_mut(handle, "update_bitfield_from_vec", |live| {
-            live.bitfield = BF::from_vec(bitfield);
-        })
-    }
-    pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<(PeerRx, PeerTx)> {
-        let rx = self
-            .with_peer_mut(h, "mark_peer_connecting", |peer| {
-                peer.state
-                    .queued_to_connecting(&self.stats)
-                    .context("invalid peer state")
-            })
-            .context("peer not found in states")??;
-        Ok(rx)
-    }
-
-    fn reset_peer_backoff(&self, handle: PeerHandle) {
-        self.with_peer_mut(handle, "reset_peer_backoff", |p| {
-            p.stats.backoff.reset();
-        });
-    }
-
-    fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
-        let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
-            peer.state.to_not_needed(&self.stats)
-        })?;
-        Some(prev)
-    }
 }
 
 pub struct TorrentStateLocked {
@@ -224,54 +115,6 @@ pub struct TorrentStateLocked {
     // At a moment in time, we are expecting a piece from only one peer.
     // inflight_pieces stores this information.
     pub inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
-}
-
-#[derive(Default, Debug)]
-struct AtomicStats {
-    have_bytes: AtomicU64,
-    downloaded_and_checked_bytes: AtomicU64,
-    downloaded_and_checked_pieces: AtomicU64,
-    uploaded_bytes: AtomicU64,
-    fetched_bytes: AtomicU64,
-    total_piece_download_ms: AtomicU64,
-}
-
-impl AtomicStats {
-    fn average_piece_download_time(&self) -> Option<Duration> {
-        let d = self.downloaded_and_checked_pieces.load(Ordering::Acquire);
-        let t = self.total_piece_download_ms.load(Ordering::Acquire);
-        if d == 0 {
-            return None;
-        }
-        Some(Duration::from_secs_f64(t as f64 / d as f64 / 1000f64))
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct StatsSnapshot {
-    pub have_bytes: u64,
-    pub downloaded_and_checked_bytes: u64,
-    pub downloaded_and_checked_pieces: u64,
-    pub fetched_bytes: u64,
-    pub uploaded_bytes: u64,
-    pub initially_needed_bytes: u64,
-    pub remaining_bytes: u64,
-    pub total_bytes: u64,
-    #[serde(skip)]
-    pub time: Instant,
-    pub total_piece_download_ms: u64,
-    pub peer_stats: AggregatePeerStats,
-}
-
-impl StatsSnapshot {
-    pub fn average_piece_download_time(&self) -> Option<Duration> {
-        let d = self.downloaded_and_checked_pieces;
-        let t = self.total_piece_download_ms;
-        if d == 0 {
-            return None;
-        }
-        Some(Duration::from_secs_f64(t as f64 / d as f64 / 1000f64))
-    }
 }
 
 #[derive(Default)]
@@ -302,105 +145,6 @@ pub struct TorrentState {
 
     finished_notify: Notify,
 }
-
-// Used during debugging to see if some locks take too long.
-#[cfg(not(feature = "timed_existence"))]
-mod timed_existence {
-    use std::ops::{Deref, DerefMut};
-
-    pub struct TimedExistence<T>(T);
-
-    impl<T> TimedExistence<T> {
-        #[inline(always)]
-        pub fn new(object: T, _reason: &'static str) -> Self {
-            Self(object)
-        }
-    }
-
-    impl<T> Deref for TimedExistence<T> {
-        type Target = T;
-
-        #[inline(always)]
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
-
-    impl<T> DerefMut for TimedExistence<T> {
-        #[inline(always)]
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut self.0
-        }
-    }
-
-    #[inline(always)]
-    pub fn timeit<R>(_n: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
-        f()
-    }
-}
-
-#[cfg(feature = "timed_existence")]
-mod timed_existence {
-    use std::ops::{Deref, DerefMut};
-    use std::time::{Duration, Instant};
-    use tracing::warn;
-
-    const MAX: Duration = Duration::from_millis(1);
-
-    // Prints if the object exists for too long.
-    // This is used to track long-lived locks for debugging.
-    pub struct TimedExistence<T> {
-        object: T,
-        reason: &'static str,
-        started: Instant,
-    }
-
-    impl<T> TimedExistence<T> {
-        pub fn new(object: T, reason: &'static str) -> Self {
-            Self {
-                object,
-                reason,
-                started: Instant::now(),
-            }
-        }
-    }
-
-    impl<T> Drop for TimedExistence<T> {
-        fn drop(&mut self) {
-            let elapsed = self.started.elapsed();
-            let reason = self.reason;
-            if elapsed > MAX {
-                warn!("elapsed on lock {reason:?}: {elapsed:?}")
-            }
-        }
-    }
-
-    impl<T> Deref for TimedExistence<T> {
-        type Target = T;
-
-        fn deref(&self) -> &Self::Target {
-            &self.object
-        }
-    }
-
-    impl<T> DerefMut for TimedExistence<T> {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut self.object
-        }
-    }
-
-    pub fn timeit<R>(name: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
-        let now = Instant::now();
-        let r = f();
-        let elapsed = now.elapsed();
-        if elapsed > MAX {
-            warn!("elapsed on \"{name:}\": {elapsed:?}")
-        }
-        r
-    }
-}
-
-pub use timed_existence::{timeit, TimedExistence};
 
 impl TorrentState {
     #[allow(clippy::too_many_arguments)]
@@ -734,7 +478,7 @@ struct PeerHandlerLocked {
 // This state tracks a live peer.
 struct PeerHandler {
     state: Arc<TorrentState>,
-    counters: Arc<PeerCounters>,
+    counters: Arc<AtomicPeerCounters>,
     // Semantically, we don't need an RwLock here, as this is only requested from
     // one future (requester + manage_peer).
     //

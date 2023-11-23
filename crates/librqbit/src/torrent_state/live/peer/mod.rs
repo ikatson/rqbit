@@ -1,3 +1,5 @@
+pub mod stats;
+
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -12,6 +14,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
+
+use super::peers::stats::atomic::AggregatePeerStatsAtomic;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct InflightRequest {
@@ -45,85 +49,10 @@ impl SendMany for PeerTx {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct PeerCounters {
-    pub fetched_bytes: AtomicU64,
-    pub total_time_connecting_ms: AtomicU64,
-    pub connection_attempts: AtomicU32,
-    pub connections: AtomicU32,
-    pub errors: AtomicU32,
-    pub fetched_chunks: AtomicU32,
-    pub downloaded_and_checked_pieces: AtomicU32,
-    pub downloaded_and_checked_bytes: AtomicU64,
-}
-
-#[derive(Debug)]
-pub struct PeerStats {
-    pub counters: Arc<PeerCounters>,
-    pub backoff: ExponentialBackoff,
-}
-
-impl Default for PeerStats {
-    fn default() -> Self {
-        Self {
-            counters: Arc::new(Default::default()),
-            backoff: ExponentialBackoffBuilder::new()
-                .with_initial_interval(Duration::from_secs(10))
-                .with_multiplier(6.)
-                .with_max_interval(Duration::from_secs(3600))
-                .with_max_elapsed_time(Some(Duration::from_secs(86400)))
-                .build(),
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct Peer {
     pub state: PeerStateNoMut,
-    pub stats: PeerStats,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct AggregatePeerStatsAtomic {
-    pub queued: AtomicU32,
-    pub connecting: AtomicU32,
-    pub live: AtomicU32,
-    pub seen: AtomicU32,
-    pub dead: AtomicU32,
-    pub not_needed: AtomicU32,
-}
-
-pub fn atomic_inc(c: &AtomicU32) -> u32 {
-    c.fetch_add(1, Ordering::Relaxed)
-}
-
-pub fn atomic_dec(c: &AtomicU32) -> u32 {
-    c.fetch_sub(1, Ordering::Relaxed)
-}
-
-impl AggregatePeerStatsAtomic {
-    pub fn counter(&self, state: &PeerState) -> &AtomicU32 {
-        match state {
-            PeerState::Connecting(_) => &self.connecting,
-            PeerState::Live(_) => &self.live,
-            PeerState::Queued => &self.queued,
-            PeerState::Dead => &self.dead,
-            PeerState::NotNeeded => &self.not_needed,
-        }
-    }
-
-    pub fn inc(&self, state: &PeerState) {
-        atomic_inc(self.counter(state));
-    }
-
-    pub fn dec(&self, state: &PeerState) {
-        atomic_dec(self.counter(state));
-    }
-
-    pub fn incdec(&self, old: &PeerState, new: &PeerState) {
-        self.dec(old);
-        self.inc(new);
-    }
+    pub stats: stats::atomic::PeerStats,
 }
 
 #[derive(Debug, Default)]
@@ -268,82 +197,3 @@ impl LivePeerState {
             .map_or(false, |s| s.all())
     }
 }
-
-mod peer_stats_snapshot {
-    use std::{collections::HashMap, sync::atomic::Ordering};
-
-    use serde::{Deserialize, Serialize};
-
-    use crate::peer_state::PeerState;
-
-    #[derive(Serialize, Deserialize)]
-    pub struct PeerCounters {
-        pub fetched_bytes: u64,
-        pub total_time_connecting_ms: u64,
-        pub connection_attempts: u32,
-        pub connections: u32,
-        pub errors: u32,
-        pub fetched_chunks: u32,
-        pub downloaded_and_checked_pieces: u32,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub struct PeerStats {
-        pub counters: PeerCounters,
-        pub state: &'static str,
-    }
-
-    impl From<&crate::peer_state::PeerCounters> for PeerCounters {
-        fn from(counters: &crate::peer_state::PeerCounters) -> Self {
-            Self {
-                fetched_bytes: counters.fetched_bytes.load(Ordering::Relaxed),
-                total_time_connecting_ms: counters.total_time_connecting_ms.load(Ordering::Relaxed),
-                connection_attempts: counters.connection_attempts.load(Ordering::Relaxed),
-                connections: counters.connections.load(Ordering::Relaxed),
-                errors: counters.errors.load(Ordering::Relaxed),
-                fetched_chunks: counters.fetched_chunks.load(Ordering::Relaxed),
-                downloaded_and_checked_pieces: counters
-                    .downloaded_and_checked_pieces
-                    .load(Ordering::Relaxed),
-            }
-        }
-    }
-
-    impl From<&crate::peer_state::Peer> for PeerStats {
-        fn from(peer: &crate::peer_state::Peer) -> Self {
-            Self {
-                counters: peer.stats.counters.as_ref().into(),
-                state: peer.state.get().name(),
-            }
-        }
-    }
-
-    #[derive(Serialize)]
-    pub struct PeerStatsSnapshot {
-        pub peers: HashMap<String, PeerStats>,
-    }
-
-    #[derive(Clone, Copy, Default, Deserialize)]
-    pub enum PeerStatsFilterState {
-        All,
-        #[default]
-        Live,
-    }
-
-    impl PeerStatsFilterState {
-        pub fn matches(&self, s: &PeerState) -> bool {
-            match (self, s) {
-                (Self::All, _) => true,
-                (Self::Live, PeerState::Live(_)) => true,
-                _ => false,
-            }
-        }
-    }
-
-    #[derive(Default, Deserialize)]
-    pub struct PeerStatsFilter {
-        pub state: PeerStatsFilterState,
-    }
-}
-
-pub use peer_stats_snapshot::{PeerStatsFilter, PeerStatsSnapshot};
