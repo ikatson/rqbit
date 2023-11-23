@@ -8,7 +8,7 @@ use crate::torrent_state::{
 };
 
 #[derive(Debug, Default, Serialize)]
-pub struct AggregatePeerStatsAtomic {
+pub(crate) struct AggregatePeerStatsAtomic {
     pub queued: AtomicU32,
     pub connecting: AtomicU32,
     pub live: AtomicU32,

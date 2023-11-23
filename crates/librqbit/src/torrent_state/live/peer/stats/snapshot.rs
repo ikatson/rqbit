@@ -21,8 +21,8 @@ pub struct PeerStats {
     pub state: &'static str,
 }
 
-impl From<&super::atomic::PeerCounters> for PeerCounters {
-    fn from(counters: &super::atomic::PeerCounters) -> Self {
+impl From<&super::atomic::PeerCountersAtomic> for PeerCounters {
+    fn from(counters: &super::atomic::PeerCountersAtomic) -> Self {
         Self {
             fetched_bytes: counters.fetched_bytes.load(Ordering::Relaxed),
             total_time_connecting_ms: counters.total_time_connecting_ms.load(Ordering::Relaxed),
@@ -59,12 +59,8 @@ pub enum PeerStatsFilterState {
 }
 
 impl PeerStatsFilterState {
-    pub fn matches(&self, s: &PeerState) -> bool {
-        match (self, s) {
-            (Self::All, _) => true,
-            (Self::Live, PeerState::Live(_)) => true,
-            _ => false,
-        }
+    pub(crate) fn matches(&self, s: &PeerState) -> bool {
+        matches!((self, s), (Self::All, _) | (Self::Live, PeerState::Live(_)))
     }
 }
 

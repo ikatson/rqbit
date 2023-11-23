@@ -16,7 +16,7 @@ use super::peer::{LivePeerState, Peer, PeerRx, PeerState, PeerTx};
 pub mod stats;
 
 #[derive(Default)]
-pub struct PeerStates {
+pub(crate) struct PeerStates {
     pub stats: AggregatePeerStatsAtomic,
     pub states: DashMap<PeerHandle, Peer>,
 }
@@ -52,14 +52,7 @@ impl PeerStates {
         timeit(reason, || self.states.get_mut(&addr))
             .map(|e| f(TimedExistence::new(e, reason).value_mut()))
     }
-    pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
-        self.states
-            .get(&addr)
-            .and_then(|e| match &e.value().state.get() {
-                PeerState::Live(l) => Some(f(l)),
-                _ => None,
-            })
-    }
+
     pub fn with_live_mut<R>(
         &self,
         addr: PeerHandle,
@@ -107,7 +100,7 @@ impl PeerStates {
 
     pub fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
         let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
-            peer.state.to_not_needed(&self.stats)
+            peer.state.set_not_needed(&self.stats)
         })?;
         Some(prev)
     }

@@ -18,7 +18,7 @@ use tracing::{debug, trace, warn};
 
 use crate::type_aliases::{PeerHandle, BF};
 
-pub struct InitialCheckResults {
+pub(crate) struct InitialCheckResults {
     pub needed_pieces: BF,
     pub have_pieces: BF,
     pub have_bytes: u64,
@@ -43,7 +43,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     Ok(())
 }
 
-pub struct FileOps<'a, Sha1> {
+pub(crate) struct FileOps<'a, Sha1> {
     torrent: &'a TorrentMetaV1Info<ByteString>,
     files: &'a [Arc<Mutex<File>>],
     lengths: &'a Lengths,

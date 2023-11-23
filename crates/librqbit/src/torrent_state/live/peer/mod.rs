@@ -15,7 +15,7 @@ use crate::type_aliases::BF;
 use super::peers::stats::atomic::AggregatePeerStatsAtomic;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-pub struct InflightRequest {
+pub(crate) struct InflightRequest {
     pub piece: ValidPieceIndex,
     pub chunk: u32,
 }
@@ -30,8 +30,8 @@ impl From<&ChunkInfo> for InflightRequest {
 }
 
 // TODO: Arc can be removed probably, as UnboundedSender should be clone + it can be downgraded to weak.
-pub type PeerRx = UnboundedReceiver<WriterRequest>;
-pub type PeerTx = UnboundedSender<WriterRequest>;
+pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
+pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 
 pub trait SendMany {
     fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()>;
@@ -47,13 +47,13 @@ impl SendMany for PeerTx {
 }
 
 #[derive(Debug, Default)]
-pub struct Peer {
+pub(crate) struct Peer {
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
 }
 
 #[derive(Debug, Default)]
-pub enum PeerState {
+pub(crate) enum PeerState {
     #[default]
     // Will be tried to be connected as soon as possible.
     Queued,
@@ -93,7 +93,7 @@ impl PeerState {
 }
 
 #[derive(Debug, Default)]
-pub struct PeerStateNoMut(PeerState);
+pub(crate) struct PeerStateNoMut(PeerState);
 
 impl PeerStateNoMut {
     pub fn get(&self) -> &PeerState {
@@ -107,13 +107,6 @@ impl PeerStateNoMut {
     pub fn set(&mut self, new: PeerState, counters: &AggregatePeerStatsAtomic) -> PeerState {
         counters.incdec(&self.0, &new);
         std::mem::replace(&mut self.0, new)
-    }
-
-    pub fn get_live(&self) -> Option<&LivePeerState> {
-        match &self.0 {
-            PeerState::Live(l) => Some(l),
-            _ => None,
-        }
     }
 
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
@@ -153,18 +146,16 @@ impl PeerStateNoMut {
         }
     }
 
-    pub fn to_dead(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
-        self.set(PeerState::Dead, counters)
-    }
-
-    pub fn to_not_needed(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
+    pub fn set_not_needed(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
         self.set(PeerState::NotNeeded, counters)
     }
 }
 
 #[derive(Debug)]
-pub struct LivePeerState {
-    pub peer_id: Id20,
+pub(crate) struct LivePeerState {
+    #[allow(dead_code)]
+    peer_id: Id20,
+
     pub peer_interested: bool,
 
     // This is used to track the pieces the peer has.

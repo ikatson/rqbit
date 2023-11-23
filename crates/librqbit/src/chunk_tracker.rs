@@ -4,7 +4,7 @@ use tracing::{debug, info};
 
 use crate::type_aliases::BF;
 
-pub struct ChunkTracker {
+pub(crate) struct ChunkTracker {
     // This forms the basis of a "queue" to pull from.
     // It's set to 1 if we need a piece, but the moment we start requesting a peer,
     // it's set to 0.
@@ -51,7 +51,7 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
     chunk_bf
 }
 
-pub enum ChunkMarkingResult {
+pub(crate) enum ChunkMarkingResult {
     PreviouslyCompleted,
     NotCompleted,
     Completed,
@@ -75,9 +75,7 @@ impl ChunkTracker {
             priority_piece_ids,
         }
     }
-    pub fn get_needed_pieces(&self) -> &BF {
-        &self.needed_pieces
-    }
+
     pub fn get_have_pieces(&self) -> &BF {
         &self.have
     }
@@ -130,13 +128,6 @@ impl ChunkTracker {
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
         self.have.set(idx.get() as usize, true);
-    }
-
-    pub fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {
-        *self
-            .chunk_status
-            .get(chunk.absolute_index as usize)
-            .unwrap()
     }
 
     pub fn is_chunk_ready_to_upload(&self, chunk: &ChunkInfo) -> bool {

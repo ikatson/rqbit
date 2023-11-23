@@ -330,7 +330,7 @@ impl TorrentAddQueryParams {
 }
 
 // Private HTTP API internals. Agnostic of web framework.
-pub struct ApiInternal {
+struct ApiInternal {
     dht: Option<Dht>,
     startup_time: Instant,
     torrent_managers: RwLock<Vec<TorrentManagerHandle>>,

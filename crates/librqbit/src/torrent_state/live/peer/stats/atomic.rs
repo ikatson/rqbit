@@ -9,7 +9,7 @@ use std::{
 use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 
 #[derive(Default, Debug)]
-pub struct PeerCounters {
+pub(crate) struct PeerCountersAtomic {
     pub fetched_bytes: AtomicU64,
     pub total_time_connecting_ms: AtomicU64,
     pub connection_attempts: AtomicU32,
@@ -21,8 +21,8 @@ pub struct PeerCounters {
 }
 
 #[derive(Debug)]
-pub struct PeerStats {
-    pub counters: Arc<PeerCounters>,
+pub(crate) struct PeerStats {
+    pub counters: Arc<PeerCountersAtomic>,
     pub backoff: ExponentialBackoff,
 }
 

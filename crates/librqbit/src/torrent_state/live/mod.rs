@@ -92,7 +92,7 @@ use crate::{
 use self::{
     peer::{
         stats::{
-            atomic::PeerCounters as AtomicPeerCounters,
+            atomic::PeerCountersAtomic as AtomicPeerCounters,
             snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         },
         InflightRequest, PeerState, PeerTx, SendMany,
@@ -103,18 +103,18 @@ use self::{
 
 use super::utils::{timeit, TimedExistence};
 
-pub struct InflightPiece {
-    pub peer: PeerHandle,
-    pub started: Instant,
+struct InflightPiece {
+    peer: PeerHandle,
+    started: Instant,
 }
 
-pub struct TorrentStateLocked {
+pub(crate) struct TorrentStateLocked {
     // What chunks we have and need.
-    pub chunks: ChunkTracker,
+    pub(crate) chunks: ChunkTracker,
 
     // At a moment in time, we are expecting a piece from only one peer.
     // inflight_pieces stores this information.
-    pub inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
+    inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
 }
 
 #[derive(Default)]
@@ -148,7 +148,7 @@ pub struct TorrentState {
 
 impl TorrentState {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         info: TorrentMetaV1Info<ByteString>,
         info_hash: Id20,
         peer_id: Id20,
@@ -194,7 +194,7 @@ impl TorrentState {
         state
     }
 
-    pub async fn task_manage_peer(
+    async fn task_manage_peer(
         self: Arc<Self>,
         addr: SocketAddr,
         spawner: BlockingSpawner,
@@ -260,7 +260,7 @@ impl TorrentState {
         Ok::<_, anyhow::Error>(())
     }
 
-    pub async fn task_peer_adder(
+    async fn task_peer_adder(
         self: Arc<Self>,
         mut peer_queue_rx: UnboundedReceiver<SocketAddr>,
         spawner: BlockingSpawner,
@@ -292,19 +292,20 @@ impl TorrentState {
     pub fn peer_id(&self) -> Id20 {
         self.peer_id
     }
-    pub fn file_ops(&self) -> FileOps<'_, Sha1> {
+    pub(crate) fn file_ops(&self) -> FileOps<'_, Sha1> {
         FileOps::new(&self.info, &self.files, &self.lengths)
     }
     pub fn initially_needed(&self) -> u64 {
         self.needed_bytes
     }
-    pub fn lock_read(
+
+    pub(crate) fn lock_read(
         &self,
         reason: &'static str,
     ) -> TimedExistence<RwLockReadGuard<TorrentStateLocked>> {
         TimedExistence::new(timeit(reason, || self.locked.read()), reason)
     }
-    pub fn lock_write(
+    pub(crate) fn lock_write(
         &self,
         reason: &'static str,
     ) -> TimedExistence<RwLockWriteGuard<TorrentStateLocked>> {
@@ -417,7 +418,7 @@ impl TorrentState {
         );
     }
 
-    pub fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
+    pub(crate) fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
         match self.peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return false,
@@ -1171,7 +1172,7 @@ impl PeerHandler {
         for mut pe in self.state.peers.states.iter_mut() {
             if let PeerState::Live(l) = pe.value().state.get() {
                 if l.has_full_torrent(self.state.lengths.total_pieces() as usize) {
-                    let prev = pe.value_mut().state.to_not_needed(&self.state.peers.stats);
+                    let prev = pe.value_mut().state.set_not_needed(&self.state.peers.stats);
                     let _ = prev
                         .take_live_no_counters()
                         .unwrap()
