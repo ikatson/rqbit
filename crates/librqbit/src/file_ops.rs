@@ -11,10 +11,10 @@ use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
 };
-use tracing::{debug, trace, warn};
 use parking_lot::Mutex;
 use peer_binary_protocol::Piece;
 use sha1w::ISha1;
+use tracing::{debug, trace, warn};
 
 use crate::type_aliases::{PeerHandle, BF};
 

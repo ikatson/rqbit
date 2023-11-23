@@ -1,15 +1,12 @@
 pub mod stats;
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
-use serde::Serialize;
+
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use crate::peer_connection::WriterRequest;
