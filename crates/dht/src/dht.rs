@@ -690,7 +690,8 @@ impl Dht {
         });
         Ok(Dht { state })
     }
-    pub async fn get_peers(
+
+    pub fn get_peers(
         &self,
         info_hash: Id20,
     ) -> anyhow::Result<impl Stream<Item = SocketAddr> + Unpin> {

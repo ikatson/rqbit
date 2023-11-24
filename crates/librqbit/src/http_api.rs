@@ -2,7 +2,7 @@ use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use buffers::ByteString;
 use dht::{Dht, DhtStats};
 use http::StatusCode;
@@ -116,6 +116,20 @@ impl HttpApi {
             state.api_peer_stats(idx, filter).map(axum::Json)
         }
 
+        async fn torrent_action_pause(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_pause(idx)
+        }
+
+        async fn torrent_action_start(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_start(idx)
+        }
+
         #[allow(unused_mut)]
         let mut app = Router::new()
             .route("/", get(api_root))
@@ -125,7 +139,9 @@ impl HttpApi {
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))
             .route("/torrents/:id/stats", get(torrent_stats))
-            .route("/torrents/:id/peer_stats", get(peer_stats));
+            .route("/torrents/:id/peer_stats", get(peer_stats))
+            .route("/torrents/:id/pause", post(torrent_action_pause))
+            .route("/torrents/:id/start", post(torrent_action_start));
 
         #[cfg(feature = "webui")]
         {
@@ -362,19 +378,35 @@ impl ApiInternal {
         TorrentListResponse { torrents: items }
     }
 
-    fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse> {
+    fn api_torrent_details(&self, idx: TorrentId) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.info().info_hash;
         let only_files = handle.only_files();
         make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
     }
 
-    fn api_peer_stats(&self, idx: usize, filter: PeerStatsFilter) -> Result<PeerStatsSnapshot> {
+    fn api_peer_stats(&self, idx: TorrentId, filter: PeerStatsFilter) -> Result<PeerStatsSnapshot> {
         let handle = self.mgr_handle(idx)?;
         Ok(handle
             .live()
             .context("not live")?
             .per_peer_stats_snapshot(filter))
+    }
+
+    fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<()> {
+        let handle = self.mgr_handle(idx)?;
+        handle
+            .pause()
+            .context("error pausing torrent")
+            .with_error_status_code(StatusCode::BAD_REQUEST)
+    }
+
+    fn api_torrent_action_start(&self, idx: TorrentId) -> Result<()> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .unpause(&handle)
+            .context("error unpausing torrent")
+            .with_error_status_code(StatusCode::BAD_REQUEST)
     }
 
     pub async fn api_add_torrent(
@@ -436,7 +468,7 @@ impl ApiInternal {
         Ok(dht.with_routing_table(|r| r.clone()))
     }
 
-    fn api_stats(&self, idx: usize) -> Result<StatsResponse> {
+    fn api_stats(&self, idx: TorrentId) -> Result<StatsResponse> {
         let mgr = self.mgr_handle(idx)?;
         let live = mgr.live().context("not live")?;
         let snapshot = live.stats_snapshot();

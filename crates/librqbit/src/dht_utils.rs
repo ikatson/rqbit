@@ -107,7 +107,7 @@ mod tests {
 
         let info_hash = Id20::from_str("cf3ea75e2ebbd30e0da6e6e215e2226bf35f2e33").unwrap();
         let dht = Dht::new().await.unwrap();
-        let peer_rx = dht.get_peers(info_hash).await.unwrap();
+        let peer_rx = dht.get_peers(info_hash).unwrap();
         let peer_id = generate_peer_id();
         match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx, None).await {
             ReadMetainfoResult::Found { info, .. } => dbg!(info),

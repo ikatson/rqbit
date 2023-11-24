@@ -224,8 +224,7 @@ impl Session {
                     .dht
                     .as_ref()
                     .context("magnet links without DHT are not supported")?
-                    .get_peers(info_hash)
-                    .await?;
+                    .get_peers(info_hash)?;
 
                 let trackers = trackers
                     .into_iter()
@@ -274,7 +273,7 @@ impl Session {
                 let dht_rx = match self.dht.as_ref() {
                     Some(dht) => {
                         debug!("reading peers for {:?} from DHT", torrent.info_hash);
-                        Some(dht.get_peers(torrent.info_hash).await?)
+                        Some(dht.get_peers(torrent.info_hash)?)
                     }
                     None => None,
                 };
@@ -430,7 +429,13 @@ impl Session {
         self.locked.read().torrents.get(id).cloned()
     }
 
-    pub fn restart(&self, id: usize) -> anyhow::Result<()> {
-        todo!()
+    pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        let peer_rx = self
+            .dht
+            .as_ref()
+            .map(|dht| dht.get_peers(handle.info_hash()))
+            .transpose()?;
+        handle.start(Default::default(), peer_rx);
+        return Ok(());
     }
 }
