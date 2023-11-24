@@ -274,7 +274,6 @@ impl TorrentStateLive {
             tokio::select! {
                 r = fut => r,
                 _ = cancel_rx.changed() => {
-                    error!("canceled");
                     bail!("canceled")
                 }
             }
