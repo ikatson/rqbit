@@ -239,39 +239,43 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         loop {
             session.with_torrents(|torrents| {
                     for (idx, torrent) in torrents.iter().enumerate() {
-                        match torrent.state() {
-                            ManagedTorrentState::Initializing(_) => {
-                                info!("[{}] initializing", idx);
-                            },
-                            ManagedTorrentState::Live(handle) => {
-                                let stats = handle.stats_snapshot();
-                                let speed = handle.speed_estimator();
-                                let total = stats.total_bytes;
-                                let progress = stats.total_bytes - stats.remaining_bytes;
-                                let downloaded_pct = if stats.remaining_bytes == 0 {
-                                    100f64
-                                } else {
-                                    (progress as f64 / total as f64) * 100f64
-                                };
-                                info!(
-                                    "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
-                                    idx,
-                                    downloaded_pct,
-                                    SF::new(progress),
-                                    speed.download_mbps(),
-                                    SF::new(stats.fetched_bytes),
-                                    SF::new(stats.remaining_bytes),
-                                    SF::new(total),
-                                    SF::new(stats.uploaded_bytes),
-                                    stats.peer_stats.live,
-                                    stats.peer_stats.connecting,
-                                    stats.peer_stats.queued,
-                                    stats.peer_stats.seen,
-                                    stats.peer_stats.dead,
-                                );
-                            },
-                            ManagedTorrentState::Created => warn!("the torrent was just created, but not initializing"),
-                        }
+                        let live = torrent.with_state(|s| {
+                            match s {
+                                ManagedTorrentState::Initializing(_) => info!("[{}] initializing", idx),
+                                ManagedTorrentState::Live(h) => return Some(h.clone()),
+                                ManagedTorrentState::Error(_) | ManagedTorrentState::Paused(_) => {},
+                            };
+                            None
+                        });
+                        let handle = match live {
+                            Some(live) => live,
+                            None => continue
+                        };
+                        let stats = handle.stats_snapshot();
+                        let speed = handle.speed_estimator();
+                        let total = stats.total_bytes;
+                        let progress = stats.total_bytes - stats.remaining_bytes;
+                        let downloaded_pct = if stats.remaining_bytes == 0 {
+                            100f64
+                        } else {
+                            (progress as f64 / total as f64) * 100f64
+                        };
+                        info!(
+                            "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
+                            idx,
+                            downloaded_pct,
+                            SF::new(progress),
+                            speed.download_mbps(),
+                            SF::new(stats.fetched_bytes),
+                            SF::new(stats.remaining_bytes),
+                            SF::new(total),
+                            SF::new(stats.uploaded_bytes),
+                            stats.peer_stats.live,
+                            stats.peer_stats.connecting,
+                            stats.peer_stats.queued,
+                            stats.peer_stats.seen,
+                            stats.peer_stats.dead,
+                        );
                     }
                 });
             tokio::time::sleep(Duration::from_secs(1)).await;

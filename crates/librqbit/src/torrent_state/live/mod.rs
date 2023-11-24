@@ -57,12 +57,13 @@ use std::{
 
 use anyhow::{bail, Context};
 use backoff::backoff::Backoff;
+use bencode::from_bytes;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     id20::Id20,
-    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    lengths::{self, ChunkInfo, Lengths, ValidPieceIndex},
     speed_estimator::{self, SpeedEstimator},
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -78,7 +79,8 @@ use tokio::{
     },
     time::timeout,
 };
-use tracing::{debug, error, info, span, trace, warn, Level};
+use tracing::{debug, error, info, span, trace, trace_span, warn, Level};
+use url::Url;
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
@@ -87,6 +89,7 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     spawn_utils::{spawn, BlockingSpawner},
+    tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
 };
 
@@ -102,7 +105,11 @@ use self::{
     stats::{atomic::AtomicStats, snapshot::StatsSnapshot},
 };
 
-use super::utils::{timeit, TimedExistence};
+use super::{
+    paused::TorrentStatePaused,
+    utils::{timeit, TimedExistence},
+    ManagedTorrentInfo,
+};
 
 struct InflightPiece {
     peer: PeerHandle,
@@ -126,17 +133,17 @@ pub struct TorrentStateOptions {
 
 pub struct TorrentStateLive {
     peers: PeerStates,
-    info: TorrentMetaV1Info<ByteString>,
+    meta: Arc<ManagedTorrentInfo>,
     locked: Arc<RwLock<TorrentStateLocked>>,
     files: Vec<Arc<Mutex<File>>>,
     filenames: Vec<PathBuf>,
-    info_hash: Id20,
-    peer_id: Id20,
-    lengths: Lengths,
+
+    // TODO: why the hell do we need these here, remove it.
     needed_bytes: u64,
     have_plus_needed_bytes: u64,
+
     stats: AtomicStats,
-    options: TorrentStateOptions,
+    lengths: Lengths,
 
     // Limits how many active (occupying network resources) peers there are at a moment in time.
     peer_semaphore: Semaphore,
@@ -151,35 +158,24 @@ pub struct TorrentStateLive {
 
 impl TorrentStateLive {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        info: TorrentMetaV1Info<ByteString>,
-        info_hash: Id20,
-        peer_id: Id20,
-        files: Vec<Arc<Mutex<File>>>,
-        filenames: Vec<PathBuf>,
-        chunk_tracker: ChunkTracker,
-        lengths: Lengths,
-        have_bytes: u64,
-        needed_bytes: u64,
-        spawner: BlockingSpawner,
-        options: Option<TorrentStateOptions>,
-    ) -> Arc<Self> {
-        let options = options.unwrap_or_default();
+    pub(crate) fn new(paused: TorrentStatePaused) -> Arc<Self> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
         let speed_estimator = SpeedEstimator::new(5);
 
+        let have_bytes = paused.chunk_tracker.get_have_bytes();
+        let needed_bytes = paused.chunk_tracker.get_needed_bytes();
+        let lengths = paused.chunk_tracker.get_lengths().clone();
+
         let state = Arc::new(TorrentStateLive {
-            info_hash,
-            info,
-            peer_id,
+            meta: paused.info.clone(),
             peers: Default::default(),
             locked: Arc::new(RwLock::new(TorrentStateLocked {
-                chunks: chunk_tracker,
+                chunks: paused.chunk_tracker,
                 inflight_pieces: Default::default(),
             })),
-            files,
-            filenames,
+            files: paused.files,
+            filenames: paused.filenames,
             stats: AtomicStats {
                 have_bytes: AtomicU64::new(have_bytes),
                 ..Default::default()
@@ -187,16 +183,42 @@ impl TorrentStateLive {
             needed_bytes,
             have_plus_needed_bytes: needed_bytes + have_bytes,
             lengths,
-            options,
 
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
             finished_notify: Notify::new(),
             speed_estimator,
         });
+
+        for tracker in state.meta.trackers.iter() {
+            spawn(
+                trace_span!("tracker_monitor", url = tracker.to_string()),
+                state.clone().task_single_tracker_monitor(tracker.clone()),
+            );
+        }
+
+        spawn(span!(Level::ERROR, "speed_estimator_updater"), {
+            let state = state.clone();
+            async move {
+                loop {
+                    let stats = state.stats_snapshot();
+                    let fetched = stats.fetched_bytes;
+                    let needed = state.initially_needed();
+                    // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
+                    let remaining = needed
+                        .wrapping_sub(fetched)
+                        .min(needed - stats.downloaded_and_checked_bytes);
+                    state
+                        .speed_estimator
+                        .add_snapshot(fetched, remaining, Instant::now());
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        });
+
         spawn(
             span!(Level::ERROR, "peer_adder"),
-            state.clone().task_peer_adder(peer_queue_rx, spawner),
+            state.clone().task_peer_adder(peer_queue_rx),
         );
         state
     }
@@ -205,11 +227,75 @@ impl TorrentStateLive {
         &self.speed_estimator
     }
 
-    async fn task_manage_peer(
+    async fn tracker_one_request(&self, tracker_url: Url) -> anyhow::Result<u64> {
+        let response: reqwest::Response = reqwest::get(tracker_url).await?;
+        if !response.status().is_success() {
+            anyhow::bail!("tracker responded with {:?}", response.status());
+        }
+        let bytes = response.bytes().await?;
+        if let Ok(error) = from_bytes::<TrackerError>(&bytes) {
+            anyhow::bail!(
+                "tracker returned failure. Failure reason: {}",
+                error.failure_reason
+            )
+        };
+        let response = from_bytes::<TrackerResponse>(&bytes)?;
+
+        for peer in response.peers.iter_sockaddrs() {
+            self.add_peer_if_not_seen(peer);
+        }
+        Ok(response.interval)
+    }
+
+    async fn task_single_tracker_monitor(
         self: Arc<Self>,
-        addr: SocketAddr,
-        spawner: BlockingSpawner,
+        mut tracker_url: Url,
     ) -> anyhow::Result<()> {
+        let mut event = Some(TrackerRequestEvent::Started);
+        loop {
+            let request = TrackerRequest {
+                info_hash: self.info_hash(),
+                peer_id: self.peer_id(),
+                port: 6778,
+                uploaded: self.get_uploaded_bytes(),
+                downloaded: self.get_downloaded_bytes(),
+                left: self.get_left_to_download_bytes(),
+                compact: true,
+                no_peer_id: false,
+                event,
+                ip: None,
+                numwant: None,
+                key: None,
+                trackerid: None,
+            };
+
+            let request_query = request.as_querystring();
+            tracker_url.set_query(Some(&request_query));
+
+            match self.tracker_one_request(tracker_url.clone()).await {
+                Ok(interval) => {
+                    event = None;
+                    let interval = self
+                        .meta
+                        .options
+                        .force_tracker_interval
+                        .unwrap_or_else(|| Duration::from_secs(interval));
+                    debug!(
+                        "sleeping for {:?} after calling tracker {}",
+                        interval,
+                        tracker_url.host().unwrap()
+                    );
+                    tokio::time::sleep(interval).await;
+                }
+                Err(e) => {
+                    debug!("error calling the tracker {}: {:#}", tracker_url, e);
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            };
+        }
+    }
+
+    async fn task_manage_peer(self: Arc<Self>, addr: SocketAddr) -> anyhow::Result<()> {
         let state = self;
         let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
 
@@ -229,21 +315,20 @@ impl TorrentStateLive {
             requests_sem: Semaphore::new(0),
             state: state.clone(),
             tx,
-            spawner,
             counters,
         };
         let options = PeerConnectionOptions {
-            connect_timeout: state.options.peer_connect_timeout,
-            read_write_timeout: state.options.peer_read_write_timeout,
+            connect_timeout: state.meta.options.peer_connect_timeout,
+            read_write_timeout: state.meta.options.peer_read_write_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
             addr,
-            state.info_hash,
-            state.peer_id,
+            state.meta.info_hash,
+            state.meta.peer_id,
             &handler,
             Some(options),
-            spawner,
+            state.meta.spawner,
         );
         let requester = handler.task_peer_chunk_requester(addr);
 
@@ -274,7 +359,6 @@ impl TorrentStateLive {
     async fn task_peer_adder(
         self: Arc<Self>,
         mut peer_queue_rx: UnboundedReceiver<SocketAddr>,
-        spawner: BlockingSpawner,
     ) -> anyhow::Result<()> {
         let state = self;
         loop {
@@ -289,22 +373,22 @@ impl TorrentStateLive {
             permit.forget();
             spawn(
                 span!(parent: None, Level::ERROR, "manage_peer", peer = addr.to_string()),
-                state.clone().task_manage_peer(addr, spawner),
+                state.clone().task_manage_peer(addr),
             );
         }
     }
 
     pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
-        &self.info
+        &self.meta.info
     }
     pub fn info_hash(&self) -> Id20 {
-        self.info_hash
+        self.meta.info_hash
     }
     pub fn peer_id(&self) -> Id20 {
-        self.peer_id
+        self.meta.peer_id
     }
     pub(crate) fn file_ops(&self) -> FileOps<'_, Sha1> {
-        FileOps::new(&self.info, &self.files, &self.lengths)
+        FileOps::new(&self.meta.info, &self.files, &self.lengths)
     }
     pub fn initially_needed(&self) -> u64 {
         self.needed_bytes
@@ -429,7 +513,7 @@ impl TorrentStateLive {
         );
     }
 
-    pub(crate) fn add_peer_if_not_seen(self: &Arc<Self>, addr: SocketAddr) -> bool {
+    pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> bool {
         match self.peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return false,
@@ -509,7 +593,6 @@ struct PeerHandler {
     requests_sem: Semaphore,
 
     addr: SocketAddr,
-    spawner: BlockingSpawner,
 
     tx: PeerTx,
 }
@@ -1083,7 +1166,9 @@ impl PeerHandler {
         // By this time we reach here, no other peer can for this piece. All others, even if they steal pieces would
         // have fallen off above in one of the defensive checks.
 
-        self.spawner
+        self.state
+            .meta
+            .spawner
             .spawn_block_in_place(move || {
                 let index = piece.index;
 

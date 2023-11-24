@@ -1,6 +1,7 @@
-pub mod utils;
-
+pub mod initializing;
 pub mod live;
+pub mod paused;
+pub mod utils;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use std::{collections::HashSet, path::Path};
 use anyhow::Context;
 use buffers::ByteString;
 use librqbit_core::id20::Id20;
+use librqbit_core::peer_id::generate_peer_id;
 use librqbit_core::speed_estimator::SpeedEstimator;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 pub use live::*;
@@ -21,23 +23,27 @@ use url::Url;
 
 use crate::spawn_utils::{spawn, BlockingSpawner};
 
-pub struct TorrentStateInitializing {}
+use initializing::TorrentStateInitializing;
 
-#[derive(Default, Clone)]
+use self::paused::TorrentStatePaused;
+
 pub enum ManagedTorrentState {
-    #[default]
-    Created,
-
-    Initializing(Arc<TorrentStateInitializing>),
-
-    // TODO: only_files_tx
-    // TODO: trackers_tx??
+    Initializing(TorrentStateInitializing),
+    Paused(TorrentStatePaused),
     Live(Arc<TorrentStateLive>),
+    Error(anyhow::Error),
 }
 
 pub(crate) struct ManagedTorrentLocked {
-    pub only_files: Option<Vec<usize>>,
     pub state: ManagedTorrentState,
+}
+
+#[derive(Default)]
+pub(crate) struct ManagedTorrentOptions {
+    pub force_tracker_interval: Option<Duration>,
+    pub peer_connect_timeout: Option<Duration>,
+    pub peer_read_write_timeout: Option<Duration>,
+    pub overwrite: bool,
 }
 
 pub struct ManagedTorrentInfo {
@@ -46,7 +52,8 @@ pub struct ManagedTorrentInfo {
     pub out_dir: PathBuf,
     pub spawner: BlockingSpawner,
     pub trackers: Vec<Url>,
-    // pub options: Option<ManagedTorrentOptions>,
+    pub peer_id: Id20,
+    pub(crate) options: ManagedTorrentOptions,
 }
 
 pub struct ManagedTorrent {
@@ -68,11 +75,12 @@ impl ManagedTorrent {
     }
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
-        self.locked.write().only_files.clone()
+        // self.locked.write().only_files.clone()
+        todo!()
     }
 
-    pub fn state(&self) -> ManagedTorrentState {
-        self.locked.read().state.clone()
+    pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
+        f(&self.locked.read().state)
     }
 
     pub fn live(&self) -> Option<Arc<TorrentStateLive>> {
@@ -169,19 +177,26 @@ impl ManagedTorrentBuilder {
     }
 
     pub(crate) fn build(self) -> ManagedTorrentHandle {
+        let info = Arc::new(ManagedTorrentInfo {
+            info: self.info,
+            info_hash: self.info_hash,
+            out_dir: self.output_folder,
+            trackers: self.trackers.into_iter().collect(),
+            spawner: self.spawner.unwrap_or_default(),
+            peer_id: self.peer_id.unwrap_or_else(generate_peer_id),
+            options: ManagedTorrentOptions {
+                force_tracker_interval: self.force_tracker_interval,
+                peer_connect_timeout: self.peer_connect_timeout,
+                peer_read_write_timeout: self.peer_read_write_timeout,
+                overwrite: self.overwrite,
+            },
+        });
+        let initializing = TorrentStateInitializing::new(info.clone(), self.only_files);
         Arc::new(ManagedTorrent {
             locked: RwLock::new(ManagedTorrentLocked {
-                only_files: self.only_files,
-                state: Default::default(),
+                state: ManagedTorrentState::Initializing(initializing),
             }),
-            info: Arc::new(ManagedTorrentInfo {
-                info: self.info,
-                info_hash: self.info_hash,
-                out_dir: self.output_folder,
-                trackers: self.trackers.into_iter().collect(),
-                spawner: self.spawner.unwrap_or_default(),
-                // options: Some(self.options),
-            }),
+            info,
         })
     }
 }
