@@ -35,6 +35,11 @@ impl TorrentStateInitializing {
         }
     }
 
+    pub fn get_checked_bytes(&self) -> u64 {
+        self.checked_bytes
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         let (files, filenames) = {
             let mut files =

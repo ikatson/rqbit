@@ -127,14 +127,28 @@ impl HttpApi {
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_torrent_action_pause(idx)
+            state.api_torrent_action_pause(idx).map(axum::Json)
         }
 
         async fn torrent_action_start(
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_torrent_action_start(idx)
+            state.api_torrent_action_start(idx).map(axum::Json)
+        }
+
+        async fn torrent_action_forget(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_forget(idx).map(axum::Json)
+        }
+
+        async fn torrent_action_delete(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_delete(idx).map(axum::Json)
         }
 
         #[allow(unused_mut)]
@@ -149,7 +163,9 @@ impl HttpApi {
             .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
             .route("/torrents/:id/peer_stats", get(peer_stats))
             .route("/torrents/:id/pause", post(torrent_action_pause))
-            .route("/torrents/:id/start", post(torrent_action_start));
+            .route("/torrents/:id/start", post(torrent_action_start))
+            .route("/torrents/:id/forget", post(torrent_action_forget))
+            .route("/torrents/:id/delete", post(torrent_action_delete));
 
         #[cfg(feature = "webui")]
         {
@@ -243,6 +259,9 @@ pub struct TorrentDetailsResponseFile {
     pub length: u64,
     pub included: bool,
 }
+
+#[derive(Default, Serialize)]
+struct EmptyJsonResponse {}
 
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponse {
@@ -409,20 +428,32 @@ impl ApiInternal {
             .per_peer_stats_snapshot(filter))
     }
 
-    fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<()> {
+    fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         handle
             .pause()
             .context("error pausing torrent")
-            .with_error_status_code(StatusCode::BAD_REQUEST)
+            .with_error_status_code(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
     }
 
-    fn api_torrent_action_start(&self, idx: TorrentId) -> Result<()> {
+    fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         self.session
             .unpause(&handle)
             .context("error unpausing torrent")
-            .with_error_status_code(StatusCode::BAD_REQUEST)
+            .with_error_status_code(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
+    fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+        Err(ApiError::not_implemented("forgetting not implemented yet"))
+    }
+
+    fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+        Err(ApiError::not_implemented(
+            "deleting torrent not implemented yet",
+        ))
     }
 
     pub async fn api_add_torrent(
@@ -528,7 +559,7 @@ impl ApiInternal {
                 ManagedTorrentState::Paused(p) => {
                     resp.state = "paused";
                     resp.progress_bytes = p.have_bytes;
-                    resp.finished = p.have_bytes == resp.progress_bytes;
+                    resp.finished = p.have_bytes == resp.total_bytes;
                 }
                 ManagedTorrentState::Live(l) => {
                     resp.state = "live";

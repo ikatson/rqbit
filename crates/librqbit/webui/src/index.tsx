@@ -14,6 +14,7 @@ interface ContextType {
 }
 
 const AppContext = createContext<ContextType>(null);
+const RefreshTorrentStatsContext = createContext<{ refresh: () => void }>(null);
 
 const IconButton: React.FC<{
     className: string,
@@ -39,6 +40,8 @@ const DeleteTorrentModal = ({ id, show, onHide }) => {
     const [error, setError] = useState<Error>(null);
     const [deleting, setDeleting] = useState(false);
 
+    const refreshCtx = useContext(RefreshTorrentStatsContext);
+
     const close = () => {
         setDeleteFiles(false);
         setError(null);
@@ -52,6 +55,7 @@ const DeleteTorrentModal = ({ id, show, onHide }) => {
         const call = deleteFiles ? API.delete : API.forget;
 
         call(id).then(() => {
+            refreshCtx.refresh();
             close();
         }).catch((e) => {
             setError({
@@ -99,6 +103,8 @@ const TorrentActions: React.FC<{
     let [disabled, setDisabled] = useState<boolean>(false);
     let [deleting, setDeleting] = useState<boolean>(false);
 
+    let refreshCtx = useContext(RefreshTorrentStatsContext);
+
     const canPause = state == 'live';
     const canUnpause = state == 'paused';
 
@@ -106,22 +112,22 @@ const TorrentActions: React.FC<{
 
     const unpause = () => {
         setDisabled(true);
-        API.start(id).finally(() => setDisabled(false)).catch((e) => {
+        API.start(id).then(() => { refreshCtx.refresh() }, (e) => {
             ctx.setCloseableError({
                 text: `Error starting torrent id=${id}`,
                 details: e,
             });
-        })
+        }).finally(() => setDisabled(false))
     };
 
     const pause = () => {
         setDisabled(true);
-        API.pause(id).finally(() => setDisabled(false)).catch((e) => {
+        API.pause(id).then(() => { refreshCtx.refresh() }, (e) => {
             ctx.setCloseableError({
                 text: `Error pausing torrent id=${id}`,
                 details: e,
             });
-        })
+        }).finally(() => setDisabled(false))
     };
 
     const startDeleting = () => {
@@ -241,21 +247,34 @@ const Torrent = ({ id, torrent }) => {
         }
     }, [detailsResponse]);
 
+    const refreshStats = () => API.getTorrentStats(torrent.id).then((stats) => {
+        updateStatsResponse(stats);
+        return stats;
+    });
+
     // Update stats once then forever.
     useEffect(() => customSetInterval((async () => {
         const errorInterval = 10000;
-        const liveInterval = 500;
-        const finishedInterval = 5000;
+        const liveInterval = 1000;
+        const finishedInterval = 10000;
+        const nonLiveInterval = 10000;
 
-        return API.getTorrentStats(torrent.id).then((stats) => {
-            updateStatsResponse(stats);
-            return torrentIsDone(stats) ? finishedInterval : liveInterval;
+        return refreshStats().then((stats) => {
+            if (stats.finished) {
+                return finishedInterval;
+            }
+            if (stats.state == STATE_INITIALIZING || stats.state == STATE_LIVE) {
+                return liveInterval;
+            }
+            return nonLiveInterval;
         }, (e) => {
             return errorInterval;
         });
     }), 0), []);
 
-    return <TorrentRow id={id} detailsResponse={detailsResponse} statsResponse={statsResponse} />
+    return <RefreshTorrentStatsContext.Provider value={{ refresh: refreshStats }}>
+        <TorrentRow id={id} detailsResponse={detailsResponse} statsResponse={statsResponse} />
+    </RefreshTorrentStatsContext.Provider >
 }
 
 const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) => {
@@ -540,10 +559,6 @@ const RootContent = (props: { closeableError: ErrorDetails, otherError: ErrorDet
         <Buttons />
     </Container>
 };
-
-function torrentIsDone(stats: TorrentStats): boolean {
-    return stats.finished;
-}
 
 function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 Bytes';

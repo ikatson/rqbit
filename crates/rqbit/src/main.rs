@@ -241,7 +241,12 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     for (idx, torrent) in torrents {
                         let live = torrent.with_state(|s| {
                             match s {
-                                ManagedTorrentState::Initializing(_) => info!("[{}] initializing", idx),
+                                ManagedTorrentState::Initializing(i) => {
+                                    let total = torrent.get_total_bytes();
+                                    let progress = i.get_checked_bytes();
+                                    let pct =  (progress as f64 / total as f64) * 100f64;
+                                    info!("[{}] initializing {:.2}%", idx, pct)
+                                },
                                 ManagedTorrentState::Live(h) => return Some(h.clone()),
                                 _ => {},
                             };

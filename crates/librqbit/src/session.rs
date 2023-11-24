@@ -11,7 +11,7 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use reqwest::Url;
 use tokio_stream::StreamExt;
-use tracing::{debug, info, trace_span, warn};
+use tracing::{debug, error_span, info, warn};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
@@ -412,13 +412,14 @@ impl Session {
             {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle.clone()));
             }
-            let managed_torrent = builder.build()?;
+            let next_id = g.torrents.len();
+            let managed_torrent = builder.build(error_span!("torrent", id = next_id))?;
             let id = g.add_torrent(managed_torrent.clone());
             (managed_torrent, id)
         };
 
         {
-            let span = trace_span!("torrent", id = id);
+            let span = managed_torrent.info.span.clone();
             let _ = span.enter();
             managed_torrent
                 .start(initial_peers, dht_peer_rx)

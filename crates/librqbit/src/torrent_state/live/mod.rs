@@ -61,6 +61,7 @@ use bencode::from_bytes;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
+use itertools::Itertools;
 use librqbit_core::{
     id20::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
@@ -79,7 +80,7 @@ use tokio::{
     },
     time::timeout,
 };
-use tracing::{debug, error, info, span, trace, trace_span, warn, Level};
+use tracing::{debug, error, error_span, info, trace, warn};
 use url::Url;
 
 use crate::{
@@ -116,13 +117,40 @@ struct InflightPiece {
     started: Instant,
 }
 
+fn dummy_file() -> anyhow::Result<std::fs::File> {
+    #[cfg(target_os = "windows")]
+    const DEVNULL: &str = "NUL";
+    #[cfg(not(target_os = "windows"))]
+    const DEVNULL: &str = "/dev/null";
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .open(DEVNULL)
+        .with_context(|| format!("error opening {}", DEVNULL))
+}
+
 pub(crate) struct TorrentStateLocked {
     // What chunks we have and need.
-    pub(crate) chunks: ChunkTracker,
+    // If this is None, the torrent was paused, and this live state is useless, and needs to be dropped.
+    pub(crate) chunks: Option<ChunkTracker>,
 
     // At a moment in time, we are expecting a piece from only one peer.
     // inflight_pieces stores this information.
     inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
+}
+
+impl TorrentStateLocked {
+    pub(crate) fn get_chunks(&self) -> anyhow::Result<&ChunkTracker> {
+        self.chunks
+            .as_ref()
+            .context("chunk tracker empty, torrent was paused")
+    }
+
+    fn get_chunks_mut(&mut self) -> anyhow::Result<&mut ChunkTracker> {
+        self.chunks
+            .as_mut()
+            .context("chunk tracker empty, torrent was paused")
+    }
 }
 
 #[derive(Default)]
@@ -134,7 +162,8 @@ pub struct TorrentStateOptions {
 pub struct TorrentStateLive {
     peers: PeerStates,
     meta: Arc<ManagedTorrentInfo>,
-    locked: Arc<RwLock<TorrentStateLocked>>,
+    locked: RwLock<TorrentStateLocked>,
+
     files: Vec<Arc<Mutex<File>>>,
     filenames: Vec<PathBuf>,
 
@@ -153,6 +182,9 @@ pub struct TorrentStateLive {
 
     finished_notify: Notify,
 
+    cancel_tx: tokio::sync::watch::Sender<()>,
+    cancel_rx: tokio::sync::watch::Receiver<()>,
+
     speed_estimator: SpeedEstimator,
 }
 
@@ -166,13 +198,15 @@ impl TorrentStateLive {
         let needed_bytes = paused.info.lengths.total_length() - have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
+
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
             peers: Default::default(),
-            locked: Arc::new(RwLock::new(TorrentStateLocked {
-                chunks: paused.chunk_tracker,
+            locked: RwLock::new(TorrentStateLocked {
+                chunks: Some(paused.chunk_tracker),
                 inflight_pieces: Default::default(),
-            })),
+            }),
             files: paused.files,
             filenames: paused.filenames,
             stats: AtomicStats {
@@ -182,44 +216,69 @@ impl TorrentStateLive {
             needed_bytes,
             have_plus_needed_bytes: needed_bytes + have_bytes,
             lengths,
-
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
             finished_notify: Notify::new(),
             speed_estimator,
+            cancel_rx,
+            cancel_tx,
         });
 
         for tracker in state.meta.trackers.iter() {
-            spawn(
-                trace_span!("tracker_monitor", url = tracker.to_string()),
+            state.spawn(
+                error_span!(parent: state.meta.span.clone(), "tracker_monitor", url = tracker.to_string()),
                 state.clone().task_single_tracker_monitor(tracker.clone()),
             );
         }
 
-        spawn(span!(Level::ERROR, "speed_estimator_updater"), {
-            let state = state.clone();
-            async move {
-                loop {
-                    let stats = state.stats_snapshot();
-                    let fetched = stats.fetched_bytes;
-                    let needed = state.initially_needed();
-                    // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
-                    let remaining = needed
-                        .wrapping_sub(fetched)
-                        .min(needed - stats.downloaded_and_checked_bytes);
-                    state
-                        .speed_estimator
-                        .add_snapshot(fetched, remaining, Instant::now());
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+        state.spawn(
+            error_span!(parent: state.meta.span.clone(), "speed_estimator_updater"),
+            {
+                let state = Arc::downgrade(&state);
+                async move {
+                    loop {
+                        let state = match state.upgrade() {
+                            Some(state) => state,
+                            None => return Ok(()),
+                        };
+                        let stats = state.stats_snapshot();
+                        let fetched = stats.fetched_bytes;
+                        let needed = state.initially_needed();
+                        // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
+                        let remaining = needed
+                            .wrapping_sub(fetched)
+                            .min(needed - stats.downloaded_and_checked_bytes);
+                        state
+                            .speed_estimator
+                            .add_snapshot(fetched, remaining, Instant::now());
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
                 }
-            }
-        });
+            },
+        );
 
-        spawn(
-            span!(Level::ERROR, "peer_adder"),
+        state.spawn(
+            error_span!(parent: state.meta.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
         );
         state
+    }
+
+    fn spawn(
+        &self,
+        span: tracing::Span,
+        fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) {
+        let mut cancel_rx = self.cancel_rx.clone();
+        spawn(span, async move {
+            tokio::select! {
+                r = fut => r,
+                _ = cancel_rx.changed() => {
+                    error!("canceled");
+                    bail!("canceled")
+                }
+            }
+        });
     }
 
     pub fn speed_estimator(&self) -> &SpeedEstimator {
@@ -241,7 +300,7 @@ impl TorrentStateLive {
         let response = from_bytes::<TrackerResponse>(&bytes)?;
 
         for peer in response.peers.iter_sockaddrs() {
-            self.add_peer_if_not_seen(peer);
+            self.add_peer_if_not_seen(peer)?;
         }
         Ok(response.interval)
     }
@@ -345,11 +404,11 @@ impl TorrentStateLive {
         match res {
             // We disconnected the peer ourselves as we don't need it
             Ok(()) => {
-                handler.on_peer_died(None);
+                handler.on_peer_died(None)?;
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e));
+                handler.on_peer_died(Some(e))?;
             }
         }
         Ok::<_, anyhow::Error>(())
@@ -361,17 +420,17 @@ impl TorrentStateLive {
     ) -> anyhow::Result<()> {
         let state = self;
         loop {
-            let addr = peer_queue_rx.recv().await.unwrap();
+            let addr = peer_queue_rx.recv().await.context("torrent closed")?;
             if state.is_finished() {
                 debug!("ignoring peer {} as we are finished", addr);
                 state.peers.mark_peer_not_needed(addr);
                 continue;
             }
 
-            let permit = state.peer_semaphore.acquire().await.unwrap();
+            let permit = state.peer_semaphore.acquire().await?;
             permit.forget();
-            spawn(
-                span!(parent: None, Level::ERROR, "manage_peer", peer = addr.to_string()),
+            state.spawn(
+                error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
                 state.clone().task_manage_peer(addr),
             );
         }
@@ -406,23 +465,28 @@ impl TorrentStateLive {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
-    fn get_next_needed_piece(&self, peer_handle: PeerHandle) -> Option<ValidPieceIndex> {
+    fn get_next_needed_piece(
+        &self,
+        peer_handle: PeerHandle,
+    ) -> anyhow::Result<Option<ValidPieceIndex>> {
         self.peers
             .with_live_mut(peer_handle, "l(get_next_needed_piece)", |live| {
                 let g = self.lock_read("g(get_next_needed_piece)");
                 let bf = &live.bitfield;
-                for n in g.chunks.iter_needed_pieces() {
+                for n in g.get_chunks()?.iter_needed_pieces() {
                     if bf.get(n).map(|v| *v) == Some(true) {
                         // in theory it should be safe without validation, but whatever.
-                        return self.lengths.validate_piece_index(n as u32);
+                        return Ok(self.lengths.validate_piece_index(n as u32));
                     }
                 }
-                None
-            })?
+                Ok(None)
+            })
+            .transpose()
+            .map(|r| r.flatten())
     }
 
     fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
-        self.get_next_needed_piece(handle).is_some()
+        matches!(self.get_next_needed_piece(handle), Ok(Some(_)))
     }
 
     fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
@@ -447,6 +511,10 @@ impl TorrentStateLive {
         self.stats
             .downloaded_and_checked_bytes
             .load(Ordering::Acquire)
+    }
+
+    pub fn get_have_bytes(&self) -> u64 {
+        self.stats.have_bytes.load(Ordering::Relaxed)
     }
 
     pub fn is_finished(&self) -> bool {
@@ -498,9 +566,11 @@ impl TorrentStateLive {
         }
 
         let mut unordered: FuturesUnordered<_> = futures.into_iter().collect();
-        spawn(
-            span!(
-                Level::ERROR,
+
+        // We don't want to remember this task as there may be too many.
+        self.spawn(
+            error_span!(
+                parent: self.meta.span.clone(),
                 "transmit_haves",
                 piece = index.get(),
                 count = unordered.len()
@@ -512,14 +582,14 @@ impl TorrentStateLive {
         );
     }
 
-    pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> bool {
+    pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> anyhow::Result<bool> {
         match self.peers.add_if_not_seen(addr) {
             Some(handle) => handle,
-            None => return false,
+            None => return Ok(false),
         };
 
-        self.peer_queue_tx.send(addr).unwrap();
-        true
+        self.peer_queue_tx.send(addr)?;
+        Ok(true)
     }
 
     pub fn stats_snapshot(&self) -> StatsSnapshot {
@@ -560,7 +630,34 @@ impl TorrentStateLive {
     }
 
     pub fn pause(&self) -> anyhow::Result<TorrentStatePaused> {
-        bail!("pause not implemented yet")
+        let _ = self.cancel_tx.send(());
+
+        let mut g = self.locked.write();
+
+        let files = self
+            .files
+            .iter()
+            .map(|f| {
+                let mut f = f.lock();
+                let dummy = dummy_file()?;
+                let f = std::mem::replace(&mut *f, dummy);
+                Ok::<_, anyhow::Error>(Arc::new(Mutex::new(f)))
+            })
+            .try_collect()?;
+
+        let filenames = self.filenames.clone();
+
+        // g.chunks;
+        Ok(TorrentStatePaused {
+            info: self.meta.clone(),
+            files,
+            filenames,
+            chunk_tracker: g
+                .chunks
+                .take()
+                .context("bug: pausing already paused torrent")?,
+            have_bytes: self.get_have_bytes(),
+        })
     }
 }
 
@@ -633,16 +730,12 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         Ok(())
     }
 
-    fn get_have_bytes(&self) -> u64 {
-        self.state.stats.have_bytes.load(Ordering::Relaxed)
-    }
-
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize> {
+    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
-        let msg = Message::Bitfield(ByteBuf(g.chunks.get_have_pieces().as_raw_slice()));
-        let len = msg.serialize(buf, None).unwrap();
+        let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_raw_slice()));
+        let len = msg.serialize(buf, None)?;
         debug!("sending: {:?}, length={}", &msg, len);
-        Some(len)
+        Ok(len)
     }
 
     fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
@@ -664,10 +757,14 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
         Ok(())
     }
+
+    fn get_have_bytes(&self) -> u64 {
+        self.state.get_have_bytes()
+    }
 }
 
 impl PeerHandler {
-    fn on_peer_died(self, error: Option<anyhow::Error>) {
+    fn on_peer_died(self, error: Option<anyhow::Error>) -> anyhow::Result<()> {
         let peers = &self.state.peers;
         let pstats = &peers.stats;
         let handle = self.addr;
@@ -675,7 +772,7 @@ impl PeerHandler {
             Some(peer) => TimedExistence::new(peer, "on_peer_died"),
             None => {
                 warn!("bug: peer not found in table. Forgetting it forever");
-                return;
+                return Ok(());
             }
         };
         let prev = pe.value_mut().state.take(pstats);
@@ -690,20 +787,21 @@ impl PeerHandler {
                         req.piece.get(),
                         req.chunk
                     );
-                    g.chunks.mark_chunk_request_cancelled(req.piece, req.chunk);
+                    g.get_chunks_mut()?
+                        .mark_chunk_request_cancelled(req.piece, req.chunk);
                 }
             }
             PeerState::NotNeeded => {
                 // Restore it as std::mem::take() replaced it above.
                 pe.value_mut().state.set(PeerState::NotNeeded, pstats);
-                return;
+                return Ok(());
             }
             s @ PeerState::Queued | s @ PeerState::Dead => {
                 warn!("bug: peer was in a wrong state {s:?}, ignoring it forever");
                 // Prevent deadlocks.
                 drop(pe);
                 self.state.peers.drop_peer(handle);
-                return;
+                return Ok(());
             }
         };
 
@@ -712,7 +810,7 @@ impl PeerHandler {
             None => {
                 debug!("peer died without errors, not re-queueing");
                 pe.value_mut().state.set(PeerState::NotNeeded, pstats);
-                return;
+                return Ok(());
             }
         };
 
@@ -721,7 +819,7 @@ impl PeerHandler {
         if self.state.is_finished() {
             debug!("torrent finished, not re-queueing");
             pe.value_mut().state.set(PeerState::NotNeeded, pstats);
-            return;
+            return Ok(());
         }
 
         pe.value_mut().state.set(PeerState::Dead, pstats);
@@ -732,10 +830,9 @@ impl PeerHandler {
         drop(pe);
 
         if let Some(dur) = backoff {
-            spawn(
-                span!(
-                    parent: None,
-                    Level::ERROR,
+            self.state.clone().spawn(
+                error_span!(
+                    parent: self.state.meta.span.clone(),
                     "wait_for_peer",
                     peer = handle.to_string(),
                     duration = format!("{dur:?}")
@@ -764,31 +861,35 @@ impl PeerHandler {
         } else {
             debug!("dropping peer, backoff exhausted");
             self.state.peers.drop_peer(handle);
-        }
+        };
+        Ok(())
     }
 
-    fn reserve_next_needed_piece(&self) -> Option<ValidPieceIndex> {
+    fn reserve_next_needed_piece(&self) -> anyhow::Result<Option<ValidPieceIndex>> {
         // TODO: locking one inside the other in different order results in deadlocks.
         self.state
             .peers
             .with_live_mut(self.addr, "reserve_next_needed_piece", |live| {
                 if self.locked.read().i_am_choked {
                     debug!("we are choked, can't reserve next piece");
-                    return None;
+                    return Ok(None);
                 }
                 let mut g = self.state.lock_write("reserve_next_needed_piece");
 
                 let n = {
                     let mut n_opt = None;
                     let bf = &live.bitfield;
-                    for n in g.chunks.iter_needed_pieces() {
+                    for n in g.get_chunks()?.iter_needed_pieces() {
                         if bf.get(n).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
                             break;
                         }
                     }
 
-                    self.state.lengths.validate_piece_index(n_opt? as u32)?
+                    self.state
+                        .lengths
+                        .validate_piece_index(n_opt.context("invalid n_opt")? as u32)
+                        .context("invalid piece")?
                 };
                 g.inflight_pieces.insert(
                     n,
@@ -797,10 +898,11 @@ impl PeerHandler {
                         started: Instant::now(),
                     },
                 );
-                g.chunks.reserve_needed_piece(n);
-                Some(n)
+                g.get_chunks_mut()?.reserve_needed_piece(n);
+                Ok(Some(n))
             })
-            .flatten()
+            .transpose()
+            .map(|r| r.flatten())
     }
 
     fn try_steal_old_slow_piece(&self, threshold: f64) -> Option<ValidPieceIndex> {
@@ -865,7 +967,7 @@ impl PeerHandler {
         if !self
             .state
             .lock_read("is_chunk_ready_to_upload")
-            .chunks
+            .get_chunks()?
             .is_chunk_ready_to_upload(&chunk_info)
         {
             anyhow::bail!(
@@ -965,7 +1067,7 @@ impl PeerHandler {
             // Afterwards means we are close to completion, try stealing more aggressively.
             let next = match self
                 .try_steal_old_slow_piece(10.)
-                .or_else(|| self.reserve_next_needed_piece())
+                .or_else(|| self.reserve_next_needed_piece().ok().flatten())
                 .or_else(|| self.try_steal_old_slow_piece(2.))
             {
                 Some(next) => next,
@@ -1037,18 +1139,6 @@ impl PeerHandler {
     }
 
     fn reopen_read_only(&self) -> anyhow::Result<()> {
-        fn dummy_file() -> anyhow::Result<std::fs::File> {
-            #[cfg(target_os = "windows")]
-            const DEVNULL: &str = "NUL";
-            #[cfg(not(target_os = "windows"))]
-            const DEVNULL: &str = "/dev/null";
-
-            std::fs::OpenOptions::new()
-                .read(true)
-                .open(DEVNULL)
-                .with_context(|| format!("error opening {}", DEVNULL))
-        }
-
         // Lock exclusive just in case to ensure in-flight operations finish.??
         let _guard = self.state.lock_write("reopen_read_only");
 
@@ -1140,7 +1230,7 @@ impl PeerHandler {
                 }
             };
 
-            match g.chunks.mark_chunk_downloaded(&piece) {
+            match g.get_chunks_mut()?.mark_chunk_downloaded(&piece) {
                 Some(ChunkMarkingResult::Completed) => {
                     debug!("piece={} done, will write and checksum", piece.index,);
                     // This will prevent others from stealing it.
@@ -1204,7 +1294,8 @@ impl PeerHandler {
                     true => {
                         {
                             let mut g = self.state.lock_write("mark_piece_downloaded");
-                            g.chunks.mark_piece_downloaded(chunk_info.piece_index);
+                            g.get_chunks_mut()?
+                                .mark_piece_downloaded(chunk_info.piece_index);
                         }
 
                         // Global piece counters.
@@ -1256,7 +1347,7 @@ impl PeerHandler {
                         warn!("checksum for piece={} did not validate", index,);
                         self.state
                             .lock_write("mark_piece_broken")
-                            .chunks
+                            .get_chunks_mut()?
                             .mark_piece_broken(chunk_info.piece_index);
                     }
                 };

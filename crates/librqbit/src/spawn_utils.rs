@@ -1,9 +1,9 @@
-use tracing::{debug, error, trace, Instrument};
+use tracing::{debug, trace, Instrument};
 
 pub fn spawn(
     span: tracing::Span,
     fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
-) {
+) -> tokio::task::JoinHandle<()> {
     let fut = async move {
         trace!("started");
         match fut.await {
@@ -11,12 +11,12 @@ pub fn spawn(
                 debug!("finished");
             }
             Err(e) => {
-                error!("{:#}", e)
+                debug!("finished with error: {:#}", e)
             }
         }
     }
     .instrument(span.or_current());
-    tokio::spawn(fut);
+    tokio::spawn(fut)
 }
 
 #[derive(Clone, Copy, Debug)]

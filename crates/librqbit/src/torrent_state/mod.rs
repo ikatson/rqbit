@@ -21,7 +21,7 @@ pub use live::*;
 use parking_lot::RwLock;
 
 use tokio_stream::StreamExt;
-use tracing::trace_span;
+use tracing::error_span;
 use url::Url;
 
 use crate::chunk_tracker::ChunkTracker;
@@ -75,6 +75,7 @@ pub struct ManagedTorrentInfo {
     pub trackers: Vec<Url>,
     pub peer_id: Id20,
     pub lengths: Lengths,
+    pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
 }
 
@@ -87,6 +88,10 @@ pub struct ManagedTorrent {
 impl ManagedTorrent {
     pub fn info(&self) -> &ManagedTorrentInfo {
         &self.info
+    }
+
+    pub fn get_total_bytes(&self) -> u64 {
+        self.info.lengths.total_length()
     }
 
     pub fn info_hash(&self) -> Id20 {
@@ -105,7 +110,7 @@ impl ManagedTorrent {
         let g = self.locked.read();
         match &g.state {
             ManagedTorrentState::Paused(p) => Ok(f(&p.chunk_tracker)),
-            ManagedTorrentState::Live(l) => Ok(f(&l.lock_read("chunk_tracker").chunks)),
+            ManagedTorrentState::Live(l) => Ok(f(l.lock_read("chunk_tracker").get_chunks()?)),
             _ => bail!("no chunk tracker, torrent neither paused nor live"),
         }
     }
@@ -131,42 +136,51 @@ impl ManagedTorrent {
             ManagedTorrentState::Initializing(init) => {
                 let init = init.clone();
                 let t = self.clone();
-                spawn(trace_span!("initialize_and_start"), async move {
-                    match init.check().await {
-                        Ok(paused) => {
-                            let live = TorrentStateLive::new(paused);
-                            t.locked.write().state = ManagedTorrentState::Live(live.clone());
+                let span = self.info.span.clone();
+                spawn(
+                    error_span!(parent: span.clone(), "initialize_and_start"),
+                    async move {
+                        match init.check().await {
+                            Ok(paused) => {
+                                let live = TorrentStateLive::new(paused);
+                                t.locked.write().state = ManagedTorrentState::Live(live.clone());
 
-                            let live = Arc::downgrade(&live);
-                            spawn(trace_span!("peer_adder"), async move {
-                                {
-                                    let live: Arc<TorrentStateLive> =
-                                        live.upgrade().context("no longer live")?;
-                                    for peer in initial_peers {
-                                        live.add_peer_if_not_seen(peer);
-                                    }
-                                }
+                                let live = Arc::downgrade(&live);
+                                spawn(
+                                    error_span!(parent: span.clone(), "external_peer_adder"),
+                                    async move {
+                                        {
+                                            let live: Arc<TorrentStateLive> =
+                                                live.upgrade().context("no longer live")?;
+                                            for peer in initial_peers {
+                                                live.add_peer_if_not_seen(peer)
+                                                    .context("torrent closed")?;
+                                            }
+                                        }
 
-                                if let Some(mut peer_rx) = peer_rx {
-                                    while let Some(peer) = peer_rx.next().await {
-                                        live.upgrade()
-                                            .context("no longer live")?
-                                            .add_peer_if_not_seen(peer);
-                                    }
-                                }
+                                        if let Some(mut peer_rx) = peer_rx {
+                                            while let Some(peer) = peer_rx.next().await {
+                                                live.upgrade()
+                                                    .context("no longer live")?
+                                                    .add_peer_if_not_seen(peer)
+                                                    .context("torrent closed")?;
+                                            }
+                                        }
+
+                                        Ok(())
+                                    },
+                                );
 
                                 Ok(())
-                            });
-
-                            Ok(())
+                            }
+                            Err(err) => {
+                                let result = anyhow::anyhow!("{:?}", err);
+                                t.locked.write().state = ManagedTorrentState::Error(err);
+                                Err(result)
+                            }
                         }
-                        Err(err) => {
-                            let result = anyhow::anyhow!("{:?}", err);
-                            t.locked.write().state = ManagedTorrentState::Error(err);
-                            Err(result)
-                        }
-                    }
-                });
+                    },
+                );
                 Ok(())
             }
             ManagedTorrentState::Paused(_) => {
@@ -288,9 +302,10 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> anyhow::Result<ManagedTorrentHandle> {
+    pub(crate) fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
         let info = Arc::new(ManagedTorrentInfo {
+            span,
             info: self.info,
             info_hash: self.info_hash,
             out_dir: self.output_folder,

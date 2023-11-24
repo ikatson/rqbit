@@ -19,6 +19,14 @@ impl ApiError {
         }
     }
 
+    pub fn not_implemented(msg: &str) -> Self {
+        Self {
+            status: Some(StatusCode::INTERNAL_SERVER_ERROR),
+            kind: ApiErrorKind::Other(anyhow::anyhow!("{}", msg)),
+            plaintext: false,
+        }
+    }
+
     pub const fn dht_disabled() -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),

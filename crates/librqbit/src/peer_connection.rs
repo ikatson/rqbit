@@ -20,7 +20,7 @@ use crate::spawn_utils::BlockingSpawner;
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn get_have_bytes(&self) -> u64;
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> Option<usize>;
+    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize>;
     fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
@@ -204,15 +204,13 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 .unwrap_or_else(|| Duration::from_secs(120));
 
             if self.handler.get_have_bytes() > 0 {
-                if let Some(len) = self
+                let len = self
                     .handler
-                    .serialize_bitfield_message_to_buf(&mut write_buf)
-                {
-                    with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
-                        .await
-                        .context("error writing bitfield to peer")?;
-                    debug!("sent bitfield");
-                }
+                    .serialize_bitfield_message_to_buf(&mut write_buf)?;
+                with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
+                    .await
+                    .context("error writing bitfield to peer")?;
+                debug!("sent bitfield");
             }
 
             loop {
