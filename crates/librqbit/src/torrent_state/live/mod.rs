@@ -63,6 +63,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     id20::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    speed_estimator::{self, SpeedEstimator},
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -144,6 +145,8 @@ pub struct TorrentStateLive {
     peer_queue_tx: UnboundedSender<SocketAddr>,
 
     finished_notify: Notify,
+
+    speed_estimator: SpeedEstimator,
 }
 
 impl TorrentStateLive {
@@ -163,6 +166,9 @@ impl TorrentStateLive {
     ) -> Arc<Self> {
         let options = options.unwrap_or_default();
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
+
+        let speed_estimator = SpeedEstimator::new(5);
+
         let state = Arc::new(TorrentStateLive {
             info_hash,
             info,
@@ -186,12 +192,17 @@ impl TorrentStateLive {
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
             finished_notify: Notify::new(),
+            speed_estimator,
         });
         spawn(
             span!(Level::ERROR, "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx, spawner),
         );
         state
+    }
+
+    pub fn speed_estimator(&self) -> &SpeedEstimator {
+        &self.speed_estimator
     }
 
     async fn task_manage_peer(

@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{bail, Context};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
@@ -22,9 +22,9 @@ use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
 };
-use crate::torrent_manager::TorrentManagerHandle;
 use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
 use crate::torrent_state::stats::snapshot::StatsSnapshot;
+use crate::torrent_state::ManagedTorrentHandle;
 
 // Public API
 #[derive(Clone)]
@@ -38,7 +38,7 @@ impl HttpApi {
             inner: Arc::new(ApiInternal::new(session)),
         }
     }
-    pub fn add_torrent_handle(&self, handle: TorrentManagerHandle) -> usize {
+    pub fn add_torrent_handle(&self, handle: ManagedTorrentHandle) -> usize {
         self.inner.add_torrent_handle(handle)
     }
 
@@ -333,7 +333,7 @@ impl TorrentAddQueryParams {
 struct ApiInternal {
     dht: Option<Dht>,
     startup_time: Instant,
-    torrent_managers: RwLock<Vec<TorrentManagerHandle>>,
+    torrent_managers: RwLock<Vec<ManagedTorrentHandle>>,
     session: Arc<Session>,
 }
 
@@ -349,14 +349,14 @@ impl ApiInternal {
         }
     }
 
-    fn add_torrent_handle(&self, handle: TorrentManagerHandle) -> usize {
+    fn add_torrent_handle(&self, handle: ManagedTorrentHandle) -> usize {
         let mut g = self.torrent_managers.write();
         let idx = g.len();
         g.push(handle);
         idx
     }
 
-    fn mgr_handle(&self, idx: usize) -> Result<TorrentManagerHandle> {
+    fn mgr_handle(&self, idx: usize) -> Result<ManagedTorrentHandle> {
         self.torrent_managers
             .read()
             .get(idx)
@@ -373,7 +373,7 @@ impl ApiInternal {
                 .enumerate()
                 .map(|(id, mgr)| TorrentListResponseItem {
                     id,
-                    info_hash: mgr.torrent_state().info_hash().as_string(),
+                    info_hash: mgr.info().info_hash.as_string(),
                 })
                 .collect(),
         }
@@ -381,14 +381,17 @@ impl ApiInternal {
 
     fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
-        let info_hash = handle.torrent_state().info_hash();
+        let info_hash = handle.info().info_hash;
         let only_files = handle.only_files();
-        make_torrent_details(&info_hash, handle.torrent_state().info(), only_files)
+        make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
     }
 
     fn api_peer_stats(&self, idx: usize, filter: PeerStatsFilter) -> Result<PeerStatsSnapshot> {
         let handle = self.mgr_handle(idx)?;
-        Ok(handle.torrent_state().per_peer_stats_snapshot(filter))
+        Ok(handle
+            .live()
+            .context("not live")?
+            .per_peer_stats_snapshot(filter))
     }
 
     pub async fn api_add_torrent(
@@ -406,8 +409,8 @@ impl ApiInternal {
             AddTorrentResponse::AlreadyManaged(managed) => {
                 return Err(anyhow::anyhow!(
                     "{:?} is already managed, downloaded to {:?}",
-                    managed.info_hash,
-                    managed.output_folder
+                    managed.info_hash(),
+                    &managed.info().out_dir
                 ))
                 .with_error_status_code(StatusCode::CONFLICT);
             }
@@ -422,9 +425,9 @@ impl ApiInternal {
             },
             AddTorrentResponse::Added(handle) => {
                 let details = make_torrent_details(
-                    &handle.torrent_state().info_hash(),
-                    handle.torrent_state().info(),
-                    handle.only_files(),
+                    &handle.info_hash(),
+                    &handle.info().info,
+                    handle.only_files().as_deref(),
                 )
                 .context("error making torrent details")?;
                 let id = self.add_torrent_handle(handle);
@@ -451,8 +454,9 @@ impl ApiInternal {
 
     fn api_stats(&self, idx: usize) -> Result<StatsResponse> {
         let mgr = self.mgr_handle(idx)?;
-        let snapshot = mgr.torrent_state().stats_snapshot();
-        let estimator = mgr.speed_estimator();
+        let live = mgr.live().context("not live")?;
+        let snapshot = live.stats_snapshot();
+        let estimator = live.speed_estimator();
 
         // Poor mans download speed computation
         let elapsed = self.startup_time.elapsed();
@@ -469,14 +473,15 @@ impl ApiInternal {
     }
 
     fn api_dump_haves(&self, idx: usize) -> Result<String> {
-        let mgr = self.mgr_handle(idx)?;
-        Ok(format!(
-            "{:?}",
-            mgr.torrent_state()
-                .lock_read("api_dump_haves")
-                .chunks
-                .get_have_pieces(),
-        ))
+        Err(anyhow::anyhow!("not implemented").into())
+        // let mgr = self.mgr_handle(idx)?;
+        // Ok(format!(
+        //     "{:?}",
+        //     mgr.live().conetext()
+        //         .lock_read("api_dump_haves")
+        //         .chunks
+        //         .get_have_pieces(),
+        // ))
     }
 }
 

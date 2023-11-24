@@ -24,127 +24,9 @@ use crate::{
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{TorrentStateLive, TorrentStateOptions},
+    torrent_state::{ManagedTorrent, ManagedTorrentHandle, TorrentStateLive, TorrentStateOptions},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
 };
-
-#[derive(Default)]
-struct TorrentManagerOptions {
-    force_tracker_interval: Option<Duration>,
-    peer_connect_timeout: Option<Duration>,
-    peer_read_write_timeout: Option<Duration>,
-    only_files: Option<Vec<usize>>,
-    peer_id: Option<Id20>,
-    overwrite: bool,
-}
-
-pub struct TorrentManagerBuilder {
-    info: TorrentMetaV1Info<ByteString>,
-    info_hash: Id20,
-    output_folder: PathBuf,
-    options: TorrentManagerOptions,
-    spawner: Option<BlockingSpawner>,
-}
-
-impl TorrentManagerBuilder {
-    pub fn new<P: AsRef<Path>>(
-        info: TorrentMetaV1Info<ByteString>,
-        info_hash: Id20,
-        output_folder: P,
-    ) -> Self {
-        Self {
-            info,
-            info_hash,
-            output_folder: output_folder.as_ref().into(),
-            spawner: None,
-            options: TorrentManagerOptions::default(),
-        }
-    }
-
-    pub fn only_files(&mut self, only_files: Vec<usize>) -> &mut Self {
-        self.options.only_files = Some(only_files);
-        self
-    }
-
-    pub fn overwrite(&mut self, overwrite: bool) -> &mut Self {
-        self.options.overwrite = overwrite;
-        self
-    }
-
-    pub fn force_tracker_interval(&mut self, force_tracker_interval: Duration) -> &mut Self {
-        self.options.force_tracker_interval = Some(force_tracker_interval);
-        self
-    }
-
-    pub fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
-        self.spawner = Some(spawner);
-        self
-    }
-
-    pub fn peer_id(&mut self, peer_id: Id20) -> &mut Self {
-        self.options.peer_id = Some(peer_id);
-        self
-    }
-
-    pub fn peer_connect_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.options.peer_connect_timeout = Some(timeout);
-        self
-    }
-
-    pub fn peer_read_write_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.options.peer_read_write_timeout = Some(timeout);
-        self
-    }
-
-    pub fn start_manager(self) -> anyhow::Result<TorrentManagerHandle> {
-        TorrentManager::start(
-            self.info,
-            self.info_hash,
-            self.output_folder,
-            self.spawner.unwrap_or_else(|| BlockingSpawner::new(true)),
-            Some(self.options),
-        )
-    }
-}
-
-#[derive(Clone)]
-pub struct TorrentManagerHandle {
-    manager: Arc<TorrentManager>,
-}
-
-impl TorrentManagerHandle {
-    pub fn add_tracker(&self, url: Url) -> bool {
-        let mgr = self.manager.clone();
-        if mgr.trackers.lock().insert(url.clone()) {
-            spawn(
-                span!(Level::ERROR, "tracker_monitor", url = url.to_string()),
-                async move { mgr.single_tracker_monitor(url).await },
-            );
-            true
-        } else {
-            false
-        }
-    }
-    pub fn only_files(&self) -> Option<&[usize]> {
-        self.manager.options.only_files.as_deref()
-    }
-    pub fn add_peer(&self, addr: SocketAddr) -> bool {
-        self.manager.state.add_peer_if_not_seen(addr)
-    }
-    pub fn torrent_state(&self) -> &TorrentStateLive {
-        &self.manager.state
-    }
-    pub fn speed_estimator(&self) -> &Arc<SpeedEstimator> {
-        &self.manager.speed_estimator
-    }
-    pub async fn cancel(&self) -> anyhow::Result<()> {
-        todo!()
-    }
-    pub async fn wait_until_completed(&self) -> anyhow::Result<()> {
-        self.manager.state.wait_until_completed().await;
-        Ok(())
-    }
-}
 
 struct TorrentManager {
     state: Arc<TorrentStateLive>,
@@ -171,8 +53,8 @@ impl TorrentManager {
         info_hash: Id20,
         out: P,
         spawner: BlockingSpawner,
-        options: Option<TorrentManagerOptions>,
-    ) -> anyhow::Result<TorrentManagerHandle> {
+        options: Option<ManagedTorrentOptions>,
+    ) -> anyhow::Result<ManagedTorrentHandle> {
         let options = options.unwrap_or_default();
         let (files, filenames) = {
             let mut files =

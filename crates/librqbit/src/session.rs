@@ -17,43 +17,28 @@ use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     peer_connection::PeerConnectionOptions,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
+    torrent_state::{ManagedTorrent, ManagedTorrentBuilder, ManagedTorrentHandle},
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
-#[derive(Clone)]
-pub enum ManagedTorrentState {
-    Initializing,
-    Running(TorrentManagerHandle),
-}
-
-#[derive(Clone)]
-pub struct ManagedTorrent {
-    pub info_hash: Id20,
-    pub output_folder: PathBuf,
-    pub state: ManagedTorrentState,
-}
-
-impl PartialEq for ManagedTorrent {
-    fn eq(&self, other: &Self) -> bool {
-        self.info_hash == other.info_hash && self.output_folder == other.output_folder
-    }
-}
-
 #[derive(Default)]
 pub struct SessionLocked {
-    torrents: Vec<ManagedTorrent>,
+    torrents: Vec<ManagedTorrentHandle>,
 }
 
 enum SessionLockedAddTorrentResult {
-    AlreadyManaged(ManagedTorrent),
+    AlreadyManaged(ManagedTorrentHandle),
     Added(usize),
 }
 
 impl SessionLocked {
-    fn add_torrent(&mut self, torrent: ManagedTorrent) -> SessionLockedAddTorrentResult {
-        if let Some(handle) = self.torrents.iter().find(|t| **t == torrent) {
+    fn add_torrent(&mut self, torrent: ManagedTorrentHandle) -> SessionLockedAddTorrentResult {
+        if let Some(handle) = self
+            .torrents
+            .iter()
+            .find(|t| t.info_hash() == torrent.info_hash())
+        {
             return SessionLockedAddTorrentResult::AlreadyManaged(handle.clone());
         }
         let idx = self.torrents.len();
@@ -124,9 +109,9 @@ pub struct ListOnlyResponse {
 }
 
 pub enum AddTorrentResponse {
-    AlreadyManaged(ManagedTorrent),
+    AlreadyManaged(ManagedTorrentHandle),
     ListOnly(ListOnlyResponse),
-    Added(TorrentManagerHandle),
+    Added(ManagedTorrentHandle),
 }
 
 pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>> {
@@ -227,7 +212,7 @@ impl Session {
     }
     pub fn with_torrents<F>(&self, callback: F)
     where
-        F: Fn(&[ManagedTorrent]),
+        F: Fn(&[ManagedTorrentHandle]),
     {
         callback(&self.locked.read().torrents)
     }
@@ -404,24 +389,13 @@ impl Session {
             .unwrap_or_else(|| self.output_folder.clone())
             .join(sub_folder);
 
-        let managed_torrent = ManagedTorrent {
-            info_hash,
-            output_folder: output_folder.clone(),
-            state: ManagedTorrentState::Initializing,
-        };
-
-        match self.locked.write().add_torrent(managed_torrent) {
-            SessionLockedAddTorrentResult::AlreadyManaged(managed) => {
-                return Ok(AddTorrentResponse::AlreadyManaged(managed))
-            }
-            SessionLockedAddTorrentResult::Added(_) => {}
-        }
-
-        let mut builder = TorrentManagerBuilder::new(info, info_hash, output_folder.clone());
+        let mut builder = ManagedTorrentBuilder::new(info, info_hash, output_folder.clone());
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
-            .peer_id(self.peer_id);
+            .peer_id(self.peer_id)
+            .trackers(trackers);
+
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
         }
@@ -437,51 +411,22 @@ impl Session {
             builder.peer_read_write_timeout(t);
         }
 
-        let handle = match builder
-            .start_manager()
-            .context("error starting torrent manager")
-        {
-            Ok(handle) => {
-                let mut g = self.locked.write();
-                let m = g
-                    .torrents
-                    .iter_mut()
-                    .find(|t| t.info_hash == info_hash && t.output_folder == output_folder)
-                    .unwrap();
-                m.state = ManagedTorrentState::Running(handle.clone());
-                handle
+        let managed_torrent = builder.build();
+
+        match self.locked.write().add_torrent(managed_torrent.clone()) {
+            SessionLockedAddTorrentResult::AlreadyManaged(managed) => {
+                return Ok(AddTorrentResponse::AlreadyManaged(managed))
             }
-            Err(error) => {
-                let mut g = self.locked.write();
-                let idx = g
-                    .torrents
-                    .iter()
-                    .position(|t| t.info_hash == info_hash && t.output_folder == output_folder)
-                    .unwrap();
-                g.torrents.remove(idx);
-                return Err(error);
-            }
-        };
-        {
-            let mut g = self.locked.write();
-            let m = g
-                .torrents
-                .iter_mut()
-                .find(|t| t.info_hash == info_hash && t.output_folder == output_folder)
-                .unwrap();
-            m.state = ManagedTorrentState::Running(handle.clone());
+            SessionLockedAddTorrentResult::Added(_) => {}
         }
 
-        for url in trackers {
-            handle.add_tracker(url);
-        }
         for peer in initial_peers {
-            handle.add_peer(peer);
+            managed_torrent.add_peer(peer);
         }
 
         if let Some(mut dht_peer_rx) = dht_peer_rx {
             spawn(span!(Level::INFO, "dht_peer_adder"), {
-                let handle = handle.clone();
+                let handle = managed_torrent.clone();
                 async move {
                     while let Some(peer) = dht_peer_rx.next().await {
                         handle.add_peer(peer);
@@ -492,6 +437,6 @@ impl Session {
             });
         }
 
-        Ok(AddTorrentResponse::Added(handle))
+        Ok(AddTorrentResponse::Added(managed_torrent))
     }
 }

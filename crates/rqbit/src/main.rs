@@ -7,10 +7,11 @@ use librqbit::{
     http_api_client,
     peer_connection::PeerConnectionOptions,
     session::{
-        AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState,
-        Session, SessionOptions,
+        AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
+        SessionOptions,
     },
     spawn_utils::{spawn, BlockingSpawner},
+    torrent_state::ManagedTorrentState,
 };
 use size_format::SizeFormatterBinary as SF;
 use tracing::{error, info, span, warn, Level};
@@ -238,12 +239,12 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         loop {
             session.with_torrents(|torrents| {
                     for (idx, torrent) in torrents.iter().enumerate() {
-                        match &torrent.state {
-                            ManagedTorrentState::Initializing => {
+                        match torrent.state() {
+                            ManagedTorrentState::Initializing(_) => {
                                 info!("[{}] initializing", idx);
                             },
-                            ManagedTorrentState::Running(handle) => {
-                                let stats = handle.torrent_state().stats_snapshot();
+                            ManagedTorrentState::Live(handle) => {
+                                let stats = handle.stats_snapshot();
                                 let speed = handle.speed_estimator();
                                 let total = stats.total_bytes;
                                 let progress = stats.total_bytes - stats.remaining_bytes;
@@ -269,6 +270,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                     stats.peer_stats.dead,
                                 );
                             },
+                            ManagedTorrentState::Created => warn!("the torrent was just created, but not initializing"),
                         }
                     }
                 });
@@ -394,7 +396,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                             AddTorrentResponse::AlreadyManaged(handle) => {
                                 info!(
                                     "torrent {:?} is already managed, downloaded to {:?}",
-                                    handle.info_hash, handle.output_folder
+                                    handle.info_hash(),
+                                    handle.info().out_dir
                                 );
                                 continue;
                             }
