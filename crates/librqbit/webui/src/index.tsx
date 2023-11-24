@@ -40,7 +40,7 @@ const DeleteTorrentModal = ({ id, show, onHide }) => {
     const [error, setError] = useState<Error>(null);
     const [deleting, setDeleting] = useState(false);
 
-    const refreshCtx = useContext(RefreshTorrentStatsContext);
+    const ctx = useContext(AppContext);
 
     const close = () => {
         setDeleteFiles(false);
@@ -55,7 +55,7 @@ const DeleteTorrentModal = ({ id, show, onHide }) => {
         const call = deleteFiles ? API.delete : API.forget;
 
         call(id).then(() => {
-            refreshCtx.refresh();
+            ctx.refreshTorrents();
             close();
         }).catch((e) => {
             setError({
