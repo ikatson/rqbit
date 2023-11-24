@@ -1,7 +1,7 @@
-import { StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
+import { MouseEventHandler, StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API } from './api';
+import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE } from './api';
 
 interface Error {
     text: string,
@@ -15,6 +15,135 @@ interface ContextType {
 
 const AppContext = createContext<ContextType>(null);
 
+const IconButton: React.FC<{
+    className: string,
+    onClick: () => void,
+    disabled?: boolean,
+    color?: string,
+}> = ({ className, onClick, disabled, color }) => {
+    const onClickStopPropagation = (e) => {
+        e.stopPropagation();
+        if (disabled) {
+            return;
+        }
+        onClick();
+    }
+    return <a className={`bi ${className} p-1`} onClick={onClickStopPropagation} href='#'></a>
+}
+
+const DeleteTorrentModal = ({ id, show, onHide }) => {
+    if (!show) {
+        return null;
+    }
+    const [deleteFiles, setDeleteFiles] = useState(false);
+    const [error, setError] = useState<Error>(null);
+    const [deleting, setDeleting] = useState(false);
+
+    const close = () => {
+        setDeleteFiles(false);
+        setError(null);
+        setDeleting(false);
+        onHide();
+    }
+
+    const deleteTorrent = () => {
+        setDeleting(true);
+
+        const call = deleteFiles ? API.delete : API.forget;
+
+        call(id).then(() => {
+            close();
+        }).catch((e) => {
+            setError({
+                text: `Error deleting torrent id=${id}`,
+                details: e,
+            });
+            setDeleting(false);
+        })
+    }
+
+    return <Modal show={show} onHide={close}>
+        <Modal.Header closeButton>
+            Delete torrent
+        </Modal.Header>
+        <Modal.Body>
+            <Form>
+                <Form.Group controlId='delete-torrent'>
+                    <Form.Check
+                        type="checkbox"
+                        label='Also delete files'
+                        checked={deleteFiles}
+                        onChange={() => setDeleteFiles(!deleteFiles)}>
+                    </Form.Check>
+                </Form.Group>
+            </Form>
+            {error && <ErrorComponent error={error} />}
+        </Modal.Body>
+        <Modal.Footer>
+            {deleting && <Spinner />}
+            <Button variant="primary" onClick={deleteTorrent} disabled={deleting}>
+                OK
+            </Button>
+            <Button variant="secondary" onClick={close}>
+                Cancel
+            </Button>
+        </Modal.Footer>
+    </Modal>
+}
+
+const TorrentActions: React.FC<{
+    id: number, statsResponse: TorrentStats
+}> = ({ id, statsResponse }) => {
+    let state = statsResponse.state;
+
+    let [disabled, setDisabled] = useState<boolean>(false);
+    let [deleting, setDeleting] = useState<boolean>(false);
+
+    const canPause = state == 'live';
+    const canUnpause = state == 'paused';
+
+    const ctx = useContext(AppContext);
+
+    const unpause = () => {
+        setDisabled(true);
+        API.start(id).finally(() => setDisabled(false)).catch((e) => {
+            ctx.setCloseableError({
+                text: `Error starting torrent id=${id}`,
+                details: e,
+            });
+        })
+    };
+
+    const pause = () => {
+        setDisabled(true);
+        API.pause(id).finally(() => setDisabled(false)).catch((e) => {
+            ctx.setCloseableError({
+                text: `Error pausing torrent id=${id}`,
+                details: e,
+            });
+        })
+    };
+
+    const startDeleting = () => {
+        setDisabled(true);
+        setDeleting(true);
+    }
+
+    const cancelDeleting = () => {
+        setDisabled(false);
+        setDeleting(false);
+    }
+
+    return <Row>
+        <Col>
+            {canUnpause && <IconButton className="bi-play-circle" onClick={unpause} disabled={disabled} color='success' />}
+            {canPause && <IconButton className="bi-pause-circle" onClick={pause} disabled={disabled} />}
+            <IconButton className="bi-x-circle" onClick={startDeleting} disabled={disabled} color='danger' />
+            <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
+        </Col>
+    </Row>
+}
+
 const TorrentRow: React.FC<{
     id: number, detailsResponse: TorrentDetails, statsResponse: TorrentStats
 }> = ({ id, detailsResponse, statsResponse }) => {
@@ -24,7 +153,7 @@ const TorrentRow: React.FC<{
     const progressBytes = statsResponse?.progress_bytes ?? 0;
     const finished = statsResponse?.finished || false;
     const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
-    const isAnimated = (state == "initializing" || state == "live") && !finished;
+    const isAnimated = (state == STATE_INITIALIZING || state == STATE_LIVE) && !finished;
     const progressLabel = error ? 'Error' : `${progressPercentage.toFixed(2)}%`;
     const progressBarVariant = error ? 'danger' : finished ? 'success' : 'info';
 
@@ -40,7 +169,7 @@ const TorrentRow: React.FC<{
         if (finished) {
             return 'Completed';
         }
-        if (state == 'initializing') {
+        if (state == STATE_INITIALIZING) {
             return 'Checking files';
         }
         return statsResponse.live?.download_speed.human_readable ?? "N/A";
@@ -58,7 +187,7 @@ const TorrentRow: React.FC<{
 
     return (
         <Row className={classNames.join(' ')}>
-            <Column size={4} label="Name">
+            <Column size={3} label="Name">
                 {detailsResponse ?
                     <>
                         <div className='text-truncate'>
@@ -77,6 +206,9 @@ const TorrentRow: React.FC<{
                     <Column size={2} label="Down Speed">{formatDownloadSped()}</Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
                     <Column size={2} label="Peers">{formatPeersString()}</Column >
+                    <Column label="Actions">
+                        <TorrentActions id={id} statsResponse={statsResponse} />
+                    </Column>
                 </>
                 : <Column label="Loading stats" size={8}><Spinner /></Column>
             }

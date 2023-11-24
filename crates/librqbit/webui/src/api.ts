@@ -69,8 +69,13 @@ export interface LiveTorrentStats {
     } | null;
 }
 
+export const STATE_INITIALIZING = 'initializing';
+export const STATE_PAUSED = 'paused';
+export const STATE_LIVE = 'live';
+export const STATE_ERROR = 'error';
+
 export interface TorrentStats {
-    state: string,
+    state: 'initializing' | 'paused' | 'live' | 'error',
     error: string | null,
     progress_bytes: number,
     finished: boolean,
