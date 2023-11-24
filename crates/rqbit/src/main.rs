@@ -238,12 +238,12 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     let stats_printer = |session: Arc<Session>| async move {
         loop {
             session.with_torrents(|torrents| {
-                    for (idx, torrent) in torrents.iter().enumerate() {
+                    for (idx, torrent) in torrents {
                         let live = torrent.with_state(|s| {
                             match s {
                                 ManagedTorrentState::Initializing(_) => info!("[{}] initializing", idx),
                                 ManagedTorrentState::Live(h) => return Some(h.clone()),
-                                ManagedTorrentState::Error(_) | ManagedTorrentState::Paused(_) => {},
+                                _ => {},
                             };
                             None
                         });
@@ -397,10 +397,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         .await
                     {
                         Ok(v) => match v {
-                            AddTorrentResponse::AlreadyManaged(handle) => {
+                            AddTorrentResponse::AlreadyManaged(id, handle) => {
                                 info!(
-                                    "torrent {:?} is already managed, downloaded to {:?}",
+                                    "torrent {:?} is already managed, id={}, downloaded to {:?}",
                                     handle.info_hash(),
+                                    id,
                                     handle.info().out_dir
                                 );
                                 continue;
@@ -426,7 +427,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                 }
                                 continue;
                             }
-                            AddTorrentResponse::Added(handle) => {
+                            AddTorrentResponse::Added(_, handle) => {
                                 added = true;
                                 handle
                             }
@@ -437,7 +438,6 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         }
                     };
 
-                    http_api.add_torrent_handle(handle.clone());
                     handles.push(handle);
                 }
 

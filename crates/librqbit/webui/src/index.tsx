@@ -18,13 +18,33 @@ const AppContext = createContext<ContextType>(null);
 const TorrentRow: React.FC<{
     id: number, detailsResponse: TorrentDetails, statsResponse: TorrentStats
 }> = ({ id, detailsResponse, statsResponse }) => {
-    const totalBytes = statsResponse?.snapshot?.total_bytes ?? 1;
-    const downloadedBytes = statsResponse?.snapshot?.have_bytes ?? 0;
-    const finished = totalBytes == downloadedBytes;
-    const downloadPercentage = (downloadedBytes / totalBytes) * 100;
+    const state = statsResponse?.state ?? "";
+
+    const totalBytes = statsResponse?.total_bytes ?? 1;
+    const progressBytes = statsResponse?.progress_bytes ?? 0;
+    const finished = statsResponse?.finished || false;
+    const progressPercentage = state == 'error' ? 100 : (progressBytes / totalBytes) * 100;
+    const isAnimated = (state == "initializing" || state == "live") && !finished;
+    const progressLabel = state == 'error' ? 'Error' : `${progressPercentage.toFixed(2)}%`;
+
+    const getPeersString = (statsResponse: TorrentStats) => {
+        let peer_stats = statsResponse?.live?.snapshot.peer_stats;
+        if (!peer_stats) {
+            return '';
+        }
+        return `${peer_stats.live} / ${peer_stats.seen}`;
+    }
+
+    let classNames = [];
+    if (id % 2 == 0) {
+        classNames.push('bg-light');
+    }
+    if (statsResponse?.error) {
+        classNames.push('bg-warning');
+    }
 
     return (
-        <Row className={`${id % 2 == 0 ? 'bg-light' : ''}`}>
+        <Row className={classNames.join(' ')}>
             <Column size={4} label="Name">
                 {detailsResponse ?
                     <div className='text-truncate'>
@@ -36,11 +56,16 @@ const TorrentRow: React.FC<{
                 <>
                     <Column label="Size">{`${formatBytes(totalBytes)} `}</Column>
                     <Column size={2} label="Progress">
-                        <ProgressBar now={downloadPercentage} label={`${downloadPercentage.toFixed(2)}% `} animated={!finished} />
+                        <ProgressBar now={progressPercentage} label={progressLabel} animated={isAnimated} className={state == 'error' ? 'bg-danger' : ''} />
+                        {
+                            statsResponse.error && (
+                                <p>{statsResponse.error}</p>
+                            )
+                        }
                     </Column>
-                    <Column size={2} label="Down Speed">{statsResponse.download_speed.human_readable}</Column>
+                    <Column size={2} label="Down Speed">{statsResponse.live?.download_speed.human_readable ?? "N/A"}</Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
-                    <Column size={2} label="Peers">{`${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`}</Column >
+                    <Column size={2} label="Peers">{getPeersString(statsResponse)}</Column >
                 </>
                 : <Column label="Loading stats" size={8}><Spinner /></Column>
             }
@@ -374,7 +399,7 @@ const RootContent = (props: { closeableError: ErrorDetails, otherError: ErrorDet
 };
 
 function torrentIsDone(stats: TorrentStats): boolean {
-    return stats.snapshot.have_bytes == stats.snapshot.total_bytes;
+    return stats.finished;
 }
 
 function formatBytes(bytes: number): string {
@@ -398,11 +423,11 @@ function getLargestFileName(torrentDetails: TorrentDetails): string {
 }
 
 function getCompletionETA(stats: TorrentStats): string {
-    if (stats.time_remaining && stats.time_remaining.duration) {
-        return formatSecondsToTime(stats.time_remaining.duration.secs);
-    } else {
+    let duration = stats?.live?.time_remaining?.duration?.secs;
+    if (duration == null) {
         return 'N/A';
     }
+    return formatSecondsToTime(duration);
 }
 
 function formatSecondsToTime(seconds: number): string {

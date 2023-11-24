@@ -438,7 +438,7 @@ impl Session {
             .as_ref()
             .map(|dht| dht.get_peers(handle.info_hash()))
             .transpose()?;
-        handle.start(Default::default(), peer_rx);
-        return Ok(());
+        handle.start(Default::default(), peer_rx)?;
+        Ok(())
     }
 }

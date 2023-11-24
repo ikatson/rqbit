@@ -285,6 +285,7 @@ struct StatsResponse {
     error: Option<String>,
     progress_bytes: u64,
     total_bytes: u64,
+    finished: bool,
     live: Option<LiveStats>,
 }
 
@@ -514,6 +515,7 @@ impl ApiInternal {
             state: "",
             error: None,
             progress_bytes: 0,
+            finished: false,
             live: None,
         };
 
@@ -526,11 +528,13 @@ impl ApiInternal {
                 ManagedTorrentState::Paused(p) => {
                     resp.state = "paused";
                     resp.progress_bytes = p.have_bytes;
+                    resp.finished = p.have_bytes == resp.progress_bytes;
                 }
                 ManagedTorrentState::Live(l) => {
                     resp.state = "live";
                     let live_stats = self.make_live_stats(l);
-                    resp.progress_bytes = live_stats.snapshot.downloaded_and_checked_bytes;
+                    resp.progress_bytes = live_stats.snapshot.have_bytes;
+                    resp.finished = resp.progress_bytes == resp.total_bytes;
                     resp.live = Some(live_stats);
                 }
                 ManagedTorrentState::Error(e) => {

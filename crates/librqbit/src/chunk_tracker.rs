@@ -4,7 +4,7 @@ use tracing::{debug, info};
 
 use crate::type_aliases::BF;
 
-pub(crate) struct ChunkTracker {
+pub struct ChunkTracker {
     // This forms the basis of a "queue" to pull from.
     // It's set to 1 if we need a piece, but the moment we start requesting a peer,
     // it's set to 0.
@@ -51,7 +51,7 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
     chunk_bf
 }
 
-pub(crate) enum ChunkMarkingResult {
+pub enum ChunkMarkingResult {
     PreviouslyCompleted,
     NotCompleted,
     Completed,
