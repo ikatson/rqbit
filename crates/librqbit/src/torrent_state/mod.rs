@@ -4,11 +4,12 @@ pub mod paused;
 pub mod utils;
 
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{path::Path};
 
+use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
 use librqbit_core::id20::Id20;
@@ -18,20 +19,38 @@ use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 pub use live::*;
 use parking_lot::RwLock;
 
-
+use tokio_stream::StreamExt;
+use tracing::trace_span;
 use url::Url;
 
-use crate::spawn_utils::{BlockingSpawner};
+use crate::spawn_utils::spawn;
+use crate::spawn_utils::BlockingSpawner;
 
 use initializing::TorrentStateInitializing;
 
 use self::paused::TorrentStatePaused;
 
 pub enum ManagedTorrentState {
-    Initializing(TorrentStateInitializing),
+    Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
     Live(Arc<TorrentStateLive>),
     Error(anyhow::Error),
+
+    // This is used when swapping between states, outside world should never see it.
+    None,
+}
+
+impl ManagedTorrentState {
+    fn assert_paused(self) -> TorrentStatePaused {
+        match self {
+            Self::Paused(paused) => paused,
+            _ => panic!("Expected paused state"),
+        }
+    }
+
+    fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::None)
+    }
 }
 
 pub(crate) struct ManagedTorrentLocked {
@@ -58,6 +77,7 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
+    only_files: Option<Vec<usize>>,
     locked: RwLock<ManagedTorrentLocked>,
 }
 
@@ -70,13 +90,8 @@ impl ManagedTorrent {
         self.info.info_hash
     }
 
-    pub(crate) fn add_peer(&self, _peer: SocketAddr) -> bool {
-        todo!()
-    }
-
     pub fn only_files(&self) -> Option<Vec<usize>> {
-        // self.locked.write().only_files.clone()
-        todo!()
+        self.only_files.clone()
     }
 
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
@@ -88,6 +103,91 @@ impl ManagedTorrent {
         match &g.state {
             ManagedTorrentState::Live(live) => Some(live.clone()),
             _ => None,
+        }
+    }
+
+    pub fn start(
+        self: &Arc<Self>,
+        initial_peers: Vec<SocketAddr>,
+        peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+    ) -> anyhow::Result<()> {
+        let mut g = self.locked.write();
+        match &g.state {
+            ManagedTorrentState::Live(_) => {
+                bail!("torrent is already live");
+            }
+            ManagedTorrentState::Initializing(init) => {
+                let init = init.clone();
+                let t = self.clone();
+                spawn(trace_span!("initialize_and_start"), async move {
+                    match init.check().await {
+                        Ok(paused) => {
+                            let live = TorrentStateLive::new(paused);
+                            t.locked.write().state = ManagedTorrentState::Live(live.clone());
+
+                            let live = Arc::downgrade(&live);
+                            spawn(trace_span!("peer_adder"), async move {
+                                {
+                                    let live: Arc<TorrentStateLive> =
+                                        live.upgrade().context("no longer live")?;
+                                    for peer in initial_peers {
+                                        live.add_peer_if_not_seen(peer);
+                                    }
+                                }
+
+                                if let Some(mut peer_rx) = peer_rx {
+                                    while let Some(peer) = peer_rx.next().await {
+                                        live.upgrade()
+                                            .context("no longer live")?
+                                            .add_peer_if_not_seen(peer);
+                                    }
+                                }
+
+                                Ok(())
+                            });
+
+                            Ok(())
+                        }
+                        Err(err) => {
+                            let result = anyhow::anyhow!("{:?}", err);
+                            t.locked.write().state = ManagedTorrentState::Error(err);
+                            Err(result)
+                        }
+                    }
+                });
+                Ok(())
+            }
+            ManagedTorrentState::Paused(_) => {
+                let paused = g.state.take().assert_paused();
+                let live = TorrentStateLive::new(paused);
+                g.state = ManagedTorrentState::Live(live);
+                Ok(())
+            }
+            ManagedTorrentState::Error(_) => {
+                bail!("starting torrents from error state not implemented")
+            }
+            ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+        }
+    }
+
+    pub fn pause(&self) -> anyhow::Result<()> {
+        let mut g = self.locked.write();
+        match &g.state {
+            ManagedTorrentState::Live(live) => {
+                let paused = live.pause()?;
+                g.state = ManagedTorrentState::Paused(paused);
+                Ok(())
+            }
+            ManagedTorrentState::Initializing(_) => {
+                bail!("torrent is initializing, can't pause");
+            }
+            ManagedTorrentState::Paused(_) => {
+                bail!("torrent is already paused");
+            }
+            ManagedTorrentState::Error(_) => {
+                bail!("can't pause torrent in error state")
+            }
+            ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }
     }
 
@@ -191,8 +291,12 @@ impl ManagedTorrentBuilder {
                 overwrite: self.overwrite,
             },
         });
-        let initializing = TorrentStateInitializing::new(info.clone(), self.only_files);
+        let initializing = Arc::new(TorrentStateInitializing::new(
+            info.clone(),
+            self.only_files.clone(),
+        ));
         Arc::new(ManagedTorrent {
+            only_files: self.only_files,
             locked: RwLock::new(ManagedTorrentLocked {
                 state: ManagedTorrentState::Initializing(initializing),
             }),

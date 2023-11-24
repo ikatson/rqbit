@@ -76,14 +76,6 @@ impl ChunkTracker {
         }
     }
 
-    pub fn get_have_bytes(&self) -> u64 {
-        todo!()
-    }
-
-    pub fn get_needed_bytes(&self) -> u64 {
-        todo!()
-    }
-
     pub fn get_lengths(&self) -> &Lengths {
         &self.lengths
     }

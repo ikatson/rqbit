@@ -64,7 +64,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     id20::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    speed_estimator::{SpeedEstimator},
+    speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -88,7 +88,7 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    spawn_utils::{spawn},
+    spawn_utils::spawn,
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
 };
@@ -157,14 +157,13 @@ pub struct TorrentStateLive {
 }
 
 impl TorrentStateLive {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(paused: TorrentStatePaused) -> Arc<Self> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
         let speed_estimator = SpeedEstimator::new(5);
 
-        let have_bytes = paused.chunk_tracker.get_have_bytes();
-        let needed_bytes = paused.chunk_tracker.get_needed_bytes();
+        let have_bytes = paused.have_bytes;
+        let needed_bytes = paused.needed_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
         let state = Arc::new(TorrentStateLive {
@@ -559,6 +558,10 @@ impl TorrentStateLive {
             return;
         }
         self.finished_notify.notified().await;
+    }
+
+    pub fn pause(&self) -> anyhow::Result<TorrentStatePaused> {
+        bail!("pause not implemented yet")
     }
 }
 

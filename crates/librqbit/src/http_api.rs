@@ -1,4 +1,4 @@
-use anyhow::{Context};
+use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
@@ -20,7 +20,7 @@ use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::session::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
 };
 use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
 use crate::torrent_state::stats::snapshot::StatsSnapshot;
@@ -37,9 +37,6 @@ impl HttpApi {
         Self {
             inner: Arc::new(ApiInternal::new(session)),
         }
-    }
-    pub fn add_torrent_handle(&self, handle: ManagedTorrentHandle) -> usize {
-        self.inner.add_torrent_handle(handle)
     }
 
     pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
@@ -331,9 +328,7 @@ impl TorrentAddQueryParams {
 
 // Private HTTP API internals. Agnostic of web framework.
 struct ApiInternal {
-    dht: Option<Dht>,
     startup_time: Instant,
-    torrent_managers: RwLock<Vec<ManagedTorrentHandle>>,
     session: Arc<Session>,
 }
 
@@ -342,41 +337,29 @@ type ApiState = Arc<ApiInternal>;
 impl ApiInternal {
     pub fn new(session: Arc<Session>) -> Self {
         Self {
-            dht: session.get_dht(),
             startup_time: Instant::now(),
-            torrent_managers: RwLock::new(Vec::new()),
             session,
         }
     }
 
-    fn add_torrent_handle(&self, handle: ManagedTorrentHandle) -> usize {
-        let mut g = self.torrent_managers.write();
-        let idx = g.len();
-        g.push(handle);
-        idx
-    }
-
-    fn mgr_handle(&self, idx: usize) -> Result<ManagedTorrentHandle> {
-        self.torrent_managers
-            .read()
+    fn mgr_handle(&self, idx: TorrentId) -> Result<ManagedTorrentHandle> {
+        self.session
             .get(idx)
-            .cloned()
             .ok_or(ApiError::torrent_not_found(idx))
     }
 
     fn api_torrent_list(&self) -> TorrentListResponse {
-        TorrentListResponse {
-            torrents: self
-                .torrent_managers
-                .read()
+        let items = self.session.with_torrents(|torrents| {
+            torrents
                 .iter()
                 .enumerate()
                 .map(|(id, mgr)| TorrentListResponseItem {
                     id,
                     info_hash: mgr.info().info_hash.as_string(),
                 })
-                .collect(),
-        }
+                .collect()
+        });
+        TorrentListResponse { torrents: items }
     }
 
     fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse> {
@@ -406,10 +389,11 @@ impl ApiInternal {
             .context("error adding torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?
         {
-            AddTorrentResponse::AlreadyManaged(managed) => {
+            AddTorrentResponse::AlreadyManaged(id, managed) => {
                 return Err(anyhow::anyhow!(
-                    "{:?} is already managed, downloaded to {:?}",
+                    "{:?} is already managed, id={}, downloaded to {:?}",
                     managed.info_hash(),
+                    id,
                     &managed.info().out_dir
                 ))
                 .with_error_status_code(StatusCode::CONFLICT);
@@ -423,14 +407,13 @@ impl ApiInternal {
                 details: make_torrent_details(&info_hash, &info, only_files.as_deref())
                     .context("error making torrent details")?,
             },
-            AddTorrentResponse::Added(handle) => {
+            AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
                     &handle.info_hash(),
                     &handle.info().info,
                     handle.only_files().as_deref(),
                 )
                 .context("error making torrent details")?;
-                let id = self.add_torrent_handle(handle);
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
@@ -441,14 +424,15 @@ impl ApiInternal {
     }
 
     fn api_dht_stats(&self) -> Result<DhtStats> {
-        self.dht
+        self.session
+            .get_dht()
             .as_ref()
             .map(|d| d.stats())
             .ok_or(ApiError::dht_disabled())
     }
 
     fn api_dht_table(&self) -> Result<impl Serialize> {
-        let dht = self.dht.as_ref().ok_or(ApiError::dht_disabled())?;
+        let dht = self.session.get_dht().ok_or(ApiError::dht_disabled())?;
         Ok(dht.with_routing_table(|r| r.clone()))
     }
 

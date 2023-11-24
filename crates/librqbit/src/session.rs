@@ -11,39 +11,29 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use reqwest::Url;
 use tokio_stream::StreamExt;
-use tracing::{debug, info, span, warn, Level};
+use tracing::{debug, info, trace_span, warn};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     peer_connection::PeerConnectionOptions,
-    spawn_utils::{spawn, BlockingSpawner},
+    spawn_utils::BlockingSpawner,
     torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle},
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
+
+pub type TorrentId = usize;
 
 #[derive(Default)]
 pub struct SessionLocked {
     torrents: Vec<ManagedTorrentHandle>,
 }
 
-enum SessionLockedAddTorrentResult {
-    AlreadyManaged(ManagedTorrentHandle),
-    Added(usize),
-}
-
 impl SessionLocked {
-    fn add_torrent(&mut self, torrent: ManagedTorrentHandle) -> SessionLockedAddTorrentResult {
-        if let Some(handle) = self
-            .torrents
-            .iter()
-            .find(|t| t.info_hash() == torrent.info_hash())
-        {
-            return SessionLockedAddTorrentResult::AlreadyManaged(handle.clone());
-        }
+    fn add_torrent(&mut self, torrent: ManagedTorrentHandle) -> TorrentId {
         let idx = self.torrents.len();
         self.torrents.push(torrent);
-        SessionLockedAddTorrentResult::Added(idx)
+        idx
     }
 }
 
@@ -109,9 +99,9 @@ pub struct ListOnlyResponse {
 }
 
 pub enum AddTorrentResponse {
-    AlreadyManaged(ManagedTorrentHandle),
+    AlreadyManaged(TorrentId, ManagedTorrentHandle),
     ListOnly(ListOnlyResponse),
-    Added(ManagedTorrentHandle),
+    Added(TorrentId, ManagedTorrentHandle),
 }
 
 pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>> {
@@ -207,15 +197,14 @@ impl Session {
             locked: RwLock::new(SessionLocked::default()),
         })
     }
-    pub fn get_dht(&self) -> Option<Dht> {
-        self.dht.clone()
+    pub fn get_dht(&self) -> Option<&Dht> {
+        self.dht.as_ref()
     }
-    pub fn with_torrents<F>(&self, callback: F)
-    where
-        F: Fn(&[ManagedTorrentHandle]),
-    {
+
+    pub fn with_torrents<R>(&self, callback: impl Fn(&[ManagedTorrentHandle]) -> R) -> R {
         callback(&self.locked.read().torrents)
     }
+
     pub async fn add_torrent(
         &self,
         add: impl Into<AddTorrent<'_>>,
@@ -411,32 +400,37 @@ impl Session {
             builder.peer_read_write_timeout(t);
         }
 
-        let managed_torrent = builder.build();
-
-        match self.locked.write().add_torrent(managed_torrent.clone()) {
-            SessionLockedAddTorrentResult::AlreadyManaged(managed) => {
-                return Ok(AddTorrentResponse::AlreadyManaged(managed))
+        let (managed_torrent, id) = {
+            let mut g = self.locked.write();
+            if let Some((id, handle)) = g
+                .torrents
+                .iter()
+                .enumerate()
+                .find(|(_, t)| t.info_hash() == info_hash)
+            {
+                return Ok(AddTorrentResponse::AlreadyManaged(id, handle.clone()));
             }
-            SessionLockedAddTorrentResult::Added(_) => {}
+            let managed_torrent = builder.build();
+            let id = g.add_torrent(managed_torrent.clone());
+            (managed_torrent, id)
+        };
+
+        {
+            let span = trace_span!("torrent", id = id);
+            let _ = span.enter();
+            managed_torrent
+                .start(initial_peers, dht_peer_rx)
+                .context("error starting torrent")?;
         }
 
-        for peer in initial_peers {
-            managed_torrent.add_peer(peer);
-        }
+        Ok(AddTorrentResponse::Added(id, managed_torrent))
+    }
 
-        if let Some(mut dht_peer_rx) = dht_peer_rx {
-            spawn(span!(Level::INFO, "dht_peer_adder"), {
-                let handle = managed_torrent.clone();
-                async move {
-                    while let Some(peer) = dht_peer_rx.next().await {
-                        handle.add_peer(peer);
-                    }
-                    warn!("dht was closed");
-                    Ok(())
-                }
-            });
-        }
+    pub fn get(&self, id: TorrentId) -> Option<ManagedTorrentHandle> {
+        self.locked.read().torrents.get(id).cloned()
+    }
 
-        Ok(AddTorrentResponse::Added(managed_torrent))
+    pub fn restart(&self, id: usize) -> anyhow::Result<()> {
+        todo!()
     }
 }

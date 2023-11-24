@@ -19,3 +19,9 @@
 
 someday:
 - [ ] cancellation from the client-side for the lib (i.e. stop the torrent manager)
+
+
+refactor:
+- [ ] where are peers stored
+- [ ] http api pause/unpause etc
+- [ ] when a live torrent fails writing to disk, it should transition to error state

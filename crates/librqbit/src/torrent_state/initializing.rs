@@ -29,8 +29,8 @@ fn ensure_file_length(file: &File, length: u64) -> anyhow::Result<()> {
 }
 
 pub struct TorrentStateInitializing {
-    meta: Arc<ManagedTorrentInfo>,
-    only_files: Option<Vec<usize>>,
+    pub(crate) meta: Arc<ManagedTorrentInfo>,
+    pub(crate) only_files: Option<Vec<usize>>,
 }
 
 impl TorrentStateInitializing {
