@@ -447,13 +447,13 @@ impl ApiInternal {
     }
 
     fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
-        Err(ApiError::not_implemented("forgetting not implemented yet"))
+        self.session.delete(idx, false)?;
+        Ok(Default::default())
     }
 
     fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
-        Err(ApiError::not_implemented(
-            "deleting torrent not implemented yet",
-        ))
+        self.session.delete(idx, true)?;
+        Ok(Default::default())
     }
 
     pub async fn api_add_torrent(

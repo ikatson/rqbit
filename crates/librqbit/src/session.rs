@@ -1,4 +1,6 @@
-use std::{borrow::Cow, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    borrow::Cow, collections::HashMap, io::Read, net::SocketAddr, path::PathBuf, time::Duration,
+};
 
 use anyhow::{bail, Context};
 use buffers::ByteString;
@@ -26,13 +28,15 @@ pub type TorrentId = usize;
 
 #[derive(Default)]
 pub struct SessionLocked {
-    torrents: Vec<ManagedTorrentHandle>,
+    next_id: usize,
+    torrents: HashMap<usize, ManagedTorrentHandle>,
 }
 
 impl SessionLocked {
     fn add_torrent(&mut self, torrent: ManagedTorrentHandle) -> TorrentId {
-        let idx = self.torrents.len();
-        self.torrents.push(torrent);
+        let idx = self.next_id;
+        self.torrents.insert(idx, torrent);
+        self.next_id += 1;
         idx
     }
 }
@@ -205,7 +209,7 @@ impl Session {
         &self,
         callback: impl Fn(&mut dyn Iterator<Item = (TorrentId, &ManagedTorrentHandle)>) -> R,
     ) -> R {
-        callback(&mut self.locked.read().torrents.iter().enumerate())
+        callback(&mut self.locked.read().torrents.iter().map(|(id, t)| (*id, t)))
     }
 
     pub async fn add_torrent(
@@ -404,13 +408,9 @@ impl Session {
 
         let (managed_torrent, id) = {
             let mut g = self.locked.write();
-            if let Some((id, handle)) = g
-                .torrents
-                .iter()
-                .enumerate()
-                .find(|(_, t)| t.info_hash() == info_hash)
+            if let Some((id, handle)) = g.torrents.iter().find(|(_, t)| t.info_hash() == info_hash)
             {
-                return Ok(AddTorrentResponse::AlreadyManaged(id, handle.clone()));
+                return Ok(AddTorrentResponse::AlreadyManaged(*id, handle.clone()));
             }
             let next_id = g.torrents.len();
             let managed_torrent = builder.build(error_span!("torrent", id = next_id))?;
@@ -430,7 +430,25 @@ impl Session {
     }
 
     pub fn get(&self, id: TorrentId) -> Option<ManagedTorrentHandle> {
-        self.locked.read().torrents.get(id).cloned()
+        self.locked.read().torrents.get(&id).cloned()
+    }
+
+    pub fn delete(&self, id: TorrentId, delete_files: bool) -> anyhow::Result<()> {
+        let removed = self
+            .locked
+            .write()
+            .torrents
+            .remove(&id)
+            .with_context(|| format!("torrent with id {} did not exist", id))?;
+
+        if let Some(live) = removed.live() {
+            let _ = live.pause()?;
+        }
+
+        if delete_files {
+            bail!("torrent deleted, but deleting files not implemented")
+        }
+        Ok(())
     }
 
     pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
