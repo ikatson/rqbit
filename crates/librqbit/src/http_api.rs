@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context};
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
@@ -472,7 +472,7 @@ impl ApiInternal {
         })
     }
 
-    fn api_dump_haves(&self, idx: usize) -> Result<String> {
+    fn api_dump_haves(&self, _idx: usize) -> Result<String> {
         Err(anyhow::anyhow!("not implemented").into())
         // let mgr = self.mgr_handle(idx)?;
         // Ok(format!(

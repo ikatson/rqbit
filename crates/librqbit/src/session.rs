@@ -17,7 +17,7 @@ use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     peer_connection::PeerConnectionOptions,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{ManagedTorrent, ManagedTorrentBuilder, ManagedTorrentHandle},
+    torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle},
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];

@@ -63,8 +63,8 @@ use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     id20::Id20,
-    lengths::{self, ChunkInfo, Lengths, ValidPieceIndex},
-    speed_estimator::{self, SpeedEstimator},
+    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    speed_estimator::{SpeedEstimator},
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -88,7 +88,7 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
-    spawn_utils::{spawn, BlockingSpawner},
+    spawn_utils::{spawn},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
 };
@@ -165,7 +165,7 @@ impl TorrentStateLive {
 
         let have_bytes = paused.chunk_tracker.get_have_bytes();
         let needed_bytes = paused.chunk_tracker.get_needed_bytes();
-        let lengths = paused.chunk_tracker.get_lengths().clone();
+        let lengths = *paused.chunk_tracker.get_lengths();
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),

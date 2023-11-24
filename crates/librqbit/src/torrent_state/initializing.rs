@@ -1,32 +1,19 @@
 use std::{
-    collections::HashSet,
     fs::{File, OpenOptions},
-    net::SocketAddr,
-    path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::Context;
-use bencode::from_bytes;
-use buffers::ByteString;
-use librqbit_core::{
-    id20::Id20, lengths::Lengths, peer_id::generate_peer_id, speed_estimator::SpeedEstimator,
-    torrent_metainfo::TorrentMetaV1Info,
-};
+
+use librqbit_core::{lengths::Lengths, torrent_metainfo::TorrentMetaV1Info};
 use parking_lot::Mutex;
-use reqwest::Url;
+
 use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
-use tracing::{debug, info, span, warn, Level};
+use tracing::{debug, info, warn};
 
-use crate::{
-    chunk_tracker::ChunkTracker,
-    file_ops::FileOps,
-    spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{ManagedTorrent, ManagedTorrentHandle, TorrentStateLive, TorrentStateOptions},
-    tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
-};
+use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
@@ -64,7 +51,7 @@ impl TorrentStateInitializing {
                 full_path.push(relative_path);
 
                 std::fs::create_dir_all(full_path.parent().unwrap())?;
-                let file = if (&self.meta).options.overwrite {
+                let file = if self.meta.options.overwrite {
                     OpenOptions::new()
                         .create(true)
                         .read(true)
@@ -86,12 +73,12 @@ impl TorrentStateInitializing {
         };
 
         let lengths =
-            make_lengths(&(&self.meta).info).context("unable to compute Lengths from torrent")?;
+            make_lengths(&self.meta.info).context("unable to compute Lengths from torrent")?;
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results = (&self.meta).spawner.spawn_block_in_place(|| {
-            FileOps::<Sha1>::new(&(&self.meta).info, &files, &lengths)
+        let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
+            FileOps::<Sha1>::new(&self.meta.info, &files, &lengths)
                 .initial_check(self.only_files.as_deref())
         })?;
 

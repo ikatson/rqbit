@@ -7,21 +7,21 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{collections::HashSet, path::Path};
+use std::{path::Path};
 
 use anyhow::Context;
 use buffers::ByteString;
 use librqbit_core::id20::Id20;
 use librqbit_core::peer_id::generate_peer_id;
-use librqbit_core::speed_estimator::SpeedEstimator;
+
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 pub use live::*;
 use parking_lot::RwLock;
-use tokio::sync::mpsc::Sender;
-use tracing::trace_span;
+
+
 use url::Url;
 
-use crate::spawn_utils::{spawn, BlockingSpawner};
+use crate::spawn_utils::{BlockingSpawner};
 
 use initializing::TorrentStateInitializing;
 
@@ -70,7 +70,7 @@ impl ManagedTorrent {
         self.info.info_hash
     }
 
-    pub(crate) fn add_peer(&self, peer: SocketAddr) -> bool {
+    pub(crate) fn add_peer(&self, _peer: SocketAddr) -> bool {
         todo!()
     }
 
