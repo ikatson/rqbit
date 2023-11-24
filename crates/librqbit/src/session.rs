@@ -201,8 +201,11 @@ impl Session {
         self.dht.as_ref()
     }
 
-    pub fn with_torrents<R>(&self, callback: impl Fn(&[ManagedTorrentHandle]) -> R) -> R {
-        callback(&self.locked.read().torrents)
+    pub fn with_torrents<R>(
+        &self,
+        callback: impl Fn(&mut dyn Iterator<Item = (TorrentId, &ManagedTorrentHandle)>) -> R,
+    ) -> R {
+        callback(&mut self.locked.read().torrents.iter().enumerate())
     }
 
     pub async fn add_torrent(

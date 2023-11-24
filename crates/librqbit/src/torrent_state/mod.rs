@@ -23,6 +23,7 @@ use tokio_stream::StreamExt;
 use tracing::trace_span;
 use url::Url;
 
+use crate::chunk_tracker::ChunkTracker;
 use crate::spawn_utils::spawn;
 use crate::spawn_utils::BlockingSpawner;
 
@@ -96,6 +97,15 @@ impl ManagedTorrent {
 
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
         f(&self.locked.read().state)
+    }
+
+    pub fn with_chunk_tracker<R>(&self, f: impl FnOnce(&ChunkTracker) -> R) -> anyhow::Result<R> {
+        let g = self.locked.read();
+        match &g.state {
+            ManagedTorrentState::Paused(p) => Ok(f(&p.chunk_tracker)),
+            ManagedTorrentState::Live(l) => Ok(f(&l.lock_read("chunk_tracker").chunks)),
+            _ => bail!("no chunk tracker, torrent neither paused nor live"),
+        }
     }
 
     pub fn live(&self) -> Option<Arc<TorrentStateLive>> {

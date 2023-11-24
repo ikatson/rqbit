@@ -4,12 +4,11 @@ use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use buffers::ByteString;
-use dht::{Dht, DhtStats};
+use dht::DhtStats;
 use http::StatusCode;
 use itertools::Itertools;
 use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -367,8 +366,6 @@ impl ApiInternal {
     fn api_torrent_list(&self) -> TorrentListResponse {
         let items = self.session.with_torrents(|torrents| {
             torrents
-                .iter()
-                .enumerate()
                 .map(|(id, mgr)| TorrentListResponseItem {
                     id,
                     info_hash: mgr.info().info_hash.as_string(),
@@ -488,16 +485,9 @@ impl ApiInternal {
         })
     }
 
-    fn api_dump_haves(&self, _idx: usize) -> Result<String> {
-        Err(anyhow::anyhow!("not implemented").into())
-        // let mgr = self.mgr_handle(idx)?;
-        // Ok(format!(
-        //     "{:?}",
-        //     mgr.live().conetext()
-        //         .lock_read("api_dump_haves")
-        //         .chunks
-        //         .get_have_pieces(),
-        // ))
+    fn api_dump_haves(&self, idx: usize) -> Result<String> {
+        let mgr = self.mgr_handle(idx)?;
+        Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
     }
 }
 
