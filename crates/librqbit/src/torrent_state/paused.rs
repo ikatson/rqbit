@@ -12,7 +12,6 @@ pub struct TorrentStatePaused {
     pub(crate) filenames: Vec<PathBuf>,
     pub(crate) chunk_tracker: ChunkTracker,
     pub(crate) have_bytes: u64,
-    pub(crate) needed_bytes: u64,
 }
 
 // impl TorrentStatePaused {

@@ -13,6 +13,7 @@ use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
 use librqbit_core::id20::Id20;
+use librqbit_core::lengths::Lengths;
 use librqbit_core::peer_id::generate_peer_id;
 
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
@@ -73,6 +74,7 @@ pub struct ManagedTorrentInfo {
     pub spawner: BlockingSpawner,
     pub trackers: Vec<Url>,
     pub peer_id: Id20,
+    pub lengths: Lengths,
     pub(crate) options: ManagedTorrentOptions,
 }
 
@@ -286,7 +288,8 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> ManagedTorrentHandle {
+    pub(crate) fn build(self) -> anyhow::Result<ManagedTorrentHandle> {
+        let lengths = Lengths::from_torrent(&self.info)?;
         let info = Arc::new(ManagedTorrentInfo {
             info: self.info,
             info_hash: self.info_hash,
@@ -294,6 +297,7 @@ impl ManagedTorrentBuilder {
             trackers: self.trackers.into_iter().collect(),
             spawner: self.spawner.unwrap_or_default(),
             peer_id: self.peer_id.unwrap_or_else(generate_peer_id),
+            lengths,
             options: ManagedTorrentOptions {
                 force_tracker_interval: self.force_tracker_interval,
                 peer_connect_timeout: self.peer_connect_timeout,
@@ -305,13 +309,13 @@ impl ManagedTorrentBuilder {
             info.clone(),
             self.only_files.clone(),
         ));
-        Arc::new(ManagedTorrent {
+        Ok(Arc::new(ManagedTorrent {
             only_files: self.only_files,
             locked: RwLock::new(ManagedTorrentLocked {
                 state: ManagedTorrentState::Initializing(initializing),
             }),
             info,
-        })
+        }))
     }
 }
 

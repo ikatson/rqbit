@@ -412,7 +412,7 @@ impl Session {
             {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle.clone()));
             }
-            let managed_torrent = builder.build();
+            let managed_torrent = builder.build()?;
             let id = g.add_torrent(managed_torrent.clone());
             (managed_torrent, id)
         };

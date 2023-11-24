@@ -163,7 +163,7 @@ impl TorrentStateLive {
         let speed_estimator = SpeedEstimator::new(5);
 
         let have_bytes = paused.have_bytes;
-        let needed_bytes = paused.needed_bytes;
+        let needed_bytes = paused.info.lengths.total_length() - have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
         let state = Arc::new(TorrentStateLive {
@@ -533,7 +533,6 @@ impl TorrentStateLive {
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded_bytes.load(Relaxed),
             total_bytes: self.have_plus_needed_bytes,
-            time: Instant::now(),
             initially_needed_bytes: self.needed_bytes,
             remaining_bytes: remaining,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),

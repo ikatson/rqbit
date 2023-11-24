@@ -1,12 +1,11 @@
 use std::{
     fs::{File, OpenOptions},
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
     time::Instant,
 };
 
 use anyhow::Context;
 
-use librqbit_core::{lengths::Lengths, torrent_metainfo::TorrentMetaV1Info};
 use parking_lot::Mutex;
 
 use sha1w::Sha1;
@@ -17,13 +16,6 @@ use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
-fn make_lengths<ByteBuf: AsRef<[u8]>>(
-    torrent: &TorrentMetaV1Info<ByteBuf>,
-) -> anyhow::Result<Lengths> {
-    let total_length = torrent.iter_file_lengths()?.sum();
-    Lengths::new(total_length, torrent.piece_length, None)
-}
-
 fn ensure_file_length(file: &File, length: u64) -> anyhow::Result<()> {
     Ok(file.set_len(length)?)
 }
@@ -31,11 +23,16 @@ fn ensure_file_length(file: &File, length: u64) -> anyhow::Result<()> {
 pub struct TorrentStateInitializing {
     pub(crate) meta: Arc<ManagedTorrentInfo>,
     pub(crate) only_files: Option<Vec<usize>>,
+    pub(crate) checked_bytes: AtomicU64,
 }
 
 impl TorrentStateInitializing {
     pub fn new(meta: Arc<ManagedTorrentInfo>, only_files: Option<Vec<usize>>) -> Self {
-        Self { meta, only_files }
+        Self {
+            meta,
+            only_files,
+            checked_bytes: AtomicU64::new(0),
+        }
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
@@ -72,14 +69,12 @@ impl TorrentStateInitializing {
             (files, filenames)
         };
 
-        let lengths =
-            make_lengths(&self.meta.info).context("unable to compute Lengths from torrent")?;
-        debug!("computed lengths: {:?}", &lengths);
+        debug!("computed lengths: {:?}", &self.meta.lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
-            FileOps::<Sha1>::new(&self.meta.info, &files, &lengths)
-                .initial_check(self.only_files.as_deref())
+            FileOps::<Sha1>::new(&self.meta.info, &files, &self.meta.lengths)
+                .initial_check(self.only_files.as_deref(), &self.checked_bytes)
         })?;
 
         info!(
@@ -122,7 +117,7 @@ impl TorrentStateInitializing {
         let chunk_tracker = ChunkTracker::new(
             initial_check_results.needed_pieces,
             initial_check_results.have_pieces,
-            lengths,
+            self.meta.lengths,
         );
 
         let paused = TorrentStatePaused {
@@ -131,7 +126,6 @@ impl TorrentStateInitializing {
             filenames,
             chunk_tracker,
             have_bytes: initial_check_results.have_bytes,
-            needed_bytes: initial_check_results.needed_bytes,
         };
         Ok(paused)
     }
