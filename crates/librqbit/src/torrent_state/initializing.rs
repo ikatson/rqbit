@@ -42,30 +42,29 @@ fn ensure_file_length(file: &File, length: u64) -> anyhow::Result<()> {
 }
 
 pub struct TorrentStateInitializing {
-    info: Arc<ManagedTorrentInfo>,
+    meta: Arc<ManagedTorrentInfo>,
     only_files: Option<Vec<usize>>,
 }
 
 impl TorrentStateInitializing {
-    pub fn new(info: Arc<ManagedTorrentInfo>, only_files: Option<Vec<usize>>) -> Self {
-        Self { info, only_files }
+    pub fn new(meta: Arc<ManagedTorrentInfo>, only_files: Option<Vec<usize>>) -> Self {
+        Self { meta, only_files }
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         let (files, filenames) = {
-            let mut files = Vec::<Arc<Mutex<File>>>::with_capacity(
-                (&self.info).info.iter_file_lengths()?.count(),
-            );
+            let mut files =
+                Vec::<Arc<Mutex<File>>>::with_capacity(self.meta.info.iter_file_lengths()?.count());
             let mut filenames = Vec::new();
-            for (path_bits, _) in (&self.info).info.iter_filenames_and_lengths()? {
-                let mut full_path = (&self.info).out_dir.clone();
+            for (path_bits, _) in self.meta.info.iter_filenames_and_lengths()? {
+                let mut full_path = self.meta.out_dir.clone();
                 let relative_path = path_bits
                     .to_pathbuf()
                     .context("error converting file to path")?;
                 full_path.push(relative_path);
 
                 std::fs::create_dir_all(full_path.parent().unwrap())?;
-                let file = if (&self.info).options.overwrite {
+                let file = if (&self.meta).options.overwrite {
                     OpenOptions::new()
                         .create(true)
                         .read(true)
@@ -87,12 +86,12 @@ impl TorrentStateInitializing {
         };
 
         let lengths =
-            make_lengths(&(&self.info).info).context("unable to compute Lengths from torrent")?;
+            make_lengths(&(&self.meta).info).context("unable to compute Lengths from torrent")?;
         debug!("computed lengths: {:?}", &lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
-        let initial_check_results = (&self.info).spawner.spawn_block_in_place(|| {
-            FileOps::<Sha1>::new(&(&self.info).info, &files, &lengths)
+        let initial_check_results = (&self.meta).spawner.spawn_block_in_place(|| {
+            FileOps::<Sha1>::new(&(&self.meta).info, &files, &lengths)
                 .initial_check(self.only_files.as_deref())
         })?;
 
@@ -102,10 +101,10 @@ impl TorrentStateInitializing {
             SF::new(initial_check_results.needed_bytes)
         );
 
-        (&self.info).spawner.spawn_block_in_place(|| {
+        self.meta.spawner.spawn_block_in_place(|| {
             for (idx, (file, (name, length))) in files
                 .iter()
-                .zip((&self.info).info.iter_filenames_and_lengths().unwrap())
+                .zip(self.meta.info.iter_filenames_and_lengths().unwrap())
                 .enumerate()
             {
                 if self
@@ -139,18 +138,13 @@ impl TorrentStateInitializing {
             lengths,
         );
 
-        #[allow(clippy::needless_update)]
-        let state_options = TorrentStateOptions {
-            peer_connect_timeout: (&self.info).options.peer_connect_timeout,
-            peer_read_write_timeout: (&self.info).options.peer_read_write_timeout,
-            ..Default::default()
-        };
-
         let paused = TorrentStatePaused {
-            info: self.info.clone(),
+            info: self.meta.clone(),
             files,
             filenames,
             chunk_tracker,
+            have_bytes: initial_check_results.have_bytes,
+            needed_bytes: initial_check_results.needed_bytes,
         };
         Ok(paused)
     }
