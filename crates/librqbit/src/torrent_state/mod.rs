@@ -192,7 +192,11 @@ impl ManagedTorrent {
                 );
             };
 
-        let spawn_peer_adder = |live: &Arc<TorrentStateLive>| {
+        fn spawn_peer_adder(
+            live: &Arc<TorrentStateLive>,
+            initial_peers: Vec<SocketAddr>,
+            peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+        ) {
             let span = live.meta().span.clone();
             let live = Arc::downgrade(live);
             spawn(
@@ -209,10 +213,11 @@ impl ManagedTorrent {
 
                     if let Some(mut peer_rx) = peer_rx {
                         while let Some(peer) = peer_rx.next().await {
-                            live.upgrade()
-                                .context("no longer live")?
-                                .add_peer_if_not_seen(peer)
-                                .context("torrent closed")?;
+                            let live = match live.upgrade() {
+                                Some(live) => live,
+                                None => return Ok(()),
+                            };
+                            live.add_peer_if_not_seen(peer).context("torrent closed")?;
                         }
                     } else {
                         error!("peer rx is not set");
@@ -221,7 +226,7 @@ impl ManagedTorrent {
                     Ok(())
                 },
             );
-        };
+        }
 
         match &g.state {
             ManagedTorrentState::Live(_) => {
@@ -254,7 +259,7 @@ impl ManagedTorrent {
                                 g.state = ManagedTorrentState::Live(live.clone());
 
                                 spawn_fatal_errors_receiver(&t, rx);
-                                spawn_peer_adder(&live);
+                                spawn_peer_adder(&live, initial_peers, peer_rx);
 
                                 Ok(())
                             }
@@ -274,11 +279,19 @@ impl ManagedTorrent {
                 let live = TorrentStateLive::new(paused, tx);
                 g.state = ManagedTorrentState::Live(live.clone());
                 spawn_fatal_errors_receiver(self, rx);
-                spawn_peer_adder(&live);
+                spawn_peer_adder(&live, initial_peers, peer_rx);
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
-                bail!("starting torrents from error state not implemented")
+                let initializing = Arc::new(TorrentStateInitializing::new(
+                    self.info.clone(),
+                    self.only_files.clone(),
+                ));
+                g.state = ManagedTorrentState::Initializing(initializing.clone());
+                drop(g);
+
+                // Recurse.
+                self.start(initial_peers, peer_rx, start_paused)
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }

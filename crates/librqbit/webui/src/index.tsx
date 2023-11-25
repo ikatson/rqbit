@@ -106,7 +106,7 @@ const TorrentActions: React.FC<{
     let refreshCtx = useContext(RefreshTorrentStatsContext);
 
     const canPause = state == 'live';
-    const canUnpause = state == 'paused';
+    const canUnpause = state == 'paused' || state == 'error';
 
     const ctx = useContext(AppContext);
 

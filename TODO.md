@@ -14,16 +14,20 @@
   - [x] pause/unpause
   - [x] remove including from disk
 - [ ] DHT
-  - [ ] for torrents with a few seeds might be cool to re-query DHT once in a while
+  - [ ] for torrents with a few seeds might be cool to re-query DHT once in a while.
   - [x] it's sending many requests now way too fast, locks up Mac OS UI annoyingly
 
 someday:
-- [ ] cancellation from the client-side for the lib (i.e. stop the torrent manager)
+- [x] cancellation from the client-side for the lib (i.e. stop the torrent manager)
 
 
 refactor:
 - [x] where are peers stored
 - [x] http api pause/unpause etc
-- [ ] when a live torrent fails writing to disk, it should transition to error state
-- [ ] something is wrong when unpausing - can't finish. Recalculate needed/have from chunk tracker.
-- [ ] silence this: WARN torrent{id=0}:external_peer_adder: librqbit::spawn_utils: finished with error: no longer live
+- [x] when a live torrent fails writing to disk, it should transition to error state
+- [x] something is wrong when unpausing - can't finish. Recalculate needed/have from chunk tracker.
+- [x] silence this: WARN torrent{id=0}:external_peer_adder: librqbit::spawn_utils: finished with error: no longer live
+
+- [x] start from error state should be possible from UI
+- [ ] if the torrent was completed, not need to re-check it
+- [ ] checking is very slow on raspberry
