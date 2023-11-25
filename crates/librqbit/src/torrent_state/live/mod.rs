@@ -167,9 +167,7 @@ pub struct TorrentStateLive {
     files: Vec<Arc<Mutex<File>>>,
     filenames: Vec<PathBuf>,
 
-    // TODO: why the hell do we need these here, remove it.
-    needed_bytes: u64,
-    have_plus_needed_bytes: u64,
+    initially_needed_bytes: u64,
 
     stats: AtomicStats,
     lengths: Lengths,
@@ -213,8 +211,7 @@ impl TorrentStateLive {
                 have_bytes: AtomicU64::new(have_bytes),
                 ..Default::default()
             },
-            needed_bytes,
-            have_plus_needed_bytes: needed_bytes + have_bytes,
+            initially_needed_bytes: needed_bytes,
             lengths,
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
@@ -454,7 +451,7 @@ impl TorrentStateLive {
         FileOps::new(&self.meta.info, &self.files, &self.lengths)
     }
     pub fn initially_needed(&self) -> u64 {
-        self.needed_bytes
+        self.initially_needed_bytes
     }
 
     pub(crate) fn lock_read(
@@ -518,7 +515,7 @@ impl TorrentStateLive {
             .load(Ordering::Acquire)
     }
 
-    pub fn get_have_bytes(&self) -> u64 {
+    pub fn get_approx_have_bytes(&self) -> u64 {
         self.stats.have_bytes.load(Ordering::Relaxed)
     }
 
@@ -527,7 +524,7 @@ impl TorrentStateLive {
     }
 
     pub fn get_left_to_download_bytes(&self) -> u64 {
-        self.needed_bytes - self.get_downloaded_bytes()
+        self.initially_needed_bytes - self.get_downloaded_bytes()
     }
 
     fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
@@ -601,15 +598,15 @@ impl TorrentStateLive {
     pub fn stats_snapshot(&self) -> StatsSnapshot {
         use Ordering::*;
         let downloaded_bytes = self.stats.downloaded_and_checked_bytes.load(Relaxed);
-        let remaining = self.needed_bytes - downloaded_bytes;
+        let remaining = self.initially_needed_bytes - downloaded_bytes;
         StatsSnapshot {
             have_bytes: self.stats.have_bytes.load(Relaxed),
             downloaded_and_checked_bytes: downloaded_bytes,
             downloaded_and_checked_pieces: self.stats.downloaded_and_checked_pieces.load(Relaxed),
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded_bytes.load(Relaxed),
-            total_bytes: self.have_plus_needed_bytes,
-            initially_needed_bytes: self.needed_bytes,
+            total_bytes: self.lengths.total_length(),
+            initially_needed_bytes: self.initially_needed_bytes,
             remaining_bytes: remaining,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
             peer_stats: self.peers.stats(),
@@ -653,16 +650,22 @@ impl TorrentStateLive {
 
         let filenames = self.filenames.clone();
 
+        let mut chunk_tracker = g
+            .chunks
+            .take()
+            .context("bug: pausing already paused torrent")?;
+        for piece_id in g.inflight_pieces.keys().copied() {
+            chunk_tracker.mark_piece_broken(piece_id);
+        }
+        let have_bytes = chunk_tracker.calc_have_bytes();
+
         // g.chunks;
         Ok(TorrentStatePaused {
             info: self.meta.clone(),
             files,
             filenames,
-            chunk_tracker: g
-                .chunks
-                .take()
-                .context("bug: pausing already paused torrent")?,
-            have_bytes: self.get_have_bytes(),
+            chunk_tracker,
+            have_bytes,
         })
     }
 }
@@ -765,7 +768,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     }
 
     fn get_have_bytes(&self) -> u64 {
-        self.state.get_have_bytes()
+        self.state.get_approx_have_bytes()
     }
 }
 

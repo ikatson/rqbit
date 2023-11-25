@@ -1,7 +1,7 @@
 import { MouseEventHandler, StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE } from './api';
+import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED } from './api';
 
 interface Error {
     text: string,
@@ -161,7 +161,7 @@ const TorrentRow: React.FC<{
     const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
     const isAnimated = (state == STATE_INITIALIZING || state == STATE_LIVE) && !finished;
     const progressLabel = error ? 'Error' : `${progressPercentage.toFixed(2)}%`;
-    const progressBarVariant = error ? 'danger' : finished ? 'success' : 'info';
+    const progressBarVariant = error ? 'danger' : finished ? 'success' : 'primary';
 
     const formatPeersString = () => {
         let peer_stats = statsResponse?.live?.snapshot.peer_stats;
@@ -206,8 +206,12 @@ const TorrentRow: React.FC<{
             {statsResponse ?
                 <>
                     <Column label="Size">{`${formatBytes(totalBytes)} `}</Column>
-                    <Column size={2} label="Progress">
-                        <ProgressBar now={progressPercentage} label={progressLabel} animated={isAnimated} variant={progressBarVariant} />
+                    <Column size={2} label={state == STATE_PAUSED ? 'Progress (PAUSED)' : 'Progress'}>
+                        <ProgressBar
+                            now={progressPercentage}
+                            label={progressLabel}
+                            animated={isAnimated}
+                            variant={progressBarVariant} />
                     </Column>
                     <Column size={2} label="Down Speed">{formatDownloadSped()}</Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>

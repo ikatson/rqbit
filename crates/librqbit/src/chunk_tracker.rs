@@ -87,6 +87,16 @@ impl ChunkTracker {
         self.needed_pieces.set(index.get() as usize, false)
     }
 
+    pub fn calc_have_bytes(&self) -> u64 {
+        self.have
+            .iter_ones()
+            .filter_map(|piece_id| {
+                let piece_id = self.lengths.validate_piece_index(piece_id as u32)?;
+                Some(self.lengths.piece_length(piece_id) as u64)
+            })
+            .sum()
+    }
+
     pub fn iter_needed_pieces(&self) -> impl Iterator<Item = usize> + '_ {
         self.priority_piece_ids
             .iter()
