@@ -19,7 +19,7 @@ use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     peer_connection::PeerConnectionOptions,
     spawn_utils::BlockingSpawner,
-    torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle},
+    torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState},
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -441,14 +441,34 @@ impl Session {
             .remove(&id)
             .with_context(|| format!("torrent with id {} did not exist", id))?;
 
-        if let Some(live) = removed.live() {
-            let _ = live.pause()?;
-        }
+        let paused = removed
+            .with_state_mut(|s| {
+                let paused = match s.take() {
+                    ManagedTorrentState::Paused(p) => p,
+                    ManagedTorrentState::Live(l) => l.pause()?,
+                    _ => return Ok(None),
+                };
+                Ok::<_, anyhow::Error>(Some(paused))
+            })
+            .context("error pausing torrent");
 
-        if delete_files {
-            bail!("torrent deleted, but deleting files not implemented")
+        match (paused, delete_files) {
+            (Err(e), true) => Err(e).context("torrent deleted, but could not delete files"),
+            (Err(e), false) => {
+                warn!("could not delete torrent files: {:?}", e);
+                Ok(())
+            }
+            (Ok(Some(paused)), true) => {
+                drop(paused.files);
+                for file in paused.filenames {
+                    if let Err(e) = std::fs::remove_file(&file) {
+                        warn!("could not delete file {:?}: {:?}", file, e);
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {

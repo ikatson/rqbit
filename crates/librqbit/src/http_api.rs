@@ -447,12 +447,16 @@ impl ApiInternal {
     }
 
     fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
-        self.session.delete(idx, false)?;
+        self.session
+            .delete(idx, false)
+            .context("error forgetting torrent")?;
         Ok(Default::default())
     }
 
     fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
-        self.session.delete(idx, true)?;
+        self.session
+            .delete(idx, true)
+            .context("error deleting torrent with files")?;
         Ok(Default::default())
     }
 

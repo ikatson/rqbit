@@ -3,6 +3,7 @@ pub mod live;
 pub mod paused;
 pub mod utils;
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ pub use live::*;
 use parking_lot::RwLock;
 
 use tokio_stream::StreamExt;
+use tracing::debug;
 use tracing::error;
 use tracing::error_span;
 use url::Url;
@@ -52,7 +54,7 @@ impl ManagedTorrentState {
         }
     }
 
-    fn take(&mut self) -> Self {
+    pub(crate) fn take(&mut self) -> Self {
         std::mem::replace(self, Self::None)
     }
 }
@@ -74,7 +76,7 @@ pub struct ManagedTorrentInfo {
     pub info_hash: Id20,
     pub out_dir: PathBuf,
     pub spawner: BlockingSpawner,
-    pub trackers: Vec<Url>,
+    pub trackers: HashSet<Url>,
     pub peer_id: Id20,
     pub lengths: Lengths,
     pub span: tracing::Span,
@@ -106,6 +108,10 @@ impl ManagedTorrent {
 
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
         f(&self.locked.read().state)
+    }
+
+    pub(crate) fn with_state_mut<R>(&self, f: impl FnOnce(&mut ManagedTorrentState) -> R) -> R {
+        f(&mut self.locked.write().state)
     }
 
     pub fn with_chunk_tracker<R>(&self, f: impl FnOnce(&ChunkTracker) -> R) -> anyhow::Result<R> {
@@ -167,14 +173,23 @@ impl ManagedTorrent {
                 let init = init.clone();
                 let t = self.clone();
                 spawn(
+                    "initialize_and_start",
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     async move {
                         match init.check().await {
                             Ok(paused) => {
+                                let mut g = t.locked.write();
+                                if let ManagedTorrentState::Initializing(_) = &g.state {
+                                } else {
+                                    debug!("no need to start torrent anymore, as it switched state from initilizing");
+                                    return Ok(());
+                                }
+
                                 let live = TorrentStateLive::new(paused);
-                                t.locked.write().state = ManagedTorrentState::Live(live.clone());
+                                g.state = ManagedTorrentState::Live(live.clone());
 
                                 spawn(
+                                    "external_peer_adder",
                                     error_span!(parent: span.clone(), "external_peer_adder"),
                                     peer_adder(Arc::downgrade(&live)),
                                 );
@@ -196,6 +211,7 @@ impl ManagedTorrent {
                 let live = TorrentStateLive::new(paused);
                 g.state = ManagedTorrentState::Live(live.clone());
                 spawn(
+                    "external_peer_adder",
                     error_span!(parent: span.clone(), "external_peer_adder"),
                     peer_adder(Arc::downgrade(&live)),
                 );

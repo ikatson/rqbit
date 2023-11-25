@@ -226,12 +226,14 @@ impl TorrentStateLive {
 
         for tracker in state.meta.trackers.iter() {
             state.spawn(
+                "tracker_monitor",
                 error_span!(parent: state.meta.span.clone(), "tracker_monitor", url = tracker.to_string()),
                 state.clone().task_single_tracker_monitor(tracker.clone()),
             );
         }
 
         state.spawn(
+            "speed_estimator_updater",
             error_span!(parent: state.meta.span.clone(), "speed_estimator_updater"),
             {
                 let state = Arc::downgrade(&state);
@@ -258,6 +260,7 @@ impl TorrentStateLive {
         );
 
         state.spawn(
+            "peer_adder",
             error_span!(parent: state.meta.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
         );
@@ -266,15 +269,17 @@ impl TorrentStateLive {
 
     fn spawn(
         &self,
+        name: &str,
         span: tracing::Span,
         fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
     ) {
         let mut cancel_rx = self.cancel_rx.clone();
-        spawn(span, async move {
+        spawn(name, span, async move {
             tokio::select! {
                 r = fut => r,
                 _ = cancel_rx.changed() => {
-                    bail!("canceled")
+                    debug!("task canceled");
+                    Ok(())
                 }
             }
         });
@@ -429,6 +434,7 @@ impl TorrentStateLive {
             let permit = state.peer_semaphore.acquire().await?;
             permit.forget();
             state.spawn(
+                "manage_peer",
                 error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
                 state.clone().task_manage_peer(addr),
             );
@@ -568,6 +574,7 @@ impl TorrentStateLive {
 
         // We don't want to remember this task as there may be too many.
         self.spawn(
+            "transmit_haves",
             error_span!(
                 parent: self.meta.span.clone(),
                 "transmit_haves",
@@ -830,6 +837,7 @@ impl PeerHandler {
 
         if let Some(dur) = backoff {
             self.state.clone().spawn(
+                "wait_for_peer",
                 error_span!(
                     parent: self.state.meta.span.clone(),
                     "wait_for_peer",

@@ -19,6 +19,7 @@ impl ApiError {
         }
     }
 
+    #[allow(dead_code)]
     pub fn not_implemented(msg: &str) -> Self {
         Self {
             status: Some(StatusCode::INTERNAL_SERVER_ERROR),

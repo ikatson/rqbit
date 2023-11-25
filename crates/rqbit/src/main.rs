@@ -14,7 +14,7 @@ use librqbit::{
     torrent_state::ManagedTorrentState,
 };
 use size_format::SizeFormatterBinary as SF;
-use tracing::{error, info, span, warn, Level};
+use tracing::{error, error_span, info, trace_span, warn};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -135,30 +135,58 @@ enum SubCommand {
 }
 
 fn init_logging(opts: &Opts) {
-    if std::env::var_os("RUST_LOG").is_none() {
-        match opts.log_level.as_ref() {
-            Some(level) => {
-                let level_str = match level {
-                    LogLevel::Trace => "trace",
-                    LogLevel::Debug => "debug",
-                    LogLevel::Info => "info",
-                    LogLevel::Warn => "warn",
-                    LogLevel::Error => "error",
-                };
-                std::env::set_var("RUST_LOG", level_str);
-            }
-            None => {
-                std::env::set_var("RUST_LOG", "info");
-            }
-        };
-    }
+    let default_rust_log = match opts.log_level.as_ref() {
+        Some(level) => match level {
+            LogLevel::Trace => "trace",
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        },
+        None => "info",
+    };
+    let stderr_filter = match std::env::var("RUST_LOG").ok() {
+        Some(rust_log) => EnvFilter::builder()
+            .parse(&rust_log)
+            .expect("can't parse RUST_LOG"),
+        None => EnvFilter::builder()
+            .parse(default_rust_log)
+            .expect("can't parse default_rust_log"),
+    };
 
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+    #[cfg(feature = "tokio-console")]
+    {
+        let (console_layer, server) = console_subscriber::Builder::default()
+            .with_default_env()
+            .build();
+
+        tracing_subscriber::registry()
+            .with(fmt::layer().with_filter(stderr_filter))
+            .with(console_layer)
+            .init();
+
+        spawn(
+            "console_subscriber server",
+            error_span!("console_subscriber server"),
+            async move {
+                server
+                    .serve()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{:#?}", e))
+                    .context("error running console subscriber server")
+            },
+        );
+    }
+
+    #[cfg(not(feature = "tokio-console"))]
+    {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(stderr_filter)
+            .init();
+    }
 }
 
 fn _start_deadlock_detector_thread() {
@@ -187,9 +215,6 @@ fn _start_deadlock_detector_thread() {
 
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
-
-    init_logging(&opts);
-    // start_deadlock_detector_thread();
 
     let (mut rt_builder, spawner) = match opts.single_thread_runtime {
         true => (
@@ -223,6 +248,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
+    init_logging(&opts);
+
     let sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
@@ -300,7 +327,8 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     .context("error initializing rqbit session")?,
                 );
                 spawn(
-                    span!(Level::TRACE, "stats_printer"),
+                    "stats_printer",
+                    trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
                 let http_api = HttpApi::new(session);
@@ -379,13 +407,15 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     .context("error initializing rqbit session")?,
                 );
                 spawn(
-                    span!(Level::TRACE, "stats_printer"),
+                    "stats_printer",
+                    trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
                 let http_api = HttpApi::new(session.clone());
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 spawn(
-                    span!(Level::ERROR, "http_api"),
+                    "http_api",
+                    error_span!("http_api"),
                     http_api.clone().make_http_api_and_run(http_api_listen_addr),
                 );
 
