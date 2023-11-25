@@ -58,7 +58,10 @@ impl TorrentStateInitializing {
                         .create(true)
                         .read(true)
                         .write(true)
-                        .open(&full_path)?
+                        .open(&full_path)
+                        .with_context(|| {
+                            format!("error opening {full_path:?} in read/write mode")
+                        })?
                 } else {
                     // TODO: create_new does not seem to work with read(true), so calling this twice.
                     OpenOptions::new()

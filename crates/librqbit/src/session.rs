@@ -363,6 +363,9 @@ impl Session {
         opts: Option<AddTorrentOptions>,
     ) -> anyhow::Result<AddTorrentResponse> {
         // Magnet links are different in that we first need to discover the metadata.
+        let span = error_span!("add_torrent");
+        let _ = span.enter();
+
         let opts = opts.unwrap_or_default();
 
         let (info_hash, info, dht_rx, trackers, initial_peers) = match add.into() {
@@ -389,6 +392,7 @@ impl Session {
                     })
                     .collect();
 
+                debug!("querying DHT for {:?}", info_hash);
                 let (info, dht_rx, initial_peers) = match read_metainfo_from_peer_receiver(
                     self.peer_id,
                     info_hash,
@@ -402,6 +406,7 @@ impl Session {
                         anyhow::bail!("DHT died, no way to discover torrent metainfo")
                     }
                 };
+                debug!("received result from DHT: {:?}", info);
                 (info_hash, info, Some(dht_rx), trackers, initial_peers)
             }
             other => {
@@ -558,7 +563,8 @@ impl Session {
                 return Ok(AddTorrentResponse::AlreadyManaged(*id, handle.clone()));
             }
             let next_id = g.torrents.len();
-            let managed_torrent = builder.build(error_span!("torrent", id = next_id))?;
+            let managed_torrent =
+                builder.build(error_span!(parent: None, "torrent", id = next_id))?;
             let id = g.add_torrent(managed_torrent.clone());
             (managed_torrent, id)
         };
