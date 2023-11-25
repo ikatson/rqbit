@@ -10,7 +10,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::Weak;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -28,6 +27,7 @@ use tokio_stream::StreamExt;
 use tracing::debug;
 use tracing::error;
 use tracing::error_span;
+use tracing::warn;
 use url::Url;
 
 use crate::chunk_tracker::ChunkTracker;
@@ -138,6 +138,30 @@ impl ManagedTorrent {
         }
     }
 
+    fn stop_with_error(&self, error: anyhow::Error) {
+        let mut g = self.locked.write();
+
+        match g.state.take() {
+            ManagedTorrentState::Live(live) => {
+                if let Err(err) = live.pause() {
+                    warn!(
+                        "error pausing live torrent during fatal error handling: {:?}",
+                        err
+                    );
+                }
+            }
+            ManagedTorrentState::Error(e) => {
+                warn!("bug: torrent already was in error state when trying to stop it. Previous error was: {:?}", e);
+            }
+            ManagedTorrentState::None => {
+                warn!("bug: torrent encountered in None state during fatal error handling")
+            }
+            _ => {}
+        };
+
+        g.state = ManagedTorrentState::Error(error)
+    }
+
     pub fn start(
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
@@ -146,29 +170,58 @@ impl ManagedTorrent {
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
 
-        let peer_adder = |live: Weak<TorrentStateLive>| async move {
-            {
-                let live: Arc<TorrentStateLive> = live.upgrade().context("no longer live")?;
-                for peer in initial_peers {
-                    live.add_peer_if_not_seen(peer).context("torrent closed")?;
-                }
-            }
+        let spawn_fatal_errors_receiver =
+            |state: &Arc<Self>, rx: tokio::sync::oneshot::Receiver<anyhow::Error>| {
+                let span = state.info.span.clone();
+                let state = Arc::downgrade(state);
+                spawn(
+                    "fatal_errors_receiver",
+                    error_span!(parent: span, "fatal_errors_receiver"),
+                    async move {
+                        let e = match rx.await {
+                            Ok(e) => e,
+                            Err(_) => return Ok(()),
+                        };
+                        if let Some(state) = state.upgrade() {
+                            state.stop_with_error(e);
+                        } else {
+                            warn!("tried to stop the torrent with error, but it's couldn't upgrade the arc");
+                        }
+                        Ok(())
+                    },
+                );
+            };
 
-            if let Some(mut peer_rx) = peer_rx {
-                while let Some(peer) = peer_rx.next().await {
-                    live.upgrade()
-                        .context("no longer live")?
-                        .add_peer_if_not_seen(peer)
-                        .context("torrent closed")?;
-                }
-            } else {
-                error!("peer rx is not set");
-            }
+        let spawn_peer_adder = |live: &Arc<TorrentStateLive>| {
+            let span = live.meta().span.clone();
+            let live = Arc::downgrade(live);
+            spawn(
+                "external_peer_adder",
+                error_span!(parent: span, "external_peer_adder"),
+                async move {
+                    {
+                        let live: Arc<TorrentStateLive> =
+                            live.upgrade().context("no longer live")?;
+                        for peer in initial_peers {
+                            live.add_peer_if_not_seen(peer).context("torrent closed")?;
+                        }
+                    }
 
-            Ok(())
+                    if let Some(mut peer_rx) = peer_rx {
+                        while let Some(peer) = peer_rx.next().await {
+                            live.upgrade()
+                                .context("no longer live")?
+                                .add_peer_if_not_seen(peer)
+                                .context("torrent closed")?;
+                        }
+                    } else {
+                        error!("peer rx is not set");
+                    }
+
+                    Ok(())
+                },
+            );
         };
-
-        let span = self.info.span.clone();
 
         match &g.state {
             ManagedTorrentState::Live(_) => {
@@ -177,6 +230,7 @@ impl ManagedTorrent {
             ManagedTorrentState::Initializing(init) => {
                 let init = init.clone();
                 let t = self.clone();
+                let span = self.info().span.clone();
                 spawn(
                     "initialize_and_start",
                     error_span!(parent: span.clone(), "initialize_and_start"),
@@ -195,14 +249,12 @@ impl ManagedTorrent {
                                     return Ok(());
                                 }
 
-                                let live = TorrentStateLive::new(paused);
+                                let (tx, rx) = tokio::sync::oneshot::channel();
+                                let live = TorrentStateLive::new(paused, tx);
                                 g.state = ManagedTorrentState::Live(live.clone());
 
-                                spawn(
-                                    "external_peer_adder",
-                                    error_span!(parent: span.clone(), "external_peer_adder"),
-                                    peer_adder(Arc::downgrade(&live)),
-                                );
+                                spawn_fatal_errors_receiver(&t, rx);
+                                spawn_peer_adder(&live);
 
                                 Ok(())
                             }
@@ -218,13 +270,11 @@ impl ManagedTorrent {
             }
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
-                let live = TorrentStateLive::new(paused);
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let live = TorrentStateLive::new(paused, tx);
                 g.state = ManagedTorrentState::Live(live.clone());
-                spawn(
-                    "external_peer_adder",
-                    error_span!(parent: span.clone(), "external_peer_adder"),
-                    peer_adder(Arc::downgrade(&live)),
-                );
+                spawn_fatal_errors_receiver(self, rx);
+                spawn_peer_adder(&live);
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {

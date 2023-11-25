@@ -137,6 +137,9 @@ pub(crate) struct TorrentStateLocked {
     // At a moment in time, we are expecting a piece from only one peer.
     // inflight_pieces stores this information.
     inflight_pieces: HashMap<ValidPieceIndex, InflightPiece>,
+
+    // If this is None, then it was already used
+    fatal_errors_tx: Option<tokio::sync::oneshot::Sender<anyhow::Error>>,
 }
 
 impl TorrentStateLocked {
@@ -187,7 +190,10 @@ pub struct TorrentStateLive {
 }
 
 impl TorrentStateLive {
-    pub(crate) fn new(paused: TorrentStatePaused) -> Arc<Self> {
+    pub(crate) fn new(
+        paused: TorrentStatePaused,
+        fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
+    ) -> Arc<Self> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
         let speed_estimator = SpeedEstimator::new(5);
@@ -204,6 +210,7 @@ impl TorrentStateLive {
             locked: RwLock::new(TorrentStateLocked {
                 chunks: Some(paused.chunk_tracker),
                 inflight_pieces: Default::default(),
+                fatal_errors_tx: Some(fatal_errors_tx),
             }),
             files: paused.files,
             filenames: paused.filenames,
@@ -438,6 +445,10 @@ impl TorrentStateLive {
         }
     }
 
+    pub fn meta(&self) -> &ManagedTorrentInfo {
+        &self.meta
+    }
+
     pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
         &self.meta.info
     }
@@ -667,6 +678,19 @@ impl TorrentStateLive {
             chunk_tracker,
             have_bytes,
         })
+    }
+
+    fn on_fatal_error(&self, e: anyhow::Error) -> anyhow::Result<()> {
+        let mut g = self.lock_write("fatal_error");
+        let tx = g
+            .fatal_errors_tx
+            .take()
+            .context("fatal_errors_tx already taken")?;
+        let res = anyhow::anyhow!("fatal error: {:?}", e);
+        if tx.send(e).is_err() {
+            warn!("there's nowhere to send fatal error, receiver is dead");
+        }
+        Err(res)
     }
 }
 
@@ -1286,7 +1310,7 @@ impl PeerHandler {
                     Ok(()) => {}
                     Err(e) => {
                         error!("FATAL: error writing chunk to disk: {:?}", e);
-                        panic!("{:?}", e);
+                        return self.state.on_fatal_error(e);
                     }
                 }
 
