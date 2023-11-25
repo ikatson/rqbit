@@ -234,6 +234,7 @@ impl ManagedTorrent {
             }
             ManagedTorrentState::Initializing(init) => {
                 let init = init.clone();
+                drop(g);
                 let t = self.clone();
                 let span = self.info().span.clone();
                 spawn(

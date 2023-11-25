@@ -259,7 +259,7 @@ impl Session {
             let session = session.clone();
             spawn(
                 "session persistene",
-                error_span!("session persistence"),
+                error_span!("session_persistence"),
                 async move {
                     // Populate initial from the state filename
                     if let Err(e) = session.populate_from_stored().await {
@@ -290,7 +290,7 @@ impl Session {
         self.dht.as_ref()
     }
 
-    async fn populate_from_stored(&self) -> anyhow::Result<()> {
+    async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {
         let mut rdr = BufReader::new(
             std::fs::File::open(&self.persistence_filename).with_context(|| {
                 format!("error opening session file {:?}", self.persistence_filename)
