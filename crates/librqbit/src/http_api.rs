@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use axum::Router;
@@ -33,9 +34,9 @@ pub struct HttpApi {
 }
 
 impl HttpApi {
-    pub fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
-            inner: Arc::new(ApiInternal::new(session)),
+            inner: Arc::new(ApiInternal::new(session, rust_log_reload_tx)),
         }
     }
 
@@ -51,11 +52,14 @@ impl HttpApi {
                     "GET /torrents": "List torrents (default torrent is 0)",
                     "GET /torrents/{index}": "Torrent details",
                     "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{index}/stats": "Torrent stats",
+                    "GET /torrents/{index}/stats/v1": "Torrent stats",
                     "GET /torrents/{index}/peer_stats": "Per peer stats",
-                    // This is kind of not secure as it just reads any local file that it has access to,
-                    // or any URL, but whatever, ok for our purposes / threat model.
+                    "POST /torrents/{index}/pause": "Pause torrent",
+                    "POST /torrents/{index}/start": "Resume torrent",
+                    "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
+                    "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
                     "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+                    "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
                     "GET /web/": "Web UI",
                 },
                 "server": "rqbit",
@@ -151,6 +155,13 @@ impl HttpApi {
             state.api_torrent_action_delete(idx).map(axum::Json)
         }
 
+        async fn set_rust_log(
+            State(state): State<ApiState>,
+            new_value: String,
+        ) -> Result<impl IntoResponse> {
+            state.api_set_rust_log(new_value).map(axum::Json)
+        }
+
         #[allow(unused_mut)]
         let mut app = Router::new()
             .route("/", get(api_root))
@@ -165,7 +176,8 @@ impl HttpApi {
             .route("/torrents/:id/pause", post(torrent_action_pause))
             .route("/torrents/:id/start", post(torrent_action_start))
             .route("/torrents/:id/forget", post(torrent_action_forget))
-            .route("/torrents/:id/delete", post(torrent_action_delete));
+            .route("/torrents/:id/delete", post(torrent_action_delete))
+            .route("/rust_log", post(set_rust_log));
 
         #[cfg(feature = "webui")]
         {
@@ -383,15 +395,17 @@ impl TorrentAddQueryParams {
 struct ApiInternal {
     startup_time: Instant,
     session: Arc<Session>,
+    rust_log_reload_tx: Option<UnboundedSender<String>>,
 }
 
 type ApiState = Arc<ApiInternal>;
 
 impl ApiInternal {
-    pub fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
             startup_time: Instant::now(),
             session,
+            rust_log_reload_tx,
         }
     }
 
@@ -457,6 +471,16 @@ impl ApiInternal {
         self.session
             .delete(idx, true)
             .context("error deleting torrent with files")?;
+        Ok(Default::default())
+    }
+
+    fn api_set_rust_log(&self, new_value: String) -> Result<EmptyJsonResponse> {
+        let tx = self
+            .rust_log_reload_tx
+            .as_ref()
+            .context("rust_log_reload_tx was not set")?;
+        tx.send(new_value)
+            .context("noone is listening to RUST_LOG changes")?;
         Ok(Default::default())
     }
 

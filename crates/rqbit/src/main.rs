@@ -134,7 +134,8 @@ enum SubCommand {
     Download(DownloadOpts),
 }
 
-fn init_logging(opts: &Opts) {
+// Iint logging and make a channel to send new RUST_LOG values to.
+fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
     let default_rust_log = match opts.log_level.as_ref() {
         Some(level) => match level {
             LogLevel::Trace => "trace",
@@ -147,12 +148,15 @@ fn init_logging(opts: &Opts) {
     };
     let stderr_filter = match std::env::var("RUST_LOG").ok() {
         Some(rust_log) => EnvFilter::builder()
-            .parse(&rust_log)
+            .parse(rust_log)
             .expect("can't parse RUST_LOG"),
         None => EnvFilter::builder()
             .parse(default_rust_log)
             .expect("can't parse default_rust_log"),
     };
+
+    let (stderr_filter, reload_stderr_filter) =
+        tracing_subscriber::reload::Layer::new(stderr_filter);
 
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -187,6 +191,27 @@ fn init_logging(opts: &Opts) {
             .with(stderr_filter)
             .init();
     }
+
+    let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    spawn(
+        "fmt_filter_reloader",
+        error_span!("fmt_filter_reloader"),
+        async move {
+            while let Some(rust_log) = reload_rx.recv().await {
+                let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
+                        continue;
+                    }
+                };
+                eprintln!("setting RUST_LOG to {:?}", rust_log);
+                let _ = reload_stderr_filter.reload(stderr_env_filter);
+            }
+            Ok(())
+        },
+    );
+    reload_tx
 }
 
 fn _start_deadlock_detector_thread() {
@@ -248,7 +273,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
-    init_logging(&opts);
+    let logging_reload_tx = init_logging(&opts);
 
     let sopts = SessionOptions {
         disable_dht: opts.disable_dht,
@@ -331,7 +356,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let http_api = HttpApi::new(session);
+                let http_api = HttpApi::new(session, Some(logging_reload_tx));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
                     .make_http_api_and_run(http_api_listen_addr)
@@ -411,7 +436,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let http_api = HttpApi::new(session.clone());
+                let http_api = HttpApi::new(session.clone(), Some(logging_reload_tx));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 spawn(
                     "http_api",

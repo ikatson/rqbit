@@ -730,7 +730,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             }
             Message::Have(h) => self.on_have(h),
             Message::NotInterested => {
-                info!("received \"not interested\", but we don't care yet")
+                debug!("received \"not interested\", but we don't care yet")
             }
             message => {
                 warn!("received unsupported message {:?}, ignoring", message);

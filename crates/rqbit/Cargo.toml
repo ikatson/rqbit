@@ -13,7 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["sha1-system", "default-tls", "webui"]
-tokio-console = ["console-subscriber"]
+tokio-console = ["console-subscriber",]
 webui = ["librqbit/webui"]
 timed_existence = ["librqbit/timed_existence"]
 sha1-system = ["librqbit/sha1-system"]

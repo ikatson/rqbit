@@ -1,6 +1,6 @@
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
-use tracing::{debug, info};
+use tracing::{debug, trace};
 
 use crate::type_aliases::BF;
 
@@ -129,7 +129,7 @@ impl ChunkTracker {
     }
 
     pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) -> bool {
-        info!("remarking piece={} as broken", index);
+        debug!("remarking piece={} as broken", index);
         self.needed_pieces.set(index.get() as usize, true);
         self.chunk_status
             .get_mut(self.lengths.chunk_range(index))
@@ -170,9 +170,11 @@ impl ChunkTracker {
             return Some(ChunkMarkingResult::PreviouslyCompleted);
         }
         chunk_range.set(chunk_info.chunk_index as usize, true);
-        debug!(
+        trace!(
             "piece={}, chunk_info={:?}, bits={:?}",
-            piece.index, chunk_info, chunk_range,
+            piece.index,
+            chunk_info,
+            chunk_range,
         );
 
         if chunk_range.all() {
