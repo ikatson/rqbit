@@ -1,5 +1,6 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
+use librqbit_core::spawn_utils::spawn;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
@@ -8,8 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use tokio::spawn;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn};
 
 use crate::dht::{Dht, DhtConfig};
 use crate::routing_table::RoutingTable;
@@ -110,7 +110,7 @@ impl PersistentDht {
         };
         let dht = Dht::with_config(dht_config).await?;
 
-        spawn({
+        spawn(error_span!("dht_persistence"), {
             let dht = dht.clone();
             let dump_interval = config
                 .dump_interval

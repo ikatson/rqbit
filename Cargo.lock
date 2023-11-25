@@ -1000,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "3.3.0"
+version = "4.0.0-beta.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1066,7 +1066,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "hex 0.4.3",
@@ -1076,13 +1076,15 @@ dependencies = [
  "librqbit-clone-to-owned",
  "parking_lot",
  "serde",
+ "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
 
 [[package]]
 name = "librqbit-dht"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1105,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1704,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "3.3.0"
+version = "4.0.0-beta.0"
 dependencies = [
  "anyhow",
  "clap",

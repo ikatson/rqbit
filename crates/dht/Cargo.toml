@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-dht"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2021"
 description = "DHT implementation, used in rqbit torrent client."
 license = "Apache-2.0"
@@ -33,7 +33,7 @@ indexmap = "2"
 directories = "5"
 
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-librqbit-core = {path="../librqbit_core", version = "3.0.0"}
+librqbit-core = {path="../librqbit_core", version = "3.1.0"}
 
 [dev-dependencies]
 tracing-subscriber = "0.3"
