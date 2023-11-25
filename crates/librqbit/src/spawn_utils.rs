@@ -1,7 +1,7 @@
 use tracing::{debug, trace, warn, Instrument};
 
 pub fn spawn(
-    name: &str,
+    _name: &str,
     span: tracing::Span,
     fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
@@ -17,7 +17,7 @@ pub fn spawn(
         }
     }
     .instrument(span.or_current());
-    tokio::task::Builder::new().name(name).spawn(fut).unwrap()
+    tokio::task::spawn(fut)
 }
 
 #[derive(Clone, Copy, Debug)]

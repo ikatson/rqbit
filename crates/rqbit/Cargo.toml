@@ -13,7 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["sha1-system", "default-tls", "webui"]
-tokio-console = ["console-subscriber",]
+tokio-console = ["console-subscriber", "tokio/tracing"]
 webui = ["librqbit/webui"]
 timed_existence = ["librqbit/timed_existence"]
 sha1-system = ["librqbit/sha1-system"]
@@ -25,7 +25,7 @@ rust-tls = ["librqbit/rust-tls"]
 [dependencies]
 librqbit = {path="../librqbit", default-features=false, version = "3.3.0"}
 dht = {path="../dht", package="librqbit-dht", version="3.1.0"}
-tokio = {version = "1", features = ["macros", "rt-multi-thread", "tracing"]}
+tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 console-subscriber = {version = "0.2", optional = true}
 anyhow = "1"
 clap = {version = "4", features = ["derive", "deprecated"]}

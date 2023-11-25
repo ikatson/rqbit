@@ -1,5 +1,2 @@
 [target.arm-unknown-linux-gnueabihf]
 rustflags = ["-l", "atomic"]
-
-[build]
-rustflags = ["--cfg", "tokio_unstable"]

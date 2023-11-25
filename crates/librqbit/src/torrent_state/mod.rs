@@ -85,7 +85,7 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    only_files: Option<Vec<usize>>,
+    pub(crate) only_files: Option<Vec<usize>>,
     locked: RwLock<ManagedTorrentLocked>,
 }
 
@@ -138,6 +138,7 @@ impl ManagedTorrent {
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
         peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+        start_paused: bool,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
 
@@ -182,6 +183,11 @@ impl ManagedTorrent {
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
                                 } else {
                                     debug!("no need to start torrent anymore, as it switched state from initilizing");
+                                    return Ok(());
+                                }
+
+                                if start_paused {
+                                    g.state = ManagedTorrentState::Paused(paused);
                                     return Ok(());
                                 }
 

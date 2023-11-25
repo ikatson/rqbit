@@ -41,6 +41,17 @@ impl Magnet {
     }
 }
 
+impl std::fmt::Display for Magnet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "magnet:?xt=urn:btih:{}&tr={}",
+            self.info_hash.as_string(),
+            self.trackers.join("&tr=")
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

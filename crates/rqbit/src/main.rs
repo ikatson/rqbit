@@ -279,6 +279,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
+        persistence: true,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: Some(opts.peer_connect_timeout),
@@ -342,15 +343,13 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
-                let session = Arc::new(
-                    Session::new_with_opts(
-                        PathBuf::from(&start_opts.output_folder),
-                        spawner,
-                        sopts,
-                    )
-                    .await
-                    .context("error initializing rqbit session")?,
-                );
+                let session = Session::new_with_opts(
+                    PathBuf::from(&start_opts.output_folder),
+                    spawner,
+                    sopts,
+                )
+                .await
+                .context("error initializing rqbit session")?;
                 spawn(
                     "stats_printer",
                     trace_span!("stats_printer"),
@@ -416,21 +415,19 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 }
                 Ok(())
             } else {
-                let session = Arc::new(
-                    Session::new_with_opts(
-                        download_opts
-                            .output_folder
-                            .as_ref()
-                            .map(PathBuf::from)
-                            .context(
-                                "output_folder is required if can't connect to an existing server",
-                            )?,
-                        spawner,
-                        sopts,
-                    )
-                    .await
-                    .context("error initializing rqbit session")?,
-                );
+                let session = Session::new_with_opts(
+                    download_opts
+                        .output_folder
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .context(
+                            "output_folder is required if can't connect to an existing server",
+                        )?,
+                    spawner,
+                    sopts,
+                )
+                .await
+                .context("error initializing rqbit session")?;
                 spawn(
                     "stats_printer",
                     trace_span!("stats_printer"),
