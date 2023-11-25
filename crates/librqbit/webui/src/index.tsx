@@ -161,7 +161,7 @@ const TorrentRow: React.FC<{
     const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
     const isAnimated = (state == STATE_INITIALIZING || state == STATE_LIVE) && !finished;
     const progressLabel = error ? 'Error' : `${progressPercentage.toFixed(2)}%`;
-    const progressBarVariant = error ? 'danger' : finished ? 'success' : 'primary';
+    const progressBarVariant = error ? 'danger' : finished ? 'success' : state == STATE_INITIALIZING ? 'warning' : 'primary';
 
     const formatPeersString = () => {
         let peer_stats = statsResponse?.live?.snapshot.peer_stats;
