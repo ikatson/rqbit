@@ -241,6 +241,11 @@ const Column: React.FC<{
 const Torrent = ({ id, torrent }) => {
     const [detailsResponse, updateDetailsResponse] = useState<TorrentDetails>(null);
     const [statsResponse, updateStatsResponse] = useState<TorrentStats>(null);
+    const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
+
+    const forceStatsRefreshCallback = () => {
+        setForceStatsRefresh(forceStatsRefresh + 1);
+    }
 
     // Update details once.
     useEffect(() => {
@@ -251,11 +256,6 @@ const Torrent = ({ id, torrent }) => {
         }
     }, [detailsResponse]);
 
-    const refreshStats = () => API.getTorrentStats(torrent.id).then((stats) => {
-        updateStatsResponse(stats);
-        return stats;
-    });
-
     // Update stats once then forever.
     useEffect(() => customSetInterval((async () => {
         const errorInterval = 10000;
@@ -263,7 +263,10 @@ const Torrent = ({ id, torrent }) => {
         const finishedInterval = 10000;
         const nonLiveInterval = 10000;
 
-        return refreshStats().then((stats) => {
+        return API.getTorrentStats(torrent.id).then((stats) => {
+            updateStatsResponse(stats);
+            return stats;
+        }).then((stats) => {
             if (stats.finished) {
                 return finishedInterval;
             }
@@ -274,9 +277,9 @@ const Torrent = ({ id, torrent }) => {
         }, (e) => {
             return errorInterval;
         });
-    }), 0), []);
+    }), 0), [forceStatsRefresh]);
 
-    return <RefreshTorrentStatsContext.Provider value={{ refresh: refreshStats }}>
+    return <RefreshTorrentStatsContext.Provider value={{ refresh: forceStatsRefreshCallback }}>
         <TorrentRow id={id} detailsResponse={detailsResponse} statsResponse={statsResponse} />
     </RefreshTorrentStatsContext.Provider >
 }
