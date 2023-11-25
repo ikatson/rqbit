@@ -191,7 +191,7 @@ impl Serialize for Speed {
         }
         Tmp {
             mbps: self.mbps,
-            human_readable: format!("{:?}", self.mbps),
+            human_readable: format!("{}", self),
         }
         .serialize(serializer)
     }

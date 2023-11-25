@@ -36,12 +36,8 @@ async fn main() -> Result<(), anyhow::Error> {
         .add_torrent(
             AddTorrent::from_url(MAGNET_LINK),
             Some(AddTorrentOptions {
-                // Set this to true to allow writing on top of existing files.
-                // If the file is partially downloaded, librqbit will only download the
-                // missing pieces.
-                //
-                // Otherwise it will throw an error that the file exists.
-                overwrite: false,
+                // Allow writing on top of existing files.
+                overwrite: true,
                 ..Default::default()
             }),
         )

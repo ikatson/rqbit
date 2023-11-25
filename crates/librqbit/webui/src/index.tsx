@@ -1,7 +1,7 @@
 import { MouseEventHandler, StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED } from './api';
+import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR } from './api';
 
 interface Error {
     text: string,
@@ -171,13 +171,16 @@ const TorrentRow: React.FC<{
         return `${peer_stats.live} / ${peer_stats.seen}`;
     }
 
-    const formatDownloadSped = () => {
+    const formatDownloadSpeed = () => {
         if (finished) {
             return 'Completed';
         }
-        if (state == STATE_INITIALIZING) {
-            return 'Checking files';
+        switch (state) {
+            case STATE_PAUSED: return 'Paused';
+            case STATE_INITIALIZING: return 'Checking files';
+            case STATE_ERROR: return 'Error';
         }
+
         return statsResponse.live?.download_speed.human_readable ?? "N/A";
     }
 
@@ -206,14 +209,14 @@ const TorrentRow: React.FC<{
             {statsResponse ?
                 <>
                     <Column label="Size">{`${formatBytes(totalBytes)} `}</Column>
-                    <Column size={2} label={state == STATE_PAUSED ? 'Progress (PAUSED)' : 'Progress'}>
+                    <Column size={2} label={state == STATE_PAUSED ? 'Progress' : 'Progress'}>
                         <ProgressBar
                             now={progressPercentage}
                             label={progressLabel}
                             animated={isAnimated}
                             variant={progressBarVariant} />
                     </Column>
-                    <Column size={2} label="Down Speed">{formatDownloadSped()}</Column>
+                    <Column size={2} label="Down Speed">{formatDownloadSpeed()}</Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
                     <Column size={2} label="Peers">{formatPeersString()}</Column >
                     <Column label="Actions">
@@ -393,7 +396,7 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
                 const response = await API.uploadTorrent(data, { listOnly: true });
                 setFileList(response.details.files);
             } catch (e) {
-                setFileListError({ text: 'Error listing torrent', details: e });
+                setFileListError({ text: 'Error uploading torrent', details: e });
             } finally {
                 setLoading(false);
             }

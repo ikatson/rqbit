@@ -38,7 +38,11 @@ impl HttpApi {
         }
     }
 
-    pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
+    pub async fn make_http_api_and_run(
+        self,
+        addr: SocketAddr,
+        read_only: bool,
+    ) -> anyhow::Result<()> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {
@@ -160,22 +164,26 @@ impl HttpApi {
             state.api_set_rust_log(new_value).map(axum::Json)
         }
 
-        #[allow(unused_mut)]
         let mut app = Router::new()
             .route("/", get(api_root))
+            .route("/rust_log", post(set_rust_log))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
-            .route("/torrents", get(torrents_list).post(torrents_post))
+            .route("/torrents", get(torrents_list))
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))
             .route("/torrents/:id/stats", get(torrent_stats_v0))
             .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
-            .route("/torrents/:id/peer_stats", get(peer_stats))
-            .route("/torrents/:id/pause", post(torrent_action_pause))
-            .route("/torrents/:id/start", post(torrent_action_start))
-            .route("/torrents/:id/forget", post(torrent_action_forget))
-            .route("/torrents/:id/delete", post(torrent_action_delete))
-            .route("/rust_log", post(set_rust_log));
+            .route("/torrents/:id/peer_stats", get(peer_stats));
+
+        if !read_only {
+            app = app
+                .route("/torrents", post(torrents_post))
+                .route("/torrents/:id/pause", post(torrent_action_pause))
+                .route("/torrents/:id/start", post(torrent_action_start))
+                .route("/torrents/:id/forget", post(torrent_action_forget))
+                .route("/torrents/:id/delete", post(torrent_action_delete));
+        }
 
         #[cfg(feature = "webui")]
         {

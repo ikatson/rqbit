@@ -210,6 +210,8 @@ pub struct SessionOptions {
     pub disable_dht: bool,
     pub disable_dht_persistence: bool,
     pub persistence: bool,
+    // Will default to output_folder/.rqbit-session.json
+    pub persistence_filename: Option<PathBuf>,
     pub dht_config: Option<PersistentDhtConfig>,
     pub peer_id: Option<Id20>,
     pub peer_opts: Option<PeerConnectionOptions>,
@@ -240,7 +242,9 @@ impl Session {
             Some(dht)
         };
         let peer_opts = opts.peer_opts.unwrap_or_default();
-        let session_filename = output_folder.join(".rqbit-session.json");
+        let session_filename = opts
+            .persistence_filename
+            .unwrap_or_else(|| output_folder.join(".rqbit-session.json"));
         let session = Arc::new(Self {
             persistence_filename: session_filename,
             peer_id,

@@ -77,6 +77,13 @@ struct Opts {
 struct ServerStartOptions {
     /// The output folder to write to. If not exists, it will be created.
     output_folder: String,
+    #[arg(
+        long = "disable-persistence",
+        help = "Disable server persistence. It will not read or write its state to disk."
+    )]
+    disable_persistence: bool,
+    #[arg(long = "persistence-filename")]
+    persistence_filename: Option<String>,
 }
 
 #[derive(Parser)]
@@ -275,11 +282,12 @@ fn main() -> anyhow::Result<()> {
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
     let logging_reload_tx = init_logging(&opts);
 
-    let sopts = SessionOptions {
+    let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
-        persistence: true,
+        persistence: false,
+        persistence_filename: None,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: Some(opts.peer_connect_timeout),
@@ -343,6 +351,9 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
+                sopts.persistence = !start_opts.disable_persistence;
+                sopts.persistence_filename =
+                    start_opts.persistence_filename.clone().map(PathBuf::from);
                 let session = Session::new_with_opts(
                     PathBuf::from(&start_opts.output_folder),
                     spawner,
@@ -358,7 +369,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 let http_api = HttpApi::new(session, Some(logging_reload_tx));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
-                    .make_http_api_and_run(http_api_listen_addr)
+                    .make_http_api_and_run(http_api_listen_addr, false)
                     .await
                     .context("error starting HTTP API")
             }
@@ -438,7 +449,9 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 spawn(
                     "http_api",
                     error_span!("http_api"),
-                    http_api.clone().make_http_api_and_run(http_api_listen_addr),
+                    http_api
+                        .clone()
+                        .make_http_api_and_run(http_api_listen_addr, true),
                 );
 
                 let mut added = false;
@@ -504,8 +517,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     if download_opts.exit_on_finish {
                         let results = futures::future::join_all(
                             handles.iter().map(|h| h.wait_until_completed()),
-                        );
-                        results.await;
+                        )
+                        .await;
+                        if results.iter().any(|r| r.is_err()) {
+                            anyhow::bail!("some downloads failed")
+                        }
                         info!("All downloads completed, exiting");
                         Ok(())
                     } else {
