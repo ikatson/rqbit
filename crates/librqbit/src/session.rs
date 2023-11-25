@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Read},
     net::SocketAddr,
     path::PathBuf,

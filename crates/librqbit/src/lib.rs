@@ -8,7 +8,6 @@ pub mod peer_connection;
 pub mod peer_info_reader;
 pub mod session;
 pub mod spawn_utils;
-// pub mod torrent_manager;
 pub mod torrent_state;
 pub mod tracker_comms;
 pub mod type_aliases;

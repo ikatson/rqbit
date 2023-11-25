@@ -11,9 +11,7 @@ use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
@@ -24,8 +22,8 @@ use crate::session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
 };
 use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
-use crate::torrent_state::stats::snapshot::StatsSnapshot;
-use crate::torrent_state::{ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive};
+use crate::torrent_state::stats::{LiveStats, TorrentStats};
+use crate::torrent_state::ManagedTorrentHandle;
 
 // Public API
 #[derive(Clone)]
@@ -233,27 +231,6 @@ impl HttpApi {
 
 type Result<T> = std::result::Result<T, ApiError>;
 
-#[derive(Serialize, Default)]
-struct Speed {
-    mbps: f64,
-    human_readable: String,
-}
-
-impl Speed {
-    fn new(mbps: f64) -> Self {
-        Self {
-            mbps,
-            human_readable: format!("{mbps:.2} MiB/s"),
-        }
-    }
-}
-
-impl From<f64> for Speed {
-    fn from(mbps: f64) -> Self {
-        Self::new(mbps)
-    }
-}
-
 #[derive(Serialize)]
 struct TorrentListResponseItem {
     id: usize,
@@ -279,45 +256,6 @@ struct EmptyJsonResponse {}
 pub struct TorrentDetailsResponse {
     pub info_hash: String,
     pub files: Vec<TorrentDetailsResponseFile>,
-}
-
-struct DurationWithHumanReadable(Duration);
-
-impl Serialize for DurationWithHumanReadable {
-    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct Tmp {
-            duration: Duration,
-            human_readable: String,
-        }
-        Tmp {
-            duration: self.0,
-            human_readable: format!("{:?}", self.0),
-        }
-        .serialize(serializer)
-    }
-}
-
-#[derive(Serialize, Default)]
-struct LiveStats {
-    snapshot: StatsSnapshot,
-    average_piece_download_time: Option<Duration>,
-    download_speed: Speed,
-    all_time_download_speed: Speed,
-    time_remaining: Option<DurationWithHumanReadable>,
-}
-
-#[derive(Serialize)]
-struct StatsResponse {
-    state: &'static str,
-    error: Option<String>,
-    progress_bytes: u64,
-    total_bytes: u64,
-    finished: bool,
-    live: Option<LiveStats>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -393,7 +331,6 @@ impl TorrentAddQueryParams {
 
 // Private HTTP API internals. Agnostic of web framework.
 struct ApiInternal {
-    startup_time: Instant,
     session: Arc<Session>,
     rust_log_reload_tx: Option<UnboundedSender<String>>,
 }
@@ -403,7 +340,6 @@ type ApiState = Arc<ApiInternal>;
 impl ApiInternal {
     pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
-            startup_time: Instant::now(),
             session,
             rust_log_reload_tx,
         }
@@ -543,70 +479,15 @@ impl ApiInternal {
         Ok(dht.with_routing_table(|r| r.clone()))
     }
 
-    fn make_live_stats(&self, live: &TorrentStateLive) -> LiveStats {
-        let snapshot = live.stats_snapshot();
-        let estimator = live.speed_estimator();
-
-        // Poor mans download speed computation
-        let elapsed = self.startup_time.elapsed();
-        let downloaded_bytes = snapshot.downloaded_and_checked_bytes;
-        let downloaded_mb = downloaded_bytes as f64 / 1024f64 / 1024f64;
-
-        LiveStats {
-            average_piece_download_time: snapshot.average_piece_download_time(),
-            snapshot,
-            all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
-            download_speed: estimator.download_mbps().into(),
-            time_remaining: estimator.time_remaining().map(DurationWithHumanReadable),
-        }
-    }
-
     fn api_stats_v0(&self, idx: TorrentId) -> Result<LiveStats> {
         let mgr = self.mgr_handle(idx)?;
         let live = mgr.live().context("torrent not live")?;
-        Ok(self.make_live_stats(&live))
+        Ok(LiveStats::from(&*live))
     }
 
-    fn api_stats_v1(&self, idx: TorrentId) -> Result<StatsResponse> {
+    fn api_stats_v1(&self, idx: TorrentId) -> Result<TorrentStats> {
         let mgr = self.mgr_handle(idx)?;
-        let mut resp = StatsResponse {
-            total_bytes: mgr.info().lengths.total_length(),
-            state: "",
-            error: None,
-            progress_bytes: 0,
-            finished: false,
-            live: None,
-        };
-
-        mgr.with_state(|s| {
-            match s {
-                ManagedTorrentState::Initializing(i) => {
-                    resp.state = "initializing";
-                    resp.progress_bytes = i.checked_bytes.load(Ordering::Relaxed);
-                }
-                ManagedTorrentState::Paused(p) => {
-                    resp.state = "paused";
-                    resp.progress_bytes = p.have_bytes;
-                    resp.finished = p.have_bytes == resp.total_bytes;
-                }
-                ManagedTorrentState::Live(l) => {
-                    resp.state = "live";
-                    let live_stats = self.make_live_stats(l);
-                    resp.progress_bytes = live_stats.snapshot.have_bytes;
-                    resp.finished = resp.progress_bytes == resp.total_bytes;
-                    resp.live = Some(live_stats);
-                }
-                ManagedTorrentState::Error(e) => {
-                    resp.state = "error";
-                    resp.error = Some(format!("{:?}", e))
-                }
-                ManagedTorrentState::None => {
-                    resp.state = "error";
-                    resp.error = Some("bug: torrent in broken \"None\" state".to_string());
-                }
-            }
-            Ok(resp)
-        })
+        Ok(mgr.stats())
     }
 
     fn api_dump_haves(&self, idx: usize) -> Result<String> {

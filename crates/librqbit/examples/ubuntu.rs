@@ -16,6 +16,10 @@ const MAGNET_LINK: &str = "magnet:?xt=urn:btih:cab507494d02ebb1178b38f2e9d7be299
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     // Output logs to console.
+    match std::env::var("RUST_LOG") {
+        Ok(_) => {}
+        Err(_) => std::env::set_var("RUST_LOG", "info"),
+    }
     tracing_subscriber::fmt::init();
 
     let output_dir = std::env::args()
@@ -44,10 +48,12 @@ async fn main() -> Result<(), anyhow::Error> {
         .await
         .context("error adding torrent")?
     {
-        AddTorrentResponse::Added(handle) => handle,
+        AddTorrentResponse::Added(_, handle) => handle,
         // For a brand new session other variants won't happen.
         _ => unreachable!(),
     };
+
+    info!("Details: {:?}", &handle.info().info);
 
     // Print stats periodically.
     tokio::spawn({
@@ -55,8 +61,8 @@ async fn main() -> Result<(), anyhow::Error> {
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let stats = handle.torrent_state().stats_snapshot();
-                info!("stats: {stats:?}");
+                let stats = handle.stats();
+                info!("{stats:}");
             }
         }
     });

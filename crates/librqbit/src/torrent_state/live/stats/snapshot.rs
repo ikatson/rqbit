@@ -14,8 +14,6 @@ pub struct StatsSnapshot {
     pub initially_needed_bytes: u64,
     pub remaining_bytes: u64,
     pub total_bytes: u64,
-    //    #[serde(skip)]
-    //    pub time: Instant,
     pub total_piece_download_ms: u64,
     pub peer_stats: AggregatePeerStats,
 }

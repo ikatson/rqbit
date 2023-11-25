@@ -1,12 +1,14 @@
 pub mod initializing;
 pub mod live;
 pub mod paused;
+pub mod stats;
 pub mod utils;
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Weak;
 use std::time::Duration;
@@ -31,10 +33,12 @@ use url::Url;
 use crate::chunk_tracker::ChunkTracker;
 use crate::spawn_utils::spawn;
 use crate::spawn_utils::BlockingSpawner;
+use crate::torrent_state::stats::LiveStats;
 
 use initializing::TorrentStateInitializing;
 
 use self::paused::TorrentStatePaused;
+use self::stats::TorrentStats;
 
 pub enum ManagedTorrentState {
     Initializing(Arc<TorrentStateInitializing>),
@@ -251,12 +255,63 @@ impl ManagedTorrent {
         }
     }
 
+    pub fn stats(&self) -> TorrentStats {
+        let mut resp = TorrentStats {
+            total_bytes: self.info().lengths.total_length(),
+            state: "",
+            error: None,
+            progress_bytes: 0,
+            finished: false,
+            live: None,
+        };
+
+        self.with_state(|s| {
+            match s {
+                ManagedTorrentState::Initializing(i) => {
+                    resp.state = "initializing";
+                    resp.progress_bytes = i.checked_bytes.load(Ordering::Relaxed);
+                }
+                ManagedTorrentState::Paused(p) => {
+                    resp.state = "paused";
+                    resp.progress_bytes = p.have_bytes;
+                    resp.finished = p.have_bytes == resp.total_bytes;
+                }
+                ManagedTorrentState::Live(l) => {
+                    resp.state = "live";
+                    let live_stats = LiveStats::from(l.as_ref());
+                    resp.progress_bytes = live_stats.snapshot.have_bytes;
+                    resp.finished = resp.progress_bytes == resp.total_bytes;
+                    resp.live = Some(live_stats);
+                }
+                ManagedTorrentState::Error(e) => {
+                    resp.state = "error";
+                    resp.error = Some(format!("{:?}", e))
+                }
+                ManagedTorrentState::None => {
+                    resp.state = "error";
+                    resp.error = Some("bug: torrent in broken \"None\" state".to_string());
+                }
+            }
+            resp
+        })
+    }
+
     pub async fn wait_until_completed(&self) -> anyhow::Result<()> {
-        // TODO: rewrite
-        self.live()
-            .context("torrent isn't live")?
-            .wait_until_completed()
-            .await;
+        // TODO: rewrite, this polling is horrible
+        let live = loop {
+            let live = self.with_state(|s| match s {
+                ManagedTorrentState::Initializing(_) | ManagedTorrentState::Paused(_) => Ok(None),
+                ManagedTorrentState::Live(l) => Ok(Some(l.clone())),
+                ManagedTorrentState::Error(e) => bail!("{:?}", e),
+                ManagedTorrentState::None => bail!("bug: torrent state is None"),
+            })?;
+            if let Some(live) = live {
+                break live;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        };
+
+        live.wait_until_completed().await;
         Ok(())
     }
 }
