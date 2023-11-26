@@ -242,11 +242,11 @@ impl Session {
             Some(dht)
         };
         let peer_opts = opts.peer_opts.unwrap_or_default();
-        let session_filename = opts
+        let persistence_filename = opts
             .persistence_filename
             .unwrap_or_else(|| output_folder.join(".rqbit-session.json"));
         let session = Arc::new(Self {
-            persistence_filename: session_filename,
+            persistence_filename,
             peer_id,
             dht,
             peer_opts,
@@ -298,34 +298,42 @@ impl Session {
         );
         let db: SerializedSessionDatabase =
             serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
+        let mut futures = Vec::new();
         for storrent in db.torrents.into_iter() {
             let magnet = Magnet {
                 info_hash: Id20::from_str(&storrent.info_hash)
                     .context("error deserializing info_hash")?,
                 trackers: storrent.trackers.into_iter().collect(),
             };
-            if let Err(e) = self
-                .add_torrent(
-                    AddTorrent::Url(Cow::Owned(magnet.to_string())),
-                    Some(AddTorrentOptions {
-                        paused: storrent.is_paused,
-                        output_folder: Some(
-                            storrent
-                                .output_folder
-                                .to_str()
-                                .context("broken path")?
-                                .to_owned(),
-                        ),
-                        only_files: storrent.only_files,
-                        overwrite: true,
-                        ..Default::default()
-                    }),
-                )
-                .await
-            {
-                error!("error adding torrent from stored session: {:?}", e)
-            }
+            futures.push({
+                let session = self.clone();
+                async move {
+                    session
+                        .add_torrent(
+                            AddTorrent::Url(Cow::Owned(magnet.to_string())),
+                            Some(AddTorrentOptions {
+                                paused: storrent.is_paused,
+                                output_folder: Some(
+                                    storrent
+                                        .output_folder
+                                        .to_str()
+                                        .context("broken path")?
+                                        .to_owned(),
+                                ),
+                                only_files: storrent.only_files,
+                                overwrite: true,
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("error adding torrent from stored session: {:?}", e);
+                            e
+                        })
+                }
+            });
         }
+        futures::future::join_all(futures).await;
         Ok(())
     }
 
