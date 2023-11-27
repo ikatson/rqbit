@@ -20,6 +20,7 @@
 someday:
 - [x] cancellation from the client-side for the lib (i.e. stop the torrent manager)
 
+- [ ] favicons for Web UI
 
 refactor:
 - [x] where are peers stored

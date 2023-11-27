@@ -4,7 +4,26 @@
 
 # rqbit - bittorrent client in Rust
 
-**rqbit** is a bittorrent client written in Rust.
+**rqbit** is a bittorrent client and server written in Rust. Has HTTP API and Web UI, and can be used as a library.
+
+## Usage quick start
+
+### Optional - start the server
+
+Assuming you are downloading to ~/Downloads.
+
+    rqbit server start ~/Downloads
+
+### Download torrents
+
+Assuming you are downloading to ~/Downloads. If the server is already started, ```-o ~/Downloads``` can be omitted.
+
+    rqbit download -o ~/Downloads 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
+
+## Web UI
+Access with http://localhost:3030/web/
+
+<img width="995" alt="Screenshot 2023-11-27 at 09 30 10" src="https://github.com/ikatson/rqbit/assets/221386/d9403763-d162-492b-a718-a857ef4dd1e6">
 
 ## Installation
 
@@ -21,20 +40,6 @@ cargo install rqbit
 Just a regular Rust binary build process.
 
     cargo build --release
-
-## Usage quick start
-
-### Optional - start the server
-
-Assuming you are downloading to ~/Downloads.
-
-    rqbit server start ~/Downloads
-
-### Download torrents
-
-Assuming you are downloading to ~/Downloads. If the server is already started, ```-o ~/Downloads``` can be omitted.
-
-    rqbit download -o ~/Downloads 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
 
 ## Useful options
 
@@ -117,11 +122,6 @@ Supported query parameters, all optional:
 - only_files_regex - the regular expression string to match filenames
 - output_folder - the folder to download to. If not specified, defaults to the one that rqbit server started with
 - list_only=true|false - if you want to just list the files in the torrent instead of downloading
-
-## Web UI
-Access with http://localhost:3030/web/
-
-<img width="995" alt="Screenshot 2023-11-27 at 09 30 10" src="https://github.com/ikatson/rqbit/assets/221386/d9403763-d162-492b-a718-a857ef4dd1e6">
 
 ## Code organization
 - crates/rqbit - main binary
