@@ -2,24 +2,26 @@
 
 import os
 import json
+import re
 
 os.chdir('dist')
 
 with open('manifest.json', 'r') as f:
     manifest = json.load(f)
 
-for replacements in manifest.values():
-    js_file = replacements['file']
-    target_file = replacements['src']
 
-    with open(target_file, 'r') as f:
-        target_content = f.read()
+# For rust to "include_str!", we need to have predictable filenames.
+# So strip all hashes out of the generated files.
 
-    target_content = target_content.replace("/" + js_file, 'app.js')
-    with open(target_file, 'w') as f:
-        f.write(target_content)
+with open('index.html', 'r') as f:
+    index_html = f.read()
 
-    os.rename(js_file, 'app.js')
+for key, item in manifest.items():
+    generated_file = item['file']
+    new_file = re.sub(r'^(assets/.+)-.+(\..+)$', r'\1\2', generated_file)
 
-os.rmdir('assets')
-os.remove('manifest.json')
+    index_html = index_html.replace("/" + generated_file, new_file)
+    os.rename(generated_file, new_file)
+
+with open('index.html', 'w') as f:
+    f.write(index_html)

@@ -1,0 +1,11 @@
+{
+  "assets/logo.svg": {
+    "file": "assets/logo-083ce41b.svg",
+    "src": "assets/logo.svg"
+  },
+  "index.html": {
+    "file": "assets/index-1c38bddb.js",
+    "isEntry": true,
+    "src": "index.html"
+  }
+}

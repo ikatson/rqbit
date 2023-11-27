@@ -198,11 +198,20 @@ impl HttpApi {
                     }),
                 )
                 .route(
-                    "/app.js",
+                    "/assets/index.js",
                     get(|| async {
                         (
                             [("Content-Type", "application/javascript")],
-                            include_str!("../webui/dist/app.js"),
+                            include_str!("../webui/dist/assets/index.js"),
+                        )
+                    }),
+                )
+                .route(
+                    "/assets/logo.svg",
+                    get(|| async {
+                        (
+                            [("Content-Type", "image/svg+xml")],
+                            include_str!("../webui/dist/assets/logo.svg"),
                         )
                     }),
                 );
