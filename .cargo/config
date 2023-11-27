@@ -3,4 +3,4 @@ rustflags = ["-l", "atomic"]
 
 [target.armv7-unknown-linux-gnueabihf]
 # Workaround for: https://github.com/rust-lang/compiler-builtins/issues/420
-rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition", "-l", "atomic"]
