@@ -16,11 +16,14 @@
 - [ ] DHT
   - [ ] for torrents with a few seeds might be cool to re-query DHT once in a while.
   - [x] it's sending many requests now way too fast, locks up Mac OS UI annoyingly
+  - [ ] After the search is exhausted, the client then inserts the peer contact information for itself onto the responding nodes with IDs closest to the infohash of the torrent.
+  - [ ] Bad actors:
+    - [ ] Ensure that if we query the "returned" nodes, they are even closer to our request than the responding node id was.
 
 someday:
 - [x] cancellation from the client-side for the lib (i.e. stop the torrent manager)
 
-- [ ] favicons for Web UI
+- [x] favicons for Web UI
 
 refactor:
 - [x] where are peers stored
@@ -33,4 +36,4 @@ refactor:
 - [ ] if the torrent was completed, not need to re-check it
 - [x] checking is very slow on raspberry
   checked. nothing much can be done here. Even if raspberry's own libssl.so is used it's still super slow (sha1)
-- [ ] .rqbit-session.json file has 0 bytes when disk full. I guess fs::rename does this when disk is full? at least on linux
+- [ ] .rqbit-session.json file has 0 bytes when disk full. I guess fs::rename does this when disk is full? at least on linux. Couldn't repro on MacOS

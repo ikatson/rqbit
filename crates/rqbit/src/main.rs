@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{io::BufWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
@@ -28,9 +28,17 @@ enum LogLevel {
 #[derive(Parser)]
 #[command(version, author, about)]
 struct Opts {
-    /// The loglevel
+    /// The console loglevel
     #[arg(value_enum, short = 'v')]
     log_level: Option<LogLevel>,
+
+    /// The log filename to also write to in addition to the console.
+    #[arg(long = "log-file")]
+    log_file: Option<String>,
+
+    /// The value for RUST_LOG in the log file
+    #[arg(long = "log-file-rust-log", default_value = "librqbit=trace,info")]
+    log_file_rust_log: String,
 
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
@@ -193,10 +201,30 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
 
     #[cfg(not(feature = "tokio-console"))]
     {
-        tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(stderr_filter)
-            .init();
+        let layered = tracing_subscriber::registry().with(fmt::layer().with_filter(stderr_filter));
+        if let Some(log_file) = &opts.log_file {
+            let log_file = log_file.clone();
+            let log_file = move || {
+                BufWriter::new(
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .write(true)
+                        .open(&log_file)
+                        .with_context(|| format!("error opening log file {:?}", log_file))
+                        .unwrap(),
+                )
+            };
+            layered
+                .with(
+                    fmt::layer()
+                        .with_writer(log_file)
+                        .with_filter(EnvFilter::builder().parse(&opts.log_file_rust_log).unwrap()),
+                )
+                .init();
+        } else {
+            layered.init();
+        }
     }
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
