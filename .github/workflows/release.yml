@@ -45,13 +45,13 @@ jobs:
       run:
         rustup target install arm-unknown-linux-gnueabihf &&
         make release-linux-armv6 &&
-        mv target/arm-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-arm32
+        mv target/arm-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv6
 
     - name: Build release linux armv7 binary
       run:
         rustup target install armv7-unknown-linux-gnueabihf &&
         make release-linux-armv7 &&
-        mv target/armv7-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-arm32
+        mv target/armv7-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv7
 
     - name: Build release linux aarch64 binary
       run:
@@ -72,6 +72,7 @@ jobs:
         files: |
           target/artifacts/rqbit-osx-universal
           target/artifacts/rqbit-linux-static-x86_64
-          target/artifactsrqbit-linux-static-aarch64
-          target/artifacts/rqbit-linux-static-arm32
+          target/artifacts/rqbit-linux-static-aarch64
+          target/artifacts/rqbit-linux-static-armv6
+          target/artifacts/rqbit-linux-static-armv7
 
