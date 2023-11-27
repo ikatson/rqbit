@@ -141,8 +141,8 @@ impl PeerConnectionHandler for Handler {
         0
     }
 
-    fn serialize_bitfield_message_to_buf(&self, _buf: &mut Vec<u8>) -> Option<usize> {
-        None
+    fn serialize_bitfield_message_to_buf(&self, _buf: &mut Vec<u8>) -> anyhow::Result<usize> {
+        Ok(0)
     }
 
     fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {

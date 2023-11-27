@@ -1,4 +1,4 @@
-use crate::constants::CHUNK_SIZE;
+use crate::{constants::CHUNK_SIZE, torrent_metainfo::TorrentMetaV1Info};
 
 const fn is_power_of_two(x: u64) -> bool {
     (x != 0) && ((x & (x - 1)) == 0)
@@ -61,6 +61,13 @@ impl ValidPieceIndex {
 }
 
 impl Lengths {
+    pub fn from_torrent<ByteBuf: AsRef<[u8]>>(
+        torrent: &TorrentMetaV1Info<ByteBuf>,
+    ) -> anyhow::Result<Lengths> {
+        let total_length = torrent.iter_file_lengths()?.sum();
+        Lengths::new(total_length, torrent.piece_length, None)
+    }
+
     pub fn new(
         total_length: u64,
         piece_length: u32,

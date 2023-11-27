@@ -2,7 +2,10 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     marker::PhantomData,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use anyhow::Context;
@@ -11,14 +14,14 @@ use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
 };
-use tracing::{debug, trace, warn};
 use parking_lot::Mutex;
 use peer_binary_protocol::Piece;
 use sha1w::ISha1;
+use tracing::{debug, trace, warn};
 
 use crate::type_aliases::{PeerHandle, BF};
 
-pub struct InitialCheckResults {
+pub(crate) struct InitialCheckResults {
     pub needed_pieces: BF,
     pub have_pieces: BF,
     pub have_bytes: u64,
@@ -43,7 +46,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     Ok(())
 }
 
-pub struct FileOps<'a, Sha1> {
+pub(crate) struct FileOps<'a, Sha1> {
     torrent: &'a TorrentMetaV1Info<ByteString>,
     files: &'a [Arc<Mutex<File>>],
     lengths: &'a Lengths,
@@ -67,6 +70,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
     pub fn initial_check(
         &self,
         only_files: Option<&[usize]>,
+        progress: &AtomicU64,
     ) -> anyhow::Result<InitialCheckResults> {
         let mut needed_pieces = BF::from_vec(vec![0u8; self.lengths.piece_bitfield_bytes()]);
         let mut have_pieces = BF::from_vec(vec![0u8; self.lengths.piece_bitfield_bytes()]);
@@ -125,6 +129,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
             let mut at_least_one_file_required = current_file.full_file_required;
+            progress.fetch_add(piece_info.len as u64, Ordering::Relaxed);
 
             while piece_remaining > 0 {
                 let mut to_read_in_file =

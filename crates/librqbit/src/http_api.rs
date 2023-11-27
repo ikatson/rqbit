@@ -2,29 +2,28 @@ use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use buffers::ByteString;
-use dht::{Dht, DhtStats};
+use dht::DhtStats;
 use http::StatusCode;
 use itertools::Itertools;
 use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
-use crate::peer_state::PeerStatsFilter;
 use crate::session::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
 };
-use crate::torrent_manager::TorrentManagerHandle;
-use crate::torrent_state::StatsSnapshot;
+use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
+use crate::torrent_state::stats::{LiveStats, TorrentStats};
+use crate::torrent_state::ManagedTorrentHandle;
 
 // Public API
 #[derive(Clone)]
@@ -33,16 +32,17 @@ pub struct HttpApi {
 }
 
 impl HttpApi {
-    pub fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
-            inner: Arc::new(ApiInternal::new(session)),
+            inner: Arc::new(ApiInternal::new(session, rust_log_reload_tx)),
         }
     }
-    pub fn add_torrent_handle(&self, handle: TorrentManagerHandle) -> usize {
-        self.inner.add_torrent_handle(handle)
-    }
 
-    pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
+    pub async fn make_http_api_and_run(
+        self,
+        addr: SocketAddr,
+        read_only: bool,
+    ) -> anyhow::Result<()> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {
@@ -54,11 +54,14 @@ impl HttpApi {
                     "GET /torrents": "List torrents (default torrent is 0)",
                     "GET /torrents/{index}": "Torrent details",
                     "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{index}/stats": "Torrent stats",
+                    "GET /torrents/{index}/stats/v1": "Torrent stats",
                     "GET /torrents/{index}/peer_stats": "Per peer stats",
-                    // This is kind of not secure as it just reads any local file that it has access to,
-                    // or any URL, but whatever, ok for our purposes / threat model.
+                    "POST /torrents/{index}/pause": "Pause torrent",
+                    "POST /torrents/{index}/start": "Resume torrent",
+                    "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
+                    "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
                     "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+                    "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
                     "GET /web/": "Web UI",
                 },
                 "server": "rqbit",
@@ -104,11 +107,18 @@ impl HttpApi {
             state.api_dump_haves(idx)
         }
 
-        async fn torrent_stats(
+        async fn torrent_stats_v0(
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_stats(idx).map(axum::Json)
+            state.api_stats_v0(idx).map(axum::Json)
+        }
+
+        async fn torrent_stats_v1(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_stats_v1(idx).map(axum::Json)
         }
 
         async fn peer_stats(
@@ -119,16 +129,61 @@ impl HttpApi {
             state.api_peer_stats(idx, filter).map(axum::Json)
         }
 
-        #[allow(unused_mut)]
+        async fn torrent_action_pause(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_pause(idx).map(axum::Json)
+        }
+
+        async fn torrent_action_start(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_start(idx).map(axum::Json)
+        }
+
+        async fn torrent_action_forget(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_forget(idx).map(axum::Json)
+        }
+
+        async fn torrent_action_delete(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            state.api_torrent_action_delete(idx).map(axum::Json)
+        }
+
+        async fn set_rust_log(
+            State(state): State<ApiState>,
+            new_value: String,
+        ) -> Result<impl IntoResponse> {
+            state.api_set_rust_log(new_value).map(axum::Json)
+        }
+
         let mut app = Router::new()
             .route("/", get(api_root))
+            .route("/rust_log", post(set_rust_log))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
-            .route("/torrents", get(torrents_list).post(torrents_post))
+            .route("/torrents", get(torrents_list))
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))
-            .route("/torrents/:id/stats", get(torrent_stats))
+            .route("/torrents/:id/stats", get(torrent_stats_v0))
+            .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
             .route("/torrents/:id/peer_stats", get(peer_stats));
+
+        if !read_only {
+            app = app
+                .route("/torrents", post(torrents_post))
+                .route("/torrents/:id/pause", post(torrent_action_pause))
+                .route("/torrents/:id/start", post(torrent_action_start))
+                .route("/torrents/:id/forget", post(torrent_action_forget))
+                .route("/torrents/:id/delete", post(torrent_action_delete));
+        }
 
         #[cfg(feature = "webui")]
         {
@@ -185,27 +240,6 @@ impl HttpApi {
 type Result<T> = std::result::Result<T, ApiError>;
 
 #[derive(Serialize)]
-struct Speed {
-    mbps: f64,
-    human_readable: String,
-}
-
-impl Speed {
-    fn new(mbps: f64) -> Self {
-        Self {
-            mbps,
-            human_readable: format!("{mbps:.2} MiB/s"),
-        }
-    }
-}
-
-impl From<f64> for Speed {
-    fn from(mbps: f64) -> Self {
-        Self::new(mbps)
-    }
-}
-
-#[derive(Serialize)]
 struct TorrentListResponseItem {
     id: usize,
     info_hash: String,
@@ -223,39 +257,13 @@ pub struct TorrentDetailsResponseFile {
     pub included: bool,
 }
 
+#[derive(Default, Serialize)]
+struct EmptyJsonResponse {}
+
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponse {
     pub info_hash: String,
     pub files: Vec<TorrentDetailsResponseFile>,
-}
-
-struct DurationWithHumanReadable(Duration);
-
-impl Serialize for DurationWithHumanReadable {
-    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct Tmp {
-            duration: Duration,
-            human_readable: String,
-        }
-        Tmp {
-            duration: self.0,
-            human_readable: format!("{:?}", self.0),
-        }
-        .serialize(serializer)
-    }
-}
-
-#[derive(Serialize)]
-struct StatsResponse {
-    snapshot: StatsSnapshot,
-    average_piece_download_time: Option<Duration>,
-    download_speed: Speed,
-    all_time_download_speed: Speed,
-    time_remaining: Option<DurationWithHumanReadable>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -330,69 +338,94 @@ impl TorrentAddQueryParams {
 }
 
 // Private HTTP API internals. Agnostic of web framework.
-pub struct ApiInternal {
-    dht: Option<Dht>,
-    startup_time: Instant,
-    torrent_managers: RwLock<Vec<TorrentManagerHandle>>,
+struct ApiInternal {
     session: Arc<Session>,
+    rust_log_reload_tx: Option<UnboundedSender<String>>,
 }
 
 type ApiState = Arc<ApiInternal>;
 
 impl ApiInternal {
-    pub fn new(session: Arc<Session>) -> Self {
+    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
-            dht: session.get_dht(),
-            startup_time: Instant::now(),
-            torrent_managers: RwLock::new(Vec::new()),
             session,
+            rust_log_reload_tx,
         }
     }
 
-    fn add_torrent_handle(&self, handle: TorrentManagerHandle) -> usize {
-        let mut g = self.torrent_managers.write();
-        let idx = g.len();
-        g.push(handle);
-        idx
-    }
-
-    fn mgr_handle(&self, idx: usize) -> Result<TorrentManagerHandle> {
-        self.torrent_managers
-            .read()
+    fn mgr_handle(&self, idx: TorrentId) -> Result<ManagedTorrentHandle> {
+        self.session
             .get(idx)
-            .cloned()
             .ok_or(ApiError::torrent_not_found(idx))
     }
 
     fn api_torrent_list(&self) -> TorrentListResponse {
-        TorrentListResponse {
-            torrents: self
-                .torrent_managers
-                .read()
-                .iter()
-                .enumerate()
+        let items = self.session.with_torrents(|torrents| {
+            torrents
                 .map(|(id, mgr)| TorrentListResponseItem {
                     id,
-                    info_hash: mgr.torrent_state().info_hash().as_string(),
+                    info_hash: mgr.info().info_hash.as_string(),
                 })
-                .collect(),
-        }
+                .collect()
+        });
+        TorrentListResponse { torrents: items }
     }
 
-    fn api_torrent_details(&self, idx: usize) -> Result<TorrentDetailsResponse> {
+    fn api_torrent_details(&self, idx: TorrentId) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
-        let info_hash = handle.torrent_state().info_hash();
+        let info_hash = handle.info().info_hash;
         let only_files = handle.only_files();
-        make_torrent_details(&info_hash, handle.torrent_state().info(), only_files)
+        make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
     }
 
-    fn api_peer_stats(
-        &self,
-        idx: usize,
-        filter: PeerStatsFilter,
-    ) -> Result<crate::peer_state::PeerStatsSnapshot> {
+    fn api_peer_stats(&self, idx: TorrentId, filter: PeerStatsFilter) -> Result<PeerStatsSnapshot> {
         let handle = self.mgr_handle(idx)?;
-        Ok(handle.torrent_state().per_peer_stats_snapshot(filter))
+        Ok(handle
+            .live()
+            .context("not live")?
+            .per_peer_stats_snapshot(filter))
+    }
+
+    fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        handle
+            .pause()
+            .context("error pausing torrent")
+            .with_error_status_code(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
+    fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .unpause(&handle)
+            .context("error unpausing torrent")
+            .with_error_status_code(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
+    fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+        self.session
+            .delete(idx, false)
+            .context("error forgetting torrent")?;
+        Ok(Default::default())
+    }
+
+    fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+        self.session
+            .delete(idx, true)
+            .context("error deleting torrent with files")?;
+        Ok(Default::default())
+    }
+
+    fn api_set_rust_log(&self, new_value: String) -> Result<EmptyJsonResponse> {
+        let tx = self
+            .rust_log_reload_tx
+            .as_ref()
+            .context("rust_log_reload_tx was not set")?;
+        tx.send(new_value)
+            .context("noone is listening to RUST_LOG changes")?;
+        Ok(Default::default())
     }
 
     pub async fn api_add_torrent(
@@ -407,11 +440,12 @@ impl ApiInternal {
             .context("error adding torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?
         {
-            AddTorrentResponse::AlreadyManaged(managed) => {
+            AddTorrentResponse::AlreadyManaged(id, managed) => {
                 return Err(anyhow::anyhow!(
-                    "{:?} is already managed, downloaded to {:?}",
-                    managed.info_hash,
-                    managed.output_folder
+                    "{:?} is already managed, id={}, downloaded to {:?}",
+                    managed.info_hash(),
+                    id,
+                    &managed.info().out_dir
                 ))
                 .with_error_status_code(StatusCode::CONFLICT);
             }
@@ -424,14 +458,13 @@ impl ApiInternal {
                 details: make_torrent_details(&info_hash, &info, only_files.as_deref())
                     .context("error making torrent details")?,
             },
-            AddTorrentResponse::Added(handle) => {
+            AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
-                    &handle.torrent_state().info_hash(),
-                    handle.torrent_state().info(),
-                    handle.only_files(),
+                    &handle.info_hash(),
+                    &handle.info().info,
+                    handle.only_files().as_deref(),
                 )
                 .context("error making torrent details")?;
-                let id = self.add_torrent_handle(handle);
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
@@ -442,45 +475,32 @@ impl ApiInternal {
     }
 
     fn api_dht_stats(&self) -> Result<DhtStats> {
-        self.dht
+        self.session
+            .get_dht()
             .as_ref()
             .map(|d| d.stats())
             .ok_or(ApiError::dht_disabled())
     }
 
     fn api_dht_table(&self) -> Result<impl Serialize> {
-        let dht = self.dht.as_ref().ok_or(ApiError::dht_disabled())?;
+        let dht = self.session.get_dht().ok_or(ApiError::dht_disabled())?;
         Ok(dht.with_routing_table(|r| r.clone()))
     }
 
-    fn api_stats(&self, idx: usize) -> Result<StatsResponse> {
+    fn api_stats_v0(&self, idx: TorrentId) -> Result<LiveStats> {
         let mgr = self.mgr_handle(idx)?;
-        let snapshot = mgr.torrent_state().stats_snapshot();
-        let estimator = mgr.speed_estimator();
+        let live = mgr.live().context("torrent not live")?;
+        Ok(LiveStats::from(&*live))
+    }
 
-        // Poor mans download speed computation
-        let elapsed = self.startup_time.elapsed();
-        let downloaded_bytes = snapshot.downloaded_and_checked_bytes;
-        let downloaded_mb = downloaded_bytes as f64 / 1024f64 / 1024f64;
-
-        Ok(StatsResponse {
-            average_piece_download_time: snapshot.average_piece_download_time(),
-            snapshot,
-            all_time_download_speed: (downloaded_mb / elapsed.as_secs_f64()).into(),
-            download_speed: estimator.download_mbps().into(),
-            time_remaining: estimator.time_remaining().map(DurationWithHumanReadable),
-        })
+    fn api_stats_v1(&self, idx: TorrentId) -> Result<TorrentStats> {
+        let mgr = self.mgr_handle(idx)?;
+        Ok(mgr.stats())
     }
 
     fn api_dump_haves(&self, idx: usize) -> Result<String> {
         let mgr = self.mgr_handle(idx)?;
-        Ok(format!(
-            "{:?}",
-            mgr.torrent_state()
-                .lock_read("api_dump_haves")
-                .chunks
-                .get_have_pieces(),
-        ))
+        Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
     }
 }
 

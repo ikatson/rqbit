@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "3.3.0"
+version = "4.0.0-beta.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -24,11 +24,11 @@ rust-tls = ["reqwest/rustls-tls"]
 [dependencies]
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
-librqbit-core = {path = "../librqbit_core", version = "3.0.0"}
+librqbit-core = {path = "../librqbit_core", version = "3.1.0"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.0.0"}
+peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.1.0"}
 sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
-dht = {path = "../dht", package="librqbit-dht", version="3.1.0"}
+dht = {path = "../dht", package="librqbit-dht", version="3.2.0"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 axum = {version = "0.6"}

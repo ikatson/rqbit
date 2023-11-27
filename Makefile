@@ -75,7 +75,7 @@ release-linux-current-target: target/openssl-linux/$(TARGET)/lib/libssl.a
 	cargo build  --profile release-github --target=$(TARGET)
 
 @PHONY: release-linux
-release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6
+release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6 release-linux-armv7
 
 @PHONY: release-linux-x86_64
 release-linux-x86_64:
@@ -103,6 +103,16 @@ release-linux-armv6:
 	CROSS_COMPILE_PREFIX=arm-linux-gnueabihf \
 	OPENSSL_CONFIGURE_NAME=linux-generic32 \
 	LDFLAGS=-latomic \
+	$(MAKE) release-linux-current-target
+
+# armv7-unknown-linux-gnueabihf
+@PHONY: release-linux-armv7
+release-linux-armv7:
+	TARGET=armv7-unknown-linux-gnueabihf \
+	TARGET_SNAKE_CASE=armv7_unknown_linux_gnueabihf \
+	TARGET_SNAKE_UPPER_CASE=ARMV7_UNKNOWN_LINUX_GNUEABIHF \
+	CROSS_COMPILE_PREFIX=armv7-linux-gnueabihf \
+	OPENSSL_CONFIGURE_NAME=linux-generic32 \
 	$(MAKE) release-linux-current-target
 
 

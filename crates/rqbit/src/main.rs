@@ -7,14 +7,14 @@ use librqbit::{
     http_api_client,
     peer_connection::PeerConnectionOptions,
     session::{
-        AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState,
-        Session, SessionOptions,
+        AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
+        SessionOptions,
     },
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::timeit,
+    torrent_state::ManagedTorrentState,
 };
 use size_format::SizeFormatterBinary as SF;
-use tracing::{error, info, span, warn, Level};
+use tracing::{error, error_span, info, trace_span, warn};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -77,6 +77,13 @@ struct Opts {
 struct ServerStartOptions {
     /// The output folder to write to. If not exists, it will be created.
     output_folder: String,
+    #[arg(
+        long = "disable-persistence",
+        help = "Disable server persistence. It will not read or write its state to disk."
+    )]
+    disable_persistence: bool,
+    #[arg(long = "persistence-filename")]
+    persistence_filename: Option<String>,
 }
 
 #[derive(Parser)]
@@ -134,31 +141,84 @@ enum SubCommand {
     Download(DownloadOpts),
 }
 
-fn init_logging(opts: &Opts) {
-    if std::env::var_os("RUST_LOG").is_none() {
-        match opts.log_level.as_ref() {
-            Some(level) => {
-                let level_str = match level {
-                    LogLevel::Trace => "trace",
-                    LogLevel::Debug => "debug",
-                    LogLevel::Info => "info",
-                    LogLevel::Warn => "warn",
-                    LogLevel::Error => "error",
-                };
-                std::env::set_var("RUST_LOG", level_str);
-            }
-            None => {
-                std::env::set_var("RUST_LOG", "info");
-            }
-        };
-    }
+// Iint logging and make a channel to send new RUST_LOG values to.
+fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
+    let default_rust_log = match opts.log_level.as_ref() {
+        Some(level) => match level {
+            LogLevel::Trace => "trace",
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        },
+        None => "info",
+    };
+    let stderr_filter = match std::env::var("RUST_LOG").ok() {
+        Some(rust_log) => EnvFilter::builder()
+            .parse(rust_log)
+            .expect("can't parse RUST_LOG"),
+        None => EnvFilter::builder()
+            .parse(default_rust_log)
+            .expect("can't parse default_rust_log"),
+    };
+
+    let (stderr_filter, reload_stderr_filter) =
+        tracing_subscriber::reload::Layer::new(stderr_filter);
 
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+    #[cfg(feature = "tokio-console")]
+    {
+        let (console_layer, server) = console_subscriber::Builder::default()
+            .with_default_env()
+            .build();
+
+        tracing_subscriber::registry()
+            .with(fmt::layer().with_filter(stderr_filter))
+            .with(console_layer)
+            .init();
+
+        spawn(
+            "console_subscriber server",
+            error_span!("console_subscriber server"),
+            async move {
+                server
+                    .serve()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{:#?}", e))
+                    .context("error running console subscriber server")
+            },
+        );
+    }
+
+    #[cfg(not(feature = "tokio-console"))]
+    {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(stderr_filter)
+            .init();
+    }
+
+    let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    spawn(
+        "fmt_filter_reloader",
+        error_span!("fmt_filter_reloader"),
+        async move {
+            while let Some(rust_log) = reload_rx.recv().await {
+                let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
+                        continue;
+                    }
+                };
+                eprintln!("setting RUST_LOG to {:?}", rust_log);
+                let _ = reload_stderr_filter.reload(stderr_env_filter);
+            }
+            Ok(())
+        },
+    );
+    reload_tx
 }
 
 fn _start_deadlock_detector_thread() {
@@ -187,9 +247,6 @@ fn _start_deadlock_detector_thread() {
 
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
-
-    init_logging(&opts);
-    // start_deadlock_detector_thread();
 
     let (mut rt_builder, spawner) = match opts.single_thread_runtime {
         true => (
@@ -223,10 +280,14 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
-    let sopts = SessionOptions {
+    let logging_reload_tx = init_logging(&opts);
+
+    let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
+        persistence: false,
+        persistence_filename: None,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: Some(opts.peer_connect_timeout),
@@ -238,39 +299,49 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     let stats_printer = |session: Arc<Session>| async move {
         loop {
             session.with_torrents(|torrents| {
-                    for (idx, torrent) in torrents.iter().enumerate() {
-                        match &torrent.state {
-                            ManagedTorrentState::Initializing => {
-                                info!("[{}] initializing", idx);
-                            },
-                            ManagedTorrentState::Running(handle) => {
-                                let stats = timeit("stats_snapshot", || handle.torrent_state().stats_snapshot());
-                                let speed = handle.speed_estimator();
-                                let total = stats.total_bytes;
-                                let progress = stats.total_bytes - stats.remaining_bytes;
-                                let downloaded_pct = if stats.remaining_bytes == 0 {
-                                    100f64
-                                } else {
-                                    (progress as f64 / total as f64) * 100f64
-                                };
-                                info!(
-                                    "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
-                                    idx,
-                                    downloaded_pct,
-                                    SF::new(progress),
-                                    speed.download_mbps(),
-                                    SF::new(stats.fetched_bytes),
-                                    SF::new(stats.remaining_bytes),
-                                    SF::new(total),
-                                    SF::new(stats.uploaded_bytes),
-                                    stats.peer_stats.live,
-                                    stats.peer_stats.connecting,
-                                    stats.peer_stats.queued,
-                                    stats.peer_stats.seen,
-                                    stats.peer_stats.dead,
-                                );
-                            },
-                        }
+                    for (idx, torrent) in torrents {
+                        let live = torrent.with_state(|s| {
+                            match s {
+                                ManagedTorrentState::Initializing(i) => {
+                                    let total = torrent.get_total_bytes();
+                                    let progress = i.get_checked_bytes();
+                                    let pct =  (progress as f64 / total as f64) * 100f64;
+                                    info!("[{}] initializing {:.2}%", idx, pct)
+                                },
+                                ManagedTorrentState::Live(h) => return Some(h.clone()),
+                                _ => {},
+                            };
+                            None
+                        });
+                        let handle = match live {
+                            Some(live) => live,
+                            None => continue
+                        };
+                        let stats = handle.stats_snapshot();
+                        let speed = handle.speed_estimator();
+                        let total = stats.total_bytes;
+                        let progress = stats.total_bytes - stats.remaining_bytes;
+                        let downloaded_pct = if stats.remaining_bytes == 0 {
+                            100f64
+                        } else {
+                            (progress as f64 / total as f64) * 100f64
+                        };
+                        info!(
+                            "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
+                            idx,
+                            downloaded_pct,
+                            SF::new(progress),
+                            speed.download_mbps(),
+                            SF::new(stats.fetched_bytes),
+                            SF::new(stats.remaining_bytes),
+                            SF::new(total),
+                            SF::new(stats.uploaded_bytes),
+                            stats.peer_stats.live,
+                            stats.peer_stats.connecting,
+                            stats.peer_stats.queued,
+                            stats.peer_stats.seen,
+                            stats.peer_stats.dead,
+                        );
                     }
                 });
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -280,23 +351,25 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
-                let session = Arc::new(
-                    Session::new_with_opts(
-                        PathBuf::from(&start_opts.output_folder),
-                        spawner,
-                        sopts,
-                    )
-                    .await
-                    .context("error initializing rqbit session")?,
-                );
+                sopts.persistence = !start_opts.disable_persistence;
+                sopts.persistence_filename =
+                    start_opts.persistence_filename.clone().map(PathBuf::from);
+                let session = Session::new_with_opts(
+                    PathBuf::from(&start_opts.output_folder),
+                    spawner,
+                    sopts,
+                )
+                .await
+                .context("error initializing rqbit session")?;
                 spawn(
-                    span!(Level::TRACE, "stats_printer"),
+                    "stats_printer",
+                    trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let http_api = HttpApi::new(session);
+                let http_api = HttpApi::new(session, Some(logging_reload_tx));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
-                    .make_http_api_and_run(http_api_listen_addr)
+                    .make_http_api_and_run(http_api_listen_addr, false)
                     .await
                     .context("error starting HTTP API")
             }
@@ -353,30 +426,32 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 }
                 Ok(())
             } else {
-                let session = Arc::new(
-                    Session::new_with_opts(
-                        download_opts
-                            .output_folder
-                            .as_ref()
-                            .map(PathBuf::from)
-                            .context(
-                                "output_folder is required if can't connect to an existing server",
-                            )?,
-                        spawner,
-                        sopts,
-                    )
-                    .await
-                    .context("error initializing rqbit session")?,
-                );
+                let session = Session::new_with_opts(
+                    download_opts
+                        .output_folder
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .context(
+                            "output_folder is required if can't connect to an existing server",
+                        )?,
+                    spawner,
+                    sopts,
+                )
+                .await
+                .context("error initializing rqbit session")?;
                 spawn(
-                    span!(Level::TRACE, "stats_printer"),
+                    "stats_printer",
+                    trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let http_api = HttpApi::new(session.clone());
+                let http_api = HttpApi::new(session.clone(), Some(logging_reload_tx));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 spawn(
-                    span!(Level::ERROR, "http_api"),
-                    http_api.clone().make_http_api_and_run(http_api_listen_addr),
+                    "http_api",
+                    error_span!("http_api"),
+                    http_api
+                        .clone()
+                        .make_http_api_and_run(http_api_listen_addr, true),
                 );
 
                 let mut added = false;
@@ -392,10 +467,12 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         .await
                     {
                         Ok(v) => match v {
-                            AddTorrentResponse::AlreadyManaged(handle) => {
+                            AddTorrentResponse::AlreadyManaged(id, handle) => {
                                 info!(
-                                    "torrent {:?} is already managed, downloaded to {:?}",
-                                    handle.info_hash, handle.output_folder
+                                    "torrent {:?} is already managed, id={}, downloaded to {:?}",
+                                    handle.info_hash(),
+                                    id,
+                                    handle.info().out_dir
                                 );
                                 continue;
                             }
@@ -420,7 +497,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                 }
                                 continue;
                             }
-                            AddTorrentResponse::Added(handle) => {
+                            AddTorrentResponse::Added(_, handle) => {
                                 added = true;
                                 handle
                             }
@@ -431,7 +508,6 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         }
                     };
 
-                    http_api.add_torrent_handle(handle.clone());
                     handles.push(handle);
                 }
 
@@ -441,8 +517,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                     if download_opts.exit_on_finish {
                         let results = futures::future::join_all(
                             handles.iter().map(|h| h.wait_until_completed()),
-                        );
-                        results.await;
+                        )
+                        .await;
+                        if results.iter().any(|r| r.is_err()) {
+                            anyhow::bail!("some downloads failed")
+                        }
                         info!("All downloads completed, exiting");
                         Ok(())
                     } else {

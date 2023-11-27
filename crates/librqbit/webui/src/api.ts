@@ -29,7 +29,7 @@ export interface ListTorrentsResponse {
 }
 
 // Interface for the Torrent Stats API response
-export interface TorrentStats {
+export interface LiveTorrentStats {
     snapshot: {
         have_bytes: number;
         downloaded_and_checked_bytes: number;
@@ -67,6 +67,20 @@ export interface TorrentStats {
             secs: number,
         }
     } | null;
+}
+
+export const STATE_INITIALIZING = 'initializing';
+export const STATE_PAUSED = 'paused';
+export const STATE_LIVE = 'live';
+export const STATE_ERROR = 'error';
+
+export interface TorrentStats {
+    state: 'initializing' | 'paused' | 'live' | 'error',
+    error: string | null,
+    progress_bytes: number,
+    finished: boolean,
+    total_bytes: number,
+    live: LiveTorrentStats | null;
 }
 
 
@@ -129,7 +143,7 @@ export const API = {
         return makeRequest('GET', `/torrents/${index}`);
     },
     getTorrentStats: (index: number): Promise<TorrentStats> => {
-        return makeRequest('GET', `/torrents/${index}/stats`);
+        return makeRequest('GET', `/torrents/${index}/stats/v1`);
     },
 
     uploadTorrent: (data: string | File, opts?: {
@@ -144,5 +158,21 @@ export const API = {
             url += `&only_files=${opts.selectedFiles.join(',')}`;
         }
         return makeRequest('POST', url, data)
+    },
+
+    pause: (index: number): Promise<void> => {
+        return makeRequest('POST', `/torrents/${index}/pause`);
+    },
+
+    start: (index: number): Promise<void> => {
+        return makeRequest('POST', `/torrents/${index}/start`);
+    },
+
+    forget: (index: number): Promise<void> => {
+        return makeRequest('POST', `/torrents/${index}/forget`);
+    },
+
+    delete: (index: number): Promise<void> => {
+        return makeRequest('POST', `/torrents/${index}/delete`);
     }
 }

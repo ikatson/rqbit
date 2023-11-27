@@ -1,22 +1,9 @@
-use tracing::{debug, error, trace, Instrument};
-
 pub fn spawn(
+    _name: &str,
     span: tracing::Span,
     fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
-) {
-    let fut = async move {
-        trace!("started");
-        match fut.await {
-            Ok(_) => {
-                debug!("finished");
-            }
-            Err(e) => {
-                error!("{:#}", e)
-            }
-        }
-    }
-    .instrument(span.or_current());
-    tokio::spawn(fut);
+) -> tokio::task::JoinHandle<()> {
+    librqbit_core::spawn_utils::spawn(span, fut)
 }
 
 #[derive(Clone, Copy, Debug)]

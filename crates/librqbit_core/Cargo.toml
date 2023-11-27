@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2021"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
@@ -17,6 +17,8 @@ sha1-openssl = ["bencode/sha1-openssl"]
 sha1-rust = ["bencode/sha1-rust"]
 
 [dependencies]
+tracing = "0.1.40"
+tokio = "1"
 hex = "0.4"
 anyhow = "1"
 url = "2"

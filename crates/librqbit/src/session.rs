@@ -1,4 +1,13 @@
-use std::{borrow::Cow, io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    io::{BufReader, BufWriter, Read},
+    net::SocketAddr,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{bail, Context};
 use buffers::ByteString;
@@ -10,64 +19,78 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
-use tracing::{debug, info, span, warn, Level};
+use tracing::{debug, error, error_span, info, warn};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     peer_connection::PeerConnectionOptions,
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_manager::{TorrentManagerBuilder, TorrentManagerHandle},
+    torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState},
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
-#[derive(Clone)]
-pub enum ManagedTorrentState {
-    Initializing,
-    Running(TorrentManagerHandle),
-}
-
-#[derive(Clone)]
-pub struct ManagedTorrent {
-    pub info_hash: Id20,
-    pub output_folder: PathBuf,
-    pub state: ManagedTorrentState,
-}
-
-impl PartialEq for ManagedTorrent {
-    fn eq(&self, other: &Self) -> bool {
-        self.info_hash == other.info_hash && self.output_folder == other.output_folder
-    }
-}
+pub type TorrentId = usize;
 
 #[derive(Default)]
-pub struct SessionLocked {
-    torrents: Vec<ManagedTorrent>,
+pub struct SessionDatabase {
+    next_id: usize,
+    torrents: HashMap<usize, ManagedTorrentHandle>,
 }
 
-enum SessionLockedAddTorrentResult {
-    AlreadyManaged(ManagedTorrent),
-    Added(usize),
-}
-
-impl SessionLocked {
-    fn add_torrent(&mut self, torrent: ManagedTorrent) -> SessionLockedAddTorrentResult {
-        if let Some(handle) = self.torrents.iter().find(|t| **t == torrent) {
-            return SessionLockedAddTorrentResult::AlreadyManaged(handle.clone());
-        }
-        let idx = self.torrents.len();
-        self.torrents.push(torrent);
-        SessionLockedAddTorrentResult::Added(idx)
+impl SessionDatabase {
+    fn add_torrent(&mut self, torrent: ManagedTorrentHandle) -> TorrentId {
+        let idx = self.next_id;
+        self.torrents.insert(idx, torrent);
+        self.next_id += 1;
+        idx
     }
+
+    fn serialize(&self) -> SerializedSessionDatabase {
+        SerializedSessionDatabase {
+            torrents: self
+                .torrents
+                .values()
+                .map(|torrent| SerializedTorrent {
+                    trackers: torrent
+                        .info()
+                        .trackers
+                        .iter()
+                        .map(|u| u.to_string())
+                        .collect(),
+                    info_hash: torrent.info_hash().as_string(),
+                    only_files: torrent.only_files.clone(),
+                    is_paused: torrent.with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
+                    output_folder: torrent.info().out_dir.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializedTorrent {
+    info_hash: String,
+    trackers: HashSet<String>,
+    output_folder: PathBuf,
+    only_files: Option<Vec<usize>>,
+    is_paused: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializedSessionDatabase {
+    torrents: Vec<SerializedTorrent>,
 }
 
 pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
+    persistence_filename: PathBuf,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
-    locked: RwLock<SessionLocked>,
+    db: RwLock<SessionDatabase>,
     output_folder: PathBuf,
 }
 
@@ -107,6 +130,7 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
 
 #[derive(Default, Clone)]
 pub struct AddTorrentOptions {
+    pub paused: bool,
     pub only_files_regex: Option<String>,
     pub only_files: Option<Vec<usize>>,
     pub overwrite: bool,
@@ -124,9 +148,9 @@ pub struct ListOnlyResponse {
 }
 
 pub enum AddTorrentResponse {
-    AlreadyManaged(ManagedTorrent),
+    AlreadyManaged(TorrentId, ManagedTorrentHandle),
     ListOnly(ListOnlyResponse),
-    Added(TorrentManagerHandle),
+    Added(TorrentId, ManagedTorrentHandle),
 }
 
 pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>> {
@@ -185,20 +209,26 @@ impl<'a> AddTorrent<'a> {
 pub struct SessionOptions {
     pub disable_dht: bool,
     pub disable_dht_persistence: bool,
+    pub persistence: bool,
+    // Will default to output_folder/.rqbit-session.json
+    pub persistence_filename: Option<PathBuf>,
     pub dht_config: Option<PersistentDhtConfig>,
     pub peer_id: Option<Id20>,
     pub peer_opts: Option<PeerConnectionOptions>,
 }
 
 impl Session {
-    pub async fn new(output_folder: PathBuf, spawner: BlockingSpawner) -> anyhow::Result<Self> {
+    pub async fn new(
+        output_folder: PathBuf,
+        spawner: BlockingSpawner,
+    ) -> anyhow::Result<Arc<Self>> {
         Self::new_with_opts(output_folder, spawner, SessionOptions::default()).await
     }
     pub async fn new_with_opts(
         output_folder: PathBuf,
         spawner: BlockingSpawner,
         opts: SessionOptions,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Arc<Self>> {
         let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
         let dht = if opts.disable_dht {
             None
@@ -212,31 +242,147 @@ impl Session {
             Some(dht)
         };
         let peer_opts = opts.peer_opts.unwrap_or_default();
-
-        Ok(Self {
+        let persistence_filename = opts
+            .persistence_filename
+            .unwrap_or_else(|| output_folder.join(".rqbit-session.json"));
+        let session = Arc::new(Self {
+            persistence_filename,
             peer_id,
             dht,
             peer_opts,
             spawner,
             output_folder,
-            locked: RwLock::new(SessionLocked::default()),
-        })
+            db: RwLock::new(Default::default()),
+        });
+
+        if opts.persistence {
+            if let Some(parent) = session.persistence_filename.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("couldn't create directory {:?} for session storage", parent)
+                })?;
+            }
+            let session = session.clone();
+            spawn(
+                "session persistene",
+                error_span!("session_persistence"),
+                async move {
+                    // Populate initial from the state filename
+                    if let Err(e) = session.populate_from_stored().await {
+                        error!("could not populate session from stored file: {:?}", e);
+                    }
+
+                    let session = Arc::downgrade(&session);
+
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        let session = match session.upgrade() {
+                            Some(s) => s,
+                            None => break,
+                        };
+                        if let Err(e) = session.dump_to_disk() {
+                            error!("error dumping session to disk: {:?}", e);
+                        }
+                    }
+
+                    Ok(())
+                },
+            );
+        }
+
+        Ok(session)
     }
-    pub fn get_dht(&self) -> Option<Dht> {
-        self.dht.clone()
+    pub fn get_dht(&self) -> Option<&Dht> {
+        self.dht.as_ref()
     }
-    pub fn with_torrents<F>(&self, callback: F)
-    where
-        F: Fn(&[ManagedTorrent]),
-    {
-        callback(&self.locked.read().torrents)
+
+    async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {
+        let mut rdr = match std::fs::File::open(&self.persistence_filename) {
+            Ok(f) => BufReader::new(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(e).context(format!(
+                    "error opening session file {:?}",
+                    self.persistence_filename
+                ))
+            }
+        };
+        let db: SerializedSessionDatabase =
+            serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
+        let mut futures = Vec::new();
+        for storrent in db.torrents.into_iter() {
+            let magnet = Magnet {
+                info_hash: Id20::from_str(&storrent.info_hash)
+                    .context("error deserializing info_hash")?,
+                trackers: storrent.trackers.into_iter().collect(),
+            };
+            futures.push({
+                let session = self.clone();
+                async move {
+                    session
+                        .add_torrent(
+                            AddTorrent::Url(Cow::Owned(magnet.to_string())),
+                            Some(AddTorrentOptions {
+                                paused: storrent.is_paused,
+                                output_folder: Some(
+                                    storrent
+                                        .output_folder
+                                        .to_str()
+                                        .context("broken path")?
+                                        .to_owned(),
+                                ),
+                                only_files: storrent.only_files,
+                                overwrite: true,
+                                ..Default::default()
+                            }),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("error adding torrent from stored session: {:?}", e);
+                            e
+                        })
+                }
+            });
+        }
+        futures::future::join_all(futures).await;
+        Ok(())
     }
+
+    fn dump_to_disk(&self) -> anyhow::Result<()> {
+        let tmp_filename = format!("{}.tmp", self.persistence_filename.to_str().unwrap());
+        let mut tmp = BufWriter::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&tmp_filename)
+                .with_context(|| format!("error opening {:?}", tmp_filename))?,
+        );
+        let serialized = self.db.read().serialize();
+        serde_json::to_writer(&mut tmp, &serialized).context("error serializing")?;
+        drop(tmp);
+
+        std::fs::rename(&tmp_filename, &self.persistence_filename)
+            .context("error renaming persistence file")?;
+        debug!("wrote persistence to {:?}", &self.persistence_filename);
+        Ok(())
+    }
+
+    pub fn with_torrents<R>(
+        &self,
+        callback: impl Fn(&mut dyn Iterator<Item = (TorrentId, &ManagedTorrentHandle)>) -> R,
+    ) -> R {
+        callback(&mut self.db.read().torrents.iter().map(|(id, t)| (*id, t)))
+    }
+
     pub async fn add_torrent(
         &self,
         add: impl Into<AddTorrent<'_>>,
         opts: Option<AddTorrentOptions>,
     ) -> anyhow::Result<AddTorrentResponse> {
         // Magnet links are different in that we first need to discover the metadata.
+        let span = error_span!("add_torrent");
+        let _ = span.enter();
+
         let opts = opts.unwrap_or_default();
 
         let (info_hash, info, dht_rx, trackers, initial_peers) = match add.into() {
@@ -250,8 +396,7 @@ impl Session {
                     .dht
                     .as_ref()
                     .context("magnet links without DHT are not supported")?
-                    .get_peers(info_hash)
-                    .await?;
+                    .get_peers(info_hash)?;
 
                 let trackers = trackers
                     .into_iter()
@@ -264,6 +409,7 @@ impl Session {
                     })
                     .collect();
 
+                debug!("querying DHT for {:?}", info_hash);
                 let (info, dht_rx, initial_peers) = match read_metainfo_from_peer_receiver(
                     self.peer_id,
                     info_hash,
@@ -277,6 +423,7 @@ impl Session {
                         anyhow::bail!("DHT died, no way to discover torrent metainfo")
                     }
                 };
+                debug!("received result from DHT: {:?}", info);
                 (info_hash, info, Some(dht_rx), trackers, initial_peers)
             }
             other => {
@@ -300,7 +447,7 @@ impl Session {
                 let dht_rx = match self.dht.as_ref() {
                     Some(dht) => {
                         debug!("reading peers for {:?} from DHT", torrent.info_hash);
-                        Some(dht.get_peers(torrent.info_hash).await?)
+                        Some(dht.get_peers(torrent.info_hash)?)
                     }
                     None => None,
                 };
@@ -404,24 +551,13 @@ impl Session {
             .unwrap_or_else(|| self.output_folder.clone())
             .join(sub_folder);
 
-        let managed_torrent = ManagedTorrent {
-            info_hash,
-            output_folder: output_folder.clone(),
-            state: ManagedTorrentState::Initializing,
-        };
-
-        match self.locked.write().add_torrent(managed_torrent) {
-            SessionLockedAddTorrentResult::AlreadyManaged(managed) => {
-                return Ok(AddTorrentResponse::AlreadyManaged(managed))
-            }
-            SessionLockedAddTorrentResult::Added(_) => {}
-        }
-
-        let mut builder = TorrentManagerBuilder::new(info, info_hash, output_folder.clone());
+        let mut builder = ManagedTorrentBuilder::new(info, info_hash, output_folder.clone());
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
-            .peer_id(self.peer_id);
+            .peer_id(self.peer_id)
+            .trackers(trackers);
+
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
         }
@@ -437,61 +573,79 @@ impl Session {
             builder.peer_read_write_timeout(t);
         }
 
-        let handle = match builder
-            .start_manager()
-            .context("error starting torrent manager")
-        {
-            Ok(handle) => {
-                let mut g = self.locked.write();
-                let m = g
-                    .torrents
-                    .iter_mut()
-                    .find(|t| t.info_hash == info_hash && t.output_folder == output_folder)
-                    .unwrap();
-                m.state = ManagedTorrentState::Running(handle.clone());
-                handle
+        let (managed_torrent, id) = {
+            let mut g = self.db.write();
+            if let Some((id, handle)) = g.torrents.iter().find(|(_, t)| t.info_hash() == info_hash)
+            {
+                return Ok(AddTorrentResponse::AlreadyManaged(*id, handle.clone()));
             }
-            Err(error) => {
-                let mut g = self.locked.write();
-                let idx = g
-                    .torrents
-                    .iter()
-                    .position(|t| t.info_hash == info_hash && t.output_folder == output_folder)
-                    .unwrap();
-                g.torrents.remove(idx);
-                return Err(error);
-            }
+            let next_id = g.torrents.len();
+            let managed_torrent =
+                builder.build(error_span!(parent: None, "torrent", id = next_id))?;
+            let id = g.add_torrent(managed_torrent.clone());
+            (managed_torrent, id)
         };
+
         {
-            let mut g = self.locked.write();
-            let m = g
-                .torrents
-                .iter_mut()
-                .find(|t| t.info_hash == info_hash && t.output_folder == output_folder)
-                .unwrap();
-            m.state = ManagedTorrentState::Running(handle.clone());
+            let span = managed_torrent.info.span.clone();
+            let _ = span.enter();
+            managed_torrent
+                .start(initial_peers, dht_peer_rx, opts.paused)
+                .context("error starting torrent")?;
         }
 
-        for url in trackers {
-            handle.add_tracker(url);
-        }
-        for peer in initial_peers {
-            handle.add_peer(peer);
-        }
+        Ok(AddTorrentResponse::Added(id, managed_torrent))
+    }
 
-        if let Some(mut dht_peer_rx) = dht_peer_rx {
-            spawn(span!(Level::INFO, "dht_peer_adder"), {
-                let handle = handle.clone();
-                async move {
-                    while let Some(peer) = dht_peer_rx.next().await {
-                        handle.add_peer(peer);
+    pub fn get(&self, id: TorrentId) -> Option<ManagedTorrentHandle> {
+        self.db.read().torrents.get(&id).cloned()
+    }
+
+    pub fn delete(&self, id: TorrentId, delete_files: bool) -> anyhow::Result<()> {
+        let removed = self
+            .db
+            .write()
+            .torrents
+            .remove(&id)
+            .with_context(|| format!("torrent with id {} did not exist", id))?;
+
+        let paused = removed
+            .with_state_mut(|s| {
+                let paused = match s.take() {
+                    ManagedTorrentState::Paused(p) => p,
+                    ManagedTorrentState::Live(l) => l.pause()?,
+                    _ => return Ok(None),
+                };
+                Ok::<_, anyhow::Error>(Some(paused))
+            })
+            .context("error pausing torrent");
+
+        match (paused, delete_files) {
+            (Err(e), true) => Err(e).context("torrent deleted, but could not delete files"),
+            (Err(e), false) => {
+                warn!("could not delete torrent files: {:?}", e);
+                Ok(())
+            }
+            (Ok(Some(paused)), true) => {
+                drop(paused.files);
+                for file in paused.filenames {
+                    if let Err(e) = std::fs::remove_file(&file) {
+                        warn!("could not delete file {:?}: {:?}", file, e);
                     }
-                    warn!("dht was closed");
-                    Ok(())
                 }
-            });
+                Ok(())
+            }
+            _ => Ok(()),
         }
+    }
 
-        Ok(AddTorrentResponse::Added(handle))
+    pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        let peer_rx = self
+            .dht
+            .as_ref()
+            .map(|dht| dht.get_peers(handle.info_hash()))
+            .transpose()?;
+        handle.start(Default::default(), peer_rx, false)?;
+        Ok(())
     }
 }

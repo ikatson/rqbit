@@ -1,6 +1,6 @@
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
-use tracing::{debug, info};
+use tracing::{debug, trace};
 
 use crate::type_aliases::BF;
 
@@ -75,14 +75,26 @@ impl ChunkTracker {
             priority_piece_ids,
         }
     }
-    pub fn get_needed_pieces(&self) -> &BF {
-        &self.needed_pieces
+
+    pub fn get_lengths(&self) -> &Lengths {
+        &self.lengths
     }
+
     pub fn get_have_pieces(&self) -> &BF {
         &self.have
     }
     pub fn reserve_needed_piece(&mut self, index: ValidPieceIndex) {
         self.needed_pieces.set(index.get() as usize, false)
+    }
+
+    pub fn calc_have_bytes(&self) -> u64 {
+        self.have
+            .iter_ones()
+            .filter_map(|piece_id| {
+                let piece_id = self.lengths.validate_piece_index(piece_id as u32)?;
+                Some(self.lengths.piece_length(piece_id) as u64)
+            })
+            .sum()
     }
 
     pub fn iter_needed_pieces(&self) -> impl Iterator<Item = usize> + '_ {
@@ -117,7 +129,7 @@ impl ChunkTracker {
     }
 
     pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) -> bool {
-        info!("remarking piece={} as broken", index);
+        debug!("remarking piece={} as broken", index);
         self.needed_pieces.set(index.get() as usize, true);
         self.chunk_status
             .get_mut(self.lengths.chunk_range(index))
@@ -130,13 +142,6 @@ impl ChunkTracker {
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
         self.have.set(idx.get() as usize, true);
-    }
-
-    pub fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {
-        *self
-            .chunk_status
-            .get(chunk.absolute_index as usize)
-            .unwrap()
     }
 
     pub fn is_chunk_ready_to_upload(&self, chunk: &ChunkInfo) -> bool {
@@ -165,9 +170,11 @@ impl ChunkTracker {
             return Some(ChunkMarkingResult::PreviouslyCompleted);
         }
         chunk_range.set(chunk_info.chunk_index as usize, true);
-        debug!(
+        trace!(
             "piece={}, chunk_info={:?}, bits={:?}",
-            piece.index, chunk_info, chunk_range,
+            piece.index,
+            chunk_info,
+            chunk_range,
         );
 
         if chunk_range.all() {

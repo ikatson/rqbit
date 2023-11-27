@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let dht = Dht::new().await.context("error initializing DHT")?;
-    let mut stream = dht.get_peers(info_hash).await?;
+    let mut stream = dht.get_peers(info_hash)?;
 
     let stats_printer = async {
         loop {

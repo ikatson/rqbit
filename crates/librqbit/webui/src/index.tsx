@@ -1,7 +1,7 @@
-import { StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
+import { MouseEventHandler, StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API } from './api';
+import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR } from './api';
 
 interface Error {
     text: string,
@@ -14,33 +14,214 @@ interface ContextType {
 }
 
 const AppContext = createContext<ContextType>(null);
+const RefreshTorrentStatsContext = createContext<{ refresh: () => void }>(null);
+
+const IconButton: React.FC<{
+    className: string,
+    onClick: () => void,
+    disabled?: boolean,
+    color?: string,
+}> = ({ className, onClick, disabled, color }) => {
+    const onClickStopPropagation = (e) => {
+        e.stopPropagation();
+        if (disabled) {
+            return;
+        }
+        onClick();
+    }
+    return <a className={`bi ${className} p-1`} onClick={onClickStopPropagation} href='#'></a>
+}
+
+const DeleteTorrentModal = ({ id, show, onHide }) => {
+    if (!show) {
+        return null;
+    }
+    const [deleteFiles, setDeleteFiles] = useState(false);
+    const [error, setError] = useState<Error>(null);
+    const [deleting, setDeleting] = useState(false);
+
+    const ctx = useContext(AppContext);
+
+    const close = () => {
+        setDeleteFiles(false);
+        setError(null);
+        setDeleting(false);
+        onHide();
+    }
+
+    const deleteTorrent = () => {
+        setDeleting(true);
+
+        const call = deleteFiles ? API.delete : API.forget;
+
+        call(id).then(() => {
+            ctx.refreshTorrents();
+            close();
+        }).catch((e) => {
+            setError({
+                text: `Error deleting torrent id=${id}`,
+                details: e,
+            });
+            setDeleting(false);
+        })
+    }
+
+    return <Modal show={show} onHide={close}>
+        <Modal.Header closeButton>
+            Delete torrent
+        </Modal.Header>
+        <Modal.Body>
+            <Form>
+                <Form.Group controlId='delete-torrent'>
+                    <Form.Check
+                        type="checkbox"
+                        label='Also delete files'
+                        checked={deleteFiles}
+                        onChange={() => setDeleteFiles(!deleteFiles)}>
+                    </Form.Check>
+                </Form.Group>
+            </Form>
+            {error && <ErrorComponent error={error} />}
+        </Modal.Body>
+        <Modal.Footer>
+            {deleting && <Spinner />}
+            <Button variant="primary" onClick={deleteTorrent} disabled={deleting}>
+                OK
+            </Button>
+            <Button variant="secondary" onClick={close}>
+                Cancel
+            </Button>
+        </Modal.Footer>
+    </Modal>
+}
+
+const TorrentActions: React.FC<{
+    id: number, statsResponse: TorrentStats
+}> = ({ id, statsResponse }) => {
+    let state = statsResponse.state;
+
+    let [disabled, setDisabled] = useState<boolean>(false);
+    let [deleting, setDeleting] = useState<boolean>(false);
+
+    let refreshCtx = useContext(RefreshTorrentStatsContext);
+
+    const canPause = state == 'live';
+    const canUnpause = state == 'paused' || state == 'error';
+
+    const ctx = useContext(AppContext);
+
+    const unpause = () => {
+        setDisabled(true);
+        API.start(id).then(() => { refreshCtx.refresh() }, (e) => {
+            ctx.setCloseableError({
+                text: `Error starting torrent id=${id}`,
+                details: e,
+            });
+        }).finally(() => setDisabled(false))
+    };
+
+    const pause = () => {
+        setDisabled(true);
+        API.pause(id).then(() => { refreshCtx.refresh() }, (e) => {
+            ctx.setCloseableError({
+                text: `Error pausing torrent id=${id}`,
+                details: e,
+            });
+        }).finally(() => setDisabled(false))
+    };
+
+    const startDeleting = () => {
+        setDisabled(true);
+        setDeleting(true);
+    }
+
+    const cancelDeleting = () => {
+        setDisabled(false);
+        setDeleting(false);
+    }
+
+    return <Row>
+        <Col>
+            {canUnpause && <IconButton className="bi-play-circle" onClick={unpause} disabled={disabled} color='success' />}
+            {canPause && <IconButton className="bi-pause-circle" onClick={pause} disabled={disabled} />}
+            <IconButton className="bi-x-circle" onClick={startDeleting} disabled={disabled} color='danger' />
+            <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
+        </Col>
+    </Row>
+}
 
 const TorrentRow: React.FC<{
     id: number, detailsResponse: TorrentDetails, statsResponse: TorrentStats
 }> = ({ id, detailsResponse, statsResponse }) => {
-    const totalBytes = statsResponse?.snapshot?.total_bytes ?? 1;
-    const downloadedBytes = statsResponse?.snapshot?.have_bytes ?? 0;
-    const finished = totalBytes == downloadedBytes;
-    const downloadPercentage = (downloadedBytes / totalBytes) * 100;
+    const state = statsResponse?.state ?? "";
+    const error = statsResponse?.error;
+    const totalBytes = statsResponse?.total_bytes ?? 1;
+    const progressBytes = statsResponse?.progress_bytes ?? 0;
+    const finished = statsResponse?.finished || false;
+    const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
+    const isAnimated = (state == STATE_INITIALIZING || state == STATE_LIVE) && !finished;
+    const progressLabel = error ? 'Error' : `${progressPercentage.toFixed(2)}%`;
+    const progressBarVariant = error ? 'danger' : finished ? 'success' : state == STATE_INITIALIZING ? 'warning' : 'primary';
+
+    const formatPeersString = () => {
+        let peer_stats = statsResponse?.live?.snapshot.peer_stats;
+        if (!peer_stats) {
+            return '';
+        }
+        return `${peer_stats.live} / ${peer_stats.seen}`;
+    }
+
+    const formatDownloadSpeed = () => {
+        if (finished) {
+            return 'Completed';
+        }
+        switch (state) {
+            case STATE_PAUSED: return 'Paused';
+            case STATE_INITIALIZING: return 'Checking files';
+            case STATE_ERROR: return 'Error';
+        }
+
+        return statsResponse.live?.download_speed.human_readable ?? "N/A";
+    }
+
+    let classNames = [];
+
+    if (error) {
+        classNames.push('bg-warning');
+    } else {
+        if (id % 2 == 0) {
+            classNames.push('bg-light');
+        }
+    }
 
     return (
-        <Row className={`${id % 2 == 0 ? 'bg-light' : ''}`}>
-            <Column size={4} label="Name">
+        <Row className={classNames.join(' ')}>
+            <Column size={3} label="Name">
                 {detailsResponse ?
-                    <div className='text-truncate'>
-                        {getLargestFileName(detailsResponse)}
-                    </div>
+                    <>
+                        <div className='text-truncate'>
+                            {getLargestFileName(detailsResponse)}
+                        </div>
+                        {error && <p className='text-danger'><strong>Error:</strong> {error}</p>}
+                    </>
                     : <Spinner />}
             </Column>
             {statsResponse ?
                 <>
                     <Column label="Size">{`${formatBytes(totalBytes)} `}</Column>
-                    <Column size={2} label="Progress">
-                        <ProgressBar now={downloadPercentage} label={`${downloadPercentage.toFixed(2)}% `} animated={!finished} />
+                    <Column size={2} label={state == STATE_PAUSED ? 'Progress' : 'Progress'}>
+                        <ProgressBar
+                            now={progressPercentage}
+                            label={progressLabel}
+                            animated={isAnimated}
+                            variant={progressBarVariant} />
                     </Column>
-                    <Column size={2} label="Down Speed">{statsResponse.download_speed.human_readable}</Column>
+                    <Column size={2} label="Down Speed">{formatDownloadSpeed()}</Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
-                    <Column size={2} label="Peers">{`${statsResponse.snapshot.peer_stats.live} / ${statsResponse.snapshot.peer_stats.seen}`}</Column >
+                    <Column size={2} label="Peers">{formatPeersString()}</Column >
+                    <Column label="Actions">
+                        <TorrentActions id={id} statsResponse={statsResponse} />
+                    </Column>
                 </>
                 : <Column label="Loading stats" size={8}><Spinner /></Column>
             }
@@ -63,6 +244,11 @@ const Column: React.FC<{
 const Torrent = ({ id, torrent }) => {
     const [detailsResponse, updateDetailsResponse] = useState<TorrentDetails>(null);
     const [statsResponse, updateStatsResponse] = useState<TorrentStats>(null);
+    const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
+
+    const forceStatsRefreshCallback = () => {
+        setForceStatsRefresh(forceStatsRefresh + 1);
+    }
 
     // Update details once.
     useEffect(() => {
@@ -76,18 +262,29 @@ const Torrent = ({ id, torrent }) => {
     // Update stats once then forever.
     useEffect(() => customSetInterval((async () => {
         const errorInterval = 10000;
-        const liveInterval = 500;
-        const finishedInterval = 5000;
+        const liveInterval = 1000;
+        const finishedInterval = 10000;
+        const nonLiveInterval = 10000;
 
         return API.getTorrentStats(torrent.id).then((stats) => {
             updateStatsResponse(stats);
-            return torrentIsDone(stats) ? finishedInterval : liveInterval;
+            return stats;
+        }).then((stats) => {
+            if (stats.finished) {
+                return finishedInterval;
+            }
+            if (stats.state == STATE_INITIALIZING || stats.state == STATE_LIVE) {
+                return liveInterval;
+            }
+            return nonLiveInterval;
         }, (e) => {
             return errorInterval;
         });
-    }), 0), []);
+    }), 0), [forceStatsRefresh]);
 
-    return <TorrentRow id={id} detailsResponse={detailsResponse} statsResponse={statsResponse} />
+    return <RefreshTorrentStatsContext.Provider value={{ refresh: forceStatsRefreshCallback }}>
+        <TorrentRow id={id} detailsResponse={detailsResponse} statsResponse={statsResponse} />
+    </RefreshTorrentStatsContext.Provider >
 }
 
 const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) => {
@@ -143,7 +340,7 @@ const Root = () => {
 
     return <AppContext.Provider value={context}>
         <div className='text-center'>
-            <h1 className="mt-3 mb-4">rqbit web 0.0.1-alpha</h1>
+            <h1 className="mt-3 mb-4">rqbit web 4.0.0-beta.0</h1>
             <RootContent
                 closeableError={closeableError}
                 otherError={otherError}
@@ -199,7 +396,7 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
                 const response = await API.uploadTorrent(data, { listOnly: true });
                 setFileList(response.details.files);
             } catch (e) {
-                setFileListError({ text: 'Error listing torrent', details: e });
+                setFileListError({ text: 'Error uploading torrent', details: e });
             } finally {
                 setLoading(false);
             }
@@ -373,10 +570,6 @@ const RootContent = (props: { closeableError: ErrorDetails, otherError: ErrorDet
     </Container>
 };
 
-function torrentIsDone(stats: TorrentStats): boolean {
-    return stats.snapshot.have_bytes == stats.snapshot.total_bytes;
-}
-
 function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 Bytes';
 
@@ -398,11 +591,11 @@ function getLargestFileName(torrentDetails: TorrentDetails): string {
 }
 
 function getCompletionETA(stats: TorrentStats): string {
-    if (stats.time_remaining && stats.time_remaining.duration) {
-        return formatSecondsToTime(stats.time_remaining.duration.secs);
-    } else {
+    let duration = stats?.live?.time_remaining?.duration?.secs;
+    if (duration == null) {
         return 'N/A';
     }
+    return formatSecondsToTime(duration);
 }
 
 function formatSecondsToTime(seconds: number): string {
