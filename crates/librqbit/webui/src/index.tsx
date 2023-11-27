@@ -340,7 +340,7 @@ const Root = () => {
 
     return <AppContext.Provider value={context}>
         <div className='text-center'>
-            <h1 className="mt-3 mb-4">rqbit web 0.0.1-alpha</h1>
+            <h1 className="mt-3 mb-4">rqbit web 4.0.0-beta.0</h1>
             <RootContent
                 closeableError={closeableError}
                 otherError={otherError}
