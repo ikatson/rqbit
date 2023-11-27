@@ -256,6 +256,11 @@ impl Session {
         });
 
         if opts.persistence {
+            if let Some(parent) = session.persistence_filename.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("couldn't create directory {:?} for session storage", parent)
+                })?;
+            }
             let session = session.clone();
             spawn(
                 "session persistene",
@@ -291,11 +296,16 @@ impl Session {
     }
 
     async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {
-        let mut rdr = BufReader::new(
-            std::fs::File::open(&self.persistence_filename).with_context(|| {
-                format!("error opening session file {:?}", self.persistence_filename)
-            })?,
-        );
+        let mut rdr = match std::fs::File::open(&self.persistence_filename) {
+            Ok(f) => BufReader::new(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(e).context(format!(
+                    "error opening session file {:?}",
+                    self.persistence_filename
+                ))
+            }
+        };
         let db: SerializedSessionDatabase =
             serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
         let mut futures = Vec::new();
@@ -342,7 +352,6 @@ impl Session {
         let mut tmp = BufWriter::new(
             std::fs::OpenOptions::new()
                 .create(true)
-                .create_new(true)
                 .truncate(true)
                 .write(true)
                 .open(&tmp_filename)

@@ -30,5 +30,6 @@ refactor:
 
 - [x] start from error state should be possible from UI
 - [ ] if the torrent was completed, not need to re-check it
-- [ ] checking is very slow on raspberry
+- [x] checking is very slow on raspberry
+  checked. nothing much can be done here. Even if raspberry's own libssl.so is used it's still super slow (sha1)
 - [ ] .rqbit-session.json file has 0 bytes when disk full. I guess fs::rename does this when disk is full? at least on linux
