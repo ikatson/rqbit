@@ -63,14 +63,9 @@ Use a regex here to select files by their names.
 - Selective downloading using a regular expression for filename
 - DHT support. Allows magnet links to work, and makes more peers available.
 - HTTP API
+- Pausing / unpausing / deleting (with files or not) APIs
+- Stateful server
 - Web UI
-
-### Code features
-- Serde-based bencode serializer/deserializer
-- Custom code for binary protocol serialization/deserialization. And for everything else too :)
-- Supports several SHA1 implementations, as this seems to be the biggest performance bottleneck. Default is openssl as it's the fastest in my benchmarks.
-- In theory, the libraries that rqbit is made of are re-usable.
-- No unsafe
 
 ### Bugs, missing features and other caveats
 PRs are very welcome.
@@ -92,10 +87,17 @@ By default it listens on http://127.0.0.1:3030.
             "GET /torrents": "List torrents (default torrent is 0)",
             "GET /torrents/{index}": "Torrent details",
             "GET /torrents/{index}/haves": "The bitfield of have pieces",
-            "GET /torrents/{index}/stats": "Torrent stats",
-            "POST /torrents/": "Add a torrent here. magnet: or http:// or a local file.",
-            "GET /web/": "Web UI"
-        }
+            "GET /torrents/{index}/peer_stats": "Per peer stats",
+            "GET /torrents/{index}/stats/v1": "Torrent stats",
+            "GET /web/": "Web UI",
+            "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
+            "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+            "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
+            "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
+            "POST /torrents/{index}/pause": "Pause torrent",
+            "POST /torrents/{index}/start": "Resume torrent"
+        },
+        "server": "rqbit"
     }
 
 ### Add torrent through HTTP API
@@ -108,7 +110,7 @@ OR
 
 OR
 
-```curl -d '/some/local/file.torrent' http://127.0.0.1:3030/torrents```
+```curl --data-binary @/tmp/xubuntu-23.04-minimal-amd64.iso.torrent http://127.0.0.1:3030/torrents```
 
 Supported query parameters, all optional:
 - overwrite=true|false
@@ -119,7 +121,7 @@ Supported query parameters, all optional:
 ## Web UI
 Access with http://localhost:3030/web/
 
-<img width="1165" alt="Web UI" src="https://github.com/ikatson/rqbit/assets/221386/3854c1d6-94ee-4416-8af5-7ede6cd2047a">
+<img width="995" alt="Screenshot 2023-11-27 at 09 30 10" src="https://github.com/ikatson/rqbit/assets/221386/d9403763-d162-492b-a718-a857ef4dd1e6">
 
 ## Code organization
 - crates/rqbit - main binary
