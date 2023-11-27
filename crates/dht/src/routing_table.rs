@@ -280,9 +280,15 @@ impl BucketTree {
         }
     }
 
-    pub fn add_node(&mut self, self_id: &Id20, id: Id20, addr: SocketAddr) -> InsertResult {
+    pub fn add_node(
+        &mut self,
+        self_id: &Id20,
+        id: Id20,
+        addr: SocketAddr,
+        on_questionable_node: impl FnMut(SocketAddr) -> bool,
+    ) -> InsertResult {
         let idx = self.get_leaf(&id);
-        self.insert_into_leaf(idx, self_id, id, addr)
+        self.insert_into_leaf(idx, self_id, id, addr, on_questionable_node)
     }
     fn insert_into_leaf(
         &mut self,
@@ -290,6 +296,7 @@ impl BucketTree {
         self_id: &Id20,
         id: Id20,
         addr: SocketAddr,
+        mut on_questionable_node: impl FnMut(SocketAddr) -> bool,
     ) -> InsertResult {
         // The loop here is for this case:
         // in case we split a node into two, and it degenerates into all the leaves
@@ -313,6 +320,7 @@ impl BucketTree {
                 addr,
                 last_request: None,
                 last_response: None,
+                last_query: None,
                 outstanding_queries_in_a_row: 0,
             };
 
@@ -320,6 +328,16 @@ impl BucketTree {
                 nodes.push(new_node);
                 nodes.sort_by_key(|n| n.id);
                 return InsertResult::Added;
+            }
+
+            // Ping first questionable node
+            if let Some(questionable_node) = nodes
+                .iter_mut()
+                .find(|r| matches!(r.status(), NodeStatus::Questionable))
+            {
+                if on_questionable_node(questionable_node.addr) {
+                    questionable_node.mark_outgoing_request();
+                }
             }
 
             // Try replace a bad node
@@ -400,6 +418,8 @@ pub struct RoutingTableNode {
     #[serde(skip)]
     last_response: Option<Instant>,
     #[serde(skip)]
+    last_query: Option<Instant>,
+    #[serde(skip)]
     outstanding_queries_in_a_row: usize,
 }
 
@@ -418,24 +438,45 @@ impl RoutingTableNode {
         self.addr
     }
     pub fn status(&self) -> NodeStatus {
-        // TODO: this is just a stub with simpler logic
-        let last_request = match self.last_request {
-            Some(v) => v,
-            None => return NodeStatus::Unknown,
-        };
-        if self.outstanding_queries_in_a_row > 0 && last_request.elapsed() > Duration::from_secs(10)
-        {
-            return NodeStatus::Bad;
+        const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+        const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+        match (self.last_request, self.last_response, self.last_query) {
+            (None, _, _) => NodeStatus::Unknown,
+            // Nodes become bad when they fail to respond to multiple queries in a row.
+            (Some(last_request), _, _)
+                if last_request.elapsed() > RESPONSE_TIMEOUT
+                    && self.outstanding_queries_in_a_row >= 2 =>
+            {
+                NodeStatus::Bad
+            }
+
+            // A good node is a node has responded to one of our queries within the last 15 minutes.
+            // A node is also good if it has ever responded to one of our queries and has sent
+            // us a query within the last 15 minutes.
+            (Some(_), Some(last_activity), _) | (Some(_), Some(_), Some(last_activity))
+                if last_activity.elapsed() < INACTIVITY_TIMEOUT =>
+            {
+                NodeStatus::Good
+            }
+
+            // After 15 minutes of inactivity, a node becomes questionable
+            (_, _, Some(last_activity)) | (_, Some(last_activity), _)
+                if last_activity.elapsed() > INACTIVITY_TIMEOUT =>
+            {
+                NodeStatus::Questionable
+            }
+            (Some(_), _, _) => NodeStatus::Unknown,
         }
-        if self.last_response.is_some() {
-            return NodeStatus::Good;
-        }
-        NodeStatus::Questionable
     }
 
     pub fn mark_outgoing_request(&mut self) {
         self.last_request = Some(Instant::now());
         self.outstanding_queries_in_a_row += 1;
+    }
+
+    pub fn mark_last_query(&mut self) {
+        self.last_query = Some(Instant::now());
     }
 
     pub fn mark_response(&mut self) {
@@ -479,8 +520,15 @@ impl RoutingTable {
         result
     }
 
-    pub fn add_node(&mut self, id: Id20, addr: SocketAddr) -> InsertResult {
-        let res = self.buckets.add_node(&self.id, id, addr);
+    pub fn add_node(
+        &mut self,
+        id: Id20,
+        addr: SocketAddr,
+        on_questionable_node: impl FnMut(SocketAddr) -> bool,
+    ) -> InsertResult {
+        let res = self
+            .buckets
+            .add_node(&self.id, id, addr, on_questionable_node);
         let replaced = match &res {
             InsertResult::WasExisting => false,
             InsertResult::ReplacedBad(..) => true,
@@ -507,6 +555,15 @@ impl RoutingTable {
             None => return false,
         };
         r.mark_response();
+        true
+    }
+
+    pub fn mark_last_query(&mut self, id: &Id20) -> bool {
+        let r = match self.buckets.get_mut(id) {
+            Some(r) => r,
+            None => return false,
+        };
+        r.mark_last_query();
         true
     }
 }
@@ -603,7 +660,7 @@ mod tests {
         for _ in 0..length.unwrap_or(16536) {
             let other_id = random_id_20();
             let addr = generate_socket_addr();
-            rtable.add_node(other_id, addr);
+            rtable.add_node(other_id, addr, |_| false);
         }
         rtable
     }

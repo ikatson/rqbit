@@ -309,7 +309,7 @@ pub struct GetPeersRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PingRequest {
-    id: Id20,
+    pub id: Id20,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

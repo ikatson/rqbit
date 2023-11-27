@@ -9,7 +9,7 @@ use std::{
 use crate::{
     bprotocol::{
         self, CompactNodeInfo, CompactPeerInfo, FindNodeRequest, GetPeersRequest, Message,
-        MessageKind, Node,
+        MessageKind, Node, PingRequest,
     },
     routing_table::{InsertResult, RoutingTable},
 };
@@ -108,6 +108,12 @@ impl DhtState {
                     target,
                 }),
             },
+            Request::Ping => Message {
+                transaction_id: ByteString::from(transaction_id_buf.as_ref()),
+                version: None,
+                ip: None,
+                kind: MessageKind::PingRequest(PingRequest { id: self.id }),
+            },
         };
         self.outstanding_requests
             .insert((transaction_id, addr), request);
@@ -169,6 +175,7 @@ impl DhtState {
                     Request::GetPeers(id) => {
                         self.on_found_peers_or_nodes(response.id, addr, id, response)
                     }
+                    Request::Ping => Ok(()),
                 }
             }
             MessageKind::PingRequest(_) => {
@@ -205,6 +212,7 @@ impl DhtState {
                     None
                 };
                 let compact_node_info = generate_compact_nodes(req.info_hash);
+                self.routing_table.mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -221,6 +229,7 @@ impl DhtState {
             }
             MessageKind::FindNodeRequest(req) => {
                 let compact_node_info = generate_compact_nodes(req.target);
+                self.routing_table.mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -320,6 +329,19 @@ impl DhtState {
         Ok(())
     }
 
+    fn routing_table_add_node(&mut self, id: Id20, addr: SocketAddr) -> InsertResult {
+        let mut questionable_nodes = Vec::new();
+        let res = self.routing_table.add_node(id, addr, |addr| {
+            questionable_nodes.push(addr);
+            true
+        });
+        for addr in questionable_nodes {
+            let req = self.create_request(Request::Ping, addr);
+            let _ = self.sender.send((req, addr));
+        }
+        res
+    }
+
     fn on_found_nodes(
         &mut self,
         source: Id20,
@@ -336,7 +358,7 @@ impl DhtState {
             .collect::<Vec<_>>();
 
         // On newly discovered nodes, ask them for peers that we are interested in.
-        match self.routing_table.add_node(source, source_addr) {
+        match self.routing_table_add_node(source, source_addr) {
             InsertResult::ReplacedBad(_) | InsertResult::Added => {
                 for info_hash in &searching_for_peers {
                     self.send_find_peers_if_not_yet(*info_hash, source, source_addr)?;
@@ -345,7 +367,7 @@ impl DhtState {
             _ => {}
         };
         for node in nodes.nodes {
-            match self.routing_table.add_node(node.id, node.addr.into()) {
+            match self.routing_table_add_node(node.id, node.addr.into()) {
                 InsertResult::ReplacedBad(_) | InsertResult::Added => {
                     for info_hash in &searching_for_peers {
                         self.send_find_peers_if_not_yet(*info_hash, node.id, node.addr.into())?;
@@ -366,7 +388,7 @@ impl DhtState {
         target: Id20,
         data: bprotocol::Response<ByteString>,
     ) -> anyhow::Result<()> {
-        self.routing_table.add_node(source, source_addr);
+        self.routing_table_add_node(source, source_addr);
         self.routing_table.mark_response(&source);
 
         let bsender = match self.get_peers_subscribers.get(&target) {
@@ -398,7 +420,7 @@ impl DhtState {
         };
         if let Some(nodes) = data.nodes {
             for node in nodes.nodes {
-                self.routing_table.add_node(node.id, node.addr.into());
+                self.routing_table_add_node(node.id, node.addr.into());
                 self.send_find_peers_if_not_yet(target, node.id, node.addr.into())?;
             }
         };
@@ -488,6 +510,7 @@ async fn run_framer(
 enum Request {
     GetPeers(Id20),
     FindNode(Id20),
+    Ping,
 }
 
 #[derive(Clone)]
