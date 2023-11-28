@@ -95,7 +95,15 @@ impl DhtState {
         let this = self.clone();
         spawn(
             error_span!(parent: None, "dht_request", addr=addr.to_string(), request=format!("{:?}", request)),
-            async move { this.send_request_and_handle_response(request, addr).await },
+            async move {
+                match this.send_request_and_handle_response(request, addr).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("error: {:?}", e);
+                    }
+                };
+                Ok(())
+            },
         );
     }
 
@@ -134,7 +142,6 @@ impl DhtState {
             }
             Err(e) => {
                 self.inflight.remove(&key);
-                debug!("error: {:?}", e);
                 anyhow::bail!("timeout")
             }
         }
