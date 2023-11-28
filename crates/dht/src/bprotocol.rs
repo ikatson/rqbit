@@ -292,11 +292,11 @@ pub struct FindNodeRequest {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Response<BufT> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values: Option<Vec<CompactPeerInfo>>,
     pub id: Id20,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nodes: Option<CompactNodeInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub values: Option<Vec<CompactPeerInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<BufT>,
 }
@@ -326,10 +326,10 @@ pub struct GetPeersResponse<BufT> {
 
 #[derive(Debug)]
 pub struct Message<BufT> {
+    pub kind: MessageKind<BufT>,
     pub transaction_id: BufT,
     pub version: Option<BufT>,
     pub ip: Option<SocketAddrV4>,
-    pub kind: MessageKind<BufT>,
 }
 
 impl Message<ByteString> {
