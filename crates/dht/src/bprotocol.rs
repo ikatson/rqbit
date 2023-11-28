@@ -4,7 +4,7 @@ use std::{
     net::{Ipv4Addr, SocketAddrV4},
 };
 
-use bencode::ByteBuf;
+use bencode::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::id20::Id20;
 use serde::{
@@ -330,6 +330,16 @@ pub struct Message<BufT> {
     pub version: Option<BufT>,
     pub ip: Option<SocketAddrV4>,
     pub kind: MessageKind<BufT>,
+}
+
+impl Message<ByteString> {
+    pub fn get_transaction_id(&self) -> Option<u16> {
+        if self.transaction_id.len() != 2 {
+            return None;
+        }
+        let tid = ((self.transaction_id[0] as u16) << 8) + (self.transaction_id[1] as u16);
+        Some(tid)
+    }
 }
 
 #[derive(Debug)]

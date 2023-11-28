@@ -218,6 +218,7 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
             layered
                 .with(
                     fmt::layer()
+                        .with_ansi(false)
                         .with_writer(log_file)
                         .with_filter(EnvFilter::builder().parse(&opts.log_file_rust_log).unwrap()),
                 )
