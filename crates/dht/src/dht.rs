@@ -1,5 +1,4 @@
 use std::{
-    f32::consts::E,
     net::SocketAddr,
     sync::{
         atomic::{AtomicU16, Ordering},
@@ -19,9 +18,9 @@ use crate::{
 };
 use anyhow::Context;
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
-use bencode::{ByteBuf, ByteString};
+use bencode::ByteString;
 use dashmap::DashMap;
-use futures::{future::join_all, stream::FuturesUnordered, Stream, StreamExt, TryFutureExt};
+use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexSet;
 use leaky_bucket::RateLimiter;
 use librqbit_core::{id20::Id20, peer_id::generate_peer_id, spawn_utils::spawn};

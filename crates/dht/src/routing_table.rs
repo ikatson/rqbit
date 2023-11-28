@@ -1,7 +1,4 @@
-use std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, time::Instant};
 
 use librqbit_core::id20::Id20;
 use serde::{ser::SerializeMap, Deserialize, Serialize};

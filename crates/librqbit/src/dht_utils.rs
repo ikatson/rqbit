@@ -86,7 +86,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
 
 #[cfg(test)]
 mod tests {
-    use dht::{Dht, DhtBuilder, Id20};
+    use dht::{DhtBuilder, Id20};
     use librqbit_core::peer_id::generate_peer_id;
 
     use super::*;

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use librqbit_core::magnet::Magnet;
-use librqbit_dht::{Dht, DhtBuilder};
+use librqbit_dht::DhtBuilder;
 use tokio_stream::StreamExt;
 use tracing::info;
 
