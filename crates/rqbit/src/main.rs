@@ -1,4 +1,4 @@
-use std::{io::BufWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{io::LineWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
@@ -205,7 +205,7 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
         if let Some(log_file) = &opts.log_file {
             let log_file = log_file.clone();
             let log_file = move || {
-                BufWriter::new(
+                LineWriter::new(
                     std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)

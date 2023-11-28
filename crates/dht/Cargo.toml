@@ -27,6 +27,7 @@ bencode = {path = "../bencode", default-features=false, package="librqbit-bencod
 anyhow = "1"
 parking_lot = "0.12"
 tracing = "0.1"
+backoff = "0.4.0"
 futures = "0.3"
 rand = "0.8"
 indexmap = "2"
