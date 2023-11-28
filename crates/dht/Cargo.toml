@@ -31,6 +31,7 @@ futures = "0.3"
 rand = "0.8"
 indexmap = "2"
 directories = "5"
+dashmap = "5.5.3"
 
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 librqbit-core = {path="../librqbit_core", version = "3.1.0"}

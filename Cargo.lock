@@ -1087,6 +1087,7 @@ name = "librqbit-dht"
 version = "3.2.0"
 dependencies = [
  "anyhow",
+ "dashmap",
  "directories",
  "futures",
  "hex 0.4.3",
