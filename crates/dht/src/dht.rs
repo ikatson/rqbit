@@ -11,12 +11,13 @@ use std::{
 use crate::{
     bprotocol::{
         self, CompactNodeInfo, CompactPeerInfo, FindNodeRequest, GetPeersRequest, Message,
-        MessageKind, Node, PingRequest,
+        MessageKind, Node, PingRequest, Response,
     },
     routing_table::{InsertResult, RoutingTable},
+    RESPONSE_TIMEOUT,
 };
 use anyhow::Context;
-use bencode::ByteString;
+use bencode::{ByteBuf, ByteString};
 use dashmap::DashMap;
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexSet;
@@ -53,8 +54,6 @@ pub struct DhtState {
 
     // Created requests: (transaction_id, addr) => Requests.
     // If we get a response, it gets removed from here.
-    //
-    // TODO: clean up old entries
     outstanding_requests_by_transaction_id: DashMap<(u16, SocketAddr), OutstandingRequest>,
 
     // TODO: clean up old entries
@@ -112,7 +111,7 @@ impl DhtState {
         spawn(
             debug_span!("dht_request", tid = tid, addr = addr.to_string()),
             async move {
-                match tokio::time::timeout(Duration::from_secs(60), rx).await {
+                match tokio::time::timeout(RESPONSE_TIMEOUT, rx).await {
                     Ok(Ok(_)) => {}
                     Ok(Err(e)) => {
                         this.outstanding_requests_by_transaction_id
@@ -163,6 +162,24 @@ impl DhtState {
             },
         };
         (transaction_id, message)
+    }
+
+    fn on_response(
+        self: &Arc<Self>,
+        addr: SocketAddr,
+        request: Request,
+        response: Response<ByteString>,
+    ) -> anyhow::Result<()> {
+        match request {
+            Request::FindNode(id) => {
+                let nodes = response
+                    .nodes
+                    .ok_or_else(|| anyhow::anyhow!("expected nodes for find_node requests"))?;
+                self.on_found_nodes(response.id, addr, id, nodes)
+            }
+            Request::GetPeers(id) => self.on_found_peers_or_nodes(response.id, addr, id, response),
+            Request::Ping => Ok(()),
+        }
     }
 
     fn on_incoming_from_remote(
@@ -220,18 +237,7 @@ impl DhtState {
                     _ => unreachable!(),
                 };
                 self.routing_table.write().mark_response(&response.id);
-                match request {
-                    Request::FindNode(id) => {
-                        let nodes = response.nodes.ok_or_else(|| {
-                            anyhow::anyhow!("expected nodes for find_node requests")
-                        })?;
-                        self.on_found_nodes(response.id, addr, id, nodes)
-                    }
-                    Request::GetPeers(id) => {
-                        self.on_found_peers_or_nodes(response.id, addr, id, response)
-                    }
-                    Request::Ping => Ok(()),
-                }
+                self.on_response(addr, request, response)
             }
             MessageKind::PingRequest(_) => {
                 let message = Message {

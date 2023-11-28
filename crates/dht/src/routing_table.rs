@@ -7,6 +7,8 @@ use librqbit_core::id20::Id20;
 use serde::{ser::SerializeMap, Deserialize, Serialize};
 use tracing::debug;
 
+use crate::{INACTIVITY_TIMEOUT, RESPONSE_TIMEOUT};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum BucketTreeNodeData {
     // TODO: maybe replace that with SmallVec<8>?
@@ -438,9 +440,6 @@ impl RoutingTableNode {
         self.addr
     }
     pub fn status(&self) -> NodeStatus {
-        const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-        const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-
         match (self.last_request, self.last_response, self.last_query) {
             (None, _, _) => NodeStatus::Unknown,
             // Nodes become bad when they fail to respond to multiple queries in a row.

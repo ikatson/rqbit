@@ -5,6 +5,7 @@ mod routing_table;
 mod utils;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState};
@@ -12,6 +13,11 @@ pub use librqbit_core::id20::Id20;
 pub use persistence::{PersistentDht, PersistentDhtConfig};
 
 pub type Dht = Arc<DhtState>;
+
+// How long do we wait for a response from a DHT node.
+pub(crate) const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+// After how long should we ping the node again.
+pub(crate) const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 pub struct DhtBuilder {}
 
