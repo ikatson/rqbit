@@ -11,8 +11,8 @@ use std::time::Duration;
 use anyhow::Context;
 use tracing::{debug, error, error_span, info, trace, warn};
 
-use crate::dht::{Dht, DhtConfig};
 use crate::routing_table::RoutingTable;
+use crate::{Dht, DhtConfig, DhtState};
 
 #[derive(Default, Clone)]
 pub struct PersistentDhtConfig {
@@ -108,7 +108,7 @@ impl PersistentDht {
             listen_addr,
             ..Default::default()
         };
-        let dht = Dht::with_config(dht_config).await?;
+        let dht = DhtState::with_config(dht_config).await?;
 
         spawn(error_span!("dht_persistence"), {
             let dht = dht.clone();

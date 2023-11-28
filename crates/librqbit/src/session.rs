@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use buffers::ByteString;
-use dht::{Dht, Id20, PersistentDht, PersistentDhtConfig};
+use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig};
 use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_peer_id,
@@ -234,7 +234,7 @@ impl Session {
             None
         } else {
             let dht = if opts.disable_dht_persistence {
-                Dht::new().await
+                DhtBuilder::new().await
             } else {
                 PersistentDht::create(opts.dht_config).await
             }

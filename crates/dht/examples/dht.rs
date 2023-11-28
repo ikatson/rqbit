@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use librqbit_core::magnet::Magnet;
-use librqbit_dht::Dht;
+use librqbit_dht::{Dht, DhtBuilder};
 use tokio_stream::StreamExt;
 use tracing::info;
 
@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt::init();
 
-    let dht = Dht::new().await.context("error initializing DHT")?;
+    let dht = DhtBuilder::new().await.context("error initializing DHT")?;
     let mut stream = dht.get_peers(info_hash)?;
 
     let stats_printer = async {
