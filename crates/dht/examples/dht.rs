@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
                 let mut f = std::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
+                    .truncate(true)
                     .open(filename)
                     .unwrap();
                 serde_json::to_writer_pretty(&mut f, r).unwrap();
