@@ -1,4 +1,4 @@
-use tracing::{debug, error, trace, Instrument};
+use tracing::{error, trace, Instrument};
 
 pub fn spawn(
     span: tracing::Span,
@@ -8,7 +8,7 @@ pub fn spawn(
         trace!("started");
         match fut.await {
             Ok(_) => {
-                debug!("finished");
+                trace!("finished");
             }
             Err(e) => {
                 error!("finished with error: {:#}", e)

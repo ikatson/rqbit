@@ -277,7 +277,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                     async move {
                         let mut iteration = 0;
                         loop {
-                            debug!("iteration {}", iteration);
+                            trace!("iteration {}", iteration);
                             let sleep = match this.get_peers_root() {
                                 Ok(0) => Duration::from_secs(1),
                                 Ok(n) if n < 8 => REQUERY_INTERVAL / 2,

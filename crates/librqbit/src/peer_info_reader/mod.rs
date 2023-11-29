@@ -15,7 +15,7 @@ use peer_binary_protocol::{
 };
 use sha1w::{ISha1, Sha1};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::debug;
+use tracing::trace;
 
 use crate::{
     peer_connection::{
@@ -153,7 +153,7 @@ impl PeerConnectionHandler for Handler {
     }
 
     fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
-        debug!("{}: received message: {:?}", self.addr, msg);
+        trace!("{}: received message: {:?}", self.addr, msg);
 
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
             piece,

@@ -1,4 +1,4 @@
-- [ ] when we have the whole torrent, there's no point talking to peers that also have the whole torrent and keep reconnecting to them.
+- [x] when we have the whole torrent, there's no point talking to peers that also have the whole torrent and keep reconnecting to them.
 - [ ] per-file stats
 - [x (partial)] per-peer stats
 - [x] use some concurrent hashmap e.g. flurry or dashmap
@@ -8,13 +8,13 @@
 - [x] initializing/checking
   - [x] blocks the whole process. Need to break it up. On slower devices (rpi) just hangs for a good while
   - [x] checking torrents should be visible right away
-- [ ] server persistence
-  - [ ] it would be nice to restart the server and keep the state
+- [x] server persistence
+  - [x] it would be nice to restart the server and keep the state
 - [x] torrent actions
   - [x] pause/unpause
   - [x] remove including from disk
 - [ ] DHT
-  - [ ] bootstrapping is lame
+  - [x] bootstrapping is lame
   - [x] many nodes in "Unknown" status, do smth about it
   - [x] for torrents with a few seeds might be cool to re-query DHT once in a while.
   - [x] don't leak memory when deleting torrents (i.e. remove torrent information (seen peers etc) once the torrent is deleted)

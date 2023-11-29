@@ -44,7 +44,7 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
         .with_routing_table(|r| serde_json::to_writer(&mut file, &DhtSerialize { addr, table: r }))
     {
         Ok(_) => {
-            debug!("dumped DHT to {:?}", &tempfile_name);
+            trace!("dumped DHT to {:?}", &tempfile_name);
         }
         Err(e) => {
             return Err(e).with_context(|| {

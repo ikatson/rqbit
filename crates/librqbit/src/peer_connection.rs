@@ -13,7 +13,7 @@ use peer_binary_protocol::{
     MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
 };
 use tokio::time::timeout;
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::spawn_utils::BlockingSpawner;
 
@@ -155,7 +155,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
             .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
 
-        debug!("connected: id={:?}", try_decode_peer_id(Id20(h.peer_id)));
+        trace!("connected: id={:?}", try_decode_peer_id(Id20(h.peer_id)));
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
         }
@@ -210,7 +210,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                     .await
                     .context("error writing bitfield to peer")?;
-                debug!("sent bitfield");
+                trace!("sent bitfield");
             }
 
             loop {
@@ -249,7 +249,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     }
                 };
 
-                debug!("sending: {:?}, length={}", &req, len);
+                trace!("sending: {:?}, length={}", &req, len);
 
                 with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                     .await
@@ -290,7 +290,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             r = reader => {r}
             r = writer => {r}
         };
-        debug!("either reader or writer are done, exiting");
+        trace!("either reader or writer are done, exiting");
         r
     }
 }

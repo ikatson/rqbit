@@ -241,9 +241,13 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             let to_read_in_file =
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64) as usize;
             let mut file_g = self.files[file_idx].lock();
-            debug!(
+            trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
-                piece_index, who_sent, file_idx, absolute_offset, &last_received_chunk
+                piece_index,
+                who_sent,
+                file_idx,
+                absolute_offset,
+                &last_received_chunk
             );
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
@@ -269,7 +273,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
         match self.torrent.compare_hash(piece_index.get(), h.finish()) {
             Some(true) => {
-                debug!("piece={} hash matches", piece_index);
+                trace!("piece={} hash matches", piece_index);
                 Ok(true)
             }
             Some(false) => {
@@ -305,9 +309,13 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64) as usize;
 
             let mut file_g = self.files[file_idx].lock();
-            debug!(
+            trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
-                chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
+                chunk_info.piece_index,
+                who_sent,
+                file_idx,
+                absolute_offset,
+                &chunk_info
             );
             file_g
                 .seek(SeekFrom::Start(absolute_offset))
@@ -354,7 +362,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             let to_write = std::cmp::min(buf.len(), remaining_len as usize);
 
             let mut file_g = self.files[file_idx].lock();
-            debug!(
+            trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
                 chunk_info.piece_index,
                 chunk_info,
