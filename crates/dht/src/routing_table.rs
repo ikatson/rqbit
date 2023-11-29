@@ -7,7 +7,7 @@ use serde::{
 };
 use tracing::debug;
 
-use crate::{INACTIVITY_TIMEOUT, RESPONSE_TIMEOUT};
+use crate::{INACTIVITY_TIMEOUT};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum BucketTreeNodeData {

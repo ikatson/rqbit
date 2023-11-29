@@ -14,9 +14,10 @@
   - [x] pause/unpause
   - [x] remove including from disk
 - [ ] DHT
+  - [ ] bootstrapping is lame
   - [x] many nodes in "Unknown" status, do smth about it
   - [x] for torrents with a few seeds might be cool to re-query DHT once in a while.
-  - [ ] don't leak memory when deleting torrents (i.e. remove torrent information (seen peers etc) once the torrent is deleted)
+  - [x] don't leak memory when deleting torrents (i.e. remove torrent information (seen peers etc) once the torrent is deleted)
   - [ ] Buckets that have not been changed in 15 minutes should be "refreshed." (per RFC)
   - [x] it's sending many requests now way too fast, locks up Mac OS UI annoyingly
   - [ ] After the search is exhausted, the client then inserts the peer contact information for itself onto the responding nodes with IDs closest to the infohash of the torrent.
