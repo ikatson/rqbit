@@ -437,7 +437,16 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             let has_returned_peers_desc = Reverse(n.returned_peers);
             let has_responded_desc = Reverse(n.last_response.is_some() as u8);
             let distance = n.id.distance(&self.info_hash);
-            (has_returned_peers_desc, has_responded_desc, distance)
+            let freshest_response = n
+                .last_response
+                .map(|r| r.elapsed())
+                .unwrap_or(Duration::MAX);
+            (
+                has_returned_peers_desc,
+                has_responded_desc,
+                distance,
+                freshest_response,
+            )
         });
         if closest_nodes.len() > LIMIT {
             let popped = closest_nodes.pop().unwrap();
