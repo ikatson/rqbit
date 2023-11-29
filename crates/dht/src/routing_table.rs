@@ -1,7 +1,10 @@
 use std::{net::SocketAddr, time::Instant};
 
 use librqbit_core::id20::Id20;
-use serde::{ser::SerializeMap, Deserialize, Serialize};
+use serde::{
+    ser::{SerializeMap, SerializeStruct},
+    Deserialize, Serialize,
+};
 use tracing::debug;
 
 use crate::{INACTIVITY_TIMEOUT, RESPONSE_TIMEOUT};
@@ -320,7 +323,7 @@ impl BucketTree {
                 last_request: None,
                 last_response: None,
                 last_query: None,
-                outstanding_queries_in_a_row: 0,
+                errors_in_a_row: 0,
             };
 
             if nodes.len() < 8 {
@@ -407,7 +410,7 @@ impl Default for BucketTree {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RoutingTableNode {
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     id: Id20,
@@ -419,9 +422,33 @@ pub struct RoutingTableNode {
     #[serde(skip)]
     last_query: Option<Instant>,
     #[serde(skip)]
-    outstanding_queries_in_a_row: usize,
+    errors_in_a_row: usize,
 }
 
+impl Serialize for RoutingTableNode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("RoutingTableNode", 3)?;
+        s.serialize_field("id", &self.id.as_string())?;
+        s.serialize_field("addr", &self.addr)?;
+        s.serialize_field("status", &self.status())?;
+        if let Some(l) = self.last_request {
+            s.serialize_field("last_request_ago", &l.elapsed())?;
+        }
+        if let Some(l) = self.last_response {
+            s.serialize_field("last_response_ago", &l.elapsed())?;
+        }
+        if let Some(l) = self.last_query {
+            s.serialize_field("last_query_ago", &l.elapsed())?;
+        }
+        s.serialize_field("errors_in_a_row", &self.errors_in_a_row)?;
+        s.end()
+    }
+}
+
+#[derive(Serialize, Debug)]
 pub enum NodeStatus {
     Good,
     Questionable,
@@ -440,12 +467,7 @@ impl RoutingTableNode {
         match (self.last_request, self.last_response, self.last_query) {
             (None, _, _) => NodeStatus::Unknown,
             // Nodes become bad when they fail to respond to multiple queries in a row.
-            (Some(last_request), _, _)
-                if last_request.elapsed() > RESPONSE_TIMEOUT
-                    && self.outstanding_queries_in_a_row >= 2 =>
-            {
-                NodeStatus::Bad
-            }
+            (Some(_), _, _) if self.errors_in_a_row >= 2 => NodeStatus::Bad,
 
             // A good node is a node has responded to one of our queries within the last 15 minutes.
             // A node is also good if it has ever responded to one of our queries and has sent
@@ -468,7 +490,6 @@ impl RoutingTableNode {
 
     pub fn mark_outgoing_request(&mut self) {
         self.last_request = Some(Instant::now());
-        self.outstanding_queries_in_a_row += 1;
     }
 
     pub fn mark_last_query(&mut self) {
@@ -481,7 +502,11 @@ impl RoutingTableNode {
         if self.last_request.is_none() {
             self.last_request = Some(now);
         }
-        self.outstanding_queries_in_a_row = 0;
+        self.errors_in_a_row = 0;
+    }
+
+    pub fn mark_error(&mut self) {
+        self.errors_in_a_row += 1;
     }
 }
 
@@ -551,6 +576,15 @@ impl RoutingTable {
             None => return false,
         };
         r.mark_response();
+        true
+    }
+
+    pub fn mark_error(&mut self, id: &Id20) -> bool {
+        let r = match self.buckets.get_mut(id) {
+            Some(r) => r,
+            None => return false,
+        };
+        r.mark_error();
         true
     }
 

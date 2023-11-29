@@ -55,10 +55,12 @@ pub struct WorkerSendRequest {
     addr: SocketAddr,
 }
 
+#[derive(Debug)]
 struct MaybeUsefulNode {
     id: Id20,
     addr: SocketAddr,
     last_response: Option<Instant>,
+    returned_peers: bool,
 }
 
 fn make_rate_limiter() -> RateLimiter {
@@ -226,6 +228,7 @@ impl DhtState {
         request: Request,
         response: Response<ByteString>,
     ) -> anyhow::Result<()> {
+        self.routing_table.write().mark_response(&response.id);
         match request {
             Request::FindNode(id) => {
                 let nodes = response
@@ -281,10 +284,7 @@ impl DhtState {
 
                 let response_or_error = match msg.kind {
                     MessageKind::Error(e) => ResponseOrError::Error(e),
-                    MessageKind::Response(r) => {
-                        self.routing_table.write().mark_response(&r.id);
-                        ResponseOrError::Response(r)
-                    }
+                    MessageKind::Response(r) => ResponseOrError::Response(r),
                     _ => unreachable!(),
                 };
                 match request.done.send(Ok(response_or_error)) {
@@ -492,6 +492,7 @@ impl DhtState {
             let resp = this.request(request, addr).await;
             match resp {
                 Ok(ResponseOrError::Response(response)) => {
+                    this.routing_table.write().mark_response(&target_node);
                     match this.on_response(addr, request, response) {
                         Ok(()) => {}
                         Err(e) => {
@@ -500,9 +501,11 @@ impl DhtState {
                     }
                 }
                 Ok(ResponseOrError::Error(e)) => {
+                    this.routing_table.write().mark_response(&target_node);
                     debug!("error response: {:?}", e);
                 }
                 Err(e) => {
+                    this.routing_table.write().mark_error(&target_node);
                     debug!("error: {:?}", e);
                 }
             };
@@ -592,19 +595,24 @@ impl DhtState {
             id: node_id,
             addr,
             last_response: None,
+
+            returned_peers: false,
         };
         match self.closest_responding_nodes_for_info_hash.entry(info_hash) {
             Entry::Occupied(mut occ) => {
-                const LIMIT: usize = 128;
+                // How many nodes to query per torrent.
+                const LIMIT: usize = 256;
                 let v = occ.get_mut();
                 v.push(n);
                 v.sort_by_key(|n| {
-                    let responded = Reverse(n.last_response.is_some() as u8);
+                    let has_returned_peers_desc = Reverse(n.returned_peers);
+                    let has_responded_desc = Reverse(n.last_response.is_some() as u8);
                     let distance = n.id.distance(&info_hash);
-                    (responded, distance)
+                    (has_returned_peers_desc, has_responded_desc, distance)
                 });
-                while v.len() > LIMIT {
-                    if v.pop().unwrap().id == node_id {
+                if v.len() > LIMIT {
+                    let popped = v.pop().unwrap();
+                    if popped.id == node_id {
                         return false;
                     }
                 }
@@ -626,7 +634,6 @@ impl DhtState {
         data: bprotocol::Response<ByteString>,
     ) -> anyhow::Result<()> {
         self.routing_table_add_node(source, source_addr);
-        self.routing_table.write().mark_response(&source);
 
         let bsender = match self.get_peers_subscribers.get(&info_hash) {
             Some(s) => s,
@@ -645,6 +652,7 @@ impl DhtState {
                 id: source,
                 addr: source_addr,
                 last_response: Some(Instant::now()),
+                returned_peers: data.values.as_ref().map(|p| !p.is_empty()).unwrap_or(false),
             };
             match self.closest_responding_nodes_for_info_hash.entry(info_hash) {
                 Entry::Occupied(mut useful_nodes) => {
