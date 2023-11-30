@@ -102,6 +102,12 @@ impl Id20 {
         }
         Id20(xor)
     }
+    pub fn get_bit(&self, bit: u8) -> bool {
+        let n = self.0[(bit / 8) as usize];
+        let mask = !(1 << (7 - bit % 8));
+        n & mask > 0
+    }
+
     pub fn set_bit(&mut self, bit: u8, value: bool) {
         let n = &mut self.0[(bit / 8) as usize];
         if value {

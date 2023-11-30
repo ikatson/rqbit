@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, time::Instant};
 
 use librqbit_core::id20::Id20;
+use rand::RngCore;
 use serde::{
     ser::{SerializeMap, SerializeStruct},
     Deserialize, Serialize, Serializer,
@@ -10,9 +11,9 @@ use tracing::debug;
 use crate::INACTIVITY_TIMEOUT;
 
 #[derive(Clone, Debug)]
-struct LeafBucket {
-    nodes: Vec<RoutingTableNode>,
-    last_refreshed: Instant,
+pub struct LeafBucket {
+    pub nodes: Vec<RoutingTableNode>,
+    pub last_refreshed: Instant,
 }
 
 impl Serialize for LeafBucket {
@@ -177,59 +178,68 @@ impl Serialize for BucketTree {
     }
 }
 
-pub struct BucketTreeIterator<'a> {
+pub struct BucketTreeIteratorItem<'a> {
+    pub bits: u8,
+    pub start: &'a Id20,
+    pub end_inclusive: &'a Id20,
+    pub leaf: &'a LeafBucket,
+}
+
+impl<'a> BucketTreeIteratorItem<'a> {
+    pub fn random_within(&self) -> Id20 {
+        generate_random_id(self.start, self.bits)
+    }
+}
+
+struct BucketTreeIterator<'a> {
     tree: &'a BucketTree,
-    current: std::slice::Iter<'a, RoutingTableNode>,
     queue: Vec<usize>,
 }
 
 impl<'a> BucketTreeIterator<'a> {
     fn new(tree: &'a BucketTree) -> Self {
-        let mut queue = Vec::new();
-        let mut current = 0;
-        let current_slice = loop {
-            match &tree.data[current].data {
-                BucketTreeNodeData::Leaf(leaf) => break leaf.nodes.iter(),
-                BucketTreeNodeData::LeftRight(left, right) => {
-                    queue.push(*right);
-                    current = *left;
-                }
-            }
-        };
-        BucketTreeIterator {
-            tree,
-            current: current_slice,
-            queue,
-        }
+        let queue = vec![0];
+        BucketTreeIterator { tree, queue }
     }
 }
 
 impl<'a> Iterator for BucketTreeIterator<'a> {
-    type Item = &'a RoutingTableNode;
+    type Item = BucketTreeIteratorItem<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(v) = self.current.next() {
-            return Some(v);
-        };
-
         loop {
             let idx = self.queue.pop()?;
-            match &self.tree.data[idx].data {
-                BucketTreeNodeData::Leaf(leaf) => {
-                    self.current = leaf.nodes.iter();
-                    match self.current.next() {
-                        Some(v) => return Some(v),
-                        None => continue,
+            match self.tree.data.get(idx) {
+                Some(node) => match &node.data {
+                    BucketTreeNodeData::Leaf(leaf) => {
+                        return Some(BucketTreeIteratorItem {
+                            bits: node.bits,
+                            start: &node.start,
+                            end_inclusive: &node.end_inclusive,
+                            leaf,
+                        });
                     }
-                }
-                BucketTreeNodeData::LeftRight(left, right) => {
-                    self.queue.push(*right);
-                    self.queue.push(*left);
-                    continue;
-                }
+                    BucketTreeNodeData::LeftRight(left, right) => {
+                        self.queue.push(*right);
+                        self.queue.push(*left);
+                        continue;
+                    }
+                },
+                None => continue,
             }
         }
     }
+}
+
+pub fn generate_random_id(start: &Id20, bits: u8) -> Id20 {
+    let mut data = [0u8; 20];
+    rand::thread_rng().fill_bytes(&mut data);
+    let mut data = Id20(data);
+    let remaining_bits = 160 - bits;
+    for bit in 0..remaining_bits {
+        data.set_bit(bit, start.get_bit(bit));
+    }
+    data
 }
 
 fn compute_split_start_end(
@@ -297,8 +307,13 @@ impl BucketTree {
             }],
         }
     }
-    pub fn iter(&self) -> BucketTreeIterator<'_> {
+
+    fn iter_leaves(&self) -> BucketTreeIterator<'_> {
         BucketTreeIterator::new(self)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &'_ RoutingTableNode> + '_ {
+        self.iter_leaves().flat_map(|l| l.leaf.nodes.iter())
     }
 
     fn get_leaf(&self, id: &Id20) -> usize {
@@ -600,6 +615,10 @@ impl RoutingTable {
         }
         result.sort_by_key(|n| id.distance(&n.id));
         result
+    }
+
+    pub fn iter_buckets(&self) -> impl Iterator<Item = BucketTreeIteratorItem<'_>> + '_ {
+        self.buckets.iter_leaves()
     }
 
     pub fn add_node(
