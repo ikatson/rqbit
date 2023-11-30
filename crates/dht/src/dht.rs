@@ -662,6 +662,7 @@ impl DhtState {
             }
             MessageKind::GetPeersRequest(req) => {
                 // TODO: respond with peer info, for now sending an empty response.
+                let compact_node_info = generate_compact_nodes(req.info_hash);
                 self.routing_table.write().mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
@@ -669,6 +670,7 @@ impl DhtState {
                     ip: None,
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
+                        nodes: Some(compact_node_info),
                         ..Default::default()
                     }),
                 };

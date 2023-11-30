@@ -505,11 +505,10 @@ const FileSelectionModal = (props: {
 
     const handleUpload = async () => {
         setUploading(true);
-        API.uploadTorrent(data, { selectedFiles, unpopularTorrent }).then(
-            () => {
-                onHide();
-                ctx.refreshTorrents();
-            },
+        API.uploadTorrent(data, { selectedFiles, unpopularTorrent }).then(() => {
+            onHide();
+            ctx.refreshTorrents();
+        },
             (e) => {
                 setUploadError({ text: 'Error starting torrent', details: e });
             }
