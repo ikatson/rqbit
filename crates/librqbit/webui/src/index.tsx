@@ -438,7 +438,7 @@ const MagnetInput = () => {
     };
 
     return (
-        <UploadButton variant='primary' buttonText="Add Torrent from Magnet Link" onClick={onClick} data={magnet} resetData={() => setMagnet(null)} />
+        <UploadButton variant='primary' buttonText="Add Torrent from Magnet / URL" onClick={onClick} data={magnet} resetData={() => setMagnet(null)} />
     );
 };
 
@@ -481,6 +481,7 @@ const FileSelectionModal = (props: {
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<Error>(null);
+    const [unpopularTorrent, setUnpopularTorrent] = useState(false);
     const ctx = useContext(AppContext);
 
     useEffect(() => {
@@ -504,7 +505,7 @@ const FileSelectionModal = (props: {
 
     const handleUpload = async () => {
         setUploading(true);
-        API.uploadTorrent(data, { selectedFiles }).then(
+        API.uploadTorrent(data, { selectedFiles, unpopularTorrent }).then(
             () => {
                 onHide();
                 ctx.refreshTorrents();
@@ -518,24 +519,43 @@ const FileSelectionModal = (props: {
     return (
         <Modal show={show} onHide={clear} size='lg'>
             <Modal.Header closeButton>
-                {!!fileListError || <Modal.Title>Select Files</Modal.Title>}
+                {!!fileListError || <Modal.Title>Add torrent</Modal.Title>}
             </Modal.Header>
             <Modal.Body>
-                {fileListLoading ? <Spinner />
-                    : fileListError ? <ErrorComponent error={fileListError}></ErrorComponent> :
-                        <Form>
-                            {fileList.map((file, index) => (
-                                <Form.Group key={index} controlId={`check-${index}`}>
-                                    <Form.Check
-                                        type="checkbox"
-                                        label={`${file.name}  (${formatBytes(file.length)})`}
-                                        checked={selectedFiles.includes(index)}
-                                        onChange={() => handleToggleFile(index)}>
-                                    </Form.Check>
-                                </Form.Group>
-                            ))}
-                        </Form>
-                }
+                <Form>
+                    <fieldset className='mb-5'>
+                        <legend>Pick the files to download</legend>
+                        {fileListLoading ? <Spinner />
+                            : fileListError ? <ErrorComponent error={fileListError}></ErrorComponent> :
+                                <>
+                                    {fileList.map((file, index) => (
+                                        <Form.Group key={index} controlId={`check-${index}`}>
+                                            <Form.Check
+                                                type="checkbox"
+                                                label={`${file.name}  (${formatBytes(file.length)})`}
+                                                checked={selectedFiles.includes(index)}
+                                                onChange={() => handleToggleFile(index)}>
+                                            </Form.Check>
+                                        </Form.Group>
+                                    ))}
+                                </>
+                        }
+                    </fieldset>
+                    <fieldset>
+                        <legend>Other options</legend>
+
+                        <Form.Group controlId='unpopular-torrent'>
+                            <Form.Check
+                                type="checkbox"
+                                label="Increase timeouts"
+                                checked={unpopularTorrent}
+                                onChange={() => setUnpopularTorrent(!unpopularTorrent)}>
+                            </Form.Check>
+                            <small id="emailHelp" className="form-text text-muted">This might be useful for unpopular torrents with few peers.</small>
+                        </Form.Group>
+                    </fieldset>
+
+                </Form>
                 <ErrorComponent error={uploadError} />
             </Modal.Body>
             <Modal.Footer>

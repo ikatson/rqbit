@@ -12,12 +12,14 @@ use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
+use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
 };
@@ -322,13 +324,15 @@ impl<'de> Deserialize<'de> for OnlyFiles {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,
     pub only_files_regex: Option<String>,
     pub only_files: Option<OnlyFiles>,
+    pub peer_connect_timeout: Option<u64>,
+    pub peer_read_write_timeout: Option<u64>,
     pub list_only: Option<bool>,
 }
 
@@ -341,6 +345,11 @@ impl TorrentAddQueryParams {
             output_folder: self.output_folder,
             sub_folder: self.sub_folder,
             list_only: self.list_only.unwrap_or(false),
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: self.peer_connect_timeout.map(Duration::from_secs),
+                read_write_timeout: self.peer_read_write_timeout.map(Duration::from_secs),
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }

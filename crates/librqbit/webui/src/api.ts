@@ -147,7 +147,7 @@ export const API = {
     },
 
     uploadTorrent: (data: string | File, opts?: {
-        listOnly?: boolean, selectedFiles?: Array<number>
+        listOnly?: boolean, selectedFiles?: Array<number>, unpopularTorrent?: boolean,
     }): Promise<AddTorrentResponse> => {
         opts = opts || {};
         let url = '/torrents?&overwrite=true';
@@ -156,6 +156,9 @@ export const API = {
         }
         if (opts.selectedFiles != null) {
             url += `&only_files=${opts.selectedFiles.join(',')}`;
+        }
+        if (opts.unpopularTorrent) {
+            url += '&peer_connect_timeout=20&peer_read_write_timeout=60';
         }
         return makeRequest('POST', url, data)
     },
