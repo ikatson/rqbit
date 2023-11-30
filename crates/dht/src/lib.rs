@@ -1,5 +1,6 @@
 mod bprotocol;
 mod dht;
+mod peer_store;
 mod persistence;
 mod routing_table;
 mod utils;

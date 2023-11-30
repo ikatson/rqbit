@@ -328,6 +328,15 @@ pub struct PingRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AnnouncePeer<BufT> {
+    pub id: Id20,
+    pub implied_port: u8,
+    pub info_hash: Id20,
+    pub port: u16,
+    pub token: BufT,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(bound(serialize = "BufT: AsRef<[u8]> + Serialize"))]
 #[serde(bound(deserialize = "BufT: From<&'de [u8]> + Deserialize<'de>"))]
 pub struct GetPeersResponse<BufT> {
@@ -364,6 +373,7 @@ pub enum MessageKind<BufT> {
     FindNodeRequest(FindNodeRequest),
     Response(Response<BufT>),
     PingRequest(PingRequest),
+    AnnouncePeer(AnnouncePeer<BufT>),
 }
 
 impl<BufT: core::fmt::Debug> core::fmt::Debug for MessageKind<BufT> {
@@ -374,6 +384,7 @@ impl<BufT: core::fmt::Debug> core::fmt::Debug for MessageKind<BufT> {
             Self::FindNodeRequest(r) => write!(f, "{r:?}"),
             Self::Response(r) => write!(f, "{r:?}"),
             Self::PingRequest(r) => write!(f, "{r:?}"),
+            Self::AnnouncePeer(r) => write!(f, "{r:?}"),
         }
     }
 }
@@ -452,6 +463,19 @@ pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(
             };
             Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
         }
+        MessageKind::AnnouncePeer(announce) => {
+            let msg: RawMessage<BufT, _, ()> = RawMessage {
+                message_type: MessageType::Request,
+                transaction_id,
+                error: None,
+                response: None,
+                method_name: Some(BufT::from(b"announce_peer")),
+                arguments: Some(announce),
+                ip,
+                version,
+            };
+            Ok(bencode::bencode_serialize_to_writer(msg, writer)?)
+        }
     }
 }
 
@@ -488,6 +512,15 @@ where
                         version: de.version,
                         ip: de.ip.map(|c| c.addr),
                         kind: MessageKind::PingRequest(de.arguments.unwrap()),
+                    })
+                }
+                b"announce_peer" => {
+                    let de: RawMessage<BufT, AnnouncePeer<BufT>> = bencode::from_bytes(buf)?;
+                    Ok(Message {
+                        transaction_id: de.transaction_id,
+                        version: de.version,
+                        ip: de.ip.map(|c| c.addr),
+                        kind: MessageKind::AnnouncePeer(de.arguments.unwrap())
                     })
                 }
                 other => anyhow::bail!("unsupported method {:?}", ByteBuf(other)),
@@ -650,6 +683,22 @@ mod tests {
     #[test]
     fn deserialize_request_what_is_that() {
         test_deserialize_then_serialize_hex(WHAT_IS_THAT, "what_is_that")
+    }
+
+    #[test]
+    fn test_announce() {
+        let ann = b"d1:ad2:id20:abcdefghij012345678912:implied_porti1e9:info_hash20:mnopqrstuvwxyz1234564:porti6881e5:token8:aoeusnthe1:q13:announce_peer1:t2:aa1:y1:qe";
+        let msg = bprotocol::deserialize_message::<ByteBuf>(ann).unwrap();
+        match &msg.kind {
+            bprotocol::MessageKind::AnnouncePeer(ann) => {
+                dbg!(&ann);
+            }
+            _ => panic!("wrong kind"),
+        }
+        let mut buf = Vec::new();
+        bprotocol::serialize_message(&mut buf, msg.transaction_id, msg.version, msg.ip, msg.kind)
+            .unwrap();
+        assert_eq!(ann[..], buf[..]);
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::{
         self, CompactNodeInfo, ErrorDescription, FindNodeRequest, GetPeersRequest, Message,
         MessageKind, Node, PingRequest, Response,
     },
+    peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
     INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
 };
@@ -488,6 +489,8 @@ pub struct DhtState {
     rate_limiter: RateLimiter,
     // This is to send raw messages
     worker_sender: UnboundedSender<WorkerSendRequest>,
+
+    peer_store: PeerStore,
 }
 
 impl DhtState {
@@ -506,6 +509,7 @@ impl DhtState {
             worker_sender: sender,
             listen_addr,
             rate_limiter: make_rate_limiter(),
+            peer_store: PeerStore::new(id),
         }
     }
 
@@ -660,9 +664,29 @@ impl DhtState {
                 })?;
                 Ok(())
             }
+            MessageKind::AnnouncePeer(ann) => {
+                self.routing_table.write().mark_last_query(&ann.id);
+                let added = self.peer_store.store_peer(ann, addr);
+                trace!("{addr}: added_peer={added}, announce={ann:?}");
+                let message = Message {
+                    transaction_id: msg.transaction_id,
+                    version: None,
+                    ip: None,
+                    kind: MessageKind::Response(bprotocol::Response {
+                        id: self.id,
+                        ..Default::default()
+                    }),
+                };
+                self.worker_sender.send(WorkerSendRequest {
+                    our_tid: None,
+                    message,
+                    addr,
+                })?;
+                Ok(())
+            }
             MessageKind::GetPeersRequest(req) => {
-                // TODO: respond with peer info, for now sending an empty response.
                 let compact_node_info = generate_compact_nodes(req.info_hash);
+                let compact_peer_info = self.peer_store.get_for_info_hash(req.info_hash);
                 self.routing_table.write().mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
@@ -671,7 +695,10 @@ impl DhtState {
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
                         nodes: Some(compact_node_info),
-                        ..Default::default()
+                        values: Some(compact_peer_info),
+                        token: Some(ByteString(
+                            self.peer_store.gen_token_for(req.id, addr).to_vec(),
+                        )),
                     }),
                 };
                 self.worker_sender.send(WorkerSendRequest {
