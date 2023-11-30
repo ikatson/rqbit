@@ -721,10 +721,18 @@ enum Request {
     Ping,
 }
 
-#[derive(Debug)]
 enum ResponseOrError {
     Response(Response<ByteString>),
     Error(ErrorDescription<ByteString>),
+}
+
+impl core::fmt::Debug for ResponseOrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Response(r) => write!(f, "{r:?}"),
+            Self::Error(e) => write!(f, "{e:?}"),
+        }
+    }
 }
 
 struct DhtWorker {

@@ -170,7 +170,7 @@ pub struct Node {
 
 impl core::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<{:?}; {}>", self.id, self.addr)
+        write!(f, "{}={:?}", self.addr, self.id)
     }
 }
 
