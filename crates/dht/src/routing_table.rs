@@ -541,26 +541,29 @@ impl RoutingTableNode {
     }
     pub fn status(&self) -> NodeStatus {
         match (self.last_request, self.last_response, self.last_query) {
-            (None, _, _) => NodeStatus::Unknown,
             // Nodes become bad when they fail to respond to multiple queries in a row.
             (Some(_), _, _) if self.errors_in_a_row >= 2 => NodeStatus::Bad,
 
             // A good node is a node has responded to one of our queries within the last 15 minutes.
             // A node is also good if it has ever responded to one of our queries and has sent
             // us a query within the last 15 minutes.
-            (Some(_), Some(last_activity), _) | (Some(_), Some(_), Some(last_activity))
-                if last_activity.elapsed() < INACTIVITY_TIMEOUT =>
+            (Some(_), Some(last_incoming), _) | (Some(_), Some(_), Some(last_incoming))
+                if last_incoming.elapsed() < INACTIVITY_TIMEOUT =>
             {
                 NodeStatus::Good
             }
 
-            // After 15 minutes of inactivity, a node becomes questionable
-            (_, _, Some(last_activity)) | (_, Some(last_activity), _)
-                if last_activity.elapsed() > INACTIVITY_TIMEOUT =>
+            // After 15 minutes of inactivity, a node becomes questionable.
+            // The moment we send a request to it, it stops becoming questionable and becomes Unknown / Bad.
+            (last_outgoing, _, Some(last_incoming)) | (last_outgoing, Some(last_incoming), _)
+                if last_incoming.elapsed() > INACTIVITY_TIMEOUT
+                    && last_outgoing
+                        .map(|e| e.elapsed() > INACTIVITY_TIMEOUT)
+                        .unwrap_or(true) =>
             {
                 NodeStatus::Questionable
             }
-            (Some(_), _, _) => NodeStatus::Unknown,
+            _ => NodeStatus::Unknown,
         }
     }
 
@@ -613,7 +616,16 @@ impl RoutingTable {
         for node in self.buckets.iter() {
             result.push(node);
         }
-        result.sort_by_key(|n| id.distance(&n.id));
+        result.sort_by_key(|n| {
+            // Query decent nodes first.
+            let status = match n.status() {
+                NodeStatus::Good => 0,
+                NodeStatus::Questionable => 0,
+                NodeStatus::Unknown => 2,
+                NodeStatus::Bad => 3,
+            };
+            (status, id.distance(&n.id))
+        });
         result
     }
 

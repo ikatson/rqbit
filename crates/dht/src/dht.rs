@@ -137,12 +137,14 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
 }
 
 struct RecursiveRequest<C: RecursiveRequestCallbacks> {
+    max_depth: usize,
+    useful_nodes_limit: usize,
     info_hash: Id20,
     request: Request,
     dht: Arc<DhtState>,
     useful_nodes: RwLock<Vec<MaybeUsefulNode>>,
     peer_tx: tokio::sync::mpsc::UnboundedSender<SocketAddr>,
-    node_tx: tokio::sync::mpsc::UnboundedSender<(Option<Id20>, SocketAddr)>,
+    node_tx: tokio::sync::mpsc::UnboundedSender<(Option<Id20>, SocketAddr, usize)>,
     callbacks: C,
 }
 
@@ -156,7 +158,9 @@ impl RequestPeersStream {
         let (peer_tx, peer_rx) = unbounded_channel();
         let (node_tx, node_rx) = unbounded_channel();
         let rp = Arc::new(RecursiveRequest {
+            max_depth: 4,
             info_hash,
+            useful_nodes_limit: 256,
             request: Request::GetPeers(info_hash),
             dht,
             useful_nodes: RwLock::new(Vec::new()),
@@ -197,17 +201,19 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
     ) -> anyhow::Result<()> {
         let (node_tx, mut node_rx) = unbounded_channel();
         let req = RecursiveRequest {
+            max_depth: 4,
             info_hash: target,
             request: Request::FindNode(target),
             dht,
+            useful_nodes_limit: 32,
             useful_nodes: RwLock::new(Vec::new()),
             peer_tx: unbounded_channel().0,
             node_tx,
             callbacks: RecursiveRequestCallbacksFindNodes {},
         };
 
-        let request_one = |id, addr| {
-            req.request_one(id, addr)
+        let request_one = |id, addr, depth| {
+            req.request_one(id, addr, depth)
                 .map_err(|e| {
                     debug!("error: {e:?}");
                     e
@@ -223,7 +229,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
 
         let mut initial_addrs = 0;
         for addr in addrs {
-            futs.push(request_one(None, addr));
+            futs.push(request_one(None, addr, 0));
             initial_addrs += 1;
         }
 
@@ -235,8 +241,8 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
                 biased;
 
                 r = node_rx.recv() => {
-                    let (id, addr) = r.unwrap();
-                    futs.push(request_one(id, addr))
+                    let (id, addr, depth) = r.unwrap();
+                    futs.push(request_one(id, addr, depth))
                 },
                 f = futs.next() => {
                     let f = match f {
@@ -267,7 +273,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
 impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
     fn request_peers_forever(
         self: &Arc<Self>,
-        mut node_rx: tokio::sync::mpsc::UnboundedReceiver<(Option<Id20>, SocketAddr)>,
+        mut node_rx: tokio::sync::mpsc::UnboundedReceiver<(Option<Id20>, SocketAddr, usize)>,
     ) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
         spawn(
@@ -300,9 +306,9 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                 loop {
                     tokio::select! {
                         addr = node_rx.recv() => {
-                            let (id, addr) = addr.unwrap();
+                            let (id, addr, depth) = addr.unwrap();
                             futs.push(
-                                this.request_one(id, addr)
+                                this.request_one(id, addr, depth)
                                     .map_err(|e| debug!("error: {e:?}"))
                                     .instrument(error_span!("addr", addr=addr.to_string()))
                             );
@@ -327,14 +333,19 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
             .take(8)
         {
             count += 1;
-            self.node_tx.send((Some(id), addr))?;
+            self.node_tx.send((Some(id), addr, 0))?;
         }
         Ok(count)
     }
 }
 
 impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
-    async fn request_one(&self, id: Option<Id20>, addr: SocketAddr) -> anyhow::Result<()> {
+    async fn request_one(
+        &self,
+        id: Option<Id20>,
+        addr: SocketAddr,
+        depth: usize,
+    ) -> anyhow::Result<()> {
         if let Some(id) = id {
             self.callbacks.on_request_start(self, id, addr);
         }
@@ -365,15 +376,17 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
         if let Some(nodes) = response.nodes {
             for node in nodes.nodes {
                 let addr = SocketAddr::V4(node.addr);
-                let should_request = self.should_request_node(node.id, addr);
+                let should_request = self.should_request_node(node.id, addr, depth);
                 trace!(
-                    "should_request={}, id={:?}, addr={}",
+                    "should_request={}, id={:?}, addr={}, depth={}/{}",
                     should_request,
                     node.id,
-                    addr
+                    addr,
+                    depth,
+                    self.max_depth
                 );
                 if should_request {
-                    self.node_tx.send((Some(node.id), addr))?;
+                    self.node_tx.send((Some(node.id), addr, depth + 1))?;
                 }
             }
         }
@@ -412,7 +425,11 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .is_some()
     }
 
-    fn should_request_node(&self, node_id: Id20, addr: SocketAddr) -> bool {
+    fn should_request_node(&self, node_id: Id20, addr: SocketAddr, depth: usize) -> bool {
+        if depth >= self.max_depth {
+            return false;
+        }
+
         let mut closest_nodes = self.useful_nodes.write();
 
         // If recently requested, ignore
@@ -433,7 +450,6 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             errors_in_a_row: 0,
         });
 
-        const LIMIT: usize = 256;
         closest_nodes.sort_by_key(|n| {
             let has_returned_peers_desc = Reverse(n.returned_peers);
             let has_responded_desc = Reverse(n.last_response.is_some() as u8);
@@ -449,7 +465,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
                 freshest_response,
             )
         });
-        if closest_nodes.len() > LIMIT {
+        if closest_nodes.len() > self.useful_nodes_limit {
             let popped = closest_nodes.pop().unwrap();
             if popped.id == node_id {
                 return false;
@@ -506,7 +522,7 @@ impl DhtState {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inflight_by_transaction_id
             .insert(key, OutstandingRequest { done: tx });
-        trace!("sending to {addr}, {message:?}");
+        trace!("sending {message:?}");
         match self.worker_sender.send(WorkerSendRequest {
             our_tid: Some(tid),
             message,
@@ -827,7 +843,7 @@ impl DhtWorker {
                     futs.push(
                         RecursiveRequest::find_node_for_routing_table(
                             self.dht.clone(), random_id, addrs.into_iter()
-                        ).instrument(error_span!("refresh_bucket", random_id=format!("{:?}", random_id)))
+                        ).instrument(error_span!("refresh_bucket"))
                     );
                 },
                 _ = futs.next(), if !futs.is_empty() => {},
