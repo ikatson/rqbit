@@ -497,7 +497,7 @@ impl DhtState {
         routing_table: Option<RoutingTable>,
         listen_addr: SocketAddr,
     ) -> Self {
-        let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id));
+        let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id, None));
         Self {
             id,
             next_transaction_id: AtomicU16::new(0),
@@ -798,7 +798,7 @@ impl DhtWorker {
         let mut futs = FuturesUnordered::new();
         let filler = async {
             let mut interval = tokio::time::interval(INACTIVITY_TIMEOUT);
-            tokio::time::sleep(INACTIVITY_TIMEOUT).await;
+            interval.tick().await;
             let mut iteration = 0;
             loop {
                 interval.tick().await;
