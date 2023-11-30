@@ -163,15 +163,25 @@ struct RawMessage<BufT, Args = IgnoredAny, Resp = IgnoredAny> {
     ip: Option<CompactPeerInfo>,
 }
 
-#[derive(Debug)]
 pub struct Node {
     pub id: Id20,
     pub addr: SocketAddrV4,
 }
 
-#[derive(Debug)]
+impl core::fmt::Debug for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<{:?}; {}>", self.id, self.addr)
+    }
+}
+
 pub struct CompactNodeInfo {
     pub nodes: Vec<Node>,
+}
+
+impl core::fmt::Debug for CompactNodeInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.nodes)
+    }
 }
 
 impl Serialize for CompactNodeInfo {
@@ -230,9 +240,14 @@ impl<'de> Deserialize<'de> for CompactNodeInfo {
     }
 }
 
-#[derive(Debug)]
 pub struct CompactPeerInfo {
     pub addr: SocketAddrV4,
+}
+
+impl core::fmt::Debug for CompactPeerInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.addr)
+    }
 }
 
 impl Serialize for CompactPeerInfo {
@@ -343,13 +358,24 @@ impl Message<ByteString> {
     }
 }
 
-#[derive(Debug)]
 pub enum MessageKind<BufT> {
     Error(ErrorDescription<BufT>),
     GetPeersRequest(GetPeersRequest),
     FindNodeRequest(FindNodeRequest),
     Response(Response<BufT>),
     PingRequest(PingRequest),
+}
+
+impl<BufT: core::fmt::Debug> core::fmt::Debug for MessageKind<BufT> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Error(e) => write!(f, "{e:?}"),
+            Self::GetPeersRequest(r) => write!(f, "{r:?}"),
+            Self::FindNodeRequest(r) => write!(f, "{r:?}"),
+            Self::Response(r) => write!(f, "{r:?}"),
+            Self::PingRequest(r) => write!(f, "{r:?}"),
+        }
+    }
 }
 
 pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(

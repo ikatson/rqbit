@@ -638,7 +638,7 @@ impl DhtState {
             _ => {}
         };
 
-        trace!("received query: {:?}", msg);
+        trace!("received query from {addr}: {msg:?}");
 
         match &msg.kind {
             // Otherwise, respond to a query.
