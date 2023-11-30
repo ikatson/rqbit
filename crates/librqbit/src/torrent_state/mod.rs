@@ -15,6 +15,7 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
+use dht::RequestPeersStream;
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::Lengths;
 use librqbit_core::peer_id::generate_peer_id;
@@ -165,7 +166,7 @@ impl ManagedTorrent {
     pub fn start(
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
-        peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+        peer_rx: Option<RequestPeersStream>,
         start_paused: bool,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
@@ -195,7 +196,7 @@ impl ManagedTorrent {
         fn spawn_peer_adder(
             live: &Arc<TorrentStateLive>,
             initial_peers: Vec<SocketAddr>,
-            peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+            peer_rx: Option<RequestPeersStream>,
         ) {
             let span = live.meta().span.clone();
             let live = Arc::downgrade(live);

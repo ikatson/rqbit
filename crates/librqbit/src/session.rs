@@ -12,7 +12,7 @@ use std::{
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::ByteString;
-use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig};
+use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream};
 use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_peer_id,
@@ -21,7 +21,6 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tokio_stream::StreamExt;
 use tracing::{debug, error, error_span, info, warn};
 
 use crate::{
@@ -451,7 +450,7 @@ impl Session {
 
     pub async fn add_torrent(
         &self,
-        add: impl Into<AddTorrent<'_>>,
+        add: AddTorrent<'_>,
         opts: Option<AddTorrentOptions>,
     ) -> anyhow::Result<AddTorrentResponse> {
         // Magnet links are different in that we first need to discover the metadata.
@@ -502,7 +501,11 @@ impl Session {
                 (
                     info_hash,
                     info,
-                    if opts.paused { None } else { Some(dht_rx) },
+                    if opts.paused || opts.list_only {
+                        None
+                    } else {
+                        Some(dht_rx)
+                    },
                     trackers,
                     initial_peers,
                 )
@@ -527,7 +530,7 @@ impl Session {
                 };
 
                 let dht_rx = match self.dht.as_ref() {
-                    Some(dht) if !opts.paused => {
+                    Some(dht) if !opts.paused && !opts.list_only => {
                         debug!("reading peers for {:?} from DHT", torrent.info_hash);
                         Some(dht.get_peers(torrent.info_hash)?)
                     }
@@ -578,7 +581,7 @@ impl Session {
         &self,
         info_hash: Id20,
         info: TorrentMetaV1Info<ByteString>,
-        dht_peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+        dht_peer_rx: Option<RequestPeersStream>,
         initial_peers: Vec<SocketAddr>,
         trackers: Vec<reqwest::Url>,
         opts: AddTorrentOptions,

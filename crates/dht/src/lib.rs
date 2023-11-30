@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use crate::dht::DhtStats;
-pub use crate::dht::{DhtConfig, DhtState};
+pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
 pub use librqbit_core::id20::Id20;
 pub use persistence::{PersistentDht, PersistentDhtConfig};
 

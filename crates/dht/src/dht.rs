@@ -145,7 +145,7 @@ struct RecursiveRequest<C: RecursiveRequestCallbacks> {
     callbacks: C,
 }
 
-struct RequestPeersStream {
+pub struct RequestPeersStream {
     rx: tokio::sync::mpsc::UnboundedReceiver<SocketAddr>,
     cancel_join_handle: tokio::task::JoinHandle<()>,
 }
@@ -959,10 +959,7 @@ impl DhtState {
         Ok(state)
     }
 
-    pub fn get_peers(
-        self: &Arc<Self>,
-        info_hash: Id20,
-    ) -> anyhow::Result<impl Stream<Item = SocketAddr> + Unpin> {
+    pub fn get_peers(self: &Arc<Self>, info_hash: Id20) -> anyhow::Result<RequestPeersStream> {
         Ok(RequestPeersStream::new(self.clone(), info_hash))
     }
 
