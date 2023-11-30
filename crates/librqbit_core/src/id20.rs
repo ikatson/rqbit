@@ -104,7 +104,7 @@ impl Id20 {
     }
     pub fn get_bit(&self, bit: u8) -> bool {
         let n = self.0[(bit / 8) as usize];
-        let mask = !(1 << (7 - bit % 8));
+        let mask = 1 << (7 - bit % 8);
         n & mask > 0
     }
 

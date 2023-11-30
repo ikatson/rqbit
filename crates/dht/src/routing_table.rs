@@ -682,7 +682,7 @@ mod tests {
 
     use crate::routing_table::compute_split_start_end;
 
-    use super::RoutingTable;
+    use super::{generate_random_id, RoutingTable};
 
     #[test]
     fn compute_split_start_end_root() {
@@ -789,5 +789,16 @@ mod tests {
         let table = generate_table(Some(1000));
         let v = serde_json::to_vec(&table).unwrap();
         let _: RoutingTable = serde_json::from_reader(Cursor::new(v)).unwrap();
+    }
+
+    #[test]
+    fn test_generate_random_id() {
+        let start = Id20::from_str("3000000000000000000000000000000000000000").unwrap();
+        let end = Id20::from_str("3fffffffffffffffffffffffffffffffffffffff").unwrap();
+        let bits = 156;
+        for _ in 0..100 {
+            let id = dbg!(generate_random_id(&start, bits));
+            assert!(id >= start && id <= end, "{:?}", id);
+        }
     }
 }
