@@ -355,7 +355,6 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
                 return Err(e);
             }
         };
-        trace!("received {response:?}");
 
         if let Some(peers) = response.values {
             for peer in peers {
@@ -520,7 +519,10 @@ impl DhtState {
             }
         };
         match tokio::time::timeout(RESPONSE_TIMEOUT, rx).await {
-            Ok(Ok(r)) => r,
+            Ok(Ok(r)) => r.map(|r| {
+                trace!("received {r:?}");
+                r
+            }),
             Ok(Err(e)) => {
                 self.inflight_by_transaction_id.remove(&key);
                 warn!("recv error, did not expect this: {:?}", e);
@@ -621,8 +623,14 @@ impl DhtState {
                         );
                     }
                 }
-                Ok(())
+                return Ok(());
             }
+            _ => {}
+        };
+
+        trace!("received query: {:?}", msg);
+
+        match &msg.kind {
             // Otherwise, respond to a query.
             MessageKind::PingRequest(req) => {
                 let message = Message {
@@ -681,6 +689,7 @@ impl DhtState {
                 })?;
                 Ok(())
             }
+            _ => unreachable!(),
         }
     }
 
@@ -848,7 +857,7 @@ impl DhtWorker {
                         }
                     }.instrument(error_span!("ping", addr=addr.to_string())))
                 },
-                _ = futs.next() => {},
+                _ = futs.next(), if !futs.is_empty() => {},
             }
         }
     }
@@ -898,13 +907,10 @@ impl DhtWorker {
                     .await
                     .context("error reading from UDP socket")?;
                 match bprotocol::deserialize_message::<ByteString>(&buf[..size]) {
-                    Ok(msg) => {
-                        trace!("{}: received {:?}", addr, &msg);
-                        match output_tx.send((msg, addr)).await {
-                            Ok(_) => {}
-                            Err(_) => break,
-                        }
-                    }
+                    Ok(msg) => match output_tx.send((msg, addr)).await {
+                        Ok(_) => {}
+                        Err(_) => break,
+                    },
                     Err(e) => debug!("{}: error deserializing incoming message: {}", addr, e),
                 }
             }
