@@ -353,6 +353,22 @@ impl Session {
         self.dht.as_ref()
     }
 
+    fn merge_peer_opts(&self, other: Option<PeerConnectionOptions>) -> PeerConnectionOptions {
+        let other = match other {
+            Some(o) => o,
+            None => self.peer_opts,
+        };
+        PeerConnectionOptions {
+            connect_timeout: other.connect_timeout.or(self.peer_opts.connect_timeout),
+            read_write_timeout: other
+                .read_write_timeout
+                .or(self.peer_opts.read_write_timeout),
+            keep_alive_interval: other
+                .keep_alive_interval
+                .or(self.peer_opts.keep_alive_interval),
+        }
+    }
+
     async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {
         let mut rdr = match std::fs::File::open(&self.persistence_filename) {
             Ok(f) => BufReader::new(f),
@@ -459,7 +475,7 @@ impl Session {
 
         let opts = opts.unwrap_or_default();
 
-        let (info_hash, info, dht_rx, trackers, initial_peers) = match add.into() {
+        let (info_hash, info, dht_rx, trackers, initial_peers) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                 let Magnet {
                     info_hash,
@@ -488,7 +504,7 @@ impl Session {
                     self.peer_id,
                     info_hash,
                     dht_rx,
-                    Some(self.peer_opts),
+                    Some(self.merge_peer_opts(opts.peer_opts)),
                 )
                 .await
                 {
@@ -650,11 +666,13 @@ impl Session {
             builder.force_tracker_interval(interval);
         }
 
-        if let Some(t) = opts.peer_opts.unwrap_or(self.peer_opts).connect_timeout {
+        let peer_opts = self.merge_peer_opts(opts.peer_opts);
+
+        if let Some(t) = peer_opts.connect_timeout {
             builder.peer_connect_timeout(t);
         }
 
-        if let Some(t) = opts.peer_opts.unwrap_or(self.peer_opts).read_write_timeout {
+        if let Some(t) = peer_opts.read_write_timeout {
             builder.peer_read_write_timeout(t);
         }
 

@@ -38,7 +38,7 @@ pub enum WriterRequest {
     Disconnect,
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct PeerConnectionOptions {
     pub connect_timeout: Option<Duration>,
     pub read_write_timeout: Option<Duration>,
