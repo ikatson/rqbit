@@ -490,7 +490,7 @@ pub struct DhtState {
     // This is to send raw messages
     worker_sender: UnboundedSender<WorkerSendRequest>,
 
-    peer_store: PeerStore,
+    pub(crate) peer_store: PeerStore,
 }
 
 impl DhtState {
@@ -499,6 +499,7 @@ impl DhtState {
         sender: UnboundedSender<WorkerSendRequest>,
         routing_table: Option<RoutingTable>,
         listen_addr: SocketAddr,
+        peer_store: PeerStore,
     ) -> Self {
         let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id, None));
         Self {
@@ -509,7 +510,7 @@ impl DhtState {
             worker_sender: sender,
             listen_addr,
             rate_limiter: make_rate_limiter(),
-            peer_store: PeerStore::new(id),
+            peer_store,
         }
     }
 
@@ -1056,6 +1057,7 @@ pub struct DhtConfig {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
+    pub(crate) peer_store: Option<PeerStore>,
 }
 
 impl DhtState {
@@ -1089,6 +1091,7 @@ impl DhtState {
             in_tx,
             config.routing_table,
             listen_addr,
+            config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
         ));
 
         spawn(error_span!("dht"), {
