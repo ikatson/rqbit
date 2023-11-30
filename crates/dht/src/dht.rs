@@ -775,6 +775,10 @@ impl DhtWorker {
         Ok(())
     }
 
+    async fn bucket_refresher(&self) -> anyhow::Result<()> {
+        todo!()
+    }
+
     async fn pinger(&self, mut rx: UnboundedReceiver<(Id20, SocketAddr)>) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
         loop {
