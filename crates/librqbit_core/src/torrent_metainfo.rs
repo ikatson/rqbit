@@ -5,7 +5,7 @@ use bencode::BencodeDeserializer;
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use itertools::Either;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::id20::Id20;
 
@@ -51,18 +51,23 @@ impl<BufType> TorrentMetaV1<BufType> {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1Info<BufType> {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<BufType>,
     pub pieces: BufType,
     #[serde(rename = "piece length")]
     pub piece_length: u32,
 
     // Single-file mode
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub md5sum: Option<BufType>,
 
     // Multi-file mode
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
 }
 
@@ -180,7 +185,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
@@ -298,5 +303,24 @@ mod tests {
             torrent.info_hash.as_string(),
             "64a980abe6e448226bb930ba061592e44c3781a1"
         );
+    }
+
+    #[test]
+    fn test_serialize_then_deserialize_bencode() {
+        let mut buf = Vec::new();
+        std::fs::File::open(TORRENT_FILENAME)
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(&buf).unwrap().info;
+        let mut writer = Vec::new();
+        bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
+        let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
+            &mut BencodeDeserializer::new_from_buf(&writer),
+        )
+        .unwrap();
+
+        assert_eq!(torrent, deserialized);
     }
 }

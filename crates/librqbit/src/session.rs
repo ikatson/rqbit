@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::ByteString;
 use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig};
 use librqbit_core::{
@@ -19,7 +20,7 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, error_span, info, warn};
 
@@ -50,7 +51,7 @@ impl SessionDatabase {
 
     fn serialize(&self) -> SerializedSessionDatabase {
         SerializedSessionDatabase {
-            torrents: self
+            torrents_v2: self
                 .torrents
                 .values()
                 .map(|torrent| SerializedTorrent {
@@ -61,6 +62,7 @@ impl SessionDatabase {
                         .map(|u| u.to_string())
                         .collect(),
                     info_hash: torrent.info_hash().as_string(),
+                    info: torrent.info().info.clone(),
                     only_files: torrent.only_files.clone(),
                     is_paused: torrent.with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
                     output_folder: torrent.info().out_dir.clone(),
@@ -73,15 +75,46 @@ impl SessionDatabase {
 #[derive(Serialize, Deserialize)]
 struct SerializedTorrent {
     info_hash: String,
+    #[serde(
+        serialize_with = "serialize_torrent",
+        deserialize_with = "deserialize_torrent"
+    )]
+    info: TorrentMetaV1Info<ByteString>,
     trackers: HashSet<String>,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
     is_paused: bool,
 }
 
+fn serialize_torrent<S>(t: &TorrentMetaV1Info<ByteString>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use base64::{engine::general_purpose, Engine as _};
+    use serde::ser::Error;
+    let mut writer = Vec::new();
+    bencode_serialize_to_writer(t, &mut writer).map_err(S::Error::custom)?;
+    let s = general_purpose::STANDARD_NO_PAD.encode(&writer);
+    s.serialize(serializer)
+}
+
+fn deserialize_torrent<'de, D>(deserializer: D) -> Result<TorrentMetaV1Info<ByteString>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use base64::{engine::general_purpose, Engine as _};
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    let b = general_purpose::STANDARD_NO_PAD
+        .decode(s)
+        .map_err(D::Error::custom)?;
+    TorrentMetaV1Info::<ByteString>::deserialize(&mut BencodeDeserializer::new_from_buf(&b))
+        .map_err(D::Error::custom)
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedSessionDatabase {
-    torrents: Vec<SerializedTorrent>,
+    torrents_v2: Vec<SerializedTorrent>,
 }
 
 pub struct Session {
@@ -171,6 +204,7 @@ pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>
 pub enum AddTorrent<'a> {
     Url(Cow<'a, str>),
     TorrentFileBytes(Cow<'a, [u8]>),
+    TorrentInfo(Box<TorrentMetaV1Owned>),
 }
 
 impl<'a> AddTorrent<'a> {
@@ -201,6 +235,7 @@ impl<'a> AddTorrent<'a> {
         match self {
             Self::Url(s) => s.into_owned().into_bytes(),
             Self::TorrentFileBytes(b) => b.into_owned(),
+            Self::TorrentInfo(_) => unimplemented!(),
         }
     }
 }
@@ -309,18 +344,33 @@ impl Session {
         let db: SerializedSessionDatabase =
             serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
         let mut futures = Vec::new();
-        for storrent in db.torrents.into_iter() {
-            let magnet = Magnet {
-                info_hash: Id20::from_str(&storrent.info_hash)
-                    .context("error deserializing info_hash")?,
-                trackers: storrent.trackers.into_iter().collect(),
+        for storrent in db.torrents_v2.into_iter() {
+            let trackers: Vec<ByteString> = storrent
+                .trackers
+                .into_iter()
+                .map(|t| ByteString(t.into_bytes()))
+                .collect();
+            let info = TorrentMetaV1Owned {
+                announce: trackers
+                    .get(0)
+                    .cloned()
+                    .unwrap_or_else(|| ByteString(b"http://retracker.local/announce".into())),
+                announce_list: vec![trackers],
+                info: storrent.info,
+                comment: None,
+                created_by: None,
+                encoding: None,
+                publisher: None,
+                publisher_url: None,
+                creation_date: None,
+                info_hash: Id20::from_str(&storrent.info_hash)?,
             };
             futures.push({
                 let session = self.clone();
                 async move {
                     session
                         .add_torrent(
-                            AddTorrent::Url(Cow::Owned(magnet.to_string())),
+                            AddTorrent::TorrentInfo(Box::new(info)),
                             Some(AddTorrentOptions {
                                 paused: storrent.is_paused,
                                 output_folder: Some(
@@ -442,6 +492,7 @@ impl Session {
                     AddTorrent::TorrentFileBytes(bytes) => {
                         torrent_from_bytes(&bytes).context("error decoding torrent")?
                     }
+                    AddTorrent::TorrentInfo(t) => *t,
                 };
 
                 let dht_rx = match self.dht.as_ref() {

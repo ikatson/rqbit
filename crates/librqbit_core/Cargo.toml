@@ -18,7 +18,7 @@ sha1-rust = ["bencode/sha1-rust"]
 
 [dependencies]
 tracing = "0.1.40"
-tokio = "1"
+tokio = {version = "1", features = ["rt-multi-thread"]}
 hex = "0.4"
 anyhow = "1"
 url = "2"
@@ -29,3 +29,6 @@ buffers = {path="../buffers", package="librqbit-buffers", version = "2.2.1"}
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 itertools = "0.12"
+
+[dev-dependencies]
+serde_json = "1"
