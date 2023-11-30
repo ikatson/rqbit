@@ -287,7 +287,7 @@ impl BucketTree {
         self_id: &Id20,
         id: Id20,
         addr: SocketAddr,
-        on_questionable_node: impl FnMut(SocketAddr) -> bool,
+        on_questionable_node: impl FnMut(Id20, SocketAddr) -> bool,
     ) -> InsertResult {
         let idx = self.get_leaf(&id);
         self.insert_into_leaf(idx, self_id, id, addr, on_questionable_node)
@@ -298,7 +298,7 @@ impl BucketTree {
         self_id: &Id20,
         id: Id20,
         addr: SocketAddr,
-        mut on_questionable_node: impl FnMut(SocketAddr) -> bool,
+        mut on_questionable_node: impl FnMut(Id20, SocketAddr) -> bool,
     ) -> InsertResult {
         // The loop here is for this case:
         // in case we split a node into two, and it degenerates into all the leaves
@@ -337,7 +337,7 @@ impl BucketTree {
                 .iter_mut()
                 .find(|r| matches!(r.status(), NodeStatus::Questionable))
             {
-                if on_questionable_node(questionable_node.addr) {
+                if on_questionable_node(questionable_node.id, questionable_node.addr) {
                     questionable_node.mark_outgoing_request();
                 }
             }
@@ -545,7 +545,7 @@ impl RoutingTable {
         &mut self,
         id: Id20,
         addr: SocketAddr,
-        on_questionable_node: impl FnMut(SocketAddr) -> bool,
+        on_questionable_node: impl FnMut(Id20, SocketAddr) -> bool,
     ) -> InsertResult {
         let res = self
             .buckets
@@ -690,7 +690,7 @@ mod tests {
         for _ in 0..length.unwrap_or(16536) {
             let other_id = random_id_20();
             let addr = generate_socket_addr();
-            rtable.add_node(other_id, addr, |_| false);
+            rtable.add_node(other_id, addr, |_, _| false);
         }
         rtable
     }
