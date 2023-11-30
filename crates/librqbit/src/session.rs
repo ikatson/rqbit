@@ -37,12 +37,27 @@ pub type TorrentId = usize;
 
 #[derive(Default)]
 pub struct SessionDatabase {
-    next_id: usize,
-    torrents: HashMap<usize, ManagedTorrentHandle>,
+    next_id: TorrentId,
+    torrents: HashMap<TorrentId, ManagedTorrentHandle>,
 }
 
 impl SessionDatabase {
-    fn add_torrent(&mut self, torrent: ManagedTorrentHandle) -> TorrentId {
+    fn add_torrent(
+        &mut self,
+        torrent: ManagedTorrentHandle,
+        preferred_id: Option<TorrentId>,
+    ) -> TorrentId {
+        match preferred_id {
+            Some(id) if self.torrents.contains_key(&id) => {
+                warn!("id {id} already present in DB, ignoring \"preferred_id\" parameter");
+            }
+            Some(id) => {
+                self.torrents.insert(id, torrent);
+                self.next_id = id.max(self.next_id).wrapping_add(1);
+                return id;
+            }
+            _ => {}
+        }
         let idx = self.next_id;
         self.torrents.insert(idx, torrent);
         self.next_id += 1;
@@ -53,19 +68,25 @@ impl SessionDatabase {
         SerializedSessionDatabase {
             torrents_v2: self
                 .torrents
-                .values()
-                .map(|torrent| SerializedTorrent {
-                    trackers: torrent
-                        .info()
-                        .trackers
-                        .iter()
-                        .map(|u| u.to_string())
-                        .collect(),
-                    info_hash: torrent.info_hash().as_string(),
-                    info: torrent.info().info.clone(),
-                    only_files: torrent.only_files.clone(),
-                    is_paused: torrent.with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
-                    output_folder: torrent.info().out_dir.clone(),
+                .iter()
+                .map(|(id, torrent)| {
+                    (
+                        *id,
+                        SerializedTorrent {
+                            trackers: torrent
+                                .info()
+                                .trackers
+                                .iter()
+                                .map(|u| u.to_string())
+                                .collect(),
+                            info_hash: torrent.info_hash().as_string(),
+                            info: torrent.info().info.clone(),
+                            only_files: torrent.only_files.clone(),
+                            is_paused: torrent
+                                .with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
+                            output_folder: torrent.info().out_dir.clone(),
+                        },
+                    )
                 })
                 .collect(),
         }
@@ -114,7 +135,7 @@ where
 
 #[derive(Serialize, Deserialize)]
 struct SerializedSessionDatabase {
-    torrents_v2: Vec<SerializedTorrent>,
+    torrents_v2: HashMap<usize, SerializedTorrent>,
 }
 
 pub struct Session {
@@ -172,6 +193,9 @@ pub struct AddTorrentOptions {
     pub sub_folder: Option<String>,
     pub peer_opts: Option<PeerConnectionOptions>,
     pub force_tracker_interval: Option<Duration>,
+
+    // This is used to restore the session.
+    pub preferred_id: Option<usize>,
 }
 
 pub struct ListOnlyResponse {
@@ -344,7 +368,7 @@ impl Session {
         let db: SerializedSessionDatabase =
             serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
         let mut futures = Vec::new();
-        for storrent in db.torrents_v2.into_iter() {
+        for (id, storrent) in db.torrents_v2.into_iter() {
             let trackers: Vec<ByteString> = storrent
                 .trackers
                 .into_iter()
@@ -382,6 +406,7 @@ impl Session {
                                 ),
                                 only_files: storrent.only_files,
                                 overwrite: true,
+                                preferred_id: Some(id),
                                 ..Default::default()
                             }),
                         )
@@ -474,7 +499,13 @@ impl Session {
                     }
                 };
                 debug!("received result from DHT: {:?}", info);
-                (info_hash, info, Some(dht_rx), trackers, initial_peers)
+                (
+                    info_hash,
+                    info,
+                    if opts.paused { None } else { Some(dht_rx) },
+                    trackers,
+                    initial_peers,
+                )
             }
             other => {
                 let torrent = match other {
@@ -496,11 +527,11 @@ impl Session {
                 };
 
                 let dht_rx = match self.dht.as_ref() {
-                    Some(dht) => {
+                    Some(dht) if !opts.paused => {
                         debug!("reading peers for {:?} from DHT", torrent.info_hash);
                         Some(dht.get_peers(torrent.info_hash)?)
                     }
-                    None => None,
+                    _ => None,
                 };
                 let trackers = torrent
                     .iter_announce()
@@ -633,7 +664,7 @@ impl Session {
             let next_id = g.torrents.len();
             let managed_torrent =
                 builder.build(error_span!(parent: None, "torrent", id = next_id))?;
-            let id = g.add_torrent(managed_torrent.clone());
+            let id = g.add_torrent(managed_torrent.clone(), opts.preferred_id);
             (managed_torrent, id)
         };
 
