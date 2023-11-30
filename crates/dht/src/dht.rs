@@ -540,7 +540,7 @@ impl DhtState {
             }
             Err(_) => {
                 self.inflight_by_transaction_id.remove(&key);
-                bail!("timeout")
+                bail!("timeout ({RESPONSE_TIMEOUT:?})")
             }
         }
     }
