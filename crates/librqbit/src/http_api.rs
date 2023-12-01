@@ -261,10 +261,12 @@ impl HttpApi {
             .into_make_service();
 
         info!("starting HTTP server on {}", addr);
-        axum::Server::try_bind(&addr)
-            .with_context(|| format!("error binding to {addr}"))?
-            .serve(app)
-            .await?;
+
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind(&addr)
+            .await
+            .with_context(|| format!("error binding to {addr}"))?;
+        axum::serve(listener, app).await?;
         Ok(())
     }
 }
