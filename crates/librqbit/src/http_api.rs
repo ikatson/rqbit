@@ -23,6 +23,7 @@ use crate::http_api_error::{ApiError, ApiErrorExt};
 use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
+    SUPPORTED_SCHEMES,
 };
 use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
 use crate::torrent_state::stats::{LiveStats, TorrentStats};
@@ -88,10 +89,29 @@ impl HttpApi {
             Query(params): Query<TorrentAddQueryParams>,
             data: Bytes,
         ) -> Result<impl IntoResponse> {
+            let is_url = params.is_url;
             let opts = params.into_add_torrent_options();
-            let add = match String::from_utf8(data.to_vec()) {
-                Ok(s) => AddTorrent::Url(s.into()),
-                Err(e) => AddTorrent::TorrentFileBytes(e.into_bytes().into()),
+            let data = data.to_vec();
+            let add = match is_url {
+                Some(true) => AddTorrent::Url(
+                    String::from_utf8(data)
+                        .context("invalid utf-8 for passed URL")?
+                        .into(),
+                ),
+                Some(false) => AddTorrent::TorrentFileBytes(data.into()),
+
+                // Guess the format.
+                None if SUPPORTED_SCHEMES
+                    .iter()
+                    .any(|s| data.starts_with(s.as_bytes())) =>
+                {
+                    AddTorrent::Url(
+                        String::from_utf8(data)
+                            .context("invalid utf-8 for passed URL")?
+                            .into(),
+                    )
+                }
+                _ => AddTorrent::TorrentFileBytes(data.into()),
             };
             state.api_add_torrent(add, Some(opts)).await.map(axum::Json)
         }
@@ -366,6 +386,8 @@ pub struct TorrentAddQueryParams {
     pub peer_connect_timeout: Option<u64>,
     pub peer_read_write_timeout: Option<u64>,
     pub initial_peers: Option<InitialPeers>,
+    // Will force interpreting the content as a URL.
+    pub is_url: Option<bool>,
     pub list_only: Option<bool>,
 }
 

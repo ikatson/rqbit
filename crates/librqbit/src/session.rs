@@ -150,14 +150,14 @@ pub struct Session {
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     let response = reqwest::get(url)
         .await
-        .with_context(|| format!("error downloading torrent metadata from {url}"))?;
+        .context("error downloading torrent metadata")?;
     if !response.status().is_success() {
         anyhow::bail!("GET {} returned {}", url, response.status())
     }
     let b = response
         .bytes()
         .await
-        .with_context(|| format!("error reading repsonse body from {url}"))?;
+        .with_context(|| format!("error reading response body from {url}"))?;
     torrent_from_bytes(&b).context("error decoding torrent")
 }
 

@@ -167,6 +167,9 @@ export const API = {
         if (opts.initialPeers) {
             url += `&initial_peers=${opts.initialPeers.join(',')}`;
         }
+        if (typeof data === 'string') {
+            url += '&is_url=true';
+        }
         return makeRequest('POST', url, data)
     },
 

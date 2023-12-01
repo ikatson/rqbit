@@ -356,8 +356,8 @@ const ErrorDetails = (props: { details: ErrorDetails }) => {
         return null;
     }
     return <>
-        {details.status && <strong>{details.status} {details.statusText}: </strong>}
-        {details.text}
+        <p>{details.status && <strong>{details.status} {details.statusText}</strong>}</p>
+        <pre>{details.text}</pre>
     </>
 
 }
@@ -438,7 +438,13 @@ const MagnetInput = () => {
     };
 
     return (
-        <UploadButton variant='primary' buttonText="Add Torrent from Magnet / URL" onClick={onClick} data={magnet} resetData={() => setMagnet(null)} />
+        <UploadButton
+            variant='primary'
+            buttonText="Add Torrent from Magnet / URL"
+            onClick={onClick}
+            data={magnet}
+            resetData={() => setMagnet(null)}
+        />
     );
 };
 
@@ -463,7 +469,13 @@ const FileInput = () => {
     return (
         <>
             <input type="file" ref={inputRef} accept=".torrent" onChange={onFileChange} className='d-none' />
-            <UploadButton variant='secondary' buttonText="Upload .torrent File" onClick={onClick} data={file} resetData={reset} />
+            <UploadButton
+                variant='secondary'
+                buttonText="Upload .torrent File"
+                onClick={onClick}
+                data={file}
+                resetData={reset}
+            />
         </>
     );
 };
@@ -474,7 +486,7 @@ const FileSelectionModal = (props: {
     listTorrentResponse: AddTorrentResponse,
     listTorrentError: Error,
     listTorrentLoading: boolean,
-    data: string | File
+    data: string | File,
 }) => {
     let { show, onHide, listTorrentResponse, listTorrentError, listTorrentLoading, data } = props;
 
@@ -516,46 +528,50 @@ const FileSelectionModal = (props: {
         ).finally(() => setUploading(false));
     };
 
+    const getBody = () => {
+        if (listTorrentLoading) {
+            return <Spinner />;
+        } else if (listTorrentError) {
+            return <ErrorComponent error={listTorrentError}></ErrorComponent>;
+        } else if (listTorrentResponse) {
+            return <Form>
+                <fieldset className='mb-5'>
+                    <legend>Pick the files to download</legend>
+                    {listTorrentResponse.details.files.map((file, index) => (
+                        <Form.Group key={index} controlId={`check-${index}`}>
+                            <Form.Check
+                                type="checkbox"
+                                label={`${file.name}  (${formatBytes(file.length)})`}
+                                checked={selectedFiles.includes(index)}
+                                onChange={() => handleToggleFile(index)}>
+                            </Form.Check>
+                        </Form.Group>
+                    ))}
+                </fieldset>
+                <fieldset>
+                    <legend>Other options</legend>
+
+                    <Form.Group controlId='unpopular-torrent'>
+                        <Form.Check
+                            type="checkbox"
+                            label="Increase timeouts"
+                            checked={unpopularTorrent}
+                            onChange={() => setUnpopularTorrent(!unpopularTorrent)}>
+                        </Form.Check>
+                        <small id="emailHelp" className="form-text text-muted">This might be useful for unpopular torrents with few peers. It will slow down fast torrents though.</small>
+                    </Form.Group>
+                </fieldset>
+            </Form >
+        }
+    };
+
     return (
         <Modal show={show} onHide={clear} size='lg'>
             <Modal.Header closeButton>
                 <Modal.Title>Add torrent</Modal.Title>
             </Modal.Header>
             <Modal.Body>
-                <Form>
-                    <fieldset className='mb-5'>
-                        <legend>Pick the files to download</legend>
-                        {listTorrentLoading ? <Spinner />
-                            : listTorrentError ? <ErrorComponent error={listTorrentError}></ErrorComponent> :
-                                <>
-                                    {listTorrentResponse?.details.files.map((file, index) => (
-                                        <Form.Group key={index} controlId={`check-${index}`}>
-                                            <Form.Check
-                                                type="checkbox"
-                                                label={`${file.name}  (${formatBytes(file.length)})`}
-                                                checked={selectedFiles.includes(index)}
-                                                onChange={() => handleToggleFile(index)}>
-                                            </Form.Check>
-                                        </Form.Group>
-                                    ))}
-                                </>
-                        }
-                    </fieldset>
-                    <fieldset>
-                        <legend>Other options</legend>
-
-                        <Form.Group controlId='unpopular-torrent'>
-                            <Form.Check
-                                type="checkbox"
-                                label="Increase timeouts"
-                                checked={unpopularTorrent}
-                                onChange={() => setUnpopularTorrent(!unpopularTorrent)}>
-                            </Form.Check>
-                            <small id="emailHelp" className="form-text text-muted">This might be useful for unpopular torrents with few peers.</small>
-                        </Form.Group>
-                    </fieldset>
-
-                </Form>
+                {getBody()}
                 <ErrorComponent error={uploadError} />
             </Modal.Body>
             <Modal.Footer>

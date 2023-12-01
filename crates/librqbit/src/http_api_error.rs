@@ -118,7 +118,7 @@ impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             ApiErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
-            ApiErrorKind::Other(err) => write!(f, "{err:#}"),
+            ApiErrorKind::Other(err) => write!(f, "{err:?}"),
             ApiErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
         }
     }
