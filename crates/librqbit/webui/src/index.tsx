@@ -378,11 +378,11 @@ const ErrorComponent = (props: { error: Error, remove?: () => void }) => {
 
 const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
     const [loading, setLoading] = useState(false);
-    const [fileList, setFileList] = useState([]);
-    const [fileListError, setFileListError] = useState(null);
+    const [listTorrentResponse, setListTorrentResponse] = useState<AddTorrentResponse>(null);
+    const [listTorrentError, setListTorrentError] = useState<Error>(null);
     const ctx = useContext(AppContext);
 
-    const showModal = data !== null || fileListError !== null;
+    const showModal = data !== null || listTorrentError !== null;
 
     // Get the torrent file list if there's data.
     useEffect(() => {
@@ -394,9 +394,9 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
             setLoading(true);
             try {
                 const response = await API.uploadTorrent(data, { listOnly: true });
-                setFileList(response.details.files);
+                setListTorrentResponse(response);
             } catch (e) {
-                setFileListError({ text: 'Error uploading torrent', details: e });
+                setListTorrentError({ text: 'Error listing torrent files', details: e });
             } finally {
                 setLoading(false);
             }
@@ -406,8 +406,8 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
 
     const clear = () => {
         resetData();
-        setFileListError(null);
-        setFileList([]);
+        setListTorrentError(null);
+        setListTorrentResponse(null);
         setLoading(false);
     }
 
@@ -420,10 +420,10 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
             <FileSelectionModal
                 show={showModal}
                 onHide={clear}
-                fileListError={fileListError}
-                fileList={fileList}
+                listTorrentError={listTorrentError}
+                listTorrentResponse={listTorrentResponse}
                 data={data}
-                fileListLoading={loading}
+                listTorrentLoading={loading}
             />
         </>
     );
@@ -471,12 +471,12 @@ const FileInput = () => {
 const FileSelectionModal = (props: {
     show: boolean,
     onHide: () => void,
-    fileList: Array<TorrentFile>,
-    fileListError: Error,
-    fileListLoading: boolean,
+    listTorrentResponse: AddTorrentResponse,
+    listTorrentError: Error,
+    listTorrentLoading: boolean,
     data: string | File
 }) => {
-    let { show, onHide, fileList, fileListError, fileListLoading, data } = props;
+    let { show, onHide, listTorrentResponse, listTorrentError, listTorrentLoading, data } = props;
 
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [uploading, setUploading] = useState(false);
@@ -485,8 +485,8 @@ const FileSelectionModal = (props: {
     const ctx = useContext(AppContext);
 
     useEffect(() => {
-        setSelectedFiles(fileList.map((_, id) => id));
-    }, [fileList]);
+        setSelectedFiles(listTorrentResponse ? listTorrentResponse.details.files.map((_, id) => id) : []);
+    }, [listTorrentResponse]);
 
     const clear = () => {
         onHide();
@@ -505,7 +505,8 @@ const FileSelectionModal = (props: {
 
     const handleUpload = async () => {
         setUploading(true);
-        API.uploadTorrent(data, { selectedFiles, unpopularTorrent }).then(() => {
+        let initialPeers = listTorrentResponse.seen_peers ? listTorrentResponse.seen_peers.slice(0, 32) : null;
+        API.uploadTorrent(data, { selectedFiles, unpopularTorrent, initialPeers }).then(() => {
             onHide();
             ctx.refreshTorrents();
         },
@@ -518,16 +519,16 @@ const FileSelectionModal = (props: {
     return (
         <Modal show={show} onHide={clear} size='lg'>
             <Modal.Header closeButton>
-                {!!fileListError || <Modal.Title>Add torrent</Modal.Title>}
+                <Modal.Title>Add torrent</Modal.Title>
             </Modal.Header>
             <Modal.Body>
                 <Form>
                     <fieldset className='mb-5'>
                         <legend>Pick the files to download</legend>
-                        {fileListLoading ? <Spinner />
-                            : fileListError ? <ErrorComponent error={fileListError}></ErrorComponent> :
+                        {listTorrentLoading ? <Spinner />
+                            : listTorrentError ? <ErrorComponent error={listTorrentError}></ErrorComponent> :
                                 <>
-                                    {fileList.map((file, index) => (
+                                    {listTorrentResponse?.details.files.map((file, index) => (
                                         <Form.Group key={index} controlId={`check-${index}`}>
                                             <Form.Check
                                                 type="checkbox"
@@ -559,7 +560,7 @@ const FileSelectionModal = (props: {
             </Modal.Body>
             <Modal.Footer>
                 {uploading && <Spinner />}
-                <Button variant="primary" onClick={handleUpload} disabled={fileListLoading || uploading || selectedFiles.length == 0}>
+                <Button variant="primary" onClick={handleUpload} disabled={listTorrentLoading || uploading || selectedFiles.length == 0}>
                     OK
                 </Button>
                 <Button variant="secondary" onClick={clear}>

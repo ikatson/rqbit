@@ -192,7 +192,7 @@ pub struct AddTorrentOptions {
     pub sub_folder: Option<String>,
     pub peer_opts: Option<PeerConnectionOptions>,
     pub force_tracker_interval: Option<Duration>,
-
+    pub initial_peers: Option<Vec<SocketAddr>>,
     // This is used to restore the session.
     pub preferred_id: Option<usize>,
 }
@@ -201,6 +201,7 @@ pub struct ListOnlyResponse {
     pub info_hash: Id20,
     pub info: TorrentMetaV1Info<ByteString>,
     pub only_files: Option<Vec<usize>>,
+    pub seen_peers: Vec<SocketAddr>,
 }
 
 pub enum AddTorrentResponse {
@@ -642,6 +643,7 @@ impl Session {
                 info_hash,
                 info,
                 only_files,
+                seen_peers: initial_peers,
             }));
         }
 

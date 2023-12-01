@@ -437,7 +437,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         )
                         .await
                     {
-                        Ok(ApiAddTorrentResponse { id, details }) => {
+                        Ok(ApiAddTorrentResponse { id, details, .. }) => {
                             if let Some(id) = id {
                                 info!("{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details", details.info_hash, id, http_api_url, id)
                             }
@@ -509,6 +509,7 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                                 info_hash: _,
                                 info,
                                 only_files,
+                                ..
                             }) => {
                                 for (idx, (filename, len)) in
                                     info.iter_filenames_and_lengths()?.enumerate()

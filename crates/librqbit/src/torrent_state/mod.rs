@@ -29,6 +29,7 @@ use tracing::debug;
 use tracing::error;
 use tracing::error_span;
 use tracing::warn;
+use tracing::trace;
 use url::Url;
 
 use crate::chunk_tracker::ChunkTracker;
@@ -207,6 +208,7 @@ impl ManagedTorrent {
                     {
                         let live: Arc<TorrentStateLive> =
                             live.upgrade().context("no longer live")?;
+                        trace!("adding {} initial peers", initial_peers.len());
                         for peer in initial_peers {
                             live.add_peer_if_not_seen(peer).context("torrent closed")?;
                         }
