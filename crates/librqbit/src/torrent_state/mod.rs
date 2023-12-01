@@ -15,6 +15,7 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
+use dht::RequestPeersStream;
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::Lengths;
 use librqbit_core::peer_id::generate_peer_id;
@@ -28,6 +29,7 @@ use tracing::debug;
 use tracing::error;
 use tracing::error_span;
 use tracing::warn;
+use tracing::trace;
 use url::Url;
 
 use crate::chunk_tracker::ChunkTracker;
@@ -165,7 +167,7 @@ impl ManagedTorrent {
     pub fn start(
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
-        peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+        peer_rx: Option<RequestPeersStream>,
         start_paused: bool,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
@@ -195,7 +197,7 @@ impl ManagedTorrent {
         fn spawn_peer_adder(
             live: &Arc<TorrentStateLive>,
             initial_peers: Vec<SocketAddr>,
-            peer_rx: Option<impl StreamExt<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
+            peer_rx: Option<RequestPeersStream>,
         ) {
             let span = live.meta().span.clone();
             let live = Arc::downgrade(live);
@@ -206,6 +208,7 @@ impl ManagedTorrent {
                     {
                         let live: Arc<TorrentStateLive> =
                             live.upgrade().context("no longer live")?;
+                        trace!("adding {} initial peers", initial_peers.len());
                         for peer in initial_peers {
                             live.add_peer_if_not_seen(peer).context("torrent closed")?;
                         }

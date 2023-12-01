@@ -27,13 +27,16 @@ bencode = {path = "../bencode", default-features=false, package="librqbit-bencod
 anyhow = "1"
 parking_lot = "0.12"
 tracing = "0.1"
+backoff = "0.4.0"
 futures = "0.3"
 rand = "0.8"
 indexmap = "2"
 directories = "5"
+dashmap = {version = "5.5.3", features = ["serde"]}
 
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 librqbit-core = {path="../librqbit_core", version = "3.1.0"}
+chrono = {version = "0.4.31", features = ["serde"]}
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

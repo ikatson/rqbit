@@ -510,7 +510,7 @@ impl TorrentStateLive {
         });
         match result {
             Some(true) => {
-                debug!("set peer to live")
+                trace!("set peer to live")
             }
             Some(false) => debug!("can't set peer live, it was in wrong state"),
             None => debug!("can't set peer live, it disappeared"),
@@ -750,7 +750,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             Message::Interested => self.on_peer_interested(),
             Message::Piece(piece) => self.on_received_piece(piece).context("on_received_piece")?,
             Message::KeepAlive => {
-                debug!("keepalive received");
+                trace!("keepalive received");
             }
             Message::Have(h) => self.on_have(h),
             Message::NotInterested => {
@@ -767,7 +767,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_raw_slice()));
         let len = msg.serialize(buf, None)?;
-        debug!("sending: {:?}, length={}", &msg, len);
+        trace!("sending: {:?}, length={}", &msg, len);
         Ok(len)
     }
 
@@ -841,7 +841,7 @@ impl PeerHandler {
         let _error = match error {
             Some(e) => e,
             None => {
-                debug!("peer died without errors, not re-queueing");
+                trace!("peer died without errors, not re-queueing");
                 pe.value_mut().state.set(PeerState::NotNeeded, pstats);
                 return Ok(());
             }
@@ -850,7 +850,7 @@ impl PeerHandler {
         self.counters.errors.fetch_add(1, Ordering::Relaxed);
 
         if self.state.is_finished() {
-            debug!("torrent finished, not re-queueing");
+            trace!("torrent finished, not re-queueing");
             pe.value_mut().state.set(PeerState::NotNeeded, pstats);
             return Ok(());
         }
@@ -1014,7 +1014,7 @@ impl PeerHandler {
         // Theoretically, this could be done in the sending code, so that it reads straight into
         // the send buffer.
         let request = WriterRequest::ReadChunkRequest(chunk_info);
-        debug!("sending {:?}", &request);
+        trace!("sending {:?}", &request);
         Ok::<_, anyhow::Error>(self.tx.send(request)?)
     }
 
@@ -1034,7 +1034,7 @@ impl PeerHandler {
                         return;
                     }
                 };
-                debug!("updated bitfield with have={}", have);
+                trace!("updated bitfield with have={}", have);
             });
     }
 
@@ -1168,7 +1168,7 @@ impl PeerHandler {
     }
 
     fn on_peer_interested(&self) {
-        debug!("peer is interested");
+        trace!("peer is interested");
         self.state.peers.mark_peer_interested(self.addr, true);
     }
 
@@ -1266,7 +1266,7 @@ impl PeerHandler {
 
             match g.get_chunks_mut()?.mark_chunk_downloaded(&piece) {
                 Some(ChunkMarkingResult::Completed) => {
-                    debug!("piece={} done, will write and checksum", piece.index,);
+                    trace!("piece={} done, will write and checksum", piece.index,);
                     // This will prevent others from stealing it.
                     {
                         let piece = chunk_info.piece_index;

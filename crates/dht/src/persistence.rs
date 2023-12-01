@@ -11,8 +11,9 @@ use std::time::Duration;
 use anyhow::Context;
 use tracing::{debug, error, error_span, info, trace, warn};
 
-use crate::dht::{Dht, DhtConfig};
+use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
+use crate::{Dht, DhtConfig, DhtState};
 
 #[derive(Default, Clone)]
 pub struct PersistentDhtConfig {
@@ -21,9 +22,10 @@ pub struct PersistentDhtConfig {
 }
 
 #[derive(Serialize, Deserialize)]
-struct DhtSerialize<Table> {
+struct DhtSerialize<Table, PeerStore> {
     addr: SocketAddr,
     table: Table,
+    peer_store: Option<PeerStore>,
 }
 
 pub struct PersistentDht {
@@ -40,11 +42,18 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
     let mut file = BufWriter::new(file);
 
     let addr = dht.listen_addr();
-    match dht
-        .with_routing_table(|r| serde_json::to_writer(&mut file, &DhtSerialize { addr, table: r }))
-    {
+    match dht.with_routing_table(|r| {
+        serde_json::to_writer(
+            &mut file,
+            &DhtSerialize {
+                addr,
+                table: r,
+                peer_store: Some(&dht.peer_store),
+            },
+        )
+    }) {
         Ok(_) => {
-            debug!("dumped DHT to {:?}", &tempfile_name);
+            trace!("dumped DHT to {:?}", &tempfile_name);
         }
         Err(e) => {
             return Err(e).with_context(|| {
@@ -79,7 +88,7 @@ impl PersistentDht {
         let de = match OpenOptions::new().read(true).open(&config_filename) {
             Ok(dht_json) => {
                 let reader = BufReader::new(dht_json);
-                match serde_json::from_reader::<_, DhtSerialize<RoutingTable>>(reader) {
+                match serde_json::from_reader::<_, DhtSerialize<RoutingTable, PeerStore>>(reader) {
                     Ok(r) => {
                         info!("loaded DHT routing table from {:?}", &config_filename);
                         Some(r)
@@ -98,17 +107,18 @@ impl PersistentDht {
                 _ => return Err(e).with_context(|| format!("error reading {config_filename:?}")),
             },
         };
-        let (listen_addr, routing_table) = de
-            .map(|de| (Some(de.addr), Some(de.table)))
-            .unwrap_or((None, None));
+        let (listen_addr, routing_table, peer_store) = de
+            .map(|de| (Some(de.addr), Some(de.table), de.peer_store))
+            .unwrap_or((None, None, None));
         let peer_id = routing_table.as_ref().map(|r| r.id());
         let dht_config = DhtConfig {
             peer_id,
             routing_table,
             listen_addr,
+            peer_store,
             ..Default::default()
         };
-        let dht = Dht::with_config(dht_config).await?;
+        let dht = DhtState::with_config(dht_config).await?;
 
         spawn(error_span!("dht_persistence"), {
             let dht = dht.clone();

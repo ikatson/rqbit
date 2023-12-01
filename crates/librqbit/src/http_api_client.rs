@@ -91,6 +91,7 @@ impl HttpApiClient {
             output_folder: opts.output_folder,
             sub_folder: opts.sub_folder,
             list_only: Some(opts.list_only),
+            ..Default::default()
         };
         let qs = serde_urlencoded::to_string(&params).unwrap();
         let url = format!("{}torrents?{}", &self.base_url, qs);

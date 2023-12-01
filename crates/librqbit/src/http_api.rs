@@ -11,15 +11,19 @@ use librqbit_core::id20::Id20;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 
 use axum::Router;
 
 use crate::http_api_error::{ApiError, ApiErrorExt};
+use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
+    SUPPORTED_SCHEMES,
 };
 use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
 use crate::torrent_state::stats::{LiveStats, TorrentStats};
@@ -85,10 +89,29 @@ impl HttpApi {
             Query(params): Query<TorrentAddQueryParams>,
             data: Bytes,
         ) -> Result<impl IntoResponse> {
+            let is_url = params.is_url;
             let opts = params.into_add_torrent_options();
-            let add = match String::from_utf8(data.to_vec()) {
-                Ok(s) => AddTorrent::Url(s.into()),
-                Err(e) => AddTorrent::TorrentFileBytes(e.into_bytes().into()),
+            let data = data.to_vec();
+            let add = match is_url {
+                Some(true) => AddTorrent::Url(
+                    String::from_utf8(data)
+                        .context("invalid utf-8 for passed URL")?
+                        .into(),
+                ),
+                Some(false) => AddTorrent::TorrentFileBytes(data.into()),
+
+                // Guess the format.
+                None if SUPPORTED_SCHEMES
+                    .iter()
+                    .any(|s| data.starts_with(s.as_bytes())) =>
+                {
+                    AddTorrent::Url(
+                        String::from_utf8(data)
+                            .context("invalid utf-8 for passed URL")?
+                            .into(),
+                    )
+                }
+                _ => AddTorrent::TorrentFileBytes(data.into()),
             };
             state.api_add_torrent(add, Some(opts)).await.map(axum::Json)
         }
@@ -279,6 +302,7 @@ pub struct TorrentDetailsResponse {
 pub struct ApiAddTorrentResponse {
     pub id: Option<usize>,
     pub details: TorrentDetailsResponse,
+    pub seen_peers: Option<Vec<SocketAddr>>,
 }
 
 pub struct OnlyFiles(Vec<usize>);
@@ -322,13 +346,48 @@ impl<'de> Deserialize<'de> for OnlyFiles {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+pub struct InitialPeers(pub Vec<SocketAddr>);
+
+impl<'de> Deserialize<'de> for InitialPeers {
+    fn deserialize<D>(deserializer: D) -> std::prelude::v1::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let string = String::deserialize(deserializer)?;
+        let mut addrs = Vec::new();
+        for addr_str in string.split(',').filter(|s| !s.is_empty()) {
+            addrs.push(SocketAddr::from_str(addr_str).map_err(D::Error::custom)?);
+        }
+        Ok(InitialPeers(addrs))
+    }
+}
+
+impl Serialize for InitialPeers {
+    fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0
+            .iter()
+            .map(|s| s.to_string())
+            .join(",")
+            .serialize(serializer)
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
 pub struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,
     pub only_files_regex: Option<String>,
     pub only_files: Option<OnlyFiles>,
+    pub peer_connect_timeout: Option<u64>,
+    pub peer_read_write_timeout: Option<u64>,
+    pub initial_peers: Option<InitialPeers>,
+    // Will force interpreting the content as a URL.
+    pub is_url: Option<bool>,
     pub list_only: Option<bool>,
 }
 
@@ -341,6 +400,12 @@ impl TorrentAddQueryParams {
             output_folder: self.output_folder,
             sub_folder: self.sub_folder,
             list_only: self.list_only.unwrap_or(false),
+            initial_peers: self.initial_peers.map(|i| i.0),
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: self.peer_connect_timeout.map(Duration::from_secs),
+                read_write_timeout: self.peer_read_write_timeout.map(Duration::from_secs),
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }
@@ -462,8 +527,10 @@ impl ApiInternal {
                 info_hash,
                 info,
                 only_files,
+                seen_peers,
             }) => ApiAddTorrentResponse {
                 id: None,
+                seen_peers: Some(seen_peers),
                 details: make_torrent_details(&info_hash, &info, only_files.as_deref())
                     .context("error making torrent details")?,
             },
@@ -477,6 +544,7 @@ impl ApiInternal {
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
+                    seen_peers: None,
                 }
             }
         };

@@ -1,16 +1,61 @@
-use std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, time::Instant};
 
 use librqbit_core::id20::Id20;
-use serde::{ser::SerializeMap, Deserialize, Serialize};
-use tracing::debug;
+use rand::RngCore;
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
+use tracing::{debug, trace};
+
+use crate::INACTIVITY_TIMEOUT;
+
+#[derive(Clone, Debug)]
+pub struct LeafBucket {
+    pub nodes: Vec<RoutingTableNode>,
+    pub last_refreshed: Instant,
+}
+
+impl Serialize for LeafBucket {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("LeafBucket", 2)?;
+        s.serialize_field("nodes", &self.nodes)?;
+        s.serialize_field(
+            "last_refreshed",
+            &format!("{:?}", self.last_refreshed.elapsed()),
+        )?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for LeafBucket {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Tmp {
+            nodes: Vec<RoutingTableNode>,
+        }
+        Tmp::deserialize(deserializer).map(|t| Self {
+            nodes: t.nodes,
+            last_refreshed: Instant::now(),
+        })
+    }
+}
+
+impl Default for LeafBucket {
+    fn default() -> Self {
+        Self {
+            nodes: Default::default(),
+            last_refreshed: Instant::now(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum BucketTreeNodeData {
-    // TODO: maybe replace that with SmallVec<8>?
-    Leaf(Vec<RoutingTableNode>),
+    Leaf(LeafBucket),
     LeftRight(usize, usize),
 }
 
@@ -24,165 +69,75 @@ struct BucketTreeNode {
     data: BucketTreeNodeData,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BucketTree {
     data: Vec<BucketTreeNode>,
+    size: usize,
+    max_size: usize,
 }
 
-impl<'de> Deserialize<'de> for BucketTree {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = BucketTree;
+pub struct BucketTreeIteratorItem<'a> {
+    pub bits: u8,
+    pub start: &'a Id20,
+    pub end_inclusive: &'a Id20,
+    pub leaf: &'a LeafBucket,
+}
 
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(f, "a map with key \"flat\"")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::MapAccess<'de>,
-            {
-                let mut data: Option<Vec<BucketTreeNode>> = None;
-                loop {
-                    match map.next_key::<String>()?.as_deref() {
-                        Some("flat") => {
-                            let buckets = map.next_value::<Vec<BucketTreeNode>>()?;
-                            data = Some(buckets)
-                        }
-                        Some(_) => {
-                            map.next_value::<serde::de::IgnoredAny>()?;
-                        }
-                        None => {
-                            use serde::de::Error;
-                            match data.take() {
-                                Some(data) => return Ok(BucketTree { data }),
-                                None => return Err(A::Error::missing_field("flat")),
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        deserializer.deserialize_map(Visitor)
+impl<'a> BucketTreeIteratorItem<'a> {
+    pub fn random_within(&self) -> Id20 {
+        generate_random_id(self.start, self.bits)
     }
 }
 
-impl Serialize for BucketTree {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        struct Node<'a> {
-            tree: &'a BucketTree,
-            idx: usize,
-        }
-
-        impl<'a> Serialize for Node<'a> {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                let mut map = serializer.serialize_map(None)?;
-                let node = &self.tree.data[self.idx];
-                map.serialize_entry("bits", &node.bits)?;
-                map.serialize_entry("start", &node.start.as_string())?;
-                map.serialize_entry("end", &node.end_inclusive.as_string())?;
-                match &node.data {
-                    BucketTreeNodeData::Leaf(nodes) => {
-                        map.serialize_entry("nodes", &nodes)?;
-                    }
-                    BucketTreeNodeData::LeftRight(l, r) => {
-                        map.serialize_entry(
-                            "left",
-                            &(Node {
-                                idx: *l,
-                                tree: self.tree,
-                            }),
-                        )?;
-                        map.serialize_entry(
-                            "right",
-                            &(Node {
-                                idx: *r,
-                                tree: self.tree,
-                            }),
-                        )?;
-                    }
-                }
-                map.end()
-            }
-        }
-
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("nodes_len", &self.data.len())?;
-        map.serialize_entry("nodes_capacity", &self.data.capacity())?;
-        map.serialize_entry("node_memory_bytes", &std::mem::size_of::<BucketTreeNode>())?;
-        map.serialize_entry(
-            "nodes_memory_bytes",
-            &(std::mem::size_of::<BucketTreeNode>() * self.data.capacity()),
-        )?;
-        map.serialize_entry("tree", &Node { tree: self, idx: 0 })?;
-        map.serialize_entry("flat", &self.data)?;
-        map.end()
-    }
-}
-
-pub struct BucketTreeIterator<'a> {
+struct BucketTreeIterator<'a> {
     tree: &'a BucketTree,
-    current: std::slice::Iter<'a, RoutingTableNode>,
     queue: Vec<usize>,
 }
 
 impl<'a> BucketTreeIterator<'a> {
     fn new(tree: &'a BucketTree) -> Self {
-        let mut queue = Vec::new();
-        let mut current = 0;
-        let current_slice = loop {
-            match &tree.data[current].data {
-                BucketTreeNodeData::Leaf(nodes) => break nodes.iter(),
-                BucketTreeNodeData::LeftRight(left, right) => {
-                    queue.push(*right);
-                    current = *left;
-                }
-            }
-        };
-        BucketTreeIterator {
-            tree,
-            current: current_slice,
-            queue,
-        }
+        let queue = vec![0];
+        BucketTreeIterator { tree, queue }
     }
 }
 
 impl<'a> Iterator for BucketTreeIterator<'a> {
-    type Item = &'a RoutingTableNode;
+    type Item = BucketTreeIteratorItem<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(v) = self.current.next() {
-            return Some(v);
-        };
-
         loop {
             let idx = self.queue.pop()?;
-            match &self.tree.data[idx].data {
-                BucketTreeNodeData::Leaf(nodes) => {
-                    self.current = nodes.iter();
-                    match self.current.next() {
-                        Some(v) => return Some(v),
-                        None => continue,
+            match self.tree.data.get(idx) {
+                Some(node) => match &node.data {
+                    BucketTreeNodeData::Leaf(leaf) => {
+                        return Some(BucketTreeIteratorItem {
+                            bits: node.bits,
+                            start: &node.start,
+                            end_inclusive: &node.end_inclusive,
+                            leaf,
+                        });
                     }
-                }
-                BucketTreeNodeData::LeftRight(left, right) => {
-                    self.queue.push(*right);
-                    self.queue.push(*left);
-                    continue;
-                }
+                    BucketTreeNodeData::LeftRight(left, right) => {
+                        self.queue.push(*right);
+                        self.queue.push(*left);
+                        continue;
+                    }
+                },
+                None => continue,
             }
         }
     }
+}
+
+pub fn generate_random_id(start: &Id20, bits: u8) -> Id20 {
+    let mut data = [0u8; 20];
+    rand::thread_rng().fill_bytes(&mut data);
+    let mut data = Id20(data);
+    let remaining_bits = 160 - bits;
+    for bit in 0..remaining_bits {
+        data.set_bit(bit, start.get_bit(bit));
+    }
+    data
 }
 
 fn compute_split_start_end(
@@ -240,18 +195,25 @@ pub enum InsertResult {
 }
 
 impl BucketTree {
-    pub fn new() -> Self {
+    pub fn new(max_size: usize) -> Self {
         BucketTree {
             data: vec![BucketTreeNode {
                 bits: 160,
                 start: Id20([0u8; 20]),
                 end_inclusive: Id20([0xff; 20]),
-                data: BucketTreeNodeData::Leaf(Vec::new()),
+                data: BucketTreeNodeData::Leaf(Default::default()),
             }],
+            size: 0,
+            max_size,
         }
     }
-    pub fn iter(&self) -> BucketTreeIterator<'_> {
+
+    fn iter_leaves(&self) -> BucketTreeIterator<'_> {
         BucketTreeIterator::new(self)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &'_ RoutingTableNode> + '_ {
+        self.iter_leaves().flat_map(|l| l.leaf.nodes.iter())
     }
 
     fn get_leaf(&self, id: &Id20) -> usize {
@@ -272,10 +234,16 @@ impl BucketTree {
         }
     }
 
-    pub fn get_mut(&mut self, id: &Id20) -> Option<&mut RoutingTableNode> {
+    pub fn get_mut(&mut self, id: &Id20, refresh: bool) -> Option<&mut RoutingTableNode> {
         let idx = self.get_leaf(id);
         match &mut self.data[idx].data {
-            BucketTreeNodeData::Leaf(nodes) => nodes.iter_mut().find(|b| b.id == *id),
+            BucketTreeNodeData::Leaf(leaf) => {
+                let r = leaf.nodes.iter_mut().find(|b| b.id == *id);
+                if r.is_some() && refresh {
+                    leaf.last_refreshed = Instant::now()
+                }
+                r
+            }
             BucketTreeNodeData::LeftRight(_, _) => unreachable!(),
         }
     }
@@ -304,7 +272,7 @@ impl BucketTree {
                 BucketTreeNodeData::LeftRight(_, _) => unreachable!(),
             };
             // if already found, quit
-            if nodes.iter().any(|r| r.id == id) {
+            if nodes.nodes.iter().any(|r| r.id == id) {
                 return InsertResult::WasExisting;
             }
 
@@ -313,24 +281,38 @@ impl BucketTree {
                 addr,
                 last_request: None,
                 last_response: None,
-                outstanding_queries_in_a_row: 0,
+                last_query: None,
+                errors_in_a_row: 0,
             };
-
-            if nodes.len() < 8 {
-                nodes.push(new_node);
-                nodes.sort_by_key(|n| n.id);
-                return InsertResult::Added;
-            }
 
             // Try replace a bad node
             if let Some(bad_node) = nodes
+                .nodes
                 .iter_mut()
                 .find(|r| matches!(r.status(), NodeStatus::Bad))
             {
                 std::mem::swap(bad_node, &mut new_node);
-                nodes.sort_by_key(|n| n.id);
+                nodes.nodes.sort_by_key(|n| n.id);
                 debug!("replaced bad node {:?}", new_node);
+                nodes.last_refreshed = Instant::now();
                 return InsertResult::ReplacedBad(new_node);
+            }
+
+            // if max size reached, don't bother
+            if self.size == self.max_size {
+                trace!(
+                    "can't add node to routing table, max size of {} reached",
+                    self.max_size
+                );
+                return InsertResult::Ignored;
+            }
+
+            if nodes.nodes.len() < 8 {
+                nodes.nodes.push(new_node);
+                nodes.nodes.sort_by_key(|n| n.id);
+                nodes.last_refreshed = Instant::now();
+                self.size += 1;
+                return InsertResult::Added;
             }
 
             // if our id is not inside, don't bother.
@@ -342,7 +324,7 @@ impl BucketTree {
             let ((ls, le), (rs, re)) =
                 compute_split_start_end(leaf.start, leaf.end_inclusive, leaf.bits);
             let (mut ld, mut rd) = (Vec::new(), Vec::new());
-            for node in nodes.drain(0..) {
+            for node in nodes.nodes.drain(0..) {
                 if node.id < rs {
                     ld.push(node);
                 } else {
@@ -354,13 +336,19 @@ impl BucketTree {
                 bits: leaf.bits - 1,
                 start: ls,
                 end_inclusive: le,
-                data: BucketTreeNodeData::Leaf(ld),
+                data: BucketTreeNodeData::Leaf(LeafBucket {
+                    nodes: ld,
+                    ..Default::default()
+                }),
             };
             let right = BucketTreeNode {
                 bits: leaf.bits - 1,
                 start: rs,
                 end_inclusive: re,
-                data: BucketTreeNodeData::Leaf(rd),
+                data: BucketTreeNodeData::Leaf(LeafBucket {
+                    nodes: rd,
+                    ..Default::default()
+                }),
             };
 
             let left_idx = {
@@ -384,13 +372,7 @@ impl BucketTree {
     }
 }
 
-impl Default for BucketTree {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RoutingTableNode {
     #[serde(serialize_with = "crate::utils::serialize_id20")]
     id: Id20,
@@ -400,9 +382,35 @@ pub struct RoutingTableNode {
     #[serde(skip)]
     last_response: Option<Instant>,
     #[serde(skip)]
-    outstanding_queries_in_a_row: usize,
+    last_query: Option<Instant>,
+    #[serde(skip)]
+    errors_in_a_row: usize,
 }
 
+impl Serialize for RoutingTableNode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("RoutingTableNode", 3)?;
+        s.serialize_field("id", &self.id.as_string())?;
+        s.serialize_field("addr", &self.addr)?;
+        s.serialize_field("status", &self.status())?;
+        if let Some(l) = self.last_request {
+            s.serialize_field("last_request_ago", &l.elapsed())?;
+        }
+        if let Some(l) = self.last_response {
+            s.serialize_field("last_response_ago", &l.elapsed())?;
+        }
+        if let Some(l) = self.last_query {
+            s.serialize_field("last_query_ago", &l.elapsed())?;
+        }
+        s.serialize_field("errors_in_a_row", &self.errors_in_a_row)?;
+        s.end()
+    }
+}
+
+#[derive(Serialize, Debug)]
 pub enum NodeStatus {
     Good,
     Questionable,
@@ -418,24 +426,39 @@ impl RoutingTableNode {
         self.addr
     }
     pub fn status(&self) -> NodeStatus {
-        // TODO: this is just a stub with simpler logic
-        let last_request = match self.last_request {
-            Some(v) => v,
-            None => return NodeStatus::Unknown,
-        };
-        if self.outstanding_queries_in_a_row > 0 && last_request.elapsed() > Duration::from_secs(10)
-        {
-            return NodeStatus::Bad;
+        match (self.last_request, self.last_response, self.last_query) {
+            // Nodes become bad when they fail to respond to multiple queries in a row.
+            (Some(_), _, _) if self.errors_in_a_row >= 2 => NodeStatus::Bad,
+
+            // A good node is a node has responded to one of our queries within the last 15 minutes.
+            // A node is also good if it has ever responded to one of our queries and has sent
+            // us a query within the last 15 minutes.
+            (Some(_), Some(last_incoming), _) | (Some(_), Some(_), Some(last_incoming))
+                if last_incoming.elapsed() < INACTIVITY_TIMEOUT =>
+            {
+                NodeStatus::Good
+            }
+
+            // After 15 minutes of inactivity, a node becomes questionable.
+            // The moment we send a request to it, it stops becoming questionable and becomes Unknown / Bad.
+            (last_outgoing, _, Some(last_incoming)) | (last_outgoing, Some(last_incoming), _)
+                if last_incoming.elapsed() > INACTIVITY_TIMEOUT
+                    && last_outgoing
+                        .map(|e| e.elapsed() > INACTIVITY_TIMEOUT)
+                        .unwrap_or(true) =>
+            {
+                NodeStatus::Questionable
+            }
+            _ => NodeStatus::Unknown,
         }
-        if self.last_response.is_some() {
-            return NodeStatus::Good;
-        }
-        NodeStatus::Questionable
     }
 
     pub fn mark_outgoing_request(&mut self) {
         self.last_request = Some(Instant::now());
-        self.outstanding_queries_in_a_row += 1;
+    }
+
+    pub fn mark_last_query(&mut self) {
+        self.last_query = Some(Instant::now());
     }
 
     pub fn mark_response(&mut self) {
@@ -444,7 +467,11 @@ impl RoutingTableNode {
         if self.last_request.is_none() {
             self.last_request = Some(now);
         }
-        self.outstanding_queries_in_a_row = 0;
+        self.errors_in_a_row = 0;
+    }
+
+    pub fn mark_error(&mut self) {
+        self.errors_in_a_row += 1;
     }
 }
 
@@ -457,10 +484,12 @@ pub struct RoutingTable {
 }
 
 impl RoutingTable {
-    pub fn new(id: Id20) -> Self {
+    const DEFAULT_MAX_SIZE: usize = 512;
+
+    pub fn new(id: Id20, max_size: Option<usize>) -> Self {
         Self {
             id,
-            buckets: BucketTree::new(),
+            buckets: BucketTree::new(max_size.unwrap_or(Self::DEFAULT_MAX_SIZE)),
             size: 0,
         }
     }
@@ -475,8 +504,25 @@ impl RoutingTable {
         for node in self.buckets.iter() {
             result.push(node);
         }
-        result.sort_by_key(|n| id.distance(&n.id));
+        result.sort_by_key(|n| {
+            // Query decent nodes first.
+            let status = match n.status() {
+                NodeStatus::Good => 0,
+                NodeStatus::Questionable => 0,
+                NodeStatus::Unknown => 2,
+                NodeStatus::Bad => 3,
+            };
+            (status, id.distance(&n.id))
+        });
         result
+    }
+
+    pub fn iter_buckets(&self) -> impl Iterator<Item = BucketTreeIteratorItem<'_>> + '_ {
+        self.buckets.iter_leaves()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &'_ RoutingTableNode> + '_ {
+        self.buckets.iter()
     }
 
     pub fn add_node(&mut self, id: Id20, addr: SocketAddr) -> InsertResult {
@@ -493,7 +539,7 @@ impl RoutingTable {
         res
     }
     pub fn mark_outgoing_request(&mut self, id: &Id20) -> bool {
-        let r = match self.buckets.get_mut(id) {
+        let r = match self.buckets.get_mut(id, false) {
             Some(r) => r,
             None => return false,
         };
@@ -502,11 +548,29 @@ impl RoutingTable {
     }
 
     pub fn mark_response(&mut self, id: &Id20) -> bool {
-        let r = match self.buckets.get_mut(id) {
+        let r = match self.buckets.get_mut(id, true) {
             Some(r) => r,
             None => return false,
         };
         r.mark_response();
+        true
+    }
+
+    pub fn mark_error(&mut self, id: &Id20) -> bool {
+        let r = match self.buckets.get_mut(id, false) {
+            Some(r) => r,
+            None => return false,
+        };
+        r.mark_error();
+        true
+    }
+
+    pub fn mark_last_query(&mut self, id: &Id20) -> bool {
+        let r = match self.buckets.get_mut(id, false) {
+            Some(r) => r,
+            None => return false,
+        };
+        r.mark_last_query();
         true
     }
 }
@@ -524,7 +588,7 @@ mod tests {
 
     use crate::routing_table::compute_split_start_end;
 
-    use super::RoutingTable;
+    use super::{generate_random_id, RoutingTable};
 
     #[test]
     fn compute_split_start_end_root() {
@@ -599,7 +663,7 @@ mod tests {
 
     fn generate_table(length: Option<usize>) -> RoutingTable {
         let my_id = random_id_20();
-        let mut rtable = RoutingTable::new(my_id);
+        let mut rtable = RoutingTable::new(my_id, None);
         for _ in 0..length.unwrap_or(16536) {
             let other_id = random_id_20();
             let addr = generate_socket_addr();
@@ -631,5 +695,16 @@ mod tests {
         let table = generate_table(Some(1000));
         let v = serde_json::to_vec(&table).unwrap();
         let _: RoutingTable = serde_json::from_reader(Cursor::new(v)).unwrap();
+    }
+
+    #[test]
+    fn test_generate_random_id() {
+        let start = Id20::from_str("3000000000000000000000000000000000000000").unwrap();
+        let end = Id20::from_str("3fffffffffffffffffffffffffffffffffffffff").unwrap();
+        let bits = 156;
+        for _ in 0..100 {
+            let id = dbg!(generate_random_id(&start, bits));
+            assert!(id >= start && id <= end, "{:?}", id);
+        }
     }
 }
