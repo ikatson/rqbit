@@ -18,7 +18,7 @@ sha1-rust = ["bencode/sha1-rust"]
 
 [dependencies]
 tracing = "0.1.40"
-tokio = {version = "1", features = ["rt-multi-thread"]}
+tokio = {version = "1", features = ["rt-multi-thread", "macros", "time"]}
 hex = "0.4"
 anyhow = "1"
 url = "2"
