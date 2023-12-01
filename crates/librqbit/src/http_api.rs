@@ -336,7 +336,7 @@ impl<'de> Deserialize<'de> for InitialPeers {
         use serde::de::Error;
         let string = String::deserialize(deserializer)?;
         let mut addrs = Vec::new();
-        for addr_str in string.split(',') {
+        for addr_str in string.split(',').filter(|s| !s.is_empty()) {
             addrs.push(SocketAddr::from_str(addr_str).map_err(D::Error::custom)?);
         }
         Ok(InitialPeers(addrs))
