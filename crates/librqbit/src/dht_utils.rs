@@ -26,15 +26,12 @@ pub enum ReadMetainfoResult<Rx> {
 pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unpin>(
     peer_id: Id20,
     info_hash: Id20,
-    mut addrs: A,
+    initial_addrs: Vec<SocketAddr>,
+    addrs_stream: A,
     peer_connection_options: Option<PeerConnectionOptions>,
 ) -> ReadMetainfoResult<A> {
     let mut seen = HashSet::<SocketAddr>::new();
-    let first_addr = match addrs.next().await {
-        Some(addr) => addr,
-        None => return ReadMetainfoResult::ChannelClosed { seen },
-    };
-    seen.insert(first_addr);
+    let mut addrs = addrs_stream;
 
     let semaphore = tokio::sync::Semaphore::new(128);
 
@@ -57,7 +54,11 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
     };
 
     let mut unordered = FuturesUnordered::new();
-    unordered.push(read_info_guarded(first_addr));
+
+    for a in initial_addrs {
+        seen.insert(a);
+        unordered.push(read_info_guarded(a));
+    }
 
     loop {
         tokio::select! {
@@ -109,7 +110,8 @@ mod tests {
         let dht = DhtBuilder::new().await.unwrap();
         let peer_rx = dht.get_peers(info_hash).unwrap();
         let peer_id = generate_peer_id();
-        match read_metainfo_from_peer_receiver(peer_id, info_hash, peer_rx, None).await {
+        match read_metainfo_from_peer_receiver(peer_id, info_hash, Vec::new(), peer_rx, None).await
+        {
             ReadMetainfoResult::Found { info, .. } => dbg!(info),
             ReadMetainfoResult::ChannelClosed { .. } => todo!("should not have happened"),
         };

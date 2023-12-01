@@ -504,6 +504,7 @@ impl Session {
                 let (info, dht_rx, initial_peers) = match read_metainfo_from_peer_receiver(
                     self.peer_id,
                     info_hash,
+                    opts.initial_peers.clone().unwrap_or_default(),
                     dht_rx,
                     Some(self.merge_peer_opts(opts.peer_opts)),
                 )
