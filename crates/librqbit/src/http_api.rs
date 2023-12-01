@@ -32,13 +32,13 @@ use crate::torrent_state::ManagedTorrentHandle;
 // Public API
 #[derive(Clone)]
 pub struct HttpApi {
-    inner: Arc<ApiInternal>,
+    inner: Arc<Api>,
 }
 
 impl HttpApi {
     pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
-            inner: Arc::new(ApiInternal::new(session, rust_log_reload_tx)),
+            inner: Arc::new(Api::new(session, rust_log_reload_tx)),
         }
     }
 
@@ -274,14 +274,14 @@ impl HttpApi {
 type Result<T> = std::result::Result<T, ApiError>;
 
 #[derive(Serialize)]
-struct TorrentListResponseItem {
-    id: usize,
-    info_hash: String,
+pub struct TorrentListResponseItem {
+    pub id: usize,
+    pub info_hash: String,
 }
 
 #[derive(Serialize)]
-struct TorrentListResponse {
-    torrents: Vec<TorrentListResponseItem>,
+pub struct TorrentListResponse {
+    pub torrents: Vec<TorrentListResponseItem>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -292,7 +292,7 @@ pub struct TorrentDetailsResponseFile {
 }
 
 #[derive(Default, Serialize)]
-struct EmptyJsonResponse {}
+pub struct EmptyJsonResponse {}
 
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponse {
@@ -414,14 +414,14 @@ impl TorrentAddQueryParams {
 }
 
 // Private HTTP API internals. Agnostic of web framework.
-struct ApiInternal {
+pub struct Api {
     session: Arc<Session>,
     rust_log_reload_tx: Option<UnboundedSender<String>>,
 }
 
-type ApiState = Arc<ApiInternal>;
+type ApiState = Arc<Api>;
 
-impl ApiInternal {
+impl Api {
     pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
         Self {
             session,
@@ -429,13 +429,13 @@ impl ApiInternal {
         }
     }
 
-    fn mgr_handle(&self, idx: TorrentId) -> Result<ManagedTorrentHandle> {
+    pub fn mgr_handle(&self, idx: TorrentId) -> Result<ManagedTorrentHandle> {
         self.session
             .get(idx)
             .ok_or(ApiError::torrent_not_found(idx))
     }
 
-    fn api_torrent_list(&self) -> TorrentListResponse {
+    pub fn api_torrent_list(&self) -> TorrentListResponse {
         let items = self.session.with_torrents(|torrents| {
             torrents
                 .map(|(id, mgr)| TorrentListResponseItem {
@@ -447,14 +447,18 @@ impl ApiInternal {
         TorrentListResponse { torrents: items }
     }
 
-    fn api_torrent_details(&self, idx: TorrentId) -> Result<TorrentDetailsResponse> {
+    pub fn api_torrent_details(&self, idx: TorrentId) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.info().info_hash;
         let only_files = handle.only_files();
         make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
     }
 
-    fn api_peer_stats(&self, idx: TorrentId, filter: PeerStatsFilter) -> Result<PeerStatsSnapshot> {
+    pub fn api_peer_stats(
+        &self,
+        idx: TorrentId,
+        filter: PeerStatsFilter,
+    ) -> Result<PeerStatsSnapshot> {
         let handle = self.mgr_handle(idx)?;
         Ok(handle
             .live()
@@ -462,7 +466,7 @@ impl ApiInternal {
             .per_peer_stats_snapshot(filter))
     }
 
-    fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         handle
             .pause()
@@ -471,7 +475,7 @@ impl ApiInternal {
         Ok(Default::default())
     }
 
-    fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         self.session
             .unpause(&handle)
@@ -480,21 +484,21 @@ impl ApiInternal {
         Ok(Default::default())
     }
 
-    fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         self.session
             .delete(idx, false)
             .context("error forgetting torrent")?;
         Ok(Default::default())
     }
 
-    fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         self.session
             .delete(idx, true)
             .context("error deleting torrent with files")?;
         Ok(Default::default())
     }
 
-    fn api_set_rust_log(&self, new_value: String) -> Result<EmptyJsonResponse> {
+    pub fn api_set_rust_log(&self, new_value: String) -> Result<EmptyJsonResponse> {
         let tx = self
             .rust_log_reload_tx
             .as_ref()
@@ -553,7 +557,7 @@ impl ApiInternal {
         Ok(response)
     }
 
-    fn api_dht_stats(&self) -> Result<DhtStats> {
+    pub fn api_dht_stats(&self) -> Result<DhtStats> {
         self.session
             .get_dht()
             .as_ref()
@@ -561,23 +565,23 @@ impl ApiInternal {
             .ok_or(ApiError::dht_disabled())
     }
 
-    fn api_dht_table(&self) -> Result<impl Serialize> {
+    pub fn api_dht_table(&self) -> Result<impl Serialize> {
         let dht = self.session.get_dht().ok_or(ApiError::dht_disabled())?;
         Ok(dht.with_routing_table(|r| r.clone()))
     }
 
-    fn api_stats_v0(&self, idx: TorrentId) -> Result<LiveStats> {
+    pub fn api_stats_v0(&self, idx: TorrentId) -> Result<LiveStats> {
         let mgr = self.mgr_handle(idx)?;
         let live = mgr.live().context("torrent not live")?;
         Ok(LiveStats::from(&*live))
     }
 
-    fn api_stats_v1(&self, idx: TorrentId) -> Result<TorrentStats> {
+    pub fn api_stats_v1(&self, idx: TorrentId) -> Result<TorrentStats> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.stats())
     }
 
-    fn api_dump_haves(&self, idx: usize) -> Result<String> {
+    pub fn api_dump_haves(&self, idx: usize) -> Result<String> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
     }

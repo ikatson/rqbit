@@ -1,7 +1,9 @@
-import { MouseEventHandler, StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
+import { StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner, Table } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentFile, TorrentId, TorrentStats, ErrorDetails, API, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR } from './api';
+import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
+import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI } from './api-types';
+
+declare const API: RqbitAPI;
 
 interface Error {
     text: string,
@@ -308,7 +310,7 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
     </>;
 };
 
-const Root = () => {
+export const RqbitWebUI = () => {
     const [closeableError, setCloseableError] = useState<Error>(null);
     const [otherError, setOtherError] = useState<Error>(null);
 
@@ -694,12 +696,3 @@ function loopUntilSuccess<T>(callback: () => Promise<T>, interval: number): () =
 
     return () => clearTimeout(timeoutId);
 }
-
-// List all torrents on page load and set up auto-refresh
-async function init(): Promise<void> {
-    const torrentsContainer = document.getElementById('app');
-    ReactDOM.createRoot(torrentsContainer).render(<StrictMode><Root /></StrictMode>);
-}
-
-// Call init function on page load
-document.addEventListener('DOMContentLoaded', init);
