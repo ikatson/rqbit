@@ -287,7 +287,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                             trace!("iteration {}", iteration);
                             let sleep = match this.get_peers_root() {
                                 Ok(0) => Duration::from_secs(1),
-                                Ok(n) if n < 8 => REQUERY_INTERVAL / 2,
+                                Ok(n) if n < 8 => REQUERY_INTERVAL / 8 * (n as u32),
                                 Ok(_) => REQUERY_INTERVAL,
                                 Err(e) => {
                                     error!("error in get_peers_root(): {e:?}");
@@ -313,7 +313,9 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                             );
                         }
                         Some(_) = futs.next(), if !futs.is_empty() => {}
-                        _ = &mut looper => {}
+                        r = &mut looper => {
+                            return r
+                        }
                     }
                 }
             },
