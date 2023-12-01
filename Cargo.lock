@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "anyhow",
  "axum 0.7.1",
@@ -1275,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "anyhow",
  "clap",
