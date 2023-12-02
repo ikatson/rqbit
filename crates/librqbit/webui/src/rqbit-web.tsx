@@ -349,7 +349,7 @@ const TorrentsList = (props: { torrents: Array<TorrentId> | null, loading: boole
     </>;
 };
 
-export const RqbitWebUI = () => {
+export const RqbitWebUI = (props: { title: string }) => {
     const [closeableError, setCloseableError] = useState<Error | null>(null);
     const [otherError, setOtherError] = useState<Error | null>(null);
 
@@ -382,7 +382,7 @@ export const RqbitWebUI = () => {
 
     return <AppContext.Provider value={context}>
         <div className='text-center'>
-            <h1 className="mt-3 mb-4">rqbit web 4.0.0-beta.0</h1>
+            <h1 className="mt-3 mb-4">{props.title}</h1>
             <RootContent
                 closeableError={closeableError}
                 otherError={otherError}
@@ -591,11 +591,14 @@ const FileSelectionModal = (props: {
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<Error | null>(null);
     const [unpopularTorrent, setUnpopularTorrent] = useState(false);
+    const [outputFolder, setOutputFolder] = useState<string>('');
     const ctx = useContext(AppContext);
     const API = useContext(APIContext);
 
     useEffect(() => {
+        console.log(listTorrentResponse);
         setSelectedFiles(listTorrentResponse ? listTorrentResponse.details.files.map((_, id) => id) : []);
+        setOutputFolder(listTorrentResponse?.output_folder || '');
     }, [listTorrentResponse]);
 
     const clear = () => {
@@ -623,6 +626,7 @@ const FileSelectionModal = (props: {
             overwrite: true,
             only_files: selectedFiles,
             initial_peers: initialPeers,
+            output_folder: outputFolder,
         };
         if (unpopularTorrent) {
             opts.peer_opts = {
@@ -647,7 +651,7 @@ const FileSelectionModal = (props: {
             return <ErrorComponent error={listTorrentError}></ErrorComponent>;
         } else if (listTorrentResponse) {
             return <Form>
-                <fieldset className='mb-5'>
+                <fieldset className='mb-4'>
                     <legend>Pick the files to download</legend>
                     {listTorrentResponse.details.files.map((file, index) => (
                         <Form.Group key={index} controlId={`check-${index}`}>
@@ -661,9 +665,16 @@ const FileSelectionModal = (props: {
                     ))}
                 </fieldset>
                 <fieldset>
-                    <legend>Other options</legend>
-
-                    <Form.Group controlId='unpopular-torrent'>
+                    <legend>Options</legend>
+                    <Form.Group controlId='output-folder' className="mb-3">
+                        <Form.Label>Output folder</Form.Label>
+                        <Form.Control
+                            type="text"
+                            value={outputFolder}
+                            onChange={(e) => setOutputFolder(e.target.value)}
+                        />
+                    </Form.Group>
+                    <Form.Group controlId='unpopular-torrent' className="mb-3">
                         <Form.Check
                             type="checkbox"
                             label="Increase timeouts"
@@ -673,7 +684,7 @@ const FileSelectionModal = (props: {
                         <small id="emailHelp" className="form-text text-muted">This might be useful for unpopular torrents with few peers. It will slow down fast torrents though.</small>
                     </Form.Group>
                 </fieldset>
-            </Form >
+            </Form>
         }
     };
 

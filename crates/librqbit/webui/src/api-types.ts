@@ -19,6 +19,7 @@ export interface TorrentDetails {
 export interface AddTorrentResponse {
     id: number | null;
     details: TorrentDetails;
+    output_folder: string,
     seen_peers?: Array<string>;
 }
 

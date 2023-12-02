@@ -31,7 +31,6 @@ backoff = "0.4.0"
 futures = "0.3"
 rand = "0.8"
 indexmap = "2"
-directories = "5"
 dashmap = {version = "5.5.3", features = ["serde"]}
 
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}

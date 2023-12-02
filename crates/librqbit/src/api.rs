@@ -143,8 +143,10 @@ impl Api {
                 info,
                 only_files,
                 seen_peers,
+                output_folder,
             }) => ApiAddTorrentResponse {
                 id: None,
+                output_folder: output_folder.to_string_lossy().into_owned(),
                 seen_peers: Some(seen_peers),
                 details: make_torrent_details(&info_hash, &info, only_files.as_deref())
                     .context("error making torrent details")?,
@@ -159,6 +161,7 @@ impl Api {
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
+                    output_folder: handle.info().out_dir.to_string_lossy().into_owned(),
                     seen_peers: None,
                 }
             }
@@ -227,6 +230,7 @@ pub struct TorrentDetailsResponse {
 pub struct ApiAddTorrentResponse {
     pub id: Option<usize>,
     pub details: TorrentDetailsResponse,
+    pub output_folder: String,
     pub seen_peers: Option<Vec<SocketAddr>>,
 }
 

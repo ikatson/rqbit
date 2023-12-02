@@ -1,4 +1,5 @@
 pub mod constants;
+pub mod directories;
 pub mod id20;
 pub mod lengths;
 pub mod magnet;

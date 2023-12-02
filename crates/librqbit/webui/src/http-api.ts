@@ -72,6 +72,9 @@ export const API: RqbitAPI = {
         if (opts?.initial_peers) {
             url += `&initial_peers=${opts.initial_peers.join(',')}`;
         }
+        if (opts?.output_folder) {
+            url += `&output_folder=${opts.output_folder}`;
+        }
         if (typeof data === 'string') {
             url += '&is_url=true';
         }

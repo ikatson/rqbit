@@ -1,5 +1,6 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
+use librqbit_core::directories::get_configuration_directory;
 use librqbit_core::spawn_utils::spawn;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
@@ -72,8 +73,7 @@ impl PersistentDht {
         let config_filename = match config.config_filename.take() {
             Some(config_filename) => config_filename,
             None => {
-                let dirs = directories::ProjectDirs::from("com", "rqbit", "dht")
-                    .context("cannot determine project directory for com.rqbit.dht")?;
+                let dirs = get_configuration_directory("dht")?;
                 let path = dirs.cache_dir().join("dht.json");
                 info!("will store DHT routing table to {:?} periodically", &path);
                 path

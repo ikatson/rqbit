@@ -14,6 +14,7 @@ use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::ByteString;
 use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream};
 use librqbit_core::{
+    directories::get_configuration_directory,
     magnet::Magnet,
     peer_id::generate_peer_id,
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
@@ -66,7 +67,7 @@ impl SessionDatabase {
 
     fn serialize(&self) -> SerializedSessionDatabase {
         SerializedSessionDatabase {
-            torrents_v2: self
+            torrents: self
                 .torrents
                 .iter()
                 .map(|(id, torrent)| {
@@ -135,7 +136,7 @@ where
 
 #[derive(Serialize, Deserialize)]
 struct SerializedSessionDatabase {
-    torrents_v2: HashMap<usize, SerializedTorrent>,
+    torrents: HashMap<usize, SerializedTorrent>,
 }
 
 pub struct Session {
@@ -208,9 +209,11 @@ pub struct ListOnlyResponse {
     pub info_hash: Id20,
     pub info: TorrentMetaV1Info<ByteString>,
     pub only_files: Option<Vec<usize>>,
+    pub output_folder: PathBuf,
     pub seen_peers: Vec<SocketAddr>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum AddTorrentResponse {
     AlreadyManaged(TorrentId, ManagedTorrentHandle),
     ListOnly(ListOnlyResponse),
@@ -276,7 +279,6 @@ pub struct SessionOptions {
     pub disable_dht: bool,
     pub disable_dht_persistence: bool,
     pub persistence: bool,
-    // Will default to output_folder/.rqbit-session.json
     pub persistence_filename: Option<PathBuf>,
     pub dht_config: Option<PersistentDhtConfig>,
     pub peer_id: Option<Id20>,
@@ -308,9 +310,12 @@ impl Session {
             Some(dht)
         };
         let peer_opts = opts.peer_opts.unwrap_or_default();
-        let persistence_filename = opts
-            .persistence_filename
-            .unwrap_or_else(|| output_folder.join(".rqbit-session.json"));
+        let persistence_filename = match opts.persistence_filename {
+            Some(filename) => filename,
+            None => get_configuration_directory("session")?
+                .data_dir()
+                .join("session.json"),
+        };
         let session = Arc::new(Self {
             persistence_filename,
             peer_id,
@@ -322,6 +327,10 @@ impl Session {
         });
 
         if opts.persistence {
+            info!(
+                "will use {:?} for session persistence",
+                session.persistence_filename
+            );
             if let Some(parent) = session.persistence_filename.parent() {
                 std::fs::create_dir_all(parent).with_context(|| {
                     format!("couldn't create directory {:?} for session storage", parent)
@@ -391,7 +400,7 @@ impl Session {
         let db: SerializedSessionDatabase =
             serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
         let mut futures = Vec::new();
-        for (id, storrent) in db.torrents_v2.into_iter() {
+        for (id, storrent) in db.torrents.into_iter() {
             let trackers: Vec<ByteString> = storrent
                 .trackers
                 .into_iter()
@@ -646,21 +655,22 @@ impl Session {
 
         let only_files = get_only_files(opts.only_files, opts.only_files_regex, opts.list_only)?;
 
-        if opts.list_only {
-            return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
-                info_hash,
-                info,
-                only_files,
-                seen_peers: initial_peers,
-            }));
-        }
-
         let sub_folder = opts.sub_folder.map(PathBuf::from).unwrap_or_default();
         let output_folder = opts
             .output_folder
             .map(PathBuf::from)
             .unwrap_or_else(|| self.output_folder.clone())
             .join(sub_folder);
+
+        if opts.list_only {
+            return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
+                info_hash,
+                info,
+                only_files,
+                output_folder,
+                seen_peers: initial_peers,
+            }));
+        }
 
         let mut builder = ManagedTorrentBuilder::new(info, info_hash, output_folder.clone());
         builder
