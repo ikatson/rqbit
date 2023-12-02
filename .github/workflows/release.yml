@@ -13,6 +13,22 @@ jobs:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v2
+    - name: install Tauri
+      run:
+        cargo install tauri-cli --profile dev
+    - name: npm install (desktop)
+      working-directory: desktop
+      run:
+        npm install
+    - name: npm install (librqbit/webui)
+      working-directory: crates/librqbit/webui
+      run:
+        npm install
+    - name: cargo tauri build
+      working-directory: desktop
+      run:
+        cargo tauri build --ci
+
     - name: Build release
       run:
         cargo build --profile release-github
@@ -21,6 +37,8 @@ jobs:
         body: This release and its artifacts were built with a GitHub action
         files: |
           target/release-github/rqbit.exe
+          desktop/src-tauri/target/release/bundle/msi/rqbit-desktop_1.0.0_x64_en-US.msi
+          desktop/src-tauri/target/release/bundle/nsis/rqbit-desktop_1.0.0_x64-setup.exe
 
   cross-compile-on-macos:
     runs-on: macos-11
@@ -30,6 +48,23 @@ jobs:
       run:
         brew tap messense/macos-cross-toolchains &&
         brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf
+
+    - name: install Tauri
+      run:
+        cargo install tauri-cli --profile dev
+    - name: npm install (desktop)
+      working-directory: desktop
+      run:
+        npm install
+    - name: npm install (librqbit/webui)
+      working-directory: crates/librqbit/webui
+      run:
+        npm install
+    - name: cargo tauri build
+      working-directory: desktop
+      run:
+        rustup target add aarch64-apple-darwin &&
+        cargo tauri build --target universal-apple-darwin --ci
 
     - name: Make a directory for output artifacts
       run:
@@ -75,4 +110,5 @@ jobs:
           target/artifacts/rqbit-linux-static-aarch64
           target/artifacts/rqbit-linux-static-armv6
           target/artifacts/rqbit-linux-static-armv7
+          desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/rqbit-desktop_1.0.0_universal.dmg
 

@@ -1856,7 +1856,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "4.0.0-beta.2"
+version = "4.0.0-beta.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1920,7 +1920,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "4.0.0-beta.2"
+version = "4.0.0-beta.3"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2967,7 +2967,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rqbit"
+name = "rqbit-desktop"
 version = "0.0.0"
 dependencies = [
  "anyhow",
