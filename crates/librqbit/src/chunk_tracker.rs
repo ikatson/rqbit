@@ -61,7 +61,14 @@ impl ChunkTracker {
     pub fn new(needed_pieces: BF, have_pieces: BF, lengths: Lengths) -> Self {
         // TODO: ideally this needs to be a list based on needed files, e.g.
         // last needed piece for each file. But let's keep simple for now.
-        let last_needed_piece_id = needed_pieces.iter_ones().next_back();
+
+        // TODO: bitvec is bugged, the short version panics.
+        // let last_needed_piece_id = needed_pieces.iter_ones().next_back();
+        let last_needed_piece_id = needed_pieces
+            .iter()
+            .enumerate()
+            .filter_map(|(id, b)| if *b { Some(id) } else { None })
+            .last();
 
         // The last pieces first. Often important information is stored in the last piece.
         // E.g. if it's a video file, than the last piece often contains some index, or just
