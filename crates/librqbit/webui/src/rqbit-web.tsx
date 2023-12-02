@@ -1,8 +1,6 @@
 import { MouseEventHandler, RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, ErrorDetails } from './api-types';
-
-declare const API: RqbitAPI;
+import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, ErrorDetails, ListTorrentsResponse } from './api-types';
 
 interface Error {
     text: string,
@@ -13,6 +11,33 @@ interface ContextType {
     setCloseableError: (error: Error | null) => void,
     refreshTorrents: () => void,
 }
+
+export const APIContext = createContext<RqbitAPI>({
+    listTorrents: function (): Promise<ListTorrentsResponse> {
+        throw new Error('Function not implemented.');
+    },
+    getTorrentDetails: function (index: number): Promise<TorrentDetails> {
+        throw new Error('Function not implemented.');
+    },
+    getTorrentStats: function (index: number): Promise<TorrentStats> {
+        throw new Error('Function not implemented.');
+    },
+    uploadTorrent: function (data: string | File, opts?: { listOnly?: boolean | undefined; selectedFiles?: number[] | undefined; unpopularTorrent?: boolean | undefined; initialPeers?: string[] | null | undefined; } | undefined): Promise<AddTorrentResponse> {
+        throw new Error('Function not implemented.');
+    },
+    pause: function (index: number): Promise<void> {
+        throw new Error('Function not implemented.');
+    },
+    start: function (index: number): Promise<void> {
+        throw new Error('Function not implemented.');
+    },
+    forget: function (index: number): Promise<void> {
+        throw new Error('Function not implemented.');
+    },
+    delete: function (index: number): Promise<void> {
+        throw new Error('Function not implemented.');
+    }
+});
 
 const AppContext = createContext<ContextType>({
     setCloseableError: (_) => { },
@@ -49,6 +74,7 @@ const DeleteTorrentModal: React.FC<{
     const [deleting, setDeleting] = useState(false);
 
     const ctx = useContext(AppContext);
+    const API = useContext(APIContext);
 
     const close = () => {
         setDeleteFiles(false);
@@ -117,6 +143,7 @@ const TorrentActions: React.FC<{
     const canUnpause = state == 'paused' || state == 'error';
 
     const ctx = useContext(AppContext);
+    const API = useContext(APIContext);
 
     const unpause = () => {
         setDisabled(true);
@@ -258,6 +285,7 @@ const Torrent: React.FC<{
     const [detailsResponse, updateDetailsResponse] = useState<TorrentDetails | null>(null);
     const [statsResponse, updateStatsResponse] = useState<TorrentStats | null>(null);
     const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
+    const API = useContext(APIContext);
 
     const forceStatsRefreshCallback = () => {
         setForceStatsRefresh(forceStatsRefresh + 1);
@@ -327,6 +355,7 @@ export const RqbitWebUI = () => {
 
     const [torrents, setTorrents] = useState<Array<TorrentId> | null>(null);
     const [torrentsLoading, setTorrentsLoading] = useState(false);
+    const API = useContext(APIContext);
 
     const refreshTorrents = async () => {
         setTorrentsLoading(true);
@@ -399,6 +428,7 @@ const UploadButton: React.FC<{
     const [loading, setLoading] = useState(false);
     const [listTorrentResponse, setListTorrentResponse] = useState<AddTorrentResponse | null>(null);
     const [listTorrentError, setListTorrentError] = useState<Error | null>(null);
+    const API = useContext(APIContext);
 
     // Get the torrent file list if there's data.
     useEffect(() => {
@@ -567,6 +597,7 @@ const FileSelectionModal = (props: {
     const [uploadError, setUploadError] = useState<Error | null>(null);
     const [unpopularTorrent, setUnpopularTorrent] = useState(false);
     const ctx = useContext(AppContext);
+    const API = useContext(APIContext);
 
     useEffect(() => {
         setSelectedFiles(listTorrentResponse ? listTorrentResponse.details.files.map((_, id) => id) : []);

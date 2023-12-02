@@ -1,9 +1,12 @@
 import { StrictMode } from "react";
 import ReactDOM from 'react-dom/client';
-import { RqbitWebUI } from "./rqbit-web";
+import { RqbitWebUI, APIContext } from "./rqbit-web";
 import { API } from "./http-api";
 
-globalThis.API = API;
-
-const torrentsContainer = document.getElementById('app') as HTMLInputElement;
-ReactDOM.createRoot(torrentsContainer).render(<StrictMode><RqbitWebUI /></StrictMode >);
+ReactDOM.createRoot(document.getElementById('app') as HTMLInputElement).render(
+    <StrictMode>
+        <APIContext.Provider value={API}>
+            <RqbitWebUI />
+        </APIContext.Provider>
+    </StrictMode>
+);
