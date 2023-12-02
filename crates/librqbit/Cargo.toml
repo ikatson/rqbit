@@ -62,6 +62,7 @@ hex = "0.4"
 backoff = "0.4.0"
 dashmap = "5.5.3"
 base64 = "0.21.5"
+serde_with = "3.4.0"
 
 [dev-dependencies]
 futures = {version = "0.3"}

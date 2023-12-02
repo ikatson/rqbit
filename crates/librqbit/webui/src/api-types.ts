@@ -104,16 +104,34 @@ export interface ErrorDetails {
     text: string,
 };
 
+export type Duration = number;
+
+export interface PeerConnectionOptions {
+    connect_timeout?: Duration | null;
+    read_write_timeout?: Duration | null;
+    keep_alive_interval?: Duration | null;
+}
+
+export interface AddTorrentOptions {
+    paused?: boolean;
+    only_files_regex?: string | null;
+    only_files?: number[] | null;
+    overwrite?: boolean;
+    list_only?: boolean;
+    output_folder?: string | null;
+    sub_folder?: string | null;
+    peer_opts?: PeerConnectionOptions | null;
+    force_tracker_interval?: Duration | null;
+    initial_peers?: string[] | null; // Assuming SocketAddr is equivalent to a string in TypeScript
+    preferred_id?: number | null;
+}
+
+
 export interface RqbitAPI {
     listTorrents: () => Promise<ListTorrentsResponse>,
     getTorrentDetails: (index: number) => Promise<TorrentDetails>,
     getTorrentStats: (index: number) => Promise<TorrentStats>;
-    uploadTorrent: (data: string | File, opts?: {
-        listOnly?: boolean,
-        selectedFiles?: Array<number>,
-        unpopularTorrent?: boolean,
-        initialPeers?: Array<string> | null,
-    }) => Promise<AddTorrentResponse>;
+    uploadTorrent: (data: string | File, opts?: AddTorrentOptions) => Promise<AddTorrentResponse>;
 
     pause: (index: number) => Promise<void>;
     start: (index: number) => Promise<void>;

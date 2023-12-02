@@ -1,6 +1,6 @@
 import { MouseEventHandler, RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, ErrorDetails, ListTorrentsResponse } from './api-types';
+import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, ErrorDetails, ListTorrentsResponse, AddTorrentOptions } from './api-types';
 
 interface Error {
     text: string,
@@ -13,28 +13,28 @@ interface ContextType {
 }
 
 export const APIContext = createContext<RqbitAPI>({
-    listTorrents: function (): Promise<ListTorrentsResponse> {
+    listTorrents: () => {
         throw new Error('Function not implemented.');
     },
-    getTorrentDetails: function (index: number): Promise<TorrentDetails> {
+    getTorrentDetails: () => {
         throw new Error('Function not implemented.');
     },
-    getTorrentStats: function (index: number): Promise<TorrentStats> {
+    getTorrentStats: () => {
         throw new Error('Function not implemented.');
     },
-    uploadTorrent: function (data: string | File, opts?: { listOnly?: boolean | undefined; selectedFiles?: number[] | undefined; unpopularTorrent?: boolean | undefined; initialPeers?: string[] | null | undefined; } | undefined): Promise<AddTorrentResponse> {
+    uploadTorrent: () => {
         throw new Error('Function not implemented.');
     },
-    pause: function (index: number): Promise<void> {
+    pause: () => {
         throw new Error('Function not implemented.');
     },
-    start: function (index: number): Promise<void> {
+    start: () => {
         throw new Error('Function not implemented.');
     },
-    forget: function (index: number): Promise<void> {
+    forget: () => {
         throw new Error('Function not implemented.');
     },
-    delete: function (index: number): Promise<void> {
+    delete: () => {
         throw new Error('Function not implemented.');
     }
 });
@@ -439,7 +439,7 @@ const UploadButton: React.FC<{
         let t = setTimeout(async () => {
             setLoading(true);
             try {
-                const response = await API.uploadTorrent(data, { listOnly: true });
+                const response = await API.uploadTorrent(data, { list_only: true });
                 setListTorrentResponse(response);
             } catch (e) {
                 setListTorrentError({ text: 'Error listing torrent files', details: e as ErrorDetails });
@@ -624,7 +624,18 @@ const FileSelectionModal = (props: {
         }
         setUploading(true);
         let initialPeers = listTorrentResponse.seen_peers ? listTorrentResponse.seen_peers.slice(0, 32) : null;
-        API.uploadTorrent(data, { selectedFiles, unpopularTorrent, initialPeers }).then(() => {
+        let opts: AddTorrentOptions = {
+            overwrite: true,
+            only_files: selectedFiles,
+            initial_peers: initialPeers,
+        };
+        if (unpopularTorrent) {
+            opts.peer_opts = {
+                connect_timeout: 20,
+                read_write_timeout: 60,
+            };
+        }
+        API.uploadTorrent(data, opts).then(() => {
             onHide();
             ctx.refreshTorrents();
         },

@@ -55,25 +55,22 @@ export const API: RqbitAPI = {
         return makeRequest('GET', `/torrents/${index}/stats/v1`);
     },
 
-    uploadTorrent: (data: string | File, opts?: {
-        listOnly?: boolean,
-        selectedFiles?: Array<number>,
-        unpopularTorrent?: boolean,
-        initialPeers?: Array<string> | null,
-    }): Promise<AddTorrentResponse> => {
-        opts = opts || {};
+    uploadTorrent: (data, opts): Promise<AddTorrentResponse> => {
         let url = '/torrents?&overwrite=true';
-        if (opts.listOnly) {
+        if (opts?.list_only) {
             url += '&list_only=true';
         }
-        if (opts.selectedFiles != null) {
-            url += `&only_files=${opts.selectedFiles.join(',')}`;
+        if (opts?.only_files != null) {
+            url += `&only_files=${opts.only_files.join(',')}`;
         }
-        if (opts.unpopularTorrent) {
-            url += '&peer_connect_timeout=20&peer_read_write_timeout=60';
+        if (opts?.peer_opts?.connect_timeout) {
+            url += `&peer_connect_timeout=${opts.peer_opts.connect_timeout}`;
         }
-        if (opts.initialPeers) {
-            url += `&initial_peers=${opts.initialPeers.join(',')}`;
+        if (opts?.peer_opts?.read_write_timeout) {
+            url += `&peer_read_write_timeout=${opts.peer_opts.read_write_timeout}`;
+        }
+        if (opts?.initial_peers) {
+            url += `&initial_peers=${opts.initial_peers.join(',')}`;
         }
         if (typeof data === 'string') {
             url += '&is_url=true';

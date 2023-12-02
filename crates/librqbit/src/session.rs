@@ -21,6 +21,7 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_with::serde_as;
 use tracing::{debug, error, error_span, info, warn};
 
 use crate::{
@@ -181,7 +182,8 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     Ok(only_files)
 }
 
-#[derive(Default, Clone)]
+#[serde_as]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct AddTorrentOptions {
     pub paused: bool,
     pub only_files_regex: Option<String>,
@@ -191,9 +193,11 @@ pub struct AddTorrentOptions {
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,
     pub peer_opts: Option<PeerConnectionOptions>,
+    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub force_tracker_interval: Option<Duration>,
     pub initial_peers: Option<Vec<SocketAddr>>,
     // This is used to restore the session.
+    #[serde(skip)]
     pub preferred_id: Option<usize>,
 }
 

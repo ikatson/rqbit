@@ -12,6 +12,8 @@ use peer_binary_protocol::{
     serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
     MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
 };
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use tokio::time::timeout;
 use tracing::trace;
 
@@ -38,10 +40,16 @@ pub enum WriterRequest {
     Disconnect,
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[serde_as]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct PeerConnectionOptions {
+    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub connect_timeout: Option<Duration>,
+
+    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub read_write_timeout: Option<Duration>,
+
+    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub keep_alive_interval: Option<Duration>,
 }
 
