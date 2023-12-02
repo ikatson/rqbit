@@ -3,7 +3,8 @@ use std::{io::LineWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Durat
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use librqbit::{
-    http_api::{ApiAddTorrentResponse, HttpApi},
+    api::ApiAddTorrentResponse,
+    http_api::HttpApi,
     http_api_client,
     peer_connection::PeerConnectionOptions,
     session::{

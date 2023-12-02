@@ -2,6 +2,7 @@ use anyhow::Context;
 use serde::Deserialize;
 
 use crate::{
+    api::ApiAddTorrentResponse,
     http_api::TorrentAddQueryParams,
     session::{AddTorrent, AddTorrentOptions},
 };
@@ -82,7 +83,7 @@ impl HttpApiClient {
         &self,
         torrent: AddTorrent<'_>,
         opts: Option<AddTorrentOptions>,
-    ) -> anyhow::Result<crate::http_api::ApiAddTorrentResponse> {
+    ) -> anyhow::Result<ApiAddTorrentResponse> {
         let opts = opts.unwrap_or_default();
         let params = TorrentAddQueryParams {
             overwrite: Some(opts.overwrite),
