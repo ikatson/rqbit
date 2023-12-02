@@ -26,19 +26,6 @@ export interface ListTorrentsResponse {
     torrents: Array<TorrentId>;
 }
 
-export interface TorrentAddQueryParams {
-    overwrite?: boolean | null;
-    output_folder?: string | null;
-    sub_folder?: string | null;
-    only_files_regex?: string | null;
-    only_files?: string,
-    peer_connect_timeout?: number | null;
-    peer_read_write_timeout?: number | null;
-    initial_peers?: string | null;
-    is_url?: boolean | null;
-    list_only?: boolean | null;
-}
-
 // Interface for the Torrent Stats API response
 export interface LiveTorrentStats {
     snapshot: {

@@ -1,6 +1,6 @@
 import { MouseEventHandler, RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, ErrorDetails, ListTorrentsResponse, AddTorrentOptions } from './api-types';
+import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, AddTorrentOptions } from './api-types';
 
 interface Error {
     text: string,
@@ -318,7 +318,7 @@ const Torrent: React.FC<{
                 return liveInterval;
             }
             return nonLiveInterval;
-        }, (e) => {
+        }, () => {
             return errorInterval;
         });
     }), 0), [forceStatsRefresh]);
@@ -442,7 +442,7 @@ const UploadButton: React.FC<{
                 const response = await API.uploadTorrent(data, { list_only: true });
                 setListTorrentResponse(response);
             } catch (e) {
-                setListTorrentError({ text: 'Error listing torrent files', details: e as ErrorDetails });
+                setListTorrentError({ text: 'Error listing torrent files', details: e as ApiErrorDetails });
             } finally {
                 setLoading(false);
             }
@@ -510,11 +510,6 @@ const MagnetInput = () => {
     let [magnet, setMagnet] = useState<string | null>(null);
 
     let [showModal, setShowModal] = useState(false);
-
-    const onClick = () => {
-        const m = prompt('Enter magnet link or HTTP(s) URL');
-        setMagnet(m === '' ? null : m);
-    };
 
     return (
         <>

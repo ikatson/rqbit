@@ -185,10 +185,13 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
 #[serde_as]
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct AddTorrentOptions {
+    #[serde(default)]
     pub paused: bool,
     pub only_files_regex: Option<String>,
     pub only_files: Option<Vec<usize>>,
+    #[serde(default)]
     pub overwrite: bool,
+    #[serde(default)]
     pub list_only: bool,
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,

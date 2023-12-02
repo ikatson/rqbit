@@ -11,6 +11,14 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    pub fn new_from_string(status: StatusCode, text: String) -> Self {
+        Self {
+            status: Some(status),
+            kind: ApiErrorKind::Other(anyhow::anyhow!("{}", text)),
+            plaintext: false,
+        }
+    }
+
     pub const fn torrent_not_found(torrent_id: usize) -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
