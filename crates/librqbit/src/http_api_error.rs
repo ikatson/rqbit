@@ -74,6 +74,7 @@ impl Serialize for ApiError {
             error_kind: &'a str,
             human_readable: String,
             status: u16,
+            status_text: String,
             #[serde(skip_serializing_if = "Option::is_none")]
             id: Option<usize>,
         }
@@ -85,6 +86,7 @@ impl Serialize for ApiError {
             },
             human_readable: format!("{self}"),
             status: self.status().as_u16(),
+            status_text: self.status().to_string(),
             ..Default::default()
         };
         if let ApiErrorKind::TorrentNotFound(id) = &self.kind {

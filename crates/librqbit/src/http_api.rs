@@ -308,6 +308,22 @@ pub struct ApiAddTorrentResponse {
 }
 
 pub struct OnlyFiles(Vec<usize>);
+pub struct InitialPeers(pub Vec<SocketAddr>);
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct TorrentAddQueryParams {
+    pub overwrite: Option<bool>,
+    pub output_folder: Option<String>,
+    pub sub_folder: Option<String>,
+    pub only_files_regex: Option<String>,
+    pub only_files: Option<OnlyFiles>,
+    pub peer_connect_timeout: Option<u64>,
+    pub peer_read_write_timeout: Option<u64>,
+    pub initial_peers: Option<InitialPeers>,
+    // Will force interpreting the content as a URL.
+    pub is_url: Option<bool>,
+    pub list_only: Option<bool>,
+}
 
 impl Serialize for OnlyFiles {
     fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
@@ -348,8 +364,6 @@ impl<'de> Deserialize<'de> for OnlyFiles {
     }
 }
 
-pub struct InitialPeers(pub Vec<SocketAddr>);
-
 impl<'de> Deserialize<'de> for InitialPeers {
     fn deserialize<D>(deserializer: D) -> std::prelude::v1::Result<Self, D::Error>
     where
@@ -378,23 +392,8 @@ impl Serialize for InitialPeers {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
-pub struct TorrentAddQueryParams {
-    pub overwrite: Option<bool>,
-    pub output_folder: Option<String>,
-    pub sub_folder: Option<String>,
-    pub only_files_regex: Option<String>,
-    pub only_files: Option<OnlyFiles>,
-    pub peer_connect_timeout: Option<u64>,
-    pub peer_read_write_timeout: Option<u64>,
-    pub initial_peers: Option<InitialPeers>,
-    // Will force interpreting the content as a URL.
-    pub is_url: Option<bool>,
-    pub list_only: Option<bool>,
-}
-
 impl TorrentAddQueryParams {
-    fn into_add_torrent_options(self) -> AddTorrentOptions {
+    pub fn into_add_torrent_options(self) -> AddTorrentOptions {
         AddTorrentOptions {
             overwrite: self.overwrite.unwrap_or(false),
             only_files_regex: self.only_files_regex,

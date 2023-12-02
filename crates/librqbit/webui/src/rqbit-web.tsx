@@ -1,13 +1,12 @@
-import { StrictMode, createContext, useContext, useEffect, useRef, useState } from 'react';
-import ReactDOM from 'react-dom/client';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI } from './api-types';
+import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI } from './api-types';
 
 declare const API: RqbitAPI;
 
 interface Error {
     text: string,
-    details?: ErrorDetails,
+    details?: ApiErrorDetails,
 }
 
 interface ContextType {
@@ -352,7 +351,7 @@ export const RqbitWebUI = () => {
     </AppContext.Provider >
 }
 
-const ErrorDetails = (props: { details: ErrorDetails }) => {
+const ErrorDetails = (props: { details: ApiErrorDetails }) => {
     let { details } = props;
     if (!details) {
         return null;
@@ -431,8 +430,42 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
     );
 };
 
+const UrlPromptModal: React.FC<{
+    show: boolean,
+    setUrl: (_: string) => void,
+    cancel: () => void,
+}> = ({ show, setUrl, cancel }) => {
+    let [inputValue, setInputValue] = useState('');
+    return <Modal show={show} onHide={cancel} size='lg'>
+        <Modal.Header closeButton>
+            <Modal.Title>Add torrent</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+            <Form>
+                <Form.Group className="mb-3" controlId="url">
+                    <Form.Label>Enter magnet or HTTP(S) URL to the .torrent</Form.Label>
+                    <Form.Control value={inputValue} placeholder="magnet:?xt=urn:btih:..." onChange={(u) => { setInputValue(u.target.value) }} />
+                </Form.Group>
+            </Form>
+        </Modal.Body>
+        <Modal.Footer>
+            <Button
+                variant="primary"
+                onClick={() => { setUrl(inputValue); setInputValue(''); }}
+                disabled={inputValue.length == 0}>
+                OK
+            </Button>
+            <Button variant="secondary" onClick={cancel}>
+                Cancel
+            </Button>
+        </Modal.Footer>
+    </Modal >
+}
+
 const MagnetInput = () => {
     let [magnet, setMagnet] = useState(null);
+
+    let [showModal, setShowModal] = useState(null);
 
     const onClick = () => {
         const m = prompt('Enter magnet link or HTTP(s) URL');
@@ -440,13 +473,28 @@ const MagnetInput = () => {
     };
 
     return (
-        <UploadButton
-            variant='primary'
-            buttonText="Add Torrent from Magnet / URL"
-            onClick={onClick}
-            data={magnet}
-            resetData={() => setMagnet(null)}
-        />
+        <>
+            <UploadButton
+                variant='primary'
+                buttonText="Add Torrent from Magnet / URL"
+                onClick={() => {
+                    setShowModal(true);
+                }}
+                data={magnet}
+                resetData={() => setMagnet(null)}
+            />
+
+            <UrlPromptModal
+                show={showModal}
+                setUrl={(url) => {
+                    setShowModal(null);
+                    setMagnet(url);
+                }}
+                cancel={() => {
+                    setShowModal(null);
+                    setMagnet(null);
+                }} />
+        </>
     );
 };
 
@@ -598,7 +646,7 @@ const Buttons = () => {
     );
 };
 
-const RootContent = (props: { closeableError: ErrorDetails, otherError: ErrorDetails, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
+const RootContent = (props: { closeableError: ApiErrorDetails, otherError: ApiErrorDetails, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
     let ctx = useContext(AppContext);
     return <Container>
         <ErrorComponent error={props.closeableError} remove={() => ctx.setCloseableError(null)} />
