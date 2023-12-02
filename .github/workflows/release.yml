@@ -68,7 +68,7 @@ jobs:
 
     - uses: softprops/action-gh-release@v1
       with:
-        body: This release and its artifacts were built with a GitHub action
+        generate_release_notes: true
         files: |
           target/artifacts/rqbit-osx-universal
           target/artifacts/rqbit-linux-static-x86_64
