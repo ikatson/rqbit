@@ -59,7 +59,7 @@ export const API: RqbitAPI = {
         listOnly?: boolean,
         selectedFiles?: Array<number>,
         unpopularTorrent?: boolean,
-        initialPeers?: Array<string>,
+        initialPeers?: Array<string> | null,
     }): Promise<AddTorrentResponse> => {
         opts = opts || {};
         let url = '/torrents?&overwrite=true';

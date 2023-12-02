@@ -112,7 +112,7 @@ export interface RqbitAPI {
         listOnly?: boolean,
         selectedFiles?: Array<number>,
         unpopularTorrent?: boolean,
-        initialPeers?: Array<string>,
+        initialPeers?: Array<string> | null,
     }) => Promise<AddTorrentResponse>;
 
     pause: (index: number) => Promise<void>;

@@ -6,9 +6,9 @@
 		"noEmit": true,
 		"allowJs": true,
 		"checkJs": true,
-		/* Preact Config */
 		"jsx": "react-jsx",
 		"skipLibCheck": true,
+		"strict": true,
 	},
 	"include": [
 		"node_modules/vite/client.d.ts",

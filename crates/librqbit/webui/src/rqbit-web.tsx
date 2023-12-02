@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { MouseEventHandler, RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
-import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI } from './api-types';
+import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, ErrorDetails } from './api-types';
 
 declare const API: RqbitAPI;
 
@@ -10,12 +10,15 @@ interface Error {
 }
 
 interface ContextType {
-    setCloseableError: (error: Error) => void,
+    setCloseableError: (error: Error | null) => void,
     refreshTorrents: () => void,
 }
 
-const AppContext = createContext<ContextType>(null);
-const RefreshTorrentStatsContext = createContext<{ refresh: () => void }>(null);
+const AppContext = createContext<ContextType>({
+    setCloseableError: (_) => { },
+    refreshTorrents: () => { },
+});
+const RefreshTorrentStatsContext = createContext({ refresh: () => { } });
 
 const IconButton: React.FC<{
     className: string,
@@ -23,7 +26,7 @@ const IconButton: React.FC<{
     disabled?: boolean,
     color?: string,
 }> = ({ className, onClick, disabled, color }) => {
-    const onClickStopPropagation = (e) => {
+    const onClickStopPropagation: MouseEventHandler<HTMLAnchorElement> = (e) => {
         e.stopPropagation();
         if (disabled) {
             return;
@@ -33,12 +36,16 @@ const IconButton: React.FC<{
     return <a className={`bi ${className} p-1`} onClick={onClickStopPropagation} href='#'></a>
 }
 
-const DeleteTorrentModal = ({ id, show, onHide }) => {
+const DeleteTorrentModal: React.FC<{
+    id: number,
+    show: boolean,
+    onHide: () => void
+}> = ({ id, show, onHide }) => {
     if (!show) {
         return null;
     }
     const [deleteFiles, setDeleteFiles] = useState(false);
-    const [error, setError] = useState<Error>(null);
+    const [error, setError] = useState<Error | null>(null);
     const [deleting, setDeleting] = useState(false);
 
     const ctx = useContext(AppContext);
@@ -152,7 +159,9 @@ const TorrentActions: React.FC<{
 }
 
 const TorrentRow: React.FC<{
-    id: number, detailsResponse: TorrentDetails, statsResponse: TorrentStats
+    id: number,
+    detailsResponse: TorrentDetails | null,
+    statsResponse: TorrentStats | null
 }> = ({ id, detailsResponse, statsResponse }) => {
     const state = statsResponse?.state ?? "";
     const error = statsResponse?.error;
@@ -182,7 +191,7 @@ const TorrentRow: React.FC<{
             case STATE_ERROR: return 'Error';
         }
 
-        return statsResponse.live?.download_speed.human_readable ?? "N/A";
+        return statsResponse?.live?.download_speed.human_readable ?? "N/A";
     }
 
     let classNames = [];
@@ -242,9 +251,12 @@ const Column: React.FC<{
     </Col>
 );
 
-const Torrent = ({ id, torrent }) => {
-    const [detailsResponse, updateDetailsResponse] = useState<TorrentDetails>(null);
-    const [statsResponse, updateStatsResponse] = useState<TorrentStats>(null);
+const Torrent: React.FC<{
+    id: number,
+    torrent: TorrentId
+}> = ({ id, torrent }) => {
+    const [detailsResponse, updateDetailsResponse] = useState<TorrentDetails | null>(null);
+    const [statsResponse, updateStatsResponse] = useState<TorrentStats | null>(null);
     const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
 
     const forceStatsRefreshCallback = () => {
@@ -288,7 +300,7 @@ const Torrent = ({ id, torrent }) => {
     </RefreshTorrentStatsContext.Provider >
 }
 
-const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) => {
+const TorrentsList = (props: { torrents: Array<TorrentId> | null, loading: boolean }) => {
     if (props.torrents === null && props.loading) {
         return <Spinner />
     }
@@ -310,10 +322,10 @@ const TorrentsList = (props: { torrents: Array<TorrentId>, loading: boolean }) =
 };
 
 export const RqbitWebUI = () => {
-    const [closeableError, setCloseableError] = useState<Error>(null);
-    const [otherError, setOtherError] = useState<Error>(null);
+    const [closeableError, setCloseableError] = useState<Error | null>(null);
+    const [otherError, setOtherError] = useState<Error | null>(null);
 
-    const [torrents, setTorrents] = useState<Array<TorrentId>>(null);
+    const [torrents, setTorrents] = useState<Array<TorrentId> | null>(null);
     const [torrentsLoading, setTorrentsLoading] = useState(false);
 
     const refreshTorrents = async () => {
@@ -351,7 +363,7 @@ export const RqbitWebUI = () => {
     </AppContext.Provider >
 }
 
-const ErrorDetails = (props: { details: ApiErrorDetails }) => {
+const ErrorDetails = (props: { details: ApiErrorDetails | null | undefined }) => {
     let { details } = props;
     if (!details) {
         return null;
@@ -363,7 +375,7 @@ const ErrorDetails = (props: { details: ApiErrorDetails }) => {
 
 }
 
-const ErrorComponent = (props: { error: Error, remove?: () => void }) => {
+const ErrorComponent = (props: { error: Error | null, remove?: () => void }) => {
     let { error, remove } = props;
 
     if (error == null) {
@@ -377,13 +389,16 @@ const ErrorComponent = (props: { error: Error, remove?: () => void }) => {
     </Alert>);
 };
 
-const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
+const UploadButton: React.FC<{
+    buttonText: string,
+    onClick: () => void,
+    data: string | File | null,
+    resetData: () => void,
+    variant: string,
+}> = ({ buttonText, onClick, data, resetData, variant }) => {
     const [loading, setLoading] = useState(false);
-    const [listTorrentResponse, setListTorrentResponse] = useState<AddTorrentResponse>(null);
-    const [listTorrentError, setListTorrentError] = useState<Error>(null);
-    const ctx = useContext(AppContext);
-
-    const showModal = data !== null || listTorrentError !== null;
+    const [listTorrentResponse, setListTorrentResponse] = useState<AddTorrentResponse | null>(null);
+    const [listTorrentError, setListTorrentError] = useState<Error | null>(null);
 
     // Get the torrent file list if there's data.
     useEffect(() => {
@@ -397,7 +412,7 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
                 const response = await API.uploadTorrent(data, { listOnly: true });
                 setListTorrentResponse(response);
             } catch (e) {
-                setListTorrentError({ text: 'Error listing torrent files', details: e });
+                setListTorrentError({ text: 'Error listing torrent files', details: e as ErrorDetails });
             } finally {
                 setLoading(false);
             }
@@ -418,14 +433,13 @@ const UploadButton = ({ buttonText, onClick, data, resetData, variant }) => {
                 {buttonText}
             </Button>
 
-            <FileSelectionModal
-                show={showModal}
+            {data && <FileSelectionModal
                 onHide={clear}
                 listTorrentError={listTorrentError}
                 listTorrentResponse={listTorrentResponse}
                 data={data}
                 listTorrentLoading={loading}
-            />
+            />}
         </>
     );
 };
@@ -463,9 +477,9 @@ const UrlPromptModal: React.FC<{
 }
 
 const MagnetInput = () => {
-    let [magnet, setMagnet] = useState(null);
+    let [magnet, setMagnet] = useState<string | null>(null);
 
-    let [showModal, setShowModal] = useState(null);
+    let [showModal, setShowModal] = useState(false);
 
     const onClick = () => {
         const m = prompt('Enter magnet link or HTTP(s) URL');
@@ -487,11 +501,11 @@ const MagnetInput = () => {
             <UrlPromptModal
                 show={showModal}
                 setUrl={(url) => {
-                    setShowModal(null);
+                    setShowModal(false);
                     setMagnet(url);
                 }}
                 cancel={() => {
-                    setShowModal(null);
+                    setShowModal(false);
                     setMagnet(null);
                 }} />
         </>
@@ -499,20 +513,29 @@ const MagnetInput = () => {
 };
 
 const FileInput = () => {
-    const inputRef = useRef<HTMLInputElement>();
-    const [file, setFile] = useState(null);
+    const inputRef = useRef<HTMLInputElement>() as RefObject<HTMLInputElement>;
+    const [file, setFile] = useState<File | null>(null);
 
     const onFileChange = async () => {
+        if (!inputRef?.current?.files) {
+            return;
+        }
         const file = inputRef.current.files[0];
         setFile(file);
     };
 
     const reset = () => {
+        if (!inputRef?.current) {
+            return;
+        }
         inputRef.current.value = '';
         setFile(null);
     }
 
     const onClick = () => {
+        if (!inputRef?.current) {
+            return;
+        }
         inputRef.current.click();
     }
 
@@ -531,18 +554,17 @@ const FileInput = () => {
 };
 
 const FileSelectionModal = (props: {
-    show: boolean,
     onHide: () => void,
-    listTorrentResponse: AddTorrentResponse,
-    listTorrentError: Error,
+    listTorrentResponse: AddTorrentResponse | null,
+    listTorrentError: Error | null,
     listTorrentLoading: boolean,
     data: string | File,
 }) => {
-    let { show, onHide, listTorrentResponse, listTorrentError, listTorrentLoading, data } = props;
+    let { onHide, listTorrentResponse, listTorrentError, listTorrentLoading, data } = props;
 
-    const [selectedFiles, setSelectedFiles] = useState([]);
+    const [selectedFiles, setSelectedFiles] = useState<number[]>([]);
     const [uploading, setUploading] = useState(false);
-    const [uploadError, setUploadError] = useState<Error>(null);
+    const [uploadError, setUploadError] = useState<Error | null>(null);
     const [unpopularTorrent, setUnpopularTorrent] = useState(false);
     const ctx = useContext(AppContext);
 
@@ -566,6 +588,9 @@ const FileSelectionModal = (props: {
     };
 
     const handleUpload = async () => {
+        if (!listTorrentResponse) {
+            return;
+        }
         setUploading(true);
         let initialPeers = listTorrentResponse.seen_peers ? listTorrentResponse.seen_peers.slice(0, 32) : null;
         API.uploadTorrent(data, { selectedFiles, unpopularTorrent, initialPeers }).then(() => {
@@ -616,7 +641,7 @@ const FileSelectionModal = (props: {
     };
 
     return (
-        <Modal show={show} onHide={clear} size='lg'>
+        <Modal show onHide={clear} size='lg'>
             <Modal.Header closeButton>
                 <Modal.Title>Add torrent</Modal.Title>
             </Modal.Header>
@@ -646,7 +671,12 @@ const Buttons = () => {
     );
 };
 
-const RootContent = (props: { closeableError: ApiErrorDetails, otherError: ApiErrorDetails, torrents: Array<TorrentId>, torrentsLoading: boolean }) => {
+const RootContent = (props: {
+    closeableError: ApiErrorDetails | null,
+    otherError: ApiErrorDetails | null,
+    torrents: Array<TorrentId> | null,
+    torrentsLoading: boolean
+}) => {
     let ctx = useContext(AppContext);
     return <Container>
         <ErrorComponent error={props.closeableError} remove={() => ctx.setCloseableError(null)} />
