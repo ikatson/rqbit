@@ -38,7 +38,6 @@ jobs:
         files: |
           target/release-github/rqbit.exe
           desktop/src-tauri/target/release/bundle/msi/rqbit-desktop_1.0.0_x64_en-US.msi
-          desktop/src-tauri/target/release/bundle/nsis/rqbit-desktop_1.0.0_x64-setup.exe
 
   cross-compile-on-macos:
     runs-on: macos-11
