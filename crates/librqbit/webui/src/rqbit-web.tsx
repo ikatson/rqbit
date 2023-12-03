@@ -401,7 +401,6 @@ const ErrorDetails = (props: { details: ApiErrorDetails | null | undefined }) =>
         {details.statusText && <p><strong>{details.statusText}</strong></p>}
         <pre>{details.text}</pre>
     </>
-
 }
 
 const ErrorComponent = (props: { error: Error | null, remove?: () => void }) => {

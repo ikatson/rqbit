@@ -11,10 +11,10 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    pub fn new_from_string(status: StatusCode, text: String) -> Self {
+    pub fn new_from_anyhow(status: StatusCode, error: anyhow::Error) -> Self {
         Self {
             status: Some(status),
-            kind: ApiErrorKind::Other(anyhow::anyhow!("{}", text)),
+            kind: ApiErrorKind::Other(error),
             plaintext: false,
         }
     }

@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use anyhow::Context;
 use http::StatusCode;
 use librqbit::{
     api::{
@@ -39,9 +40,10 @@ async fn torrent_create_from_base64_file(
     opts: Option<AddTorrentOptions>,
 ) -> Result<ApiAddTorrentResponse, ApiError> {
     use base64::{engine::general_purpose, Engine as _};
-    let bytes = general_purpose::STANDARD_NO_PAD
+    let bytes = general_purpose::STANDARD
         .decode(&contents)
-        .map_err(|_| ApiError::new_from_string(StatusCode::BAD_REQUEST, "invalid base64".into()))?;
+        .context("invalid base64")
+        .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
     state
         .api
         .api_add_torrent(
