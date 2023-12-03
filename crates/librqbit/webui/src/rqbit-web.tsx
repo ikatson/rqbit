@@ -398,7 +398,7 @@ const ErrorDetails = (props: { details: ApiErrorDetails | null | undefined }) =>
         return null;
     }
     return <>
-        <p>{details.status && <strong>{details.status} {details.statusText}</strong>}</p>
+        {details.statusText && <p><strong>{details.statusText}</strong></p>}
         <pre>{details.text}</pre>
     </>
 

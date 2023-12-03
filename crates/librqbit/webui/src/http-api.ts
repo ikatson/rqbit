@@ -30,7 +30,7 @@ const makeRequest = async (method: string, path: string, data?: any): Promise<an
     }
 
     error.status = response.status;
-    error.statusText = response.statusText;
+    error.statusText = `${response.status} ${response.statusText}`;
 
     if (!response.ok) {
         const errorBody = await response.text();
