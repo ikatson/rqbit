@@ -6,7 +6,7 @@ import { API } from "./api";
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <StrictMode>
         <APIContext.Provider value={API}>
-            <RqbitWebUI title="Rqbit Desktop v4.0.0-beta.3" />
+            <RqbitWebUI title="Rqbit Desktop v4.0.0" />
         </APIContext.Provider>
     </StrictMode>
 );

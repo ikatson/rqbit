@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "4.0.0-beta.3"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "axum 0.7.1",
@@ -1277,6 +1277,7 @@ dependencies = [
  "size_format",
  "tokio",
  "tokio-stream",
+ "tokio-test",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -1310,7 +1311,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -1330,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "4.0.0-beta.3"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1355,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1960,14 +1961,13 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "4.0.0-beta.3"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "clap",
  "console-subscriber",
  "futures",
  "librqbit",
- "librqbit-dht",
  "parking_lot",
  "parse_duration",
  "regex",
@@ -2459,6 +2459,19 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89b3cbabd3ae862100094ae433e1def582cf86451b4e9bf83aa7ac1d8a7d719"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "futures-core",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

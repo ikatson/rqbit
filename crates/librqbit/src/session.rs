@@ -183,24 +183,41 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
     Ok(only_files)
 }
 
+/// Options for adding new torrents to the session.
 #[serde_as]
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct AddTorrentOptions {
+    /// Start in paused state.
     #[serde(default)]
     pub paused: bool,
+    /// A regex to only download files matching it.
     pub only_files_regex: Option<String>,
+    /// An explicit list of file IDs to download.
+    /// To see the file indices, run with "list_only".
     pub only_files: Option<Vec<usize>>,
+    /// Allow writing on top of existing files, including when resuming a torrent.
+    /// You probably want to set it, however for safety it's not default.
     #[serde(default)]
     pub overwrite: bool,
+    /// Only list the files in the torrent without starting it.
     #[serde(default)]
     pub list_only: bool,
+    /// The output folder for the torrent. If not set, the session's default one will be used.
     pub output_folder: Option<String>,
+    /// Sub-folder within session's default output folder. Will error if "output_folder" if also set.
+    /// By default, multi-torrent files are downloaded to a sub-folder.
     pub sub_folder: Option<String>,
+    /// Peer connection options, timeouts etc. If not set, session's defaults will be used.
     pub peer_opts: Option<PeerConnectionOptions>,
+
+    /// Force a refresh interval for polling trackers.
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub force_tracker_interval: Option<Duration>,
+
+    /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
-    // This is used to restore the session.
+
+    /// This is used to restore the session from serialized state.
     #[serde(skip)]
     pub preferred_id: Option<usize>,
 }
@@ -218,6 +235,16 @@ pub enum AddTorrentResponse {
     AlreadyManaged(TorrentId, ManagedTorrentHandle),
     ListOnly(ListOnlyResponse),
     Added(TorrentId, ManagedTorrentHandle),
+}
+
+impl AddTorrentResponse {
+    pub fn into_handle(self) -> Option<ManagedTorrentHandle> {
+        match self {
+            Self::AlreadyManaged(_, handle) => Some(handle),
+            Self::ListOnly(_) => None,
+            Self::Added(_, handle) => Some(handle),
+        }
+    }
 }
 
 pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>> {
@@ -276,25 +303,36 @@ impl<'a> AddTorrent<'a> {
 
 #[derive(Default)]
 pub struct SessionOptions {
+    /// Turn on to disable DHT.
     pub disable_dht: bool,
+    /// Turn on to disable DHT persistence. By default it will re-use stored DHT
+    /// configuration, including the port it listens on.
     pub disable_dht_persistence: bool,
-    pub persistence: bool,
-    pub persistence_filename: Option<PathBuf>,
+    /// Pass in to configure DHT persistence filename. This can be used to run multiple
+    /// librqbit instances at a time.
     pub dht_config: Option<PersistentDhtConfig>,
+
+    /// Turn on to dump session contents into a file periodically, so that on next start
+    /// all remembered torrents will continue where they left off.
+    pub persistence: bool,
+    /// The filename for persistence. By default uses an OS-specific folder.
+    pub persistence_filename: Option<PathBuf>,
+
+    /// The peer ID to use. If not specified, a random one will be generated.
     pub peer_id: Option<Id20>,
+    /// Configure default peer connection options. Can be overriden per torrent.
     pub peer_opts: Option<PeerConnectionOptions>,
 }
 
 impl Session {
-    pub async fn new(
-        output_folder: PathBuf,
-        spawner: BlockingSpawner,
-    ) -> anyhow::Result<Arc<Self>> {
-        Self::new_with_opts(output_folder, spawner, SessionOptions::default()).await
+    /// Create a new session. The passed in folder will be used as a default unless overriden per torrent.
+    pub async fn new(output_folder: PathBuf) -> anyhow::Result<Arc<Self>> {
+        Self::new_with_opts(output_folder, SessionOptions::default()).await
     }
+
+    /// Create a new session with options.
     pub async fn new_with_opts(
         output_folder: PathBuf,
-        spawner: BlockingSpawner,
         opts: SessionOptions,
     ) -> anyhow::Result<Arc<Self>> {
         let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
@@ -316,6 +354,7 @@ impl Session {
                 .data_dir()
                 .join("session.json"),
         };
+        let spawner = BlockingSpawner::default();
         let session = Arc::new(Self {
             persistence_filename,
             peer_id,
@@ -474,6 +513,7 @@ impl Session {
         Ok(())
     }
 
+    /// Run a callback given the currently managed torrents.
     pub fn with_torrents<R>(
         &self,
         callback: impl Fn(&mut dyn Iterator<Item = (TorrentId, &ManagedTorrentHandle)>) -> R,
@@ -481,6 +521,7 @@ impl Session {
         callback(&mut self.db.read().torrents.iter().map(|(id, t)| (*id, t)))
     }
 
+    /// Add a torrent to the session.
     pub async fn add_torrent(
         &self,
         add: AddTorrent<'_>,

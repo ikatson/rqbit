@@ -1,3 +1,5 @@
+/// Spawn a future inside a tracing span, while logging it's start,
+/// finish and periodically logging if it's still alive.
 pub fn spawn(
     _name: &str,
     span: tracing::Span,
@@ -7,7 +9,7 @@ pub fn spawn(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct BlockingSpawner {
+pub(crate) struct BlockingSpawner {
     allow_tokio_block_in_place: bool,
 }
 

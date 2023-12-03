@@ -119,9 +119,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             options: options.unwrap_or_default(),
         }
     }
-    pub fn into_handler(self) -> H {
-        self.handler
-    }
+
     pub async fn manage_peer(
         &self,
         mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,

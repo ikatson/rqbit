@@ -3,16 +3,9 @@ use std::{io::LineWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Durat
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use librqbit::{
-    api::ApiAddTorrentResponse,
-    http_api::HttpApi,
-    http_api_client,
-    peer_connection::PeerConnectionOptions,
-    session::{
-        AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session,
-        SessionOptions,
-    },
-    spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::ManagedTorrentState,
+    api::ApiAddTorrentResponse, http_api::HttpApi, http_api_client, librqbit_spawn, AddTorrent,
+    AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState,
+    PeerConnectionOptions, Session, SessionOptions,
 };
 use size_format::SizeFormatterBinary as SF;
 use tracing::{error, error_span, info, trace_span, warn};
@@ -230,7 +223,7 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
     }
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    spawn(
+    librqbit_spawn(
         "fmt_filter_reloader",
         error_span!("fmt_filter_reloader"),
         async move {
@@ -278,21 +271,15 @@ fn _start_deadlock_detector_thread() {
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
-    let (mut rt_builder, spawner) = match opts.single_thread_runtime {
-        true => (
-            tokio::runtime::Builder::new_current_thread(),
-            BlockingSpawner::new(false),
-        ),
-        false => (
-            {
-                let mut b = tokio::runtime::Builder::new_multi_thread();
-                if let Some(e) = opts.worker_threads {
-                    b.worker_threads(e);
-                }
-                b
-            },
-            BlockingSpawner::new(true),
-        ),
+    let mut rt_builder = match opts.single_thread_runtime {
+        true => tokio::runtime::Builder::new_current_thread(),
+        false => {
+            let mut b = tokio::runtime::Builder::new_multi_thread();
+            if let Some(e) = opts.worker_threads {
+                b.worker_threads(e);
+            }
+            b
+        }
     };
 
     let rt = rt_builder
@@ -306,10 +293,10 @@ fn main() -> anyhow::Result<()> {
         .max_blocking_threads(8)
         .build()?;
 
-    rt.block_on(async_main(opts, spawner))
+    rt.block_on(async_main(opts))
 }
 
-async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> {
+async fn async_main(opts: Opts) -> anyhow::Result<()> {
     let logging_reload_tx = init_logging(&opts);
 
     let mut sopts = SessionOptions {
@@ -384,14 +371,11 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                 sopts.persistence = !start_opts.disable_persistence;
                 sopts.persistence_filename =
                     start_opts.persistence_filename.clone().map(PathBuf::from);
-                let session = Session::new_with_opts(
-                    PathBuf::from(&start_opts.output_folder),
-                    spawner,
-                    sopts,
-                )
-                .await
-                .context("error initializing rqbit session")?;
-                spawn(
+                let session =
+                    Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
+                        .await
+                        .context("error initializing rqbit session")?;
+                librqbit_spawn(
                     "stats_printer",
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
@@ -464,19 +448,18 @@ async fn async_main(opts: Opts, spawner: BlockingSpawner) -> anyhow::Result<()> 
                         .context(
                             "output_folder is required if can't connect to an existing server",
                         )?,
-                    spawner,
                     sopts,
                 )
                 .await
                 .context("error initializing rqbit session")?;
-                spawn(
+                librqbit_spawn(
                     "stats_printer",
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
                 let http_api = HttpApi::new(session.clone(), Some(logging_reload_tx));
                 let http_api_listen_addr = opts.http_api_listen_addr;
-                spawn(
+                librqbit_spawn(
                     "http_api",
                     error_span!("http_api"),
                     http_api

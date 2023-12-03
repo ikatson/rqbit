@@ -4,12 +4,14 @@ use anyhow::Context;
 
 use crate::id20::Id20;
 
+/// A parsed magnet link.
 pub struct Magnet {
     pub info_hash: Id20,
     pub trackers: Vec<String>,
 }
 
 impl Magnet {
+    /// Parse a magnet link.
     pub fn parse(url: &str) -> anyhow::Result<Magnet> {
         let url = url::Url::parse(url).context("magnet link must be a valid URL")?;
         if url.scheme() != "magnet" {

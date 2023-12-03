@@ -12,6 +12,7 @@ struct ProgressSnapshot {
     instant: Instant,
 }
 
+/// Estimates download speed in a sliding time window.
 pub struct SpeedEstimator {
     latest_per_second_snapshots: Mutex<VecDeque<ProgressSnapshot>>,
     download_bytes_per_second: AtomicU64,

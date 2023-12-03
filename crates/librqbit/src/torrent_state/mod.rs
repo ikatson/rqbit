@@ -81,7 +81,7 @@ pub struct ManagedTorrentInfo {
     pub info: TorrentMetaV1Info<ByteString>,
     pub info_hash: Id20,
     pub out_dir: PathBuf,
-    pub spawner: BlockingSpawner,
+    pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<Url>,
     pub peer_id: Id20,
     pub lengths: Lengths,
@@ -120,7 +120,10 @@ impl ManagedTorrent {
         f(&mut self.locked.write().state)
     }
 
-    pub fn with_chunk_tracker<R>(&self, f: impl FnOnce(&ChunkTracker) -> R) -> anyhow::Result<R> {
+    pub(crate) fn with_chunk_tracker<R>(
+        &self,
+        f: impl FnOnce(&ChunkTracker) -> R,
+    ) -> anyhow::Result<R> {
         let g = self.locked.read();
         match &g.state {
             ManagedTorrentState::Paused(p) => Ok(f(&p.chunk_tracker)),
@@ -132,6 +135,7 @@ impl ManagedTorrent {
         }
     }
 
+    /// Get the live state if the torrent is live.
     pub fn live(&self) -> Option<Arc<TorrentStateLive>> {
         let g = self.locked.read();
         match &g.state {
@@ -164,7 +168,7 @@ impl ManagedTorrent {
         g.state = ManagedTorrentState::Error(error)
     }
 
-    pub fn start(
+    pub(crate) fn start(
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
         peer_rx: Option<RequestPeersStream>,
@@ -309,6 +313,7 @@ impl ManagedTorrent {
         }
     }
 
+    /// Pause the torrent if it's live.
     pub fn pause(&self) -> anyhow::Result<()> {
         let mut g = self.locked.write();
         match &g.state {
@@ -330,6 +335,7 @@ impl ManagedTorrent {
         }
     }
 
+    /// Get stats.
     pub fn stats(&self) -> TorrentStats {
         let mut resp = TorrentStats {
             total_bytes: self.info().lengths.total_length(),

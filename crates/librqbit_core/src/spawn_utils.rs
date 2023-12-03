@@ -1,5 +1,6 @@
 use tracing::{error, trace, Instrument};
 
+/// Spawns a future with tracing instrumentation.
 pub fn spawn(
     span: tracing::Span,
     fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,

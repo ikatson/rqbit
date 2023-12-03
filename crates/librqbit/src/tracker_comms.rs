@@ -13,7 +13,9 @@ use librqbit_core::id20::Id20;
 #[derive(Clone, Copy)]
 pub enum TrackerRequestEvent {
     Started,
+    #[allow(dead_code)]
     Stopped,
+    #[allow(dead_code)]
     Completed,
 }
 

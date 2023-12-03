@@ -12,6 +12,7 @@ use crate::id20::Id20;
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
 
+/// Parse torrent metainfo from bytes.
 pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     buf: &'de [u8],
 ) -> anyhow::Result<TorrentMetaV1<ByteBuf>> {
@@ -25,6 +26,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     Ok(t)
 }
 
+/// A parsed .torrent file.
 #[derive(Deserialize, Debug, Clone)]
 pub struct TorrentMetaV1<BufType> {
     pub announce: BufType,
@@ -51,6 +53,7 @@ impl<BufType> TorrentMetaV1<BufType> {
     }
 }
 
+/// Main torrent information, shared by .torrent files and magnet link contents.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1Info<BufType> {
     #[serde(skip_serializing_if = "Option::is_none")]

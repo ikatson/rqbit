@@ -2,6 +2,7 @@ use std::{cmp::Ordering, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// A 20-byte hash used throughout librqbit, for torrent info hashes, peer ids etc.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Id20(pub [u8; 20]);
 

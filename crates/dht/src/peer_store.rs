@@ -209,6 +209,7 @@ impl PeerStore {
         Vec::new()
     }
 
+    #[allow(dead_code)]
     pub fn garbage_collect_peers(&self) {
         todo!()
     }

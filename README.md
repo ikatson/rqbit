@@ -30,7 +30,7 @@ Access with http://localhost:3030/web/
 ## Desktop app
 The desktop app is a [thin wrapper](https://github.com/ikatson/rqbit/blob/main/desktop/src-tauri/src/main.rs) on top of the Web UI frontend.
 
-Download it in [Releases](https://github.com/ikatson/rqbit/releases) starting from [4.0.0-beta.3](https://github.com/ikatson/rqbit/releases/tag/v4.0.0-beta.3).
+Download it in [Releases](https://github.com/ikatson/rqbit/releases).
 
 ## Installation
 

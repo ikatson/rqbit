@@ -24,7 +24,7 @@ type ApiState = Arc<Api>;
 
 use crate::api::Result;
 
-// Public API
+/// An HTTP server for the API.
 #[derive(Clone)]
 pub struct HttpApi {
     inner: ApiState,
@@ -37,6 +37,8 @@ impl HttpApi {
         }
     }
 
+    /// Run the HTTP server forever on the given address.
+    /// If read_only is passed, no state-modifying methods will be exposed.
     pub async fn make_http_api_and_run(
         self,
         addr: SocketAddr,
@@ -267,11 +269,11 @@ impl HttpApi {
     }
 }
 
-pub struct OnlyFiles(Vec<usize>);
-pub struct InitialPeers(pub Vec<SocketAddr>);
+pub(crate) struct OnlyFiles(Vec<usize>);
+pub(crate) struct InitialPeers(pub Vec<SocketAddr>);
 
 #[derive(Serialize, Deserialize, Default)]
-pub struct TorrentAddQueryParams {
+pub(crate) struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,
     pub output_folder: Option<String>,
     pub sub_folder: Option<String>,

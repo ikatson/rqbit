@@ -5,11 +5,10 @@ use anyhow::Context;
 use http::StatusCode;
 use librqbit::{
     api::{
-        Api, ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentListResponse,
+        ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentListResponse,
+        TorrentStats,
     },
-    api_error::ApiError,
-    session::AddTorrentOptions,
-    torrent_state::stats::TorrentStats,
+    AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
 };
 
 struct State {
@@ -29,7 +28,7 @@ async fn torrent_create_from_url(
 ) -> Result<ApiAddTorrentResponse, ApiError> {
     state
         .api
-        .api_add_torrent(librqbit::session::AddTorrent::Url(url.into()), opts)
+        .api_add_torrent(AddTorrent::Url(url.into()), opts)
         .await
 }
 
@@ -46,10 +45,7 @@ async fn torrent_create_from_base64_file(
         .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
     state
         .api
-        .api_add_torrent(
-            librqbit::session::AddTorrent::TorrentFileBytes(bytes.into()),
-            opts,
-        )
+        .api_add_torrent(AddTorrent::TorrentFileBytes(bytes.into()), opts)
         .await
 }
 
@@ -110,10 +106,9 @@ async fn start_session() {
         .expect("download_dir()")
         .to_path_buf();
 
-    let s = librqbit::session::Session::new_with_opts(
+    let session = Session::new_with_opts(
         download_folder,
-        Default::default(),
-        librqbit::session::SessionOptions {
+        SessionOptions {
             disable_dht: false,
             disable_dht_persistence: false,
             persistence: true,
@@ -123,7 +118,7 @@ async fn start_session() {
     .await
     .expect("couldn't set up librqbit session");
 
-    let api = Api::new(s, None);
+    let api = Api::new(session, None);
 
     tauri::Builder::default()
         .manage(State { api })

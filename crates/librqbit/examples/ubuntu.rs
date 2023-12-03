@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use librqbit::session::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
+use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
 use tracing::info;
 
 // This is ubuntu-21.04-live-server-amd64.iso.torrent
@@ -27,7 +27,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .expect("the first argument should be the output directory");
 
     // Create the session
-    let session = Session::new(output_dir.into(), Default::default())
+    let session = Session::new(output_dir.into())
         .await
         .context("error creating session")?;
 
