@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
-use buffers::ByteString;
+use buffers::{ByteBufT, ByteString};
 use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream};
 use librqbit_core::{
     directories::get_configuration_directory,
@@ -655,12 +655,38 @@ impl Session {
 
         let only_files = get_only_files(opts.only_files, opts.only_files_regex, opts.list_only)?;
 
-        let sub_folder = opts.sub_folder.map(PathBuf::from).unwrap_or_default();
-        let output_folder = opts
-            .output_folder
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.output_folder.clone())
-            .join(sub_folder);
+        let get_default_subfolder = || {
+            let files = info
+                .iter_filenames_and_lengths()?
+                .map(|(f, l)| Ok((f.to_pathbuf()?, l)))
+                .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
+            if files.len() < 2 {
+                return Ok(None);
+            }
+            if let Some(name) = &info.name {
+                let s = std::str::from_utf8(name.as_slice())
+                    .context("invalid UTF-8 in torrent name")?;
+                return Ok(Some(PathBuf::from(s)));
+            };
+            // Let the subfolder name be the longest filename
+            let longest = files
+                .iter()
+                .max_by_key(|(_, l)| l)
+                .unwrap()
+                .0
+                .file_stem()
+                .context("can't determine longest filename")?;
+            Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
+        };
+
+        let output_folder = match (opts.output_folder, opts.sub_folder) {
+            (None, None) => self
+                .output_folder
+                .join(get_default_subfolder()?.unwrap_or_default()),
+            (Some(o), None) => PathBuf::from(o),
+            (Some(_), Some(_)) => bail!("you can't provide both output_folder and sub_folder"),
+            (None, Some(s)) => self.output_folder.join(s),
+        };
 
         if opts.list_only {
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
