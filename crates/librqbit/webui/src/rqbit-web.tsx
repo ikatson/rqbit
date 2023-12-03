@@ -342,11 +342,11 @@ const TorrentsList = (props: { torrents: Array<TorrentId> | null, loading: boole
             <p>No existing torrents found. Add them through buttons below.</p>
         </div>;
     }
-    return <>
+    return <div style={{ 'fontSize': 'smaller' }}>
         {props.torrents.map((t: TorrentId) =>
             <Torrent id={t.id} key={t.id} torrent={t} />
         )}
-    </>;
+    </div>;
 };
 
 export const RqbitWebUI = (props: { title: string }) => {
