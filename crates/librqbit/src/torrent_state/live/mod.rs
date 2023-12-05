@@ -188,7 +188,8 @@ pub struct TorrentStateLive {
     cancel_tx: tokio::sync::watch::Sender<()>,
     cancel_rx: tokio::sync::watch::Receiver<()>,
 
-    speed_estimator: SpeedEstimator,
+    down_speed_estimator: SpeedEstimator,
+    up_speed_estimator: SpeedEstimator,
 }
 
 impl TorrentStateLive {
@@ -198,7 +199,8 @@ impl TorrentStateLive {
     ) -> Arc<Self> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
-        let speed_estimator = SpeedEstimator::new(5);
+        let down_speed_estimator = SpeedEstimator::new(5);
+        let up_speed_estimator = SpeedEstimator::new(5);
 
         let have_bytes = paused.have_bytes;
         let needed_bytes = paused.info.lengths.total_length() - have_bytes;
@@ -225,7 +227,8 @@ impl TorrentStateLive {
             peer_semaphore: Semaphore::new(128),
             peer_queue_tx,
             finished_notify: Notify::new(),
-            speed_estimator,
+            down_speed_estimator,
+            up_speed_estimator,
             cancel_rx,
             cancel_tx,
         });
@@ -249,6 +252,7 @@ impl TorrentStateLive {
                             Some(state) => state,
                             None => return Ok(()),
                         };
+                        let now = Instant::now();
                         let stats = state.stats_snapshot();
                         let fetched = stats.fetched_bytes;
                         let needed = state.initially_needed();
@@ -257,8 +261,11 @@ impl TorrentStateLive {
                             .wrapping_sub(fetched)
                             .min(needed - stats.downloaded_and_checked_bytes);
                         state
-                            .speed_estimator
-                            .add_snapshot(fetched, remaining, Instant::now());
+                            .down_speed_estimator
+                            .add_snapshot(fetched, Some(remaining), now);
+                        state
+                            .up_speed_estimator
+                            .add_snapshot(stats.uploaded_bytes, None, now);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -291,8 +298,12 @@ impl TorrentStateLive {
         });
     }
 
-    pub fn speed_estimator(&self) -> &SpeedEstimator {
-        &self.speed_estimator
+    pub fn down_speed_estimator(&self) -> &SpeedEstimator {
+        &self.down_speed_estimator
+    }
+
+    pub fn up_speed_estimator(&self) -> &SpeedEstimator {
+        &self.up_speed_estimator
     }
 
     async fn tracker_one_request(&self, tracker_url: Url) -> anyhow::Result<u64> {

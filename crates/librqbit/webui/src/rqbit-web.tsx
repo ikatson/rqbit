@@ -185,6 +185,27 @@ const TorrentActions: React.FC<{
     </Row>
 }
 
+const Speed: React.FC<{ statsResponse: TorrentStats }> = ({ statsResponse }) => {
+    switch (statsResponse.state) {
+        case STATE_PAUSED: return 'Paused';
+        case STATE_INITIALIZING: return 'Checking files';
+        case STATE_ERROR: return 'Error';
+    }
+    // Unknown state
+    if (statsResponse.state != 'live' || statsResponse.live === null) {
+        return statsResponse.state;
+    }
+
+    return <>
+        {!statsResponse.finished && <p>↓ {statsResponse.live.download_speed.human_readable}</p>}
+        <p>↑ {statsResponse.live.upload_speed.human_readable}</p>
+    </>
+
+    if (statsResponse.finished) {
+        return <span>Completed</span>;
+    }
+}
+
 const TorrentRow: React.FC<{
     id: number,
     detailsResponse: TorrentDetails | null,
@@ -206,19 +227,6 @@ const TorrentRow: React.FC<{
             return '';
         }
         return `${peer_stats.live} / ${peer_stats.seen}`;
-    }
-
-    const formatDownloadSpeed = () => {
-        if (finished) {
-            return 'Completed';
-        }
-        switch (state) {
-            case STATE_PAUSED: return 'Paused';
-            case STATE_INITIALIZING: return 'Checking files';
-            case STATE_ERROR: return 'Error';
-        }
-
-        return statsResponse?.live?.download_speed.human_readable ?? "N/A";
     }
 
     let classNames = [];
@@ -253,7 +261,9 @@ const TorrentRow: React.FC<{
                             animated={isAnimated}
                             variant={progressBarVariant} />
                     </Column>
-                    <Column size={2} label="Down Speed">{formatDownloadSpeed()}</Column>
+                    <Column size={2} label="Speed">
+                        <Speed statsResponse={statsResponse} />
+                    </Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
                     <Column size={2} label="Peers">{formatPeersString()}</Column >
                     <Column label="Actions">

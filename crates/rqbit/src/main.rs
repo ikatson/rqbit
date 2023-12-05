@@ -377,7 +377,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             None => continue
                         };
                         let stats = handle.stats_snapshot();
-                        let speed = handle.speed_estimator();
+                        let speed = handle.down_speed_estimator();
                         let total = stats.total_bytes;
                         let progress = stats.total_bytes - stats.remaining_bytes;
                         let downloaded_pct = if stats.remaining_bytes == 0 {
@@ -390,7 +390,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             idx,
                             downloaded_pct,
                             SF::new(progress),
-                            speed.download_mbps(),
+                            speed.mbps(),
                             SF::new(stats.fetched_bytes),
                             SF::new(stats.remaining_bytes),
                             SF::new(total),

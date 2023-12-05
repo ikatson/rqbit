@@ -10,6 +10,7 @@ pub struct LiveStats {
     pub snapshot: StatsSnapshot,
     pub average_piece_download_time: Option<Duration>,
     pub download_speed: Speed,
+    pub upload_speed: Speed,
     pub time_remaining: Option<DurationWithHumanReadable>,
 }
 
@@ -17,8 +18,9 @@ impl std::fmt::Display for LiveStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "down speed: {}", self.download_speed)?;
         if let Some(time_remaining) = &self.time_remaining {
-            write!(f, " eta: {time_remaining}")?;
+            write!(f, ", eta: {time_remaining}")?;
         }
+        write!(f, ", up speed: {}", self.upload_speed)?;
         Ok(())
     }
 }
@@ -26,13 +28,17 @@ impl std::fmt::Display for LiveStats {
 impl From<&TorrentStateLive> for LiveStats {
     fn from(live: &TorrentStateLive) -> Self {
         let snapshot = live.stats_snapshot();
-        let estimator = live.speed_estimator();
+        let down_estimator = live.down_speed_estimator();
+        let up_estimator = live.up_speed_estimator();
 
         Self {
             average_piece_download_time: snapshot.average_piece_download_time(),
             snapshot,
-            download_speed: estimator.download_mbps().into(),
-            time_remaining: estimator.time_remaining().map(DurationWithHumanReadable),
+            download_speed: down_estimator.mbps().into(),
+            upload_speed: up_estimator.mbps().into(),
+            time_remaining: down_estimator
+                .time_remaining()
+                .map(DurationWithHumanReadable),
         }
     }
 }
