@@ -1159,7 +1159,8 @@ impl PeerHandler {
         let handle = self.addr;
         self.wait_for_bitfield().await;
 
-        // TODO: this check needs to happen more often
+        // TODO: this check needs to happen more often, we need to update our
+        // interested state with the other side, for now we send it only once.
         if self.state.is_finished() {
             self.tx
                 .send(WriterRequest::Message(MessageOwned::NotInterested))?;
@@ -1174,6 +1175,8 @@ impl PeerHandler {
             {
                 debug!("both peer and us have full torrent, disconnecting");
                 self.tx.send(WriterRequest::Disconnect)?;
+                // Sleep a bit to ensure this gets written to the network by manage_peer
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 return Ok(());
             }
         } else {
