@@ -564,7 +564,7 @@ impl Session {
                             futs.push(
                                 self.check_incoming_connection(addr, stream)
                                     .map_err(|e| {
-                                        error!("error checking incoming connection: {e:#}");
+                                        debug!("error checking incoming connection: {e:#}");
                                         e
                                     })
                                     .instrument(error_span!("incoming", addr=%addr))
