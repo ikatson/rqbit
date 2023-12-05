@@ -159,6 +159,8 @@ pub struct Session {
     db: RwLock<SessionDatabase>,
     output_folder: PathBuf,
 
+    tcp_listen_port: Option<u16>,
+
     cancel_tx: tokio::sync::watch::Sender<()>,
     cancel_rx: tokio::sync::watch::Receiver<()>,
 }
@@ -392,14 +394,9 @@ impl Session {
             None
         } else {
             let dht = if opts.disable_dht_persistence {
-                DhtBuilder::with_config(DhtConfig {
-                    announce_port: tcp_listen_port,
-                    ..Default::default()
-                })
-                .await
+                DhtBuilder::with_config(DhtConfig::default()).await
             } else {
-                let mut pdht_config = opts.dht_config.take().unwrap_or_default();
-                pdht_config.announce_port = tcp_listen_port;
+                let pdht_config = opts.dht_config.take().unwrap_or_default();
                 PersistentDht::create(Some(pdht_config)).await
             }
             .context("error initializing DHT")?;
@@ -426,6 +423,7 @@ impl Session {
             db: RwLock::new(Default::default()),
             cancel_rx,
             cancel_tx,
+            tcp_listen_port,
         });
 
         if let Some(tcp_listener) = tcp_listener {
@@ -740,6 +738,12 @@ impl Session {
 
         let opts = opts.unwrap_or_default();
 
+        let announce_port = if opts.list_only {
+            None
+        } else {
+            self.tcp_listen_port
+        };
+
         let (info_hash, info, dht_rx, trackers, initial_peers) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                 let Magnet {
@@ -751,7 +755,7 @@ impl Session {
                     .dht
                     .as_ref()
                     .context("magnet links without DHT are not supported")?
-                    .get_peers(info_hash)?;
+                    .get_peers(info_hash, announce_port)?;
 
                 let trackers = trackers
                     .into_iter()
@@ -814,7 +818,7 @@ impl Session {
                 let dht_rx = match self.dht.as_ref() {
                     Some(dht) if !opts.paused && !opts.list_only => {
                         debug!("reading peers for {:?} from DHT", torrent.info_hash);
-                        Some(dht.get_peers(torrent.info_hash)?)
+                        Some(dht.get_peers(torrent.info_hash, announce_port)?)
                     }
                     _ => None,
                 };
@@ -1047,7 +1051,7 @@ impl Session {
         let peer_rx = self
             .dht
             .as_ref()
-            .map(|dht| dht.get_peers(handle.info_hash()))
+            .map(|dht| dht.get_peers(handle.info_hash(), self.tcp_listen_port))
             .transpose()?;
         handle.start(Default::default(), peer_rx, false)?;
         Ok(())

@@ -97,6 +97,7 @@ trait RecursiveRequestCallbacks: Sized + Send + Sync + 'static {
 struct RecursiveRequestCallbacksGetPeers {
     // Id20::from_str("00000fffffffffffffffffffffffffffffffffff").unwrap()
     min_distance_to_announce: Id20,
+    announce_port: Option<u16>,
 }
 
 impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
@@ -109,7 +110,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
         addr: SocketAddr,
         resp: &anyhow::Result<ResponseOrError>,
     ) {
-        let announce_port = match req.dht.announce_port {
+        let announce_port = match self.announce_port {
             Some(a) => a,
             None => return,
         };
@@ -189,7 +190,7 @@ pub struct RequestPeersStream {
 }
 
 impl RequestPeersStream {
-    fn new(dht: Arc<DhtState>, info_hash: Id20) -> Self {
+    fn new(dht: Arc<DhtState>, info_hash: Id20, announce_port: Option<u16>) -> Self {
         let (peer_tx, peer_rx) = unbounded_channel();
         let (node_tx, node_rx) = unbounded_channel();
         let rp = Arc::new(RecursiveRequest {
@@ -206,6 +207,7 @@ impl RequestPeersStream {
                     "0000ffffffffffffffffffffffffffffffffffff",
                 )
                 .unwrap(),
+                announce_port,
             },
         });
         let join_handle = rp.request_peers_forever(node_rx);
@@ -534,7 +536,6 @@ pub struct DhtState {
     worker_sender: UnboundedSender<WorkerSendRequest>,
 
     pub(crate) peer_store: PeerStore,
-    announce_port: Option<u16>,
 }
 
 impl DhtState {
@@ -544,7 +545,6 @@ impl DhtState {
         routing_table: Option<RoutingTable>,
         listen_addr: SocketAddr,
         peer_store: PeerStore,
-        announce_port: Option<u16>,
     ) -> Self {
         let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id, None));
         Self {
@@ -556,7 +556,6 @@ impl DhtState {
             listen_addr,
             rate_limiter: make_rate_limiter(),
             peer_store,
-            announce_port,
         }
     }
 
@@ -1124,7 +1123,6 @@ pub struct DhtConfig {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
-    pub announce_port: Option<u16>,
     pub peer_store: Option<PeerStore>,
 }
 
@@ -1160,7 +1158,6 @@ impl DhtState {
             config.routing_table,
             listen_addr,
             config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
-            config.announce_port,
         ));
 
         spawn(error_span!("dht"), {
@@ -1174,8 +1171,16 @@ impl DhtState {
         Ok(state)
     }
 
-    pub fn get_peers(self: &Arc<Self>, info_hash: Id20) -> anyhow::Result<RequestPeersStream> {
-        Ok(RequestPeersStream::new(self.clone(), info_hash))
+    pub fn get_peers(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        announce_port: Option<u16>,
+    ) -> anyhow::Result<RequestPeersStream> {
+        Ok(RequestPeersStream::new(
+            self.clone(),
+            info_hash,
+            announce_port,
+        ))
     }
 
     pub fn listen_addr(&self) -> SocketAddr {
