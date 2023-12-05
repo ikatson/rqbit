@@ -3,15 +3,24 @@ OPENSSL_VERSION=3.1.1
 # I'm lazy to type "webui-build" so made it default
 all: webui-build
 
+@PHONY: webui-deps
+webui-deps:
+	cd desktop && npm install
+	cd crates/librqbit/webui && npm install
+
 @PHONY: webui-dev
-webui-dev:
+webui-dev: webui-deps
 	cd crates/librqbit/webui && \
 	npm run dev
 
 @PHONY: webui-build
-webui-build:
+webui-build: webui-deps
 	cd crates/librqbit/webui && \
 	npm run build
+
+@PHONY: devserver
+devserver:
+	CORS_DEBUG=1 cargo run --release -- server start /tmp/scratch/
 
 @PHONY: clean
 clean:
