@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{id20::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
@@ -142,6 +142,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             anyhow::bail!("wrong info hash");
         }
 
+        if handshake.peer_id == self.peer_id.0 {
+            bail!("looks like we are connecting to ourselves");
+        }
+
         trace!(
             "incoming connection: id={:?}",
             try_decode_peer_id(Id20(handshake.peer_id))
@@ -215,6 +219,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         trace!("connected: id={:?}", try_decode_peer_id(Id20(h.peer_id)));
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
+        }
+
+        if h.peer_id == self.peer_id.0 {
+            bail!("looks like we are connecting to ourselves");
         }
 
         self.handler.on_handshake(h)?;
