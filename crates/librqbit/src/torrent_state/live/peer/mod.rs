@@ -52,6 +52,15 @@ pub(crate) struct Peer {
     pub stats: stats::atomic::PeerStats,
 }
 
+impl Peer {
+    pub fn new_live_for_incoming_connection(peer_id: Id20, tx: PeerTx) -> Self {
+        Self {
+            state: PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx))),
+            stats: Default::default(),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) enum PeerState {
     #[default]

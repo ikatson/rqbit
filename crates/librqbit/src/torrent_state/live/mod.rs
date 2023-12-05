@@ -89,7 +89,9 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
+    session::CheckedIncomingConnection,
     spawn_utils::spawn,
+    torrent_state::peer::Peer,
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
 };
@@ -100,7 +102,7 @@ use self::{
             atomic::PeerCountersAtomic as AtomicPeerCounters,
             snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         },
-        InflightRequest, PeerState, PeerTx, SendMany,
+        InflightRequest, PeerRx, PeerState, PeerTx, SendMany,
     },
     peers::PeerStates,
     stats::{atomic::AtomicStats, snapshot::StatsSnapshot},
@@ -361,7 +363,99 @@ impl TorrentStateLive {
         }
     }
 
-    async fn task_manage_peer(self: Arc<Self>, addr: SocketAddr) -> anyhow::Result<()> {
+    pub(crate) fn add_incoming_peer(
+        self: &Arc<Self>,
+        checked_peer: CheckedIncomingConnection,
+    ) -> anyhow::Result<()> {
+        use dashmap::mapref::entry::Entry;
+        let (tx, rx) = unbounded_channel();
+
+        let counters = match self.peers.states.entry(checked_peer.addr) {
+            Entry::Occupied(_) => bail!("we are already managing peer {}", checked_peer.addr),
+            Entry::Vacant(vac) => {
+                let peer = Peer::new_live_for_incoming_connection(
+                    Id20(checked_peer.handshake.peer_id),
+                    tx.clone(),
+                );
+                let counters = peer.stats.counters.clone();
+                vac.insert(peer);
+                counters
+            }
+        };
+
+        self.spawn(
+            "incoming peer",
+            error_span!("manage_incoming_peer", addr = %checked_peer.addr),
+            self.clone()
+                .task_manage_incoming_peer(checked_peer, counters, tx, rx),
+        );
+        Ok(())
+    }
+
+    async fn task_manage_incoming_peer(
+        self: Arc<Self>,
+        checked_peer: CheckedIncomingConnection,
+        counters: Arc<AtomicPeerCounters>,
+        tx: PeerTx,
+        rx: PeerRx,
+    ) -> anyhow::Result<()> {
+        // TODO: bump counters for incoming
+
+        let handler = PeerHandler {
+            addr: checked_peer.addr,
+            on_bitfield_notify: Default::default(),
+            unchoke_notify: Default::default(),
+            locked: RwLock::new(PeerHandlerLocked {
+                i_am_choked: true,
+                previously_requested_pieces: BF::new(),
+            }),
+            requests_sem: Semaphore::new(0),
+            state: self.clone(),
+            tx,
+            counters,
+        };
+        let options = PeerConnectionOptions {
+            connect_timeout: self.meta.options.peer_connect_timeout,
+            read_write_timeout: self.meta.options.peer_read_write_timeout,
+            ..Default::default()
+        };
+        let peer_connection = PeerConnection::new(
+            checked_peer.addr,
+            self.meta.info_hash,
+            self.meta.peer_id,
+            &handler,
+            Some(options),
+            self.meta.spawner,
+        );
+        let requester = handler.task_peer_chunk_requester(checked_peer.addr);
+
+        let res = tokio::select! {
+            r = requester => {r}
+            r = peer_connection.manage_peer_incoming(
+                rx,
+                checked_peer.read_so_far,
+                checked_peer.read_buf,
+                checked_peer.handshake,
+                checked_peer.stream
+            ) => {r}
+        };
+
+        handler.state.peer_semaphore.add_permits(1);
+
+        match res {
+            // We disconnected the peer ourselves as we don't need it
+            Ok(()) => {
+                handler.on_peer_died(None)?;
+            }
+            Err(e) => {
+                debug!("error managing peer: {:#}", e);
+                handler.on_peer_died(Some(e))?;
+            }
+        };
+        Ok(())
+    }
+
+    async fn task_manage_outgoing_peer(self: Arc<Self>, addr: SocketAddr) -> anyhow::Result<()> {
         let state = self;
         let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
 
@@ -440,7 +534,7 @@ impl TorrentStateLive {
             state.spawn(
                 "manage_peer",
                 error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
-                state.clone().task_manage_peer(addr),
+                state.clone().task_manage_outgoing_peer(addr),
             );
         }
     }

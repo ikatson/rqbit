@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    net::{SocketAddr, SocketAddrV4},
+    net::SocketAddr,
     sync::{
         atomic::{AtomicU16, Ordering},
         Arc,

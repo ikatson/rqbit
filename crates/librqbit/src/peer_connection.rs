@@ -62,7 +62,7 @@ pub(crate) struct PeerConnection<H> {
     spawner: BlockingSpawner,
 }
 
-async fn with_timeout<T, E>(
+pub(crate) async fn with_timeout<T, E>(
     timeout_value: Duration,
     fut: impl std::future::Future<Output = Result<T, E>>,
 ) -> anyhow::Result<T>
@@ -120,18 +120,57 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         }
     }
 
+    // By the time this is called:
+    // read_buf should start with valuable data. The handshake should be removed from it.
     pub async fn manage_peer_incoming(
         &self,
-        mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+        outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+        // How many bytes into read buffer have we read already.
+        read_so_far: usize,
+        read_buf: Vec<u8>,
         handshake: Handshake<ByteString>,
-        socket: tokio::net::TcpSocket,
+        mut conn: tokio::net::TcpStream,
     ) -> anyhow::Result<()> {
-        todo!()
+        use tokio::io::AsyncWriteExt;
+
+        let rwtimeout = self
+            .options
+            .read_write_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        if handshake.info_hash != self.info_hash.0 {
+            anyhow::bail!("wrong info hash");
+        }
+
+        trace!(
+            "incoming connection: id={:?}",
+            try_decode_peer_id(Id20(handshake.peer_id))
+        );
+
+        let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
+        let handshake = Handshake::new(self.info_hash, self.peer_id);
+        handshake.serialize(&mut write_buf);
+        with_timeout(rwtimeout, conn.write_all(&write_buf))
+            .await
+            .context("error writing handshake")?;
+        write_buf.clear();
+
+        let h_supports_extended = handshake.supports_extended();
+
+        self.manage_peer(
+            h_supports_extended,
+            read_so_far,
+            read_buf,
+            write_buf,
+            conn,
+            outgoing_chan,
+        )
+        .await
     }
 
     pub async fn manage_peer_outgoing(
         &self,
-        mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+        outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
@@ -170,19 +209,50 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
             .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
 
+        let h_supports_extended = h.supports_extended();
         trace!("connected: id={:?}", try_decode_peer_id(Id20(h.peer_id)));
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
         }
 
-        let mut extended_handshake: Option<ExtendedHandshake<ByteString>> = None;
-        let supports_extended = h.supports_extended();
-
         self.handler.on_handshake(h)?;
+
         if read_so_far > size {
             read_buf.copy_within(size..read_so_far, 0);
         }
         read_so_far -= size;
+
+        self.manage_peer(
+            h_supports_extended,
+            read_so_far,
+            read_buf,
+            write_buf,
+            conn,
+            outgoing_chan,
+        )
+        .await
+    }
+
+    async fn manage_peer(
+        &self,
+        handshake_supports_extended: bool,
+        // How many bytes into read_buf is there of peer-sent-data.
+        mut read_so_far: usize,
+        mut read_buf: Vec<u8>,
+        mut write_buf: Vec<u8>,
+        mut conn: tokio::net::TcpStream,
+        mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+    ) -> anyhow::Result<()> {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        let rwtimeout = self
+            .options
+            .read_write_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        let mut extended_handshake: Option<ExtendedHandshake<ByteString>> = None;
+        let supports_extended = handshake_supports_extended;
 
         if supports_extended {
             let my_extended =

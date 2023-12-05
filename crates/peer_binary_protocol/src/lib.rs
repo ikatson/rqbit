@@ -5,7 +5,7 @@
 pub mod extended;
 
 use bincode::Options;
-use buffers::{ByteBuf, ByteBufT, ByteString};
+use buffers::{ByteBuf, ByteString};
 use byteorder::{ByteOrder, BE};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{constants::CHUNK_SIZE, id20::Id20, lengths::ChunkInfo};

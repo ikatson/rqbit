@@ -12,9 +12,11 @@ use std::{
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBufT, ByteString};
+use clone_to_owned::CloneToOwned;
 use dht::{
     Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream,
 };
+use futures::{stream::FuturesUnordered, StreamExt, TryFutureExt};
 use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -22,17 +24,23 @@ use librqbit_core::{
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
 };
 use parking_lot::RwLock;
+use peer_binary_protocol::{Handshake, PIECE_MESSAGE_DEFAULT_LEN};
 use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
-use tokio::net::TcpListener;
-use tracing::{debug, error, error_span, info, warn};
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
-    peer_connection::PeerConnectionOptions,
+    peer_connection::{with_timeout, PeerConnectionOptions},
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState},
+    torrent_state::{
+        ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
+    },
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -375,6 +383,14 @@ async fn get_public_announce_addr(port: u16) -> anyhow::Result<SocketAddr> {
     Ok(addr)
 }
 
+pub(crate) struct CheckedIncomingConnection {
+    pub addr: SocketAddr,
+    pub stream: tokio::net::TcpStream,
+    pub read_buf: Vec<u8>,
+    pub handshake: Handshake<ByteString>,
+    pub read_so_far: usize,
+}
+
 impl Session {
     /// Create a new session. The passed in folder will be used as a default unless overriden per torrent.
     pub async fn new(output_folder: PathBuf) -> anyhow::Result<Arc<Self>> {
@@ -509,14 +525,103 @@ impl Session {
         Ok(())
     }
 
+    async fn check_incoming_connection(
+        &self,
+        addr: SocketAddr,
+        mut stream: TcpStream,
+    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
+        // TODO: move buffer handling to peer_connection
+
+        let rwtimeout = self
+            .peer_opts
+            .read_write_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
+        let mut read_so_far = with_timeout(rwtimeout, stream.read(&mut read_buf))
+            .await
+            .context("error reading handshake")?;
+        if read_so_far == 0 {
+            anyhow::bail!("bad handshake");
+        }
+        let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
+            .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
+
+        trace!("received handshake from {addr}: {:?}", h);
+
+        for (id, torrent) in self.db.read().torrents.iter() {
+            if torrent.info_hash().0 != h.info_hash {
+                continue;
+            }
+
+            let live = match torrent.live() {
+                Some(live) => live,
+                None => {
+                    bail!("torrent {id} is not live, ignoring connection");
+                }
+            };
+
+            let handshake = h.clone_to_owned();
+
+            if read_so_far > size {
+                read_buf.copy_within(size..read_so_far, 0);
+            }
+            read_so_far -= size;
+
+            return Ok((
+                live,
+                CheckedIncomingConnection {
+                    addr,
+                    stream,
+                    handshake,
+                    read_buf,
+                    read_so_far,
+                },
+            ));
+        }
+
+        bail!("didn't find a matching torrent for {:?}", h.info_hash)
+    }
+
+    fn handover_checked_connection(
+        &self,
+        live: Arc<TorrentStateLive>,
+        checked: CheckedIncomingConnection,
+    ) -> anyhow::Result<()> {
+        live.add_incoming_peer(checked)
+    }
+
     async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
-        let mut buf = vec![0u8; 4096];
+        let mut futs = FuturesUnordered::new();
 
         loop {
-            let (stream, addr) = l.accept().await.context("error accepting")?;
-            info!("accepted connection from {addr}");
+            tokio::select! {
+                r = l.accept() => {
+                    match r {
+                        Ok((stream, addr)) => {
+                            trace!("accepted connection from {addr}");
+                            futs.push(
+                                self.check_incoming_connection(addr, stream)
+                                    .map_err(|e| {
+                                        error!("error checking incoming connection: {e:#}");
+                                        e
+                                    })
+                                    .instrument(error_span!("incoming", addr=%addr))
+                            );
+                        }
+                        Err(e) => {
+                            error!("error accepting: {e:#}");
+                            continue;
+                        }
+                    }
+                },
+                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                    if let Err(e) = self.handover_checked_connection(live, checked) {
+                        warn!("error handing over incoming connection: {e:#}");
+                    }
+                },
+            }
         }
-        Ok(())
     }
 
     async fn task_upnp_port_forwarder(self: Arc<Self>, port: u16) -> anyhow::Result<()> {
@@ -562,7 +667,7 @@ impl Session {
         });
     }
 
-    fn stop(&self) {
+    pub fn stop(&self) {
         let _ = self.cancel_tx.send(());
     }
 
