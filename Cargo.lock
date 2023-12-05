@@ -1275,6 +1275,7 @@ dependencies = [
  "librqbit-dht",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
+ "librqbit-upnp",
  "openssl",
  "parking_lot",
  "rand",
