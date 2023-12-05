@@ -23,7 +23,7 @@ pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn get_have_bytes(&self) -> u64;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize>;
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
+    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
@@ -120,7 +120,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         }
     }
 
-    pub async fn manage_peer(
+    pub async fn manage_peer_incoming(
+        &self,
+        mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+        handshake: Handshake<ByteString>,
+        socket: tokio::net::TcpSocket,
+    ) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    pub async fn manage_peer_outgoing(
         &self,
         mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     ) -> anyhow::Result<()> {

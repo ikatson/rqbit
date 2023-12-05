@@ -5,7 +5,7 @@
 pub mod extended;
 
 use bincode::Options;
-use buffers::{ByteBuf, ByteString};
+use buffers::{ByteBuf, ByteBufT, ByteString};
 use byteorder::{ByteOrder, BE};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{constants::CHUNK_SIZE, id20::Id20, lengths::ChunkInfo};
@@ -472,8 +472,8 @@ where
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Handshake<'a> {
-    pub pstr: &'a str,
+pub struct Handshake<ByteBuf> {
+    pub pstr: ByteBuf,
     pub reserved: [u8; 8],
     pub info_hash: [u8; 20],
     pub peer_id: [u8; 20],
@@ -485,8 +485,8 @@ fn bopts() -> impl bincode::Options {
         .with_big_endian()
 }
 
-impl<'a> Handshake<'a> {
-    pub fn new(info_hash: Id20, peer_id: Id20) -> Handshake<'static> {
+impl Handshake<ByteBuf<'static>> {
+    pub fn new(info_hash: Id20, peer_id: Id20) -> Handshake<ByteBuf<'static>> {
         debug_assert_eq!(PSTR_BT1.len(), 19);
 
         let mut reserved: u64 = 0;
@@ -496,19 +496,16 @@ impl<'a> Handshake<'a> {
         BE::write_u64(&mut reserved_arr, reserved);
 
         Handshake {
-            pstr: PSTR_BT1,
+            pstr: ByteBuf(PSTR_BT1.as_bytes()),
             reserved: reserved_arr,
             info_hash: info_hash.0,
             peer_id: peer_id.0,
         }
     }
-    pub fn supports_extended(&self) -> bool {
-        self.reserved[5] & 0x10 > 0
-    }
-    fn bopts() -> impl bincode::Options {
-        bincode::DefaultOptions::new()
-    }
-    pub fn deserialize(b: &[u8]) -> Result<(Handshake<'_>, usize), MessageDeserializeError> {
+
+    pub fn deserialize(
+        b: &[u8],
+    ) -> Result<(Handshake<ByteBuf<'_>>, usize), MessageDeserializeError> {
         let pstr_len = *b
             .first()
             .ok_or(MessageDeserializeError::NotEnoughData(1, "handshake"))?;
@@ -526,8 +523,37 @@ impl<'a> Handshake<'a> {
             expected_len,
         ))
     }
-    pub fn serialize(&self, buf: &mut Vec<u8>) {
+}
+
+impl<B> Handshake<B> {
+    pub fn supports_extended(&self) -> bool {
+        self.reserved[5] & 0x10 > 0
+    }
+    fn bopts() -> impl bincode::Options {
+        bincode::DefaultOptions::new()
+    }
+
+    pub fn serialize(&self, buf: &mut Vec<u8>)
+    where
+        B: Serialize,
+    {
         Self::bopts().serialize_into(buf, &self).unwrap()
+    }
+}
+
+impl<B> CloneToOwned for Handshake<B>
+where
+    B: CloneToOwned,
+{
+    type Target = Handshake<<B as CloneToOwned>::Target>;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        Handshake {
+            pstr: self.pstr.clone_to_owned(),
+            reserved: self.reserved,
+            info_hash: self.info_hash,
+            peer_id: self.peer_id,
+        }
     }
 }
 

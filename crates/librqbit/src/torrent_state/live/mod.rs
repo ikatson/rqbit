@@ -404,7 +404,7 @@ impl TorrentStateLive {
             .fetch_add(1, Ordering::Relaxed);
         let res = tokio::select! {
             r = requester => {r}
-            r = peer_connection.manage_peer(rx) => {r}
+            r = peer_connection.manage_peer_outgoing(rx) => {r}
         };
 
         handler.state.peer_semaphore.add_permits(1);
@@ -502,7 +502,7 @@ impl TorrentStateLive {
         matches!(self.get_next_needed_piece(handle), Ok(Some(_)))
     }
 
-    fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
+    fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
         let result = self.peers.with_peer_mut(handle, "set_peer_live", |p| {
             p.state
                 .connecting_to_live(Id20(h.peer_id), &self.peers.stats)
@@ -771,7 +771,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         Ok(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
+    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()> {
         self.state.set_peer_live(self.addr, handshake);
         Ok(())
     }
