@@ -157,6 +157,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         let h_supports_extended = handshake.supports_extended();
 
+        self.handler.on_handshake(handshake)?;
+
         self.manage_peer(
             h_supports_extended,
             read_so_far,

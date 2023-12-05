@@ -53,9 +53,15 @@ pub(crate) struct Peer {
 }
 
 impl Peer {
-    pub fn new_live_for_incoming_connection(peer_id: Id20, tx: PeerTx) -> Self {
+    pub fn new_live_for_incoming_connection(
+        peer_id: Id20,
+        tx: PeerTx,
+        counters: &AggregatePeerStatsAtomic,
+    ) -> Self {
+        let state = PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx)));
+        counters.inc(&state.0);
         Self {
-            state: PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx))),
+            state,
             stats: Default::default(),
         }
     }
@@ -116,6 +122,13 @@ impl PeerStateNoMut {
     pub fn set(&mut self, new: PeerState, counters: &AggregatePeerStatsAtomic) -> PeerState {
         counters.incdec(&self.0, &new);
         std::mem::replace(&mut self.0, new)
+    }
+
+    pub fn get_live(&self) -> Option<&LivePeerState> {
+        match &self.0 {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
     }
 
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
