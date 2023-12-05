@@ -330,6 +330,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         full_len
                     }
                     WriterRequest::Disconnect => {
+                        trace!("disconnect requested, closing writer");
                         return Ok(());
                     }
                 };
@@ -378,10 +379,15 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         };
 
         let r = tokio::select! {
-            r = reader => {r}
-            r = writer => {r}
+            r = reader => {
+                trace!("reader is done, exiting");
+                r
+            }
+            r = writer => {
+                trace!("writer is done, exiting");
+                r
+            }
         };
-        trace!("either reader or writer are done, exiting");
         r
     }
 }
