@@ -20,7 +20,7 @@ use crate::{Dht, DhtConfig, DhtState};
 pub struct PersistentDhtConfig {
     pub dump_interval: Option<Duration>,
     pub config_filename: Option<PathBuf>,
-    pub announce_addr: Option<SocketAddr>,
+    pub announce_port: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -118,7 +118,7 @@ impl PersistentDht {
             routing_table,
             listen_addr,
             peer_store,
-            announce_addr: config.announce_addr,
+            announce_port: config.announce_port,
             ..Default::default()
         };
         let dht = DhtState::with_config(dht_config).await?;

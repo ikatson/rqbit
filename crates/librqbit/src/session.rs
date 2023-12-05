@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::{BufReader, BufWriter, Read},
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::SocketAddr,
     path::PathBuf,
     str::FromStr,
     sync::Arc,
@@ -357,34 +357,6 @@ async fn create_tcp_listener(
     bail!("no free TCP ports in range {port_range:?}");
 }
 
-async fn get_public_announce_addr(port: u16) -> anyhow::Result<SocketAddr> {
-    async fn get_ipify() -> anyhow::Result<Ipv4Addr> {
-        #[derive(Deserialize)]
-        struct Data {
-            ip: Ipv4Addr,
-        }
-        let resp: Data = reqwest::get("https://api.ipify.org?format=json")
-            .await
-            .context("error getting public IP address")?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok(resp.ip)
-    }
-
-    async fn get_public_ip() -> anyhow::Result<Ipv4Addr> {
-        get_ipify().await
-    }
-
-    let ip = get_public_ip()
-        .await
-        .context("error getting public IP address")?;
-
-    let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
-    info!("using public IP address {addr} to publish on DHT");
-    Ok(addr)
-}
-
 pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
     pub stream: tokio::net::TcpStream,
@@ -406,7 +378,7 @@ impl Session {
     ) -> anyhow::Result<Arc<Self>> {
         let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
 
-        let (tcp_listener, port) = if let Some(port_range) = opts.listen_port_range {
+        let (tcp_listener, tcp_listen_port) = if let Some(port_range) = opts.listen_port_range {
             let (l, p) = create_tcp_listener(port_range)
                 .await
                 .context("error listening on TCP")?;
@@ -419,24 +391,15 @@ impl Session {
         let dht = if opts.disable_dht {
             None
         } else {
-            let announce_addr = if let Some(port) = port {
-                Some(
-                    get_public_announce_addr(port)
-                        .await
-                        .context("error getting public announce address")?,
-                )
-            } else {
-                None
-            };
             let dht = if opts.disable_dht_persistence {
                 DhtBuilder::with_config(DhtConfig {
-                    announce_addr,
+                    announce_port: tcp_listen_port,
                     ..Default::default()
                 })
                 .await
             } else {
                 let mut pdht_config = opts.dht_config.take().unwrap_or_default();
-                pdht_config.announce_addr = announce_addr;
+                pdht_config.announce_port = tcp_listen_port;
                 PersistentDht::create(Some(pdht_config)).await
             }
             .context("error initializing DHT")?;
@@ -468,12 +431,12 @@ impl Session {
         if let Some(tcp_listener) = tcp_listener {
             session.spawn(
                 "tcp listener",
-                error_span!("tcp_listen", port = port),
+                error_span!("tcp_listen", port = tcp_listen_port),
                 session.clone().task_tcp_listener(tcp_listener),
             );
         }
 
-        if let Some(listen_port) = port {
+        if let Some(listen_port) = tcp_listen_port {
             if opts.enable_upnp_port_forwarding {
                 session.spawn(
                     "upnp_forward",

@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    net::{SocketAddr, SocketAddrV4},
+    net::SocketAddr,
     str::FromStr,
     sync::{
         atomic::{AtomicU16, Ordering},
@@ -109,7 +109,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
         addr: SocketAddr,
         resp: &anyhow::Result<ResponseOrError>,
     ) {
-        let announce_addr = match req.dht.announce_addr {
+        let announce_port = match req.dht.announce_port {
             Some(a) => a,
             None => return,
         };
@@ -132,7 +132,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
         let (tid, message) = req.dht.create_request(Request::Announce {
             info_hash: req.info_hash,
             token: token.clone(),
-            addr: announce_addr,
+            port: announce_port,
         });
 
         let _ = req.dht.worker_sender.send(WorkerSendRequest {
@@ -534,7 +534,7 @@ pub struct DhtState {
     worker_sender: UnboundedSender<WorkerSendRequest>,
 
     pub(crate) peer_store: PeerStore,
-    announce_addr: Option<SocketAddrV4>,
+    announce_port: Option<u16>,
 }
 
 impl DhtState {
@@ -544,7 +544,7 @@ impl DhtState {
         routing_table: Option<RoutingTable>,
         listen_addr: SocketAddr,
         peer_store: PeerStore,
-        announce_addr: Option<SocketAddrV4>,
+        announce_port: Option<u16>,
     ) -> Self {
         let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id, None));
         Self {
@@ -556,7 +556,7 @@ impl DhtState {
             listen_addr,
             rate_limiter: make_rate_limiter(),
             peer_store,
-            announce_addr,
+            announce_port,
         }
     }
 
@@ -628,13 +628,13 @@ impl DhtState {
             Request::Announce {
                 info_hash,
                 token,
-                addr,
+                port,
             } => Message {
                 kind: MessageKind::AnnouncePeer(AnnouncePeer {
                     id: self.id,
                     implied_port: 0,
                     info_hash,
-                    port: addr.port(),
+                    port,
                     token,
                 }),
                 transaction_id: ByteString::from(transaction_id_buf.as_ref()),
@@ -811,7 +811,7 @@ enum Request {
     Announce {
         info_hash: Id20,
         token: ByteString,
-        addr: SocketAddrV4,
+        port: u16,
     },
     Ping,
 }
@@ -1124,7 +1124,7 @@ pub struct DhtConfig {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
-    pub announce_addr: Option<SocketAddr>,
+    pub announce_port: Option<u16>,
     pub peer_store: Option<PeerStore>,
 }
 
@@ -1160,13 +1160,7 @@ impl DhtState {
             config.routing_table,
             listen_addr,
             config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
-            config.announce_addr.and_then(|a| match a {
-                SocketAddr::V4(v4) => Some(v4),
-                SocketAddr::V6(_) => {
-                    warn!("libqrqbit-dht doesn't support announcing IPv6 addresses");
-                    None
-                }
-            }),
+            config.announce_port,
         ));
 
         spawn(error_span!("dht"), {
