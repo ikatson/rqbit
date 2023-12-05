@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    net::SocketAddr,
+    net::{SocketAddr, SocketAddrV4},
     sync::{
         atomic::{AtomicU16, Ordering},
         Arc,
@@ -1059,7 +1059,8 @@ pub struct DhtConfig {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
-    pub(crate) peer_store: Option<PeerStore>,
+    pub announce_addr: Option<SocketAddr>,
+    pub peer_store: Option<PeerStore>,
 }
 
 impl DhtState {

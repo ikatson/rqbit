@@ -71,6 +71,22 @@ struct Opts {
     #[arg(short = 't', long)]
     worker_threads: Option<usize>,
 
+    // Enable to listen on 0.0.0.0 on TCP for torrent requests.
+    #[arg(long = "tcp-listen", default_value = "true")]
+    tcp_listen: bool,
+
+    /// The minimal port to listen for incoming connections.
+    #[arg(long = "tcp-min-port", default_value = "4240")]
+    tcp_listen_min_port: u16,
+
+    /// The maximal port to listen for incoming connections.
+    #[arg(long = "tcp-max-port", default_value = "4260")]
+    tcp_listen_max_port: u16,
+
+    /// If set, will try to publish the chosen port through upnp on your router.
+    #[arg(long = "enable-upnp", default_value = "true")]
+    enable_upnp: bool,
+
     #[command(subcommand)]
     subcommand: SubCommand,
 }
@@ -311,6 +327,12 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             read_write_timeout: Some(opts.peer_read_write_timeout),
             ..Default::default()
         }),
+        listen_port_range: if opts.tcp_listen {
+            Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
+        } else {
+            None
+        },
+        enable_upnp_port_forwarding: opts.enable_upnp,
     };
 
     let stats_printer = |session: Arc<Session>| async move {
@@ -371,6 +393,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 sopts.persistence = !start_opts.disable_persistence;
                 sopts.persistence_filename =
                     start_opts.persistence_filename.clone().map(PathBuf::from);
+
                 let session =
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
                         .await

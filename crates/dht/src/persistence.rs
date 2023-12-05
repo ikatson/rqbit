@@ -16,10 +16,11 @@ use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
 use crate::{Dht, DhtConfig, DhtState};
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct PersistentDhtConfig {
     pub dump_interval: Option<Duration>,
     pub config_filename: Option<PathBuf>,
+    pub announce_addr: Option<SocketAddr>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -111,11 +112,13 @@ impl PersistentDht {
             .map(|de| (Some(de.addr), Some(de.table), de.peer_store))
             .unwrap_or((None, None, None));
         let peer_id = routing_table.as_ref().map(|r| r.id());
+
         let dht_config = DhtConfig {
             peer_id,
             routing_table,
             listen_addr,
             peer_store,
+            announce_addr: config.announce_addr,
             ..Default::default()
         };
         let dht = DhtState::with_config(dht_config).await?;

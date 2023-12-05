@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::{BufReader, BufWriter, Read},
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     str::FromStr,
     sync::Arc,
@@ -12,7 +12,9 @@ use std::{
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBufT, ByteString};
-use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream};
+use dht::{
+    Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream,
+};
 use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -345,6 +347,34 @@ async fn create_tcp_listener(
     bail!("no free TCP ports in range {port_range:?}");
 }
 
+async fn get_public_announce_addr(port: u16) -> anyhow::Result<SocketAddr> {
+    async fn get_ipify() -> anyhow::Result<Ipv4Addr> {
+        #[derive(Deserialize)]
+        struct Data {
+            ip: Ipv4Addr,
+        }
+        let resp: Data = reqwest::get("https://api.ipify.org?format=json")
+            .await
+            .context("error getting public IP address")?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(resp.ip)
+    }
+
+    async fn get_public_ip() -> anyhow::Result<Ipv4Addr> {
+        get_ipify().await
+    }
+
+    let ip = get_public_ip()
+        .await
+        .context("error getting public IP address")?;
+
+    let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+    info!("using public IP address {addr} to publish on DHT");
+    Ok(addr)
+}
+
 impl Session {
     /// Create a new session. The passed in folder will be used as a default unless overriden per torrent.
     pub async fn new(output_folder: PathBuf) -> anyhow::Result<Arc<Self>> {
@@ -354,7 +384,7 @@ impl Session {
     /// Create a new session with options.
     pub async fn new_with_opts(
         output_folder: PathBuf,
-        opts: SessionOptions,
+        mut opts: SessionOptions,
     ) -> anyhow::Result<Arc<Self>> {
         let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
 
@@ -362,6 +392,7 @@ impl Session {
             let (l, p) = create_tcp_listener(port_range)
                 .await
                 .context("error listening on TCP")?;
+            info!("Listening on 0.0.0.0:{p} for incoming peer connections");
             (Some(l), Some(p))
         } else {
             (None, None)
@@ -370,10 +401,25 @@ impl Session {
         let dht = if opts.disable_dht {
             None
         } else {
-            let dht = if opts.disable_dht_persistence {
-                DhtBuilder::new().await
+            let announce_addr = if let Some(port) = port {
+                Some(
+                    get_public_announce_addr(port)
+                        .await
+                        .context("error getting public announce address")?,
+                )
             } else {
-                PersistentDht::create(opts.dht_config).await
+                None
+            };
+            let dht = if opts.disable_dht_persistence {
+                DhtBuilder::with_config(DhtConfig {
+                    announce_addr,
+                    ..Default::default()
+                })
+                .await
+            } else {
+                let mut pdht_config = opts.dht_config.take().unwrap_or_default();
+                pdht_config.announce_addr = announce_addr;
+                PersistentDht::create(Some(pdht_config)).await
             }
             .context("error initializing DHT")?;
             Some(dht)
@@ -464,7 +510,12 @@ impl Session {
     }
 
     async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
-        // TODO
+        let mut buf = vec![0u8; 4096];
+
+        loop {
+            let (stream, addr) = l.accept().await.context("error accepting")?;
+            info!("accepted connection from {addr}");
+        }
         Ok(())
     }
 
@@ -509,6 +560,10 @@ impl Session {
                 }
             }
         });
+    }
+
+    fn stop(&self) {
+        let _ = self.cancel_tx.send(());
     }
 
     async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {
