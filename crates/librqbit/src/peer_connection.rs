@@ -7,6 +7,7 @@ use anyhow::{bail, Context};
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{id20::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
+use parking_lot::RwLock;
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ExtendedMessage},
     serialize_piece_preamble, Handshake, Message, MessageBorrowed, MessageDeserializeError,
@@ -261,33 +262,19 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let mut extended_handshake: Option<ExtendedHandshake<ByteString>> = None;
+        let extended_handshake: RwLock<Option<ExtendedHandshake<ByteString>>> = RwLock::new(None);
+        let extended_handshake_ref = &extended_handshake;
         let supports_extended = handshake_supports_extended;
 
         if supports_extended {
             let my_extended =
                 Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
             trace!("sending extended handshake: {:?}", &my_extended);
-            my_extended.serialize(&mut write_buf, None).unwrap();
+            my_extended.serialize(&mut write_buf, &|| None).unwrap();
             with_timeout(rwtimeout, conn.write_all(&write_buf))
                 .await
                 .context("error writing extended handshake")?;
             write_buf.clear();
-
-            let (extended, size) = read_one!(conn, read_buf, read_so_far, rwtimeout);
-            match extended {
-                Message::Extended(ExtendedMessage::Handshake(h)) => {
-                    trace!("received: {:?}", &h);
-                    self.handler.on_extended_handshake(&h)?;
-                    extended_handshake = Some(h.clone_to_owned())
-                }
-                other => anyhow::bail!("expected extended handshake, but got {:?}", other),
-            };
-
-            if read_so_far > size {
-                read_buf.copy_within(size..read_so_far, 0);
-            }
-            read_so_far -= size;
         }
 
         let (mut read_half, mut write_half) = tokio::io::split(conn);
@@ -320,9 +307,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let mut uploaded_add = None;
 
                 let len = match &req {
-                    WriterRequest::Message(msg) => {
-                        msg.serialize(&mut write_buf, extended_handshake.as_ref())?
-                    }
+                    WriterRequest::Message(msg) => msg.serialize(&mut write_buf, &|| {
+                        extended_handshake_ref
+                            .read()
+                            .as_ref()
+                            .and_then(|e| e.ut_metadata())
+                    })?,
                     WriterRequest::ReadChunkRequest(chunk) => {
                         // this whole section is an optimization
                         write_buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
@@ -366,9 +356,15 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let (message, size) = read_one!(read_half, read_buf, read_so_far, rwtimeout);
                 trace!("received: {:?}", &message);
 
-                self.handler
-                    .on_received_message(message)
-                    .context("error in handler.on_received_message()")?;
+                if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
+                    *extended_handshake_ref.write() = Some(h.clone_to_owned());
+                    self.handler.on_extended_handshake(h)?;
+                    trace!("remembered extended handshake for future serializing");
+                } else {
+                    self.handler
+                        .on_received_message(message)
+                        .context("error in handler.on_received_message()")?;
+                }
 
                 if read_so_far > size {
                     read_buf.copy_within(size..read_so_far, 0);

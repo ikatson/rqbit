@@ -59,6 +59,13 @@ impl<ByteBuf: Eq + std::hash::Hash> ExtendedHandshake<ByteBuf> {
             }
         })
     }
+
+    pub fn ut_metadata(&self) -> Option<u8>
+    where
+        ByteBuf: AsRef<[u8]>,
+    {
+        self.get_msgid(b"ut_metadata")
+    }
 }
 
 impl<ByteBuf> CloneToOwned for ExtendedHandshake<ByteBuf>

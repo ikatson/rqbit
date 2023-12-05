@@ -11,7 +11,7 @@ use clone_to_owned::CloneToOwned;
 use librqbit_core::{constants::CHUNK_SIZE, id20::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
 
-use self::extended::{handshake::ExtendedHandshake, ExtendedMessage};
+use self::extended::ExtendedMessage;
 
 const INTEGER_LEN: usize = 4;
 const MSGID_LEN: usize = 1;
@@ -258,7 +258,7 @@ where
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
-        peer_extended_handshake: Option<&ExtendedHandshake<ByteString>>,
+        extended_handshake_ut_metadata: &dyn Fn() -> Option<u8>,
     ) -> anyhow::Result<usize> {
         let (lp, msg_id) = self.len_prefix_and_msg_id();
 
@@ -308,7 +308,7 @@ where
                 Ok(msg_len)
             }
             Message::Extended(e) => {
-                e.serialize(out, peer_extended_handshake)?;
+                e.serialize(out, extended_handshake_ut_metadata)?;
                 let msg_size = out.len();
                 // no fucking idea why +1, but I tweaked that for it all to match up
                 // with real messages.
@@ -576,6 +576,8 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
+    use crate::extended::handshake::ExtendedHandshake;
+
     use super::*;
     #[test]
     fn test_handshake_serialize() {
@@ -594,7 +596,7 @@ mod tests {
     fn test_extended_serialize() {
         let msg = Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
         let mut out = Vec::new();
-        msg.serialize(&mut out, None).unwrap();
+        msg.serialize(&mut out, &|| None).unwrap();
         dbg!(out);
     }
 
@@ -610,7 +612,7 @@ mod tests {
         let (msg, size) = MessageBorrowed::deserialize(&buf).unwrap();
         assert_eq!(size, buf.len());
         let mut write_buf = Vec::new();
-        msg.serialize(&mut write_buf, None).unwrap();
+        msg.serialize(&mut write_buf, &|| None).unwrap();
         if buf != write_buf {
             {
                 use std::io::Write;
