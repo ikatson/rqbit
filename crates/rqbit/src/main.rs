@@ -338,6 +338,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
+        // This will be overriden by "server start" below if needed.
         persistence: false,
         persistence_filename: None,
         peer_id: None,

@@ -102,7 +102,7 @@ use self::{
             atomic::PeerCountersAtomic as AtomicPeerCounters,
             snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         },
-        InflightRequest, PeerRx, PeerState, PeerTx, SendMany,
+        InflightRequest, PeerRx, PeerState, PeerTx,
     },
     peers::PeerStates,
     stats::{atomic::AtomicStats, snapshot::StatsSnapshot},
@@ -569,30 +569,6 @@ impl TorrentStateLive {
         reason: &'static str,
     ) -> TimedExistence<RwLockWriteGuard<TorrentStateLocked>> {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
-    }
-
-    fn get_next_needed_piece(
-        &self,
-        peer_handle: PeerHandle,
-    ) -> anyhow::Result<Option<ValidPieceIndex>> {
-        self.peers
-            .with_live_mut(peer_handle, "l(get_next_needed_piece)", |live| {
-                let g = self.lock_read("g(get_next_needed_piece)");
-                let bf = &live.bitfield;
-                for n in g.get_chunks()?.iter_needed_pieces() {
-                    if bf.get(n).map(|v| *v) == Some(true) {
-                        // in theory it should be safe without validation, but whatever.
-                        return Ok(self.lengths.validate_piece_index(n as u32));
-                    }
-                }
-                Ok(None)
-            })
-            .transpose()
-            .map(|r| r.flatten())
-    }
-
-    fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
-        matches!(self.get_next_needed_piece(handle), Ok(Some(_)))
     }
 
     fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
@@ -1172,16 +1148,27 @@ impl PeerHandler {
         let handle = self.addr;
         self.wait_for_bitfield().await;
 
-        if !self.state.am_i_interested_in_peer(self.addr) {
+        // TODO: this check needs to happen more often
+        if self.state.is_finished() {
             self.tx
                 .send(WriterRequest::Message(MessageOwned::NotInterested))?;
-            if self.state.is_finished() {
+
+            if self
+                .state
+                .peers
+                .with_live(self.addr, |l| {
+                    l.has_full_torrent(self.state.lengths.total_pieces() as usize)
+                })
+                .unwrap_or_default()
+            {
+                debug!("both peer and us have full torrent, disconnecting");
                 self.tx.send(WriterRequest::Disconnect)?;
+                return Ok(());
             }
-            return Ok(());
         }
+
         self.tx
-            .send_many([WriterRequest::Message(MessageOwned::Interested)])?;
+            .send(WriterRequest::Message(MessageOwned::Interested))?;
 
         loop {
             self.wait_for_unchoke().await;

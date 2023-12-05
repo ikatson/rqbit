@@ -2,8 +2,6 @@ pub mod stats;
 
 use std::collections::HashSet;
 
-use anyhow::Context;
-
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 
@@ -29,22 +27,8 @@ impl From<&ChunkInfo> for InflightRequest {
     }
 }
 
-// TODO: Arc can be removed probably, as UnboundedSender should be clone + it can be downgraded to weak.
 pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
-
-pub trait SendMany {
-    fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()>;
-}
-
-impl SendMany for PeerTx {
-    fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()> {
-        requests
-            .into_iter()
-            .try_for_each(|r| self.send(r))
-            .context("peer dropped")
-    }
-}
 
 #[derive(Debug, Default)]
 pub(crate) struct Peer {
