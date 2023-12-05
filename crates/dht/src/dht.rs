@@ -203,7 +203,7 @@ impl RequestPeersStream {
             node_tx,
             callbacks: RecursiveRequestCallbacksGetPeers {
                 min_distance_to_announce: Id20::from_str(
-                    "000000ffffffffffffffffffffffffffffffffff",
+                    "0000ffffffffffffffffffffffffffffffffffff",
                 )
                 .unwrap(),
             },
