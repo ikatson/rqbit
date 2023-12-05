@@ -32,6 +32,9 @@
     To do this, a
   - [x] Ensure that if we query the "returned" nodes, they are even closer to our request than the responding node id was.
 
+incoming peers:
+- [ ] error managing peer: expected extended handshake, but got Bitfield(<94 bytes>)
+
 someday:
 - [x] cancellation from the client-side for the lib (i.e. stop the torrent manager)
 
