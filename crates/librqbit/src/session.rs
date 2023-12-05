@@ -449,7 +449,7 @@ impl Session {
                 announce: trackers
                     .get(0)
                     .cloned()
-                    .unwrap_or_else(|| ByteString(b"http://retracker.local/announce".into())),
+                    .unwrap_or_else(|| ByteString(b"http://retracker.local/announce".to_vec())),
                 announce_list: vec![trackers],
                 info: storrent.info,
                 comment: None,
