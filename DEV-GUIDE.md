@@ -8,23 +8,23 @@ Nothing special here. I run with
 
 ## Web UI
 
-1. Start the server
+Start the server
 
     make devserver
 
-2. Run Web UI dev
+Run Web UI dev
 
     make webui-dev
 
 ## Desktop app
 
-1. Stop the devserver, otherwise ports will conflict.
+Stop the devserver, otherwise ports will conflict.
 
-2. Install deps
+Install deps
 
     cargo install tauri-cli
     make webui-deps
 
-3. Run tauri dev
+Run tauri dev
 
     cargo tauri dev
