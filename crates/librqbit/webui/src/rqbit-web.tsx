@@ -197,9 +197,12 @@ const Speed: React.FC<{ statsResponse: TorrentStats }> = ({ statsResponse }) => 
     }
 
     return <>
-        {!statsResponse.finished && <p>↓ {statsResponse.live.download_speed.human_readable}</p>}
-        <p>↑ {statsResponse.live.upload_speed.human_readable}</p>
-        {statsResponse.live.snapshot.uploaded_bytes > 0 && <p>Uploaded {formatBytes(statsResponse.live.snapshot.uploaded_bytes)}</p>}
+        {!statsResponse.finished &&
+            <div className='download-speed'>↓ {statsResponse.live.download_speed.human_readable}</div>}
+        <div className='upload-speed'>
+            ↑ {statsResponse.live.upload_speed.human_readable}
+            {statsResponse.live.snapshot.uploaded_bytes > 0 &&
+                <span> (total {formatBytes(statsResponse.live.snapshot.uploaded_bytes)}</span>})</div>
     </>
 }
 
