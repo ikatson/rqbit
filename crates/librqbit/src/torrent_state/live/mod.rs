@@ -1176,10 +1176,10 @@ impl PeerHandler {
                 self.tx.send(WriterRequest::Disconnect)?;
                 return Ok(());
             }
+        } else {
+            self.tx
+                .send(WriterRequest::Message(MessageOwned::Interested))?;
         }
-
-        self.tx
-            .send(WriterRequest::Message(MessageOwned::Interested))?;
 
         loop {
             self.wait_for_unchoke().await;
