@@ -452,7 +452,7 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
+    pub(crate) fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
         self.spawner = Some(spawner);
         self
     }

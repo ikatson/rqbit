@@ -53,7 +53,7 @@ pub struct PeerConnectionOptions {
     pub keep_alive_interval: Option<Duration>,
 }
 
-pub struct PeerConnection<H> {
+pub(crate) struct PeerConnection<H> {
     handler: H,
     addr: SocketAddr,
     info_hash: Id20,

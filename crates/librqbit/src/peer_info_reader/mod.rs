@@ -24,7 +24,7 @@ use crate::{
     spawn_utils::BlockingSpawner,
 };
 
-pub async fn read_metainfo_from_peer(
+pub(crate) async fn read_metainfo_from_peer(
     addr: SocketAddr,
     peer_id: Id20,
     info_hash: Id20,
