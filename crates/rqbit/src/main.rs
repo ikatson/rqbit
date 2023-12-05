@@ -72,8 +72,8 @@ struct Opts {
     worker_threads: Option<usize>,
 
     // Enable to listen on 0.0.0.0 on TCP for torrent requests.
-    #[arg(long = "tcp-listen", default_value = "true")]
-    tcp_listen: bool,
+    #[arg(long = "disable-tcp-listen")]
+    disable_tcp_listen: bool,
 
     /// The minimal port to listen for incoming connections.
     #[arg(long = "tcp-min-port", default_value = "4240")]
@@ -84,8 +84,8 @@ struct Opts {
     tcp_listen_max_port: u16,
 
     /// If set, will try to publish the chosen port through upnp on your router.
-    #[arg(long = "enable-upnp", default_value = "true")]
-    enable_upnp: bool,
+    #[arg(long = "disable-upnp")]
+    disable_upnp: bool,
 
     #[command(subcommand)]
     subcommand: SubCommand,
@@ -148,6 +148,25 @@ struct DownloadOpts {
     /// Exit the program once the torrents complete download.
     #[arg(short = 'e', long)]
     exit_on_finish: bool,
+
+    #[arg(long = "disable-trackers")]
+    disable_trackers: bool,
+
+    #[arg(long = "initial-peers")]
+    initial_peers: Option<InitialPeers>,
+}
+
+#[derive(Clone)]
+struct InitialPeers(Vec<SocketAddr>);
+
+impl From<&str> for InitialPeers {
+    fn from(s: &str) -> Self {
+        let mut v = Vec::new();
+        for addr in s.split(',') {
+            v.push(addr.parse().unwrap());
+        }
+        Self(v)
+    }
 }
 
 // server start
@@ -327,12 +346,12 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             read_write_timeout: Some(opts.peer_read_write_timeout),
             ..Default::default()
         }),
-        listen_port_range: if opts.tcp_listen {
+        listen_port_range: if !opts.disable_tcp_listen {
             Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
         } else {
             None
         },
-        enable_upnp_port_forwarding: opts.enable_upnp,
+        enable_upnp_port_forwarding: !opts.disable_upnp,
     };
 
     let stats_printer = |session: Arc<Session>| async move {
@@ -424,6 +443,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 force_tracker_interval: opts.force_tracker_interval,
                 output_folder: download_opts.output_folder.clone(),
                 sub_folder: download_opts.sub_folder.clone(),
+                initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
+                disable_trackers: download_opts.disable_trackers,
                 ..Default::default()
             };
             let connect_to_existing = match client.validate_rqbit_server().await {

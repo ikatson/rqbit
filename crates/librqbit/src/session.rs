@@ -228,6 +228,8 @@ pub struct AddTorrentOptions {
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub force_tracker_interval: Option<Duration>,
 
+    pub disable_trackers: bool,
+
     /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
 
@@ -549,6 +551,10 @@ impl Session {
 
         trace!("received handshake from {addr}: {:?}", h);
 
+        if h.peer_id == self.peer_id.0 {
+            bail!("seems like we are connecting to ourselves, ignoring");
+        }
+
         for (id, torrent) in self.db.read().torrents.iter() {
             if torrent.info_hash().0 != h.info_hash {
                 continue;
@@ -580,15 +586,7 @@ impl Session {
             ));
         }
 
-        bail!("didn't find a matching torrent for {:?}", h.info_hash)
-    }
-
-    fn handover_checked_connection(
-        &self,
-        live: Arc<TorrentStateLive>,
-        checked: CheckedIncomingConnection,
-    ) -> anyhow::Result<()> {
-        live.add_incoming_peer(checked)
+        bail!("didn't find a matching torrent for {:?}", Id20(h.info_hash))
     }
 
     async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
@@ -616,7 +614,7 @@ impl Session {
                     }
                 },
                 Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
-                    if let Err(e) = self.handover_checked_connection(live, checked) {
+                    if let Err(e) = live.add_incoming_peer(checked) {
                         warn!("error handing over incoming connection: {e:#}");
                     }
                 },
@@ -881,7 +879,11 @@ impl Session {
                     torrent.info,
                     dht_rx,
                     trackers,
-                    Default::default(),
+                    opts.initial_peers
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
                 )
             }
         };
@@ -989,8 +991,11 @@ impl Session {
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
-            .peer_id(self.peer_id)
-            .trackers(trackers);
+            .peer_id(self.peer_id);
+
+        if opts.disable_trackers {
+            builder.trackers(trackers);
+        }
 
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
