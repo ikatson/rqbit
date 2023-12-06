@@ -91,7 +91,7 @@ use crate::{
     },
     session::CheckedIncomingConnection,
     spawn_utils::spawn,
-    torrent_state::peer::Peer,
+    torrent_state::{peer::Peer, utils::atomic_inc},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
 };
@@ -394,6 +394,7 @@ impl TorrentStateLive {
                 peer.stats.counters.clone()
             }
             Entry::Vacant(vac) => {
+                atomic_inc(&self.peers.stats.seen);
                 let peer = Peer::new_live_for_incoming_connection(
                     Id20(checked_peer.handshake.peer_id),
                     tx.clone(),
@@ -404,9 +405,7 @@ impl TorrentStateLive {
                 counters
             }
         };
-        counters
-            .incoming_connections
-            .fetch_add(1, Ordering::Relaxed);
+        atomic_inc(&counters.incoming_connections);
 
         self.spawn(
             "incoming peer",
