@@ -265,7 +265,7 @@ const TorrentRow: React.FC<{
                         <Speed statsResponse={statsResponse} />
                     </Column>
                     <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
-                    <Column size={2} label="Peers">{formatPeersString()}</Column >
+                    <Column size={2} label="Live / Seen">{formatPeersString()}</Column >
                     <Column label="Actions">
                         <TorrentActions id={id} statsResponse={statsResponse} />
                     </Column>

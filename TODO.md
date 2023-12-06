@@ -45,6 +45,12 @@ desktop:
 - [ ] allow to change options later (even with a session restart)
 - [ ] look at logs - allow writing them to files? Set RUST_LOG through API
 
+persistence:
+- [ ] store total uploaded bytes, so that on restart it comes back up
+
+efficiency:
+- [ ] once the torrent is completed, we don't need to remember old peers
+
 refactor:
 - [x] session persistence: should add torrents even if we haven't resolved it yet
 - [x] where are peers stored
