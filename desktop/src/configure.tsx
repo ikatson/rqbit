@@ -5,6 +5,49 @@ import { ErrorComponent } from "./rqbit-webui-src/rqbit-web";
 import { invokeAPI } from "./api";
 import { ErrorDetails } from "./rqbit-webui-src/api-types";
 
+const FormCheck: React.FC<{
+    label: string,
+    name: string,
+    checked: boolean,
+    onChange: (e: any) => void,
+    disabled?: boolean,
+}> = ({ label, name, checked, onChange, disabled }) => {
+    return <Form.Group as={Row} controlId={name} className="mb-3">
+        <Form.Label className="col-4">{label}</Form.Label>
+        <div className="col-8">
+            <Form.Check
+                type="switch"
+                name={name}
+                checked={checked}
+                onChange={onChange}
+                disabled={disabled}
+            />
+        </div>
+    </Form.Group>
+}
+
+const FormInput: React.FC<{
+    label: string,
+    name: string,
+    value: string | number,
+    inputType: string,
+    onChange: (e: any) => void,
+    disabled?: boolean,
+}> = ({ label, name, value, inputType, onChange, disabled }) => {
+    return <Form.Group as={Row} controlId={name} className="mb-3">
+        <Form.Label className="col-4 col-form-label">{label}</Form.Label>
+        <div className="col-8">
+            <Form.Control
+                type={inputType}
+                name={name}
+                value={value}
+                onChange={onChange}
+                disabled={disabled}
+            />
+        </div>
+    </Form.Group>
+}
+
 export const ConfigModal: React.FC<{
     handleOk: (config: RqbitDesktopConfig) => void,
     initialConfig: RqbitDesktopConfig,
@@ -79,210 +122,143 @@ export const ConfigModal: React.FC<{
                     className="mb-3">
 
                     <Tab className="mb-3" eventKey="home" title="Home">
-                        <Form.Group as={Row} controlId="default_download_location" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Default download folder</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="text"
-                                    name="default_download_location"
-                                    value={config.default_download_location}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
-
-                        </Form.Group>
+                        <FormInput
+                            label="Default download folder"
+                            name="default_download_location"
+                            value={config.default_download_location}
+                            inputType="text"
+                            onChange={handleInputChange}
+                        />
                     </Tab>
 
                     <Tab className="mb-3" eventKey="dht" title="DHT">
                         <legend>DHT config</legend>
 
-                        <Form.Group controlId="dht_disable" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="Disable DHT"
-                                name="dht.disable"
-                                checked={config.dht.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
+                        <FormCheck
+                            label="Enable DHT"
+                            name="dht.disable"
+                            checked={!config.dht.disable}
+                            onChange={handleToggleChange}
+                        />
 
-                        <Form.Group controlId="dht_disable_persistence" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="Disable DHT Persistence"
-                                name="dht.disable_persistence"
-                                checked={config.dht.disable_persistence}
-                                disabled={config.dht.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
+                        <FormCheck
+                            label="Enable DHT persistence"
+                            name="dht.disable_persistence"
+                            checked={!config.dht.disable_persistence}
+                            onChange={handleToggleChange}
+                        />
 
-                        <Form.Group as={Row} controlId="dht_persistence_filename" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Persistence Filename</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="text"
-                                    name="dht.persistence_filename"
-                                    value={config.dht.persistence_filename}
-                                    disabled={config.dht.disable}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
-                        </Form.Group>
+                        <FormInput
+                            label="Persistence filename"
+                            name="dht.persistence_filename"
+                            value={config.dht.persistence_filename}
+                            inputType="text"
+                            onChange={handleInputChange}
+                        />
                     </Tab>
 
                     <Tab className="mb-3" eventKey="tcp_listen" title="TCP">
                         <legend>TCP Listener config</legend>
 
-                        <Form.Group controlId="tcp_listen_disable" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="Disable TCP Listen"
-                                name="tcp_listen.disable"
-                                checked={config.tcp_listen.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
+                        <FormCheck
+                            label="Listen on TCP"
+                            name="tcp_listen.disable"
+                            checked={!config.tcp_listen.disable}
+                            onChange={handleToggleChange}
+                        />
 
-                        <Form.Group as={Row} controlId="tcp_listen_min_port" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Min port</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="number"
-                                    name="tcp_listen.min_port"
-                                    value={config.tcp_listen.min_port}
-                                    disabled={config.tcp_listen.disable}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
+                        <FormCheck
+                            label="Advertise over UPnP"
+                            name="tcp_listen.disable"
+                            checked={!config.tcp_listen.disable}
+                            onChange={handleToggleChange}
+                        />
 
-                        </Form.Group>
+                        <FormInput
+                            inputType="number"
+                            label="Min port"
+                            name="tcp_listen.min_port"
+                            value={config.tcp_listen.min_port}
+                            disabled={config.tcp_listen.disable}
+                            onChange={handleInputChange}
+                        />
 
-                        <Form.Group as={Row} controlId="tcp_listen_max_port" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Max Port</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="number"
-                                    name="tcp_listen.max_port"
-                                    value={config.tcp_listen.max_port}
-                                    disabled={config.tcp_listen.disable}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
-
-                        </Form.Group>
-
-                        <Form.Group controlId="upnp_disable" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="Do not advertise TCP port over UPnP"
-                                name="upnp.disable"
-                                checked={config.upnp.disable}
-                                disabled={config.tcp_listen.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
-
+                        <FormInput
+                            inputType="number"
+                            label="Max port"
+                            name="tcp_listen.max_port"
+                            value={config.tcp_listen.max_port}
+                            disabled={config.tcp_listen.disable}
+                            onChange={handleInputChange}
+                        />
                     </Tab>
 
 
                     <Tab className="mb-3" eventKey="session_persistence" title="Session">
                         <legend>Session persistence</legend>
 
-                        <Form.Group controlId="persistence_disable" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="Disable Persistence"
-                                name="persistence.disable"
-                                checked={config.persistence.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
+                        <FormCheck
+                            label="Enable persistence"
+                            name="persistence.disable"
+                            checked={!config.persistence.disable}
+                            onChange={handleToggleChange}
+                        />
 
-                        <Form.Group as={Row} controlId="persistence_filename" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Persistence Filename</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="text"
-                                    name="persistence.filename"
-                                    value={config.persistence.filename}
-                                    disabled={config.persistence.disable}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
-
-                        </Form.Group>
-
+                        <FormInput
+                            label="Persistence filename"
+                            name="persistence.filename"
+                            inputType="text"
+                            value={config.persistence.filename}
+                            onChange={handleInputChange}
+                        />
                     </Tab>
 
                     <Tab className="mb-3" eventKey="peer_opts" title="Peer options">
                         <legend>Peer connection options</legend>
 
-                        <Form.Group as={Row} controlId="peer_opts_connect_timeout" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Connect timeout (seconds)</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="number"
-                                    name="peer_opts.connect_timeout"
-                                    value={config.peer_opts.connect_timeout}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
+                        <FormInput
+                            label="Connect timeout (seconds)"
+                            inputType="number"
+                            name="peer_opts.connect_timeout"
+                            value={config.peer_opts.connect_timeout}
+                            onChange={handleInputChange}
+                        />
 
-                        </Form.Group>
-
-                        <Form.Group as={Row} controlId="peer_opts_read_write_timeout" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">Read/write timeout (seconds)</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="number"
-                                    name="peer_opts.read_write_timeout"
-                                    value={config.peer_opts.read_write_timeout}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
-
-                        </Form.Group>
+                        <FormInput
+                            label="Read/write timeout (seconds)"
+                            inputType="number"
+                            name="peer_opts.read_write_timeout"
+                            value={config.peer_opts.read_write_timeout}
+                            onChange={handleInputChange}
+                        />
                     </Tab>
 
                     <Tab className="mb-3" eventKey="http_api" title="HTTP API">
                         <legend>HTTP API config</legend>
 
-                        <Form.Group controlId="http_api_disable" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="Disable HTTP API"
-                                name="http_api.disable"
-                                checked={config.http_api.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
+                        <FormCheck
+                            label="Enable HTTP API"
+                            name="http_api.disable"
+                            checked={!config.http_api.disable}
+                            onChange={handleToggleChange}
+                        />
 
-                        <Form.Group as={Row} controlId="http_api_listen_addr" className="mb-3">
-                            <Form.Label className="col-4 col-form-label">HTTP API Listen Address</Form.Label>
-                            <div className="col-8">
-                                <Form.Control
-                                    type="text"
-                                    name="http_api.listen_addr"
-                                    value={config.http_api.listen_addr}
-                                    disabled={config.http_api.disable}
-                                    onChange={handleInputChange}
-                                />
-                            </div>
+                        <FormCheck
+                            label="Read Only"
+                            name="http_api.read_only"
+                            checked={config.http_api.read_only}
+                            disabled={config.http_api.disable}
+                            onChange={handleToggleChange}
+                        />
 
-                        </Form.Group>
-
-                        <Form.Group controlId="http_api_read_only" className="mb-3">
-                            <Form.Check
-                                type="switch"
-                                label="HTTP API Read Only"
-                                name="http_api.read_only"
-                                checked={config.http_api.read_only}
-                                disabled={config.http_api.disable}
-                                onChange={handleToggleChange}
-                            />
-                        </Form.Group>
-
+                        <FormInput
+                            label="Listen address"
+                            inputType="text"
+                            name="http_api.listen_addr"
+                            value={config.http_api.listen_addr}
+                            disabled={config.http_api.disable}
+                            onChange={handleInputChange}
+                        />
                     </Tab>
 
                 </Tabs>
