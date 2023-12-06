@@ -202,7 +202,7 @@ const Speed: React.FC<{ statsResponse: TorrentStats }> = ({ statsResponse }) => 
         <div className='upload-speed'>
             ↑ {statsResponse.live.upload_speed.human_readable}
             {statsResponse.live.snapshot.uploaded_bytes > 0 &&
-                <span> (total {formatBytes(statsResponse.live.snapshot.uploaded_bytes)}</span>})</div>
+                <span> ({formatBytes(statsResponse.live.snapshot.uploaded_bytes)})</span>}</div>
     </>
 }
 
