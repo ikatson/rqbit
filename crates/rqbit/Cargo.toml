@@ -23,7 +23,7 @@ default-tls = ["librqbit/default-tls"]
 rust-tls = ["librqbit/rust-tls"]
 
 [dependencies]
-librqbit = {path="../librqbit", default-features=false, version = "4.0.0"}
+librqbit = {path="../librqbit", default-features=false, version = "4.0.1"}
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 console-subscriber = {version = "0.2", optional = true}
 anyhow = "1"
