@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { RqbitDesktopConfig } from "./configuration";
-import { Button, Form, Modal } from "react-bootstrap";
+import { Button, Form, Modal, Tab, Tabs } from "react-bootstrap";
 import { ErrorComponent } from "./rqbit-webui-src/rqbit-web";
 import { invokeAPI } from "./api";
 import { ErrorDetails } from "./rqbit-webui-src/api-types";
@@ -73,8 +73,12 @@ export const ConfigModal: React.FC<{
             </Modal.Header>
             <Modal.Body>
                 <ErrorComponent error={error}></ErrorComponent>
-                <Form>
-                    <fieldset className="mb-3">
+                <Tabs
+                    defaultActiveKey="main"
+                    id="rqbit-config"
+                    className="mb-3">
+
+                    <Tab className="mb-3" eventKey="home" title="Home">
                         <Form.Group controlId="default_download_location">
                             <Form.Label>Default Download Location</Form.Label>
                             <Form.Control
@@ -84,9 +88,9 @@ export const ConfigModal: React.FC<{
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
-                    </fieldset>
+                    </Tab>
 
-                    <fieldset className="mb-3">
+                    <Tab className="mb-3" eventKey="dht" title="DHT">
                         <legend>DHT config</legend>
 
                         <Form.Group controlId="dht_disable">
@@ -105,6 +109,7 @@ export const ConfigModal: React.FC<{
                                 label="Disable DHT Persistence"
                                 name="dht.disable_persistence"
                                 checked={config.dht.disable_persistence}
+                                disabled={config.dht.disable}
                                 onChange={handleToggleChange}
                             />
                         </Form.Group>
@@ -115,12 +120,13 @@ export const ConfigModal: React.FC<{
                                 type="text"
                                 name="dht.persistence_filename"
                                 value={config.dht.persistence_filename}
+                                disabled={config.dht.disable}
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
-                    </fieldset>
+                    </Tab>
 
-                    <fieldset className="mb-3">
+                    <Tab className="mb-3" eventKey="tcp_listen" title="TCP">
 
                         <legend>TCP Listener config</legend>
 
@@ -135,21 +141,23 @@ export const ConfigModal: React.FC<{
                         </Form.Group>
 
                         <Form.Group controlId="tcp_listen_min_port">
-                            <Form.Label>TCP Listen Min Port</Form.Label>
+                            <Form.Label>Min port</Form.Label>
                             <Form.Control
                                 type="number"
                                 name="tcp_listen.min_port"
                                 value={config.tcp_listen.min_port}
+                                disabled={config.tcp_listen.disable}
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
 
                         <Form.Group controlId="tcp_listen_max_port">
-                            <Form.Label>TCP Listen Max Port</Form.Label>
+                            <Form.Label>Max Port</Form.Label>
                             <Form.Control
                                 type="number"
                                 name="tcp_listen.max_port"
                                 value={config.tcp_listen.max_port}
+                                disabled={config.tcp_listen.disable}
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
@@ -160,14 +168,15 @@ export const ConfigModal: React.FC<{
                                 label="Do not advertise TCP port over UPnP"
                                 name="upnp.disable"
                                 checked={config.upnp.disable}
+                                disabled={config.tcp_listen.disable}
                                 onChange={handleToggleChange}
                             />
                         </Form.Group>
 
-                    </fieldset>
+                    </Tab>
 
 
-                    <fieldset className="mb-3">
+                    <Tab className="mb-3" eventKey="session_persistence" title="Session">
                         <legend>Session persistence</legend>
 
                         <Form.Group controlId="persistence_disable">
@@ -186,13 +195,14 @@ export const ConfigModal: React.FC<{
                                 type="text"
                                 name="persistence.filename"
                                 value={config.persistence.filename}
+                                disabled={config.persistence.disable}
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
 
-                    </fieldset>
+                    </Tab>
 
-                    <fieldset className="mb-3">
+                    <Tab className="mb-3" eventKey="peer_opts" title="Peer options">
                         <legend>Peer connection options</legend>
 
                         <Form.Group controlId="peer_opts_connect_timeout">
@@ -214,9 +224,9 @@ export const ConfigModal: React.FC<{
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
-                    </fieldset>
+                    </Tab>
 
-                    <fieldset className="mb-3">
+                    <Tab className="mb-3" eventKey="http_api" title="HTTP API">
                         <legend>HTTP API config</legend>
 
                         <Form.Group controlId="http_api_disable">
@@ -235,6 +245,7 @@ export const ConfigModal: React.FC<{
                                 type="text"
                                 name="http_api.listen_addr"
                                 value={config.http_api.listen_addr}
+                                disabled={config.http_api.disable}
                                 onChange={handleInputChange}
                             />
                         </Form.Group>
@@ -245,13 +256,14 @@ export const ConfigModal: React.FC<{
                                 label="HTTP API Read Only"
                                 name="http_api.read_only"
                                 checked={config.http_api.read_only}
+                                disabled={config.http_api.disable}
                                 onChange={handleToggleChange}
                             />
                         </Form.Group>
 
-                    </fieldset>
+                    </Tab>
 
-                </Form>
+                </Tabs>
             </Modal.Body>
             <Modal.Footer>
                 <Button variant="secondary" onClick={() => setConfig(initialConfig)}>
