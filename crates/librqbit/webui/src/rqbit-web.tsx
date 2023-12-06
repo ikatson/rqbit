@@ -314,16 +314,12 @@ const Torrent: React.FC<{
     useEffect(() => customSetInterval((async () => {
         const errorInterval = 10000;
         const liveInterval = 1000;
-        const finishedInterval = 10000;
         const nonLiveInterval = 10000;
 
         return API.getTorrentStats(torrent.id).then((stats) => {
             updateStatsResponse(stats);
             return stats;
         }).then((stats) => {
-            if (stats.finished) {
-                return finishedInterval;
-            }
             if (stats.state == STATE_INITIALIZING || stats.state == STATE_LIVE) {
                 return liveInterval;
             }

@@ -163,7 +163,7 @@ async fn start_session() {
         "http api",
         error_span!("http_api"),
         librqbit::http_api::HttpApi::new(session, Some(rust_log_reload_tx))
-            .make_http_api_and_run("127.0.0.1:3000".parse().unwrap(), false),
+            .make_http_api_and_run("127.0.0.1:3030".parse().unwrap(), false),
     );
 
     tauri::Builder::default()
