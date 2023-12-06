@@ -178,7 +178,7 @@ enum SubCommand {
     Download(DownloadOpts),
 }
 
-// Iint logging and make a channel to send new RUST_LOG values to.
+// Init logging and make a channel to send new RUST_LOG values to.
 fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
     let default_rust_log = match opts.log_level.as_ref() {
         Some(level) => match level {

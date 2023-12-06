@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "0.0.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "anyhow",
  "base64 0.21.5",
@@ -3020,6 +3020,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

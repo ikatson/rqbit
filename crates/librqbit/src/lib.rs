@@ -53,3 +53,8 @@ pub use clone_to_owned::CloneToOwned;
 pub use librqbit_core::magnet::*;
 pub use librqbit_core::peer_id::*;
 pub use librqbit_core::torrent_metainfo::*;
+
+/// The cargo version of librqbit.
+pub fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
