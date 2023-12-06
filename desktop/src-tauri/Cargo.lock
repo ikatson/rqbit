@@ -63,6 +63,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4668cab20f66d8d020e1fbc0ebe47217433c1b6c8f2040faf858554e394ace6"
 
 [[package]]
+name = "async-recursion"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd55a5ba1179988837d24ab4c7cc8ed6efdeff578ede0416b4225a5fca35bd0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.39",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1856,7 +1867,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "4.0.0"
+version = "5.0.0-beta.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1877,6 +1888,7 @@ dependencies = [
  "librqbit-dht",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
+ "librqbit-upnp",
  "parking_lot",
  "rand 0.8.5",
  "regex",
@@ -1920,7 +1932,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1939,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1963,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.2.1"
+version = "3.3.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1981,6 +1993,22 @@ name = "librqbit-sha1-wrapper"
 version = "2.2.1"
 dependencies = [
  "crypto-hash",
+]
+
+[[package]]
+name = "librqbit-upnp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "futures",
+ "network-interface",
+ "reqwest",
+ "serde",
+ "serde-xml-rs",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2179,6 +2207,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e5a6ae77c8ee183dcbbba6150e2e6b9f3f4196a7666c02a715a95692ec1fa97"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "network-interface"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d68759ef97fe9c9e46f79ea8736c19f1d28992e24c8dc8ce86752918bfeaae7"
+dependencies = [
+ "cc",
+ "libc",
+ "thiserror",
+ "winapi",
 ]
 
 [[package]]
@@ -3118,6 +3158,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25dd9975e68d0cb5aa1120c288333fc98731bd1dd12f561e468ea4728c042b89"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-xml-rs"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb3aa78ecda1ebc9ec9847d5d3aba7d618823446a049ba2491940506da6e2782"
+dependencies = [
+ "log",
+ "serde",
+ "thiserror",
+ "xml-rs",
 ]
 
 [[package]]
@@ -4835,3 +4887,9 @@ checksum = "f4686009f71ff3e5c4dbcf1a282d0a44db3f021ba69350cd42086b3e5f1c6985"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "xml-rs"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fcb9cbac069e033553e8bb871be2fbdffcab578eb25bd0f7c508cedc6dcd75a"
