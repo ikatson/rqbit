@@ -373,6 +373,11 @@ impl Session {
         Self::new_with_opts(output_folder, SessionOptions::default()).await
     }
 
+    pub fn default_persistence_filename() -> anyhow::Result<PathBuf> {
+        let dir = get_configuration_directory("session")?;
+        Ok(dir.data_dir().join("session.json"))
+    }
+
     /// Create a new session with options.
     pub async fn new_with_opts(
         output_folder: PathBuf,
@@ -405,9 +410,7 @@ impl Session {
         let peer_opts = opts.peer_opts.unwrap_or_default();
         let persistence_filename = match opts.persistence_filename {
             Some(filename) => filename,
-            None => get_configuration_directory("session")?
-                .data_dir()
-                .join("session.json"),
+            None => Self::default_persistence_filename()?,
         };
         let spawner = BlockingSpawner::default();
 
@@ -608,7 +611,8 @@ impl Session {
         }
     }
 
-    fn spawn(
+    /// Spawn a task in the context of the session.
+    pub fn spawn(
         &self,
         name: &str,
         span: tracing::Span,
@@ -626,7 +630,9 @@ impl Session {
         });
     }
 
-    pub fn stop(&self) {
+    /// Stop the session and all managed tasks.
+    // TODO: this probably doesn't kill everything properly.
+    pub async fn stop(&self) {
         let _ = self.cancel_tx.send(());
     }
 

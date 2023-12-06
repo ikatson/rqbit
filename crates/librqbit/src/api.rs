@@ -26,6 +26,7 @@ pub type Result<T> = std::result::Result<T, ApiError>;
 
 /// Library API for use in different web frameworks.
 /// Contains all methods you might want to expose with (de)serializable inputs/outputs.
+#[derive(Clone)]
 pub struct Api {
     session: Arc<Session>,
     rust_log_reload_tx: Option<UnboundedSender<String>>,

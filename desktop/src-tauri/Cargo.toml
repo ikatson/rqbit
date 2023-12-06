@@ -24,6 +24,8 @@ http = "1.0.0"
 directories = "5.0.1"
 tracing-subscriber = {version = "0.3.18", features = ["env-filter"] }
 tracing = "0.1"
+serde_with = "3.4.0"
+parking_lot = "0.12.1"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

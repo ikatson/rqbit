@@ -68,17 +68,23 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
 }
 
 impl PersistentDht {
+    pub fn default_persistence_filename() -> anyhow::Result<PathBuf> {
+        let dirs = get_configuration_directory("dht")?;
+        let path = dirs.cache_dir().join("dht.json");
+        Ok(path)
+    }
+
     pub async fn create(config: Option<PersistentDhtConfig>) -> anyhow::Result<Dht> {
         let mut config = config.unwrap_or_default();
         let config_filename = match config.config_filename.take() {
             Some(config_filename) => config_filename,
-            None => {
-                let dirs = get_configuration_directory("dht")?;
-                let path = dirs.cache_dir().join("dht.json");
-                info!("will store DHT routing table to {:?} periodically", &path);
-                path
-            }
+            None => Self::default_persistence_filename()?,
         };
+
+        info!(
+            "will store DHT routing table to {:?} periodically",
+            &config_filename
+        );
 
         if let Some(parent) = config_filename.parent() {
             std::fs::create_dir_all(parent)

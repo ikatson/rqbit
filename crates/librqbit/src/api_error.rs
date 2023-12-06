@@ -27,6 +27,14 @@ impl ApiError {
         }
     }
 
+    pub const fn new_from_text(status: StatusCode, text: &'static str) -> Self {
+        Self {
+            status: Some(status),
+            kind: ApiErrorKind::Text(text),
+            plaintext: false,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn not_implemented(msg: &str) -> Self {
         Self {
@@ -69,6 +77,7 @@ impl ApiError {
 enum ApiErrorKind {
     TorrentNotFound(usize),
     DhtDisabled,
+    Text(&'static str),
     Other(anyhow::Error),
 }
 
@@ -91,6 +100,7 @@ impl Serialize for ApiError {
                 ApiErrorKind::TorrentNotFound(_) => "torrent_not_found",
                 ApiErrorKind::DhtDisabled => "dht_disabled",
                 ApiErrorKind::Other(_) => "internal_error",
+                ApiErrorKind::Text(_) => "internal_error",
             },
             human_readable: format!("{self}"),
             status: self.status().as_u16(),
@@ -130,6 +140,7 @@ impl std::fmt::Display for ApiError {
             ApiErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
             ApiErrorKind::Other(err) => write!(f, "{err:?}"),
             ApiErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
+            ApiErrorKind::Text(t) => write!(f, "{t}"),
         }
     }
 }
