@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { RqbitDesktopConfig } from "./configuration";
-import { Button, Form, Modal, Tab, Tabs } from "react-bootstrap";
+import { Button, Form, Modal, Row, Tab, Tabs } from "react-bootstrap";
 import { ErrorComponent } from "./rqbit-webui-src/rqbit-web";
 import { invokeAPI } from "./api";
 import { ErrorDetails } from "./rqbit-webui-src/api-types";
@@ -79,14 +79,17 @@ export const ConfigModal: React.FC<{
                     className="mb-3">
 
                     <Tab className="mb-3" eventKey="home" title="Home">
-                        <Form.Group controlId="default_download_location" className="mb-3">
-                            <Form.Label>Default download folder</Form.Label>
-                            <Form.Control
-                                type="text"
-                                name="default_download_location"
-                                value={config.default_download_location}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="default_download_location" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Default download folder</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="text"
+                                    name="default_download_location"
+                                    value={config.default_download_location}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
                     </Tab>
 
@@ -114,20 +117,21 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="dht_persistence_filename" className="mb-3">
-                            <Form.Label>Persistence Filename</Form.Label>
-                            <Form.Control
-                                type="text"
-                                name="dht.persistence_filename"
-                                value={config.dht.persistence_filename}
-                                disabled={config.dht.disable}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="dht_persistence_filename" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Persistence Filename</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="text"
+                                    name="dht.persistence_filename"
+                                    value={config.dht.persistence_filename}
+                                    disabled={config.dht.disable}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
                         </Form.Group>
                     </Tab>
 
                     <Tab className="mb-3" eventKey="tcp_listen" title="TCP">
-
                         <legend>TCP Listener config</legend>
 
                         <Form.Group controlId="tcp_listen_disable" className="mb-3">
@@ -140,26 +144,32 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="tcp_listen_min_port" className="mb-3">
-                            <Form.Label>Min port</Form.Label>
-                            <Form.Control
-                                type="number"
-                                name="tcp_listen.min_port"
-                                value={config.tcp_listen.min_port}
-                                disabled={config.tcp_listen.disable}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="tcp_listen_min_port" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Min port</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="number"
+                                    name="tcp_listen.min_port"
+                                    value={config.tcp_listen.min_port}
+                                    disabled={config.tcp_listen.disable}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
 
-                        <Form.Group controlId="tcp_listen_max_port" className="mb-3">
-                            <Form.Label>Max Port</Form.Label>
-                            <Form.Control
-                                type="number"
-                                name="tcp_listen.max_port"
-                                value={config.tcp_listen.max_port}
-                                disabled={config.tcp_listen.disable}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="tcp_listen_max_port" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Max Port</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="number"
+                                    name="tcp_listen.max_port"
+                                    value={config.tcp_listen.max_port}
+                                    disabled={config.tcp_listen.disable}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
 
                         <Form.Group controlId="upnp_disable" className="mb-3">
@@ -189,15 +199,18 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="persistence_filename" className="mb-3">
-                            <Form.Label>Persistence Filename</Form.Label>
-                            <Form.Control
-                                type="text"
-                                name="persistence.filename"
-                                value={config.persistence.filename}
-                                disabled={config.persistence.disable}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="persistence_filename" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Persistence Filename</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="text"
+                                    name="persistence.filename"
+                                    value={config.persistence.filename}
+                                    disabled={config.persistence.disable}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
 
                     </Tab>
@@ -205,24 +218,30 @@ export const ConfigModal: React.FC<{
                     <Tab className="mb-3" eventKey="peer_opts" title="Peer options">
                         <legend>Peer connection options</legend>
 
-                        <Form.Group controlId="peer_opts_connect_timeout" className="mb-3">
-                            <Form.Label>Connect timeout</Form.Label>
-                            <Form.Control
-                                type="text"
-                                name="peer_opts.connect_timeout"
-                                value={config.peer_opts.connect_timeout}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="peer_opts_connect_timeout" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Connect timeout (seconds)</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="number"
+                                    name="peer_opts.connect_timeout"
+                                    value={config.peer_opts.connect_timeout}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
 
-                        <Form.Group controlId="peer_opts_read_write_timeout" className="mb-3">
-                            <Form.Label>Read/write timeout</Form.Label>
-                            <Form.Control
-                                type="text"
-                                name="peer_opts.read_write_timeout"
-                                value={config.peer_opts.read_write_timeout}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="peer_opts_read_write_timeout" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">Read/write timeout (seconds)</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="number"
+                                    name="peer_opts.read_write_timeout"
+                                    value={config.peer_opts.read_write_timeout}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
                     </Tab>
 
@@ -239,15 +258,18 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="http_api_listen_addr" className="mb-3">
-                            <Form.Label>HTTP API Listen Address</Form.Label>
-                            <Form.Control
-                                type="text"
-                                name="http_api.listen_addr"
-                                value={config.http_api.listen_addr}
-                                disabled={config.http_api.disable}
-                                onChange={handleInputChange}
-                            />
+                        <Form.Group as={Row} controlId="http_api_listen_addr" className="mb-3">
+                            <Form.Label className="col-4 col-form-label">HTTP API Listen Address</Form.Label>
+                            <div className="col-8">
+                                <Form.Control
+                                    type="text"
+                                    name="http_api.listen_addr"
+                                    value={config.http_api.listen_addr}
+                                    disabled={config.http_api.disable}
+                                    onChange={handleInputChange}
+                                />
+                            </div>
+
                         </Form.Group>
 
                         <Form.Group controlId="http_api_read_only" className="mb-3">
