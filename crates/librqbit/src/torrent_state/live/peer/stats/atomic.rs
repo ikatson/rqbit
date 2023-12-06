@@ -12,8 +12,9 @@ use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 pub(crate) struct PeerCountersAtomic {
     pub fetched_bytes: AtomicU64,
     pub total_time_connecting_ms: AtomicU64,
-    pub connection_attempts: AtomicU32,
-    pub connections: AtomicU32,
+    pub incoming_connections: AtomicU32,
+    pub outgoing_connection_attempts: AtomicU32,
+    pub outgoing_connections: AtomicU32,
     pub errors: AtomicU32,
     pub fetched_chunks: AtomicU32,
     pub downloaded_and_checked_pieces: AtomicU32,

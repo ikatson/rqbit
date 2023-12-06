@@ -382,7 +382,17 @@ impl TorrentStateLive {
         let (tx, rx) = unbounded_channel();
 
         let counters = match self.peers.states.entry(checked_peer.addr) {
-            Entry::Occupied(_) => bail!("we are already managing peer {}", checked_peer.addr),
+            Entry::Occupied(mut occ) => {
+                let peer = occ.get_mut();
+                peer.state
+                    .incoming_connection(
+                        Id20(checked_peer.handshake.peer_id),
+                        tx.clone(),
+                        &self.peers.stats,
+                    )
+                    .context("peer already existed")?;
+                peer.stats.counters.clone()
+            }
             Entry::Vacant(vac) => {
                 let peer = Peer::new_live_for_incoming_connection(
                     Id20(checked_peer.handshake.peer_id),
@@ -394,6 +404,9 @@ impl TorrentStateLive {
                 counters
             }
         };
+        counters
+            .incoming_connections
+            .fetch_add(1, Ordering::Relaxed);
 
         self.spawn(
             "incoming peer",
@@ -504,7 +517,7 @@ impl TorrentStateLive {
 
         handler
             .counters
-            .connection_attempts
+            .outgoing_connection_attempts
             .fetch_add(1, Ordering::Relaxed);
         let res = tokio::select! {
             r = requester => {r}
@@ -803,7 +816,9 @@ struct PeerHandler {
 
 impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
-        self.counters.connections.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .outgoing_connections
+            .fetch_add(1, Ordering::Relaxed);
         self.counters
             .total_time_connecting_ms
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);

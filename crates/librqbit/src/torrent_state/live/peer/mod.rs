@@ -135,6 +135,25 @@ impl PeerStateNoMut {
             None
         }
     }
+
+    pub fn incoming_connection(
+        &mut self,
+        peer_id: Id20,
+        tx: PeerTx,
+        counters: &AggregatePeerStatsAtomic,
+    ) -> anyhow::Result<()> {
+        if matches!(&self.0, PeerState::Connecting(..) | PeerState::Live(..)) {
+            anyhow::bail!("peer already active");
+        }
+        match self.take(counters) {
+            PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
+                self.set(PeerState::Live(LivePeerState::new(peer_id, tx)), counters);
+            }
+            PeerState::Connecting(..) | PeerState::Live(..) => unreachable!(),
+        }
+        Ok(())
+    }
+
     pub fn connecting_to_live(
         &mut self,
         peer_id: Id20,

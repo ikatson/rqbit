@@ -6,6 +6,7 @@ use crate::torrent_state::live::peer::{Peer, PeerState};
 
 #[derive(Serialize, Deserialize)]
 pub struct PeerCounters {
+    pub incoming_connections: u32,
     pub fetched_bytes: u64,
     pub total_time_connecting_ms: u64,
     pub connection_attempts: u32,
@@ -24,10 +25,13 @@ pub struct PeerStats {
 impl From<&super::atomic::PeerCountersAtomic> for PeerCounters {
     fn from(counters: &super::atomic::PeerCountersAtomic) -> Self {
         Self {
+            incoming_connections: counters.incoming_connections.load(Ordering::Relaxed),
             fetched_bytes: counters.fetched_bytes.load(Ordering::Relaxed),
             total_time_connecting_ms: counters.total_time_connecting_ms.load(Ordering::Relaxed),
-            connection_attempts: counters.connection_attempts.load(Ordering::Relaxed),
-            connections: counters.connections.load(Ordering::Relaxed),
+            connection_attempts: counters
+                .outgoing_connection_attempts
+                .load(Ordering::Relaxed),
+            connections: counters.outgoing_connections.load(Ordering::Relaxed),
             errors: counters.errors.load(Ordering::Relaxed),
             fetched_chunks: counters.fetched_chunks.load(Ordering::Relaxed),
             downloaded_and_checked_pieces: counters

@@ -428,7 +428,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 http_api
                     .make_http_api_and_run(http_api_listen_addr, false)
                     .await
-                    .context("error starting HTTP API")
+                    .context("error running HTTP API")
             }
         },
         SubCommand::Download(download_opts) => {
