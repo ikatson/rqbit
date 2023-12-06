@@ -1,7 +1,6 @@
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use bencode::BencodeValue;
-use buffers::ByteString;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
 
@@ -41,7 +40,7 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
-        extended_handshake: Option<&ExtendedHandshake<ByteString>>,
+        extended_handshake_ut_metadata: &dyn Fn() -> Option<u8>,
     ) -> anyhow::Result<()>
     where
         ByteBuf: AsRef<[u8]>,
@@ -56,12 +55,9 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
                 bencode_serialize_to_writer(h, out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
-                let h = extended_handshake.ok_or_else(|| {
+                let emsg_id = extended_handshake_ut_metadata().ok_or_else(|| {
                     anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
                 })?;
-                let emsg_id = h
-                    .get_msgid(b"ut_metadata")
-                    .ok_or_else(|| anyhow::anyhow!("peer doesn't support ut_metadata"))?;
                 out.push(emsg_id);
                 u.serialize(out);
             }

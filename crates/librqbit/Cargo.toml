@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "4.0.0"
+version = "5.0.0-beta.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -24,11 +24,12 @@ rust-tls = ["reqwest/rustls-tls"]
 [dependencies]
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
-librqbit-core = {path = "../librqbit_core", version = "3.2.1"}
+librqbit-core = {path = "../librqbit_core", version = "3.3.0"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.2.1"}
+peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.3.0"}
 sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
-dht = {path = "../dht", package="librqbit-dht", version="4.0.0"}
+dht = {path = "../dht", package="librqbit-dht", version="4.1.0"}
+librqbit-upnp = {path = "../upnp", version = "0.1.0"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 axum = {version = "0.7"}
@@ -41,7 +42,7 @@ anyhow = "1"
 itertools = "0.12"
 http = "1"
 regex = "1"
-reqwest = {version="0.11.22", default-features=false}
+reqwest = {version="0.11.22", default-features=false, features = ["json"]}
 urlencoding = "2"
 byteorder = "1"
 bincode = "1"

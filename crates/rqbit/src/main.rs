@@ -71,6 +71,22 @@ struct Opts {
     #[arg(short = 't', long)]
     worker_threads: Option<usize>,
 
+    // Enable to listen on 0.0.0.0 on TCP for torrent requests.
+    #[arg(long = "disable-tcp-listen")]
+    disable_tcp_listen: bool,
+
+    /// The minimal port to listen for incoming connections.
+    #[arg(long = "tcp-min-port", default_value = "4240")]
+    tcp_listen_min_port: u16,
+
+    /// The maximal port to listen for incoming connections.
+    #[arg(long = "tcp-max-port", default_value = "4260")]
+    tcp_listen_max_port: u16,
+
+    /// If set, will try to publish the chosen port through upnp on your router.
+    #[arg(long = "disable-upnp")]
+    disable_upnp: bool,
+
     #[command(subcommand)]
     subcommand: SubCommand,
 }
@@ -132,6 +148,25 @@ struct DownloadOpts {
     /// Exit the program once the torrents complete download.
     #[arg(short = 'e', long)]
     exit_on_finish: bool,
+
+    #[arg(long = "disable-trackers")]
+    disable_trackers: bool,
+
+    #[arg(long = "initial-peers")]
+    initial_peers: Option<InitialPeers>,
+}
+
+#[derive(Clone)]
+struct InitialPeers(Vec<SocketAddr>);
+
+impl From<&str> for InitialPeers {
+    fn from(s: &str) -> Self {
+        let mut v = Vec::new();
+        for addr in s.split(',') {
+            v.push(addr.parse().unwrap());
+        }
+        Self(v)
+    }
 }
 
 // server start
@@ -303,6 +338,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
+        // This will be overriden by "server start" below if needed.
         persistence: false,
         persistence_filename: None,
         peer_id: None,
@@ -311,6 +347,12 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             read_write_timeout: Some(opts.peer_read_write_timeout),
             ..Default::default()
         }),
+        listen_port_range: if !opts.disable_tcp_listen {
+            Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
+        } else {
+            None
+        },
+        enable_upnp_port_forwarding: !opts.disable_upnp,
     };
 
     let stats_printer = |session: Arc<Session>| async move {
@@ -335,7 +377,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             None => continue
                         };
                         let stats = handle.stats_snapshot();
-                        let speed = handle.speed_estimator();
+                        let down_speed = handle.down_speed_estimator();
+                        let up_speed = handle.up_speed_estimator();
                         let total = stats.total_bytes;
                         let progress = stats.total_bytes - stats.remaining_bytes;
                         let downloaded_pct = if stats.remaining_bytes == 0 {
@@ -343,20 +386,23 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                         } else {
                             (progress as f64 / total as f64) * 100f64
                         };
+                        let time_remaining = down_speed.time_remaining();
+                        let eta = match &time_remaining {
+                            Some(d) => format!(", ETA: {:?}", d),
+                            None => String::new()
+                        };
                         info!(
-                            "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
+                            "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}}}",
                             idx,
                             downloaded_pct,
                             SF::new(progress),
-                            speed.download_mbps(),
-                            SF::new(stats.fetched_bytes),
-                            SF::new(stats.remaining_bytes),
                             SF::new(total),
+                            down_speed.mbps(),
+                            up_speed.mbps(),
                             SF::new(stats.uploaded_bytes),
-                            stats.peer_stats.live,
-                            stats.peer_stats.connecting,
+                            eta,
+                            stats.peer_stats.live + stats.peer_stats.connecting,
                             stats.peer_stats.queued,
-                            stats.peer_stats.seen,
                             stats.peer_stats.dead,
                         );
                     }
@@ -371,6 +417,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 sopts.persistence = !start_opts.disable_persistence;
                 sopts.persistence_filename =
                     start_opts.persistence_filename.clone().map(PathBuf::from);
+
                 let session =
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
                         .await
@@ -385,7 +432,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 http_api
                     .make_http_api_and_run(http_api_listen_addr, false)
                     .await
-                    .context("error starting HTTP API")
+                    .context("error running HTTP API")
             }
         },
         SubCommand::Download(download_opts) => {
@@ -401,6 +448,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 force_tracker_interval: opts.force_tracker_interval,
                 output_folder: download_opts.output_folder.clone(),
                 sub_folder: download_opts.sub_folder.clone(),
+                initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
+                disable_trackers: download_opts.disable_trackers,
                 ..Default::default()
             };
             let connect_to_existing = match client.validate_rqbit_server().await {

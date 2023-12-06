@@ -2,8 +2,6 @@ pub mod stats;
 
 use std::collections::HashSet;
 
-use anyhow::Context;
-
 use librqbit_core::id20::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 
@@ -29,27 +27,28 @@ impl From<&ChunkInfo> for InflightRequest {
     }
 }
 
-// TODO: Arc can be removed probably, as UnboundedSender should be clone + it can be downgraded to weak.
 pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
-
-pub trait SendMany {
-    fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()>;
-}
-
-impl SendMany for PeerTx {
-    fn send_many(&self, requests: impl IntoIterator<Item = WriterRequest>) -> anyhow::Result<()> {
-        requests
-            .into_iter()
-            .try_for_each(|r| self.send(r))
-            .context("peer dropped")
-    }
-}
 
 #[derive(Debug, Default)]
 pub(crate) struct Peer {
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
+}
+
+impl Peer {
+    pub fn new_live_for_incoming_connection(
+        peer_id: Id20,
+        tx: PeerTx,
+        counters: &AggregatePeerStatsAtomic,
+    ) -> Self {
+        let state = PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx)));
+        counters.inc(&state.0);
+        Self {
+            state,
+            stats: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -109,6 +108,13 @@ impl PeerStateNoMut {
         std::mem::replace(&mut self.0, new)
     }
 
+    pub fn get_live(&self) -> Option<&LivePeerState> {
+        match &self.0 {
+            PeerState::Live(l) => Some(l),
+            _ => None,
+        }
+    }
+
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
         match &mut self.0 {
             PeerState::Live(l) => Some(l),
@@ -129,6 +135,25 @@ impl PeerStateNoMut {
             None
         }
     }
+
+    pub fn incoming_connection(
+        &mut self,
+        peer_id: Id20,
+        tx: PeerTx,
+        counters: &AggregatePeerStatsAtomic,
+    ) -> anyhow::Result<()> {
+        if matches!(&self.0, PeerState::Connecting(..) | PeerState::Live(..)) {
+            anyhow::bail!("peer already active");
+        }
+        match self.take(counters) {
+            PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
+                self.set(PeerState::Live(LivePeerState::new(peer_id, tx)), counters);
+            }
+            PeerState::Connecting(..) | PeerState::Live(..) => unreachable!(),
+        }
+        Ok(())
+    }
+
     pub fn connecting_to_live(
         &mut self,
         peer_id: Id20,

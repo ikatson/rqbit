@@ -1,0 +1,28 @@
+[package]
+name = "librqbit-upnp"
+version = "0.1.0"
+authors = ["Igor Katson <igor.katson@gmail.com>"]
+edition = "2021"
+description = "Library used by rqbit torrent client to lease port forwards on the router."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-upnp"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tracing = "0.1"
+anyhow = "1"
+reqwest = {version = "0.11"}
+serde = {version = "1", features = ["derive"]}
+serde-xml-rs = "0.6.0"
+tokio = {version = "1"}
+futures = "0.3"
+url = "2"
+async-recursion = "1"
+network-interface = "1"
+
+[dev-dependencies]
+tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
+tracing-subscriber = "0.3"

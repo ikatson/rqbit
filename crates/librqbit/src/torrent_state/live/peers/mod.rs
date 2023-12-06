@@ -53,6 +53,11 @@ impl PeerStates {
             .map(|e| f(TimedExistence::new(e, reason).value_mut()))
     }
 
+    pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
+        self.with_peer(addr, |peer| peer.state.get_live().map(f))
+            .flatten()
+    }
+
     pub fn with_live_mut<R>(
         &self,
         addr: PeerHandle,

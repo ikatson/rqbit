@@ -51,7 +51,7 @@ pub(crate) async fn read_metainfo_from_peer(
     );
 
     let result_reader = async move { result_rx.await? };
-    let connection_runner = async move { connection.manage_peer(writer_rx).await };
+    let connection_runner = async move { connection.manage_peer_outgoing(writer_rx).await };
 
     tokio::select! {
         result = result_reader => result,
@@ -145,7 +145,7 @@ impl PeerConnectionHandler for Handler {
         Ok(0)
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
+    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()> {
         if !handshake.supports_extended() {
             anyhow::bail!("this peer does not support extended handshaking, which is a prerequisite to download metadata")
         }

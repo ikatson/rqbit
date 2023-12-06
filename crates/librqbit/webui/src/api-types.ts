@@ -27,6 +27,11 @@ export interface ListTorrentsResponse {
     torrents: Array<TorrentId>;
 }
 
+export interface Speed {
+    mbps: number;
+    human_readable: string;
+}
+
 // Interface for the Torrent Stats API response
 export interface LiveTorrentStats {
     snapshot: {
@@ -52,10 +57,8 @@ export interface LiveTorrentStats {
         secs: number;
         nanos: number;
     };
-    download_speed: {
-        mbps: number;
-        human_readable: string;
-    };
+    download_speed: Speed;
+    upload_speed: Speed;
     all_time_download_speed: {
         mbps: number;
         human_readable: string;

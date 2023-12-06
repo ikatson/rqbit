@@ -1,6 +1,7 @@
 use std::{
     cmp::Reverse,
     net::SocketAddr,
+    str::FromStr,
     sync::{
         atomic::{AtomicU16, Ordering},
         Arc,
@@ -11,8 +12,8 @@ use std::{
 
 use crate::{
     bprotocol::{
-        self, CompactNodeInfo, ErrorDescription, FindNodeRequest, GetPeersRequest, Message,
-        MessageKind, Node, PingRequest, Response,
+        self, AnnouncePeer, CompactNodeInfo, ErrorDescription, FindNodeRequest, GetPeersRequest,
+        Message, MessageKind, Node, PingRequest, Response,
     },
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
@@ -93,17 +94,53 @@ trait RecursiveRequestCallbacks: Sized + Send + Sync + 'static {
     );
 }
 
-struct RecursiveRequestCallbacksGetPeers {}
+struct RecursiveRequestCallbacksGetPeers {
+    // Id20::from_str("00000fffffffffffffffffffffffffffffffffff").unwrap()
+    min_distance_to_announce: Id20,
+    announce_port: Option<u16>,
+}
+
 impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
     fn on_request_start(&self, _: &RecursiveRequest<Self>, _: Id20, _: SocketAddr) {}
 
     fn on_request_end(
         &self,
-        _: &RecursiveRequest<Self>,
-        _: Id20,
-        _: SocketAddr,
-        _: &anyhow::Result<ResponseOrError>,
+        req: &RecursiveRequest<Self>,
+        target_node: Id20,
+        addr: SocketAddr,
+        resp: &anyhow::Result<ResponseOrError>,
     ) {
+        let announce_port = match self.announce_port {
+            Some(a) => a,
+            None => return,
+        };
+        let resp = match resp {
+            Ok(ResponseOrError::Response(resp)) => resp,
+            _ => return,
+        };
+        let token = match &resp.token {
+            Some(token) => token,
+            None => return,
+        };
+        if req.info_hash.distance(&target_node) > self.min_distance_to_announce {
+            trace!(
+                "not announcing, {:?} is too far from {:?}",
+                target_node,
+                req.info_hash
+            );
+            return;
+        }
+        let (tid, message) = req.dht.create_request(Request::Announce {
+            info_hash: req.info_hash,
+            token: token.clone(),
+            port: announce_port,
+        });
+
+        let _ = req.dht.worker_sender.send(WorkerSendRequest {
+            our_tid: Some(tid),
+            message,
+            addr,
+        });
     }
 }
 
@@ -153,7 +190,7 @@ pub struct RequestPeersStream {
 }
 
 impl RequestPeersStream {
-    fn new(dht: Arc<DhtState>, info_hash: Id20) -> Self {
+    fn new(dht: Arc<DhtState>, info_hash: Id20, announce_port: Option<u16>) -> Self {
         let (peer_tx, peer_rx) = unbounded_channel();
         let (node_tx, node_rx) = unbounded_channel();
         let rp = Arc::new(RecursiveRequest {
@@ -165,7 +202,13 @@ impl RequestPeersStream {
             useful_nodes: RwLock::new(Vec::new()),
             peer_tx,
             node_tx,
-            callbacks: RecursiveRequestCallbacksGetPeers {},
+            callbacks: RecursiveRequestCallbacksGetPeers {
+                min_distance_to_announce: Id20::from_str(
+                    "0000ffffffffffffffffffffffffffffffffffff",
+                )
+                .unwrap(),
+                announce_port,
+            },
         });
         let join_handle = rp.request_peers_forever(node_rx);
         Self {
@@ -351,7 +394,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             self.callbacks.on_request_start(self, id, addr);
         }
 
-        let response = self.dht.request(self.request, addr).await.map(|r| {
+        let response = self.dht.request(self.request.clone(), addr).await.map(|r| {
             self.mark_node_responded(addr, &r);
             r
         });
@@ -359,7 +402,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             self.callbacks.on_request_end(self, id, addr, &response);
         }
 
-        let response = match self.dht.request(self.request, addr).await {
+        let response = match self.dht.request(self.request.clone(), addr).await {
             Ok(ResponseOrError::Response(r)) => r,
             Ok(ResponseOrError::Error(e)) => bail!("error response: {:?}", e),
             Err(e) => {
@@ -581,6 +624,22 @@ impl DhtState {
                 ip: None,
                 kind: MessageKind::PingRequest(PingRequest { id: self.id }),
             },
+            Request::Announce {
+                info_hash,
+                token,
+                port,
+            } => Message {
+                kind: MessageKind::AnnouncePeer(AnnouncePeer {
+                    id: self.id,
+                    implied_port: 0,
+                    info_hash,
+                    port,
+                    token,
+                }),
+                transaction_id: ByteString::from(transaction_id_buf.as_ref()),
+                version: None,
+                ip: None,
+            },
         };
         (transaction_id, message)
     }
@@ -744,10 +803,15 @@ impl DhtState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Request {
     GetPeers(Id20),
     FindNode(Id20),
+    Announce {
+        info_hash: Id20,
+        token: ByteString,
+        port: u16,
+    },
     Ping,
 }
 
@@ -1059,7 +1123,7 @@ pub struct DhtConfig {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
-    pub(crate) peer_store: Option<PeerStore>,
+    pub peer_store: Option<PeerStore>,
 }
 
 impl DhtState {
@@ -1107,8 +1171,16 @@ impl DhtState {
         Ok(state)
     }
 
-    pub fn get_peers(self: &Arc<Self>, info_hash: Id20) -> anyhow::Result<RequestPeersStream> {
-        Ok(RequestPeersStream::new(self.clone(), info_hash))
+    pub fn get_peers(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        announce_port: Option<u16>,
+    ) -> anyhow::Result<RequestPeersStream> {
+        Ok(RequestPeersStream::new(
+            self.clone(),
+            info_hash,
+            announce_port,
+        ))
     }
 
     pub fn listen_addr(&self) -> SocketAddr {

@@ -12,7 +12,11 @@ use std::{
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBufT, ByteString};
-use dht::{Dht, DhtBuilder, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream};
+use clone_to_owned::CloneToOwned;
+use dht::{
+    Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream,
+};
+use futures::{stream::FuturesUnordered, StreamExt, TryFutureExt};
 use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -20,16 +24,23 @@ use librqbit_core::{
     torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
 };
 use parking_lot::RwLock;
+use peer_binary_protocol::{Handshake, PIECE_MESSAGE_DEFAULT_LEN};
 use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
-use tracing::{debug, error, error_span, info, warn};
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
-    peer_connection::PeerConnectionOptions,
+    peer_connection::{with_timeout, PeerConnectionOptions},
     spawn_utils::{spawn, BlockingSpawner},
-    torrent_state::{ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState},
+    torrent_state::{
+        ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
+    },
 };
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -147,6 +158,11 @@ pub struct Session {
     spawner: BlockingSpawner,
     db: RwLock<SessionDatabase>,
     output_folder: PathBuf,
+
+    tcp_listen_port: Option<u16>,
+
+    cancel_tx: tokio::sync::watch::Sender<()>,
+    cancel_rx: tokio::sync::watch::Receiver<()>,
 }
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
@@ -213,6 +229,8 @@ pub struct AddTorrentOptions {
     /// Force a refresh interval for polling trackers.
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub force_tracker_interval: Option<Duration>,
+
+    pub disable_trackers: bool,
 
     /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
@@ -322,6 +340,31 @@ pub struct SessionOptions {
     pub peer_id: Option<Id20>,
     /// Configure default peer connection options. Can be overriden per torrent.
     pub peer_opts: Option<PeerConnectionOptions>,
+
+    pub listen_port_range: Option<std::ops::Range<u16>>,
+    pub enable_upnp_port_forwarding: bool,
+}
+
+async fn create_tcp_listener(
+    port_range: std::ops::Range<u16>,
+) -> anyhow::Result<(TcpListener, u16)> {
+    for port in port_range.clone() {
+        match TcpListener::bind(("0.0.0.0", port)).await {
+            Ok(l) => return Ok((l, port)),
+            Err(e) => {
+                debug!("error listening on port {port}: {e:#}")
+            }
+        }
+    }
+    bail!("no free TCP ports in range {port_range:?}");
+}
+
+pub(crate) struct CheckedIncomingConnection {
+    pub addr: SocketAddr,
+    pub stream: tokio::net::TcpStream,
+    pub read_buf: Vec<u8>,
+    pub handshake: Handshake<ByteString>,
+    pub read_so_far: usize,
 }
 
 impl Session {
@@ -333,16 +376,28 @@ impl Session {
     /// Create a new session with options.
     pub async fn new_with_opts(
         output_folder: PathBuf,
-        opts: SessionOptions,
+        mut opts: SessionOptions,
     ) -> anyhow::Result<Arc<Self>> {
         let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
+
+        let (tcp_listener, tcp_listen_port) = if let Some(port_range) = opts.listen_port_range {
+            let (l, p) = create_tcp_listener(port_range)
+                .await
+                .context("error listening on TCP")?;
+            info!("Listening on 0.0.0.0:{p} for incoming peer connections");
+            (Some(l), Some(p))
+        } else {
+            (None, None)
+        };
+
         let dht = if opts.disable_dht {
             None
         } else {
             let dht = if opts.disable_dht_persistence {
-                DhtBuilder::new().await
+                DhtBuilder::with_config(DhtConfig::default()).await
             } else {
-                PersistentDht::create(opts.dht_config).await
+                let pdht_config = opts.dht_config.take().unwrap_or_default();
+                PersistentDht::create(Some(pdht_config)).await
             }
             .context("error initializing DHT")?;
             Some(dht)
@@ -355,6 +410,9 @@ impl Session {
                 .join("session.json"),
         };
         let spawner = BlockingSpawner::default();
+
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
+
         let session = Arc::new(Self {
             persistence_filename,
             peer_id,
@@ -363,7 +421,28 @@ impl Session {
             spawner,
             output_folder,
             db: RwLock::new(Default::default()),
+            cancel_rx,
+            cancel_tx,
+            tcp_listen_port,
         });
+
+        if let Some(tcp_listener) = tcp_listener {
+            session.spawn(
+                "tcp listener",
+                error_span!("tcp_listen", port = tcp_listen_port),
+                session.clone().task_tcp_listener(tcp_listener),
+            );
+        }
+
+        if let Some(listen_port) = tcp_listen_port {
+            if opts.enable_upnp_port_forwarding {
+                session.spawn(
+                    "upnp_forward",
+                    error_span!("upnp_forward", port = listen_port),
+                    session.clone().task_upnp_port_forwarder(listen_port),
+                );
+            }
+        }
 
         if opts.persistence {
             info!(
@@ -375,36 +454,140 @@ impl Session {
                     format!("couldn't create directory {:?} for session storage", parent)
                 })?;
             }
-            let session = session.clone();
-            spawn(
+            let persistence_task = session.clone().task_persistence();
+            session.spawn(
                 "session persistene",
                 error_span!("session_persistence"),
-                async move {
-                    // Populate initial from the state filename
-                    if let Err(e) = session.populate_from_stored().await {
-                        error!("could not populate session from stored file: {:?}", e);
-                    }
-
-                    let session = Arc::downgrade(&session);
-
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
-                        let session = match session.upgrade() {
-                            Some(s) => s,
-                            None => break,
-                        };
-                        if let Err(e) = session.dump_to_disk() {
-                            error!("error dumping session to disk: {:?}", e);
-                        }
-                    }
-
-                    Ok(())
-                },
+                persistence_task,
             );
         }
 
         Ok(session)
     }
+
+    async fn task_persistence(self: Arc<Self>) -> anyhow::Result<()> {
+        // Populate initial from the state filename
+        if let Err(e) = self.populate_from_stored().await {
+            error!("could not populate session from stored file: {:?}", e);
+        }
+
+        let session = Arc::downgrade(&self);
+        drop(self);
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            let session = match session.upgrade() {
+                Some(s) => s,
+                None => break,
+            };
+            if let Err(e) = session.dump_to_disk() {
+                error!("error dumping session to disk: {:?}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn check_incoming_connection(
+        &self,
+        addr: SocketAddr,
+        mut stream: TcpStream,
+    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
+        // TODO: move buffer handling to peer_connection
+
+        let rwtimeout = self
+            .peer_opts
+            .read_write_timeout
+            .unwrap_or_else(|| Duration::from_secs(10));
+
+        let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
+        let mut read_so_far = with_timeout(rwtimeout, stream.read(&mut read_buf))
+            .await
+            .context("error reading handshake")?;
+        if read_so_far == 0 {
+            anyhow::bail!("bad handshake");
+        }
+        let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
+            .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
+
+        trace!("received handshake from {addr}: {:?}", h);
+
+        if h.peer_id == self.peer_id.0 {
+            bail!("seems like we are connecting to ourselves, ignoring");
+        }
+
+        for (id, torrent) in self.db.read().torrents.iter() {
+            if torrent.info_hash().0 != h.info_hash {
+                continue;
+            }
+
+            let live = match torrent.live() {
+                Some(live) => live,
+                None => {
+                    bail!("torrent {id} is not live, ignoring connection");
+                }
+            };
+
+            let handshake = h.clone_to_owned();
+
+            if read_so_far > size {
+                read_buf.copy_within(size..read_so_far, 0);
+            }
+            read_so_far -= size;
+
+            return Ok((
+                live,
+                CheckedIncomingConnection {
+                    addr,
+                    stream,
+                    handshake,
+                    read_buf,
+                    read_so_far,
+                },
+            ));
+        }
+
+        bail!("didn't find a matching torrent for {:?}", Id20(h.info_hash))
+    }
+
+    async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
+        let mut futs = FuturesUnordered::new();
+
+        loop {
+            tokio::select! {
+                r = l.accept() => {
+                    match r {
+                        Ok((stream, addr)) => {
+                            trace!("accepted connection from {addr}");
+                            futs.push(
+                                self.check_incoming_connection(addr, stream)
+                                    .map_err(|e| {
+                                        debug!("error checking incoming connection: {e:#}");
+                                        e
+                                    })
+                                    .instrument(error_span!("incoming", addr=%addr))
+                            );
+                        }
+                        Err(e) => {
+                            error!("error accepting: {e:#}");
+                            continue;
+                        }
+                    }
+                },
+                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                    if let Err(e) = live.add_incoming_peer(checked) {
+                        warn!("error handing over incoming connection: {e:#}");
+                    }
+                },
+            }
+        }
+    }
+
+    async fn task_upnp_port_forwarder(self: Arc<Self>, port: u16) -> anyhow::Result<()> {
+        let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None)?;
+        pf.run_forever().await
+    }
+
     pub fn get_dht(&self) -> Option<&Dht> {
         self.dht.as_ref()
     }
@@ -423,6 +606,28 @@ impl Session {
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
         }
+    }
+
+    fn spawn(
+        &self,
+        name: &str,
+        span: tracing::Span,
+        fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) {
+        let mut cancel_rx = self.cancel_rx.clone();
+        spawn(name, span, async move {
+            tokio::select! {
+                r = fut => r,
+                _ = cancel_rx.changed() => {
+                    debug!("task canceled");
+                    Ok(())
+                }
+            }
+        });
+    }
+
+    pub fn stop(&self) {
+        let _ = self.cancel_tx.send(());
     }
 
     async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {
@@ -533,6 +738,12 @@ impl Session {
 
         let opts = opts.unwrap_or_default();
 
+        let announce_port = if opts.list_only {
+            None
+        } else {
+            self.tcp_listen_port
+        };
+
         let (info_hash, info, dht_rx, trackers, initial_peers) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                 let Magnet {
@@ -544,7 +755,7 @@ impl Session {
                     .dht
                     .as_ref()
                     .context("magnet links without DHT are not supported")?
-                    .get_peers(info_hash)?;
+                    .get_peers(info_hash, announce_port)?;
 
                 let trackers = trackers
                     .into_iter()
@@ -607,7 +818,7 @@ impl Session {
                 let dht_rx = match self.dht.as_ref() {
                     Some(dht) if !opts.paused && !opts.list_only => {
                         debug!("reading peers for {:?} from DHT", torrent.info_hash);
-                        Some(dht.get_peers(torrent.info_hash)?)
+                        Some(dht.get_peers(torrent.info_hash, announce_port)?)
                     }
                     _ => None,
                 };
@@ -635,7 +846,11 @@ impl Session {
                     torrent.info,
                     dht_rx,
                     trackers,
-                    Default::default(),
+                    opts.initial_peers
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
                 )
             }
         };
@@ -743,8 +958,11 @@ impl Session {
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
-            .peer_id(self.peer_id)
-            .trackers(trackers);
+            .peer_id(self.peer_id);
+
+        if opts.disable_trackers {
+            builder.trackers(trackers);
+        }
 
         if let Some(only_files) = only_files {
             builder.only_files(only_files);
@@ -833,7 +1051,7 @@ impl Session {
         let peer_rx = self
             .dht
             .as_ref()
-            .map(|dht| dht.get_peers(handle.info_hash()))
+            .map(|dht| dht.get_peers(handle.info_hash(), self.tcp_listen_port))
             .transpose()?;
         handle.start(Default::default(), peer_rx, false)?;
         Ok(())

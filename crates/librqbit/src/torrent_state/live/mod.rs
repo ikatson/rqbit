@@ -76,7 +76,7 @@ use sha1w::Sha1;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Notify, Semaphore,
+        Notify, OwnedSemaphorePermit, Semaphore,
     },
     time::timeout,
 };
@@ -89,7 +89,9 @@ use crate::{
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
+    session::CheckedIncomingConnection,
     spawn_utils::spawn,
+    torrent_state::{peer::Peer, utils::atomic_inc},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
 };
@@ -100,7 +102,7 @@ use self::{
             atomic::PeerCountersAtomic as AtomicPeerCounters,
             snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         },
-        InflightRequest, PeerState, PeerTx, SendMany,
+        InflightRequest, PeerRx, PeerState, PeerTx,
     },
     peers::PeerStates,
     stats::{atomic::AtomicStats, snapshot::StatsSnapshot},
@@ -176,7 +178,7 @@ pub struct TorrentStateLive {
     lengths: Lengths,
 
     // Limits how many active (occupying network resources) peers there are at a moment in time.
-    peer_semaphore: Semaphore,
+    peer_semaphore: Arc<Semaphore>,
 
     // The queue for peer manager to connect to them.
     peer_queue_tx: UnboundedSender<SocketAddr>,
@@ -186,7 +188,8 @@ pub struct TorrentStateLive {
     cancel_tx: tokio::sync::watch::Sender<()>,
     cancel_rx: tokio::sync::watch::Receiver<()>,
 
-    speed_estimator: SpeedEstimator,
+    down_speed_estimator: SpeedEstimator,
+    up_speed_estimator: SpeedEstimator,
 }
 
 impl TorrentStateLive {
@@ -196,7 +199,8 @@ impl TorrentStateLive {
     ) -> Arc<Self> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
-        let speed_estimator = SpeedEstimator::new(5);
+        let down_speed_estimator = SpeedEstimator::new(5);
+        let up_speed_estimator = SpeedEstimator::new(5);
 
         let have_bytes = paused.have_bytes;
         let needed_bytes = paused.info.lengths.total_length() - have_bytes;
@@ -220,10 +224,11 @@ impl TorrentStateLive {
             },
             initially_needed_bytes: needed_bytes,
             lengths,
-            peer_semaphore: Semaphore::new(128),
+            peer_semaphore: Arc::new(Semaphore::new(128)),
             peer_queue_tx,
             finished_notify: Notify::new(),
-            speed_estimator,
+            down_speed_estimator,
+            up_speed_estimator,
             cancel_rx,
             cancel_tx,
         });
@@ -247,6 +252,7 @@ impl TorrentStateLive {
                             Some(state) => state,
                             None => return Ok(()),
                         };
+                        let now = Instant::now();
                         let stats = state.stats_snapshot();
                         let fetched = stats.fetched_bytes;
                         let needed = state.initially_needed();
@@ -255,8 +261,11 @@ impl TorrentStateLive {
                             .wrapping_sub(fetched)
                             .min(needed - stats.downloaded_and_checked_bytes);
                         state
-                            .speed_estimator
-                            .add_snapshot(fetched, remaining, Instant::now());
+                            .down_speed_estimator
+                            .add_snapshot(fetched, Some(remaining), now);
+                        state
+                            .up_speed_estimator
+                            .add_snapshot(stats.uploaded_bytes, None, now);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -289,8 +298,12 @@ impl TorrentStateLive {
         });
     }
 
-    pub fn speed_estimator(&self) -> &SpeedEstimator {
-        &self.speed_estimator
+    pub fn down_speed_estimator(&self) -> &SpeedEstimator {
+        &self.down_speed_estimator
+    }
+
+    pub fn up_speed_estimator(&self) -> &SpeedEstimator {
+        &self.up_speed_estimator
     }
 
     async fn tracker_one_request(&self, tracker_url: Url) -> anyhow::Result<u64> {
@@ -361,10 +374,127 @@ impl TorrentStateLive {
         }
     }
 
-    async fn task_manage_peer(self: Arc<Self>, addr: SocketAddr) -> anyhow::Result<()> {
+    pub(crate) fn add_incoming_peer(
+        self: &Arc<Self>,
+        checked_peer: CheckedIncomingConnection,
+    ) -> anyhow::Result<()> {
+        use dashmap::mapref::entry::Entry;
+        let (tx, rx) = unbounded_channel();
+        let permit = match self.peer_semaphore.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                warn!("limit of live peers reached, dropping incoming peer");
+                self.peers.with_peer(checked_peer.addr, |p| {
+                    atomic_inc(&p.stats.counters.incoming_connections);
+                });
+                return Ok(());
+            }
+        };
+
+        let counters = match self.peers.states.entry(checked_peer.addr) {
+            Entry::Occupied(mut occ) => {
+                let peer = occ.get_mut();
+                peer.state
+                    .incoming_connection(
+                        Id20(checked_peer.handshake.peer_id),
+                        tx.clone(),
+                        &self.peers.stats,
+                    )
+                    .context("peer already existed")?;
+                peer.stats.counters.clone()
+            }
+            Entry::Vacant(vac) => {
+                atomic_inc(&self.peers.stats.seen);
+                let peer = Peer::new_live_for_incoming_connection(
+                    Id20(checked_peer.handshake.peer_id),
+                    tx.clone(),
+                    &self.peers.stats,
+                );
+                let counters = peer.stats.counters.clone();
+                vac.insert(peer);
+                counters
+            }
+        };
+        atomic_inc(&counters.incoming_connections);
+
+        self.spawn(
+            "incoming peer",
+            error_span!("manage_incoming_peer", addr = %checked_peer.addr),
+            self.clone()
+                .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit),
+        );
+        Ok(())
+    }
+
+    async fn task_manage_incoming_peer(
+        self: Arc<Self>,
+        checked_peer: CheckedIncomingConnection,
+        counters: Arc<AtomicPeerCounters>,
+        tx: PeerTx,
+        rx: PeerRx,
+        permit: OwnedSemaphorePermit,
+    ) -> anyhow::Result<()> {
+        // TODO: bump counters for incoming
+        let handler = PeerHandler {
+            addr: checked_peer.addr,
+            on_bitfield_notify: Default::default(),
+            unchoke_notify: Default::default(),
+            locked: RwLock::new(PeerHandlerLocked {
+                i_am_choked: true,
+                previously_requested_pieces: BF::new(),
+            }),
+            requests_sem: Semaphore::new(0),
+            state: self.clone(),
+            tx,
+            counters,
+        };
+        let options = PeerConnectionOptions {
+            connect_timeout: self.meta.options.peer_connect_timeout,
+            read_write_timeout: self.meta.options.peer_read_write_timeout,
+            ..Default::default()
+        };
+        let peer_connection = PeerConnection::new(
+            checked_peer.addr,
+            self.meta.info_hash,
+            self.meta.peer_id,
+            &handler,
+            Some(options),
+            self.meta.spawner,
+        );
+        let requester = handler.task_peer_chunk_requester();
+
+        let res = tokio::select! {
+            r = requester => {r}
+            r = peer_connection.manage_peer_incoming(
+                rx,
+                checked_peer.read_so_far,
+                checked_peer.read_buf,
+                checked_peer.handshake,
+                checked_peer.stream
+            ) => {r}
+        };
+
+        match res {
+            // We disconnected the peer ourselves as we don't need it
+            Ok(()) => {
+                handler.on_peer_died(None)?;
+            }
+            Err(e) => {
+                debug!("error managing peer: {:#}", e);
+                handler.on_peer_died(Some(e))?;
+            }
+        };
+        drop(permit);
+        Ok(())
+    }
+
+    async fn task_manage_outgoing_peer(
+        self: Arc<Self>,
+        addr: SocketAddr,
+        permit: OwnedSemaphorePermit,
+    ) -> anyhow::Result<()> {
         let state = self;
         let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
-
         let counters = state
             .peers
             .with_peer(addr, |p| p.stats.counters.clone())
@@ -396,18 +526,16 @@ impl TorrentStateLive {
             Some(options),
             state.meta.spawner,
         );
-        let requester = handler.task_peer_chunk_requester(addr);
+        let requester = handler.task_peer_chunk_requester();
 
         handler
             .counters
-            .connection_attempts
+            .outgoing_connection_attempts
             .fetch_add(1, Ordering::Relaxed);
         let res = tokio::select! {
             r = requester => {r}
-            r = peer_connection.manage_peer(rx) => {r}
+            r = peer_connection.manage_peer_outgoing(rx) => {r}
         };
-
-        handler.state.peer_semaphore.add_permits(1);
 
         match res {
             // We disconnected the peer ourselves as we don't need it
@@ -419,6 +547,7 @@ impl TorrentStateLive {
                 handler.on_peer_died(Some(e))?;
             }
         }
+        drop(permit);
         Ok::<_, anyhow::Error>(())
     }
 
@@ -435,12 +564,11 @@ impl TorrentStateLive {
                 continue;
             }
 
-            let permit = state.peer_semaphore.acquire().await?;
-            permit.forget();
+            let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
                 "manage_peer",
                 error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
-                state.clone().task_manage_peer(addr),
+                state.clone().task_manage_outgoing_peer(addr, permit),
             );
         }
     }
@@ -478,43 +606,11 @@ impl TorrentStateLive {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
-    fn get_next_needed_piece(
-        &self,
-        peer_handle: PeerHandle,
-    ) -> anyhow::Result<Option<ValidPieceIndex>> {
-        self.peers
-            .with_live_mut(peer_handle, "l(get_next_needed_piece)", |live| {
-                let g = self.lock_read("g(get_next_needed_piece)");
-                let bf = &live.bitfield;
-                for n in g.get_chunks()?.iter_needed_pieces() {
-                    if bf.get(n).map(|v| *v) == Some(true) {
-                        // in theory it should be safe without validation, but whatever.
-                        return Ok(self.lengths.validate_piece_index(n as u32));
-                    }
-                }
-                Ok(None)
-            })
-            .transpose()
-            .map(|r| r.flatten())
-    }
-
-    fn am_i_interested_in_peer(&self, handle: PeerHandle) -> bool {
-        matches!(self.get_next_needed_piece(handle), Ok(Some(_)))
-    }
-
-    fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
-        let result = self.peers.with_peer_mut(handle, "set_peer_live", |p| {
+    fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
+        self.peers.with_peer_mut(handle, "set_peer_live", |p| {
             p.state
-                .connecting_to_live(Id20(h.peer_id), &self.peers.stats)
-                .is_some()
+                .connecting_to_live(Id20(h.peer_id), &self.peers.stats);
         });
-        match result {
-            Some(true) => {
-                trace!("set peer to live")
-            }
-            Some(false) => debug!("can't set peer live, it was in wrong state"),
-            None => debug!("can't set peer live, it disappeared"),
-        }
     }
 
     pub fn get_uploaded_bytes(&self) -> u64 {
@@ -731,7 +827,9 @@ struct PeerHandler {
 
 impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
-        self.counters.connections.fetch_add(1, Ordering::Relaxed);
+        self.counters
+            .outgoing_connections
+            .fetch_add(1, Ordering::Relaxed);
         self.counters
             .total_time_connecting_ms
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);
@@ -766,13 +864,15 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_raw_slice()));
-        let len = msg.serialize(buf, None)?;
+        let len = msg.serialize(buf, &|| None)?;
         trace!("sending: {:?}, length={}", &msg, len);
         Ok(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
+    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()> {
         self.state.set_peer_live(self.addr, handshake);
+        self.tx
+            .send(WriterRequest::Message(MessageOwned::Unchoke))?;
         Ok(())
     }
 
@@ -1022,7 +1122,8 @@ impl PeerHandler {
         self.state
             .peers
             .with_live_mut(self.addr, "on_have", |live| {
-                // If bitfield wasn't allocated yet, let's do it. Some clients send haves before bitfield.
+                // If bitfield wasn't allocated yet, let's do it. Some clients start empty so they never
+                // send bitfields.
                 if live.bitfield.is_empty() {
                     live.bitfield =
                         BF::from_vec(vec![0; self.state.lengths.piece_bitfield_bytes()]);
@@ -1035,6 +1136,7 @@ impl PeerHandler {
                     }
                 };
                 trace!("updated bitfield with have={}", have);
+                self.on_bitfield_notify.notify_waiters();
             });
     }
 
@@ -1050,43 +1152,66 @@ impl PeerHandler {
         self.state
             .peers
             .update_bitfield_from_vec(self.addr, bitfield.0);
-
-        if !self.state.am_i_interested_in_peer(self.addr) {
-            self.tx
-                .send(WriterRequest::Message(MessageOwned::Unchoke))?;
-            self.tx
-                .send(WriterRequest::Message(MessageOwned::NotInterested))?;
-            if self.state.is_finished() {
-                self.tx.send(WriterRequest::Disconnect)?;
-            }
-            return Ok(());
-        }
-
         self.on_bitfield_notify.notify_waiters();
         Ok(())
     }
 
-    async fn task_peer_chunk_requester(&self, handle: PeerHandle) -> anyhow::Result<()> {
-        self.on_bitfield_notify.notified().await;
-        self.tx.send_many([
-            WriterRequest::Message(MessageOwned::Unchoke),
-            WriterRequest::Message(MessageOwned::Interested),
-        ])?;
+    async fn wait_for_any_notify(&self, notify: &Notify, check: impl Fn() -> bool) {
+        // To remove possibility of races, we first grab a token, then check
+        // if we need it, and only if so, await.
+        let notified = notify.notified();
+        if check() {
+            return;
+        }
+        notified.await;
+    }
 
-        #[allow(unused_must_use)]
-        {
-            timeout(Duration::from_secs(60), self.unchoke_notify.notified()).await;
+    async fn wait_for_bitfield(&self) {
+        self.wait_for_any_notify(&self.on_bitfield_notify, || {
+            self.state
+                .peers
+                .with_live(self.addr, |live| !live.bitfield.is_empty())
+                .unwrap_or_default()
+        })
+        .await;
+    }
+
+    async fn wait_for_unchoke(&self) {
+        self.wait_for_any_notify(&self.unchoke_notify, || !self.locked.read().i_am_choked)
+            .await;
+    }
+
+    async fn task_peer_chunk_requester(&self) -> anyhow::Result<()> {
+        let handle = self.addr;
+        self.wait_for_bitfield().await;
+
+        // TODO: this check needs to happen more often, we need to update our
+        // interested state with the other side, for now we send it only once.
+        if self.state.is_finished() {
+            self.tx
+                .send(WriterRequest::Message(MessageOwned::NotInterested))?;
+
+            if self
+                .state
+                .peers
+                .with_live(self.addr, |l| {
+                    l.has_full_torrent(self.state.lengths.total_pieces() as usize)
+                })
+                .unwrap_or_default()
+            {
+                debug!("both peer and us have full torrent, disconnecting");
+                self.tx.send(WriterRequest::Disconnect)?;
+                // Sleep a bit to ensure this gets written to the network by manage_peer
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                return Ok(());
+            }
+        } else {
+            self.tx
+                .send(WriterRequest::Message(MessageOwned::Interested))?;
         }
 
         loop {
-            if self.locked.read().i_am_choked {
-                debug!("we are choked, can't reserve next piece");
-                #[allow(unused_must_use)]
-                {
-                    timeout(Duration::from_secs(60), self.unchoke_notify.notified()).await;
-                }
-                continue;
-            }
+            self.wait_for_unchoke().await;
 
             if self.state.is_finished() {
                 debug!("nothing left to download, looping forever until manage_peer quits");
