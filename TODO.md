@@ -26,23 +26,27 @@
           don't know about the other ones, and DHT returns the same nodes again and again.
   - [x] it's sending many requests now way too fast, locks up Mac OS UI annoyingly
   - [x] store peers sent to us with "announce_peer"
-  - [ ] announced peers should be persisted
-  - [ ] After the search is exhausted, the client then inserts the peer contact information for itself onto the responding nodes with IDs closest to the infohash of the torrent.
-
-    To do this, a
+  - [x] announced peers should be persisted (partial)
+  - [ ] clean up announced peer cache
+    - [ ] only send a token to torrents really close to us
+  - [x] After the search is exhausted, the client then inserts the peer contact information for itself onto the responding nodes with IDs closest to the infohash of the torrent.
   - [x] Ensure that if we query the "returned" nodes, they are even closer to our request than the responding node id was.
 
 incoming peers:
-- [ ] error managing peer: expected extended handshake, but got Bitfield(<94 bytes>)
-- [ ] do not announce when merely listing the torrent
+- [x] error managing peer: expected extended handshake, but got Bitfield(<94 bytes>)
+- [x] do not announce when merely listing the torrent
 
 someday:
 - [x] cancellation from the client-side for the lib (i.e. stop the torrent manager)
-
 - [x] favicons for Web UI
 
+desktop:
+- [ ] on first run show options
+- [ ] allow to change options later (even with a session restart)
+- [ ] look at logs - allow writing them to files? Set RUST_LOG through API
+
 refactor:
-- [ ] session persistence: should add torrents even if we haven't resolved it yet
+- [x] session persistence: should add torrents even if we haven't resolved it yet
 - [x] where are peers stored
 - [x] http api pause/unpause etc
 - [x] when a live torrent fails writing to disk, it should transition to error state
