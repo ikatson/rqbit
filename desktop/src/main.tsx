@@ -4,7 +4,7 @@ import { APIContext, RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
 import { API } from "./api";
 import { invoke } from "@tauri-apps/api";
 import { RqbitDesktopConfig } from "./configuration";
-import { ConfigModal } from "./configure";
+import { RqbitDesktop } from "./rqbit-desktop";
 
 async function get_version(): Promise<string> {
     return invoke<string>("get_version");
@@ -12,18 +12,6 @@ async function get_version(): Promise<string> {
 
 async function get_default_config(): Promise<RqbitDesktopConfig> {
     return invoke<RqbitDesktopConfig>("config_default");
-}
-
-const RqbitDesktop: React.FC<{
-    version: string,
-    defaultConfig: RqbitDesktopConfig,
-}> = ({ version, defaultConfig }) => {
-    let [configured, setConfigured] = useState<boolean>(false);
-
-    if (configured) {
-        return <RqbitWebUI title={`Rqbit Desktop v${version}`}></RqbitWebUI>
-    }
-    return <ConfigModal handleOk={() => setConfigured(true)} initialConfig={defaultConfig}></ConfigModal>;
 }
 
 Promise.all([get_version(), get_default_config()]).then(([version, config]) => {
@@ -35,6 +23,3 @@ Promise.all([get_version(), get_default_config()]).then(([version, config]) => {
         </StrictMode>
     );
 })
-
-
-

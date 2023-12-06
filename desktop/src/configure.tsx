@@ -53,10 +53,14 @@ const FormInput: React.FC<{
 }
 
 export const ConfigModal: React.FC<{
-    handleOk: (config: RqbitDesktopConfig) => void,
+    show: boolean,
+    handleStartReconfigure: () => void,
+    handleConfigured: (config: RqbitDesktopConfig) => void,
+    handleCancel?: () => void,
     initialConfig: RqbitDesktopConfig,
-}> = ({ handleOk, initialConfig }) => {
-    const [config, setConfig] = useState(initialConfig);
+}> = ({ show, handleStartReconfigure, handleConfigured, handleCancel, initialConfig }) => {
+    let [config, setConfig] = useState<RqbitDesktopConfig>(initialConfig);
+
     const [error, setError] = useState<any | null>(null);
 
     const handleInputChange = (e: any) => {
@@ -102,8 +106,9 @@ export const ConfigModal: React.FC<{
 
     const handleOkClick = () => {
         setError(null);
+        handleStartReconfigure();
         invokeAPI<{}>("config_change", { config }).then(
-            () => handleOk(config),
+            () => handleConfigured(config),
             (e: ErrorDetails) => {
                 setError({
                     text: "Error saving configuration",
@@ -114,14 +119,14 @@ export const ConfigModal: React.FC<{
     };
 
     return (
-        <Modal show size='xl'>
+        <Modal show={show} size='xl' onHide={handleCancel}>
             <Modal.Header closeButton>
                 <Modal.Title>Configure Rqbit desktop</Modal.Title>
             </Modal.Header>
             <Modal.Body>
                 <ErrorComponent error={error}></ErrorComponent>
                 <Tabs
-                    defaultActiveKey="main"
+                    defaultActiveKey="home"
                     id="rqbit-config"
                     className="mb-3">
 
@@ -282,6 +287,12 @@ export const ConfigModal: React.FC<{
                 </Tabs>
             </Modal.Body>
             <Modal.Footer>
+
+                {!!handleCancel &&
+                    <Button variant="secondary" onClick={handleCancel}>
+                        Cancel
+                    </Button>
+                }
                 <Button variant="secondary" onClick={() => setConfig(initialConfig)}>
                     Reset to defaults
                 </Button>
