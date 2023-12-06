@@ -112,6 +112,7 @@ async fn start_session() {
             disable_dht: false,
             disable_dht_persistence: false,
             persistence: true,
+            listen_port_range: Some(4240..4260),
             ..Default::default()
         },
     )
