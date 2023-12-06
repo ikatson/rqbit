@@ -11,7 +11,8 @@ const FormCheck: React.FC<{
     checked: boolean,
     onChange: (e: any) => void,
     disabled?: boolean,
-}> = ({ label, name, checked, onChange, disabled }) => {
+    help?: string,
+}> = ({ label, name, checked, onChange, disabled, help }) => {
     return <Form.Group as={Row} controlId={name} className="mb-3">
         <Form.Label className="col-4">{label}</Form.Label>
         <div className="col-8">
@@ -23,6 +24,7 @@ const FormCheck: React.FC<{
                 disabled={disabled}
             />
         </div>
+        {help && <div className="form-text">{help}</div>}
     </Form.Group>
 }
 
@@ -33,7 +35,8 @@ const FormInput: React.FC<{
     inputType: string,
     onChange: (e: any) => void,
     disabled?: boolean,
-}> = ({ label, name, value, inputType, onChange, disabled }) => {
+    help?: string
+}> = ({ label, name, value, inputType, onChange, disabled, help }) => {
     return <Form.Group as={Row} controlId={name} className="mb-3">
         <Form.Label className="col-4 col-form-label">{label}</Form.Label>
         <div className="col-8">
@@ -45,6 +48,7 @@ const FormInput: React.FC<{
                 disabled={disabled}
             />
         </div>
+        {help && <div className="form-text">{help}</div>}
     </Form.Group>
 }
 
@@ -128,6 +132,7 @@ export const ConfigModal: React.FC<{
                             value={config.default_download_location}
                             inputType="text"
                             onChange={handleInputChange}
+                            help="Where to download torrents by default. You can override this per torrent."
                         />
                     </Tab>
 
@@ -139,6 +144,7 @@ export const ConfigModal: React.FC<{
                             name="dht.disable"
                             checked={!config.dht.disable}
                             onChange={handleToggleChange}
+                            help="DHT is required to read magnet links. There's no good reason to disable it, unless you know what you are doing."
                         />
 
                         <FormCheck
@@ -146,6 +152,7 @@ export const ConfigModal: React.FC<{
                             name="dht.disable_persistence"
                             checked={!config.dht.disable_persistence}
                             onChange={handleToggleChange}
+                            help="Enable to store DHT state in a file periodically. If disabled, DHT will bootstrap from scratch on restart."
                         />
 
                         <FormInput
@@ -154,6 +161,7 @@ export const ConfigModal: React.FC<{
                             value={config.dht.persistence_filename}
                             inputType="text"
                             onChange={handleInputChange}
+                            help="The filename to store DHT state into"
                         />
                     </Tab>
 
@@ -165,6 +173,7 @@ export const ConfigModal: React.FC<{
                             name="tcp_listen.disable"
                             checked={!config.tcp_listen.disable}
                             onChange={handleToggleChange}
+                            help="Listen for torrent requests on TCP. Required for peers to be able to connect to you, mainly for uploading."
                         />
 
                         <FormCheck
@@ -172,6 +181,7 @@ export const ConfigModal: React.FC<{
                             name="tcp_listen.disable"
                             checked={!config.tcp_listen.disable}
                             onChange={handleToggleChange}
+                            help="Advertise your port over UPnP. This is required for peers to be able to connect to you from the internet. Will only work if your router has a static IP."
                         />
 
                         <FormInput
@@ -181,6 +191,7 @@ export const ConfigModal: React.FC<{
                             value={config.tcp_listen.min_port}
                             disabled={config.tcp_listen.disable}
                             onChange={handleInputChange}
+                            help="The min port to try to listen on. First successful is taken."
                         />
 
                         <FormInput
@@ -190,6 +201,7 @@ export const ConfigModal: React.FC<{
                             value={config.tcp_listen.max_port}
                             disabled={config.tcp_listen.disable}
                             onChange={handleInputChange}
+                            help="The max port to try to listen on."
                         />
                     </Tab>
 
@@ -202,6 +214,7 @@ export const ConfigModal: React.FC<{
                             name="persistence.disable"
                             checked={!config.persistence.disable}
                             onChange={handleToggleChange}
+                            help="If you disable session persistence, rqbit won't remember the torrents you had before restart."
                         />
 
                         <FormInput
@@ -222,6 +235,7 @@ export const ConfigModal: React.FC<{
                             name="peer_opts.connect_timeout"
                             value={config.peer_opts.connect_timeout}
                             onChange={handleInputChange}
+                            help="How much to wait for outgoing connections to connect. Default is low to prefer faster peers."
                         />
 
                         <FormInput
@@ -230,6 +244,7 @@ export const ConfigModal: React.FC<{
                             name="peer_opts.read_write_timeout"
                             value={config.peer_opts.read_write_timeout}
                             onChange={handleInputChange}
+                            help="Peer socket read/write timeout."
                         />
                     </Tab>
 
@@ -241,14 +256,16 @@ export const ConfigModal: React.FC<{
                             name="http_api.disable"
                             checked={!config.http_api.disable}
                             onChange={handleToggleChange}
+                            help="If enabled you can access the HTTP API at the address below"
                         />
 
                         <FormCheck
-                            label="Read Only"
+                            label="Read only"
                             name="http_api.read_only"
                             checked={config.http_api.read_only}
                             disabled={config.http_api.disable}
                             onChange={handleToggleChange}
+                            help="If enabled, only GET requests will be allowed through the API"
                         />
 
                         <FormInput
@@ -258,6 +275,7 @@ export const ConfigModal: React.FC<{
                             value={config.http_api.listen_addr}
                             disabled={config.http_api.disable}
                             onChange={handleInputChange}
+                            help={`You'll access the API at http://${config.http_api.listen_addr}`}
                         />
                     </Tab>
 
