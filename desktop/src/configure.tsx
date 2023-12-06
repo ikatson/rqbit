@@ -79,8 +79,8 @@ export const ConfigModal: React.FC<{
                     className="mb-3">
 
                     <Tab className="mb-3" eventKey="home" title="Home">
-                        <Form.Group controlId="default_download_location">
-                            <Form.Label>Default Download Location</Form.Label>
+                        <Form.Group controlId="default_download_location" className="mb-3">
+                            <Form.Label>Default download folder</Form.Label>
                             <Form.Control
                                 type="text"
                                 name="default_download_location"
@@ -93,7 +93,7 @@ export const ConfigModal: React.FC<{
                     <Tab className="mb-3" eventKey="dht" title="DHT">
                         <legend>DHT config</legend>
 
-                        <Form.Group controlId="dht_disable">
+                        <Form.Group controlId="dht_disable" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="Disable DHT"
@@ -103,7 +103,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="dht_disable_persistence">
+                        <Form.Group controlId="dht_disable_persistence" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="Disable DHT Persistence"
@@ -114,7 +114,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="dht_persistence_filename">
+                        <Form.Group controlId="dht_persistence_filename" className="mb-3">
                             <Form.Label>Persistence Filename</Form.Label>
                             <Form.Control
                                 type="text"
@@ -130,7 +130,7 @@ export const ConfigModal: React.FC<{
 
                         <legend>TCP Listener config</legend>
 
-                        <Form.Group controlId="tcp_listen_disable">
+                        <Form.Group controlId="tcp_listen_disable" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="Disable TCP Listen"
@@ -140,7 +140,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="tcp_listen_min_port">
+                        <Form.Group controlId="tcp_listen_min_port" className="mb-3">
                             <Form.Label>Min port</Form.Label>
                             <Form.Control
                                 type="number"
@@ -151,7 +151,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="tcp_listen_max_port">
+                        <Form.Group controlId="tcp_listen_max_port" className="mb-3">
                             <Form.Label>Max Port</Form.Label>
                             <Form.Control
                                 type="number"
@@ -162,7 +162,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="upnp_disable">
+                        <Form.Group controlId="upnp_disable" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="Do not advertise TCP port over UPnP"
@@ -179,7 +179,7 @@ export const ConfigModal: React.FC<{
                     <Tab className="mb-3" eventKey="session_persistence" title="Session">
                         <legend>Session persistence</legend>
 
-                        <Form.Group controlId="persistence_disable">
+                        <Form.Group controlId="persistence_disable" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="Disable Persistence"
@@ -189,7 +189,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="persistence_filename">
+                        <Form.Group controlId="persistence_filename" className="mb-3">
                             <Form.Label>Persistence Filename</Form.Label>
                             <Form.Control
                                 type="text"
@@ -205,8 +205,8 @@ export const ConfigModal: React.FC<{
                     <Tab className="mb-3" eventKey="peer_opts" title="Peer options">
                         <legend>Peer connection options</legend>
 
-                        <Form.Group controlId="peer_opts_connect_timeout">
-                            <Form.Label>Peer Options Connect Timeout</Form.Label>
+                        <Form.Group controlId="peer_opts_connect_timeout" className="mb-3">
+                            <Form.Label>Connect timeout</Form.Label>
                             <Form.Control
                                 type="text"
                                 name="peer_opts.connect_timeout"
@@ -215,8 +215,8 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="peer_opts_read_write_timeout">
-                            <Form.Label>Peer Options Read Write Timeout</Form.Label>
+                        <Form.Group controlId="peer_opts_read_write_timeout" className="mb-3">
+                            <Form.Label>Read/write timeout</Form.Label>
                             <Form.Control
                                 type="text"
                                 name="peer_opts.read_write_timeout"
@@ -229,7 +229,7 @@ export const ConfigModal: React.FC<{
                     <Tab className="mb-3" eventKey="http_api" title="HTTP API">
                         <legend>HTTP API config</legend>
 
-                        <Form.Group controlId="http_api_disable">
+                        <Form.Group controlId="http_api_disable" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="Disable HTTP API"
@@ -239,7 +239,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="http_api_listen_addr">
+                        <Form.Group controlId="http_api_listen_addr" className="mb-3">
                             <Form.Label>HTTP API Listen Address</Form.Label>
                             <Form.Control
                                 type="text"
@@ -250,7 +250,7 @@ export const ConfigModal: React.FC<{
                             />
                         </Form.Group>
 
-                        <Form.Group controlId="http_api_read_only">
+                        <Form.Group controlId="http_api_read_only" className="mb-3">
                             <Form.Check
                                 type="switch"
                                 label="HTTP API Read Only"
