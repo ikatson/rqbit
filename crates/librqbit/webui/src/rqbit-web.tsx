@@ -2,7 +2,7 @@ import { MouseEventHandler, RefObject, createContext, useContext, useEffect, use
 import { ProgressBar, Button, Container, Row, Col, Alert, Modal, Form, Spinner } from 'react-bootstrap';
 import { AddTorrentResponse, TorrentDetails, TorrentId, TorrentStats, ErrorDetails as ApiErrorDetails, STATE_INITIALIZING, STATE_LIVE, STATE_PAUSED, STATE_ERROR, RqbitAPI, AddTorrentOptions } from './api-types';
 
-interface Error {
+export interface Error {
     text: string,
     details?: ApiErrorDetails,
 }
@@ -409,7 +409,7 @@ const ErrorDetails = (props: { details: ApiErrorDetails | null | undefined }) =>
     </>
 }
 
-const ErrorComponent = (props: { error: Error | null, remove?: () => void }) => {
+export const ErrorComponent = (props: { error: Error | null, remove?: () => void }) => {
     let { error, remove } = props;
 
     if (error == null) {
