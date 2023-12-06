@@ -150,6 +150,23 @@ struct SerializedSessionDatabase {
     torrents: HashMap<usize, SerializedTorrent>,
 }
 
+fn spawn_with_cancel_token(
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+    name: &str,
+    span: tracing::Span,
+    fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+) {
+    spawn(name, span, async move {
+        tokio::select! {
+            r = fut => r,
+            _ = cancel_rx.changed() => {
+                debug!("task canceled");
+                Ok(())
+            }
+        }
+    });
+}
+
 pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
@@ -385,6 +402,8 @@ impl Session {
     ) -> anyhow::Result<Arc<Self>> {
         let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
 
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
+
         let (tcp_listener, tcp_listen_port) = if let Some(port_range) = opts.listen_port_range {
             let (l, p) = create_tcp_listener(port_range)
                 .await
@@ -399,12 +418,26 @@ impl Session {
             None
         } else {
             let dht = if opts.disable_dht_persistence {
-                DhtBuilder::with_config(DhtConfig::default()).await
+                let (dht, run_worker) = DhtBuilder::with_config(DhtConfig::default())
+                    .await
+                    .context("error initializing DHT")?;
+                spawn_with_cancel_token(cancel_rx.clone(), "dht", error_span!("dht"), run_worker);
+                dht
             } else {
                 let pdht_config = opts.dht_config.take().unwrap_or_default();
-                PersistentDht::create(Some(pdht_config)).await
-            }
-            .context("error initializing DHT")?;
+                let (dht, run_worker, run_persistence) = PersistentDht::create(Some(pdht_config))
+                    .await
+                    .context("error initializing persistent DHT")?;
+                spawn_with_cancel_token(cancel_rx.clone(), "dht", error_span!("dht"), run_worker);
+                spawn_with_cancel_token(
+                    cancel_rx.clone(),
+                    "dht_persistence",
+                    error_span!("dht_persistence"),
+                    run_persistence,
+                );
+                dht
+            };
+
             Some(dht)
         };
         let peer_opts = opts.peer_opts.unwrap_or_default();
@@ -413,8 +446,6 @@ impl Session {
             None => Self::default_persistence_filename()?,
         };
         let spawner = BlockingSpawner::default();
-
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
 
         let session = Arc::new(Self {
             persistence_filename,
@@ -618,22 +649,26 @@ impl Session {
         span: tracing::Span,
         fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
     ) {
-        let mut cancel_rx = self.cancel_rx.clone();
-        spawn(name, span, async move {
-            tokio::select! {
-                r = fut => r,
-                _ = cancel_rx.changed() => {
-                    debug!("task canceled");
-                    Ok(())
-                }
-            }
-        });
+        spawn_with_cancel_token(self.cancel_rx.clone(), name, span, fut);
     }
 
     /// Stop the session and all managed tasks.
-    // TODO: this probably doesn't kill everything properly.
     pub async fn stop(&self) {
+        let torrents = self
+            .db
+            .read()
+            .torrents
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for torrent in torrents {
+            if let Err(e) = torrent.pause() {
+                debug!("error pausing torrent: {e:#}");
+            }
+        }
         let _ = self.cancel_tx.send(());
+        // this sucks, but hopefully will be enough
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     async fn populate_from_stored(self: &Arc<Self>) -> anyhow::Result<()> {

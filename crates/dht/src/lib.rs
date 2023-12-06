@@ -10,6 +10,7 @@ use std::time::Duration;
 
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
+use futures::Future;
 pub use librqbit_core::id20::Id20;
 pub use persistence::{PersistentDht, PersistentDhtConfig};
 
@@ -26,11 +27,19 @@ pub struct DhtBuilder {}
 
 impl DhtBuilder {
     #[allow(clippy::new_ret_no_self)]
-    pub async fn new() -> anyhow::Result<Dht> {
+    pub async fn new() -> anyhow::Result<(
+        Dht,
+        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
+    )> {
         DhtState::new().await
     }
 
-    pub async fn with_config(config: DhtConfig) -> anyhow::Result<Dht> {
+    pub async fn with_config(
+        config: DhtConfig,
+    ) -> anyhow::Result<(
+        Dht,
+        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
+    )> {
         DhtState::with_config(config).await
     }
 }

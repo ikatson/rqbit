@@ -23,7 +23,7 @@ use anyhow::{bail, Context};
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use bencode::ByteString;
 use dashmap::DashMap;
-use futures::{stream::FuturesUnordered, Stream, StreamExt, TryFutureExt};
+use futures::{stream::FuturesUnordered, Future, Stream, StreamExt, TryFutureExt};
 
 use leaky_bucket::RateLimiter;
 use librqbit_core::{id20::Id20, peer_id::generate_peer_id, spawn_utils::spawn};
@@ -1127,10 +1127,18 @@ pub struct DhtConfig {
 }
 
 impl DhtState {
-    pub async fn new() -> anyhow::Result<Arc<Self>> {
+    pub async fn new() -> anyhow::Result<(
+        Arc<Self>,
+        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
+    )> {
         Self::with_config(DhtConfig::default()).await
     }
-    pub async fn with_config(config: DhtConfig) -> anyhow::Result<Arc<Self>> {
+    pub async fn with_config(
+        config: DhtConfig,
+    ) -> anyhow::Result<(
+        Arc<Self>,
+        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
+    )> {
         let socket = match config.listen_addr {
             Some(addr) => UdpSocket::bind(addr)
                 .await
@@ -1160,15 +1168,15 @@ impl DhtState {
             config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
         ));
 
-        spawn(error_span!("dht"), {
+        let run_worker = {
             let state = state.clone();
             async move {
                 let worker = DhtWorker { socket, dht: state };
                 worker.start(in_rx, &bootstrap_addrs).await?;
                 Ok(())
             }
-        });
-        Ok(state)
+        };
+        Ok((state, run_worker))
     }
 
     pub fn get_peers(

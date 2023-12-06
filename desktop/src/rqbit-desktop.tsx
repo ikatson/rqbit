@@ -32,8 +32,11 @@ export const RqbitDesktop: React.FC<{
             }}
             handleConfigured={(config) => {
                 setConfig(config);
+                setConfigurationOpened(false);
                 setConfigured(true);
             }}
-            initialConfig={config} />
+            initialConfig={config}
+            defaultConfig={defaultConfig}
+        />
     </>
 }

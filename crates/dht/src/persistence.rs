@@ -1,7 +1,7 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
+use futures::Future;
 use librqbit_core::directories::get_configuration_directory;
-use librqbit_core::spawn_utils::spawn;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
-use tracing::{debug, error, error_span, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
@@ -74,7 +74,13 @@ impl PersistentDht {
         Ok(path)
     }
 
-    pub async fn create(config: Option<PersistentDhtConfig>) -> anyhow::Result<Dht> {
+    pub async fn create(
+        config: Option<PersistentDhtConfig>,
+    ) -> anyhow::Result<(
+        Dht,
+        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
+        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
+    )> {
         let mut config = config.unwrap_or_default();
         let config_filename = match config.config_filename.take() {
             Some(config_filename) => config_filename,
@@ -125,9 +131,9 @@ impl PersistentDht {
             peer_store,
             ..Default::default()
         };
-        let dht = DhtState::with_config(dht_config).await?;
+        let (dht, run_worker) = DhtState::with_config(dht_config).await?;
 
-        spawn(error_span!("dht_persistence"), {
+        let run_persistence = {
             let dht = dht.clone();
             let dump_interval = config
                 .dump_interval
@@ -150,7 +156,8 @@ impl PersistentDht {
                     }
                 }
             }
-        });
-        Ok(dht)
+        };
+
+        Ok((dht, run_worker, run_persistence))
     }
 }

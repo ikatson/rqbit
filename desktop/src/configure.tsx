@@ -58,8 +58,10 @@ export const ConfigModal: React.FC<{
     handleConfigured: (config: RqbitDesktopConfig) => void,
     handleCancel?: () => void,
     initialConfig: RqbitDesktopConfig,
-}> = ({ show, handleStartReconfigure, handleConfigured, handleCancel, initialConfig }) => {
+    defaultConfig: RqbitDesktopConfig,
+}> = ({ show, handleStartReconfigure, handleConfigured, handleCancel, initialConfig, defaultConfig }) => {
     let [config, setConfig] = useState<RqbitDesktopConfig>(initialConfig);
+    let [loading, setLoading] = useState<boolean>(false);
 
     const [error, setError] = useState<any | null>(null);
 
@@ -107,9 +109,14 @@ export const ConfigModal: React.FC<{
     const handleOkClick = () => {
         setError(null);
         handleStartReconfigure();
+        setLoading(true);
         invokeAPI<{}>("config_change", { config }).then(
-            () => handleConfigured(config),
+            () => {
+                setLoading(false);
+                handleConfigured(config);
+            },
             (e: ErrorDetails) => {
+                setLoading(false);
                 setError({
                     text: "Error saving configuration",
                     details: e,
@@ -228,6 +235,7 @@ export const ConfigModal: React.FC<{
                             inputType="text"
                             value={config.persistence.filename}
                             onChange={handleInputChange}
+                            disabled={config.persistence.disable}
                         />
                     </Tab>
 
@@ -293,10 +301,10 @@ export const ConfigModal: React.FC<{
                         Cancel
                     </Button>
                 }
-                <Button variant="secondary" onClick={() => setConfig(initialConfig)}>
+                <Button variant="secondary" onClick={() => setConfig(defaultConfig)}>
                     Reset to defaults
                 </Button>
-                <Button variant="primary" onClick={handleOkClick}>
+                <Button variant="primary" onClick={handleOkClick} disabled={loading}>
                     OK
                 </Button>
             </Modal.Footer>
