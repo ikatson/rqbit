@@ -40,6 +40,7 @@ const MSGID_HAVE: u8 = 4;
 const MSGID_BITFIELD: u8 = 5;
 const MSGID_REQUEST: u8 = 6;
 const MSGID_PIECE: u8 = 7;
+const MSGID_CANCEL: u8 = 8;
 const MSGID_EXTENDED: u8 = 20;
 
 pub const MY_EXTENDED_UT_METADATA: u8 = 3;
@@ -169,6 +170,7 @@ impl From<anyhow::Error> for MessageDeserializeError {
 #[derive(Debug)]
 pub enum Message<ByteBuf: std::hash::Hash + Eq> {
     Request(Request),
+    Cancel(Request),
     Bitfield(ByteBuf),
     KeepAlive,
     Have(u32),
@@ -200,6 +202,7 @@ where
     fn clone_to_owned(&self) -> Self::Target {
         match self {
             Message::Request(req) => Message::Request(*req),
+            Message::Cancel(req) => Message::Cancel(*req),
             Message::Bitfield(b) => Message::Bitfield(b.clone_to_owned()),
             Message::Choke => Message::Choke,
             Message::Unchoke => Message::Unchoke,
@@ -240,7 +243,7 @@ where
 {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
-            Message::Request(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
+            Message::Request(_) | Message::Cancel(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
             Message::Bitfield(b) => (1 + b.as_ref().len() as u32, MSGID_BITFIELD),
             Message::Choke => (LEN_PREFIX_CHOKE, MSGID_CHOKE),
             Message::Unchoke => (LEN_PREFIX_UNCHOKE, MSGID_UNCHOKE),
@@ -270,7 +273,7 @@ where
         let ser = bopts();
 
         match self {
-            Message::Request(request) => {
+            Message::Request(request) | Message::Cancel(request) => {
                 const MSG_LEN: usize = PREAMBLE_LEN + 12;
                 out.resize(MSG_LEN, 0);
                 debug_assert_eq!(out[PREAMBLE_LEN..].len(), 12);
@@ -411,16 +414,28 @@ where
                     }
                 }
             }
-            MSGID_REQUEST => {
+            MSGID_REQUEST | MSGID_CANCEL => {
                 let expected_len = 12;
                 match rest.get(..expected_len) {
                     Some(b) => {
                         let request = decoder_config.deserialize::<Request>(b).unwrap();
-                        Ok((Message::Request(request), PREAMBLE_LEN + expected_len))
+                        let req = if msg_id == MSGID_REQUEST {
+                            Message::Request(request)
+                        } else {
+                            Message::Cancel(request)
+                        };
+                        Ok((req, PREAMBLE_LEN + expected_len))
                     }
                     None => {
                         let missing = expected_len - rest.len();
-                        Err(MessageDeserializeError::NotEnoughData(missing, "request"))
+                        Err(MessageDeserializeError::NotEnoughData(
+                            missing,
+                            if msg_id == MSGID_REQUEST {
+                                "request"
+                            } else {
+                                "cancel"
+                            },
+                        ))
                     }
                 }
             }
