@@ -419,7 +419,11 @@ impl TorrentStateLive {
 
         self.spawn(
             "incoming peer",
-            error_span!("manage_incoming_peer", addr = %checked_peer.addr),
+            error_span!(
+                parent: self.meta.span.clone(),
+                "manage_incoming_peer",
+                addr = %checked_peer.addr
+            ),
             self.clone()
                 .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit),
         );
