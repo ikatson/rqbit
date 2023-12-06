@@ -377,7 +377,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             None => continue
                         };
                         let stats = handle.stats_snapshot();
-                        let speed = handle.down_speed_estimator();
+                        let down_speed = handle.down_speed_estimator();
+                        let up_speed = handle.up_speed_estimator();
                         let total = stats.total_bytes;
                         let progress = stats.total_bytes - stats.remaining_bytes;
                         let downloaded_pct = if stats.remaining_bytes == 0 {
@@ -385,20 +386,23 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                         } else {
                             (progress as f64 / total as f64) * 100f64
                         };
+                        let time_remaining = down_speed.time_remaining();
+                        let eta = match &time_remaining {
+                            Some(d) => format!(", ETA: {:?}", d),
+                            None => String::new()
+                        };
                         info!(
-                            "[{}]: {:.2}% ({:.2}), down speed {:.2} MiB/s, fetched {}, remaining {:.2} of {:.2}, uploaded {:.2}, peers: {{live: {}, connecting: {}, queued: {}, seen: {}, dead: {}}}",
+                            "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}}}",
                             idx,
                             downloaded_pct,
                             SF::new(progress),
-                            speed.mbps(),
-                            SF::new(stats.fetched_bytes),
-                            SF::new(stats.remaining_bytes),
                             SF::new(total),
+                            down_speed.mbps(),
+                            up_speed.mbps(),
                             SF::new(stats.uploaded_bytes),
-                            stats.peer_stats.live,
-                            stats.peer_stats.connecting,
+                            eta,
+                            stats.peer_stats.live + stats.peer_stats.connecting,
                             stats.peer_stats.queued,
-                            stats.peer_stats.seen,
                             stats.peer_stats.dead,
                         );
                     }
