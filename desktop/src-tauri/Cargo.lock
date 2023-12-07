@@ -3011,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "5.0.0-beta.1"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "base64 0.21.5",
