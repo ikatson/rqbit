@@ -1867,7 +1867,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.0.0-beta.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1900,6 +1900,7 @@ dependencies = [
  "size_format",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tower-http",
  "tracing",
  "url",
@@ -1944,6 +1945,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "uuid",
@@ -1951,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "4.1.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1970,6 +1972,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3015,8 +3018,10 @@ dependencies = [
  "directories",
  "http 1.0.0",
  "librqbit",
+ "parking_lot",
  "serde",
  "serde_json",
+ "serde_with",
  "tauri",
  "tauri-build",
  "tokio",

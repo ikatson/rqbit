@@ -26,7 +26,11 @@ use dashmap::DashMap;
 use futures::{stream::FuturesUnordered, Stream, StreamExt, TryFutureExt};
 
 use leaky_bucket::RateLimiter;
-use librqbit_core::{id20::Id20, peer_id::generate_peer_id, spawn_utils::spawn};
+use librqbit_core::{
+    id20::Id20,
+    peer_id::generate_peer_id,
+    spawn_utils::{spawn, spawn_with_cancel},
+};
 use parking_lot::RwLock;
 
 use serde::Serialize;
@@ -35,6 +39,7 @@ use tokio::{
     sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
 };
 
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, error_span, info, trace, warn, Instrument};
 
 #[derive(Debug, Serialize)]
@@ -535,6 +540,8 @@ pub struct DhtState {
     // This is to send raw messages
     worker_sender: UnboundedSender<WorkerSendRequest>,
 
+    cancellation_token: CancellationToken,
+
     pub(crate) peer_store: PeerStore,
 }
 
@@ -545,6 +552,7 @@ impl DhtState {
         routing_table: Option<RoutingTable>,
         listen_addr: SocketAddr,
         peer_store: PeerStore,
+        cancellation_token: CancellationToken,
     ) -> Self {
         let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id, None));
         Self {
@@ -556,6 +564,7 @@ impl DhtState {
             listen_addr,
             rate_limiter: make_rate_limiter(),
             peer_store,
+            cancellation_token,
         }
     }
 
@@ -1124,13 +1133,18 @@ pub struct DhtConfig {
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
     pub peer_store: Option<PeerStore>,
+    pub cancellation_token: Option<CancellationToken>,
 }
 
 impl DhtState {
     pub async fn new() -> anyhow::Result<Arc<Self>> {
         Self::with_config(DhtConfig::default()).await
     }
-    pub async fn with_config(config: DhtConfig) -> anyhow::Result<Arc<Self>> {
+    pub fn cancellation_token(&self) -> &CancellationToken {
+        &self.cancellation_token
+    }
+
+    pub async fn with_config(mut config: DhtConfig) -> anyhow::Result<Arc<Self>> {
         let socket = match config.listen_addr {
             Some(addr) => UdpSocket::bind(addr)
                 .await
@@ -1151,6 +1165,8 @@ impl DhtState {
             .bootstrap_addrs
             .unwrap_or_else(|| crate::DHT_BOOTSTRAP.iter().map(|v| v.to_string()).collect());
 
+        let token = config.cancellation_token.take().unwrap_or_default();
+
         let (in_tx, in_rx) = unbounded_channel();
         let state = Arc::new(Self::new_internal(
             peer_id,
@@ -1158,14 +1174,14 @@ impl DhtState {
             config.routing_table,
             listen_addr,
             config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
+            token,
         ));
 
-        spawn(error_span!("dht"), {
+        spawn_with_cancel(error_span!("dht"), state.cancellation_token.clone(), {
             let state = state.clone();
             async move {
                 let worker = DhtWorker { socket, dht: state };
-                worker.start(in_rx, &bootstrap_addrs).await?;
-                Ok(())
+                worker.start(in_rx, &bootstrap_addrs).await
             }
         });
         Ok(state)

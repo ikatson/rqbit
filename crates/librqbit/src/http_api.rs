@@ -66,6 +66,7 @@ impl HttpApi {
                     "GET /web/": "Web UI",
                 },
                 "server": "rqbit",
+                "version": env!("CARGO_PKG_VERSION"),
             }))
         }
 

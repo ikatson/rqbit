@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.0.0-beta.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "anyhow",
  "axum 0.7.1",
@@ -1290,6 +1290,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-test",
+ "tokio-util",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -1336,6 +1337,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "uuid",
@@ -1343,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "4.1.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1362,6 +1364,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2002,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "5.0.0-beta.0"
+version = "5.0.0-beta.1"
 dependencies = [
  "anyhow",
  "clap",

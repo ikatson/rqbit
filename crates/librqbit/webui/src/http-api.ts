@@ -46,7 +46,7 @@ const makeRequest = async (method: string, path: string, data?: any): Promise<an
     return result;
 }
 
-export const API: RqbitAPI = {
+export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     listTorrents: (): Promise<ListTorrentsResponse> => makeRequest('GET', '/torrents'),
     getTorrentDetails: (index: number): Promise<TorrentDetails> => {
         return makeRequest('GET', `/torrents/${index}`);
@@ -95,5 +95,9 @@ export const API: RqbitAPI = {
 
     delete: (index: number): Promise<void> => {
         return makeRequest('POST', `/torrents/${index}/delete`);
+    },
+    getVersion: async (): Promise<string> => {
+        const r = await makeRequest('GET', '/');
+        return r.version;
     }
 }

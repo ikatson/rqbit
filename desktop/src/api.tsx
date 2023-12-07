@@ -23,7 +23,7 @@ function errorToUIError(path: string): (e: InvokeErrorResponse) => Promise<never
     }
 }
 
-async function invokeAPI<Response>(name: string, params?: InvokeArgs): Promise<Response> {
+export async function invokeAPI<Response>(name: string, params?: InvokeArgs): Promise<Response> {
     console.log("invoking", name, params);
     const result = await invoke<Response>(name, params).catch(errorToUIError(name));
     console.log(result);
