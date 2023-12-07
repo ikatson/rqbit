@@ -1,6 +1,6 @@
-import { StrictMode, useState } from "react";
+import { StrictMode } from "react";
 import ReactDOM from 'react-dom/client';
-import { APIContext, RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
+import { APIContext } from "./rqbit-webui-src/rqbit-web";
 import { API } from "./api";
 import { invoke } from "@tauri-apps/api";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
