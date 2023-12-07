@@ -26,7 +26,7 @@ bencode = {path = "../bencode", default-features=false, package="librqbit-bencod
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
 librqbit-core = {path = "../librqbit_core", version = "3.4.0"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.3.0"}
+peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.4.0"}
 sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
 dht = {path = "../dht", package="librqbit-dht", version="5.0.0"}
 librqbit-upnp = {path = "../upnp", version = "0.1.0"}
