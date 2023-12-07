@@ -1,12 +1,27 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import ReactDOM from 'react-dom/client';
-import { RqbitWebUI, APIContext } from "./rqbit-web";
+import { RqbitWebUI, APIContext, customSetInterval } from "./rqbit-web";
 import { API } from "./http-api";
 
-ReactDOM.createRoot(document.getElementById('app') as HTMLInputElement).render(
-    <StrictMode>
+const RootWithVersion = () => {
+    let [title, setTitle] = useState<string>("rqbit web UI");
+    useEffect(() => {
+        const refreshVersion = () => API.getVersion().then((version) => {
+            setTitle(`rqbit web UI - v${version}`);
+            return 10000;
+        }, (e) => {
+            return 1000;
+        });
+        return customSetInterval(refreshVersion, 0)
+    }, [])
+
+    return <StrictMode>
         <APIContext.Provider value={API}>
-            <RqbitWebUI title="rqbit web UI - v5.0.0-beta.0" />
+            <RqbitWebUI title={title} />
         </APIContext.Provider>
-    </StrictMode>
+    </StrictMode>;
+}
+
+ReactDOM.createRoot(document.getElementById('app') as HTMLInputElement).render(
+    <RootWithVersion />
 );

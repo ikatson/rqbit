@@ -786,7 +786,7 @@ function formatSecondsToTime(seconds: number): string {
 // Run a function with initial interval, then run it forever with the interval that the
 // callback returns.
 // Returns a callback to clear it.
-function customSetInterval(asyncCallback: () => Promise<number>, initialInterval: number): () => void {
+export function customSetInterval(asyncCallback: () => Promise<number>, initialInterval: number): () => void {
     let timeoutId: number;
     let currentInterval: number = initialInterval;
 
@@ -809,7 +809,7 @@ function customSetInterval(asyncCallback: () => Promise<number>, initialInterval
     };
 }
 
-function loopUntilSuccess<T>(callback: () => Promise<T>, interval: number): () => void {
+export function loopUntilSuccess<T>(callback: () => Promise<T>, interval: number): () => void {
     let timeoutId: number;
 
     const executeCallback = async () => {
