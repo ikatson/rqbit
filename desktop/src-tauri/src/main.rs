@@ -111,6 +111,7 @@ impl State {
         let config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
             .expect("directories::ProjectDirs::from")
             .config_dir()
+            .join("config.json")
             .to_str()
             .expect("to_str()")
             .to_owned();
