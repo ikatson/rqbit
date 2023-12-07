@@ -6,6 +6,7 @@ mod config;
 use std::{
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter},
+    path::Path,
     sync::Arc,
 };
 
@@ -49,6 +50,8 @@ fn read_config(path: &str) -> anyhow::Result<RqbitDesktopConfig> {
 }
 
 fn write_config(path: &str, config: &RqbitDesktopConfig) -> anyhow::Result<()> {
+    std::fs::create_dir_all(Path::new(path).parent().context("no parent")?)
+        .context("error creating dirs")?;
     let tmp = format!("{}.tmp", path);
     let mut tmp_file = BufWriter::new(
         OpenOptions::new()
