@@ -11,7 +11,9 @@ const RootWithVersion = () => {
     const refreshVersion = () =>
       API.getVersion().then(
         (version) => {
-          setTitle(`rqbit web UI - v${version}`);
+          const title = `rqbit web UI - v${version}`;
+          setTitle(title);
+          document.title = title;
           return 10000;
         },
         (e) => {
