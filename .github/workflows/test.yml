@@ -2,20 +2,31 @@ name: Run tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  check-rust-compat:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        rust_version: ["1.72", "1.73", "1.74"]
     steps:
-    - uses: actions/checkout@v2
-    - uses: Swatinem/rust-cache@v1    
-    - name: Run tests
-      run: cargo test
+      - name: rustup toolchain install ${{ matrix.rust_version }}
+        run: |
+          rustup toolchain install ${{ matrix.rust_version }}
+      - uses: actions/checkout@v2
+      - run: rustup override set ${{ matrix.rust_version }}
+      - name: cargo check
+        run: cargo check
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: Swatinem/rust-cache@v1
+      - name: Run tests
+        run: cargo test
