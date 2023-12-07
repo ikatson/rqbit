@@ -16,8 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt::init();
 
-    let (dht, worker) = DhtBuilder::new().await.context("error initializing DHT")?;
-    tokio::spawn(worker);
+    let dht = DhtBuilder::new().await.context("error initializing DHT")?;
 
     let mut stream = dht.get_peers(info_hash, None)?;
 

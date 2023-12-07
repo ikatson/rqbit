@@ -101,7 +101,7 @@ async fn api_from_config(
             librqbit::http_api::HttpApi::new(session.clone(), Some(rust_log_reload_tx.clone()))
                 .make_http_api_and_run(config.http_api.listen_addr, config.http_api.read_only);
 
-        session.spawn("http api", error_span!("http_api"), http_api_task);
+        session.spawn(error_span!("http_api"), http_api_task);
     }
     Ok(api)
 }

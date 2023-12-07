@@ -65,6 +65,7 @@ use itertools::Itertools;
 use librqbit_core::{
     id20::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    spawn_utils::spawn_with_cancel,
     speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -80,6 +81,7 @@ use tokio::{
     },
     time::timeout,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, trace, warn};
 use url::Url;
 
@@ -90,7 +92,6 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     session::CheckedIncomingConnection,
-    spawn_utils::spawn,
     torrent_state::{peer::Peer, utils::atomic_inc},
     tracker_comms::{TrackerError, TrackerRequest, TrackerRequestEvent, TrackerResponse},
     type_aliases::{PeerHandle, BF},
@@ -185,17 +186,16 @@ pub struct TorrentStateLive {
 
     finished_notify: Notify,
 
-    cancel_tx: tokio::sync::watch::Sender<()>,
-    cancel_rx: tokio::sync::watch::Receiver<()>,
-
     down_speed_estimator: SpeedEstimator,
     up_speed_estimator: SpeedEstimator,
+    cancellation_token: CancellationToken,
 }
 
 impl TorrentStateLive {
     pub(crate) fn new(
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
+        cancellation_token: CancellationToken,
     ) -> Arc<Self> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
@@ -205,8 +205,6 @@ impl TorrentStateLive {
         let have_bytes = paused.have_bytes;
         let needed_bytes = paused.info.lengths.total_length() - have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
-
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
@@ -229,20 +227,17 @@ impl TorrentStateLive {
             finished_notify: Notify::new(),
             down_speed_estimator,
             up_speed_estimator,
-            cancel_rx,
-            cancel_tx,
+            cancellation_token,
         });
 
         for tracker in state.meta.trackers.iter() {
             state.spawn(
-                "tracker_monitor",
                 error_span!(parent: state.meta.span.clone(), "tracker_monitor", url = tracker.to_string()),
                 state.clone().task_single_tracker_monitor(tracker.clone()),
             );
         }
 
         state.spawn(
-            "speed_estimator_updater",
             error_span!(parent: state.meta.span.clone(), "speed_estimator_updater"),
             {
                 let state = Arc::downgrade(&state);
@@ -273,29 +268,18 @@ impl TorrentStateLive {
         );
 
         state.spawn(
-            "peer_adder",
             error_span!(parent: state.meta.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
         );
         state
     }
 
-    fn spawn(
+    pub(crate) fn spawn(
         &self,
-        name: &str,
         span: tracing::Span,
         fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
     ) {
-        let mut cancel_rx = self.cancel_rx.clone();
-        spawn(name, span, async move {
-            tokio::select! {
-                r = fut => r,
-                _ = cancel_rx.changed() => {
-                    debug!("task canceled");
-                    Ok(())
-                }
-            }
-        });
+        spawn_with_cancel(span, self.cancellation_token.clone(), fut);
     }
 
     pub fn down_speed_estimator(&self) -> &SpeedEstimator {
@@ -418,7 +402,6 @@ impl TorrentStateLive {
         atomic_inc(&counters.incoming_connections);
 
         self.spawn(
-            "incoming peer",
             error_span!(
                 parent: self.meta.span.clone(),
                 "manage_incoming_peer",
@@ -570,7 +553,6 @@ impl TorrentStateLive {
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
-                "manage_peer",
                 error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
                 state.clone().task_manage_outgoing_peer(addr, permit),
             );
@@ -682,7 +664,6 @@ impl TorrentStateLive {
 
         // We don't want to remember this task as there may be too many.
         self.spawn(
-            "transmit_haves",
             error_span!(
                 parent: self.meta.span.clone(),
                 "transmit_haves",
@@ -744,7 +725,7 @@ impl TorrentStateLive {
     }
 
     pub fn pause(&self) -> anyhow::Result<TorrentStatePaused> {
-        let _ = self.cancel_tx.send(());
+        self.cancellation_token.cancel();
 
         let mut g = self.locked.write();
 
@@ -971,7 +952,6 @@ impl PeerHandler {
 
         if let Some(dur) = backoff {
             self.state.clone().spawn(
-                "wait_for_peer",
                 error_span!(
                     parent: self.state.meta.span.clone(),
                     "wait_for_peer",

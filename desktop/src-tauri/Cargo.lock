@@ -1900,6 +1900,7 @@ dependencies = [
  "size_format",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tower-http",
  "tracing",
  "url",
@@ -1944,6 +1945,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "uuid",
@@ -1970,6 +1972,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
 ]
 

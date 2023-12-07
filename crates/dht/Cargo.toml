@@ -32,10 +32,10 @@ futures = "0.3"
 rand = "0.8"
 indexmap = "2"
 dashmap = {version = "5.5.3", features = ["serde"]}
-
 clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
 librqbit-core = {path="../librqbit_core", version = "3.3.0"}
 chrono = {version = "0.4.31", features = ["serde"]}
+tokio-util = "0.7.10"
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

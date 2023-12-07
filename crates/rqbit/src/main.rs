@@ -501,6 +501,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 )
                 .await
                 .context("error initializing rqbit session")?;
+
                 librqbit_spawn(
                     "stats_printer",
                     trace_span!("stats_printer"),

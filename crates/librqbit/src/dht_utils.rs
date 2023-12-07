@@ -107,8 +107,7 @@ mod tests {
         init_logging();
 
         let info_hash = Id20::from_str("cab507494d02ebb1178b38f2e9d7be299c86b862").unwrap();
-        let (dht, run_dht) = DhtBuilder::new().await.unwrap();
-        tokio::spawn(run_dht);
+        let dht = DhtBuilder::new().await.unwrap();
 
         let peer_rx = dht.get_peers(info_hash, None).unwrap();
         let peer_id = generate_peer_id();

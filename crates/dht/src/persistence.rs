@@ -1,16 +1,17 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
-use futures::Future;
 use librqbit_core::directories::get_configuration_directory;
+use librqbit_core::spawn_utils::spawn_with_cancel;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use anyhow::Context;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn};
 
 use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
@@ -76,11 +77,8 @@ impl PersistentDht {
 
     pub async fn create(
         config: Option<PersistentDhtConfig>,
-    ) -> anyhow::Result<(
-        Dht,
-        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
-        impl Future<Output = anyhow::Result<()>> + Send + Sync + 'static,
-    )> {
+        cancellation_token: Option<CancellationToken>,
+    ) -> anyhow::Result<Dht> {
         let mut config = config.unwrap_or_default();
         let config_filename = match config.config_filename.take() {
             Some(config_filename) => config_filename,
@@ -129,35 +127,41 @@ impl PersistentDht {
             routing_table,
             listen_addr,
             peer_store,
+            cancellation_token,
             ..Default::default()
         };
-        let (dht, run_worker) = DhtState::with_config(dht_config).await?;
+        let dht = DhtState::with_config(dht_config).await?;
+        spawn_with_cancel(
+            error_span!("dht_persistence"),
+            dht.cancellation_token().clone(),
+            {
+                let dht = dht.clone();
+                let dump_interval = config
+                    .dump_interval
+                    .unwrap_or_else(|| Duration::from_secs(3));
+                async move {
+                    let tempfile_name = {
+                        let file_name = format!("dht.json.tmp.{}", std::process::id());
+                        let mut tmp = config_filename.clone();
+                        tmp.set_file_name(file_name);
+                        tmp
+                    };
 
-        let run_persistence = {
-            let dht = dht.clone();
-            let dump_interval = config
-                .dump_interval
-                .unwrap_or_else(|| Duration::from_secs(3));
-            async move {
-                let tempfile_name = {
-                    let file_name = format!("dht.json.tmp.{}", std::process::id());
-                    let mut tmp = config_filename.clone();
-                    tmp.set_file_name(file_name);
-                    tmp
-                };
+                    loop {
+                        trace!("sleeping for {:?}", &dump_interval);
+                        tokio::time::sleep(dump_interval).await;
 
-                loop {
-                    trace!("sleeping for {:?}", &dump_interval);
-                    tokio::time::sleep(dump_interval).await;
-
-                    match dump_dht(&dht, &config_filename, &tempfile_name) {
-                        Ok(_) => debug!("dumped DHT to {:?}", &config_filename),
-                        Err(e) => error!("error dumping DHT to {:?}: {:#}", &config_filename, e),
+                        match dump_dht(&dht, &config_filename, &tempfile_name) {
+                            Ok(_) => debug!("dumped DHT to {:?}", &config_filename),
+                            Err(e) => {
+                                error!("error dumping DHT to {:?}: {:#}", &config_filename, e)
+                            }
+                        }
                     }
                 }
-            }
-        };
+            },
+        );
 
-        Ok((dht, run_worker, run_persistence))
+        Ok(dht)
     }
 }
