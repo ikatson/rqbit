@@ -1,6 +1,8 @@
 import { StrictMode, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { RqbitWebUI, APIContext, customSetInterval } from "./rqbit-web";
+import { RqbitWebUI } from "./rqbit-web";
+import { customSetInterval } from "./helper/customSetInterval";
+import { APIContext } from "./context";
 import { API } from "./http-api";
 
 const RootWithVersion = () => {
