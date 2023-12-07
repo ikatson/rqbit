@@ -26,11 +26,11 @@ export const Speed: React.FC<{ statsResponse: TorrentStats }> = ({
     <>
       {!statsResponse.finished && (
         <div className="download-speed">
-          ↓ {statsResponse.live.download_speed.human_readable}
+          ↓ {statsResponse.live.download_speed?.human_readable}
         </div>
       )}
       <div className="upload-speed">
-        ↑ {statsResponse.live.upload_speed.human_readable}
+        ↑ {statsResponse.live.upload_speed?.human_readable}
         {statsResponse.live.snapshot.uploaded_bytes > 0 && (
           <span>
             {" "}
