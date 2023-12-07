@@ -1,7 +1,7 @@
 import { useContext, useState } from "react";
 import { Button, Modal, Form, Spinner } from "react-bootstrap";
 import { AppContext, APIContext } from "../context";
-import { Error } from "../rqbit-web";
+import { ErrorWithLabel } from "../rqbit-web";
 import { ErrorComponent } from "./ErrorComponent";
 
 export const DeleteTorrentModal: React.FC<{
@@ -13,7 +13,7 @@ export const DeleteTorrentModal: React.FC<{
     return null;
   }
   const [deleteFiles, setDeleteFiles] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useState<ErrorWithLabel | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const ctx = useContext(AppContext);

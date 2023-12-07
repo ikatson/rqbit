@@ -1,10 +1,10 @@
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
-import { APIContext } from "./rqbit-webui-src/rqbit-web";
 import { API } from "./api";
 import { invoke } from "@tauri-apps/api";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { RqbitDesktop } from "./rqbit-desktop";
+import { APIContext } from "./rqbit-webui-src/context";
 
 async function get_version(): Promise<string> {
   return invoke<string>("get_version");

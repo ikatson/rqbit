@@ -4,6 +4,7 @@ import { TorrentStats } from "../api-types";
 import { AppContext, APIContext, RefreshTorrentStatsContext } from "../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "./DeleteTorrentModal";
+import { BsPauseCircle, BsPlayCircle, BsXCircle } from "react-icons/bs";
 
 export const TorrentActions: React.FC<{
   id: number;
@@ -70,26 +71,18 @@ export const TorrentActions: React.FC<{
     <Row>
       <Col>
         {canUnpause && (
-          <IconButton
-            className="bi-play-circle"
-            onClick={unpause}
-            disabled={disabled}
-            color="success"
-          />
+          <IconButton onClick={unpause} disabled={disabled} color="success">
+            <BsPlayCircle />
+          </IconButton>
         )}
         {canPause && (
-          <IconButton
-            className="bi-pause-circle"
-            onClick={pause}
-            disabled={disabled}
-          />
+          <IconButton onClick={pause} disabled={disabled}>
+            <BsPauseCircle />
+          </IconButton>
         )}
-        <IconButton
-          className="bi-x-circle"
-          onClick={startDeleting}
-          disabled={disabled}
-          color="danger"
-        />
+        <IconButton onClick={startDeleting} disabled={disabled} color="danger">
+          <BsXCircle />
+        </IconButton>
         <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
       </Col>
     </Row>

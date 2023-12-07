@@ -30,10 +30,10 @@ export const TorrentRow: React.FC<{
   const progressBarVariant = error
     ? "danger"
     : finished
-    ? "success"
-    : state == STATE_INITIALIZING
-    ? "warning"
-    : "primary";
+      ? "success"
+      : state == STATE_INITIALIZING
+        ? "warning"
+        : "primary";
 
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;

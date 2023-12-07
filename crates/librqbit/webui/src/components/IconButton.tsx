@@ -1,11 +1,11 @@
 import { MouseEventHandler } from "react";
 
 export const IconButton: React.FC<{
-  className: string;
   onClick: () => void;
   disabled?: boolean;
   color?: string;
-}> = ({ className, onClick, disabled, color }) => {
+  children: any;
+}> = ({ onClick, disabled, color, children }) => {
   const onClickStopPropagation: MouseEventHandler<HTMLAnchorElement> = (e) => {
     e.stopPropagation();
     if (disabled) {
@@ -13,11 +13,14 @@ export const IconButton: React.FC<{
     }
     onClick();
   };
+  const colorClassName = color ? `text-${color}` : "";
   return (
     <a
-      className={`bi ${className} p-1`}
+      className={`p-1 ${colorClassName}`}
       onClick={onClickStopPropagation}
       href="#"
-    ></a>
+    >
+      {children}
+    </a>
   );
 };

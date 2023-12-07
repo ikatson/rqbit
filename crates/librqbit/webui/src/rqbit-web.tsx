@@ -4,19 +4,21 @@ import { AppContext, APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
 import { customSetInterval } from "./helper/customSetInterval";
 
-export interface Error {
+export interface ErrorWithLabel {
   text: string;
   details?: ApiErrorDetails;
 }
 
 export interface ContextType {
-  setCloseableError: (error: Error | null) => void;
+  setCloseableError: (error: ErrorWithLabel | null) => void;
   refreshTorrents: () => void;
 }
 
 export const RqbitWebUI = (props: { title: string }) => {
-  const [closeableError, setCloseableError] = useState<Error | null>(null);
-  const [otherError, setOtherError] = useState<Error | null>(null);
+  const [closeableError, setCloseableError] = useState<ErrorWithLabel | null>(
+    null
+  );
+  const [otherError, setOtherError] = useState<ErrorWithLabel | null>(null);
 
   const [torrents, setTorrents] = useState<Array<TorrentId> | null>(null);
   const [torrentsLoading, setTorrentsLoading] = useState(false);

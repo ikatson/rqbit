@@ -4,12 +4,12 @@ import { AddTorrentResponse, AddTorrentOptions } from "../api-types";
 import { AppContext, APIContext } from "../context";
 import { ErrorComponent } from "./ErrorComponent";
 import { formatBytes } from "../helper/formatBytes";
-import { Error } from "../rqbit-web";
+import { ErrorWithLabel } from "../rqbit-web";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
   listTorrentResponse: AddTorrentResponse | null;
-  listTorrentError: Error | null;
+  listTorrentError: ErrorWithLabel | null;
   listTorrentLoading: boolean;
   data: string | File;
 }) => {
@@ -23,7 +23,7 @@ export const FileSelectionModal = (props: {
 
   const [selectedFiles, setSelectedFiles] = useState<number[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<Error | null>(null);
+  const [uploadError, setUploadError] = useState<ErrorWithLabel | null>(null);
   const [unpopularTorrent, setUnpopularTorrent] = useState(false);
   const [outputFolder, setOutputFolder] = useState<string>("");
   const ctx = useContext(AppContext);

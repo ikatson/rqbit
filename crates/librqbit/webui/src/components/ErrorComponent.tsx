@@ -1,8 +1,8 @@
 import { Alert } from "react-bootstrap";
-import { Error } from "../rqbit-web";
+import { ErrorWithLabel } from "../rqbit-web";
 
 export const ErrorComponent = (props: {
-  error: Error | null;
+  error: ErrorWithLabel | null;
   remove?: () => void;
 }) => {
   let { error, remove } = props;

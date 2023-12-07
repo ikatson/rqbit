@@ -5,7 +5,7 @@ import {
   ErrorDetails as ApiErrorDetails,
 } from "../api-types";
 import { APIContext } from "../context";
-import { Error } from "../rqbit-web";
+import { ErrorWithLabel } from "../rqbit-web";
 import { FileSelectionModal } from "./FileSelectionModal";
 
 export const UploadButton: React.FC<{
@@ -18,7 +18,8 @@ export const UploadButton: React.FC<{
   const [loading, setLoading] = useState(false);
   const [listTorrentResponse, setListTorrentResponse] =
     useState<AddTorrentResponse | null>(null);
-  const [listTorrentError, setListTorrentError] = useState<Error | null>(null);
+  const [listTorrentError, setListTorrentError] =
+    useState<ErrorWithLabel | null>(null);
   const API = useContext(APIContext);
 
   // Get the torrent file list if there's data.
