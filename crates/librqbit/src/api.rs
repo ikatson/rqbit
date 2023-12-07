@@ -40,6 +40,10 @@ impl Api {
         }
     }
 
+    pub fn session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
     pub fn mgr_handle(&self, idx: TorrentId) -> Result<ManagedTorrentHandle> {
         self.session
             .get(idx)

@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { APIContext, RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
 import { API } from "./api";
 import { invoke } from "@tauri-apps/api";
-import { RqbitDesktopConfig } from "./configuration";
+import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { RqbitDesktop } from "./rqbit-desktop";
 
 async function get_version(): Promise<string> {
@@ -14,11 +14,15 @@ async function get_default_config(): Promise<RqbitDesktopConfig> {
     return invoke<RqbitDesktopConfig>("config_default");
 }
 
-Promise.all([get_version(), get_default_config()]).then(([version, config]) => {
+async function get_current_config(): Promise<CurrentDesktopState> {
+    return invoke<CurrentDesktopState>("config_current");
+}
+
+Promise.all([get_version(), get_default_config(), get_current_config()]).then(([version, defaultConfig, currentState]) => {
     ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
         <StrictMode>
             <APIContext.Provider value={API}>
-                <RqbitDesktop version={version} defaultConfig={config} />
+                <RqbitDesktop version={version} defaultConfig={defaultConfig} currentState={currentState} />
             </APIContext.Provider>
         </StrictMode>
     );

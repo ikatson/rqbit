@@ -164,6 +164,7 @@ export const ConfigModal: React.FC<{
                             name="dht.disable_persistence"
                             checked={!config.dht.disable_persistence}
                             onChange={handleToggleChange}
+                            disabled={config.dht.disable}
                             help="Enable to store DHT state in a file periodically. If disabled, DHT will bootstrap from scratch on restart."
                         />
 
@@ -172,6 +173,7 @@ export const ConfigModal: React.FC<{
                             name="dht.persistence_filename"
                             value={config.dht.persistence_filename}
                             inputType="text"
+                            disabled={config.dht.disable}
                             onChange={handleInputChange}
                             help="The filename to store DHT state into"
                         />

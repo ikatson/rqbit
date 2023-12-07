@@ -43,3 +43,8 @@ export interface RqbitDesktopConfig {
     peer_opts: RqbitDesktopConfigPeerOpts;
     http_api: RqbitDesktopConfigHttpApi;
 }
+
+export interface CurrentDesktopState {
+    config: RqbitDesktopConfig | null,
+    configured: boolean,
+}

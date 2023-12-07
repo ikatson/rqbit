@@ -3,7 +3,11 @@
 
 mod config;
 
-use std::sync::Arc;
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufReader, BufWriter},
+    sync::Arc,
+};
 
 use anyhow::Context;
 use config::RqbitDesktopConfig;
@@ -18,94 +22,160 @@ use librqbit::{
     SessionOptions,
 };
 use parking_lot::RwLock;
-use tracing::error_span;
+use serde::Serialize;
+use tracing::{error, error_span};
 
 const ERR_NOT_CONFIGURED: ApiError =
     ApiError::new_from_text(StatusCode::FAILED_DEPENDENCY, "not configured");
 
 struct StateShared {
     config: config::RqbitDesktopConfig,
-    api: Api,
-    session: Arc<Session>,
+    api: Option<Api>,
 }
+
+type RustLogReloadTx = tokio::sync::mpsc::UnboundedSender<String>;
 
 impl StateShared {}
 
 struct State {
+    config_filename: String,
     shared: Arc<RwLock<Option<StateShared>>>,
-    rust_log_reload_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    rust_log_reload_tx: RustLogReloadTx,
+}
+
+fn read_config(path: &str) -> anyhow::Result<RqbitDesktopConfig> {
+    let rdr = BufReader::new(File::open(path)?);
+    Ok(serde_json::from_reader(rdr)?)
+}
+
+fn write_config(path: &str, config: &RqbitDesktopConfig) -> anyhow::Result<()> {
+    let tmp = format!("{}.tmp", path);
+    let mut tmp_file = BufWriter::new(
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(&tmp)?,
+    );
+    serde_json::to_writer(&mut tmp_file, config)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+async fn api_from_config(
+    rust_log_reload_tx: &RustLogReloadTx,
+    config: &RqbitDesktopConfig,
+) -> anyhow::Result<Api> {
+    let session = Session::new_with_opts(
+        config.default_download_location.clone(),
+        SessionOptions {
+            disable_dht: config.dht.disable,
+            disable_dht_persistence: config.dht.disable_persistence,
+            dht_config: Some(PersistentDhtConfig {
+                config_filename: Some(config.dht.persistence_filename.clone()),
+                ..Default::default()
+            }),
+            persistence: !config.persistence.disable,
+            persistence_filename: Some(config.persistence.filename.clone()),
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(config.peer_opts.connect_timeout),
+                read_write_timeout: Some(config.peer_opts.read_write_timeout),
+                ..Default::default()
+            }),
+            listen_port_range: if !config.tcp_listen.disable {
+                Some(config.tcp_listen.min_port..config.tcp_listen.max_port)
+            } else {
+                None
+            },
+            enable_upnp_port_forwarding: !config.upnp.disable,
+            ..Default::default()
+        },
+    )
+    .await
+    .context("couldn't set up librqbit session")?;
+
+    let api = Api::new(session.clone(), None);
+
+    if !config.http_api.disable {
+        let http_api_task =
+            librqbit::http_api::HttpApi::new(session.clone(), Some(rust_log_reload_tx.clone()))
+                .make_http_api_and_run(config.http_api.listen_addr, config.http_api.read_only);
+
+        session.spawn("http api", error_span!("http_api"), http_api_task);
+    }
+    Ok(api)
 }
 
 impl State {
+    async fn new(rust_log_reload_tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
+        let config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
+            .expect("directories::ProjectDirs::from")
+            .config_dir()
+            .to_str()
+            .expect("to_str()")
+            .to_owned();
+
+        if let Ok(config) = read_config(&config_filename) {
+            let api = api_from_config(&rust_log_reload_tx, &config).await.ok();
+            let shared = Arc::new(RwLock::new(Some(StateShared { config, api })));
+
+            return Self {
+                config_filename,
+                shared,
+                rust_log_reload_tx,
+            };
+        }
+
+        Self {
+            config_filename,
+            rust_log_reload_tx,
+            shared: Arc::new(RwLock::new(None)),
+        }
+    }
+
     fn api(&self) -> Result<Api, ApiError> {
         let g = self.shared.read();
-        match &*g {
-            Some(s) => Ok(s.api.clone()),
+        match g.as_ref().and_then(|s| s.api.as_ref()) {
+            Some(api) => Ok(api.clone()),
             None => Err(ERR_NOT_CONFIGURED),
         }
     }
 
-    fn current_config(&self) -> Option<RqbitDesktopConfig> {
-        self.shared.read().as_ref().map(|s| s.config.clone())
-    }
-
     async fn configure(&self, config: RqbitDesktopConfig) -> Result<(), ApiError> {
-        let existing = self.shared.write().take();
-
-        if let Some(existing) = existing {
-            existing.session.stop().await;
+        {
+            let g = self.shared.read();
+            if let Some(shared) = g.as_ref() {
+                if shared.api.is_some() && shared.config == config {
+                    // The config didn't change, and the API is running, nothing to do.
+                    return Ok(());
+                }
+            }
         }
 
-        let config_clone = config.clone();
+        let existing = self.shared.write().as_mut().and_then(|s| s.api.take());
 
-        let session = Session::new_with_opts(
-            config.default_download_location,
-            SessionOptions {
-                disable_dht: config.dht.disable,
-                disable_dht_persistence: config.dht.disable_persistence,
-                dht_config: Some(PersistentDhtConfig {
-                    config_filename: Some(config.dht.persistence_filename),
-                    ..Default::default()
-                }),
-                persistence: !config.persistence.disable,
-                persistence_filename: Some(config.persistence.filename),
-                peer_opts: Some(PeerConnectionOptions {
-                    connect_timeout: Some(config.peer_opts.connect_timeout),
-                    read_write_timeout: Some(config.peer_opts.read_write_timeout),
-                    ..Default::default()
-                }),
-                listen_port_range: if !config.tcp_listen.disable {
-                    Some(config.tcp_listen.min_port..config.tcp_listen.max_port)
-                } else {
-                    None
-                },
-                enable_upnp_port_forwarding: !config.upnp.disable,
-                ..Default::default()
-            },
-        )
-        .await
-        .context("couldn't set up librqbit session")?;
-
-        let api = Api::new(session.clone(), None);
-
-        if !config.http_api.disable {
-            let http_api_task = librqbit::http_api::HttpApi::new(
-                session.clone(),
-                Some(self.rust_log_reload_tx.clone()),
-            )
-            .make_http_api_and_run(config.http_api.listen_addr, config.http_api.read_only);
-
-            session.spawn("http api", error_span!("http_api"), http_api_task);
+        if let Some(api) = existing {
+            api.session().stop().await;
         }
 
-        *self.shared.write() = Some(StateShared {
-            config: config_clone,
-            api,
-            session,
+        let api = api_from_config(&self.rust_log_reload_tx, &config).await?;
+        if let Err(e) = write_config(&self.config_filename, &config) {
+            error!("error writing config: {:#}", e);
+        }
+
+        let mut g = self.shared.write();
+        *g = Some(StateShared {
+            config,
+            api: Some(api),
         });
-
         Ok(())
     }
+}
+
+#[derive(Default, Serialize)]
+struct CurrentState {
+    config: Option<RqbitDesktopConfig>,
+    configured: bool,
 }
 
 #[tauri::command]
@@ -114,8 +184,15 @@ fn config_default() -> config::RqbitDesktopConfig {
 }
 
 #[tauri::command]
-fn config_current(state: tauri::State<'_, State>) -> Option<config::RqbitDesktopConfig> {
-    state.current_config()
+fn config_current(state: tauri::State<'_, State>) -> CurrentState {
+    let g = state.shared.read();
+    match &*g {
+        Some(s) => CurrentState {
+            config: Some(s.config.clone()),
+            configured: s.api.is_some(),
+        },
+        None => Default::default(),
+    }
 }
 
 #[tauri::command]
@@ -247,11 +324,10 @@ async fn start() {
     tauri::async_runtime::set(tokio::runtime::Handle::current());
     let rust_log_reload_tx = init_logging();
 
+    let state = State::new(rust_log_reload_tx).await;
+
     tauri::Builder::default()
-        .manage(State {
-            shared: Arc::new(RwLock::new(None)),
-            rust_log_reload_tx,
-        })
+        .manage(state)
         .invoke_handler(tauri::generate_handler![
             torrents_list,
             torrent_details,

@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
-import { RqbitDesktopConfig } from "./configuration";
+import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { ConfigModal } from "./configure";
 
 
 export const RqbitDesktop: React.FC<{
     version: string,
     defaultConfig: RqbitDesktopConfig,
-}> = ({ version, defaultConfig }) => {
-    let [configured, setConfigured] = useState<boolean>(false);
-    let [config, setConfig] = useState<RqbitDesktopConfig>(defaultConfig);
+    currentState: CurrentDesktopState,
+}> = ({ version, defaultConfig, currentState }) => {
+    let [configured, setConfigured] = useState<boolean>(currentState.configured);
+    let [config, setConfig] = useState<RqbitDesktopConfig>(currentState.config ?? defaultConfig);
     let [configurationOpened, setConfigurationOpened] = useState<boolean>(false);
 
     return <>
