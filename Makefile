@@ -20,7 +20,8 @@ webui-build: webui-deps
 
 @PHONY: devserver
 devserver:
-	CORS_DEBUG=1 cargo run --release -- server start /tmp/scratch/
+	echo -n '' > /tmp/rqbit-log
+	CORS_DEBUG=1 cargo run --release -- --log-file /tmp/rqbit-log server start /tmp/scratch/
 
 @PHONY: clean
 clean:

@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tracing::{debug, error, error_span, trace, warn, Instrument, Span};
+use tracing::{debug, error_span, trace, warn, Instrument, Span};
 use url::Url;
 
 const SERVICE_TYPE_WAN_IP_CONNECTION: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
@@ -236,7 +236,7 @@ impl UpnpEndpoint {
             .filter_map(|(span, url)| match url {
                 Ok(url) => Some((span, url)),
                 Err(e) => {
-                    error!("bad control url: {e:#}");
+                    debug!("bad control url: {e:#}");
                     None
                 }
             })
@@ -262,7 +262,7 @@ async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
     let root_desc: RootDesc = from_str(&response)
         .context("failed to parse response body as xml")
         .map_err(|e| {
-            error!("failed to parse this XML: {response}");
+            debug!("failed to parse this XML: {response}");
             e
         })?;
     Ok(root_desc)
@@ -429,7 +429,7 @@ impl UpnpPortForwarder {
                     let r = r.unwrap();
                     let location = r.location.clone();
                     endpoints.push(self.parse_endpoint(r).map_err(|e| {
-                        error!("failed to parse endpoint: {e:#}");
+                        debug!("error parsing endpoint: {e:#}");
                         e
                     }).instrument(error_span!("parse endpoint", location=location.to_string())));
                 },
