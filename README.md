@@ -4,7 +4,7 @@
 
 # rqbit - bittorrent client in Rust
 
-**rqbit** is a bittorrent client written entirely in Rust. Has HTTP API and Web UI, and can be used as a library.
+**rqbit** is a bittorrent client written in Rust. Has HTTP API and Web UI, and can be used as a library.
 
 Also has a desktop app built with [Tauri](https://tauri.app/) (on Windows and OSX).
 
