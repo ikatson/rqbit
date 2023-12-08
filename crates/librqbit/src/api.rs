@@ -19,7 +19,7 @@ use crate::{
     torrent_state::{
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         ManagedTorrentHandle,
-    }, log_subscriber::LineBroadcast,
+    }, tracing_subscriber_config_utils::LineBroadcast,
 };
 
 pub use crate::torrent_state::stats::{LiveStats, TorrentStats};

@@ -1,11 +1,14 @@
-use std::{io::LineWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use librqbit::{
-    api::ApiAddTorrentResponse, http_api::{HttpApi, HttpApiOptions}, http_api_client, librqbit_spawn, AddTorrent,
-    AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState,
-    PeerConnectionOptions, Session, SessionOptions, log_subscriber::LineBroadcast, Api,
+    api::ApiAddTorrentResponse,
+    http_api::{HttpApi, HttpApiOptions},
+    http_api_client, librqbit_spawn,
+    tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse, ManagedTorrentState,
+    PeerConnectionOptions, Session, SessionOptions,
 };
 use size_format::SizeFormatterBinary as SF;
 use tracing::{error, error_span, info, trace_span, warn};
@@ -178,125 +181,6 @@ enum SubCommand {
     Download(DownloadOpts),
 }
 
-struct InitLoggingResult {
-    rust_log_reload_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    line_broadcast: LineBroadcast,
-}
-
-// Init logging and make a channel to send new RUST_LOG values to.
-fn init_logging(opts: &Opts) -> InitLoggingResult {
-    let default_rust_log = match opts.log_level.as_ref() {
-        Some(level) => match level {
-            LogLevel::Trace => "trace",
-            LogLevel::Debug => "debug",
-            LogLevel::Info => "info",
-            LogLevel::Warn => "warn",
-            LogLevel::Error => "error",
-        },
-        None => "info",
-    };
-    let stderr_filter = match std::env::var("RUST_LOG").ok() {
-        Some(rust_log) => EnvFilter::builder()
-            .parse(rust_log)
-            .expect("can't parse RUST_LOG"),
-        None => EnvFilter::builder()
-            .parse(default_rust_log)
-            .expect("can't parse default_rust_log"),
-    };
-
-    let (stderr_filter, reload_stderr_filter) =
-        tracing_subscriber::reload::Layer::new(stderr_filter);
-
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-    let (line_sub, line_broadcast) = librqbit::log_subscriber::Subscriber::new();
-
-    #[cfg(feature = "tokio-console")]
-    {
-        let (console_layer, server) = console_subscriber::Builder::default()
-            .with_default_env()
-            .build();
-
-        tracing_subscriber::registry()
-            .with(fmt::layer().with_filter(stderr_filter))
-            .with(console_layer)
-            .init();
-
-        spawn(
-            "console_subscriber server",
-            error_span!("console_subscriber server"),
-            async move {
-                server
-                    .serve()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{:#?}", e))
-                    .context("error running console subscriber server")
-            },
-        );
-    }
-
-    #[cfg(not(feature = "tokio-console"))]
-    {
-        let layered = tracing_subscriber::registry()
-            .with(fmt::layer().with_filter(stderr_filter))
-            .with(
-                fmt::layer()
-                    .event_format(fmt::format().with_ansi(false).compact())
-                    .with_ansi(false)
-                    .with_writer(line_sub)
-                    .with_filter(EnvFilter::builder().parse("info").unwrap()),
-            );
-        if let Some(log_file) = &opts.log_file {
-            let log_file = log_file.clone();
-            let log_file = move || {
-                LineWriter::new(
-                    std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .write(true)
-                        .open(&log_file)
-                        .with_context(|| format!("error opening log file {:?}", log_file))
-                        .unwrap(),
-                )
-            };
-            layered
-                .with(
-                    fmt::layer()
-                        .with_ansi(false)
-                        .with_writer(log_file)
-                        .with_filter(EnvFilter::builder().parse(&opts.log_file_rust_log).unwrap()),
-                )
-                .init();
-        } else {
-            layered.init();
-        }
-    }
-
-    let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    librqbit_spawn(
-        "fmt_filter_reloader",
-        error_span!("fmt_filter_reloader"),
-        async move {
-            while let Some(rust_log) = reload_rx.recv().await {
-                let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
-                        continue;
-                    }
-                };
-                eprintln!("setting RUST_LOG to {:?}", rust_log);
-                let _ = reload_stderr_filter.reload(stderr_env_filter);
-            }
-            Ok(())
-        },
-    );
-    InitLoggingResult {
-        rust_log_reload_tx: reload_tx,
-        line_broadcast,
-    }
-}
-
 fn _start_deadlock_detector_thread() {
     use parking_lot::deadlock;
     use std::thread;
@@ -350,7 +234,17 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(opts: Opts) -> anyhow::Result<()> {
-    let log_config = init_logging(&opts);
+    let log_config = init_logging(InitLoggingOptions {
+        default_rust_log_value: Some(match opts.log_level.unwrap_or(LogLevel::Info) {
+            LogLevel::Trace => "trace",
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }),
+        log_file: opts.log_file.as_deref(),
+        log_file_rust_log: Some(&opts.log_file_rust_log),
+    })?;
 
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
@@ -445,10 +339,14 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let api = Api::new(session, Some(log_config.rust_log_reload_tx), Some(log_config.line_broadcast));
+                let api = Api::new(
+                    session,
+                    Some(log_config.rust_log_reload_tx),
+                    Some(log_config.line_broadcast),
+                );
                 let http_api = HttpApi::new(
                     api,
-                    Some(HttpApiOptions{
+                    Some(HttpApiOptions {
                         read_only: false,
                         cors_enable_all: false,
                     }),
@@ -532,9 +430,17 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let api = Api::new(session.clone(), Some(log_config.rust_log_reload_tx), Some(log_config.line_broadcast));
+                let api = Api::new(
+                    session.clone(),
+                    Some(log_config.rust_log_reload_tx),
+                    Some(log_config.line_broadcast),
+                );
                 let http_api = HttpApi::new(
-                    api, Some(HttpApiOptions { cors_enable_all: false, read_only: true })
+                    api,
+                    Some(HttpApiOptions {
+                        cors_enable_all: false,
+                        read_only: true,
+                    }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 librqbit_spawn(
