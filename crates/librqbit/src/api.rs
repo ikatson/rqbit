@@ -2,7 +2,6 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use buffers::ByteString;
-use bytes::Bytes;
 use dht::{DhtStats, Id20};
 use futures::Stream;
 use http::StatusCode;
@@ -20,7 +19,7 @@ use crate::{
     torrent_state::{
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         ManagedTorrentHandle,
-    },
+    }, log_subscriber::LineBroadcast,
 };
 
 pub use crate::torrent_state::stats::{LiveStats, TorrentStats};
@@ -33,19 +32,19 @@ pub type Result<T> = std::result::Result<T, ApiError>;
 pub struct Api {
     session: Arc<Session>,
     rust_log_reload_tx: Option<UnboundedSender<String>>,
-    line_rx: Option<Arc<tokio::sync::broadcast::Receiver<Bytes>>>,
+    line_broadcast: Option<LineBroadcast>,
 }
 
 impl Api {
     pub fn new(
         session: Arc<Session>,
         rust_log_reload_tx: Option<UnboundedSender<String>>,
-        line_rx: Option<tokio::sync::broadcast::Receiver<Bytes>>,
+        line_broadcast: Option<LineBroadcast>
     ) -> Self {
         Self {
             session,
             rust_log_reload_tx,
-            line_rx: line_rx.map(Arc::new),
+            line_broadcast
         }
     }
 
@@ -141,9 +140,9 @@ impl Api {
             + 'static,
     > {
         Ok(self
-            .line_rx
+            .line_broadcast
             .as_ref()
-            .map(|rx| BroadcastStream::new(rx.resubscribe()))
+            .map(|sender| BroadcastStream::new(sender.subscribe()))
             .context("line_rx wasn't set")?)
     }
 

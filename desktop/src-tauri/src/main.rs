@@ -19,8 +19,9 @@ use librqbit::{
         TorrentStats,
     },
     dht::PersistentDhtConfig,
-    librqbit_spawn, AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session,
-    SessionOptions,
+    librqbit_spawn,
+    log_subscriber::LineBroadcast,
+    AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
 };
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -98,7 +99,7 @@ async fn api_from_config(
     let api = Api::new(
         session.clone(),
         Some(init_logging.reload_stdout_tx.clone()),
-        Some(init_logging.line_rx.resubscribe()),
+        Some(init_logging.line_broadcast.clone()),
     );
 
     if !config.http_api.disable {
@@ -303,7 +304,7 @@ fn get_version() -> &'static str {
 
 struct InitLogging {
     reload_stdout_tx: RustLogReloadTx,
-    line_rx: librqbit::log_subscriber::LineRx,
+    line_broadcast: LineBroadcast,
 }
 
 fn init_logging() -> InitLogging {
@@ -315,7 +316,7 @@ fn init_logging() -> InitLogging {
             .unwrap(),
     );
 
-    let (line_sub, line_rx) = librqbit::log_subscriber::Subscriber::new();
+    let (line_sub, line_broadcast) = librqbit::log_subscriber::Subscriber::new();
 
     let layered = tracing_subscriber::registry()
         .with(fmt::layer().with_filter(stderr_filter))
@@ -350,7 +351,7 @@ fn init_logging() -> InitLogging {
     );
     InitLogging {
         reload_stdout_tx: reload_tx,
-        line_rx,
+        line_broadcast,
     }
 }
 

@@ -22,13 +22,16 @@ const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
 const streamLogs = (
   httpApiBase: string,
   addLine: (text: string) => void,
-  setError: (error: ErrorWithLabel) => void
+  setError: (error: ErrorWithLabel | null) => void
 ): (() => void) => {
   const controller = new AbortController();
   const signal = controller.signal;
 
+  let canceled = true;
+
   const cancel = () => {
     console.log("cancelling fetch");
+    canceled = true;
     controller.abort();
   };
 
@@ -37,6 +40,9 @@ const streamLogs = (
     try {
       response = await fetch(httpApiBase + "/stream_logs", { signal });
     } catch (e: any) {
+      if (canceled) {
+        return;
+      }
       setError({
         text: "network error fetching logs",
         details: {

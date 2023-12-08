@@ -3,9 +3,9 @@ use std::{io::LineWriter, net::SocketAddr, path::PathBuf, sync::Arc, time::Durat
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use librqbit::{
-    api::ApiAddTorrentResponse, http_api::HttpApi, http_api_client, librqbit_spawn, AddTorrent,
+    api::ApiAddTorrentResponse, http_api::{HttpApi, HttpApiOptions}, http_api_client, librqbit_spawn, AddTorrent,
     AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, ManagedTorrentState,
-    PeerConnectionOptions, Session, SessionOptions,
+    PeerConnectionOptions, Session, SessionOptions, log_subscriber::LineBroadcast, Api,
 };
 use size_format::SizeFormatterBinary as SF;
 use tracing::{error, error_span, info, trace_span, warn};
@@ -180,7 +180,7 @@ enum SubCommand {
 
 struct InitLoggingResult {
     rust_log_reload_tx: tokio::sync::mpsc::UnboundedSender<String>,
-    line_rx: tokio::sync::broadcast::Receiver<bytes::Bytes>,
+    line_broadcast: LineBroadcast,
 }
 
 // Init logging and make a channel to send new RUST_LOG values to.
@@ -209,7 +209,7 @@ fn init_logging(opts: &Opts) -> InitLoggingResult {
 
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let (line_sub, line_rx) = librqbit::log_subscriber::Subscriber::new();
+    let (line_sub, line_broadcast) = librqbit::log_subscriber::Subscriber::new();
 
     #[cfg(feature = "tokio-console")]
     {
@@ -293,7 +293,7 @@ fn init_logging(opts: &Opts) -> InitLoggingResult {
     );
     InitLoggingResult {
         rust_log_reload_tx: reload_tx,
-        line_rx,
+        line_broadcast,
     }
 }
 
@@ -445,14 +445,17 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
+                let api = Api::new(session, Some(log_config.rust_log_reload_tx), Some(log_config.line_broadcast));
                 let http_api = HttpApi::new(
-                    session,
-                    Some(log_config.rust_log_reload_tx),
-                    Some(log_config.line_rx),
+                    api,
+                    Some(HttpApiOptions{
+                        read_only: false,
+                        cors_enable_all: false,
+                    }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
-                    .make_http_api_and_run(http_api_listen_addr, false)
+                    .make_http_api_and_run(http_api_listen_addr)
                     .await
                     .context("error running HTTP API")
             }
@@ -529,16 +532,15 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
+                let api = Api::new(session.clone(), Some(log_config.rust_log_reload_tx), Some(log_config.line_broadcast));
                 let http_api = HttpApi::new(
-                    session.clone(),
-                    Some(log_config.rust_log_reload_tx),
-                    Some(log_config.line_rx),
+                    api, Some(HttpApiOptions { cors_enable_all: false, read_only: true })
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 librqbit_spawn(
                     "http_api",
                     error_span!("http_api"),
-                    http_api.make_http_api_and_run(http_api_listen_addr, true),
+                    http_api.make_http_api_and_run(http_api_listen_addr),
                 );
 
                 let mut added = false;
