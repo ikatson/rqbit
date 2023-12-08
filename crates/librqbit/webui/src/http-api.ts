@@ -64,6 +64,7 @@ const makeRequest = async (
 };
 
 export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
+  getHttpBaseUrl: () => apiUrl,
   listTorrents: (): Promise<ListTorrentsResponse> =>
     makeRequest("GET", "/torrents"),
   getTorrentDetails: (index: number): Promise<TorrentDetails> => {

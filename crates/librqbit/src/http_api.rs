@@ -8,42 +8,43 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::UnboundedSender;
-use tracing::info;
+use tracing::{info, warn};
 
 use axum::Router;
 
 use crate::api::Api;
 use crate::peer_connection::PeerConnectionOptions;
-use crate::session::{AddTorrent, AddTorrentOptions, Session, SUPPORTED_SCHEMES};
+use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 
-type ApiState = Arc<Api>;
+type ApiState = Api;
 
 use crate::api::Result;
 
 /// An HTTP server for the API.
-#[derive(Clone)]
 pub struct HttpApi {
     inner: ApiState,
+    opts: HttpApiOptions,
+}
+
+#[derive(Debug, Default)]
+pub struct HttpApiOptions {
+    pub cors_enable_all: bool,
+    pub read_only: bool,
 }
 
 impl HttpApi {
-    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
+    pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
-            inner: Arc::new(Api::new(session, rust_log_reload_tx)),
+            inner: api,
+            opts: opts.unwrap_or_default(),
         }
     }
 
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
-    pub async fn make_http_api_and_run(
-        self,
-        addr: SocketAddr,
-        read_only: bool,
-    ) -> anyhow::Result<()> {
+    pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {
@@ -185,8 +186,14 @@ impl HttpApi {
             state.api_set_rust_log(new_value).map(axum::Json)
         }
 
+        async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+            let s = state.api_log_lines_stream()?;
+            Ok(axum::body::Body::from_stream(s))
+        }
+
         let mut app = Router::new()
             .route("/", get(api_root))
+            .route("/stream_logs", get(stream_logs))
             .route("/rust_log", post(set_rust_log))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
@@ -197,7 +204,7 @@ impl HttpApi {
             .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
             .route("/torrents/:id/peer_stats", get(peer_stats));
 
-        if !read_only {
+        if !self.opts.read_only {
             app = app
                 .route("/torrents", post(torrents_post))
                 .route("/torrents/:id/pause", post(torrent_action_pause))
@@ -208,7 +215,6 @@ impl HttpApi {
 
         #[cfg(feature = "webui")]
         {
-            use tracing::warn;
             let webui_router = Router::new()
                 .route(
                     "/",
@@ -238,23 +244,25 @@ impl HttpApi {
                     }),
                 );
 
-            // This is to develop webui by just doing "open index.html && tsc --watch"
-            let cors_layer = std::env::var("CORS_DEBUG")
-                .ok()
-                .map(|_| {
-                    use tower_http::cors::{AllowHeaders, AllowOrigin};
-
-                    warn!("CorsLayer: allowing everything because CORS_DEBUG is set");
-                    tower_http::cors::CorsLayer::default()
-                        .allow_origin(AllowOrigin::predicate(|_, _| true))
-                        .allow_headers(AllowHeaders::any())
-                })
-                .unwrap_or_default();
-
-            app = app.nest("/web/", webui_router).layer(cors_layer);
+            app = app.nest("/web/", webui_router);
         }
 
+        let enable_cors = std::env::var("CORS_DEBUG").is_ok() || self.opts.cors_enable_all;
+
+        // This is to develop webui by just doing "open index.html && tsc --watch"
+        let cors_layer = if enable_cors {
+            use tower_http::cors::{AllowHeaders, AllowOrigin};
+
+            warn!("CorsLayer: allowing everything");
+            tower_http::cors::CorsLayer::default()
+                .allow_origin(AllowOrigin::predicate(|_, _| true))
+                .allow_headers(AllowHeaders::any())
+        } else {
+            Default::default()
+        };
+
         let app = app
+        .layer(cors_layer)
             .layer(tower_http::trace::TraceLayer::new_for_http())
             .with_state(state)
             .into_make_service();

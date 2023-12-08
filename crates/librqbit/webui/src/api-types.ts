@@ -117,6 +117,7 @@ export interface AddTorrentOptions {
 }
 
 export interface RqbitAPI {
+  getHttpBaseUrl: () => string | null;
   listTorrents: () => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;

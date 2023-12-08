@@ -28,6 +28,7 @@ interface RqbitDesktopConfigHttpApi {
   disable: boolean;
   listen_addr: SocketAddr;
   read_only: boolean;
+  cors_enable_all: boolean;
 }
 
 interface RqbitDesktopConfigUpnp {
