@@ -2,6 +2,8 @@ import { useState } from "react";
 import { RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { ConfigModal } from "./configure";
+import { IconButton } from "./rqbit-webui-src/components/IconButton";
+import { BsSliders2 } from "react-icons/bs";
 
 export const RqbitDesktop: React.FC<{
   version: string;
@@ -20,15 +22,14 @@ export const RqbitDesktop: React.FC<{
         <RqbitWebUI title={`Rqbit Desktop v${version}`}></RqbitWebUI>
       )}
       {configured && (
-        <a
-          className="bi bi-sliders2 position-absolute top-0 start-0 p-3 text-primary"
-          onClick={(e) => {
-            e.stopPropagation();
+        <IconButton
+          className="position-absolute top-0 start-0 p-3 text-primary"
+          onClick={() => {
             setConfigurationOpened(true);
           }}
-          href="#"
-          aria-label="Settings"
-        />
+        >
+          <BsSliders2 />
+        </IconButton>
       )}
       <ConfigModal
         show={!configured || configurationOpened}

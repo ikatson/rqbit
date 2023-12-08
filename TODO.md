@@ -3,7 +3,7 @@
 - [x (partial)] per-peer stats
 - [x] use some concurrent hashmap e.g. flurry or dashmap
 - [x] tracing instead of logging. Debugging peers: RUST_LOG=[{peer=.*}]=debug
-  test-log for tests
+      test-log for tests
 - [x] reopen read only is bugged
 - [x] initializing/checking
   - [x] blocks the whole process. Need to break it up. On slower devices (rpi) just hangs for a good while
@@ -19,7 +19,6 @@
   - [x] for torrents with a few seeds might be cool to re-query DHT once in a while.
   - [x] don't leak memory when deleting torrents (i.e. remove torrent information (seen peers etc) once the torrent is deleted)
   - [x] Routing table - is it balanced properly?
-  - [ ]
   - [x] Don't query Bad nodes
   - [-] Buckets that have not been changed in 15 minutes should be "refreshed." (per RFC)
     - [x] Did it, but it's flawed: starts repeating the same queries again as neighboring refreshes
@@ -33,25 +32,31 @@
   - [x] Ensure that if we query the "returned" nodes, they are even closer to our request than the responding node id was.
 
 incoming peers:
+
 - [x] error managing peer: expected extended handshake, but got Bitfield(<94 bytes>)
 - [x] do not announce when merely listing the torrent
 
 someday:
+
 - [x] cancellation from the client-side for the lib (i.e. stop the torrent manager)
 - [x] favicons for Web UI
 
 desktop:
-- [ ] on first run show options
-- [ ] allow to change options later (even with a session restart)
+
+- [x] on first run show options
+- [x] allow to change options later (even with a session restart)
 - [ ] look at logs - allow writing them to files? Set RUST_LOG through API
 
 persistence:
+
 - [ ] store total uploaded bytes, so that on restart it comes back up
 
 efficiency:
+
 - [ ] once the torrent is completed, we don't need to remember old peers
 
 refactor:
+
 - [x] session persistence: should add torrents even if we haven't resolved it yet
 - [x] where are peers stored
 - [x] http api pause/unpause etc
@@ -61,5 +66,5 @@ refactor:
 
 - [x] start from error state should be possible from UI
 - [x] checking is very slow on raspberry
-  checked. nothing much can be done here. Even if raspberry's own libssl.so is used it's still super slow (sha1)
+      checked. nothing much can be done here. Even if raspberry's own libssl.so is used it's still super slow (sha1)
 - [ ] .rqbit-session.json file has 0 bytes when disk full. I guess fs::rename does this when disk is full? at least on linux. Couldn't repro on MacOS

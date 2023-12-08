@@ -203,9 +203,9 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
 /// Options for adding new torrents to the session.
 #[serde_as]
 #[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AddTorrentOptions {
     /// Start in paused state.
-    #[serde(default)]
     pub paused: bool,
     /// A regex to only download files matching it.
     pub only_files_regex: Option<String>,
@@ -214,10 +214,8 @@ pub struct AddTorrentOptions {
     pub only_files: Option<Vec<usize>>,
     /// Allow writing on top of existing files, including when resuming a torrent.
     /// You probably want to set it, however for safety it's not default.
-    #[serde(default)]
     pub overwrite: bool,
     /// Only list the files in the torrent without starting it.
-    #[serde(default)]
     pub list_only: bool,
     /// The output folder for the torrent. If not set, the session's default one will be used.
     pub output_folder: Option<String>,
