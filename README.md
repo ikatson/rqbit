@@ -23,14 +23,21 @@ Assuming you are downloading to ~/Downloads. If the server is already started, `
     rqbit download -o ~/Downloads 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
 
 ## Web UI
-Access with http://localhost:3030/web/
-
-<img width="995" alt="Screenshot 2023-11-27 at 09 30 10" src="https://github.com/ikatson/rqbit/assets/221386/d9403763-d162-492b-a718-a857ef4dd1e6">
+Access with http://localhost:3030/web/. It looks similar to Desktop app, see screenshot below.
 
 ## Desktop app
 The desktop app is a [thin wrapper](https://github.com/ikatson/rqbit/blob/main/desktop/src-tauri/src/main.rs) on top of the Web UI frontend.
 
 Download it in [Releases](https://github.com/ikatson/rqbit/releases).
+
+<img width="1104" alt="rqbit Desktop" src="https://github.com/ikatson/rqbit/assets/221386/fbc39db1-f598-46d1-bc6b-1a55bc4b15be">
+
+## Performance
+As you can see from the Desktop app screenshot, it's fast. Anecdotally from a few reports, it's faster than other clients they've tried, at least with their default settings.
+
+Memory usage for the server is usually within a few tens of megabytes, which makes it great for e.g. RaspberryPI.
+
+CPU is spent mostly on SHA1 checksumming.
 
 ## Installation
 
