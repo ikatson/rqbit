@@ -24,7 +24,7 @@ function errorToUIError(
     let reason: ErrorDetails = {
       method: "INVOKE",
       path: path,
-      text: e.human_readable,
+      text: e.human_readable ?? e.toString(),
       status: e.status,
       statusText: e.status_text,
     };

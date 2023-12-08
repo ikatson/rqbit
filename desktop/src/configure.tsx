@@ -9,7 +9,7 @@ const FormCheck: React.FC<{
   label: string;
   name: string;
   checked: boolean;
-  onChange: (e: any) => void;
+  onChange: React.ChangeEventHandler<HTMLInputElement>;
   disabled?: boolean;
   help?: string;
 }> = ({ label, name, checked, onChange, disabled, help }) => {
@@ -35,7 +35,7 @@ const FormInput: React.FC<{
   name: string;
   value: string | number;
   inputType: string;
-  onChange: (e: any) => void;
+  onChange: React.ChangeEventHandler<HTMLInputElement>;
   disabled?: boolean;
   help?: string;
 }> = ({ label, name, value, inputType, onChange, disabled, help }) => {
@@ -76,9 +76,13 @@ export const ConfigModal: React.FC<{
 
   const [error, setError] = useState<any | null>(null);
 
-  const handleInputChange = (e: any) => {
+  const handleInputChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const name: string = e.target.name;
-    const value: any = e.target.value;
+    let value: string | number = e.target.value;
+    if (e.target.type == "number") {
+      value = e.target.valueAsNumber;
+    }
+    console.log(value, typeof value);
     const [mainField, subField] = name.split(".", 2);
 
     if (subField) {
@@ -97,7 +101,9 @@ export const ConfigModal: React.FC<{
     }
   };
 
-  const handleToggleChange = (e: any) => {
+  const handleToggleChange: React.ChangeEventHandler<HTMLInputElement> = (
+    e
+  ) => {
     const name: string = e.target.name;
     const [mainField, subField] = name.split(".", 2);
 

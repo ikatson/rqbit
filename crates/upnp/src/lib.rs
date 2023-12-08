@@ -67,12 +67,12 @@ async fn forward_port(
         <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
             s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
             <s:Body>
-                <u:AddPortMapping xmlns:u="{}">
+                <u:AddPortMapping xmlns:u="{SERVICE_TYPE_WAN_IP_CONNECTION}">
                     <NewRemoteHost></NewRemoteHost>
-                    <NewExternalPort>{}</NewExternalPort>
+                    <NewExternalPort>{port}</NewExternalPort>
                     <NewProtocol>TCP</NewProtocol>
-                    <NewInternalPort>{}</NewInternalPort>
-                    <NewInternalClient>{}</NewInternalClient>
+                    <NewInternalPort>{port}</NewInternalPort>
+                    <NewInternalClient>{local_ip}</NewInternalClient>
                     <NewEnabled>1</NewEnabled>
                     <NewPortMappingDescription>rust UPnP</NewPortMappingDescription>
                     <NewLeaseDuration>{}</NewLeaseDuration>
@@ -80,10 +80,6 @@ async fn forward_port(
             </s:Body>
         </s:Envelope>
     "#,
-        SERVICE_TYPE_WAN_IP_CONNECTION,
-        port,
-        port,
-        local_ip,
         lease_duration.as_secs()
     );
 
