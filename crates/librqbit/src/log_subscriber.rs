@@ -11,8 +11,10 @@ pub struct Writer {
     tx: tokio::sync::broadcast::Sender<Bytes>,
 }
 
+pub type LineRx = tokio::sync::broadcast::Receiver<Bytes>;
+
 impl Subscriber {
-    pub fn new() -> (Self, tokio::sync::broadcast::Receiver<Bytes>) {
+    pub fn new() -> (Self, LineRx) {
         let (tx, rx) = tokio::sync::broadcast::channel(100);
         (Self { tx }, rx)
     }

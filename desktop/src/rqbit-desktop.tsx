@@ -3,7 +3,10 @@ import { RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { ConfigModal } from "./configure";
 import { IconButton } from "./rqbit-webui-src/components/IconButton";
-import { BsSliders2 } from "react-icons/bs";
+import { BsBodyText, BsSliders2 } from "react-icons/bs";
+import { LogStreamModal } from "./rqbit-webui-src/components/LogStreamModal";
+import { APIContext } from "./rqbit-webui-src/context";
+import { makeAPI } from "./api";
 
 export const RqbitDesktop: React.FC<{
   version: string;
@@ -15,21 +18,27 @@ export const RqbitDesktop: React.FC<{
     currentState.config ?? defaultConfig
   );
   let [configurationOpened, setConfigurationOpened] = useState<boolean>(false);
+  let [logsOpened, setLogsOpened] = useState<boolean>(false);
 
   return (
-    <>
+    <APIContext.Provider value={makeAPI(config)}>
       {configured && (
         <RqbitWebUI title={`Rqbit Desktop v${version}`}></RqbitWebUI>
       )}
       {configured && (
-        <IconButton
-          className="position-absolute top-0 start-0 p-3 text-primary"
-          onClick={() => {
-            setConfigurationOpened(true);
-          }}
-        >
-          <BsSliders2 />
-        </IconButton>
+        <div className="position-absolute top-0 start-0">
+          <IconButton
+            className="p-3 text-primary"
+            onClick={() => {
+              setConfigurationOpened(true);
+            }}
+          >
+            <BsSliders2 />
+          </IconButton>
+          <IconButton onClick={() => setLogsOpened(true)}>
+            <BsBodyText />
+          </IconButton>
+        </div>
       )}
       <ConfigModal
         show={!configured || configurationOpened}
@@ -47,6 +56,7 @@ export const RqbitDesktop: React.FC<{
         initialConfig={config}
         defaultConfig={defaultConfig}
       />
-    </>
+      <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
+    </APIContext.Provider>
   );
 };

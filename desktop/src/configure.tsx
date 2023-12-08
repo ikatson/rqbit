@@ -295,6 +295,15 @@ export const ConfigModal: React.FC<{
               help="If enabled, only GET requests will be allowed through the API"
             />
 
+            <FormCheck
+              label="CORS any"
+              name="http_api.cors_enable_all"
+              checked={config.http_api.cors_enable_all}
+              disabled={config.http_api.disable}
+              onChange={handleToggleChange}
+              help="If enabled, the API will allow Cross Origin requests (including this app)"
+            />
+
             <FormInput
               label="Listen address"
               inputType="text"

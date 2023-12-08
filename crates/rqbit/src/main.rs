@@ -241,6 +241,7 @@ fn init_logging(opts: &Opts) -> InitLoggingResult {
             .with(fmt::layer().with_filter(stderr_filter))
             .with(
                 fmt::layer()
+                    .event_format(fmt::format().with_ansi(false).compact())
                     .with_ansi(false)
                     .with_writer(line_sub)
                     .with_filter(EnvFilter::builder().parse("info").unwrap()),

@@ -1,10 +1,8 @@
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
-import { API } from "./api";
 import { invoke } from "@tauri-apps/api";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { RqbitDesktop } from "./rqbit-desktop";
-import { APIContext } from "./rqbit-webui-src/context";
 
 async function get_version(): Promise<string> {
   return invoke<string>("get_version");
@@ -22,13 +20,11 @@ Promise.all([get_version(), get_default_config(), get_current_config()]).then(
   ([version, defaultConfig, currentState]) => {
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <StrictMode>
-        <APIContext.Provider value={API}>
-          <RqbitDesktop
-            version={version}
-            defaultConfig={defaultConfig}
-            currentState={currentState}
-          />
-        </APIContext.Provider>
+        <RqbitDesktop
+          version={version}
+          defaultConfig={defaultConfig}
+          currentState={currentState}
+        />
       </StrictMode>
     );
   }

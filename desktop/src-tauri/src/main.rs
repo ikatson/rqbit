@@ -36,12 +36,10 @@ struct StateShared {
 
 type RustLogReloadTx = tokio::sync::mpsc::UnboundedSender<String>;
 
-impl StateShared {}
-
 struct State {
     config_filename: String,
     shared: Arc<RwLock<Option<StateShared>>>,
-    rust_log_reload_tx: RustLogReloadTx,
+    init_logging: InitLogging,
 }
 
 fn read_config(path: &str) -> anyhow::Result<RqbitDesktopConfig> {
@@ -66,7 +64,7 @@ fn write_config(path: &str, config: &RqbitDesktopConfig) -> anyhow::Result<()> {
 }
 
 async fn api_from_config(
-    rust_log_reload_tx: &RustLogReloadTx,
+    init_logging: &InitLogging,
     config: &RqbitDesktopConfig,
 ) -> anyhow::Result<Api> {
     let session = Session::new_with_opts(
@@ -97,12 +95,21 @@ async fn api_from_config(
     .await
     .context("couldn't set up librqbit session")?;
 
-    let api = Api::new(session.clone(), None);
+    let api = Api::new(
+        session.clone(),
+        Some(init_logging.reload_stdout_tx.clone()),
+        Some(init_logging.line_rx.resubscribe()),
+    );
 
     if !config.http_api.disable {
-        let http_api_task =
-            librqbit::http_api::HttpApi::new(session.clone(), Some(rust_log_reload_tx.clone()))
-                .make_http_api_and_run(config.http_api.listen_addr, config.http_api.read_only);
+        let http_api_task = librqbit::http_api::HttpApi::new(
+            api.clone(),
+            Some(librqbit::http_api::HttpApiOptions {
+                cors_enable_all: config.http_api.cors_enable_all,
+                read_only: config.http_api.read_only,
+            }),
+        )
+        .make_http_api_and_run(config.http_api.listen_addr);
 
         session.spawn(error_span!("http_api"), http_api_task);
     }
@@ -110,7 +117,7 @@ async fn api_from_config(
 }
 
 impl State {
-    async fn new(rust_log_reload_tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
+    async fn new(init_logging: InitLogging) -> Self {
         let config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
             .expect("directories::ProjectDirs::from")
             .config_dir()
@@ -120,19 +127,19 @@ impl State {
             .to_owned();
 
         if let Ok(config) = read_config(&config_filename) {
-            let api = api_from_config(&rust_log_reload_tx, &config).await.ok();
+            let api = api_from_config(&init_logging, &config).await.ok();
             let shared = Arc::new(RwLock::new(Some(StateShared { config, api })));
 
             return Self {
                 config_filename,
                 shared,
-                rust_log_reload_tx,
+                init_logging,
             };
         }
 
         Self {
             config_filename,
-            rust_log_reload_tx,
+            init_logging,
             shared: Arc::new(RwLock::new(None)),
         }
     }
@@ -162,7 +169,7 @@ impl State {
             api.session().stop().await;
         }
 
-        let api = api_from_config(&self.rust_log_reload_tx, &config).await?;
+        let api = api_from_config(&self.init_logging, &config).await?;
         if let Err(e) = write_config(&self.config_filename, &config) {
             error!("error writing config: {:#}", e);
         }
@@ -294,12 +301,32 @@ fn get_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-fn init_logging() -> tokio::sync::mpsc::UnboundedSender<String> {
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let (stderr_filter, reload_stderr_filter) =
-        tracing_subscriber::reload::Layer::new(EnvFilter::builder().parse("info").unwrap());
+struct InitLogging {
+    reload_stdout_tx: RustLogReloadTx,
+    line_rx: librqbit::log_subscriber::LineRx,
+}
 
-    let layered = tracing_subscriber::registry().with(fmt::layer().with_filter(stderr_filter));
+fn init_logging() -> InitLogging {
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let (stderr_filter, reload_stderr_filter) = tracing_subscriber::reload::Layer::new(
+        EnvFilter::builder()
+            .with_default_directive("info".parse().unwrap())
+            .from_env()
+            .unwrap(),
+    );
+
+    let (line_sub, line_rx) = librqbit::log_subscriber::Subscriber::new();
+
+    let layered = tracing_subscriber::registry()
+        .with(fmt::layer().with_filter(stderr_filter))
+        .with(
+            fmt::layer()
+                .with_ansi(false)
+                .fmt_fields(tracing_subscriber::fmt::format::DefaultFields::new().delimited(","))
+                .event_format(fmt::format().with_ansi(false))
+                .with_writer(line_sub)
+                .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
+        );
     layered.init();
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -321,7 +348,10 @@ fn init_logging() -> tokio::sync::mpsc::UnboundedSender<String> {
             Ok(())
         },
     );
-    reload_tx
+    InitLogging {
+        reload_stdout_tx: reload_tx,
+        line_rx,
+    }
 }
 
 async fn start() {

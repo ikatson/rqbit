@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfigDht {
     pub disable: bool,
     pub disable_persistence: bool,
@@ -26,6 +27,7 @@ impl Default for RqbitDesktopConfigDht {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfigTcpListen {
     pub disable: bool,
     pub min_port: u16,
@@ -44,6 +46,7 @@ impl Default for RqbitDesktopConfigTcpListen {
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfigPersistence {
     pub disable: bool,
     pub filename: PathBuf,
@@ -60,6 +63,7 @@ impl Default for RqbitDesktopConfigPersistence {
 
 #[serde_as]
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfigPeerOpts {
     #[serde_as(as = "serde_with::DurationSeconds")]
     pub connect_timeout: Duration,
@@ -79,10 +83,12 @@ impl Default for RqbitDesktopConfigPeerOpts {
 
 #[serde_as]
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfigHttpApi {
     pub disable: bool,
     pub listen_addr: SocketAddr,
     pub read_only: bool,
+    pub cors_enable_all: bool,
 }
 
 impl Default for RqbitDesktopConfigHttpApi {
@@ -91,16 +97,19 @@ impl Default for RqbitDesktopConfigHttpApi {
             disable: Default::default(),
             listen_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 3030)),
             read_only: false,
+            cors_enable_all: true,
         }
     }
 }
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfigUpnp {
     pub disable: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct RqbitDesktopConfig {
     pub default_download_location: PathBuf,
     pub dht: RqbitDesktopConfigDht,
