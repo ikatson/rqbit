@@ -323,8 +323,8 @@ fn init_logging() -> InitLogging {
         .with(
             fmt::layer()
                 .with_ansi(false)
-                .fmt_fields(tracing_subscriber::fmt::format::DefaultFields::new().delimited(","))
-                .event_format(fmt::format().with_ansi(false))
+                .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
+                .event_format(fmt::format().with_ansi(false).json())
                 .with_writer(line_sub)
                 .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
         );

@@ -262,12 +262,12 @@ impl HttpApi {
         };
 
         let app = app
-        .layer(cors_layer)
+            .layer(cors_layer)
             .layer(tower_http::trace::TraceLayer::new_for_http())
             .with_state(state)
             .into_make_service();
 
-        info!("starting HTTP server on {}", addr);
+        info!(%addr, "starting HTTP server");
 
         use tokio::net::TcpListener;
         let listener = TcpListener::bind(&addr)

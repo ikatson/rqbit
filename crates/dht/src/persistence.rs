@@ -152,9 +152,9 @@ impl PersistentDht {
                         tokio::time::sleep(dump_interval).await;
 
                         match dump_dht(&dht, &config_filename, &tempfile_name) {
-                            Ok(_) => debug!("dumped DHT to {:?}", &config_filename),
+                            Ok(_) => debug!(filename=?config_filename, "dumped DHT"),
                             Err(e) => {
-                                error!("error dumping DHT to {:?}: {:#}", &config_filename, e)
+                                error!(filename=?config_filename, "error dumping DHT: {:#}", e)
                             }
                         }
                     }
