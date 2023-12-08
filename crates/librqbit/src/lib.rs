@@ -29,6 +29,7 @@ mod dht_utils;
 mod file_ops;
 pub mod http_api;
 pub mod http_api_client;
+pub mod log_subscriber;
 mod peer_connection;
 mod peer_info_reader;
 mod session;

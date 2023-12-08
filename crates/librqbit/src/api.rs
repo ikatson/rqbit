@@ -2,11 +2,14 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use buffers::ByteString;
+use bytes::Bytes;
 use dht::{DhtStats, Id20};
+use futures::Stream;
 use http::StatusCode;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing::warn;
 
 use crate::{
@@ -30,13 +33,19 @@ pub type Result<T> = std::result::Result<T, ApiError>;
 pub struct Api {
     session: Arc<Session>,
     rust_log_reload_tx: Option<UnboundedSender<String>>,
+    line_rx: Option<Arc<tokio::sync::broadcast::Receiver<Bytes>>>,
 }
 
 impl Api {
-    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
+    pub fn new(
+        session: Arc<Session>,
+        rust_log_reload_tx: Option<UnboundedSender<String>>,
+        line_rx: Option<tokio::sync::broadcast::Receiver<Bytes>>,
+    ) -> Self {
         Self {
             session,
             rust_log_reload_tx,
+            line_rx: line_rx.map(Arc::new),
         }
     }
 
@@ -121,6 +130,21 @@ impl Api {
         tx.send(new_value)
             .context("noone is listening to RUST_LOG changes")?;
         Ok(Default::default())
+    }
+
+    pub fn api_log_lines_stream(
+        &self,
+    ) -> Result<
+        impl Stream<Item = std::result::Result<bytes::Bytes, BroadcastStreamRecvError>>
+            + Send
+            + Sync
+            + 'static,
+    > {
+        Ok(self
+            .line_rx
+            .as_ref()
+            .map(|rx| BroadcastStream::new(rx.resubscribe()))
+            .context("line_rx wasn't set")?)
     }
 
     pub async fn api_add_torrent(

@@ -178,8 +178,13 @@ enum SubCommand {
     Download(DownloadOpts),
 }
 
+struct InitLoggingResult {
+    rust_log_reload_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    line_rx: tokio::sync::broadcast::Receiver<bytes::Bytes>,
+}
+
 // Init logging and make a channel to send new RUST_LOG values to.
-fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
+fn init_logging(opts: &Opts) -> InitLoggingResult {
     let default_rust_log = match opts.log_level.as_ref() {
         Some(level) => match level {
             LogLevel::Trace => "trace",
@@ -203,6 +208,8 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
         tracing_subscriber::reload::Layer::new(stderr_filter);
 
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    let (line_sub, line_rx) = librqbit::log_subscriber::Subscriber::new();
 
     #[cfg(feature = "tokio-console")]
     {
@@ -230,7 +237,14 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
 
     #[cfg(not(feature = "tokio-console"))]
     {
-        let layered = tracing_subscriber::registry().with(fmt::layer().with_filter(stderr_filter));
+        let layered = tracing_subscriber::registry()
+            .with(fmt::layer().with_filter(stderr_filter))
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(line_sub)
+                    .with_filter(EnvFilter::builder().parse("info").unwrap()),
+            );
         if let Some(log_file) = &opts.log_file {
             let log_file = log_file.clone();
             let log_file = move || {
@@ -276,7 +290,10 @@ fn init_logging(opts: &Opts) -> tokio::sync::mpsc::UnboundedSender<String> {
             Ok(())
         },
     );
-    reload_tx
+    InitLoggingResult {
+        rust_log_reload_tx: reload_tx,
+        line_rx,
+    }
 }
 
 fn _start_deadlock_detector_thread() {
@@ -332,7 +349,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(opts: Opts) -> anyhow::Result<()> {
-    let logging_reload_tx = init_logging(&opts);
+    let log_config = init_logging(&opts);
 
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
@@ -427,7 +444,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let http_api = HttpApi::new(session, Some(logging_reload_tx));
+                let http_api = HttpApi::new(
+                    session,
+                    Some(log_config.rust_log_reload_tx),
+                    Some(log_config.line_rx),
+                );
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
                     .make_http_api_and_run(http_api_listen_addr, false)
@@ -507,14 +528,16 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
-                let http_api = HttpApi::new(session.clone(), Some(logging_reload_tx));
+                let http_api = HttpApi::new(
+                    session.clone(),
+                    Some(log_config.rust_log_reload_tx),
+                    Some(log_config.line_rx),
+                );
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 librqbit_spawn(
                     "http_api",
                     error_span!("http_api"),
-                    http_api
-                        .clone()
-                        .make_http_api_and_run(http_api_listen_addr, true),
+                    http_api.make_http_api_and_run(http_api_listen_addr, true),
                 );
 
                 let mut added = false;

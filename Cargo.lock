@@ -1262,6 +1262,7 @@ dependencies = [
  "bincode",
  "bitvec",
  "byteorder",
+ "bytes",
  "crypto-hash",
  "dashmap",
  "futures",
@@ -2008,6 +2009,7 @@ name = "rqbit"
 version = "5.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "console-subscriber",
  "futures",

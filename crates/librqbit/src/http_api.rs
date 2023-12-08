@@ -3,6 +3,7 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use futures::StreamExt;
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
@@ -25,15 +26,18 @@ type ApiState = Arc<Api>;
 use crate::api::Result;
 
 /// An HTTP server for the API.
-#[derive(Clone)]
 pub struct HttpApi {
     inner: ApiState,
 }
 
 impl HttpApi {
-    pub fn new(session: Arc<Session>, rust_log_reload_tx: Option<UnboundedSender<String>>) -> Self {
+    pub fn new(
+        session: Arc<Session>,
+        rust_log_reload_tx: Option<UnboundedSender<String>>,
+        line_rx: Option<tokio::sync::broadcast::Receiver<Bytes>>,
+    ) -> Self {
         Self {
-            inner: Arc::new(Api::new(session, rust_log_reload_tx)),
+            inner: Arc::new(Api::new(session, rust_log_reload_tx, line_rx)),
         }
     }
 
@@ -185,8 +189,14 @@ impl HttpApi {
             state.api_set_rust_log(new_value).map(axum::Json)
         }
 
+        async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+            let s = state.api_log_lines_stream()?;
+            Ok(axum::body::Body::from_stream(s))
+        }
+
         let mut app = Router::new()
             .route("/", get(api_root))
+            .route("/stream_logs", get(stream_logs))
             .route("/rust_log", post(set_rust_log))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
