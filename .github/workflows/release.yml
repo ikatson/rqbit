@@ -12,102 +12,112 @@ jobs:
   release-windows:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: install Tauri
-      run:
-        cargo install tauri-cli --profile dev
-    - name: npm install (desktop)
-      working-directory: desktop
-      run:
-        npm install
-    - name: npm install (librqbit/webui)
-      working-directory: crates/librqbit/webui
-      run:
-        npm install
-    - name: cargo tauri build
-      working-directory: desktop
-      run:
-        cargo tauri build --ci
+      - uses: actions/checkout@v2
+      - name: install Tauri
+        run: cargo install tauri-cli --profile dev
+      - name: npm install (desktop)
+        working-directory: desktop
+        run: npm install
+      - name: npm install (librqbit/webui)
+        working-directory: crates/librqbit/webui
+        run: npm install
 
-    - name: Build release
-      run:
-        cargo build --profile release-github
-    - uses: softprops/action-gh-release@v1
-      with:
-        generate_release_notes: true
-        files: |
-          target/release-github/rqbit.exe
-          desktop/src-tauri/target/release/bundle/msi/rqbit-desktop_5.0.0_x64_en-US.msi
+      - name: cargo tauri build
+        working-directory: desktop
+        run: cargo tauri build --ci
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            desktop/src-tauri/target/release/bundle/msi/rqbit-desktop_5.0.1_x64_en-US.msi
+
+      - name: Build release
+        run: cargo build --profile release-github
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/release-github/rqbit.exe
 
   cross-compile-on-macos:
     runs-on: macos-11
     steps:
-    - uses: actions/checkout@v2
-    - name: install linux cross compiler
-      run:
-        brew tap messense/macos-cross-toolchains &&
-        brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf
+      - uses: actions/checkout@v2
 
-    - name: install Tauri
-      run:
-        cargo install tauri-cli --profile dev
-    - name: npm install (desktop)
-      working-directory: desktop
-      run:
-        npm install
-    - name: npm install (librqbit/webui)
-      working-directory: crates/librqbit/webui
-      run:
-        npm install
-    - name: cargo tauri build
-      working-directory: desktop
-      run:
-        rustup target add aarch64-apple-darwin &&
-        cargo tauri build --target universal-apple-darwin --ci
+      - name: install Tauri
+        run: cargo install tauri-cli --profile dev
+      - name: npm install (desktop)
+        working-directory: desktop
+        run: npm install
+      - name: npm install (librqbit/webui)
+        working-directory: crates/librqbit/webui
+        run: npm install
 
-    - name: Make a directory for output artifacts
-      run:
-        mkdir -p target/artifacts
+      - name: cargo tauri build
+        working-directory: desktop
+        run: rustup target add aarch64-apple-darwin &&
+          cargo tauri build --target universal-apple-darwin --ci
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/rqbit-desktop_5.0.1_universal.dmg
 
-    - name: Build release linux x86_64 binary
-      run:
-        rustup target install x86_64-unknown-linux-gnu &&
-        make release-linux-x86_64 &&
-        mv target/x86_64-unknown-linux-gnu/release-github/rqbit target/artifacts/rqbit-linux-static-x86_64
+      - name: Make a directory for output artifacts
+        run: mkdir -p target/artifacts
 
-    - name: Build release linux armv6 binary
-      run:
-        rustup target install arm-unknown-linux-gnueabihf &&
-        make release-linux-armv6 &&
-        mv target/arm-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv6
+      - name: Build release OSX universal binary
+        run: rustup target install aarch64-apple-darwin &&
+          cargo build --profile release-github &&
+          cargo build --profile release-github --target aarch64-apple-darwin &&
+          lipo ./target/release-github/rqbit ./target/aarch64-apple-darwin/release-github/rqbit -create -output ./target/artifacts/rqbit-osx-universal
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/artifacts/rqbit-osx-universal
 
-    - name: Build release linux armv7 binary
-      run:
-        rustup target install armv7-unknown-linux-gnueabihf &&
-        make release-linux-armv7 &&
-        mv target/armv7-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv7
+      - name: install linux cross compiler
+        run: brew tap messense/macos-cross-toolchains &&
+          brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf
 
-    - name: Build release linux aarch64 binary
-      run:
-        rustup target install aarch64-unknown-linux-gnu &&
-        make release-linux-aarch64 &&
-        mv target/aarch64-unknown-linux-gnu/release-github/rqbit target/artifacts/rqbit-linux-static-aarch64
+      - name: Build release linux x86_64 binary
+        run: rustup target install x86_64-unknown-linux-gnu &&
+          make release-linux-x86_64 &&
+          mv target/x86_64-unknown-linux-gnu/release-github/rqbit target/artifacts/rqbit-linux-static-x86_64
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/artifacts/rqbit-linux-static-x86_64
 
-    - name: Build release OSX universal binary
-      run:
-        rustup target install aarch64-apple-darwin &&
-        cargo build --profile release-github &&
-        cargo build --profile release-github --target aarch64-apple-darwin &&
-        lipo ./target/release-github/rqbit ./target/aarch64-apple-darwin/release-github/rqbit -create -output ./target/artifacts/rqbit-osx-universal
+      - name: Build release linux armv6 binary
+        run: rustup target install arm-unknown-linux-gnueabihf &&
+          make release-linux-armv6 &&
+          mv target/arm-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv6
 
-    - uses: softprops/action-gh-release@v1
-      with:
-        generate_release_notes: true
-        files: |
-          target/artifacts/rqbit-osx-universal
-          target/artifacts/rqbit-linux-static-x86_64
-          target/artifacts/rqbit-linux-static-aarch64
-          target/artifacts/rqbit-linux-static-armv6
-          target/artifacts/rqbit-linux-static-armv7
-          desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/rqbit-desktop_5.0.0_universal.dmg
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/artifacts/rqbit-linux-static-armv6
 
+      - name: Build release linux armv7 binary
+        run: rustup target install armv7-unknown-linux-gnueabihf &&
+          make release-linux-armv7 &&
+          mv target/armv7-unknown-linux-gnueabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv7
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/artifacts/rqbit-linux-static-armv7
+
+      - name: Build release linux aarch64 binary
+        run: rustup target install aarch64-unknown-linux-gnu &&
+          make release-linux-aarch64 &&
+          mv target/aarch64-unknown-linux-gnu/release-github/rqbit target/artifacts/rqbit-linux-static-aarch64
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/artifacts/rqbit-linux-static-aarch64

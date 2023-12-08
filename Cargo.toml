@@ -22,5 +22,4 @@ debug = true
 
 [profile.release-github]
 inherits = "release"
-lto = true
 debug = false
