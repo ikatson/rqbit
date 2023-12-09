@@ -18,27 +18,25 @@ export const RqbitDesktop: React.FC<{
     currentState.config ?? defaultConfig
   );
   let [configurationOpened, setConfigurationOpened] = useState<boolean>(false);
-  let [logsOpened, setLogsOpened] = useState<boolean>(false);
+
+  const configButton = (
+    <IconButton
+      className="p-3 text-primary"
+      onClick={() => {
+        setConfigurationOpened(true);
+      }}
+    >
+      <BsSliders2 />
+    </IconButton>
+  );
 
   return (
     <APIContext.Provider value={makeAPI(config)}>
       {configured && (
-        <RqbitWebUI title={`Rqbit Desktop v${version}`}></RqbitWebUI>
-      )}
-      {configured && (
-        <div className="position-absolute top-0 start-0">
-          <IconButton
-            className="p-3 text-primary"
-            onClick={() => {
-              setConfigurationOpened(true);
-            }}
-          >
-            <BsSliders2 />
-          </IconButton>
-          <IconButton onClick={() => setLogsOpened(true)}>
-            <BsBodyText />
-          </IconButton>
-        </div>
+        <RqbitWebUI
+          title={`Rqbit Desktop v${version}`}
+          menuButtons={[configButton]}
+        ></RqbitWebUI>
       )}
       <ConfigModal
         show={!configured || configurationOpened}
@@ -56,7 +54,6 @@ export const RqbitDesktop: React.FC<{
         initialConfig={config}
         defaultConfig={defaultConfig}
       />
-      <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
     </APIContext.Provider>
   );
 };

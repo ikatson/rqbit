@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use anyhow::Context;
-use tracing::{debug, error, error_span, info, trace, warn};
+use tracing::{error, error_span, info, trace, warn};
 
 use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
@@ -86,8 +86,8 @@ impl PersistentDht {
         };
 
         info!(
-            "will store DHT routing table to {:?} periodically",
-            &config_filename
+            filename=?config_filename,
+            "will store DHT routing table periodically",
         );
 
         if let Some(parent) = config_filename.parent() {
@@ -100,13 +100,14 @@ impl PersistentDht {
                 let reader = BufReader::new(dht_json);
                 match serde_json::from_reader::<_, DhtSerialize<RoutingTable, PeerStore>>(reader) {
                     Ok(r) => {
-                        info!("loaded DHT routing table from {:?}", &config_filename);
+                        info!(filename=?config_filename, "loaded DHT routing table from");
                         Some(r)
                     }
                     Err(e) => {
                         warn!(
-                            "cannot deserialize routing table from file {:?}: {:#}",
-                            &config_filename, e
+                            filename=?config_filename,
+                            "cannot deserialize routing table: {:#}",
+                            e
                         );
                         None
                     }
@@ -152,7 +153,7 @@ impl PersistentDht {
                         tokio::time::sleep(dump_interval).await;
 
                         match dump_dht(&dht, &config_filename, &tempfile_name) {
-                            Ok(_) => debug!(filename=?config_filename, "dumped DHT"),
+                            Ok(_) => trace!(filename=?config_filename, "dumped DHT"),
                             Err(e) => {
                                 error!(filename=?config_filename, "error dumping DHT: {:#}", e)
                             }

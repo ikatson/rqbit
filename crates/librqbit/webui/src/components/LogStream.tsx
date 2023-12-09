@@ -1,6 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ErrorWithLabel } from "../rqbit-web";
 import { ErrorComponent } from "./ErrorComponent";
+import { Form } from "react-bootstrap";
 
 interface LogStreamProps {
   httpApiBase: string;
@@ -10,6 +17,8 @@ interface LogStreamProps {
 interface Line {
   id: number;
   content: string;
+  parsed: JSONLogLine;
+  show: boolean;
 }
 
 const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
@@ -21,13 +30,13 @@ const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
 
 const streamLogs = (
   httpApiBase: string,
-  addLine: (text: string) => void,
+  addLine: React.MutableRefObject<(text: string) => void>,
   setError: (error: ErrorWithLabel | null) => void
 ): (() => void) => {
   const controller = new AbortController();
   const signal = controller.signal;
 
-  let canceled = true;
+  let canceled = false;
 
   const cancel = () => {
     console.log("cancelling fetch");
@@ -90,7 +99,7 @@ const streamLogs = (
         }
         let lineBytes = buffer.slice(0, newLineIdx);
         let line = new TextDecoder().decode(lineBytes);
-        addLine(line);
+        addLine.current(line);
         buffer = buffer.slice(newLineIdx + 1);
       }
     }
@@ -139,8 +148,8 @@ const EXAMPLE_LOG_JSON: JSONLogLine = {
   ],
 };
 
-const LogLine = ({ line }: { line: string }) => {
-  let parsed: JSONLogLine = JSON.parse(line);
+const LogLine = ({ line }: { line: Line }) => {
+  const parsed = line.parsed;
 
   const classNameByLevel = (level: string) => {
     switch (level) {
@@ -168,9 +177,9 @@ const LogLine = ({ line }: { line: string }) => {
         {fields
           .map(([name, value]) => {
             return (
-              <>
+              <span key={name}>
                 {name} = {value}
-              </>
+              </span>
             );
           })
           .reduce((prev, curr) => (
@@ -184,16 +193,20 @@ const LogLine = ({ line }: { line: string }) => {
   };
 
   return (
-    <p className="font-monospace m-0 text-break" style={{ fontSize: "10px" }}>
+    <p
+      hidden={!line.show}
+      className="font-monospace m-0 text-break"
+      style={{ fontSize: "10px" }}
+    >
       <span className="m-1">{parsed.timestamp}</span>
       <span className={`m-1 ${classNameByLevel(parsed.level)}`}>
         {parsed.level}
       </span>
 
-      <span className="fw-bold m-1">
-        {parsed.spans.map((span, i) => (
+      <span className="m-1">
+        {parsed.spans?.map((span, i) => (
           <span key={i}>
-            {span.name}
+            <span className="fw-bold">{span.name}</span>
             {spanFields(span)}:
           </span>
         ))}
@@ -201,15 +214,17 @@ const LogLine = ({ line }: { line: string }) => {
       <span className="m-1 text-muted">{parsed.target}</span>
       <span
         className={`m-1 ${
-          parsed.fields.message.match(/error|fail/g) ? "text-danger" : ""
+          parsed.fields.message.match(/error|fail/g)
+            ? "text-danger"
+            : "text-muted"
         }`}
       >
         {parsed.fields.message}
         {Object.entries(parsed.fields)
           .filter(([key, value]) => key != "message")
           .map(([key, value]) => (
-            <span className="m-1">
-              {key}={value}
+            <span className="m-1" key={key}>
+              <span className="fst-italic fw-bold">{key}</span>={value}
             </span>
           ))}
       </span>
@@ -223,32 +238,72 @@ export const LogStream: React.FC<LogStreamProps> = ({
 }) => {
   const [logLines, setLogLines] = useState<Line[]>([]);
   const [error, setError] = useState<ErrorWithLabel | null>(null);
+  const [filter, setFilter] = useState<string>("");
+  const filterRegex = useRef(new RegExp(""));
+
   const maxL = maxLines ?? 1000;
 
-  const addLine = (text: string) => {
-    setLogLines((logLines: Line[]) => {
-      const nextLineId = logLines.length == 0 ? 0 : logLines[0].id + 1;
+  const addLine = useCallback(
+    (text: string) => {
+      setLogLines((logLines: Line[]) => {
+        const nextLineId = logLines.length == 0 ? 0 : logLines[0].id + 1;
 
-      let newLogLines = [
-        {
-          id: nextLineId,
-          content: text,
-        },
-        ...logLines.slice(0, maxL - 1),
-      ];
-      return newLogLines;
-    });
+        let newLogLines = [
+          {
+            id: nextLineId,
+            content: text,
+            parsed: JSON.parse(text) as JSONLogLine,
+            show: !!text.match(filterRegex.current),
+          },
+          ...logLines.slice(0, maxL - 1),
+        ];
+        return newLogLines;
+      });
+    },
+    [filterRegex.current, maxLines]
+  );
+
+  const addLineRef = useRef(addLine);
+  addLineRef.current = addLine;
+
+  const handleFilterChange = (value: string) => {
+    setFilter(value);
+    try {
+      let regex = new RegExp(value);
+      filterRegex.current = regex;
+      setLogLines((logLines) => {
+        let tmp = [...logLines];
+        for (let line of tmp) {
+          line.show = !!line.content.match(regex);
+        }
+        return tmp;
+      });
+    } catch (e) {}
   };
 
   useEffect(() => {
-    return streamLogs(httpApiBase, addLine, setError);
+    return streamLogs(httpApiBase, addLineRef, setError);
   }, [httpApiBase]);
 
   return (
     <div className="row">
       <ErrorComponent error={error} />
+      <div className="mb-3">
+        Showing last {maxL} logs since this window was opened
+      </div>
+      <Form>
+        <Form.Group className="mb-3">
+          <Form.Control
+            type="text"
+            value={filter}
+            placeholder="Enter filter (regex)"
+            onChange={(e) => handleFilterChange(e.target.value)}
+          />
+        </Form.Group>
+      </Form>
+
       {logLines.map((line) => (
-        <LogLine key={line.id} line={line.content} />
+        <LogLine key={line.id} line={line} />
       ))}
     </div>
   );

@@ -29,12 +29,12 @@ mod dht_utils;
 mod file_ops;
 pub mod http_api;
 pub mod http_api_client;
-pub mod tracing_subscriber_config_utils;
 mod peer_connection;
 mod peer_info_reader;
 mod session;
 mod spawn_utils;
 mod torrent_state;
+pub mod tracing_subscriber_config_utils;
 mod tracker_comms;
 mod type_aliases;
 

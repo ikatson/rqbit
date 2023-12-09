@@ -725,7 +725,7 @@ impl Session {
 
         std::fs::rename(&tmp_filename, &self.persistence_filename)
             .context("error renaming persistence file")?;
-        debug!("wrote persistence to {:?}", &self.persistence_filename);
+        trace!(filename=?self.persistence_filename, "wrote persistence");
         Ok(())
     }
 
@@ -779,7 +779,7 @@ impl Session {
                     })
                     .collect();
 
-                debug!("querying DHT for {:?}", info_hash);
+                debug!(?info_hash, "querying DHT");
                 let (info, dht_rx, initial_peers) = match read_metainfo_from_peer_receiver(
                     self.peer_id,
                     info_hash,
@@ -794,7 +794,7 @@ impl Session {
                         anyhow::bail!("DHT died, no way to discover torrent metainfo")
                     }
                 };
-                debug!("received result from DHT: {:?}", info);
+                debug!(?info, "received result from DHT");
                 (
                     info_hash,
                     info,
@@ -828,7 +828,7 @@ impl Session {
 
                 let dht_rx = match self.dht.as_ref() {
                     Some(dht) if !opts.paused && !opts.list_only => {
-                        debug!("reading peers for {:?} from DHT", torrent.info_hash);
+                        debug!(info_hash=?torrent.info_hash, "reading peers from DHT");
                         Some(dht.get_peers(torrent.info_hash, announce_port)?)
                     }
                     _ => None,
@@ -911,7 +911,7 @@ impl Session {
                                 continue;
                             }
                             if !list_only {
-                                info!("Will download {:?}", filename);
+                                info!(?filename, "will download");
                             }
                         }
                         Ok(Some(only_files))
@@ -1043,14 +1043,14 @@ impl Session {
         match (paused, delete_files) {
             (Err(e), true) => Err(e).context("torrent deleted, but could not delete files"),
             (Err(e), false) => {
-                warn!("could not delete torrent files: {:?}", e);
+                warn!(error=?e, "could not delete torrent files");
                 Ok(())
             }
             (Ok(Some(paused)), true) => {
                 drop(paused.files);
                 for file in paused.filenames {
                     if let Err(e) = std::fs::remove_file(&file) {
-                        warn!("could not delete file {:?}: {:?}", file, e);
+                        warn!(?file, error=?e, "could not delete file");
                     }
                 }
                 Ok(())
