@@ -837,10 +837,10 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             }
             Message::Have(h) => self.on_have(h),
             Message::NotInterested => {
-                debug!("received \"not interested\", but we don't process it yet")
+                trace!("received \"not interested\", but we don't process it yet")
             }
             Message::Cancel(_) => {
-                debug!("received \"cancel\", but we don't process it yet")
+                trace!("received \"cancel\", but we don't process it yet")
             }
             message => {
                 warn!("received unsupported message {:?}, ignoring", message);
@@ -1306,7 +1306,7 @@ impl PeerHandler {
     }
 
     fn on_i_am_unchoked(&self) {
-        debug!("we are unchoked");
+        trace!("we are unchoked");
         self.locked.write().i_am_choked = false;
         self.unchoke_notify.notify_waiters();
         self.requests_sem.add_permits(16);

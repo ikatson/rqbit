@@ -116,6 +116,48 @@ export interface AddTorrentOptions {
   preferred_id?: number | null;
 }
 
+export type Value = string | number | boolean;
+
+export interface Span {
+  name: string;
+  [key: string]: Value;
+}
+
+/*
+Example log line
+
+const EXAMPLE_LOG_JSON: JSONLogLine = {
+  timestamp: "2023-12-08T21:48:13.649165Z",
+  level: "DEBUG",
+  fields: { message: "successfully port forwarded 192.168.0.112:4225" },
+  target: "librqbit_upnp",
+  span: { port: 4225, name: "manage_port" },
+  spans: [
+    { port: 4225, name: "upnp_forward" },
+    {
+      location: "http://192.168.0.1:49152/IGDdevicedesc_brlan0.xml",
+      name: "upnp_endpoint",
+    },
+    { device: "ARRIS TG3492LG", name: "device" },
+    { device: "WANDevice:1", name: "device" },
+    { device: "WANConnectionDevice:1", name: "device" },
+    { url: "/upnp/control/WANIPConnection0", name: "service" },
+    { port: 4225, name: "manage_port" },
+  ],
+};
+*/
+export interface JSONLogLine {
+  level: string;
+  timestamp: string;
+  fields: {
+    message: string;
+    [key: string]: Value;
+  };
+  target: string;
+  span: Span;
+  spans: Span[];
+}
+
 export interface RqbitAPI {
   getHttpBaseUrl: () => string | null;
   listTorrents: () => Promise<ListTorrentsResponse>;

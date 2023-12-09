@@ -8,13 +8,17 @@ import React, {
 import { ErrorWithLabel } from "../rqbit-web";
 import { ErrorComponent } from "./ErrorComponent";
 import { Form } from "react-bootstrap";
+import { loopUntilSuccess } from "../helper/loopUntilSuccess";
+import debounce from "lodash.debounce";
+import { LogLine } from "./LogLine";
+import { JSONLogLine } from "../api-types";
 
 interface LogStreamProps {
   httpApiBase: string;
   maxLines?: number;
 }
 
-interface Line {
+export interface Line {
   id: number;
   content: string;
   parsed: JSONLogLine;
@@ -22,6 +26,12 @@ interface Line {
 }
 
 const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
+  if (a1.length === 0) {
+    return a2;
+  }
+  if (a2.length === 0) {
+    return a1;
+  }
   const merged = new Uint8Array(a1.length + a2.length);
   merged.set(a1);
   merged.set(a2, a1.length);
@@ -30,7 +40,7 @@ const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
 
 const streamLogs = (
   httpApiBase: string,
-  addLine: React.MutableRefObject<(text: string) => void>,
+  addLine: (text: string) => void,
   setError: (error: ErrorWithLabel | null) => void
 ): (() => void) => {
   const controller = new AbortController();
@@ -38,28 +48,14 @@ const streamLogs = (
 
   let canceled = false;
 
-  const cancel = () => {
+  const cancelFetch = () => {
     console.log("cancelling fetch");
     canceled = true;
     controller.abort();
   };
 
-  const run = async () => {
-    let response = null;
-    try {
-      response = await fetch(httpApiBase + "/stream_logs", { signal });
-    } catch (e: any) {
-      if (canceled) {
-        return;
-      }
-      setError({
-        text: "network error fetching logs",
-        details: {
-          text: e.toString(),
-        },
-      });
-      return null;
-    }
+  const runOnce = async () => {
+    let response = await fetch(httpApiBase + "/stream_logs", { signal });
 
     if (!response.ok) {
       let text = await response.text();
@@ -70,14 +66,17 @@ const streamLogs = (
           text,
         },
       });
+      throw new Error("retry");
     }
 
     if (!response.body) {
       setError({
         text: "error fetching logs: ReadableStream not supported.",
       });
-      throw new Error("ReadableStream not supported.");
+      return;
     }
+
+    setError(null);
 
     const reader = response.body.getReader();
 
@@ -86,150 +85,47 @@ const streamLogs = (
       const { done, value } = await reader.read();
 
       if (done) {
-        // Handle stream completion or errors
-        break;
+        setError({
+          text: "log stream terminated",
+        });
+        throw new Error("retry");
       }
 
       buffer = mergeBuffers(buffer, value);
 
-      while (true) {
-        const newLineIdx = buffer.indexOf(10);
-        if (newLineIdx === -1) {
-          break;
-        }
+      for (let newLineIdx: number; (newLineIdx = buffer.indexOf(10)) !== -1; ) {
         let lineBytes = buffer.slice(0, newLineIdx);
         let line = new TextDecoder().decode(lineBytes);
-        addLine.current(line);
+        addLine(line);
         buffer = buffer.slice(newLineIdx + 1);
       }
     }
   };
-  run();
 
-  return cancel;
-};
-
-type Value = string | number | boolean;
-
-interface Span {
-  name: string;
-  [key: string]: Value;
-}
-
-interface JSONLogLine {
-  level: string;
-  timestamp: string;
-  fields: {
-    message: string;
-    [key: string]: Value;
-  };
-  target: string;
-  span: Span;
-  spans: Span[];
-}
-
-const EXAMPLE_LOG_JSON: JSONLogLine = {
-  timestamp: "2023-12-08T21:48:13.649165Z",
-  level: "DEBUG",
-  fields: { message: "successfully port forwarded 192.168.0.112:4225" },
-  target: "librqbit_upnp",
-  span: { port: 4225, name: "manage_port" },
-  spans: [
-    { port: 4225, name: "upnp_forward" },
-    {
-      location: "http://192.168.0.1:49152/IGDdevicedesc_brlan0.xml",
-      name: "upnp_endpoint",
-    },
-    { device: "ARRIS TG3492LG", name: "device" },
-    { device: "WANDevice:1", name: "device" },
-    { device: "WANConnectionDevice:1", name: "device" },
-    { url: "/upnp/control/WANIPConnection0", name: "service" },
-    { port: 4225, name: "manage_port" },
-  ],
-};
-
-const LogLine = ({ line }: { line: Line }) => {
-  const parsed = line.parsed;
-
-  const classNameByLevel = (level: string) => {
-    switch (level) {
-      case "DEBUG":
-        return "text-primary";
-      case "INFO":
-        return "text-success";
-      case "WARN":
-        return "text-warning";
-      case "ERROR":
-        return "text-danger";
-      default:
-        return "text-muted";
-    }
-  };
-
-  const spanFields = (span: Span) => {
-    let fields = Object.entries(span).filter(([name, value]) => name != "name");
-    if (fields.length == 0) {
-      return null;
-    }
-    return (
-      <>
-        {"{"}
-        {fields
-          .map(([name, value]) => {
-            return (
-              <span key={name}>
-                {name} = {value}
-              </span>
-            );
-          })
-          .reduce((prev, curr) => (
-            <>
-              {prev}, {curr}
-            </>
-          ))}
-        {"}"}
-      </>
-    );
-  };
-
-  return (
-    <p
-      hidden={!line.show}
-      className="font-monospace m-0 text-break"
-      style={{ fontSize: "10px" }}
-    >
-      <span className="m-1">{parsed.timestamp}</span>
-      <span className={`m-1 ${classNameByLevel(parsed.level)}`}>
-        {parsed.level}
-      </span>
-
-      <span className="m-1">
-        {parsed.spans?.map((span, i) => (
-          <span key={i}>
-            <span className="fw-bold">{span.name}</span>
-            {spanFields(span)}:
-          </span>
-        ))}
-      </span>
-      <span className="m-1 text-muted">{parsed.target}</span>
-      <span
-        className={`m-1 ${
-          parsed.fields.message.match(/error|fail/g)
-            ? "text-danger"
-            : "text-muted"
-        }`}
-      >
-        {parsed.fields.message}
-        {Object.entries(parsed.fields)
-          .filter(([key, value]) => key != "message")
-          .map(([key, value]) => (
-            <span className="m-1" key={key}>
-              <span className="fst-italic fw-bold">{key}</span>={value}
-            </span>
-          ))}
-      </span>
-    </p>
+  let cancelLoop = loopUntilSuccess(
+    () =>
+      runOnce().then(
+        () => {},
+        (e) => {
+          if (canceled) {
+            return;
+          }
+          setError({
+            text: "error streaming logs",
+            details: {
+              text: e.toString(),
+            },
+          });
+          throw e;
+        }
+      ),
+    1000
   );
+
+  return () => {
+    cancelFetch();
+    cancelLoop();
+  };
 };
 
 export const LogStream: React.FC<LogStreamProps> = ({
@@ -239,7 +135,7 @@ export const LogStream: React.FC<LogStreamProps> = ({
   const [logLines, setLogLines] = useState<Line[]>([]);
   const [error, setError] = useState<ErrorWithLabel | null>(null);
   const [filter, setFilter] = useState<string>("");
-  const filterRegex = useRef(new RegExp(""));
+  const filterRegex = useRef<RegExp | null>(null);
 
   const maxL = maxLines ?? 1000;
 
@@ -253,7 +149,9 @@ export const LogStream: React.FC<LogStreamProps> = ({
             id: nextLineId,
             content: text,
             parsed: JSON.parse(text) as JSONLogLine,
-            show: !!text.match(filterRegex.current),
+            show: filterRegex.current
+              ? !!text.match(filterRegex.current)
+              : true,
           },
           ...logLines.slice(0, maxL - 1),
         ];
@@ -266,27 +164,40 @@ export const LogStream: React.FC<LogStreamProps> = ({
   const addLineRef = useRef(addLine);
   addLineRef.current = addLine;
 
+  const updateFilter = debounce((value: string) => {
+    let regex: RegExp | null = null;
+    try {
+      regex = new RegExp(value);
+    } catch (e) {
+      return;
+    }
+    filterRegex.current = regex;
+    setLogLines((logLines) => {
+      let tmp = [...logLines];
+      for (let line of tmp) {
+        line.show = !!line.content.match(regex as RegExp);
+      }
+      return tmp;
+    });
+  }, 200);
+
   const handleFilterChange = (value: string) => {
     setFilter(value);
-    try {
-      let regex = new RegExp(value);
-      filterRegex.current = regex;
-      setLogLines((logLines) => {
-        let tmp = [...logLines];
-        for (let line of tmp) {
-          line.show = !!line.content.match(regex);
-        }
-        return tmp;
-      });
-    } catch (e) {}
+    updateFilter(value);
   };
 
+  useEffect(() => updateFilter.cancel, []);
+
   useEffect(() => {
-    return streamLogs(httpApiBase, addLineRef, setError);
+    return streamLogs(
+      httpApiBase,
+      (line) => addLineRef.current(line),
+      setError
+    );
   }, [httpApiBase]);
 
   return (
-    <div className="row">
+    <div>
       <ErrorComponent error={error} />
       <div className="mb-3">
         Showing last {maxL} logs since this window was opened
@@ -296,6 +207,7 @@ export const LogStream: React.FC<LogStreamProps> = ({
           <Form.Control
             type="text"
             value={filter}
+            name="filter"
             placeholder="Enter filter (regex)"
             onChange={(e) => handleFilterChange(e.target.value)}
           />
@@ -303,7 +215,9 @@ export const LogStream: React.FC<LogStreamProps> = ({
       </Form>
 
       {logLines.map((line) => (
-        <LogLine key={line.id} line={line} />
+        <div hidden={!line.show}>
+          <LogLine key={line.id} line={line.parsed} />
+        </div>
       ))}
     </div>
   );
