@@ -11,7 +11,7 @@ interface Props {
 
 export const LogStreamModal: React.FC<Props> = ({ show, onClose }) => {
   const api = useContext(APIContext);
-  const apiBase = api.getHttpBaseUrl();
+  let logsUrl = api.getStreamLogsUrl();
 
   return (
     <Modal size="xl" show={show} onHide={onClose}>
@@ -19,8 +19,8 @@ export const LogStreamModal: React.FC<Props> = ({ show, onClose }) => {
         <Modal.Title>rqbit server logs</Modal.Title>
       </Modal.Header>
       <Modal.Body>
-        {apiBase ? (
-          <LogStream httpApiBase={apiBase} />
+        {logsUrl ? (
+          <LogStream url={logsUrl} />
         ) : (
           <ErrorComponent
             error={{ text: "HTTP API not available to stream logs" }}

@@ -27,8 +27,8 @@ export const APIContext = createContext<RqbitAPI>({
   delete: () => {
     throw new Error("Function not implemented.");
   },
-  getHttpBaseUrl: () => {
-    throw new Error("Function not implemented.");
+  getStreamLogsUrl: () => {
+    return null;
   },
 });
 export const AppContext = createContext<ContextType>({

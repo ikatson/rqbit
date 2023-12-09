@@ -14,7 +14,7 @@ import { LogLine } from "./LogLine";
 import { JSONLogLine } from "../api-types";
 
 interface LogStreamProps {
-  httpApiBase: string;
+  url: string;
   maxLines?: number;
 }
 
@@ -39,7 +39,7 @@ const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
 };
 
 const streamLogs = (
-  httpApiBase: string,
+  url: string,
   addLine: (text: string) => void,
   setError: (error: ErrorWithLabel | null) => void
 ): (() => void) => {
@@ -55,7 +55,7 @@ const streamLogs = (
   };
 
   const runOnce = async () => {
-    let response = await fetch(httpApiBase + "/stream_logs", { signal });
+    let response = await fetch(url, { signal });
 
     if (!response.ok) {
       let text = await response.text();
@@ -128,10 +128,7 @@ const streamLogs = (
   };
 };
 
-export const LogStream: React.FC<LogStreamProps> = ({
-  httpApiBase,
-  maxLines,
-}) => {
+export const LogStream: React.FC<LogStreamProps> = ({ url, maxLines }) => {
   const [logLines, setLogLines] = useState<Line[]>([]);
   const [error, setError] = useState<ErrorWithLabel | null>(null);
   const [filter, setFilter] = useState<string>("");
@@ -189,12 +186,8 @@ export const LogStream: React.FC<LogStreamProps> = ({
   useEffect(() => updateFilter.cancel, []);
 
   useEffect(() => {
-    return streamLogs(
-      httpApiBase,
-      (line) => addLineRef.current(line),
-      setError
-    );
-  }, [httpApiBase]);
+    return streamLogs(url, (line) => addLineRef.current(line), setError);
+  }, [url]);
 
   return (
     <div>

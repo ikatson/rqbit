@@ -69,10 +69,15 @@ async function readFileAsBase64(file: File): Promise<string> {
 
 export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
   return {
-    getHttpBaseUrl: () => {
-      return configuration.http_api.listen_addr
-        ? `http://${configuration.http_api.listen_addr}`
-        : null;
+    getStreamLogsUrl: () => {
+      if (!configuration.http_api.listen_addr) {
+        return null;
+      }
+      let port = configuration.http_api.listen_addr.split(":")[1];
+      if (!port) {
+        return null;
+      }
+      return `http://127.0.0.1:${port}/stream_logs`;
     },
     listTorrents: async function (): Promise<ListTorrentsResponse> {
       return await invokeAPI<ListTorrentsResponse>("torrents_list");
