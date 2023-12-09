@@ -1,7 +1,6 @@
 {
   "name": "rqbit",
   "private": true,
-  "version": "4.0.0-beta.3",
   "type": "module",
   "scripts": {
     "dev": "vite",

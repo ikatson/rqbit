@@ -6,8 +6,7 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "rqbit-desktop",
-    "version": "5.1.0"
+    "productName": "rqbit-desktop"
   },
   "tauri": {
     "allowlist": {
