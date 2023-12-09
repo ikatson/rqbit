@@ -66,7 +66,7 @@ const streamLogs = (
           text,
         },
       });
-      throw new Error("retry");
+      throw null;
     }
 
     if (!response.body) {
@@ -88,7 +88,7 @@ const streamLogs = (
         setError({
           text: "log stream terminated",
         });
-        throw new Error("retry");
+        throw null;
       }
 
       buffer = mergeBuffers(buffer, value);
@@ -108,6 +108,10 @@ const streamLogs = (
         () => {},
         (e) => {
           if (canceled) {
+            return;
+          }
+          if (e === null) {
+            // We already set the error.
             return;
           }
           setError({

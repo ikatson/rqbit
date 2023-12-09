@@ -3,13 +3,14 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use futures::TryStreamExt;
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use axum::Router;
 
@@ -187,7 +188,10 @@ impl HttpApi {
         }
 
         async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
-            let s = state.api_log_lines_stream()?;
+            let s = state.api_log_lines_stream()?.map_err(|e| {
+                debug!(error=%e, "stream_logs");
+                e
+            });
             Ok(axum::body::Body::from_stream(s))
         }
 
