@@ -29,7 +29,7 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            desktop/src-tauri/target/release/bundle/msi/rqbit-desktop_5.0.2_x64_en-US.msi
+            desktop/src-tauri/target/release/bundle/msi/rqbit-desktop_5.1.0_x64_en-US.msi
 
       - name: Build release
         run: cargo build --profile release-github
