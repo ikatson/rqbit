@@ -44,7 +44,7 @@ export const FileInput = () => {
         onClick={onClick}
         data={file}
         resetData={reset}
-        icon={<CgFileAdd />}
+        icon={<CgFileAdd color="blue" />}
       />
     </>
   );

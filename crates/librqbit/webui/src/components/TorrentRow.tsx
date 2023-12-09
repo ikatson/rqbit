@@ -1,14 +1,19 @@
-import { ProgressBar, Row, Spinner } from "react-bootstrap";
+import { ProgressBar } from "react-bootstrap";
+import {
+  MdDownload,
+  MdOutlineMotionPhotosPaused,
+  MdThumbUp,
+} from "react-icons/md";
+
+import { GoClock, GoFile, GoPeople } from "react-icons/go";
 import {
   TorrentDetails,
   TorrentStats,
   STATE_INITIALIZING,
   STATE_LIVE,
-  STATE_PAUSED,
 } from "../api-types";
 import { TorrentActions } from "./TorrentActions";
 import { Speed } from "./Speed";
-import { Column } from "./Column";
 import { formatBytes } from "../helper/formatBytes";
 import { getLargestFileName } from "../helper/getLargestFileName";
 import { getCompletionETA } from "../helper/getCompletionETA";
@@ -34,6 +39,7 @@ export const TorrentRow: React.FC<{
       : state == STATE_INITIALIZING
         ? "warning"
         : "primary";
+  const isDownloading = !!statsResponse?.live;
 
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;
@@ -54,53 +60,62 @@ export const TorrentRow: React.FC<{
   }
 
   return (
-    <Row className={classNames.join(" ")}>
-      <Column size={3} label="Name">
-        {detailsResponse ? (
-          <>
-            <div className="text-truncate">
-              {getLargestFileName(detailsResponse)}
-            </div>
-            {error && (
-              <p className="text-danger">
-                <strong>Error:</strong> {error}
-              </p>
-            )}
-          </>
+    <section className="w-full grid bg-white border grid-cols-12 p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm items-center gap-2">
+      <div className="col-span-1 p-2">
+        {finished ? (
+          <MdThumbUp className="w-12 h-full" color="green" />
+        ) : isDownloading ? (
+          <MdDownload className="w-12 h-full" color="green" />
         ) : (
-          <Spinner />
+          <MdOutlineMotionPhotosPaused className="w-12 h-full" />
         )}
-      </Column>
-      {statsResponse ? (
-        <>
-          <Column label="Size">{`${formatBytes(totalBytes)} `}</Column>
-          <Column
-            size={2}
-            label={state == STATE_PAUSED ? "Progress" : "Progress"}
-          >
-            <ProgressBar
-              now={progressPercentage}
-              label={progressLabel}
-              animated={isAnimated}
-              variant={progressBarVariant}
-            />
-          </Column>
-          <Column size={2} label="Speed">
-            <Speed statsResponse={statsResponse} />
-          </Column>
-          <Column label="ETA">{getCompletionETA(statsResponse)}</Column>
-          <Column size={2} label="Live / Seen">
-            {formatPeersString()}
-          </Column>
-          <Column label="Actions">
-            <TorrentActions id={id} statsResponse={statsResponse} />
-          </Column>
-        </>
-      ) : (
-        <Column label="Loading stats" size={8}>
-          <Spinner />
-        </Column>
+      </div>
+      <div className="text-left col-span-10">
+        {detailsResponse && (
+          <p className="text-left text-xl font-bold tracking-tight text-gray-900 truncate">
+            {getLargestFileName(detailsResponse)}
+          </p>
+        )}
+        {error ? (
+          <p className="text-danger">
+            <strong>Error:</strong> {error}
+          </p>
+        ) : (
+          <>
+            <div className="mt-3 mb-1">
+              <ProgressBar
+                now={progressPercentage}
+                label={progressLabel}
+                animated={isAnimated}
+                variant={progressBarVariant}
+              />
+            </div>
+            <div className="grid grid-flow-col gap-4 w-full justify-start  text-sm font-medium text-gray-500">
+              <p className="col-span-2 flex items-center">
+                <GoPeople /> {formatPeersString().toString()}
+              </p>
+              <p className="col-span-2 flex items-center">
+                <GoFile />
+                {formatBytes(progressBytes)}/{formatBytes(totalBytes)}
+              </p>
+              {statsResponse && (
+                <>
+                  <p className="col-span-2 flex items-center">
+                    <GoClock />
+                    {getCompletionETA(statsResponse)}
+                  </p>
+                  <Speed statsResponse={statsResponse} />
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+      {statsResponse && (
+        <div className="col-span-1">
+          <TorrentActions id={id} statsResponse={statsResponse} />
+        </div>
       )}
-    </Row>
+    </section>
   );
 };

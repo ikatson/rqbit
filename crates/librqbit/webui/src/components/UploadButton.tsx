@@ -13,7 +13,7 @@ export const UploadButton: React.FC<{
   data: string | File | null;
   resetData: () => void;
   variant: string;
-  icon: ReactNode
+  icon: ReactNode;
 }> = ({ buttonText, onClick, data, resetData, variant, icon }) => {
   const [loading, setLoading] = useState(false);
   const [listTorrentResponse, setListTorrentResponse] =
@@ -54,11 +54,14 @@ export const UploadButton: React.FC<{
 
   return (
     <>
-      <button onClick={onClick}  className='inline-flex gap-1  rounded-md hover:bg-blue-600 transition-colors duration-400 hover:text-white items-center p-1'>
+      <button
+        onClick={onClick}
+        className="inline-flex gap-1 border rounded-lg hover:bg-blue-600 transition-colors duration-500 hover:text-white items-center p-1"
+      >
         {icon}
         {buttonText}
-      </button> 
-            
+      </button>
+
       {data && (
         <FileSelectionModal
           onHide={clear}
