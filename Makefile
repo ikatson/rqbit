@@ -1,7 +1,4 @@
-OPENSSL_VERSION=3.1.1
-
-# I'm lazy to type "webui-build" so made it default
-all: webui-build
+all:
 
 @PHONY: webui-deps
 webui-deps:
@@ -61,28 +58,13 @@ release-windows:
 	# brew install mingw-w64
 	cargo build --target x86_64-pc-windows-gnu --profile release-github
 
-target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz:
-	mkdir -p target/openssl-linux
-	curl -L https://www.openssl.org/source/openssl-$(OPENSSL_VERSION).tar.gz -o $@
-
-target/openssl-linux/$(TARGET)/lib/libssl.a: target/openssl-linux/openssl-$(OPENSSL_VERSION).tar.gz
-	export OPENSSL_ROOT=$(PWD)/target/openssl-linux/$(TARGET)/ && \
-	mkdir -p $${OPENSSL_ROOT}/src && \
-	cd $${OPENSSL_ROOT}/src/ && \
-	tar xf ../../openssl-$(OPENSSL_VERSION).tar.gz && \
-	cd openssl-$(OPENSSL_VERSION) && \
-	./Configure $(OPENSSL_CONFIGURE_NAME) --prefix="$${OPENSSL_ROOT}" --openssldir="$${OPENSSL_ROOT}" no-shared \
-		--cross-compile-prefix=$(CROSS_COMPILE_PREFIX)- && \
-	make install_dev -j
-
 @PHONY: release-linux-current-target
-release-linux-current-target: target/openssl-linux/$(TARGET)/lib/libssl.a
+release-linux-current-target:
 	CC_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-gcc \
 	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
 	AR_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-ar \
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
-	OPENSSL_DIR=$(PWD)/target/openssl-linux/$(TARGET)/ \
-	cargo build  --profile release-github --target=$(TARGET)
+	cargo build  --profile release-github --target=$(TARGET) --features=openssl-vendored
 
 @PHONY: release-linux
 release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6 release-linux-armv7
@@ -93,7 +75,6 @@ release-linux-x86_64:
 	TARGET_SNAKE_CASE=x86_64_unknown_linux_gnu \
 	TARGET_SNAKE_UPPER_CASE=X86_64_UNKNOWN_LINUX_GNU \
 	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-gnu \
-	OPENSSL_CONFIGURE_NAME=linux-generic64 \
 	$(MAKE) release-linux-current-target
 
 @PHONY: release-linux-aarch64
@@ -102,7 +83,6 @@ release-linux-aarch64:
 	TARGET_SNAKE_CASE=aarch64_unknown_linux_gnu \
 	TARGET_SNAKE_UPPER_CASE=AARCH64_UNKNOWN_LINUX_GNU \
 	CROSS_COMPILE_PREFIX=aarch64-unknown-linux-gnu \
-	OPENSSL_CONFIGURE_NAME=linux-aarch64 \
 	$(MAKE) release-linux-current-target
 
 @PHONY: release-linux-armv6
@@ -111,7 +91,6 @@ release-linux-armv6:
 	TARGET_SNAKE_CASE=arm_unknown_linux_gnueabihf \
 	TARGET_SNAKE_UPPER_CASE=ARM_UNKNOWN_LINUX_GNUEABIHF \
 	CROSS_COMPILE_PREFIX=arm-linux-gnueabihf \
-	OPENSSL_CONFIGURE_NAME=linux-generic32 \
 	LDFLAGS=-latomic \
 	$(MAKE) release-linux-current-target
 
@@ -122,7 +101,6 @@ release-linux-armv7:
 	TARGET_SNAKE_CASE=armv7_unknown_linux_gnueabihf \
 	TARGET_SNAKE_UPPER_CASE=ARMV7_UNKNOWN_LINUX_GNUEABIHF \
 	CROSS_COMPILE_PREFIX=armv7-linux-gnueabihf \
-	OPENSSL_CONFIGURE_NAME=linux-generic32 \
 	$(MAKE) release-linux-current-target
 
 
