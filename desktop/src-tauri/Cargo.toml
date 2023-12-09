@@ -22,7 +22,7 @@ anyhow = "1.0.75"
 base64 = "0.21.5"
 http = "1.0.0"
 directories = "5.0.1"
-tracing-subscriber = {version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = {version = "0.3.18", features = ["env-filter", "json"] }
 tracing = "0.1"
 serde_with = "3.4.0"
 parking_lot = "0.12.1"

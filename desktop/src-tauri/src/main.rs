@@ -19,8 +19,7 @@ use librqbit::{
         TorrentStats,
     },
     dht::PersistentDhtConfig,
-    librqbit_spawn,
-    log_subscriber::LineBroadcast,
+    tracing_subscriber_config_utils::{init_logging, InitLoggingOptions, InitLoggingResult},
     AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
 };
 use parking_lot::RwLock;
@@ -35,12 +34,10 @@ struct StateShared {
     api: Option<Api>,
 }
 
-type RustLogReloadTx = tokio::sync::mpsc::UnboundedSender<String>;
-
 struct State {
     config_filename: String,
     shared: Arc<RwLock<Option<StateShared>>>,
-    init_logging: InitLogging,
+    init_logging: InitLoggingResult,
 }
 
 fn read_config(path: &str) -> anyhow::Result<RqbitDesktopConfig> {
@@ -65,7 +62,7 @@ fn write_config(path: &str, config: &RqbitDesktopConfig) -> anyhow::Result<()> {
 }
 
 async fn api_from_config(
-    init_logging: &InitLogging,
+    init_logging: &InitLoggingResult,
     config: &RqbitDesktopConfig,
 ) -> anyhow::Result<Api> {
     let session = Session::new_with_opts(
@@ -98,7 +95,7 @@ async fn api_from_config(
 
     let api = Api::new(
         session.clone(),
-        Some(init_logging.reload_stdout_tx.clone()),
+        Some(init_logging.rust_log_reload_tx.clone()),
         Some(init_logging.line_broadcast.clone()),
     );
 
@@ -118,7 +115,7 @@ async fn api_from_config(
 }
 
 impl State {
-    async fn new(init_logging: InitLogging) -> Self {
+    async fn new(init_logging: InitLoggingResult) -> Self {
         let config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
             .expect("directories::ProjectDirs::from")
             .config_dir()
@@ -302,64 +299,16 @@ fn get_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-struct InitLogging {
-    reload_stdout_tx: RustLogReloadTx,
-    line_broadcast: LineBroadcast,
-}
-
-fn init_logging() -> InitLogging {
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-    let (stderr_filter, reload_stderr_filter) = tracing_subscriber::reload::Layer::new(
-        EnvFilter::builder()
-            .with_default_directive("info".parse().unwrap())
-            .from_env()
-            .unwrap(),
-    );
-
-    let (line_sub, line_broadcast) = librqbit::log_subscriber::Subscriber::new();
-
-    let layered = tracing_subscriber::registry()
-        .with(fmt::layer().with_filter(stderr_filter))
-        .with(
-            fmt::layer()
-                .with_ansi(false)
-                .fmt_fields(tracing_subscriber::fmt::format::DefaultFields::new().delimited(","))
-                .event_format(fmt::format().with_ansi(false))
-                .with_writer(line_sub)
-                .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
-        );
-    layered.init();
-
-    let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    librqbit_spawn(
-        "fmt_filter_reloader",
-        error_span!("fmt_filter_reloader"),
-        async move {
-            while let Some(rust_log) = reload_rx.recv().await {
-                let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
-                        continue;
-                    }
-                };
-                eprintln!("setting RUST_LOG to {:?}", rust_log);
-                let _ = reload_stderr_filter.reload(stderr_env_filter);
-            }
-            Ok(())
-        },
-    );
-    InitLogging {
-        reload_stdout_tx: reload_tx,
-        line_broadcast,
-    }
-}
-
 async fn start() {
     tauri::async_runtime::set(tokio::runtime::Handle::current());
-    let rust_log_reload_tx = init_logging();
+    let init_logging_result = init_logging(InitLoggingOptions {
+        default_rust_log_value: Some("info"),
+        log_file: None,
+        log_file_rust_log: None,
+    })
+    .unwrap();
 
-    let state = State::new(rust_log_reload_tx).await;
+    let state = State::new(init_logging_result).await;
 
     tauri::Builder::default()
         .manage(state)

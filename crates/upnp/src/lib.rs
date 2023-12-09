@@ -105,11 +105,11 @@ async fn forward_port(
         .await
         .context("error reading response text")?;
 
-    trace!("AddPortMapping response: {} {}", status, response_text);
+    trace!(status = %status, text=response_text, "AddPortMapping response");
     if !status.is_success() {
         bail!("failed port forwarding: {}", status);
     } else {
-        debug!("successfully port forwarded {}:{}", local_ip, port);
+        debug!(%local_ip, port, "successfully port forwarded");
     }
     Ok(())
 }
@@ -155,7 +155,7 @@ impl Device {
     }
 
     pub fn span(&self, parent: tracing::Span) -> tracing::Span {
-        error_span!(parent: parent, "device", name = self.name())
+        error_span!(parent: parent, "device", device = self.name())
     }
 }
 
@@ -355,11 +355,11 @@ impl UpnpPortForwarder {
                     let response = match std::str::from_utf8(&buffer[..len]) {
                         Ok(response) => response,
                         Err(_) => {
-                            warn!("received invalid utf-8 from {addr}");
+                            warn!(%addr, "received invalid utf-8");
                             continue;
                         },
                     };
-                    trace!("received response from {addr}: {response}");
+                    trace!(%addr, response, "response");
                     match parse_upnp_discover_response(response, addr) {
                         Ok(r) => {
                             tx.send(r)?;

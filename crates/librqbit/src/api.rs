@@ -19,7 +19,8 @@ use crate::{
     torrent_state::{
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         ManagedTorrentHandle,
-    }, log_subscriber::LineBroadcast,
+    },
+    tracing_subscriber_config_utils::LineBroadcast,
 };
 
 pub use crate::torrent_state::stats::{LiveStats, TorrentStats};
@@ -39,12 +40,12 @@ impl Api {
     pub fn new(
         session: Arc<Session>,
         rust_log_reload_tx: Option<UnboundedSender<String>>,
-        line_broadcast: Option<LineBroadcast>
+        line_broadcast: Option<LineBroadcast>,
     ) -> Self {
         Self {
             session,
             rust_log_reload_tx,
-            line_broadcast
+            line_broadcast,
         }
     }
 
