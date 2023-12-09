@@ -3,7 +3,7 @@ import { FileInput } from "./FileInput";
 
 export const Buttons = () => {
   return (
-    <div id="buttons-container" className="mt-3">
+    <div id="buttons-container" className="flex gap-2">
       <MagnetInput />
       <FileInput />
     </div>

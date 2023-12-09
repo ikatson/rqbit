@@ -6,6 +6,7 @@ import { customSetInterval } from "./helper/customSetInterval";
 import { IconButton } from "./components/IconButton";
 import { BsBodyText } from "react-icons/bs";
 import { LogStreamModal } from "./components/LogStreamModal";
+import { Header } from "./components/Header";
 
 export interface ErrorWithLabel {
   text: string;
@@ -66,7 +67,7 @@ export const RqbitWebUI = (props: {
   return (
     <AppContext.Provider value={context}>
       <div className="text-center">
-        <h1 className="mt-3 mb-4">{props.title}</h1>
+        <Header title={props.title}/>
         <RootContent
           closeableError={closeableError}
           otherError={otherError}

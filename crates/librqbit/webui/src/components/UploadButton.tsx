@@ -1,5 +1,4 @@
-import { useContext, useEffect, useState } from "react";
-import { Button } from "react-bootstrap";
+import { ReactNode, useContext, useEffect, useState } from "react";
 import {
   AddTorrentResponse,
   ErrorDetails as ApiErrorDetails,
@@ -14,7 +13,8 @@ export const UploadButton: React.FC<{
   data: string | File | null;
   resetData: () => void;
   variant: string;
-}> = ({ buttonText, onClick, data, resetData, variant }) => {
+  icon: ReactNode
+}> = ({ buttonText, onClick, data, resetData, variant, icon }) => {
   const [loading, setLoading] = useState(false);
   const [listTorrentResponse, setListTorrentResponse] =
     useState<AddTorrentResponse | null>(null);
@@ -54,10 +54,11 @@ export const UploadButton: React.FC<{
 
   return (
     <>
-      <Button variant={variant} onClick={onClick} className="m-1">
+      <button onClick={onClick}  className='inline-flex gap-1  rounded-md hover:bg-blue-600 transition-colors duration-400 hover:text-white items-center p-1'>
+        {icon}
         {buttonText}
-      </Button>
-
+      </button> 
+            
       {data && (
         <FileSelectionModal
           onHide={clear}

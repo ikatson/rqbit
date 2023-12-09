@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { UploadButton } from "./UploadButton";
 import { UrlPromptModal } from "./UrlPromptModal";
+import {  CgLink } from "react-icons/cg";
 
 export const MagnetInput = () => {
   let [magnet, setMagnet] = useState<string | null>(null);
@@ -12,6 +13,7 @@ export const MagnetInput = () => {
       <UploadButton
         variant="primary"
         buttonText="Add Torrent from Magnet / URL"
+        icon={<CgLink />}
         onClick={() => {
           setShowModal(true);
         }}

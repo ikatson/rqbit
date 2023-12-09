@@ -21,7 +21,6 @@ export const RootContent = (props: {
       />
       <ErrorComponent error={props.otherError} />
       <TorrentsList torrents={props.torrents} loading={props.torrentsLoading} />
-      <Buttons />
     </Container>
   );
 };

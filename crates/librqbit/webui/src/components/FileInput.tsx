@@ -1,5 +1,6 @@
 import { RefObject, useRef, useState } from "react";
 import { UploadButton } from "./UploadButton";
+import { CgFileAdd } from "react-icons/cg";
 
 export const FileInput = () => {
   const inputRef = useRef<HTMLInputElement>() as RefObject<HTMLInputElement>;
@@ -43,6 +44,7 @@ export const FileInput = () => {
         onClick={onClick}
         data={file}
         resetData={reset}
+        icon={<CgFileAdd />}
       />
     </>
   );
