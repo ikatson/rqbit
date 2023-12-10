@@ -1,6 +1,5 @@
-import { CgFileAdd, CgLink } from "react-icons/cg";
 import Logo from "/assets/logo.svg";
-import { Buttons } from "./Buttons";
+import { Buttons } from "./buttons/Buttons";
 
 export const Header = ({ title }: { title: string }) => {
   const [name, version] = title.split("-");

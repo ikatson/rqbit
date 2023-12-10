@@ -1,8 +1,8 @@
 import { useContext, useState } from "react";
 import { Button, Modal, Form, Spinner } from "react-bootstrap";
-import { AppContext, APIContext } from "../context";
-import { ErrorWithLabel } from "../rqbit-web";
-import { ErrorComponent } from "./ErrorComponent";
+import { AppContext, APIContext } from "../../context";
+import { ErrorWithLabel } from "../../rqbit-web";
+import { ErrorComponent } from "../ErrorComponent";
 
 export const DeleteTorrentModal: React.FC<{
   id: number;

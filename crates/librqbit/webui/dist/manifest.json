@@ -3,8 +3,18 @@
     "file": "assets/logo-083ce41b.svg",
     "src": "assets/logo.svg"
   },
+  "index.css": {
+    "file": "assets/index-cb439b00.css",
+    "src": "index.css"
+  },
   "index.html": {
-    "file": "assets/index-af1222d3.js",
+    "assets": [
+      "assets/logo-083ce41b.svg"
+    ],
+    "css": [
+      "assets/index-cb439b00.css"
+    ],
+    "file": "assets/index-a0982301.js",
     "isEntry": true,
     "src": "index.html"
   }

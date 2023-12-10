@@ -2,10 +2,10 @@ import { ReactNode, useContext, useEffect, useState } from "react";
 import {
   AddTorrentResponse,
   ErrorDetails as ApiErrorDetails,
-} from "../api-types";
-import { APIContext } from "../context";
-import { ErrorWithLabel } from "../rqbit-web";
-import { FileSelectionModal } from "./FileSelectionModal";
+} from "../../api-types";
+import { APIContext } from "../../context";
+import { ErrorWithLabel } from "../../rqbit-web";
+import { FileSelectionModal } from "../modals/FileSelectionModal";
 
 export const UploadButton: React.FC<{
   buttonText: string;

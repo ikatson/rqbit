@@ -1,10 +1,10 @@
 import { useContext, useEffect, useState } from "react";
 import { Button, Modal, Form, Spinner } from "react-bootstrap";
-import { AddTorrentResponse, AddTorrentOptions } from "../api-types";
-import { AppContext, APIContext } from "../context";
-import { ErrorComponent } from "./ErrorComponent";
-import { formatBytes } from "../helper/formatBytes";
-import { ErrorWithLabel } from "../rqbit-web";
+import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
+import { AppContext, APIContext } from "../../context";
+import { ErrorComponent } from "../ErrorComponent";
+import { formatBytes } from "../../helper/formatBytes";
+import { ErrorWithLabel } from "../../rqbit-web";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;

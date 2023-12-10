@@ -1,4 +1,4 @@
-import { ProgressBar } from "react-bootstrap";
+// import { ProgressBar } from "react-bootstrap";
 import {
   MdDownload,
   MdOutlineMotionPhotosPaused,
@@ -11,8 +11,10 @@ import {
   TorrentStats,
   STATE_INITIALIZING,
   STATE_LIVE,
+  STATE_PAUSED,
 } from "../api-types";
-import { TorrentActions } from "./TorrentActions";
+import { TorrentActions } from "./buttons/TorrentActions";
+import { ProgressBar } from "./ProgressBar";
 import { Speed } from "./Speed";
 import { formatBytes } from "../helper/formatBytes";
 import { getLargestFileName } from "../helper/getLargestFileName";
@@ -31,14 +33,7 @@ export const TorrentRow: React.FC<{
   const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
   const isAnimated =
     (state == STATE_INITIALIZING || state == STATE_LIVE) && !finished;
-  const progressLabel = error ? "Error" : `${progressPercentage.toFixed(2)}%`;
-  const progressBarVariant = error
-    ? "danger"
-    : finished
-      ? "success"
-      : state == STATE_INITIALIZING
-        ? "warning"
-        : "primary";
+
   const isDownloading = !!statsResponse?.live;
 
   const formatPeersString = () => {
@@ -48,16 +43,6 @@ export const TorrentRow: React.FC<{
     }
     return `${peer_stats.live} / ${peer_stats.seen}`;
   };
-
-  let classNames = [];
-
-  if (error) {
-    classNames.push("bg-warning");
-  } else {
-    if (id % 2 == 0) {
-      classNames.push("bg-light");
-    }
-  }
 
   return (
     <section className="w-full grid bg-white border grid-cols-12 p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm items-center gap-2">
@@ -84,11 +69,17 @@ export const TorrentRow: React.FC<{
           <>
             <div className="mt-3 mb-1">
               <ProgressBar
+                error={error}
+                now={progressPercentage}
+                finished={finished}
+                initializaion={state == STATE_INITIALIZING}
+              />
+              {/* <ProgressBar
                 now={progressPercentage}
                 label={progressLabel}
                 animated={isAnimated}
                 variant={progressBarVariant}
-              />
+              /> */}
             </div>
             <div className="grid grid-flow-col gap-4 w-full justify-start  text-sm font-medium text-gray-500">
               <p className="col-span-2 flex items-center">

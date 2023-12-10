@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { UploadButton } from "./UploadButton";
-import { UrlPromptModal } from "./UrlPromptModal";
+import { UrlPromptModal } from "../modals/UrlPromptModal";
 import { CgLink } from "react-icons/cg";
 
 export const MagnetInput = () => {

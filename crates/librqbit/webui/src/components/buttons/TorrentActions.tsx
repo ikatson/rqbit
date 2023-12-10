@@ -1,10 +1,13 @@
 import { useContext, useState } from "react";
-import { Row, Col } from "react-bootstrap";
-import { TorrentStats } from "../api-types";
-import { AppContext, APIContext, RefreshTorrentStatsContext } from "../context";
+import { TorrentStats } from "../../api-types";
+import {
+  AppContext,
+  APIContext,
+  RefreshTorrentStatsContext,
+} from "../../context";
 import { IconButton } from "./IconButton";
-import { DeleteTorrentModal } from "./DeleteTorrentModal";
-import { BsPauseCircle, BsPlayCircle, BsXCircle } from "react-icons/bs";
+import { DeleteTorrentModal } from "../modals/DeleteTorrentModal";
+import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
 
 export const TorrentActions: React.FC<{
   id: number;
@@ -68,23 +71,21 @@ export const TorrentActions: React.FC<{
   };
 
   return (
-    <Row>
-      <Col>
-        {canUnpause && (
-          <IconButton onClick={unpause} disabled={disabled} color="success">
-            <BsPlayCircle />
-          </IconButton>
-        )}
-        {canPause && (
-          <IconButton onClick={pause} disabled={disabled}>
-            <BsPauseCircle />
-          </IconButton>
-        )}
-        <IconButton onClick={startDeleting} disabled={disabled} color="danger">
-          <BsXCircle />
+    <div className="flex w-full justify-center gap-4">
+      {canUnpause && (
+        <IconButton onClick={unpause} disabled={disabled}>
+          <FaPlay className="hover:text-green-500 transition-colors duration-300" />
         </IconButton>
-        <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
-      </Col>
-    </Row>
+      )}
+      {canPause && (
+        <IconButton onClick={pause} disabled={disabled}>
+          <FaPause className="hover:text-yellow-500 transition-colors duration-300" />
+        </IconButton>
+      )}
+      <IconButton onClick={startDeleting} disabled={disabled}>
+        <FaTrash className="hover:text-red-500 transition-colors duration-500" />
+      </IconButton>
+      <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
+    </div>
   );
 };

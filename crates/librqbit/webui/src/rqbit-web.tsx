@@ -3,9 +3,9 @@ import { TorrentId, ErrorDetails as ApiErrorDetails } from "./api-types";
 import { AppContext, APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
 import { customSetInterval } from "./helper/customSetInterval";
-import { IconButton } from "./components/IconButton";
+import { IconButton } from "./components/buttons/IconButton";
 import { BsBodyText } from "react-icons/bs";
-import { LogStreamModal } from "./components/LogStreamModal";
+import { LogStreamModal } from "./components/modals/LogStreamModal";
 import { Header } from "./components/Header";
 
 export interface ErrorWithLabel {
@@ -67,7 +67,7 @@ export const RqbitWebUI = (props: {
   return (
     <AppContext.Provider value={context}>
       <div className="text-center">
-        <Header title={props.title}/>
+        <Header title={props.title} />
         <RootContent
           closeableError={closeableError}
           otherError={otherError}

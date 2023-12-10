@@ -1,8 +1,8 @@
 import { useContext } from "react";
 import { Button, Modal } from "react-bootstrap";
-import { APIContext } from "../context";
-import { ErrorComponent } from "./ErrorComponent";
-import { LogStream } from "./LogStream";
+import { APIContext } from "../../context";
+import { ErrorComponent } from "../ErrorComponent";
+import { LogStream } from "../LogStream";
 
 interface Props {
   show: boolean;
