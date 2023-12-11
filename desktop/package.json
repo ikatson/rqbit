@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^1.5.1",
+    "rqbit-webui": "file:../crates/librqbit/webui",
     "lodash.debounce": "^4.0.8",
     "react": "^18.2.0",
     "react-bootstrap": "^2.9.1",

@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { RqbitDesktopConfig } from "./configuration";
 import { Button, Form, Modal, Row, Tab, Tabs } from "react-bootstrap";
+import { ErrorComponent } from "rqbit-webui/src/components/ErrorComponent";
 import { invokeAPI } from "./api";
-import { ErrorDetails } from "./rqbit-webui-src/api-types";
-import { ErrorComponent } from "./rqbit-webui-src/components/ErrorComponent";
+import { ErrorDetails } from "rqbit-webui/src/api-types";
 
 const FormCheck: React.FC<{
   label: string;

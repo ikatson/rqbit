@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
+import { RqbitWebUI } from "rqbit-webui/src/rqbit-web";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { ConfigModal } from "./configure";
-import { IconButton } from "./rqbit-webui-src/components/IconButton";
-import { BsBodyText, BsSliders2 } from "react-icons/bs";
-import { LogStreamModal } from "./rqbit-webui-src/components/LogStreamModal";
-import { APIContext } from "./rqbit-webui-src/context";
+import { IconButton } from "rqbit-webui/src/components/IconButton";
+import { BsSliders2 } from "react-icons/bs";
+import { APIContext } from "rqbit-webui/src/context";
 import { makeAPI } from "./api";
 
 export const RqbitDesktop: React.FC<{

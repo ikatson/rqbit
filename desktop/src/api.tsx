@@ -6,7 +6,7 @@ import {
   TorrentDetails,
   TorrentStats,
   ErrorDetails,
-} from "./rqbit-webui-src/api-types";
+} from "rqbit-webui/src/api-types";
 
 import { InvokeArgs, invoke } from "@tauri-apps/api/tauri";
 
