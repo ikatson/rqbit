@@ -66,16 +66,13 @@ export const RqbitWebUI = (props: {
 
   return (
     <AppContext.Provider value={context}>
-      <div className="text-center">
-        <Header title={props.title} />
-        <RootContent
-          closeableError={closeableError}
-          otherError={otherError}
-          torrents={torrents}
-          torrentsLoading={torrentsLoading}
-        />
-      </div>
-
+      <Header title={props.title} />
+      <RootContent
+        closeableError={closeableError}
+        otherError={otherError}
+        torrents={torrents}
+        torrentsLoading={torrentsLoading}
+      />
       {/* Menu buttons */}
       <div className="absolute top-10 start-0 p-1">
         {props.menuButtons &&
