@@ -41,20 +41,20 @@ export const TorrentRow: React.FC<{
   };
 
   return (
-    <section className="w-full grid bg-white border grid-cols-12 p-1 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm items-center gap-2">
-      <div className="col-span-1 p-1">
+    <section className="flex items-center justify-center gap-2 flex-wrap border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
+      <div className="p-1">
         {finished ? (
-          <MdCheck className="w-12 h-full" color="green" />
+          <MdCheck className="w-10 h-10" color="green" />
         ) : isDownloading ? (
-          <MdDownload className="w-12 h-full" color="green" />
+          <MdDownload className="w-10 h-10" color="green" />
         ) : (
-          <MdOutlineMotionPhotosPaused className="w-12 h-full" />
+          <MdOutlineMotionPhotosPaused className="w-10 h-10" />
         )}
       </div>
-      <div className="text-left col-span-10">
+      <div className="flex-grow flex flex-col gap-1">
         {detailsResponse && (
-          <div className="group">
-            <p className="text-left text-lg text-gray-900 truncate">
+          <div>
+            <p className="text-left text-lg text-gray-900 text-ellipsis break-all">
               {getLargestFileName(detailsResponse)}
             </p>
             <div
@@ -102,7 +102,7 @@ export const TorrentRow: React.FC<{
         )}
       </div>
       {statsResponse && (
-        <div className="col-span-1">
+        <div className="">
           <TorrentActions id={id} statsResponse={statsResponse} />
         </div>
       )}
