@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from "react";
-import { Button, Form } from "react-bootstrap";
+import { Form } from "react-bootstrap";
 import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
 import { AppContext, APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
@@ -7,6 +7,8 @@ import { formatBytes } from "../../helper/formatBytes";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { Spinner } from "../Spinner";
 import { Modal } from "./Modal";
+import { ModalBody } from "./ModalBody";
+import { ModalFooter } from "./ModalFooter";
 // import useModal from "../useModal";
 
 export const FileSelectionModal = (props: {
@@ -141,9 +143,11 @@ export const FileSelectionModal = (props: {
   };
   return (
     <Modal isOpen={true} onClose={clear} title="Add Torrent">
-      {getBody()}
-      <ErrorComponent error={uploadError} />
-      <div id="footer" className="flex justify-end gap-4">
+      <ModalBody>
+        {getBody()}
+        <ErrorComponent error={uploadError} />
+      </ModalBody>
+      <ModalFooter>
         {uploading && <Spinner />}
         <button onClick={clear}>Cancel</button>
         <button
@@ -154,7 +158,7 @@ export const FileSelectionModal = (props: {
         >
           OK
         </button>
-      </div>
+      </ModalFooter>
     </Modal>
   );
   // return (
