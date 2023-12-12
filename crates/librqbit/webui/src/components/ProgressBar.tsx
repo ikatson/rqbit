@@ -3,10 +3,18 @@ type Props = {
   error?: string | null;
   finished: boolean;
   initializaion: boolean;
+  live: boolean;
 };
 
-export const ProgressBar = ({ now, error, finished, initializaion }: Props) => {
+export const ProgressBar = ({
+  now,
+  error,
+  finished,
+  initializaion,
+  live,
+}: Props) => {
   const progressLabel = error ? "Error" : `${now.toFixed(2)}%`;
+  const isAnimated = (initializaion || live) && !finished;
 
   return (
     <div className={"w-full bg-gray-200 rounded-full"}>

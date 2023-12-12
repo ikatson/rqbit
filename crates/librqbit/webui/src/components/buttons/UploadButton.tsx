@@ -5,7 +5,7 @@ import {
 } from "../../api-types";
 import { APIContext } from "../../context";
 import { ErrorWithLabel } from "../../rqbit-web";
-import { FileSelectionModal } from "../modals/FileSelectionModal";
+import { FileSelectionModal } from "../modal/FileSelectionModal";
 
 export const UploadButton: React.FC<{
   buttonText: string;

@@ -6,7 +6,7 @@ import {
   RefreshTorrentStatsContext,
 } from "../../context";
 import { IconButton } from "./IconButton";
-import { DeleteTorrentModal } from "../modals/DeleteTorrentModal";
+import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
 import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
 
 export const TorrentActions: React.FC<{
@@ -71,7 +71,7 @@ export const TorrentActions: React.FC<{
   };
 
   return (
-    <div className="flex w-full justify-center gap-4">
+    <div className="flex w-full justify-center gap-2">
       {canUnpause && (
         <IconButton onClick={unpause} disabled={disabled}>
           <FaPlay className="hover:text-green-500 transition-colors duration-300" />

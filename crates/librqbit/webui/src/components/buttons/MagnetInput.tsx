@@ -36,14 +36,14 @@ export const MagnetInput = () => {
         />
         <div className="flex gap-2 justify-end">
           <button
-            className="p-2 rounded-lg hover:bg-red-100"
+            className="p-2 rounded-lg  border-transparent border  hover:bg-red-100  hover:border-red-400"
             onClick={closeModal}
           >
             Cancel
           </button>
           <button
             disabled={!inputValue}
-            className="p-2 rounded-lg hover:bg-green-100 disabled:cursor-not-allowed"
+            className="p-2 rounded-lg  border-transparent disabled:hover:bg-slate-100 hover:bg-green-100 disabled:cursor-not-allowed"
             onClick={() => {
               setMagnet(inputValue);
               closeModal();

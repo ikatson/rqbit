@@ -12,7 +12,7 @@ export const RootContent = (props: {
 }) => {
   let ctx = useContext(AppContext);
   return (
-    <div className="container">
+    <div className="container mx-auto">
       <ErrorComponent
         error={props.closeableError}
         remove={() => ctx.setCloseableError(null)}
