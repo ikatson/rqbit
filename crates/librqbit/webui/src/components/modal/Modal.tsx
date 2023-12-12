@@ -9,6 +9,7 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  className?: string;
 }
 
 const ModalHeader: React.FC<{
@@ -34,6 +35,7 @@ export const Modal: React.FC<ModalProps> = ({
   onClose,
   title,
   children,
+  className,
 }) => {
   const renderBackdrop = () => {
     return <div className="fixed inset-0 bg-black/30 z-[300]"></div>;
@@ -43,13 +45,13 @@ export const Modal: React.FC<ModalProps> = ({
       show={isOpen}
       onHide={onClose}
       renderBackdrop={renderBackdrop}
-      className="fixed z-[301] top-0 left-0 w-full h-full block overflow-x-hidden overflow-y-auto"
+      className={`fixed z-[301] top-0 left-0 w-full h-full block overflow-x-hidden overflow-y-auto`}
     >
-      <div className="">
-        <div className="bg-white shadow-lg my-8 mx-auto max-w-2xl rounded">
-          <ModalHeader onClose={onClose} title={title} />
-          {children}
-        </div>
+      <div
+        className={`bg-white shadow-lg my-8 mx-auto max-w-2xl rounded ${className}`}
+      >
+        <ModalHeader onClose={onClose} title={title} />
+        {children}
       </div>
     </RestartModal>
   );

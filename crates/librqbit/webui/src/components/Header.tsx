@@ -1,4 +1,3 @@
-import { Buttons } from "./buttons/Buttons";
 import { FileInput } from "./buttons/FileInput";
 import { MagnetInput } from "./buttons/MagnetInput";
 

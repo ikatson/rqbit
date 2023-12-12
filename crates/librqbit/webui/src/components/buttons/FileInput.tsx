@@ -36,16 +36,12 @@ export const FileInput = () => {
         ref={inputRef}
         accept=".torrent"
         onChange={onFileChange}
-        className="d-none"
+        hidden
       />
-      <UploadButton
-        variant="secondary"
-        buttonText="Upload .torrent File"
-        onClick={onClick}
-        data={file}
-        resetData={reset}
-        icon={<CgFileAdd color="blue" />}
-      />
+      <UploadButton onClick={onClick} data={file} resetData={reset}>
+        <CgFileAdd color="blue" />
+        <div>Upload .torrent File</div>
+      </UploadButton>
     </>
   );
 };

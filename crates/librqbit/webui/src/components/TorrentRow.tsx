@@ -53,7 +53,7 @@ export const TorrentRow: React.FC<{
         )}
       </div>
       {/* Name, progress, stats */}
-      <div className="w-100 flex flex-col gap-2">
+      <div className="w-full flex flex-col gap-2">
         {detailsResponse && (
           <div>
             <p className="text-left text-lg text-gray-900 text-ellipsis break-all">

@@ -9,7 +9,7 @@ import { Spinner } from "../Spinner";
 import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
-// import useModal from "../useModal";
+import { Button } from "../buttons/Button";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -149,15 +149,18 @@ export const FileSelectionModal = (props: {
       </ModalBody>
       <ModalFooter>
         {uploading && <Spinner />}
-        <button onClick={clear}>Cancel</button>
-        <button
+        <Button onClick={clear} variant="cancel">
+          Cancel
+        </Button>
+        <Button
           onClick={handleUpload}
+          variant="primary"
           disabled={
             listTorrentLoading || uploading || selectedFiles.length == 0
           }
         >
           OK
-        </button>
+        </Button>
       </ModalFooter>
     </Modal>
   );

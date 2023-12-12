@@ -1,58 +1,65 @@
 import { useState } from "react";
 import { CgLink } from "react-icons/cg";
 import { UploadButton } from "./UploadButton";
-import useModal from "../useModal";
+import { Modal } from "../modal/Modal";
+import { Button } from "./Button";
+import { ModalBody } from "../modal/ModalBody";
+import { ModalFooter } from "../modal/ModalFooter";
 
 export const MagnetInput = () => {
   const [magnet, setMagnet] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
-  const [Modal, isOpen, openModal, closeModal] = useModal();
+  const [modalIsOpen, setModalIsOpen] = useState(false);
+
+  const clear = () => {
+    setModalIsOpen(false);
+    setMagnet(null);
+  };
 
   return (
     <>
       <UploadButton
-        variant="primary"
-        buttonText="Add Torrent from Magnet / URL"
-        icon={<CgLink color="blue" />}
         onClick={() => {
-          openModal();
+          setModalIsOpen(true);
         }}
         data={magnet}
         resetData={() => setMagnet(null)}
-      />
+      >
+        <CgLink color="blue" />
+        <div>Add Torrent from Magnet / URL</div>
+      </UploadButton>
 
-      <Modal isOpen={isOpen} closeModal={closeModal}>
-        <h1 className="text-xl mb-2">Add Torrent</h1>
-        <p className="mb-2 text-sm text-gray-500 italic">
-          Enter magnet or HTTP(S) URL to the .torrent
-        </p>
-        <input
-          autoFocus
-          className="w-full border rounded-md p-2 my-2"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          type="text"
-          placeholder="magnet:?xt=urn:btih:..."
-        />
-        <div className="flex gap-2 justify-end">
-          <button
-            className="p-2 rounded-lg  border-transparent border  hover:bg-red-100  hover:border-red-400"
-            onClick={closeModal}
-          >
+      <Modal isOpen={modalIsOpen} onClose={clear} title="Add torrent">
+        <ModalBody>
+          <p className="mb-2 text-sm text-gray-500 italic">
+            Enter magnet or HTTP(S) URL to the .torrent
+          </p>
+          <input
+            autoFocus
+            className="w-full border rounded-md p-2 my-2"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            type="text"
+            placeholder="magnet:?xt=urn:btih:..."
+          />
+        </ModalBody>
+
+        <ModalFooter>
+          <Button variant="cancel" onClick={clear}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             disabled={!inputValue}
-            className="p-2 rounded-lg  border-transparent disabled:hover:bg-slate-100 hover:bg-green-100 disabled:cursor-not-allowed"
+            variant="primary"
             onClick={() => {
               setMagnet(inputValue);
-              closeModal();
               setInputValue("");
+              setModalIsOpen(false);
             }}
           >
             Add
-          </button>
-        </div>
+          </Button>
+        </ModalFooter>
       </Modal>
     </>
   );

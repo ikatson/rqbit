@@ -6,15 +6,14 @@ import {
 import { APIContext } from "../../context";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { FileSelectionModal } from "../modal/FileSelectionModal";
+import { Button } from "./Button";
 
 export const UploadButton: React.FC<{
-  buttonText: string;
   onClick: () => void;
   data: string | File | null;
   resetData: () => void;
-  variant: string;
-  icon: ReactNode;
-}> = ({ buttonText, onClick, data, resetData, variant, icon }) => {
+  children: ReactNode;
+}> = ({ onClick, data, resetData, children }) => {
   const [loading, setLoading] = useState(false);
   const [listTorrentResponse, setListTorrentResponse] =
     useState<AddTorrentResponse | null>(null);
@@ -54,13 +53,7 @@ export const UploadButton: React.FC<{
 
   return (
     <>
-      <button
-        onClick={onClick}
-        className="flex-grow justify-center inline-flex gap-1 border rounded-lg hover:bg-blue-600 transition-colors duration-500 hover:text-white items-center p-1"
-      >
-        {icon}
-        {buttonText}
-      </button>
+      <Button onClick={onClick}>{children}</Button>
 
       {data && (
         <FileSelectionModal

@@ -1,8 +1,11 @@
 import { useContext } from "react";
-import { Button, Modal } from "react-bootstrap";
 import { APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
 import { LogStream } from "../LogStream";
+import { Modal } from "./Modal";
+import { ModalFooter } from "./ModalFooter";
+import { ModalBody } from "./ModalBody";
+import { Button } from "../buttons/Button";
 
 interface Props {
   show: boolean;
@@ -14,11 +17,13 @@ export const LogStreamModal: React.FC<Props> = ({ show, onClose }) => {
   let logsUrl = api.getStreamLogsUrl();
 
   return (
-    <Modal size="xl" show={show} onHide={onClose}>
-      <Modal.Header closeButton>
-        <Modal.Title>rqbit server logs</Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
+    <Modal
+      isOpen={show}
+      onClose={onClose}
+      title="rqbit server logs"
+      className="max-w-5xl"
+    >
+      <ModalBody>
         {logsUrl ? (
           <LogStream url={logsUrl} />
         ) : (
@@ -26,12 +31,12 @@ export const LogStreamModal: React.FC<Props> = ({ show, onClose }) => {
             error={{ text: "HTTP API not available to stream logs" }}
           ></ErrorComponent>
         )}
-      </Modal.Body>
-      <Modal.Footer>
+      </ModalBody>
+      <ModalFooter>
         <Button variant="primary" onClick={onClose}>
           Close
         </Button>
-      </Modal.Footer>
+      </ModalFooter>
     </Modal>
   );
 };
