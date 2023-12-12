@@ -1,6 +1,7 @@
 // Modal.tsx
 import React, { useEffect, useState, type ReactNode } from "react";
 import RestartModal from "@restart/ui/Modal";
+import BootstrapModal from "react-bootstrap/Modal";
 import { BsX } from "react-icons/bs";
 
 interface ModalProps {
@@ -42,8 +43,9 @@ export const Modal: React.FC<ModalProps> = ({
       show={isOpen}
       onHide={onClose}
       renderBackdrop={renderBackdrop}
+      className="fixed z-[301] top-0 left-0 w-full h-full block overflow-x-hidden overflow-y-auto"
     >
-      <div className="fixed z-[301] top-0 left-0 w-full block overflow-x-hidden overflow-y-auto">
+      <div className="">
         <div className="bg-white shadow-lg my-8 mx-auto max-w-2xl rounded">
           <ModalHeader onClose={onClose} title={title} />
           {children}
