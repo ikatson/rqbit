@@ -6,7 +6,7 @@ import { Button } from "./Button";
 import { ModalBody } from "../modal/ModalBody";
 import { ModalFooter } from "../modal/ModalFooter";
 
-export const MagnetInput = () => {
+export const MagnetInput = ({ className }: { className?: string }) => {
   const [magnet, setMagnet] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [modalIsOpen, setModalIsOpen] = useState(false);
@@ -23,6 +23,7 @@ export const MagnetInput = () => {
           setModalIsOpen(true);
         }}
         data={magnet}
+        className={className}
         resetData={() => setMagnet(null)}
       >
         <CgLink color="blue" />

@@ -13,7 +13,8 @@ export const UploadButton: React.FC<{
   data: string | File | null;
   resetData: () => void;
   children: ReactNode;
-}> = ({ onClick, data, resetData, children }) => {
+  className?: string;
+}> = ({ onClick, data, resetData, children, className }) => {
   const [loading, setLoading] = useState(false);
   const [listTorrentResponse, setListTorrentResponse] =
     useState<AddTorrentResponse | null>(null);
@@ -53,7 +54,9 @@ export const UploadButton: React.FC<{
 
   return (
     <>
-      <Button onClick={onClick}>{children}</Button>
+      <Button onClick={onClick} className={className}>
+        {children}
+      </Button>
 
       {data && (
         <FileSelectionModal
