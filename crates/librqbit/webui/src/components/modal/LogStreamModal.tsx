@@ -21,7 +21,7 @@ export const LogStreamModal: React.FC<Props> = ({ show, onClose }) => {
       isOpen={show}
       onClose={onClose}
       title="rqbit server logs"
-      className="max-w-5xl"
+      className="max-w-7xl"
     >
       <ModalBody>
         {logsUrl ? (

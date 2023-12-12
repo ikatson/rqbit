@@ -10,6 +10,9 @@ import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 import { Button } from "../buttons/Button";
+import { FormCheckbox } from "../forms/FormCheckbox";
+import { Fieldset } from "../forms/Fieldset";
+import { FormInput } from "../forms/FormInput";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -101,42 +104,35 @@ export const FileSelectionModal = (props: {
     } else if (listTorrentResponse) {
       return (
         <Form>
-          <fieldset className="mb-4">
-            <legend>Pick the files to download</legend>
+          <Fieldset className="mb-4" label="Pick the files to download">
             {listTorrentResponse.details.files.map((file, index) => (
-              <Form.Group key={index} controlId={`check-${index}`}>
-                <Form.Check
-                  type="checkbox"
-                  label={`${file.name}  (${formatBytes(file.length)})`}
-                  checked={selectedFiles.includes(index)}
-                  onChange={() => handleToggleFile(index)}
-                ></Form.Check>
-              </Form.Group>
-            ))}
-          </fieldset>
-          <fieldset>
-            <legend>Options</legend>
-            <Form.Group controlId="output-folder" className="mb-3">
-              <Form.Label>Output folder</Form.Label>
-              <Form.Control
-                type="text"
-                value={outputFolder}
-                onChange={(e) => setOutputFolder(e.target.value)}
+              <FormCheckbox
+                key={index}
+                label={`${file.name}  (${formatBytes(file.length)})`}
+                checked={selectedFiles.includes(index)}
+                onChange={() => handleToggleFile(index)}
+                name={`check-${index}`}
               />
-            </Form.Group>
-            <Form.Group controlId="unpopular-torrent" className="mb-3">
-              <Form.Check
-                type="checkbox"
-                label="Increase timeouts"
-                checked={unpopularTorrent}
-                onChange={() => setUnpopularTorrent(!unpopularTorrent)}
-              ></Form.Check>
-              <small id="emailHelp" className="form-text text-muted">
-                This might be useful for unpopular torrents with few peers. It
-                will slow down fast torrents though.
-              </small>
-            </Form.Group>
-          </fieldset>
+            ))}
+          </Fieldset>
+          <Fieldset label="Options">
+            <FormInput
+              label="Output folder"
+              name="output_folder"
+              inputType="text"
+              help="Some help text"
+              value={outputFolder}
+              onChange={(e) => setOutputFolder(e.target.value)}
+            />
+
+            <FormCheckbox
+              label="Increase timeouts"
+              checked={unpopularTorrent}
+              onChange={() => setUnpopularTorrent(!unpopularTorrent)}
+              help="This might be useful for unpopular torrents with few peers. It will slow down fast torrents though."
+              name="increase_timeouts"
+            />
+          </Fieldset>
         </Form>
       );
     }
@@ -164,30 +160,4 @@ export const FileSelectionModal = (props: {
       </ModalFooter>
     </Modal>
   );
-  // return (
-  //   <Modal show onHide={clear} size="lg">
-  //     <Modal.Header closeButton>
-  //       <Modal.Title>Add torrent</Modal.Title>
-  //     </Modal.Header>
-  //     <Modal.Body>
-  //       {getBody()}
-  //       <ErrorComponent error={uploadError} />
-  //     </Modal.Body>
-  //     <Modal.Footer>
-  //       {uploading && <Spinner />}
-  //       <Button
-  //         variant="primary"
-  //         onClick={handleUpload}
-  //         disabled={
-  //           listTorrentLoading || uploading || selectedFiles.length == 0
-  //         }
-  //       >
-  //         OK
-  //       </Button>
-  //       <Button variant="secondary" onClick={clear}>
-  //         Cancel
-  //       </Button>
-  //     </Modal.Footer>
-  //   </Modal>
-  // );
 };

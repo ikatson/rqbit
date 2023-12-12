@@ -1,0 +1,30 @@
+import { ChangeEventHandler } from "react";
+
+export const FormCheckbox: React.FC<{
+  checked: boolean;
+  label: string;
+  name: string;
+  help?: string;
+  disabled?: boolean;
+  onChange?: ChangeEventHandler<HTMLInputElement>;
+}> = ({ checked, name, disabled, onChange, label, help }) => {
+  return (
+    <div className="flex gap-3 items-start">
+      <div className="flex">
+        <input
+          type="checkbox"
+          className="block mt-1"
+          id={name}
+          name={name}
+          disabled={disabled}
+          checked={checked}
+          onChange={onChange}
+        />
+      </div>
+      <div className="text-sm flex flex-col gap-1">
+        <label htmlFor={name}>{label}</label>
+        {help && <div className="text-xs text-slate-500 mb-3">{help}</div>}
+      </div>
+    </div>
+  );
+};
