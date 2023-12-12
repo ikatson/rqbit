@@ -1,9 +1,15 @@
-import React, { useState } from "react";
+import React, { ReactNode, useState } from "react";
 import { RqbitDesktopConfig } from "./configuration";
-import { Button, Form, Modal, Row, Tab, Tabs } from "react-bootstrap";
 import { invokeAPI } from "./api";
 import { ErrorDetails } from "./rqbit-webui-src/api-types";
 import { ErrorComponent } from "./rqbit-webui-src/components/ErrorComponent";
+import { Modal } from "./rqbit-webui-src/components/modal/Modal";
+import { ModalBody } from "./rqbit-webui-src/components/modal/ModalBody";
+import { ModalFooter } from "./rqbit-webui-src/components/modal/ModalFooter";
+import { Button } from "./rqbit-webui-src/components/buttons/Button";
+import { FormCheckbox } from "./rqbit-webui-src/components/forms/FormCheckbox";
+import { FormInput as FI } from "./rqbit-webui-src/components/forms/FormInput";
+import { Fieldset } from "./rqbit-webui-src/components/forms/Fieldset";
 
 const FormCheck: React.FC<{
   label: string;
@@ -14,19 +20,14 @@ const FormCheck: React.FC<{
   help?: string;
 }> = ({ label, name, checked, onChange, disabled, help }) => {
   return (
-    <Form.Group as={Row} controlId={name} className="mb-3">
-      <Form.Label className="col-4">{label}</Form.Label>
-      <div className="col-8">
-        <Form.Check
-          type="switch"
-          name={name}
-          checked={checked}
-          onChange={onChange}
-          disabled={disabled}
-        />
-      </div>
-      {help && <div className="form-text">{help}</div>}
-    </Form.Group>
+    <FormCheckbox
+      label={label}
+      name={name}
+      checked={checked}
+      onChange={onChange}
+      disabled={disabled}
+      help={help}
+    />
   );
 };
 
@@ -40,20 +41,45 @@ const FormInput: React.FC<{
   help?: string;
 }> = ({ label, name, value, inputType, onChange, disabled, help }) => {
   return (
-    <Form.Group as={Row} controlId={name} className="mb-3">
-      <Form.Label className="col-4 col-form-label">{label}</Form.Label>
-      <div className="col-8">
-        <Form.Control
-          type={inputType}
-          name={name}
-          value={value}
-          onChange={onChange}
-          disabled={disabled}
-        />
-      </div>
-      {help && <div className="form-text">{help}</div>}
-    </Form.Group>
+    <FI
+      inputType={inputType}
+      name={name}
+      value={value as string}
+      onChange={onChange}
+      disabled={disabled}
+      label={label}
+      help={help}
+    />
   );
+};
+
+type TAB =
+  | "Home"
+  | "DHT"
+  | "Session"
+  | "Peer options"
+  | "HTTP API"
+  | "TCP Listen";
+
+const TABS: readonly TAB[] = [
+  "Home",
+  "DHT",
+  "Session",
+  "TCP Listen",
+  "Peer options",
+  "HTTP API",
+] as const;
+
+const Tab: React.FC<{
+  name: TAB;
+  currentTab: TAB;
+  children: ReactNode;
+}> = ({ name, currentTab, children }) => {
+  const show = name === currentTab;
+  if (!show) {
+    return;
+  }
+  return <div>{children}</div>;
 };
 
 export const ConfigModal: React.FC<{
@@ -73,6 +99,8 @@ export const ConfigModal: React.FC<{
 }) => {
   let [config, setConfig] = useState<RqbitDesktopConfig>(initialConfig);
   let [loading, setLoading] = useState<boolean>(false);
+
+  let [tab, setTab] = useState<TAB>("Home");
 
   const [error, setError] = useState<any | null>(null);
 
@@ -143,27 +171,46 @@ export const ConfigModal: React.FC<{
   };
 
   return (
-    <Modal show={show} size="xl" onHide={handleCancel}>
-      <Modal.Header closeButton>
-        <Modal.Title>Configure Rqbit desktop</Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
+    <Modal
+      title="Configure Rqbit desktop"
+      isOpen={show}
+      onClose={handleCancel}
+      className="max-w-6xl"
+    >
+      <ModalBody>
         <ErrorComponent error={error}></ErrorComponent>
-        <Tabs defaultActiveKey="home" id="rqbit-config" className="mb-3">
-          <Tab className="mb-3" eventKey="home" title="Home">
-            <FormInput
-              label="Default download folder"
-              name="default_download_location"
-              value={config.default_download_location}
-              inputType="text"
-              onChange={handleInputChange}
-              help="Where to download torrents by default. You can override this per torrent."
-            />
-          </Tab>
+        <div className="flex border-b mb-2">
+          {TABS.map((t, i) => {
+            const isActive = t === tab;
+            let classNames = "text-slate-300";
+            if (isActive) {
+              classNames = "text-slate-800";
+            }
+            return (
+              <button
+                key={i}
+                className={`p-2 border rounded ${classNames}`}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            );
+          })}
+        </div>
 
-          <Tab className="mb-3" eventKey="dht" title="DHT">
-            <legend>DHT config</legend>
+        <Tab name="Home" currentTab={tab}>
+          <FormInput
+            label="Default download folder"
+            name="default_download_location"
+            value={config.default_download_location}
+            inputType="text"
+            onChange={handleInputChange}
+            help="Where to download torrents by default. You can override this per torrent."
+          />
+        </Tab>
 
+        <Tab name="DHT" currentTab={tab}>
+          <Fieldset label="DHT config">
             <FormCheck
               label="Enable DHT"
               name="dht.disable"
@@ -190,11 +237,11 @@ export const ConfigModal: React.FC<{
               onChange={handleInputChange}
               help="The filename to store DHT state into"
             />
-          </Tab>
+          </Fieldset>
+        </Tab>
 
-          <Tab className="mb-3" eventKey="tcp_listen" title="TCP">
-            <legend>TCP Listener config</legend>
-
+        <Tab name="TCP Listen" currentTab={tab}>
+          <Fieldset label="TCP Listener config">
             <FormCheck
               label="Listen on TCP"
               name="tcp_listen.disable"
@@ -230,11 +277,11 @@ export const ConfigModal: React.FC<{
               onChange={handleInputChange}
               help="The max port to try to listen on."
             />
-          </Tab>
+          </Fieldset>
+        </Tab>
 
-          <Tab className="mb-3" eventKey="session_persistence" title="Session">
-            <legend>Session persistence</legend>
-
+        <Tab name="Session" currentTab={tab}>
+          <Fieldset label="Session persistence">
             <FormCheck
               label="Enable persistence"
               name="persistence.disable"
@@ -251,11 +298,11 @@ export const ConfigModal: React.FC<{
               onChange={handleInputChange}
               disabled={config.persistence.disable}
             />
-          </Tab>
+          </Fieldset>
+        </Tab>
 
-          <Tab className="mb-3" eventKey="peer_opts" title="Peer options">
-            <legend>Peer connection options</legend>
-
+        <Tab name="Peer options" currentTab={tab}>
+          <Fieldset label="Peer connection options">
             <FormInput
               label="Connect timeout (seconds)"
               inputType="number"
@@ -273,11 +320,11 @@ export const ConfigModal: React.FC<{
               onChange={handleInputChange}
               help="Peer socket read/write timeout."
             />
-          </Tab>
+          </Fieldset>
+        </Tab>
 
-          <Tab className="mb-3" eventKey="http_api" title="HTTP API">
-            <legend>HTTP API config</legend>
-
+        <Tab name="HTTP API" currentTab={tab}>
+          <Fieldset label="HTTP API config">
             <FormCheck
               label="Enable HTTP API"
               name="http_api.disable"
@@ -313,10 +360,10 @@ export const ConfigModal: React.FC<{
               onChange={handleInputChange}
               help={`You'll access the API at http://${config.http_api.listen_addr}`}
             />
-          </Tab>
-        </Tabs>
-      </Modal.Body>
-      <Modal.Footer>
+          </Fieldset>
+        </Tab>
+      </ModalBody>
+      <ModalFooter>
         {!!handleCancel && (
           <Button variant="secondary" onClick={handleCancel}>
             Cancel
@@ -328,7 +375,7 @@ export const ConfigModal: React.FC<{
         <Button variant="primary" onClick={handleOkClick} disabled={loading}>
           OK
         </Button>
-      </Modal.Footer>
+      </ModalFooter>
     </Modal>
   );
 };

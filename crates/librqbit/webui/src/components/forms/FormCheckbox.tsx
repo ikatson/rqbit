@@ -6,13 +6,14 @@ export const FormCheckbox: React.FC<{
   name: string;
   help?: string;
   disabled?: boolean;
+  inputType?: "checkbox" | "switch";
   onChange?: ChangeEventHandler<HTMLInputElement>;
-}> = ({ checked, name, disabled, onChange, label, help }) => {
+}> = ({ checked, name, disabled, onChange, label, help, inputType }) => {
   return (
     <div className="flex gap-3 items-start">
       <div className="flex">
         <input
-          type="checkbox"
+          type={inputType || "checkbox"}
           className="block mt-1"
           id={name}
           name={name}

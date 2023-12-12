@@ -3,8 +3,7 @@ import { RqbitWebUI } from "./rqbit-webui-src/rqbit-web";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { ConfigModal } from "./configure";
 import { IconButton } from "./rqbit-webui-src/components/buttons/IconButton";
-import { BsBodyText, BsSliders2 } from "react-icons/bs";
-import { LogStreamModal } from "./rqbit-webui-src/components/modals/LogStreamModal";
+import { BsSliders2 } from "react-icons/bs";
 import { APIContext } from "./rqbit-webui-src/context";
 import { makeAPI } from "./api";
 
@@ -21,7 +20,6 @@ export const RqbitDesktop: React.FC<{
 
   const configButton = (
     <IconButton
-      className="p-3 text-primary"
       onClick={() => {
         setConfigurationOpened(true);
       }}
@@ -34,7 +32,7 @@ export const RqbitDesktop: React.FC<{
     <APIContext.Provider value={makeAPI(config)}>
       {configured && (
         <RqbitWebUI
-          title={`Rqbit Desktop v${version}`}
+          title={`Rqbit Desktop - v${version}`}
           menuButtons={[configButton]}
         ></RqbitWebUI>
       )}

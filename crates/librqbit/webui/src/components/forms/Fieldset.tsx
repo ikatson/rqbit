@@ -13,7 +13,7 @@ export const Fieldset = ({
 }) => {
   return (
     <fieldset className={`mb-4 ${className}`}>
-      <label className="text-md font-md mb-2 block">{label}</label>
+      <label className="text-md font-md mb-3 block">{label}</label>
       {children}
     </fieldset>
   );

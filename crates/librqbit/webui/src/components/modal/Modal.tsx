@@ -6,26 +6,28 @@ import { BsX } from "react-icons/bs";
 
 interface ModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   title: string;
   children: ReactNode;
   className?: string;
 }
 
 const ModalHeader: React.FC<{
-  onClose: () => void;
+  onClose?: () => void;
   title: string;
 }> = ({ onClose, title }) => {
   return (
     <div className="flex p-3 justify-between items-center border-b">
       <h2 className="text-xl font-semibold">{title}</h2>
-      <button
-        className="text-gray-500 hover:text-gray-700"
-        onClick={onClose}
-        aria-label="Close modal"
-      >
-        <BsX className="w-5 h-5" />
-      </button>
+      {onClose && (
+        <button
+          className="text-gray-500 hover:text-gray-700"
+          onClick={onClose}
+          aria-label="Close modal"
+        >
+          <BsX className="w-5 h-5" />
+        </button>
+      )}
     </div>
   );
 };
