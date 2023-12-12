@@ -67,19 +67,22 @@ export const RqbitWebUI = (props: {
   return (
     <AppContext.Provider value={context}>
       <Header title={props.title} />
-      <RootContent
-        closeableError={closeableError}
-        otherError={otherError}
-        torrents={torrents}
-        torrentsLoading={torrentsLoading}
-      />
-      {/* Menu buttons */}
-      <div className="absolute top-10 start-0 p-1">
-        {props.menuButtons &&
-          props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
-        <IconButton onClick={() => setLogsOpened(true)}>
-          <BsBodyText />
-        </IconButton>
+      <div className="relative">
+        {/* Menu buttons */}
+        <div className="absolute top-0 start-0 pl-2">
+          {props.menuButtons &&
+            props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
+          <IconButton onClick={() => setLogsOpened(true)}>
+            <BsBodyText />
+          </IconButton>
+        </div>
+
+        <RootContent
+          closeableError={closeableError}
+          otherError={otherError}
+          torrents={torrents}
+          torrentsLoading={torrentsLoading}
+        />
       </div>
 
       <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />

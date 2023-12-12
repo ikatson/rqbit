@@ -56,7 +56,7 @@ export const UploadButton: React.FC<{
     <>
       <button
         onClick={onClick}
-        className="inline-flex gap-1 border rounded-lg hover:bg-blue-600 transition-colors duration-500 hover:text-white items-center p-1"
+        className="flex-grow justify-center inline-flex gap-1 border rounded-lg hover:bg-blue-600 transition-colors duration-500 hover:text-white items-center p-1"
       >
         {icon}
         {buttonText}
