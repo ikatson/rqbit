@@ -1,5 +1,7 @@
 // Modal.tsx
 import React, { useEffect, useState, type ReactNode } from "react";
+import RestartModal from "@restart/ui/Modal";
+import { BsX } from "react-icons/bs";
 
 interface ModalProps {
   isOpen: boolean;
@@ -14,66 +16,30 @@ export const Modal: React.FC<ModalProps> = ({
   title,
   children,
 }) => {
-  const [isModalOpen, setIsModalOpen] = useState(isOpen);
-
-  useEffect(() => {
-    setIsModalOpen(isOpen);
-  }, [isOpen]);
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    onClose();
+  const renderBackdrop = () => {
+    return <div className="fixed inset-0 bg-black/30 z-[300]"></div>;
   };
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      closeModal();
-    }
-  };
-
   return (
-    <div
-      className={`fixed top-0 left-0 w-full h-full flex items-center justify-center bg-opacity-50 ${
-        isModalOpen ? "" : "hidden"
-      }`}
-      onClick={closeModal}
+    <RestartModal
+      show={isOpen}
+      onHide={onClose}
+      renderBackdrop={renderBackdrop}
     >
-      <div
-        className="bg-white p-6 rounded shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-        tabIndex={-1}
-      >
-        <div className="flex justify-between items-center border-b-2 pb-4">
-          <h2 id="modal-title" className="text-2xl font-semibold">
-            {title}
-          </h2>
-          <button
-            className="text-gray-500 hover:text-gray-700 focus:outline-none"
-            onClick={closeModal}
-            aria-label="Close modal"
-          >
-            <svg
-              className="h-6 w-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
+      <div className="fixed z-[301] top-0 left-0 w-full">
+        <div className="bg-white shadow-lg p-4 my-8 mx-auto max-w-2xl rounded">
+          <div className="flex justify-between items-center border-b-2 pb-4">
+            <h2 className="text-xl font-semibold">{title}</h2>
+            <button
+              className="text-gray-500 hover:text-gray-700"
+              onClick={onClose}
+              aria-label="Close modal"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M6 18L18 6M6 6l12 12"
-              ></path>
-            </svg>
-          </button>
+              <BsX className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="mt-4">{children}</div>
         </div>
-        <div className="mt-4">{children}</div>
       </div>
-    </div>
+    </RestartModal>
   );
 };

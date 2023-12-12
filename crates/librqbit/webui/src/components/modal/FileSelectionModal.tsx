@@ -141,9 +141,6 @@ export const FileSelectionModal = (props: {
   };
   return (
     <Modal isOpen={true} onClose={clear} title="Add Torrent">
-      <h1 className="text-2xl font-bold mb-4 mt-2 text-center text-blue-500">
-        Add torrent
-      </h1>
       {getBody()}
       <ErrorComponent error={uploadError} />
       <div id="footer" className="flex justify-end gap-4">
