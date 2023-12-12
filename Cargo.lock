@@ -1507,8 +1507,7 @@ dependencies = [
 [[package]]
 name = "network-interface"
 version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d68759ef97fe9c9e46f79ea8736c19f1d28992e24c8dc8ce86752918bfeaae7"
+source = "git+https://github.com/ikatson/network-interface?branch=compile-on-freebsd#4d36a2e91aaa4b737bdf5bf3c77c95774a76e4ac"
 dependencies = [
  "cc",
  "libc",
