@@ -41,7 +41,8 @@ export const TorrentRow: React.FC<{
   };
 
   return (
-    <section className="flex items-center justify-center gap-2 flex-wrap border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
+    <section className="flex flex-col md:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
+      {/* Icon */}
       <div className="p-1">
         {finished ? (
           <MdCheck className="w-10 h-10" color="green" />
@@ -51,7 +52,8 @@ export const TorrentRow: React.FC<{
           <MdOutlineMotionPhotosPaused className="w-10 h-10" />
         )}
       </div>
-      <div className="flex-grow flex flex-col gap-1">
+      {/* Name, progress, stats */}
+      <div className="w-100 flex flex-col gap-2">
         {detailsResponse && (
           <div>
             <p className="text-left text-lg text-gray-900 text-ellipsis break-all">
@@ -80,27 +82,32 @@ export const TorrentRow: React.FC<{
                 live={state === STATE_LIVE}
               />
             </div>
-            <div className="grid grid-flow-col gap-4 w-full justify-start  text-sm font-medium text-gray-500">
-              <p className="col-span-2 flex items-center  gap-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
+              <div className="flex gap-2 items-center">
                 <GoPeople /> {formatPeersString().toString()}
-              </p>
-              <p className="col-span-2 flex items-center gap-1">
+              </div>
+              <div className="flex gap-2 items-center">
                 <GoFile />
-                {formatBytes(progressBytes)}/{formatBytes(totalBytes)}
-              </p>
+                <div>
+                  {formatBytes(progressBytes)}/{formatBytes(totalBytes)}
+                </div>
+              </div>
               {statsResponse && (
                 <>
-                  <p className="col-span-2 flex items-center gap-1">
+                  <div className="flex gap-2 items-center">
                     <GoClock />
                     {getCompletionETA(statsResponse)}
-                  </p>
-                  <Speed statsResponse={statsResponse} />
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <Speed statsResponse={statsResponse} />
+                  </div>
                 </>
               )}
             </div>
           </>
         )}
       </div>
+      {/* Actions */}
       {statsResponse && (
         <div className="">
           <TorrentActions id={id} statsResponse={statsResponse} />

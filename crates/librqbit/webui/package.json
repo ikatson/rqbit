@@ -7,7 +7,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
     "lodash.debounce": "^4.0.8",
     "react": "^18.2.0",
     "react-bootstrap": "^2.9.1",
@@ -15,6 +14,7 @@
     "react-icons": "^4.12.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
     "@types/lodash.debounce": "^4.0.9",
     "@types/react": "^18.2.38",
     "@types/react-dom": "^18.2.16",
