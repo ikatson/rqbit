@@ -13,7 +13,7 @@ export const DeleteTorrentModal: React.FC<{
   if (!show) {
     return null;
   }
-  const [Modal, isOpen, openModal, closeModal] = useModal();
+  const [Modal, isOpen, , closeModal] = useModal();
 
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [error, setError] = useState<ErrorWithLabel | null>(null);
@@ -58,7 +58,7 @@ export const DeleteTorrentModal: React.FC<{
     >
       <h1 className="text-xl mb-2">Delete torrent</h1>
       <div className="flex my-3 justify-start gap-4">
-        <div className="mt-4">
+        <div className="mt-2">
           <p className="text-gray-700">
             Are you sure you want to delete the torrent?
           </p>
@@ -82,7 +82,7 @@ export const DeleteTorrentModal: React.FC<{
       <div className="flex gap-2 justify-end">
         {deleting && <Spinner />}
         <button
-          className="p-2 rounded-lg border-1 border-red-50 drop-shadow-md hover:border-red-400"
+          className="p-2 rounded-lg border-1 border-red-50 drop-shadow-md hover:border-slate-400 hover:text-slate-500"
           onClick={close}
         >
           Cancel

@@ -68,7 +68,7 @@ const useModal = (
             <div className="fixed inset-0 transition-opacity">
               <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
             </div>
-            <div className="flex items-center justify-center min-h-screen">
+            <div className="flex items-center justify-center min-h-screen p-4">
               <div
                 className={`z-50 ${
                   options.fullScreen ? "w-full h-full" : "max-w-md"

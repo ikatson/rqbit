@@ -1,10 +1,13 @@
 import { useContext, useEffect, useState } from "react";
-import { Button, Modal, Form, Spinner } from "react-bootstrap";
+import { Button, Form } from "react-bootstrap";
 import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
 import { AppContext, APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
 import { formatBytes } from "../../helper/formatBytes";
 import { ErrorWithLabel } from "../../rqbit-web";
+import { Spinner } from "../Spinner";
+import { Modal } from "./Modal";
+// import useModal from "../useModal";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -28,6 +31,7 @@ export const FileSelectionModal = (props: {
   const [outputFolder, setOutputFolder] = useState<string>("");
   const ctx = useContext(AppContext);
   const API = useContext(APIContext);
+  // const [Modal, , , closeModal] = useModal({ fullScreen: true });
 
   useEffect(() => {
     console.log(listTorrentResponse);
@@ -135,31 +139,51 @@ export const FileSelectionModal = (props: {
       );
     }
   };
-
   return (
-    <Modal show onHide={clear} size="lg">
-      <Modal.Header closeButton>
-        <Modal.Title>Add torrent</Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
-        {getBody()}
-        <ErrorComponent error={uploadError} />
-      </Modal.Body>
-      <Modal.Footer>
+    <Modal isOpen={true} onClose={clear} title="Add Torrent">
+      <h1 className="text-2xl font-bold mb-4 mt-2 text-center text-blue-500">
+        Add torrent
+      </h1>
+      {getBody()}
+      <ErrorComponent error={uploadError} />
+      <div id="footer" className="flex justify-end gap-4">
         {uploading && <Spinner />}
-        <Button
-          variant="primary"
+        <button onClick={clear}>Cancel</button>
+        <button
           onClick={handleUpload}
           disabled={
             listTorrentLoading || uploading || selectedFiles.length == 0
           }
         >
           OK
-        </Button>
-        <Button variant="secondary" onClick={clear}>
-          Cancel
-        </Button>
-      </Modal.Footer>
+        </button>
+      </div>
     </Modal>
   );
+  // return (
+  //   <Modal show onHide={clear} size="lg">
+  //     <Modal.Header closeButton>
+  //       <Modal.Title>Add torrent</Modal.Title>
+  //     </Modal.Header>
+  //     <Modal.Body>
+  //       {getBody()}
+  //       <ErrorComponent error={uploadError} />
+  //     </Modal.Body>
+  //     <Modal.Footer>
+  //       {uploading && <Spinner />}
+  //       <Button
+  //         variant="primary"
+  //         onClick={handleUpload}
+  //         disabled={
+  //           listTorrentLoading || uploading || selectedFiles.length == 0
+  //         }
+  //       >
+  //         OK
+  //       </Button>
+  //       <Button variant="secondary" onClick={clear}>
+  //         Cancel
+  //       </Button>
+  //     </Modal.Footer>
+  //   </Modal>
+  // );
 };
