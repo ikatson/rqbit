@@ -82,9 +82,9 @@ impl Lengths {
         if !(is_power_of_two(chunk_length as u64)) {
             anyhow::bail!("chunk length {} is not a power of 2", chunk_length);
         }
-        if chunk_length >= piece_length {
+        if chunk_length > piece_length {
             anyhow::bail!(
-                "chunk length {} should be smaller than pice length {}",
+                "chunk length {} should be smaller than or equal to piece length {}",
                 chunk_length,
                 piece_length
             );
