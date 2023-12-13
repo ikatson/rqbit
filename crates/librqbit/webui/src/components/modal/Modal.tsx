@@ -1,7 +1,6 @@
 // Modal.tsx
-import React, { useEffect, useState, type ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import RestartModal from "@restart/ui/Modal";
-import BootstrapModal from "react-bootstrap/Modal";
 import { BsX } from "react-icons/bs";
 
 interface ModalProps {

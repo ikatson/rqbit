@@ -1,5 +1,4 @@
 import { useContext, useEffect, useState } from "react";
-import { Form } from "react-bootstrap";
 import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
 import { AppContext, APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
@@ -13,6 +12,7 @@ import { Button } from "../buttons/Button";
 import { FormCheckbox } from "../forms/FormCheckbox";
 import { Fieldset } from "../forms/Fieldset";
 import { FormInput } from "../forms/FormInput";
+import { Form } from "../forms/Form";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;

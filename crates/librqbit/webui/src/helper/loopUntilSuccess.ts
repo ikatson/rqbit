@@ -2,7 +2,7 @@ export function loopUntilSuccess<T>(
   callback: () => Promise<T>,
   interval: number
 ): () => void {
-  let timeoutId: number;
+  let timeoutId: any;
 
   const executeCallback = async () => {
     let retry = await callback().then(

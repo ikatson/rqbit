@@ -6,7 +6,7 @@ export function customSetInterval(
   asyncCallback: () => Promise<number>,
   initialInterval: number
 ): () => void {
-  let timeoutId: number;
+  let timeoutId: any;
   let currentInterval: number = initialInterval;
 
   const executeCallback = async () => {
