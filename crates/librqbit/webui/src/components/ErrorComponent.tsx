@@ -7,7 +7,7 @@ const AlertDanger: React.FC<{
   onClose?: () => void;
 }> = ({ title, children, onClose }) => {
   return (
-    <div className="bg-red-200 p-3 rounded-md">
+    <div className="bg-red-200 p-3 rounded-md mb-3">
       <div className="flex justify-between mb-2">
         <h2 className="text-lg font-semibold">{title}</h2>
         {onClose && (
