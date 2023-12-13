@@ -1,4 +1,5 @@
 {
+  "name": "rqbit-webui",
   "private": true,
   "type": "module",
   "scripts": {

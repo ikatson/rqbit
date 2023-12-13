@@ -21,7 +21,7 @@ tokio = {version = "1", features = ["macros"]}
 futures = "0.3"
 url = "2"
 async-recursion = "1"
-network-interface = "1"
+network-interface = { git = 'https://github.com/ikatson/network-interface', branch = "compile-on-freebsd" }
 
 [dev-dependencies]
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}

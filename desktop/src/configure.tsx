@@ -1,15 +1,15 @@
 import React, { ReactNode, useState } from "react";
 import { RqbitDesktopConfig } from "./configuration";
+import { ErrorComponent } from "rqbit-webui/src/components/ErrorComponent";
 import { invokeAPI } from "./api";
-import { ErrorDetails } from "./rqbit-webui-src/api-types";
-import { ErrorComponent } from "./rqbit-webui-src/components/ErrorComponent";
-import { Modal } from "./rqbit-webui-src/components/modal/Modal";
-import { ModalBody } from "./rqbit-webui-src/components/modal/ModalBody";
-import { ModalFooter } from "./rqbit-webui-src/components/modal/ModalFooter";
-import { Button } from "./rqbit-webui-src/components/buttons/Button";
-import { FormCheckbox } from "./rqbit-webui-src/components/forms/FormCheckbox";
-import { FormInput as FI } from "./rqbit-webui-src/components/forms/FormInput";
-import { Fieldset } from "./rqbit-webui-src/components/forms/Fieldset";
+import { ErrorDetails } from "rqbit-webui/src/api-types";
+import { FormCheckbox } from "rqbit-webui/src/components/forms/FormCheckbox";
+import { FormInput as FI } from "rqbit-webui/src/components/forms/FormInput";
+import { ModalBody } from "rqbit-webui/src/components/modal/ModalBody";
+import { Modal } from "rqbit-webui/src/components/modal/Modal";
+import { Fieldset } from "rqbit-webui/src/components/forms/Fieldset";
+import { ModalFooter } from "rqbit-webui/src/components/modal/ModalFooter";
+import { Button } from "rqbit-webui/src/components/buttons/Button";
 
 const FormCheck: React.FC<{
   label: string;
