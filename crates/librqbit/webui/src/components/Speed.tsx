@@ -33,7 +33,6 @@ export const Speed: React.FC<{ statsResponse: TorrentStats }> = ({
         ↑ {statsResponse.live.upload_speed?.human_readable}
         {statsResponse.live.snapshot.uploaded_bytes > 0 && (
           <span>
-            {" "}
             ({formatBytes(statsResponse.live.snapshot.uploaded_bytes)})
           </span>
         )}

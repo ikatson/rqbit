@@ -1,10 +1,8 @@
-import { useContext, useState } from "react";
-import { Container } from "react-bootstrap";
+import { useContext } from "react";
 import { TorrentId, ErrorDetails as ApiErrorDetails } from "../api-types";
-import { APIContext, AppContext } from "../context";
+import { AppContext } from "../context";
 import { TorrentsList } from "./TorrentsList";
 import { ErrorComponent } from "./ErrorComponent";
-import { Buttons } from "./Buttons";
 
 export const RootContent = (props: {
   closeableError: ApiErrorDetails | null;
@@ -14,14 +12,13 @@ export const RootContent = (props: {
 }) => {
   let ctx = useContext(AppContext);
   return (
-    <Container>
+    <div className="container mx-auto">
       <ErrorComponent
         error={props.closeableError}
         remove={() => ctx.setCloseableError(null)}
       />
       <ErrorComponent error={props.otherError} />
       <TorrentsList torrents={props.torrents} loading={props.torrentsLoading} />
-      <Buttons />
-    </Container>
+    </div>
   );
 };

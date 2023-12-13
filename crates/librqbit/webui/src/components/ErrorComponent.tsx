@@ -1,5 +1,25 @@
-import { Alert } from "react-bootstrap";
+import { BsX } from "react-icons/bs";
 import { ErrorWithLabel } from "../rqbit-web";
+
+const AlertDanger: React.FC<{
+  title: string;
+  children: React.ReactNode;
+  onClose?: () => void;
+}> = ({ title, children, onClose }) => {
+  return (
+    <div className="bg-red-200 p-3 rounded-md mb-3">
+      <div className="flex justify-between mb-2">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        {onClose && (
+          <button onClick={onClose}>
+            <BsX />
+          </button>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+};
 
 export const ErrorComponent = (props: {
   error: ErrorWithLabel | null;
@@ -12,14 +32,11 @@ export const ErrorComponent = (props: {
   }
 
   return (
-    <Alert variant="danger" onClose={remove} dismissible={remove != null}>
-      <Alert.Heading>{error.text}</Alert.Heading>
+    <AlertDanger onClose={remove} title={error.text}>
       {error.details?.statusText && (
-        <p>
-          <strong>{error.details?.statusText}</strong>
-        </p>
+        <div className="pb-2 text-md">{error.details?.statusText}</div>
       )}
-      <pre>{error.details?.text}</pre>
-    </Alert>
+      <div className="whitespace-pre text-sm">{error.details?.text}</div>
+    </AlertDanger>
   );
 };

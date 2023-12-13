@@ -4,6 +4,7 @@ import { RqbitWebUI } from "./rqbit-web";
 import { customSetInterval } from "./helper/customSetInterval";
 import { APIContext } from "./context";
 import { API } from "./http-api";
+import "./globals.css";
 
 const RootWithVersion = () => {
   let [title, setTitle] = useState<string>("rqbit web UI");

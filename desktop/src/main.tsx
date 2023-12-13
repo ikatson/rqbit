@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { RqbitDesktop } from "./rqbit-desktop";
+import "./styles/index.css";
 
 async function get_version(): Promise<string> {
   return invoke<string>("get_version");

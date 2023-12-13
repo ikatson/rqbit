@@ -3,9 +3,10 @@ import { TorrentId, ErrorDetails as ApiErrorDetails } from "./api-types";
 import { AppContext, APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
 import { customSetInterval } from "./helper/customSetInterval";
-import { IconButton } from "./components/IconButton";
+import { IconButton } from "./components/buttons/IconButton";
 import { BsBodyText } from "react-icons/bs";
-import { LogStreamModal } from "./components/LogStreamModal";
+import { LogStreamModal } from "./components/modal/LogStreamModal";
+import { Header } from "./components/Header";
 
 export interface ErrorWithLabel {
   text: string;
@@ -65,23 +66,23 @@ export const RqbitWebUI = (props: {
 
   return (
     <AppContext.Provider value={context}>
-      <div className="text-center">
-        <h1 className="mt-3 mb-4">{props.title}</h1>
+      <Header title={props.title} />
+      <div className="relative">
+        {/* Menu buttons */}
+        <div className="absolute top-0 start-0 pl-2">
+          {props.menuButtons &&
+            props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
+          <IconButton onClick={() => setLogsOpened(true)}>
+            <BsBodyText />
+          </IconButton>
+        </div>
+
         <RootContent
           closeableError={closeableError}
           otherError={otherError}
           torrents={torrents}
           torrentsLoading={torrentsLoading}
         />
-      </div>
-
-      {/* Menu buttons */}
-      <div className="position-absolute top-0 start-0 p-1">
-        {props.menuButtons &&
-          props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
-        <IconButton onClick={() => setLogsOpened(true)}>
-          <BsBodyText />
-        </IconButton>
       </div>
 
       <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
