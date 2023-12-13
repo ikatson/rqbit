@@ -24,7 +24,7 @@ export const TorrentRow: React.FC<{
   statsResponse: TorrentStats | null;
 }> = ({ id, detailsResponse, statsResponse }) => {
   const state = statsResponse?.state ?? "";
-  const error = statsResponse?.error;
+  const error = statsResponse?.error ?? null;
   const totalBytes = statsResponse?.total_bytes ?? 1;
   const progressBytes = statsResponse?.progress_bytes ?? 0;
   const finished = statsResponse?.finished || false;
@@ -68,18 +68,22 @@ export const TorrentRow: React.FC<{
           </div>
         )}
         {error ? (
-          <p className="text-danger">
+          <p className="text-red-500 text-sm">
             <strong>Error:</strong> {error}
           </p>
         ) : (
           <>
-            <div className="mt-1">
+            <div>
               <ProgressBar
-                error={error}
                 now={progressPercentage}
-                finished={finished}
-                initializaion={state == STATE_INITIALIZING}
-                live={state === STATE_LIVE}
+                label={error}
+                variant={
+                  state == STATE_INITIALIZING
+                    ? "warn"
+                    : finished
+                      ? "success"
+                      : "info"
+                }
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
