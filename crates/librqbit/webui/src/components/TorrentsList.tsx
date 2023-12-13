@@ -17,7 +17,7 @@ export const TorrentsList = (props: {
   if (props.torrents.length === 0) {
     return (
       <div className="text-center">
-        <p>No existing torrents found. Add them through buttons below.</p>
+        <p>No existing torrents found.</p>
       </div>
     );
   }
