@@ -25,8 +25,6 @@ export const TorrentRow: React.FC<{
   const finished = statsResponse?.finished || false;
   const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
 
-  const isDownloading = !!statsResponse?.live;
-
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;
     if (!peer_stats) {
@@ -41,7 +39,7 @@ export const TorrentRow: React.FC<{
       <div className="p-1">
         <StatusIcon
           error={!!error}
-          isDownloading={isDownloading}
+          live={!!statsResponse?.live}
           finished={finished}
         />
       </div>
