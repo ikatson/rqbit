@@ -19,8 +19,11 @@ export const Button: React.FC<{
   return (
     <button
       disabled={disabled}
-      onClick={onClick}
-      className={`flex inline-flex items-center gap-1 border rounded-lg border mx-1 disabled:cursor-not-allowed px-2 py-1 transition-colors duration-300 ${variantClassNames} ${className}`}
+      onClick={(e) => {
+        e.preventDefault();
+        onClick(e);
+      }}
+      className={`flex inline-flex items-center gap-1 border rounded-lg border disabled:cursor-not-allowed px-2 py-1 transition-colors duration-300 ${variantClassNames} ${className}`}
     >
       {children}
     </button>

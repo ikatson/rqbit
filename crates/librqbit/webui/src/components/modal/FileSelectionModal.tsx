@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
 import { AppContext, APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
@@ -38,13 +38,17 @@ export const FileSelectionModal = (props: {
   const API = useContext(APIContext);
   // const [Modal, , , closeModal] = useModal({ fullScreen: true });
 
-  useEffect(() => {
-    console.log(listTorrentResponse);
+  const selectAll = () => {
     setSelectedFiles(
       listTorrentResponse
         ? listTorrentResponse.details.files.map((_, id) => id)
         : []
     );
+  };
+
+  useEffect(() => {
+    console.log(listTorrentResponse);
+    selectAll();
     setOutputFolder(listTorrentResponse?.output_folder || "");
   }, [listTorrentResponse]);
 
@@ -105,6 +109,14 @@ export const FileSelectionModal = (props: {
       return (
         <Form>
           <Fieldset className="mb-4" label="Pick the files to download">
+            <div className="mb-3 flex gap-2">
+              <Button onClick={selectAll} className="text-sm">
+                Select all
+              </Button>
+              <Button onClick={() => setSelectedFiles([])} className="text-sm">
+                Deselect all
+              </Button>
+            </div>
             {listTorrentResponse.details.files.map((file, index) => (
               <FormCheckbox
                 key={index}
@@ -120,7 +132,6 @@ export const FileSelectionModal = (props: {
               label="Output folder"
               name="output_folder"
               inputType="text"
-              help="Some help text"
               value={outputFolder}
               onChange={(e) => setOutputFolder(e.target.value)}
             />
