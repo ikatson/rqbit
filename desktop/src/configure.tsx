@@ -175,21 +175,21 @@ export const ConfigModal: React.FC<{
       title="Configure Rqbit desktop"
       isOpen={show}
       onClose={handleCancel}
-      className="max-w-6xl"
+      className="max-w-4xl"
     >
       <ModalBody>
         <ErrorComponent error={error}></ErrorComponent>
-        <div className="flex border-b mb-2">
+        <div className="flex border-b mb-4">
           {TABS.map((t, i) => {
             const isActive = t === tab;
             let classNames = "text-slate-300";
             if (isActive) {
-              classNames = "text-slate-800";
+              classNames = "text-slate-800 border-b-2 border-blue-800";
             }
             return (
               <button
                 key={i}
-                className={`p-2 border rounded ${classNames}`}
+                className={`p-2 ${classNames}`}
                 onClick={() => setTab(t)}
               >
                 {t}
