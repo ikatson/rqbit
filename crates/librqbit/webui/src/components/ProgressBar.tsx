@@ -14,12 +14,11 @@ export const ProgressBar = ({
   live,
 }: Props) => {
   const progressLabel = error ? "Error" : `${now.toFixed(2)}%`;
-  const isAnimated = (initializaion || live) && !finished;
 
   return (
     <div className={"w-full bg-gray-200 rounded-full"}>
       <div
-        className="text-xs bg-blue-500 font-medium text-blue-100 text-center p-0.5 leading-none rounded-full"
+        className="text-xs bg-blue-500 font-medium text-blue-100 transition-all text-center p-0.5 leading-none rounded-full"
         style={{ width: `${now}%` }}
       >
         {progressLabel}
