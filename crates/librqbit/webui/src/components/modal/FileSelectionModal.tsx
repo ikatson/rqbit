@@ -1,10 +1,18 @@
-import { useContext, useEffect, useState } from "react";
-import { Button, Modal, Form, Spinner } from "react-bootstrap";
-import { AddTorrentResponse, AddTorrentOptions } from "../api-types";
-import { AppContext, APIContext } from "../context";
-import { ErrorComponent } from "./ErrorComponent";
-import { formatBytes } from "../helper/formatBytes";
-import { ErrorWithLabel } from "../rqbit-web";
+import { useCallback, useContext, useEffect, useState } from "react";
+import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
+import { AppContext, APIContext } from "../../context";
+import { ErrorComponent } from "../ErrorComponent";
+import { formatBytes } from "../../helper/formatBytes";
+import { ErrorWithLabel } from "../../rqbit-web";
+import { Spinner } from "../Spinner";
+import { Modal } from "./Modal";
+import { ModalBody } from "./ModalBody";
+import { ModalFooter } from "./ModalFooter";
+import { Button } from "../buttons/Button";
+import { FormCheckbox } from "../forms/FormCheckbox";
+import { Fieldset } from "../forms/Fieldset";
+import { FormInput } from "../forms/FormInput";
+import { Form } from "../forms/Form";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -28,14 +36,19 @@ export const FileSelectionModal = (props: {
   const [outputFolder, setOutputFolder] = useState<string>("");
   const ctx = useContext(AppContext);
   const API = useContext(APIContext);
+  // const [Modal, , , closeModal] = useModal({ fullScreen: true });
 
-  useEffect(() => {
-    console.log(listTorrentResponse);
+  const selectAll = () => {
     setSelectedFiles(
       listTorrentResponse
         ? listTorrentResponse.details.files.map((_, id) => id)
         : []
     );
+  };
+
+  useEffect(() => {
+    console.log(listTorrentResponse);
+    selectAll();
     setOutputFolder(listTorrentResponse?.output_folder || "");
   }, [listTorrentResponse]);
 
@@ -95,71 +108,67 @@ export const FileSelectionModal = (props: {
     } else if (listTorrentResponse) {
       return (
         <Form>
-          <fieldset className="mb-4">
-            <legend>Pick the files to download</legend>
+          <Fieldset className="mb-4" label="Pick the files to download">
+            <div className="mb-3 flex gap-2">
+              <Button onClick={selectAll} className="text-sm">
+                Select all
+              </Button>
+              <Button onClick={() => setSelectedFiles([])} className="text-sm">
+                Deselect all
+              </Button>
+            </div>
             {listTorrentResponse.details.files.map((file, index) => (
-              <Form.Group key={index} controlId={`check-${index}`}>
-                <Form.Check
-                  type="checkbox"
-                  label={`${file.name}  (${formatBytes(file.length)})`}
-                  checked={selectedFiles.includes(index)}
-                  onChange={() => handleToggleFile(index)}
-                ></Form.Check>
-              </Form.Group>
-            ))}
-          </fieldset>
-          <fieldset>
-            <legend>Options</legend>
-            <Form.Group controlId="output-folder" className="mb-3">
-              <Form.Label>Output folder</Form.Label>
-              <Form.Control
-                type="text"
-                value={outputFolder}
-                onChange={(e) => setOutputFolder(e.target.value)}
+              <FormCheckbox
+                key={index}
+                label={`${file.name}  (${formatBytes(file.length)})`}
+                checked={selectedFiles.includes(index)}
+                onChange={() => handleToggleFile(index)}
+                name={`check-${index}`}
               />
-            </Form.Group>
-            <Form.Group controlId="unpopular-torrent" className="mb-3">
-              <Form.Check
-                type="checkbox"
-                label="Increase timeouts"
-                checked={unpopularTorrent}
-                onChange={() => setUnpopularTorrent(!unpopularTorrent)}
-              ></Form.Check>
-              <small id="emailHelp" className="form-text text-muted">
-                This might be useful for unpopular torrents with few peers. It
-                will slow down fast torrents though.
-              </small>
-            </Form.Group>
-          </fieldset>
+            ))}
+          </Fieldset>
+          <Fieldset label="Options">
+            <FormInput
+              label="Output folder"
+              name="output_folder"
+              inputType="text"
+              value={outputFolder}
+              onChange={(e) => setOutputFolder(e.target.value)}
+            />
+
+            <FormCheckbox
+              label="Increase timeouts"
+              checked={unpopularTorrent}
+              onChange={() => setUnpopularTorrent(!unpopularTorrent)}
+              help="This might be useful for unpopular torrents with few peers. It will slow down fast torrents though."
+              name="increase_timeouts"
+            />
+          </Fieldset>
         </Form>
       );
     }
   };
-
   return (
-    <Modal show onHide={clear} size="lg">
-      <Modal.Header closeButton>
-        <Modal.Title>Add torrent</Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
+    <Modal isOpen={true} onClose={clear} title="Add Torrent">
+      <ModalBody>
         {getBody()}
         <ErrorComponent error={uploadError} />
-      </Modal.Body>
-      <Modal.Footer>
+      </ModalBody>
+      <ModalFooter>
         {uploading && <Spinner />}
+        <Button onClick={clear} variant="cancel">
+          Cancel
+        </Button>
         <Button
-          variant="primary"
           onClick={handleUpload}
+          variant="primary"
           disabled={
             listTorrentLoading || uploading || selectedFiles.length == 0
           }
         >
           OK
         </Button>
-        <Button variant="secondary" onClick={clear}>
-          Cancel
-        </Button>
-      </Modal.Footer>
+      </ModalFooter>
     </Modal>
   );
 };

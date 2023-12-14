@@ -29,7 +29,7 @@ const SpanFields: React.FC<{ span: Span }> = ({ span }) => {
 
 const LogSpan: React.FC<{ span: Span }> = ({ span }) => (
   <>
-    <span className="fw-bold">{span.name}</span>
+    <span className="font-bold">{span.name}</span>
     <SpanFields span={span} />
   </>
 );
@@ -37,7 +37,7 @@ const LogSpan: React.FC<{ span: Span }> = ({ span }) => (
 const Fields: React.FC<{ fields: JSONLogLine["fields"] }> = ({ fields }) => (
   <span
     className={`m-1 ${
-      fields.message.match(/error|fail/g) ? "text-danger" : "text-muted"
+      fields.message.match(/error|fail/g) ? "text-red-500" : "text-slate-500"
     }`}
   >
     {fields.message}
@@ -45,7 +45,7 @@ const Fields: React.FC<{ fields: JSONLogLine["fields"] }> = ({ fields }) => (
       .filter(([key, value]) => key != "message")
       .map(([key, value]) => (
         <span className="m-1" key={key}>
-          <span className="fst-italic fw-bold">{key}</span>={value}
+          <span className="italic font-bold">{key}</span>={value}
         </span>
       ))}
   </span>
@@ -58,21 +58,21 @@ export const LogLine: React.FC<{ line: JSONLogLine }> = React.memo(
     const classNameByLevel = (level: string) => {
       switch (level) {
         case "DEBUG":
-          return "text-primary";
+          return "text-blue-500";
         case "INFO":
-          return "text-success";
+          return "text-green-500";
         case "WARN":
-          return "text-warning";
+          return "text-amber-500";
         case "ERROR":
-          return "text-danger";
+          return "text-red-500";
         default:
-          return "text-muted";
+          return "text-slate-500";
       }
     };
 
     return (
-      <p className="font-monospace m-0 text-break" style={{ fontSize: "10px" }}>
-        <span className="m-1">{parsed.timestamp}</span>
+      <p className="font-mono m-0 text-break text-[10px]">
+        <span className="m-1 text-slate-500">{parsed.timestamp}</span>
         <span className={`m-1 ${classNameByLevel(parsed.level)}`}>
           {parsed.level}
         </span>
@@ -80,7 +80,7 @@ export const LogLine: React.FC<{ line: JSONLogLine }> = React.memo(
         <span className="m-1">
           {parsed.spans?.map((span, i) => <LogSpan key={i} span={span} />)}
         </span>
-        <span className="m-1 text-muted">{parsed.target}</span>
+        <span className="m-1 text-slate-500">{parsed.target}</span>
         <Fields fields={parsed.fields} />
       </p>
     );

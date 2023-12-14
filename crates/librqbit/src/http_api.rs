@@ -239,6 +239,15 @@ impl HttpApi {
                     }),
                 )
                 .route(
+                    "/assets/index.css",
+                    get(|| async {
+                        (
+                            [("Content-Type", "text/css")],
+                            include_str!("../webui/dist/assets/index.css"),
+                        )
+                    }),
+                )
+                .route(
                     "/assets/logo.svg",
                     get(|| async {
                         (

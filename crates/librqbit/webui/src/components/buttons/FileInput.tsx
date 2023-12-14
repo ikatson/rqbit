@@ -1,7 +1,8 @@
 import { RefObject, useRef, useState } from "react";
 import { UploadButton } from "./UploadButton";
+import { CgFileAdd } from "react-icons/cg";
 
-export const FileInput = () => {
+export const FileInput = ({ className }: { className?: string }) => {
   const inputRef = useRef<HTMLInputElement>() as RefObject<HTMLInputElement>;
   const [file, setFile] = useState<File | null>(null);
 
@@ -35,15 +36,17 @@ export const FileInput = () => {
         ref={inputRef}
         accept=".torrent"
         onChange={onFileChange}
-        className="d-none"
+        hidden
       />
       <UploadButton
-        variant="secondary"
-        buttonText="Upload .torrent File"
         onClick={onClick}
         data={file}
         resetData={reset}
-      />
+        className={className}
+      >
+        <CgFileAdd color="blue" />
+        <div>Upload .torrent File</div>
+      </UploadButton>
     </>
   );
 };

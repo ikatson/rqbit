@@ -19,7 +19,7 @@ export const IconButton: React.FC<{
   const colorClassName = color ? `text-${color}` : "";
   return (
     <a
-      className={`p-1 ${colorClassName} ${className}`}
+      className={`block p-1 ${colorClassName} ${className}`}
       onClick={onClickStopPropagation}
       href="#"
       {...otherProps}

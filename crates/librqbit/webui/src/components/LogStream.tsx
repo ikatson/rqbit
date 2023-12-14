@@ -1,17 +1,12 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorWithLabel } from "../rqbit-web";
 import { ErrorComponent } from "./ErrorComponent";
-import { Form } from "react-bootstrap";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
 import debounce from "lodash.debounce";
 import { LogLine } from "./LogLine";
 import { JSONLogLine } from "../api-types";
+import { Form } from "./forms/Form";
+import { FormInput } from "./forms/FormInput";
 
 interface LogStreamProps {
   url: string;
@@ -200,15 +195,12 @@ export const LogStream: React.FC<LogStreamProps> = ({ url, maxLines }) => {
         Showing last {maxL} logs since this window was opened
       </div>
       <Form>
-        <Form.Group className="mb-3">
-          <Form.Control
-            type="text"
-            value={filter}
-            name="filter"
-            placeholder="Enter filter (regex)"
-            onChange={(e) => handleFilterChange(e.target.value)}
-          />
-        </Form.Group>
+        <FormInput
+          value={filter}
+          name="filter"
+          placeholder="Enter filter (regex)"
+          onChange={(e) => handleFilterChange(e.target.value)}
+        />
       </Form>
 
       {logLines.map((line) => (

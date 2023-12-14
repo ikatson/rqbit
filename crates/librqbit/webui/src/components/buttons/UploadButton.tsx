@@ -1,20 +1,20 @@
-import { useContext, useEffect, useState } from "react";
-import { Button } from "react-bootstrap";
+import { ReactNode, useContext, useEffect, useState } from "react";
 import {
   AddTorrentResponse,
   ErrorDetails as ApiErrorDetails,
-} from "../api-types";
-import { APIContext } from "../context";
-import { ErrorWithLabel } from "../rqbit-web";
-import { FileSelectionModal } from "./FileSelectionModal";
+} from "../../api-types";
+import { APIContext } from "../../context";
+import { ErrorWithLabel } from "../../rqbit-web";
+import { FileSelectionModal } from "../modal/FileSelectionModal";
+import { Button } from "./Button";
 
 export const UploadButton: React.FC<{
-  buttonText: string;
   onClick: () => void;
   data: string | File | null;
   resetData: () => void;
-  variant: string;
-}> = ({ buttonText, onClick, data, resetData, variant }) => {
+  children: ReactNode;
+  className?: string;
+}> = ({ onClick, data, resetData, children, className }) => {
   const [loading, setLoading] = useState(false);
   const [listTorrentResponse, setListTorrentResponse] =
     useState<AddTorrentResponse | null>(null);
@@ -54,8 +54,8 @@ export const UploadButton: React.FC<{
 
   return (
     <>
-      <Button variant={variant} onClick={onClick} className="m-1">
-        {buttonText}
+      <Button onClick={onClick} className={className}>
+        {children}
       </Button>
 
       {data && (
