@@ -33,27 +33,27 @@ export const TorrentRow: React.FC<{
     return `${peer_stats.live} / ${peer_stats.seen}`;
   };
 
+  const statusIcon = (className: string) => {
+    return (
+      <StatusIcon
+        className={className}
+        error={!!error}
+        live={!!statsResponse?.live}
+        finished={finished}
+      />
+    );
+  };
+
   return (
-    <section className="flex flex-col md:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
+    <section className="flex flex-col sm:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
       {/* Icon */}
-      <div className="p-1">
-        <StatusIcon
-          error={!!error}
-          live={!!statsResponse?.live}
-          finished={finished}
-        />
-      </div>
+      <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
       {/* Name, progress, stats */}
       <div className="w-full flex flex-col gap-2">
         {detailsResponse && (
-          <div>
-            <p className="text-left text-lg text-gray-900 text-ellipsis break-all">
-              {getLargestFileName(detailsResponse)}
-            </p>
-            <div
-              id="tooltip"
-              className="hidden bg-gray-800 text-white p-2 rounded absolute group-hover:block"
-            >
+          <div className="flex items-center gap-2">
+            <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
+            <div className="text-left text-lg text-gray-900 text-ellipsis break-all">
               {getLargestFileName(detailsResponse)}
             </div>
           </div>
@@ -77,7 +77,7 @@ export const TorrentRow: React.FC<{
                 }
               />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
               <div className="flex gap-2 items-center">
                 <GoPeople /> {formatPeersString().toString()}
               </div>
