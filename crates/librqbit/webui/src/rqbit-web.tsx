@@ -69,7 +69,7 @@ export const RqbitWebUI = (props: {
       <Header title={props.title} />
       <div className="relative">
         {/* Menu buttons */}
-        <div className="absolute top-0 start-0 pl-2">
+        <div className="absolute top-0 start-0 pl-2 z-10">
           {props.menuButtons &&
             props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
           <IconButton onClick={() => setLogsOpened(true)}>
