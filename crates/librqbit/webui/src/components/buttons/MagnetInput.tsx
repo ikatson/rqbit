@@ -5,6 +5,7 @@ import { Modal } from "../modal/Modal";
 import { Button } from "./Button";
 import { ModalBody } from "../modal/ModalBody";
 import { ModalFooter } from "../modal/ModalFooter";
+import { FormInput } from "../forms/FormInput";
 
 export const MagnetInput = ({ className }: { className?: string }) => {
   const [magnet, setMagnet] = useState<string | null>(null);
@@ -32,16 +33,13 @@ export const MagnetInput = ({ className }: { className?: string }) => {
 
       <Modal isOpen={modalIsOpen} onClose={clear} title="Add torrent">
         <ModalBody>
-          <p className="mb-2 text-sm text-gray-500 italic">
-            Enter magnet or HTTP(S) URL to the .torrent
-          </p>
-          <input
+          <FormInput
             autoFocus
-            className="w-full border rounded-md p-2 my-2"
             value={inputValue}
+            name="magnet"
             onChange={(e) => setInputValue(e.target.value)}
-            type="text"
             placeholder="magnet:?xt=urn:btih:..."
+            help="Enter magnet or HTTP(S) URL to the .torrent"
           />
         </ModalBody>
 
