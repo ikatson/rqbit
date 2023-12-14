@@ -204,8 +204,8 @@ export const LogStream: React.FC<LogStreamProps> = ({ url, maxLines }) => {
       </Form>
 
       {logLines.map((line) => (
-        <div hidden={!line.show}>
-          <LogLine key={line.id} line={line.parsed} />
+        <div key={line.id} hidden={!line.show}>
+          <LogLine line={line.parsed} />
         </div>
       ))}
     </div>
