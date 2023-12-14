@@ -24,6 +24,8 @@ pub struct ChunkTracker {
 
     // What pieces to download first.
     priority_piece_ids: Vec<usize>,
+
+    total_selected_bytes: u64,
 }
 
 // TODO: this should be redone from "have" pieces, not from "needed" pieces.
@@ -58,7 +60,12 @@ pub enum ChunkMarkingResult {
 }
 
 impl ChunkTracker {
-    pub fn new(needed_pieces: BF, have_pieces: BF, lengths: Lengths) -> Self {
+    pub fn new(
+        needed_pieces: BF,
+        have_pieces: BF,
+        lengths: Lengths,
+        total_selected_bytes: u64,
+    ) -> Self {
         // TODO: ideally this needs to be a list based on needed files, e.g.
         // last needed piece for each file. But let's keep simple for now.
 
@@ -80,7 +87,12 @@ impl ChunkTracker {
             lengths,
             have: have_pieces,
             priority_piece_ids,
+            total_selected_bytes,
         }
+    }
+
+    pub fn get_total_selected_bytes(&self) -> u64 {
+        self.total_selected_bytes
     }
 
     pub fn get_lengths(&self) -> &Lengths {
@@ -96,6 +108,16 @@ impl ChunkTracker {
 
     pub fn calc_have_bytes(&self) -> u64 {
         self.have
+            .iter_ones()
+            .filter_map(|piece_id| {
+                let piece_id = self.lengths.validate_piece_index(piece_id as u32)?;
+                Some(self.lengths.piece_length(piece_id) as u64)
+            })
+            .sum()
+    }
+
+    pub fn calc_needed_bytes(&self) -> u64 {
+        self.needed_pieces
             .iter_ones()
             .filter_map(|piece_id| {
                 let piece_id = self.lengths.validate_piece_index(piece_id as u32)?;

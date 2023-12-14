@@ -22,10 +22,18 @@ use tracing::{debug, trace, warn};
 use crate::type_aliases::{PeerHandle, BF};
 
 pub(crate) struct InitialCheckResults {
+    // The pieces that we need to download.
     pub needed_pieces: BF,
+    // The pieces we have downloaded.
     pub have_pieces: BF,
+    // How many bytes we have. This can be MORE than "total_selected_bytes",
+    // if we downloaded some pieces, and later the "only_files" was changed.
     pub have_bytes: u64,
+    // How many bytes we need to download.
     pub needed_bytes: u64,
+    // How many bytes are in selected pieces.
+    // If all selected, this must be equal to total torrent length.
+    pub total_selected_bytes: u64,
 }
 
 pub fn update_hash_from_file<Sha1: ISha1>(
@@ -77,6 +85,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
         let mut have_bytes = 0u64;
         let mut needed_bytes = 0u64;
+        let mut total_selected_bytes = 0u64;
 
         #[derive(Debug)]
         struct CurrentFile<'a> {
@@ -135,6 +144,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                 let mut to_read_in_file =
                     std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
 
+                // Keep changing the current file to next until we find a file that has greater than 0 length.
                 while to_read_in_file == 0 {
                     current_file = file_iterator
                         .next()
@@ -157,7 +167,8 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
 
                 let mut fd = current_file.fd.lock();
 
-                fd.seek(SeekFrom::Start(pos)).unwrap();
+                fd.seek(SeekFrom::Start(pos))
+                    .context("bug? error seeking")?;
                 if let Err(err) = update_hash_from_file(
                     &mut fd,
                     &mut computed_hash,
@@ -171,6 +182,10 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
                     current_file.is_broken = true;
                     some_files_broken = true;
                 }
+            }
+
+            if at_least_one_file_required {
+                total_selected_bytes += piece_info.len as u64;
             }
 
             if at_least_one_file_required && some_files_broken {
@@ -187,7 +202,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             if self
                 .torrent
                 .compare_hash(piece_info.piece_index.get(), computed_hash.finish())
-                .unwrap()
+                .context("bug: either torrent info broken or we have a bug - piece index invalid")?
             {
                 trace!(
                     "piece {} is fine, not marking as needed",
@@ -215,6 +230,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             have_pieces,
             have_bytes,
             needed_bytes,
+            total_selected_bytes,
         })
     }
 

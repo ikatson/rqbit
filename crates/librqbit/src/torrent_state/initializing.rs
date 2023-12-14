@@ -86,9 +86,10 @@ impl TorrentStateInitializing {
         })?;
 
         info!(
-            "Initial check results: have {}, needed {}",
+            "Initial check results: have {}, needed {}, total selected {}",
             SF::new(initial_check_results.have_bytes),
-            SF::new(initial_check_results.needed_bytes)
+            SF::new(initial_check_results.needed_bytes),
+            SF::new(initial_check_results.total_selected_bytes)
         );
 
         self.meta.spawner.spawn_block_in_place(|| {
@@ -126,6 +127,7 @@ impl TorrentStateInitializing {
             initial_check_results.needed_pieces,
             initial_check_results.have_pieces,
             self.meta.lengths,
+            initial_check_results.total_selected_bytes,
         );
 
         let paused = TorrentStatePaused {
@@ -134,6 +136,7 @@ impl TorrentStateInitializing {
             filenames,
             chunk_tracker,
             have_bytes: initial_check_results.have_bytes,
+            needed_bytes: initial_check_results.needed_bytes,
         };
         Ok(paused)
     }

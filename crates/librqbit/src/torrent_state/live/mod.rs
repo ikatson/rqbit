@@ -174,6 +174,7 @@ pub struct TorrentStateLive {
     filenames: Vec<PathBuf>,
 
     initially_needed_bytes: u64,
+    total_selected_bytes: u64,
 
     stats: AtomicStats,
     lengths: Lengths,
@@ -203,7 +204,8 @@ impl TorrentStateLive {
         let up_speed_estimator = SpeedEstimator::new(5);
 
         let have_bytes = paused.have_bytes;
-        let needed_bytes = paused.info.lengths.total_length() - have_bytes;
+        let needed_bytes = paused.needed_bytes;
+        let total_selected_bytes = paused.chunk_tracker.get_total_selected_bytes();
         let lengths = *paused.chunk_tracker.get_lengths();
 
         let state = Arc::new(TorrentStateLive {
@@ -222,6 +224,7 @@ impl TorrentStateLive {
             },
             initially_needed_bytes: needed_bytes,
             lengths,
+            total_selected_bytes,
             peer_semaphore: Arc::new(Semaphore::new(128)),
             peer_queue_tx,
             finished_notify: Notify::new(),
@@ -697,7 +700,7 @@ impl TorrentStateLive {
             downloaded_and_checked_pieces: self.stats.downloaded_and_checked_pieces.load(Relaxed),
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded_bytes.load(Relaxed),
-            total_bytes: self.lengths.total_length(),
+            total_bytes: self.total_selected_bytes,
             initially_needed_bytes: self.initially_needed_bytes,
             remaining_bytes: remaining,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
@@ -750,6 +753,7 @@ impl TorrentStateLive {
             chunk_tracker.mark_piece_broken(piece_id);
         }
         let have_bytes = chunk_tracker.calc_have_bytes();
+        let needed_bytes = chunk_tracker.calc_needed_bytes();
 
         // g.chunks;
         Ok(TorrentStatePaused {
@@ -758,6 +762,7 @@ impl TorrentStateLive {
             filenames,
             chunk_tracker,
             have_bytes,
+            needed_bytes,
         })
     }
 

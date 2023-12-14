@@ -364,8 +364,9 @@ impl ManagedTorrent {
                 }
                 ManagedTorrentState::Paused(p) => {
                     resp.state = "paused";
-                    resp.progress_bytes = p.have_bytes;
-                    resp.finished = p.have_bytes == resp.total_bytes;
+                    resp.total_bytes = p.chunk_tracker.get_total_selected_bytes();
+                    resp.progress_bytes = resp.total_bytes - p.needed_bytes;
+                    resp.finished = resp.progress_bytes == resp.total_bytes;
                 }
                 ManagedTorrentState::Live(l) => {
                     resp.state = "live";
