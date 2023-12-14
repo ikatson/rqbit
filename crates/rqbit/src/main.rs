@@ -7,7 +7,7 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse, ManagedTorrentState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
     PeerConnectionOptions, Session, SessionOptions,
 };
 use size_format::SizeFormatterBinary as SF;
@@ -271,29 +271,23 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         loop {
             session.with_torrents(|torrents| {
                     for (idx, torrent) in torrents {
-                        let live = torrent.with_state(|s| {
-                            match s {
-                                ManagedTorrentState::Initializing(i) => {
-                                    let total = torrent.get_total_bytes();
-                                    let progress = i.get_checked_bytes();
-                                    let pct =  (progress as f64 / total as f64) * 100f64;
-                                    info!("[{}] initializing {:.2}%", idx, pct)
-                                },
-                                ManagedTorrentState::Live(h) => return Some(h.clone()),
-                                _ => {},
-                            };
-                            None
-                        });
-                        let handle = match live {
-                            Some(live) => live,
-                            None => continue
+                        let stats = torrent.stats();
+                        if stats.state == "initializing" {
+                            let total = stats.total_bytes;
+                            let progress = stats.progress_bytes;
+                            let pct =  (progress as f64 / total as f64) * 100f64;
+                            info!("[{}] initializing {:.2}%", idx, pct);
+                            continue;
+                        }
+                        let (live, live_stats) = match (torrent.live(), stats.live.as_ref()) {
+                            (Some(live), Some(live_stats)) => (live, live_stats),
+                            _ => continue
                         };
-                        let stats = handle.stats_snapshot();
-                        let down_speed = handle.down_speed_estimator();
-                        let up_speed = handle.up_speed_estimator();
+                        let down_speed = live.down_speed_estimator();
+                        let up_speed = live.up_speed_estimator();
                         let total = stats.total_bytes;
-                        let progress = stats.total_bytes - stats.remaining_bytes;
-                        let downloaded_pct = if stats.remaining_bytes == 0 {
+                        let progress = stats.progress_bytes;
+                        let downloaded_pct = if stats.finished {
                             100f64
                         } else {
                             (progress as f64 / total as f64) * 100f64
@@ -303,6 +297,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             Some(d) => format!(", ETA: {:?}", d),
                             None => String::new()
                         };
+                        let peer_stats = &live_stats.snapshot.peer_stats;
                         info!(
                             "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}}}",
                             idx,
@@ -311,11 +306,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             SF::new(total),
                             down_speed.mbps(),
                             up_speed.mbps(),
-                            SF::new(stats.uploaded_bytes),
+                            SF::new(live_stats.snapshot.uploaded_bytes),
                             eta,
-                            stats.peer_stats.live + stats.peer_stats.connecting,
-                            stats.peer_stats.queued,
-                            stats.peer_stats.dead,
+                            peer_stats.live + peer_stats.connecting,
+                            peer_stats.queued,
+                            peer_stats.dead,
                         );
                     }
                 });

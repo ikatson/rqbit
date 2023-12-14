@@ -6,14 +6,12 @@ use crate::torrent_state::live::peers::stats::snapshot::AggregatePeerStats;
 
 #[derive(Debug, Serialize, Default)]
 pub struct StatsSnapshot {
-    pub have_bytes: u64,
     pub downloaded_and_checked_bytes: u64,
-    pub downloaded_and_checked_pieces: u64,
+
     pub fetched_bytes: u64,
     pub uploaded_bytes: u64,
-    pub initially_needed_bytes: u64,
-    pub remaining_bytes: u64,
-    pub total_bytes: u64,
+
+    pub downloaded_and_checked_pieces: u64,
     pub total_piece_download_ms: u64,
     pub peer_stats: AggregatePeerStats,
 }
