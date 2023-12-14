@@ -602,6 +602,10 @@ impl TorrentStateLive {
         });
     }
 
+    pub fn get_total_selected_bytes(&self) -> u64 {
+        self.total_selected_bytes
+    }
+
     pub fn get_uploaded_bytes(&self) -> u64 {
         self.stats.uploaded_bytes.load(Ordering::Relaxed)
     }
@@ -693,16 +697,11 @@ impl TorrentStateLive {
     pub fn stats_snapshot(&self) -> StatsSnapshot {
         use Ordering::*;
         let downloaded_bytes = self.stats.downloaded_and_checked_bytes.load(Relaxed);
-        let remaining = self.initially_needed_bytes - downloaded_bytes;
         StatsSnapshot {
-            have_bytes: self.stats.have_bytes.load(Relaxed),
             downloaded_and_checked_bytes: downloaded_bytes,
             downloaded_and_checked_pieces: self.stats.downloaded_and_checked_pieces.load(Relaxed),
             fetched_bytes: self.stats.fetched_bytes.load(Relaxed),
             uploaded_bytes: self.stats.uploaded_bytes.load(Relaxed),
-            total_bytes: self.total_selected_bytes,
-            initially_needed_bytes: self.initially_needed_bytes,
-            remaining_bytes: remaining,
             total_piece_download_ms: self.stats.total_piece_download_ms.load(Relaxed),
             peer_stats: self.peers.stats(),
         }

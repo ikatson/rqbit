@@ -371,8 +371,13 @@ impl ManagedTorrent {
                 ManagedTorrentState::Live(l) => {
                     resp.state = "live";
                     let live_stats = LiveStats::from(l.as_ref());
-                    resp.progress_bytes = live_stats.snapshot.have_bytes;
-                    resp.finished = resp.progress_bytes == resp.total_bytes;
+                    let total = l.get_total_selected_bytes();
+                    let remaining = l.get_left_to_download_bytes();
+                    let progress = total - remaining;
+
+                    resp.progress_bytes = progress;
+                    resp.total_bytes = total;
+                    resp.finished = remaining == 0;
                     resp.live = Some(live_stats);
                 }
                 ManagedTorrentState::Error(e) => {
