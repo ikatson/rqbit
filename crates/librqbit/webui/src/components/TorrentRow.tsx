@@ -1,9 +1,3 @@
-import {
-  MdDownload,
-  MdOutlineMotionPhotosPaused,
-  MdCheck,
-} from "react-icons/md";
-
 import { GoClock, GoFile, GoPeople } from "react-icons/go";
 import {
   TorrentDetails,
@@ -17,6 +11,7 @@ import { Speed } from "./Speed";
 import { formatBytes } from "../helper/formatBytes";
 import { getLargestFileName } from "../helper/getLargestFileName";
 import { getCompletionETA } from "../helper/getCompletionETA";
+import { StatusIcon } from "./StatusIcon";
 
 export const TorrentRow: React.FC<{
   id: number;
@@ -30,8 +25,6 @@ export const TorrentRow: React.FC<{
   const finished = statsResponse?.finished || false;
   const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
 
-  const isDownloading = !!statsResponse?.live;
-
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;
     if (!peer_stats) {
@@ -44,13 +37,11 @@ export const TorrentRow: React.FC<{
     <section className="flex flex-col md:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
       {/* Icon */}
       <div className="p-1">
-        {finished ? (
-          <MdCheck className="w-10 h-10" color="green" />
-        ) : isDownloading ? (
-          <MdDownload className="w-10 h-10" color="green" />
-        ) : (
-          <MdOutlineMotionPhotosPaused className="w-10 h-10" />
-        )}
+        <StatusIcon
+          error={!!error}
+          live={!!statsResponse?.live}
+          finished={finished}
+        />
       </div>
       {/* Name, progress, stats */}
       <div className="w-full flex flex-col gap-2">
