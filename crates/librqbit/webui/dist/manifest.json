@@ -4,14 +4,14 @@
     "src": "assets/logo.svg"
   },
   "index.css": {
-    "file": "assets/index-bc066ae5.css",
+    "file": "assets/index-458d2033.css",
     "src": "index.css"
   },
   "index.html": {
     "css": [
-      "assets/index-bc066ae5.css"
+      "assets/index-458d2033.css"
     ],
-    "file": "assets/index-9469b905.js",
+    "file": "assets/index-1daa8daf.js",
     "isEntry": true,
     "src": "index.html"
   }

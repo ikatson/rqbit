@@ -36,7 +36,6 @@ export const FileSelectionModal = (props: {
   const [outputFolder, setOutputFolder] = useState<string>("");
   const ctx = useContext(AppContext);
   const API = useContext(APIContext);
-  // const [Modal, , , closeModal] = useModal({ fullScreen: true });
 
   const selectAll = () => {
     setSelectedFiles(
@@ -108,7 +107,16 @@ export const FileSelectionModal = (props: {
     } else if (listTorrentResponse) {
       return (
         <Form>
-          <Fieldset className="mb-4" label="Pick the files to download">
+          <FormInput
+            label="Output folder"
+            name="output_folder"
+            inputType="text"
+            value={outputFolder}
+            onChange={(e) => setOutputFolder(e.target.value)}
+          />
+
+          <Fieldset>
+            <label className="text-sm mb-2 block">Select files</label>
             <div className="mb-3 flex gap-2">
               <Button onClick={selectAll} className="text-sm">
                 Select all
@@ -127,15 +135,8 @@ export const FileSelectionModal = (props: {
               />
             ))}
           </Fieldset>
-          <Fieldset label="Options">
-            <FormInput
-              label="Output folder"
-              name="output_folder"
-              inputType="text"
-              value={outputFolder}
-              onChange={(e) => setOutputFolder(e.target.value)}
-            />
 
+          {/* <Fieldset label="Options">
             <FormCheckbox
               label="Increase timeouts"
               checked={unpopularTorrent}
@@ -143,7 +144,7 @@ export const FileSelectionModal = (props: {
               help="This might be useful for unpopular torrents with few peers. It will slow down fast torrents though."
               name="increase_timeouts"
             />
-          </Fieldset>
+          </Fieldset> */}
         </Form>
       );
     }

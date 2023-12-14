@@ -12,6 +12,12 @@ export const MagnetInput = ({ className }: { className?: string }) => {
   const [inputValue, setInputValue] = useState("");
   const [modalIsOpen, setModalIsOpen] = useState(false);
 
+  const submit = () => {
+    setMagnet(inputValue);
+    setInputValue("");
+    setModalIsOpen(false);
+  };
+
   const clear = () => {
     setModalIsOpen(false);
     setMagnet(null);
@@ -38,6 +44,11 @@ export const MagnetInput = ({ className }: { className?: string }) => {
             value={inputValue}
             name="magnet"
             onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !!inputValue) {
+                submit();
+              }
+            }}
             placeholder="magnet:?xt=urn:btih:..."
             help="Enter magnet or HTTP(S) URL to the .torrent"
           />
@@ -47,15 +58,7 @@ export const MagnetInput = ({ className }: { className?: string }) => {
           <Button variant="cancel" onClick={clear}>
             Cancel
           </Button>
-          <Button
-            disabled={!inputValue}
-            variant="primary"
-            onClick={() => {
-              setMagnet(inputValue);
-              setInputValue("");
-              setModalIsOpen(false);
-            }}
-          >
+          <Button disabled={!inputValue} variant="primary" onClick={submit}>
             Add
           </Button>
         </ModalFooter>

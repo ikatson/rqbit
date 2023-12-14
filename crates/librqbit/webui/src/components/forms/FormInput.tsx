@@ -6,6 +6,7 @@ export const FormInput: React.FC<{
   autoFocus?: boolean;
   name: string;
   inputType?: string;
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
   placeholder?: string;
   help?: string;
   disabled?: boolean;
@@ -16,13 +17,14 @@ export const FormInput: React.FC<{
   name,
   disabled,
   onChange,
+  onKeyDown,
   label,
   help,
   inputType,
   placeholder,
 }) => {
   return (
-    <div className="flex flex-col gap-2 text-sm mb-6">
+    <div className="flex flex-col gap-2 text-sm mb-2">
       <label htmlFor={name}>{label}</label>
       <input
         autoFocus={autoFocus}
@@ -33,9 +35,10 @@ export const FormInput: React.FC<{
         disabled={disabled}
         placeholder={placeholder}
         value={value}
+        onKeyDown={onKeyDown}
         onChange={onChange}
       />
-      {help && <div className="text-xs text-slate-500 mb-3">{help}</div>}
+      {help && <div className="text-xs text-slate-500">{help}</div>}
     </div>
   );
 };

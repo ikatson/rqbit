@@ -7,13 +7,17 @@ export const Fieldset = ({
   className,
 }: {
   children: ReactNode;
-  label: string;
+  label?: string;
   help?: string;
   className?: string;
 }) => {
   return (
     <fieldset className={`mb-4 ${className}`}>
-      <label className="text-md font-md mb-3 block">{label}</label>
+      {label && (
+        <label className="text-md font-md mb-3 block pb-1 border-b">
+          {label}
+        </label>
+      )}
       {children}
     </fieldset>
   );

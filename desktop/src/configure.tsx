@@ -210,7 +210,7 @@ export const ConfigModal: React.FC<{
         </Tab>
 
         <Tab name="DHT" currentTab={tab}>
-          <Fieldset label="DHT config">
+          <Fieldset>
             <FormCheck
               label="Enable DHT"
               name="dht.disable"
@@ -241,7 +241,7 @@ export const ConfigModal: React.FC<{
         </Tab>
 
         <Tab name="TCP Listen" currentTab={tab}>
-          <Fieldset label="TCP Listener config">
+          <Fieldset>
             <FormCheck
               label="Listen on TCP"
               name="tcp_listen.disable"
@@ -281,7 +281,7 @@ export const ConfigModal: React.FC<{
         </Tab>
 
         <Tab name="Session" currentTab={tab}>
-          <Fieldset label="Session persistence">
+          <Fieldset>
             <FormCheck
               label="Enable persistence"
               name="persistence.disable"
@@ -302,7 +302,7 @@ export const ConfigModal: React.FC<{
         </Tab>
 
         <Tab name="Peer options" currentTab={tab}>
-          <Fieldset label="Peer connection options">
+          <Fieldset>
             <FormInput
               label="Connect timeout (seconds)"
               inputType="number"
@@ -324,7 +324,7 @@ export const ConfigModal: React.FC<{
         </Tab>
 
         <Tab name="HTTP API" currentTab={tab}>
-          <Fieldset label="HTTP API config">
+          <Fieldset>
             <FormCheck
               label="Enable HTTP API"
               name="http_api.disable"
@@ -365,7 +365,7 @@ export const ConfigModal: React.FC<{
       </ModalBody>
       <ModalFooter>
         {!!handleCancel && (
-          <Button variant="secondary" onClick={handleCancel}>
+          <Button variant="cancel" onClick={handleCancel}>
             Cancel
           </Button>
         )}
