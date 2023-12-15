@@ -15,7 +15,7 @@ export const ProgressBar = ({ now, variant, label }: Props) => {
   }[variant ?? "info"];
 
   return (
-    <div className={"w-full bg-gray-200 rounded-full"}>
+    <div className={"w-full bg-gray-200 rounded-full dark:bg-gray-500"}>
       <div
         className={`text-xs bg-blue-500 font-medium transition-all text-center p-0.5 leading-none rounded-full ${variantClassName}`}
         style={{ width: `${now}%` }}
