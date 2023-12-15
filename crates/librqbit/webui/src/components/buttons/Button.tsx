@@ -8,11 +8,14 @@ export const Button: React.FC<{
   children: ReactNode;
 }> = ({ onClick, children, className, disabled, variant }) => {
   let variantClassNames = {
-    secondary: "hover:bg-blue-500 transition-colors hover:text-white",
+    secondary:
+      "hover:bg-blue-500 transition-colors hover:text-white dark:hover:bg-blue-900/50",
     danger:
-      "bg-red-400 text-white border-green-50 hover:border-red-700 hover:bg-red-600",
-    primary: "bg-blue-600 text-white hover:bg-blue-800 disabled:bg-blue-200",
-    cancel: "hover:bg-slate-200",
+      "bg-red-400 text-white border-green-50 hover:border-red-700 hover:bg-red-600 dark:bg-red-800 dark:border-none",
+    primary:
+      "bg-blue-600 text-white hover:bg-blue-800 disabled:bg-blue-200 dark:disabled:bg-slate-600 dark:disabled:text-slate-300 dark:border-none",
+    cancel:
+      "hover:bg-slate-200 dark:bg-slate-200 dark:hover:bg-slate-400 dark:border-none",
     none: "",
   }[variant ?? "secondary"];
   return (
@@ -22,7 +25,7 @@ export const Button: React.FC<{
         e.preventDefault();
         onClick();
       }}
-      className={`flex inline-flex items-center gap-1 border rounded-lg border disabled:cursor-not-allowed px-2 py-1 transition-colors duration-300 ${variantClassNames} ${className}`}
+      className={`inline-flex items-center gap-1 border rounded-lg  disabled:cursor-not-allowed px-2 py-1 transition-colors duration-300 dark:border-slate-700 ${variantClassNames} ${className}`}
     >
       {children}
     </button>

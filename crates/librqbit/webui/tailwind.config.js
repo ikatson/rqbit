@@ -20,6 +20,7 @@ export default {
       'fade-out': 'fadeOut 0.3s ease-in-out',
     },
   },
+  darkMode: 'class',
   plugins: [],
 }
 
