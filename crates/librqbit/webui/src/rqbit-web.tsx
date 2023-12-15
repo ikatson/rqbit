@@ -7,6 +7,7 @@ import { IconButton } from "./components/buttons/IconButton";
 import { BsBodyText } from "react-icons/bs";
 import { LogStreamModal } from "./components/modal/LogStreamModal";
 import { Header } from "./components/Header";
+import DarkModeToggle from "./components/buttons/DarkModeToggle";
 
 export interface ErrorWithLabel {
   text: string;
@@ -86,6 +87,7 @@ export const RqbitWebUI = (props: {
       </div>
 
       <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
+      <DarkModeToggle />
     </AppContext.Provider>
   );
 };

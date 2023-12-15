@@ -25,7 +25,9 @@ export const FormInput: React.FC<{
 }) => {
   return (
     <div className="flex flex-col gap-2 text-sm mb-2">
-      <label htmlFor={name}>{label}</label>
+      <label htmlFor={name} className="dark:text-slate-500">
+        {label}
+      </label>
       <input
         autoFocus={autoFocus}
         type={inputType}
