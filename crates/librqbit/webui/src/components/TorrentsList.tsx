@@ -22,7 +22,7 @@ export const TorrentsList = (props: {
     );
   }
   return (
-    <div className="flex flex-col gap-2 mx-2">
+    <div className="flex flex-col gap-2 mx-2 mt-3">
       {props.torrents.map((t: TorrentId) => (
         <Torrent id={t.id} key={t.id} torrent={t} />
       ))}

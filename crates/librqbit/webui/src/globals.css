@@ -1,3 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+
+.dark {
+    @apply bg-gray-800 text-zinc-50
+  }

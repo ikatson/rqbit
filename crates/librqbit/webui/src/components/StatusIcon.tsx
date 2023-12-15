@@ -1,5 +1,4 @@
 import {
-  MdCheck,
   MdCheckCircle,
   MdDownload,
   MdError,

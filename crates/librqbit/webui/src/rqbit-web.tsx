@@ -67,7 +67,7 @@ export const RqbitWebUI = (props: {
   return (
     <AppContext.Provider value={context}>
       <Header title={props.title} />
-      <div className="relative">
+      <div className="relative dark:bg-gray-900 pt-3 min-h-screen h-full">
         {/* Menu buttons */}
         <div className="absolute top-0 start-0 pl-2 z-10">
           {props.menuButtons &&
