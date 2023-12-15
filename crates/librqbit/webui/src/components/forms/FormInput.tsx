@@ -29,7 +29,7 @@ export const FormInput: React.FC<{
       <input
         autoFocus={autoFocus}
         type={inputType}
-        className="block border rounded bg-transparent py-1.5 pl-2 text-gray-800 focus:ring-0 sm:text-sm sm:leading-6"
+        className="block border rounded bg-transparent py-1.5 pl-2 text-gray-800 focus:ring-0 sm:text-sm sm:leading-6 dark:text-slate-300"
         id={name}
         name={name}
         disabled={disabled}

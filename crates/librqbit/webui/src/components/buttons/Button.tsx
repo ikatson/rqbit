@@ -11,11 +11,11 @@ export const Button: React.FC<{
     secondary:
       "hover:bg-blue-500 transition-colors hover:text-white dark:hover:bg-blue-900/50",
     danger:
-      "bg-red-400 text-white border-green-50 hover:border-red-700 hover:bg-red-600 dark:bg-red-800 dark:border-none",
+      "bg-red-400 text-white border-green-50 hover:border-red-700 hover:bg-red-600 dark:bg-red-800 dark:border-none dark:hover:bg-red-900",
     primary:
       "bg-blue-600 text-white hover:bg-blue-800 disabled:bg-blue-200 dark:disabled:bg-slate-600 dark:disabled:text-slate-300 dark:border-none",
     cancel:
-      "hover:bg-slate-200 dark:bg-slate-200 dark:hover:bg-slate-400 dark:border-none",
+      "hover:bg-slate-200 dark:bg-slate-600 dark:hover:bg-slate-700 dark:border-none",
     none: "",
   }[variant ?? "secondary"];
   return (
