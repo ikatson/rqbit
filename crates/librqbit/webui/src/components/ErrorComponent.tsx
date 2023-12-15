@@ -7,7 +7,7 @@ const AlertDanger: React.FC<{
   onClose?: () => void;
 }> = ({ title, children, onClose }) => {
   return (
-    <div className="bg-red-200 p-3 rounded-md mb-3">
+    <div className="bg-red-200 p-3 rounded-md mb-3 dark:bg-red-800/60">
       <div className="flex justify-between mb-2">
         <h2 className="text-lg font-semibold">{title}</h2>
         {onClose && (
@@ -36,7 +36,7 @@ export const ErrorComponent = (props: {
       {error.details?.statusText && (
         <div className="pb-2 text-md">{error.details?.statusText}</div>
       )}
-      <div className="whitespace-pre text-sm">{error.details?.text}</div>
+      <div className="whitespace-pre-line text-sm">{error.details?.text}</div>
     </AlertDanger>
   );
 };
