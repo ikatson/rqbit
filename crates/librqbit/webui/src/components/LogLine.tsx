@@ -31,13 +31,16 @@ const LogSpan: React.FC<{ span: Span }> = ({ span }) => (
   <>
     <span className="font-bold">{span.name}</span>
     <SpanFields span={span} />
+    <span className="font-bold">:</span>
   </>
 );
 
 const Fields: React.FC<{ fields: JSONLogLine["fields"] }> = ({ fields }) => (
   <span
     className={`m-1 ${
-      fields.message.match(/error|fail/g) ? "text-red-500" : "text-slate-500"
+      fields.message.match(/error|fail/g)
+        ? "text-red-500"
+        : "text-slate-500 dark:text-slate-200"
     }`}
   >
     {fields.message}
@@ -72,7 +75,9 @@ export const LogLine: React.FC<{ line: JSONLogLine }> = React.memo(
 
     return (
       <p className="font-mono m-0 text-break text-[10px]">
-        <span className="m-1 text-slate-500">{parsed.timestamp}</span>
+        <span className="m-1 text-slate-500 dark:text-slate-400">
+          {parsed.timestamp}
+        </span>
         <span className={`m-1 ${classNameByLevel(parsed.level)}`}>
           {parsed.level}
         </span>
@@ -80,7 +85,9 @@ export const LogLine: React.FC<{ line: JSONLogLine }> = React.memo(
         <span className="m-1">
           {parsed.spans?.map((span, i) => <LogSpan key={i} span={span} />)}
         </span>
-        <span className="m-1 text-slate-500">{parsed.target}</span>
+        <span className="m-1 text-slate-500 dark:text-slate-400">
+          {parsed.target}
+        </span>
         <Fields fields={parsed.fields} />
       </p>
     );

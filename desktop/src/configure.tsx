@@ -184,7 +184,8 @@ export const ConfigModal: React.FC<{
             const isActive = t === tab;
             let classNames = "text-slate-300";
             if (isActive) {
-              classNames = "text-slate-800 border-b-2 border-blue-800";
+              classNames =
+                "text-slate-800 border-b-2 border-blue-800 dark:border-blue-200 dark:text-white";
             }
             return (
               <button

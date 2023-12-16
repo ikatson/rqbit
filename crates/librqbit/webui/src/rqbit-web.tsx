@@ -4,9 +4,10 @@ import { AppContext, APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
 import { customSetInterval } from "./helper/customSetInterval";
 import { IconButton } from "./components/buttons/IconButton";
-import { BsBodyText } from "react-icons/bs";
+import { BsBodyText, BsMoon } from "react-icons/bs";
 import { LogStreamModal } from "./components/modal/LogStreamModal";
 import { Header } from "./components/Header";
+import { DarkMode } from "./helper/darkMode";
 
 export interface ErrorWithLabel {
   text: string;
@@ -66,26 +67,34 @@ export const RqbitWebUI = (props: {
 
   return (
     <AppContext.Provider value={context}>
-      <Header title={props.title} />
-      <div className="relative">
-        {/* Menu buttons */}
-        <div className="absolute top-0 start-0 pl-2 z-10">
-          {props.menuButtons &&
-            props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
-          <IconButton onClick={() => setLogsOpened(true)}>
-            <BsBodyText />
-          </IconButton>
+      <div className="dark:bg-gray-900 dark:text-zinc-50 min-h-screen">
+        <Header title={props.title} />
+        <div className="relative">
+          {/* Menu buttons */}
+          <div className="absolute top-0 start-0 pl-2 z-10">
+            {props.menuButtons &&
+              props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
+            <IconButton onClick={() => setLogsOpened(true)}>
+              <BsBodyText />
+            </IconButton>
+            <IconButton onClick={DarkMode.toggle}>
+              <BsMoon />
+            </IconButton>
+          </div>
+
+          <RootContent
+            closeableError={closeableError}
+            otherError={otherError}
+            torrents={torrents}
+            torrentsLoading={torrentsLoading}
+          />
         </div>
 
-        <RootContent
-          closeableError={closeableError}
-          otherError={otherError}
-          torrents={torrents}
-          torrentsLoading={torrentsLoading}
+        <LogStreamModal
+          show={logsOpened}
+          onClose={() => setLogsOpened(false)}
         />
       </div>
-
-      <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
     </AppContext.Provider>
   );
 };

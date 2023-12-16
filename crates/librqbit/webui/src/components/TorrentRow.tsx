@@ -45,7 +45,7 @@ export const TorrentRow: React.FC<{
   };
 
   return (
-    <section className="flex flex-col sm:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm">
+    <section className="flex flex-col sm:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
       {/* Icon */}
       <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
       {/* Name, progress, stats */}
@@ -53,7 +53,7 @@ export const TorrentRow: React.FC<{
         {detailsResponse && (
           <div className="flex items-center gap-2">
             <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-            <div className="text-left text-lg text-gray-900 text-ellipsis break-all">
+            <div className="text-left text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
               {getLargestFileName(detailsResponse)}
             </div>
           </div>

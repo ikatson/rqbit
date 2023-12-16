@@ -33,7 +33,7 @@ export const MagnetInput = ({ className }: { className?: string }) => {
         className={className}
         resetData={() => setMagnet(null)}
       >
-        <CgLink color="blue" />
+        <CgLink className="text-blue-500 dark:text-white" />
         <div>Add Torrent from Magnet / URL</div>
       </UploadButton>
 

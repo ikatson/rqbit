@@ -44,7 +44,7 @@ export const FileInput = ({ className }: { className?: string }) => {
         resetData={reset}
         className={className}
       >
-        <CgFileAdd color="blue" />
+        <CgFileAdd className="text-blue-500 dark:text-white" />
         <div>Upload .torrent File</div>
       </UploadButton>
     </>

@@ -52,7 +52,7 @@ export const DeleteTorrentModal: React.FC<{
   return (
     <Modal isOpen={show} onClose={onHide} title="Delete torrent">
       <ModalBody>
-        <p className="text-gray-700">
+        <p className="text-gray-700 dark:text-slate-300">
           Are you sure you want to delete the torrent?
         </p>
 
@@ -65,7 +65,10 @@ export const DeleteTorrentModal: React.FC<{
             checked={deleteFiles}
             placeholder="Also delete files"
           />
-          <label htmlFor="deleteFiles" className="ml-2 text-gray-700">
+          <label
+            htmlFor="deleteFiles"
+            className="ml-2 text-gray-700 dark:text-slate-300"
+          >
             Also delete files
           </label>
         </div>

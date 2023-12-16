@@ -101,7 +101,7 @@ export const FileSelectionModal = (props: {
 
   const getBody = () => {
     if (listTorrentLoading) {
-      return <Spinner />;
+      return <Spinner label="Loading torrent contents" />;
     } else if (listTorrentError) {
       return <ErrorComponent error={listTorrentError}></ErrorComponent>;
     } else if (listTorrentResponse) {

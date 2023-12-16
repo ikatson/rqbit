@@ -4,8 +4,5 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx,mdx}",
     "../crates/librqbit/webui/src/**/*.{js,ts,jsx,tsx,mdx}",
   ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
+  darkMode: "class",
 };
