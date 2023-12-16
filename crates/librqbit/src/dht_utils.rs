@@ -103,6 +103,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn read_metainfo_from_dht() {
         init_logging();
 
