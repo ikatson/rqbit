@@ -1,6 +1,12 @@
-export const Spinner = ({ label }: { label?: string }) => {
+export const Spinner = ({
+  label,
+  className,
+}: {
+  label?: string;
+  className?: string;
+}) => {
   return (
-    <div className="flex gap-2 items-center w-full justify-center">
+    <div className={`flex gap-2 items-center ${className}`}>
       <svg
         aria-hidden="true"
         className="w-8 h-8 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600"
