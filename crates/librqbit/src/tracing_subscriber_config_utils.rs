@@ -92,17 +92,14 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         );
     if let Some(log_file) = &opts.log_file {
         let log_file = log_file.to_string();
-        let log_file = move || {
-            LineWriter::new(
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .write(true)
-                    .open(&log_file)
-                    .with_context(|| format!("error opening log file {:?}", log_file))
-                    .unwrap(),
-            )
-        };
+        let log_file = std::sync::Mutex::new(LineWriter::new(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .write(true)
+                .open(&log_file)
+                .with_context(|| format!("error opening log file {:?}", log_file))?,
+        ));
         layered
             .with(
                 fmt::layer()
