@@ -55,7 +55,7 @@ rand = "0.8"
 openssl = {version="0.10", optional=true}
 crypto-hash = {version="0.3", optional=true}
 sha1 = {version = "0.10", optional=true}
-tracing-subscriber = {version = "0.3", default-features = false, features = ["json"]}
+tracing-subscriber = {version = "0.3", default-features = false, features = ["json", "fmt", "env-filter"]}
 
 uuid = {version = "1.2", features = ["v4"]}
 futures = "0.3"
