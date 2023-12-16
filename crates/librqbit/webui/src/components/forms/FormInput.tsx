@@ -25,7 +25,7 @@ export const FormInput: React.FC<{
 }) => {
   return (
     <div className="flex flex-col gap-2 text-sm mb-2">
-      <label htmlFor={name} className="dark:text-slate-500">
+      <label htmlFor={name} className="dark:text-white">
         {label}
       </label>
       <input
@@ -40,7 +40,9 @@ export const FormInput: React.FC<{
         onKeyDown={onKeyDown}
         onChange={onChange}
       />
-      {help && <div className="text-xs text-slate-500">{help}</div>}
+      {help && (
+        <div className="text-xs text-slate-500 dark:text-slate-300">{help}</div>
+      )}
     </div>
   );
 };

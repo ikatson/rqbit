@@ -36,7 +36,7 @@ export const ErrorComponent = (props: {
       {error.details?.statusText && (
         <div className="pb-2 text-md">{error.details?.statusText}</div>
       )}
-      <div className="whitespace-pre-line text-sm">{error.details?.text}</div>
+      <div className="whitespace-pre text-sm">{error.details?.text}</div>
     </AlertDanger>
   );
 };

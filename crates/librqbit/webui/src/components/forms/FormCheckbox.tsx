@@ -24,7 +24,11 @@ export const FormCheckbox: React.FC<{
       </div>
       <div className="text-sm flex flex-col gap-1">
         <label htmlFor={name}>{label}</label>
-        {help && <div className="text-xs text-slate-500 mb-3">{help}</div>}
+        {help && (
+          <div className="text-xs text-slate-500 dark:text-slate-300 mb-3">
+            {help}
+          </div>
+        )}
       </div>
     </div>
   );
