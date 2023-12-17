@@ -246,6 +246,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         log_file_rust_log: Some(&opts.log_file_rust_log),
     })?;
 
+    match librqbit::try_increase_nofile_limit() {
+        Ok(limit) => info!(limit = limit, "inreased open file limit"),
+        Err(e) => warn!("failed increasing open file limit: {:#}", e),
+    };
+
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,

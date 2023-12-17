@@ -24,7 +24,7 @@ use librqbit::{
 };
 use parking_lot::RwLock;
 use serde::Serialize;
-use tracing::{error, error_span};
+use tracing::{error, error_span, info, warn};
 
 const ERR_NOT_CONFIGURED: ApiError =
     ApiError::new_from_text(StatusCode::FAILED_DEPENDENCY, "not configured");
@@ -306,6 +306,11 @@ async fn start() {
         log_file_rust_log: None,
     })
     .unwrap();
+
+    match librqbit::try_increase_nofile_limit() {
+        Ok(limit) => info!(limit = limit, "inreased open file limit"),
+        Err(e) => warn!("failed increasing open file limit: {:#}", e),
+    };
 
     let state = State::new(init_logging_result).await;
 
