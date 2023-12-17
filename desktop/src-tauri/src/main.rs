@@ -103,7 +103,6 @@ async fn api_from_config(
         let http_api_task = librqbit::http_api::HttpApi::new(
             api.clone(),
             Some(librqbit::http_api::HttpApiOptions {
-                cors_enable_all: config.http_api.cors_enable_all,
                 read_only: config.http_api.read_only,
             }),
         )

@@ -339,13 +339,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(
-                    api,
-                    Some(HttpApiOptions {
-                        read_only: false,
-                        cors_enable_all: false,
-                    }),
-                );
+                let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: false }));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 http_api
                     .make_http_api_and_run(http_api_listen_addr)
@@ -430,13 +424,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(
-                    api,
-                    Some(HttpApiOptions {
-                        cors_enable_all: false,
-                        read_only: true,
-                    }),
-                );
+                let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: true }));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 librqbit_spawn(
                     "http_api",

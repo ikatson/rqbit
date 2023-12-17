@@ -88,7 +88,6 @@ pub struct RqbitDesktopConfigHttpApi {
     pub disable: bool,
     pub listen_addr: SocketAddr,
     pub read_only: bool,
-    pub cors_enable_all: bool,
 }
 
 impl Default for RqbitDesktopConfigHttpApi {
@@ -97,7 +96,6 @@ impl Default for RqbitDesktopConfigHttpApi {
             disable: Default::default(),
             listen_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 3030)),
             read_only: false,
-            cors_enable_all: true,
         }
     }
 }

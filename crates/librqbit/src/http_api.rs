@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use axum::Router;
 
@@ -31,7 +31,6 @@ pub struct HttpApi {
 
 #[derive(Debug, Default)]
 pub struct HttpApiOptions {
-    pub cors_enable_all: bool,
     pub read_only: bool,
 }
 
@@ -260,18 +259,24 @@ impl HttpApi {
             app = app.nest("/web/", webui_router);
         }
 
-        let enable_cors = std::env::var("CORS_DEBUG").is_ok() || self.opts.cors_enable_all;
-
-        // This is to develop webui by just doing "open index.html && tsc --watch"
-        let cors_layer = if enable_cors {
+        let cors_layer = {
             use tower_http::cors::{AllowHeaders, AllowOrigin};
 
-            warn!("CorsLayer: allowing everything");
+            const ALLOWED_ORIGINS: [&[u8]; 4] = [
+                // Webui-dev
+                b"http://localhost:3031",
+                b"http://127.0.0.1:3031",
+                // Tauri dev
+                b"http://localhost:1420",
+                // Tauri prod
+                b"tauri://localhost",
+            ];
+
             tower_http::cors::CorsLayer::default()
-                .allow_origin(AllowOrigin::predicate(|_, _| true))
+                .allow_origin(AllowOrigin::predicate(|v, _| {
+                    ALLOWED_ORIGINS.contains(&v.as_bytes())
+                }))
                 .allow_headers(AllowHeaders::any())
-        } else {
-            Default::default()
         };
 
         let app = app
