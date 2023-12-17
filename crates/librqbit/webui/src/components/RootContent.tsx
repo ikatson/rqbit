@@ -1,24 +1,23 @@
-import { useContext } from "react";
-import { TorrentId, ErrorDetails as ApiErrorDetails } from "../api-types";
-import { AppContext } from "../context";
 import { TorrentsList } from "./TorrentsList";
 import { ErrorComponent } from "./ErrorComponent";
+import { useTorrentStore } from "../stores/torrentStore";
+import { useErrorStore } from "../stores/errorStore";
 
-export const RootContent = (props: {
-  closeableError: ApiErrorDetails | null;
-  otherError: ApiErrorDetails | null;
-  torrents: Array<TorrentId> | null;
-  torrentsLoading: boolean;
-}) => {
-  let ctx = useContext(AppContext);
+export const RootContent = (props: {}) => {
+  let closeableError = useErrorStore((state) => state.closeableError);
+  let setCloseableError = useErrorStore((state) => state.setCloseableError);
+  let otherError = useErrorStore((state) => state.otherError);
+  let torrents = useTorrentStore((state) => state.torrents);
+  let torrentsLoading = useTorrentStore((state) => state.torrentsLoading);
+
   return (
     <div className="container mx-auto">
       <ErrorComponent
-        error={props.closeableError}
-        remove={() => ctx.setCloseableError(null)}
+        error={closeableError}
+        remove={() => setCloseableError(null)}
       />
-      <ErrorComponent error={props.otherError} />
-      <TorrentsList torrents={props.torrents} loading={props.torrentsLoading} />
+      <ErrorComponent error={otherError} />
+      <TorrentsList torrents={torrents} loading={torrentsLoading} />
     </div>
   );
 };

@@ -1,13 +1,10 @@
 import { useContext, useState } from "react";
 import { TorrentStats } from "../../api-types";
-import {
-  AppContext,
-  APIContext,
-  RefreshTorrentStatsContext,
-} from "../../context";
+import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
 import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
+import { useErrorStore } from "../../stores/errorStore";
 
 export const TorrentActions: React.FC<{
   id: number;
@@ -23,7 +20,8 @@ export const TorrentActions: React.FC<{
   const canPause = state == "live";
   const canUnpause = state == "paused" || state == "error";
 
-  const ctx = useContext(AppContext);
+  const setCloseableError = useErrorStore((state) => state.setCloseableError);
+
   const API = useContext(APIContext);
 
   const unpause = () => {
@@ -34,7 +32,7 @@ export const TorrentActions: React.FC<{
           refreshCtx.refresh();
         },
         (e) => {
-          ctx.setCloseableError({
+          setCloseableError({
             text: `Error starting torrent id=${id}`,
             details: e,
           });
@@ -51,7 +49,7 @@ export const TorrentActions: React.FC<{
           refreshCtx.refresh();
         },
         (e) => {
-          ctx.setCloseableError({
+          setCloseableError({
             text: `Error pausing torrent id=${id}`,
             details: e,
           });
