@@ -59,3 +59,7 @@ pub use librqbit_core::torrent_metainfo::*;
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
+
+pub fn try_increase_nofile_limit() -> anyhow::Result<u64> {
+    Ok(rlimit::increase_nofile_limit(1024 * 1024)?)
+}
