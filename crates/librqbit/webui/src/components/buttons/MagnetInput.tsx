@@ -30,10 +30,10 @@ export const MagnetInput = ({ className }: { className?: string }) => {
           setModalIsOpen(true);
         }}
         data={magnet}
-        className={className}
+        className={`group ${className}`}
         resetData={() => setMagnet(null)}
       >
-        <CgLink className="text-blue-500 dark:text-white" />
+        <CgLink className="text-blue-500 group-hover:text-white dark:text-white" />
         <div>Add Torrent from Magnet / URL</div>
       </UploadButton>
 

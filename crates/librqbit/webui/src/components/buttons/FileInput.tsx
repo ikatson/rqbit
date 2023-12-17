@@ -42,9 +42,9 @@ export const FileInput = ({ className }: { className?: string }) => {
         onClick={onClick}
         data={file}
         resetData={reset}
-        className={className}
+        className={`group ${className}`}
       >
-        <CgFileAdd className="text-blue-500 dark:text-white" />
+        <CgFileAdd className="text-blue-500 group-hover:text-white dark:text-white" />
         <div>Upload .torrent File</div>
       </UploadButton>
     </>

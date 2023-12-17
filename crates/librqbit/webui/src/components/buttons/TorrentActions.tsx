@@ -74,16 +74,16 @@ export const TorrentActions: React.FC<{
     <div className="flex w-full justify-center gap-2 dark:text-slate-300">
       {canUnpause && (
         <IconButton onClick={unpause} disabled={disabled}>
-          <FaPlay className="hover:text-green-500 transition-colors duration-300" />
+          <FaPlay className="hover:text-green-600" />
         </IconButton>
       )}
       {canPause && (
         <IconButton onClick={pause} disabled={disabled}>
-          <FaPause className="hover:text-yellow-500 transition-colors duration-300" />
+          <FaPause className="hover:text-amber-500" />
         </IconButton>
       )}
       <IconButton onClick={startDeleting} disabled={disabled}>
-        <FaTrash className="hover:text-red-500 transition-colors duration-500" />
+        <FaTrash className="hover:text-red-500" />
       </IconButton>
       <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
     </div>
