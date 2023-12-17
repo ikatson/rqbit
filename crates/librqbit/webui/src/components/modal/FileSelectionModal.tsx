@@ -13,6 +13,7 @@ import { FormCheckbox } from "../forms/FormCheckbox";
 import { Fieldset } from "../forms/Fieldset";
 import { FormInput } from "../forms/FormInput";
 import { Form } from "../forms/Form";
+import { FileListInput } from "../FileListInput";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -29,7 +30,7 @@ export const FileSelectionModal = (props: {
     data,
   } = props;
 
-  const [selectedFiles, setSelectedFiles] = useState<number[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<ErrorWithLabel | null>(null);
   const [unpopularTorrent, setUnpopularTorrent] = useState(false);
@@ -37,33 +38,19 @@ export const FileSelectionModal = (props: {
   const ctx = useContext(AppContext);
   const API = useContext(APIContext);
 
-  const selectAll = () => {
-    setSelectedFiles(
-      listTorrentResponse
-        ? listTorrentResponse.details.files.map((_, id) => id)
-        : []
-    );
-  };
-
   useEffect(() => {
     console.log(listTorrentResponse);
-    selectAll();
+    setSelectedFiles(
+      new Set(listTorrentResponse?.details.files.map((_, i) => i))
+    );
     setOutputFolder(listTorrentResponse?.output_folder || "");
   }, [listTorrentResponse]);
 
   const clear = () => {
     onHide();
-    setSelectedFiles([]);
+    setSelectedFiles(new Set());
     setUploadError(null);
     setUploading(false);
-  };
-
-  const handleToggleFile = (toggledId: number) => {
-    if (selectedFiles.includes(toggledId)) {
-      setSelectedFiles(selectedFiles.filter((i) => i !== toggledId));
-    } else {
-      setSelectedFiles([...selectedFiles, toggledId]);
-    }
   };
 
   const handleUpload = async () => {
@@ -76,7 +63,7 @@ export const FileSelectionModal = (props: {
       : null;
     let opts: AddTorrentOptions = {
       overwrite: true,
-      only_files: selectedFiles,
+      only_files: Array.from(selectedFiles),
       initial_peers: initialPeers,
       output_folder: outputFolder,
     };
@@ -116,24 +103,11 @@ export const FileSelectionModal = (props: {
           />
 
           <Fieldset>
-            <label className="text-sm mb-2 block">Select files</label>
-            <div className="mb-3 flex gap-2">
-              <Button onClick={selectAll} className="text-sm">
-                Select all
-              </Button>
-              <Button onClick={() => setSelectedFiles([])} className="text-sm">
-                Deselect all
-              </Button>
-            </div>
-            {listTorrentResponse.details.files.map((file, index) => (
-              <FormCheckbox
-                key={index}
-                label={`${file.name}  (${formatBytes(file.length)})`}
-                checked={selectedFiles.includes(index)}
-                onChange={() => handleToggleFile(index)}
-                name={`check-${index}`}
-              />
-            ))}
+            <FileListInput
+              selectedFiles={selectedFiles}
+              setSelectedFiles={setSelectedFiles}
+              listTorrentResponse={listTorrentResponse}
+            />
           </Fieldset>
 
           {/* <Fieldset label="Options">
@@ -163,9 +137,7 @@ export const FileSelectionModal = (props: {
         <Button
           onClick={handleUpload}
           variant="primary"
-          disabled={
-            listTorrentLoading || uploading || selectedFiles.length == 0
-          }
+          disabled={listTorrentLoading || uploading || selectedFiles.size == 0}
         >
           OK
         </Button>
