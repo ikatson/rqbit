@@ -25,14 +25,14 @@ const RootWithVersion = () => {
   }, []);
 
   return (
-    <StrictMode>
-      <APIContext.Provider value={API}>
-        <RqbitWebUI title={title} />
-      </APIContext.Provider>
-    </StrictMode>
+    <APIContext.Provider value={API}>
+      <RqbitWebUI title={title} />
+    </APIContext.Provider>
   );
 };
 
 ReactDOM.createRoot(document.getElementById("app") as HTMLInputElement).render(
-  <RootWithVersion />
+  <StrictMode>
+    <RootWithVersion />
+  </StrictMode>
 );

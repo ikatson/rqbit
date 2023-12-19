@@ -8,7 +8,9 @@ export const RootContent = (props: {}) => {
   let setCloseableError = useErrorStore((state) => state.setCloseableError);
   let otherError = useErrorStore((state) => state.otherError);
   let torrents = useTorrentStore((state) => state.torrents);
-  let torrentsLoading = useTorrentStore((state) => state.torrentsLoading);
+  let torrentsInitiallyLoading = useTorrentStore(
+    (state) => state.torrentsInitiallyLoading
+  );
 
   return (
     <div className="container mx-auto">
@@ -17,7 +19,7 @@ export const RootContent = (props: {}) => {
         remove={() => setCloseableError(null)}
       />
       <ErrorComponent error={otherError} />
-      <TorrentsList torrents={torrents} loading={torrentsLoading} />
+      <TorrentsList torrents={torrents} loading={torrentsInitiallyLoading} />
     </div>
   );
 };

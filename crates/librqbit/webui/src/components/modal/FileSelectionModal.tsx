@@ -1,15 +1,13 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
 import { APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
-import { formatBytes } from "../../helper/formatBytes";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { Spinner } from "../Spinner";
 import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 import { Button } from "../buttons/Button";
-import { FormCheckbox } from "../forms/FormCheckbox";
 import { Fieldset } from "../forms/Fieldset";
 import { FormInput } from "../forms/FormInput";
 import { Form } from "../forms/Form";
@@ -40,7 +38,6 @@ export const FileSelectionModal = (props: {
   const API = useContext(APIContext);
 
   useEffect(() => {
-    console.log(listTorrentResponse);
     setSelectedFiles(
       new Set(listTorrentResponse?.details.files.map((_, i) => i))
     );
