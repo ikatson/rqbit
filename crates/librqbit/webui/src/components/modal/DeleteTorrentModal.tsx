@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import { AppContext, APIContext } from "../../context";
+import { APIContext } from "../../context";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { ErrorComponent } from "../ErrorComponent";
 import { Spinner } from "../Spinner";
@@ -7,6 +7,7 @@ import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 import { Button } from "../buttons/Button";
+import { useTorrentStore } from "../../stores/torrentStore";
 
 export const DeleteTorrentModal: React.FC<{
   id: number;
@@ -20,8 +21,8 @@ export const DeleteTorrentModal: React.FC<{
   const [error, setError] = useState<ErrorWithLabel | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const ctx = useContext(AppContext);
   const API = useContext(APIContext);
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
   const close = () => {
     setDeleteFiles(false);
@@ -37,7 +38,7 @@ export const DeleteTorrentModal: React.FC<{
 
     call(id)
       .then(() => {
-        ctx.refreshTorrents();
+        refreshTorrents();
         close();
       })
       .catch((e) => {

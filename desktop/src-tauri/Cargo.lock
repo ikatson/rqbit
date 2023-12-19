@@ -1867,7 +1867,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.3.0"
+version = "5.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1894,6 +1894,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest",
+ "rlimit",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -3011,8 +3012,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlimit"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3560f70f30a0f16d11d01ed078a07740fe6b489667abc7c7b029155d9f21c3d8"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rqbit-desktop"
-version = "5.3.0"
+version = "5.4.0"
 dependencies = [
  "anyhow",
  "base64 0.21.5",

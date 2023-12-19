@@ -1,19 +1,18 @@
-import { useCallback, useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { AddTorrentResponse, AddTorrentOptions } from "../../api-types";
-import { AppContext, APIContext } from "../../context";
+import { APIContext } from "../../context";
 import { ErrorComponent } from "../ErrorComponent";
-import { formatBytes } from "../../helper/formatBytes";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { Spinner } from "../Spinner";
 import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 import { Button } from "../buttons/Button";
-import { FormCheckbox } from "../forms/FormCheckbox";
 import { Fieldset } from "../forms/Fieldset";
 import { FormInput } from "../forms/FormInput";
 import { Form } from "../forms/Form";
 import { FileListInput } from "../FileListInput";
+import { useTorrentStore } from "../../stores/torrentStore";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -35,11 +34,10 @@ export const FileSelectionModal = (props: {
   const [uploadError, setUploadError] = useState<ErrorWithLabel | null>(null);
   const [unpopularTorrent, setUnpopularTorrent] = useState(false);
   const [outputFolder, setOutputFolder] = useState<string>("");
-  const ctx = useContext(AppContext);
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const API = useContext(APIContext);
 
   useEffect(() => {
-    console.log(listTorrentResponse);
     setSelectedFiles(
       new Set(listTorrentResponse?.details.files.map((_, i) => i))
     );
@@ -77,7 +75,7 @@ export const FileSelectionModal = (props: {
       .then(
         () => {
           onHide();
-          ctx.refreshTorrents();
+          refreshTorrents();
         },
         (e) => {
           setUploadError({ text: "Error starting torrent", details: e });

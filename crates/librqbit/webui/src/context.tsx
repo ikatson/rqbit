@@ -31,8 +31,4 @@ export const APIContext = createContext<RqbitAPI>({
     return null;
   },
 });
-export const AppContext = createContext<ContextType>({
-  setCloseableError: (_) => {},
-  refreshTorrents: () => {},
-});
 export const RefreshTorrentStatsContext = createContext({ refresh: () => {} });
