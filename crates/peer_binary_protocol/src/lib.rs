@@ -8,7 +8,7 @@ use bincode::Options;
 use buffers::{ByteBuf, ByteString};
 use byteorder::{ByteOrder, BE};
 use clone_to_owned::CloneToOwned;
-use librqbit_core::{constants::CHUNK_SIZE, id20::Id20, lengths::ChunkInfo};
+use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
 
 use self::extended::ExtendedMessage;
@@ -596,10 +596,10 @@ mod tests {
     use super::*;
     #[test]
     fn test_handshake_serialize() {
-        let info_hash = Id20([
+        let info_hash = Id20::new([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
-        let peer_id = Id20([
+        let peer_id = Id20::new([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
         let mut buf = Vec::new();

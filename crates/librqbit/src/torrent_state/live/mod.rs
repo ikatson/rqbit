@@ -63,7 +63,7 @@ use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use librqbit_core::{
-    id20::Id20,
+    hash_id::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     spawn_utils::spawn_with_cancel,
     speed_estimator::SpeedEstimator,
@@ -383,7 +383,7 @@ impl TorrentStateLive {
                 let peer = occ.get_mut();
                 peer.state
                     .incoming_connection(
-                        Id20(checked_peer.handshake.peer_id),
+                        Id20::new(checked_peer.handshake.peer_id),
                         tx.clone(),
                         &self.peers.stats,
                     )
@@ -393,7 +393,7 @@ impl TorrentStateLive {
             Entry::Vacant(vac) => {
                 atomic_inc(&self.peers.stats.seen);
                 let peer = Peer::new_live_for_incoming_connection(
-                    Id20(checked_peer.handshake.peer_id),
+                    Id20::new(checked_peer.handshake.peer_id),
                     tx.clone(),
                     &self.peers.stats,
                 );
@@ -598,7 +598,7 @@ impl TorrentStateLive {
     fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
             p.state
-                .connecting_to_live(Id20(h.peer_id), &self.peers.stats);
+                .connecting_to_live(Id20::new(h.peer_id), &self.peers.stats);
         });
     }
 

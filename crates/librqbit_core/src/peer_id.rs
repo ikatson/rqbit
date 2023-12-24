@@ -1,4 +1,4 @@
-use crate::id20::Id20;
+use crate::hash_id::Id20;
 
 #[derive(Debug)]
 pub enum AzureusStyleKind {
@@ -55,5 +55,5 @@ pub fn generate_peer_id() -> Id20 {
 
     peer_id[..8].copy_from_slice(b"-rQ0001-");
 
-    Id20(peer_id)
+    Id20::new(peer_id)
 }

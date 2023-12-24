@@ -16,7 +16,7 @@ use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
 use dht::RequestPeersStream;
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
 use librqbit_core::peer_id::generate_peer_id;
 

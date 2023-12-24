@@ -2,7 +2,7 @@ pub mod stats;
 
 use std::collections::HashSet;
 
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};

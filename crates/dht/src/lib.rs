@@ -10,7 +10,7 @@ use std::time::Duration;
 
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
-pub use librqbit_core::id20::Id20;
+pub use librqbit_core::hash_id::Id20;
 pub use persistence::{PersistentDht, PersistentDhtConfig};
 
 pub type Dht = Arc<DhtState>;

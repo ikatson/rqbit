@@ -8,7 +8,7 @@ use std::{
     str::FromStr,
 };
 
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 
 #[derive(Clone, Copy)]
 pub enum TrackerRequestEvent {
@@ -207,10 +207,10 @@ mod tests {
     use super::*;
     #[test]
     fn test_serialize() {
-        let info_hash = Id20([
+        let info_hash = Id20::new([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
-        let peer_id = Id20([
+        let peer_id = Id20::new([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
         let request = TrackerRequest {

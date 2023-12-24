@@ -6,7 +6,7 @@ use std::{
 use anyhow::{bail, Context};
 use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
-use librqbit_core::{id20::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
+use librqbit_core::{hash_id::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
 use parking_lot::RwLock;
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ExtendedMessage},
@@ -149,7 +149,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         trace!(
             "incoming connection: id={:?}",
-            try_decode_peer_id(Id20(handshake.peer_id))
+            try_decode_peer_id(Id20::new(handshake.peer_id))
         );
 
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
@@ -217,7 +217,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
 
         let h_supports_extended = h.supports_extended();
-        trace!("connected: id={:?}", try_decode_peer_id(Id20(h.peer_id)));
+        trace!("connected: id={:?}", try_decode_peer_id(Id20::new(h.peer_id)));
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
         }

@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, time::Instant};
 
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 use rand::RngCore;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use tracing::{debug, trace};
@@ -132,7 +132,7 @@ impl<'a> Iterator for BucketTreeIterator<'a> {
 pub fn generate_random_id(start: &Id20, bits: u8) -> Id20 {
     let mut data = [0u8; 20];
     rand::thread_rng().fill_bytes(&mut data);
-    let mut data = Id20(data);
+    let mut data = Id20::new(data);
     let remaining_bits = 160 - bits;
     for bit in 0..remaining_bits {
         data.set_bit(bit, start.get_bit(bit));
@@ -199,8 +199,8 @@ impl BucketTree {
         BucketTree {
             data: vec![BucketTreeNode {
                 bits: 160,
-                start: Id20([0u8; 20]),
-                end_inclusive: Id20([0xff; 20]),
+                start: Id20::new([0u8; 20]),
+                end_inclusive: Id20::new([0xff; 20]),
                 data: BucketTreeNodeData::Leaf(Default::default()),
             }],
             size: 0,
@@ -583,7 +583,7 @@ mod tests {
         str::FromStr,
     };
 
-    use librqbit_core::id20::Id20;
+    use librqbit_core::hash_id::Id20;
     use rand::Rng;
 
     use crate::routing_table::compute_split_start_end;
@@ -592,8 +592,8 @@ mod tests {
 
     #[test]
     fn compute_split_start_end_root() {
-        let start = Id20([0u8; 20]);
-        let end = Id20([0xff; 20]);
+        let start = Id20::new([0u8; 20]);
+        let end = Id20::new([0xff; 20]);
         assert_eq!(
             compute_split_start_end(start, end, 160),
             (
@@ -612,7 +612,7 @@ mod tests {
     #[test]
     fn compute_split_start_end_second_split() {
         let start = Id20::from_str("8000000000000000000000000000000000000000").unwrap();
-        let end = Id20([0xff; 20]);
+        let end = Id20::new([0xff; 20]);
         assert_eq!(
             compute_split_start_end(start, end, 159),
             (
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn compute_split_start_end_3() {
         let start = Id20::from_str("8000000000000000000000000000000000000000").unwrap();
-        let end = Id20([0xff; 20]);
+        let end = Id20::new([0xff; 20]);
         assert_eq!(
             compute_split_start_end(start, end, 159),
             (
@@ -650,7 +650,7 @@ mod tests {
     fn random_id_20() -> Id20 {
         let mut id20 = [0u8; 20];
         rand::thread_rng().fill(&mut id20);
-        Id20(id20)
+        Id20::new(id20)
     }
 
     fn generate_socket_addr() -> SocketAddr {
