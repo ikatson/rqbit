@@ -1011,10 +1011,15 @@ impl PeerHandler {
                         }
                     }
 
+                    let n_opt = match n_opt {
+                        Some(n_opt) => n_opt,
+                        None => return Ok(None),
+                    };
+
                     self.state
                         .lengths
-                        .validate_piece_index(n_opt.context("invalid n_opt")? as u32)
-                        .context("invalid piece")?
+                        .validate_piece_index(n_opt as u32)
+                        .context("bug: invalid piece")?
                 };
                 g.inflight_pieces.insert(
                     n,
@@ -1214,7 +1219,7 @@ impl PeerHandler {
             // Afterwards means we are close to completion, try stealing more aggressively.
             let next = match self
                 .try_steal_old_slow_piece(10.)
-                .or_else(|| self.reserve_next_needed_piece().ok().flatten())
+                .map_or_else(|| self.reserve_next_needed_piece(), |v| Ok(Some(v)))?
                 .or_else(|| self.try_steal_old_slow_piece(3.))
             {
                 Some(next) => next,
