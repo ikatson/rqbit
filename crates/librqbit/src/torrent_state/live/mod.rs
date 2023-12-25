@@ -1030,18 +1030,15 @@ impl PeerHandler {
             .map(|r| r.flatten())
     }
 
+    /// Try to steal a piece from a slower peer. Threshold is
+    /// "how many times is my average download speed faster to be able to steal".
+    ///
+    /// If this returns, an existing in-flight piece was marked to be ours.
     fn try_steal_old_slow_piece(&self, threshold: f64) -> Option<ValidPieceIndex> {
-        let total = self
-            .state
-            .stats
-            .downloaded_and_checked_pieces
-            .load(Ordering::Acquire);
-
-        // heuristic for not enough precision in average time
-        if total < 20 {
-            return None;
-        }
-        let avg_time = self.state.stats.average_piece_download_time()?;
+        let my_avg_time = match self.counters.average_piece_download_time() {
+            Some(t) => t,
+            None => return None,
+        };
 
         let mut g = self.state.lock_write("try_steal_old_slow_piece");
         let (idx, elapsed, piece_req) = g
@@ -1053,10 +1050,10 @@ impl PeerHandler {
             .max_by_key(|(_, e, _)| *e)?;
 
         // heuristic for "too slow peer"
-        if elapsed.as_secs_f64() > avg_time.as_secs_f64() * threshold {
+        if elapsed.as_secs_f64() > my_avg_time.as_secs_f64() * threshold {
             debug!(
-                "will steal piece {} from {}: elapsed time {:?}, avg piece time: {:?}",
-                idx, piece_req.peer, elapsed, avg_time
+                "will steal piece {} from {}: elapsed time {:?}, my avg piece time: {:?}",
+                idx, piece_req.peer, elapsed, my_avg_time
             );
             piece_req.peer = self.addr;
             piece_req.started = Instant::now();
@@ -1469,7 +1466,7 @@ impl PeerHandler {
                             .fetch_add(piece_len, Ordering::Relaxed);
                         self.state.stats.total_piece_download_ms.fetch_add(
                             full_piece_download_time.as_millis() as u64,
-                            Ordering::Release,
+                            Ordering::Relaxed,
                         );
 
                         // Per-peer piece counters.
