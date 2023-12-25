@@ -1215,7 +1215,7 @@ impl PeerHandler {
             let next = match self
                 .try_steal_old_slow_piece(10.)
                 .or_else(|| self.reserve_next_needed_piece().ok().flatten())
-                .or_else(|| self.try_steal_old_slow_piece(2.))
+                .or_else(|| self.try_steal_old_slow_piece(3.))
             {
                 Some(next) => next,
                 None => {
