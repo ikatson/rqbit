@@ -1474,12 +1474,7 @@ impl PeerHandler {
 
                         // Per-peer piece counters.
                         self.counters
-                            .downloaded_and_checked_pieces
-                            .fetch_add(1, Ordering::Relaxed);
-                        self.counters
-                            .downloaded_and_checked_bytes
-                            .fetch_add(piece_len, Ordering::Relaxed);
-
+                            .on_piece_downloaded(piece_len, full_piece_download_time);
                         self.state.peers.reset_peer_backoff(self.addr);
 
                         debug!("piece={} successfully downloaded and verified", index);
