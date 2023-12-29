@@ -76,32 +76,6 @@ where
     }
 }
 
-macro_rules! read_one {
-    ($conn:ident, $read_buf:ident, $read_so_far:ident, $rwtimeout:ident) => {{
-        let (extended, size) = loop {
-            match MessageBorrowed::deserialize(&$read_buf[..$read_so_far]) {
-                Ok((msg, size)) => break (msg, size),
-                Err(MessageDeserializeError::NotEnoughData(d, _)) => {
-                    if $read_buf.len() < $read_so_far + d {
-                        $read_buf.reserve(d);
-                        $read_buf.resize($read_buf.capacity(), 0);
-                    }
-
-                    let size = with_timeout($rwtimeout, $conn.read(&mut $read_buf[$read_so_far..]))
-                        .await
-                        .context("error reading from peer")?;
-                    if size == 0 {
-                        anyhow::bail!("disconnected while reading, read so far: {}", $read_so_far)
-                    }
-                    $read_so_far += size;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        };
-        (extended, size)
-    }};
-}
-
 impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(
         addr: SocketAddr,
@@ -354,7 +328,31 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         let reader = async move {
             loop {
-                let (message, size) = read_one!(read_half, read_buf, read_so_far, rwtimeout);
+                let (message, size) = loop {
+                    match MessageBorrowed::deserialize(&read_buf[..read_so_far]) {
+                        Ok((msg, size)) => break (msg, size),
+                        Err(MessageDeserializeError::NotEnoughData(d, _)) => {
+                            if read_buf.len() < read_so_far + d {
+                                read_buf.reserve(d);
+                                read_buf.resize(read_buf.capacity(), 0);
+                            }
+                            let size = with_timeout(
+                                rwtimeout,
+                                read_half.read(&mut read_buf[read_so_far..]),
+                            )
+                            .await
+                            .context("error reading from peer")?;
+                            if size == 0 {
+                                anyhow::bail!(
+                                    "disconnected while reading, read so far: {}",
+                                    read_so_far
+                                )
+                            }
+                            read_so_far += size;
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                };
                 trace!("received: {:?}", &message);
 
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
@@ -378,7 +376,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             Ok::<_, anyhow::Error>(())
         };
 
-        let r = tokio::select! {
+        tokio::select! {
             r = reader => {
                 trace!("reader is done, exiting");
                 r
@@ -387,7 +385,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("writer is done, exiting");
                 r
             }
-        };
-        r
+        }
     }
 }

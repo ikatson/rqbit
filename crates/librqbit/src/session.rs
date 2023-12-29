@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
-use buffers::{ByteBufT, ByteString};
+use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{
     Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream,
@@ -22,7 +22,9 @@ use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
-    torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
+    torrent_metainfo::{
+        torrent_from_bytes as bencode_torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned,
+    },
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{Handshake, PIECE_MESSAGE_DEFAULT_LEN};
@@ -48,6 +50,14 @@ use crate::{
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 pub type TorrentId = usize;
+
+fn torrent_from_bytes(bytes: &[u8]) -> anyhow::Result<TorrentMetaV1Owned> {
+    debug!(
+        "all fields in torrent: {:#?}",
+        bencode::dyn_from_bytes::<ByteBuf>(bytes)
+    );
+    bencode_torrent_from_bytes(bytes)
+}
 
 #[derive(Default)]
 pub struct SessionDatabase {
