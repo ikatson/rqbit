@@ -31,6 +31,7 @@ pub mod http_api;
 pub mod http_api_client;
 mod peer_connection;
 mod peer_info_reader;
+mod read_buf;
 mod session;
 mod spawn_utils;
 mod torrent_state;
