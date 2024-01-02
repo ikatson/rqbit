@@ -14,6 +14,7 @@ pub struct PeerCounters {
     pub errors: u32,
     pub fetched_chunks: u32,
     pub downloaded_and_checked_pieces: u32,
+    pub total_piece_download_ms: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -37,6 +38,7 @@ impl From<&super::atomic::PeerCountersAtomic> for PeerCounters {
             downloaded_and_checked_pieces: counters
                 .downloaded_and_checked_pieces
                 .load(Ordering::Relaxed),
+            total_piece_download_ms: counters.total_piece_download_ms.load(Ordering::Relaxed),
         }
     }
 }
