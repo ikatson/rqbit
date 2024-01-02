@@ -157,16 +157,20 @@ impl ChunkTracker {
         Some(true)
     }
 
-    pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) -> bool {
+    pub fn mark_piece_broken_if_not_have(&mut self, index: ValidPieceIndex) {
+        if self
+            .have
+            .get(index.get() as usize)
+            .map(|r| *r)
+            .unwrap_or_default()
+        {
+            return;
+        }
         debug!("remarking piece={} as broken", index);
         self.needed_pieces.set(index.get() as usize, true);
-        self.chunk_status
-            .get_mut(self.lengths.chunk_range(index))
-            .map(|s| {
-                s.fill(false);
-                true
-            })
-            .unwrap_or_default()
+        if let Some(s) = self.chunk_status.get_mut(self.lengths.chunk_range(index)) {
+            s.fill(false);
+        }
     }
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {

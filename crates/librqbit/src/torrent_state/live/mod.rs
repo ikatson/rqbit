@@ -748,7 +748,7 @@ impl TorrentStateLive {
             .take()
             .context("bug: pausing already paused torrent")?;
         for piece_id in g.inflight_pieces.keys().copied() {
-            chunk_tracker.mark_piece_broken(piece_id);
+            chunk_tracker.mark_piece_broken_if_not_have(piece_id);
         }
         let have_bytes = chunk_tracker.calc_have_bytes();
         let needed_bytes = chunk_tracker.calc_needed_bytes();
@@ -1494,7 +1494,7 @@ impl PeerHandler {
                         self.state
                             .lock_write("mark_piece_broken")
                             .get_chunks_mut()?
-                            .mark_piece_broken(chunk_info.piece_index);
+                            .mark_piece_broken_if_not_have(chunk_info.piece_index);
                     }
                 };
                 Ok::<_, anyhow::Error>(())
