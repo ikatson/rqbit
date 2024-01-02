@@ -457,7 +457,6 @@ impl TorrentStateLive {
             r = requester => {r}
             r = peer_connection.manage_peer_incoming(
                 rx,
-                checked_peer.read_so_far,
                 checked_peer.read_buf,
                 checked_peer.handshake,
                 checked_peer.stream

@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
-use buffers::{ByteBufT, ByteString};
+use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{
     Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream,
@@ -22,23 +22,23 @@ use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
-    torrent_metainfo::{torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned},
+    torrent_metainfo::{
+        torrent_from_bytes as bencode_torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned,
+    },
 };
 use parking_lot::RwLock;
-use peer_binary_protocol::{Handshake, PIECE_MESSAGE_DEFAULT_LEN};
+use peer_binary_protocol::Handshake;
 use reqwest::Url;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
-use tokio::{
-    io::AsyncReadExt,
-    net::{TcpListener, TcpStream},
-};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
-    peer_connection::{with_timeout, PeerConnectionOptions},
+    peer_connection::PeerConnectionOptions,
+    read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
@@ -48,6 +48,14 @@ use crate::{
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 pub type TorrentId = usize;
+
+fn torrent_from_bytes(bytes: &[u8]) -> anyhow::Result<TorrentMetaV1Owned> {
+    debug!(
+        "all fields in torrent: {:#?}",
+        bencode::dyn_from_bytes::<ByteBuf>(bytes)
+    );
+    bencode_torrent_from_bytes(bytes)
+}
 
 #[derive(Default)]
 pub struct SessionDatabase {
@@ -361,9 +369,8 @@ async fn create_tcp_listener(
 pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
     pub stream: tokio::net::TcpStream,
-    pub read_buf: Vec<u8>,
+    pub read_buf: ReadBuf,
     pub handshake: Handshake<ByteString>,
-    pub read_so_far: usize,
 }
 
 impl Session {
@@ -505,16 +512,11 @@ impl Session {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let mut read_buf = vec![0u8; PIECE_MESSAGE_DEFAULT_LEN * 2];
-        let mut read_so_far = with_timeout(rwtimeout, stream.read(&mut read_buf))
+        let mut read_buf = ReadBuf::new();
+        let h = read_buf
+            .read_handshake(&mut stream, rwtimeout)
             .await
             .context("error reading handshake")?;
-        if read_so_far == 0 {
-            anyhow::bail!("bad handshake");
-        }
-        let (h, size) = Handshake::deserialize(&read_buf[..read_so_far])
-            .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
-
         trace!("received handshake from {addr}: {:?}", h);
 
         if h.peer_id == self.peer_id.0 {
@@ -535,11 +537,6 @@ impl Session {
 
             let handshake = h.clone_to_owned();
 
-            if read_so_far > size {
-                read_buf.copy_within(size..read_so_far, 0);
-            }
-            read_so_far -= size;
-
             return Ok((
                 live,
                 CheckedIncomingConnection {
@@ -547,7 +544,6 @@ impl Session {
                     stream,
                     handshake,
                     read_buf,
-                    read_so_far,
                 },
             ));
         }
