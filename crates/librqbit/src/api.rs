@@ -243,6 +243,7 @@ pub struct TorrentListResponse {
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponseFile {
     pub name: String,
+    pub components: Vec<String>,
     pub length: u64,
     pub included: bool,
 }
@@ -253,6 +254,7 @@ pub struct EmptyJsonResponse {}
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponse {
     pub info_hash: String,
+    pub name: Option<String>,
     pub files: Vec<TorrentDetailsResponseFile>,
 }
 
@@ -281,9 +283,11 @@ fn make_torrent_details(
                     "<INVALID NAME>".to_string()
                 }
             };
+            let components = filename_it.to_vec().unwrap_or_default();
             let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
             TorrentDetailsResponseFile {
                 name,
+                components,
                 length,
                 included,
             }
@@ -291,6 +295,7 @@ fn make_torrent_details(
         .collect();
     Ok(TorrentDetailsResponse {
         info_hash: info_hash.as_string(),
+        name: info.name.as_ref().map(|b| b.to_string()),
         files,
     })
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AddTorrentResponse } from "../api-types";
+import { AddTorrentResponse, TorrentFile } from "../api-types";
 import { FormCheckbox } from "./forms/FormCheckbox";
 import { CiSquarePlus, CiSquareMinus } from "react-icons/ci";
 import { IconButton } from "./buttons/IconButton";
@@ -7,7 +7,8 @@ import { formatBytes } from "../helper/formatBytes";
 
 type TorrentFileForCheckbox = {
   id: number;
-  name: string;
+  filename: string;
+  pathComponents: string[];
   length: number;
 };
 
@@ -18,19 +19,12 @@ type FileTree = {
   files: TorrentFileForCheckbox[];
 };
 
-const splitOnce = (s: string, sep: string): [string, string | undefined] => {
-  if (s.indexOf(sep) === -1) {
-    return [s, undefined];
-  }
-  return [s.slice(0, s.indexOf(sep)), s.slice(s.indexOf(sep) + 1)];
-};
-
 const newFileTree = (listTorrentResponse: AddTorrentResponse): FileTree => {
-  const separator = "/";
   const newFileTreeInner = (
     name: string,
     id: string,
-    files: TorrentFileForCheckbox[]
+    files: TorrentFileForCheckbox[],
+    depth: number
   ): FileTree => {
     let directFiles: TorrentFileForCheckbox[] = [];
     let groups: FileTree[] = [];
@@ -41,22 +35,17 @@ const newFileTree = (listTorrentResponse: AddTorrentResponse): FileTree => {
       return groupsByName[prefix];
     };
 
-    files.forEach((file) => {
-      let [prefix, name] = splitOnce(file.name, separator);
-      if (name === undefined) {
+    files.forEach((file: TorrentFileForCheckbox) => {
+      if (depth == file.pathComponents.length - 1) {
         directFiles.push(file);
         return;
       }
-      getGroup(prefix).push({
-        id: file.id,
-        name: name,
-        length: file.length,
-      });
+      getGroup(file.pathComponents[0]).push(file);
     });
 
     let childId = 0;
     for (const [key, value] of Object.entries(groupsByName)) {
-      groups.push(newFileTreeInner(key, id + "." + childId, value));
+      groups.push(newFileTreeInner(key, id + "." + childId, value, depth + 1));
       childId += 1;
     }
     return {
@@ -70,9 +59,15 @@ const newFileTree = (listTorrentResponse: AddTorrentResponse): FileTree => {
   return newFileTreeInner(
     "",
     "filetree-root",
-    listTorrentResponse.details.files.map((data, id) => {
-      return { id, name: data.name, length: data.length };
-    })
+    listTorrentResponse.details.files.map((file, id) => {
+      return {
+        id,
+        filename: file.components[file.components.length - 1],
+        pathComponents: file.components,
+        length: file.length,
+      };
+    }),
+    0
   );
 };
 
@@ -168,7 +163,7 @@ const FileTreeComponent: React.FC<{
             <FormCheckbox
               checked={selectedFiles.has(file.id)}
               key={file.id}
-              label={`${file.name} (${formatBytes(file.length)})`}
+              label={`${file.filename} (${formatBytes(file.length)})`}
               name={`file-${file.id}`}
               onChange={() => handleToggleFile(file.id)}
             ></FormCheckbox>

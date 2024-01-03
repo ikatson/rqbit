@@ -9,7 +9,7 @@ import { TorrentActions } from "./buttons/TorrentActions";
 import { ProgressBar } from "./ProgressBar";
 import { Speed } from "./Speed";
 import { formatBytes } from "../helper/formatBytes";
-import { getLargestFileName } from "../helper/getLargestFileName";
+import { torrentDisplayName } from "../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
 
@@ -54,7 +54,7 @@ export const TorrentRow: React.FC<{
           <div className="flex items-center gap-2">
             <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
             <div className="text-left text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
-              {getLargestFileName(detailsResponse)}
+              {torrentDisplayName(detailsResponse)}
             </div>
           </div>
         )}

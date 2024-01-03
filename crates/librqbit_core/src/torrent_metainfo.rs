@@ -74,6 +74,7 @@ pub struct TorrentMetaV1Info<BufType> {
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
 }
 
+#[derive(Clone, Copy)]
 pub enum FileIteratorName<'a, ByteBuf> {
     Single(Option<&'a ByteBuf>),
     Tree(&'a [ByteBuf]),
@@ -91,11 +92,17 @@ where
     }
 }
 
-impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
-    pub fn to_string(&self) -> anyhow::Result<String>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf>
+where
+    ByteBuf: AsRef<[u8]>,
+{
+    pub fn to_vec(&self) -> anyhow::Result<Vec<String>> {
+        self.iter_components()
+            .map(|c| c.map(|s| s.to_owned()))
+            .collect()
+    }
+
+    pub fn to_string(&self) -> anyhow::Result<String> {
         let mut buf = String::new();
         for (idx, bit) in self.iter_components().enumerate() {
             let bit = bit?;
@@ -106,10 +113,7 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
         }
         Ok(buf)
     }
-    pub fn to_pathbuf(&self) -> anyhow::Result<PathBuf>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+    pub fn to_pathbuf(&self) -> anyhow::Result<PathBuf> {
         let mut buf = PathBuf::new();
         for bit in self.iter_components() {
             let bit = bit?;
@@ -117,10 +121,7 @@ impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf> {
         }
         Ok(buf)
     }
-    pub fn iter_components(&self) -> impl Iterator<Item = anyhow::Result<&'a str>>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+    pub fn iter_components(&self) -> impl Iterator<Item = anyhow::Result<&'a str>> {
         let it = match self {
             FileIteratorName::Single(None) => return Either::Left(once(Ok("torrent-content"))),
             FileIteratorName::Single(Some(name)) => Either::Left(once((*name).as_ref())),

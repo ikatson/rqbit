@@ -6,12 +6,14 @@ export interface TorrentId {
 
 export interface TorrentFile {
   name: string;
+  components: string[];
   length: number;
   included: boolean;
 }
 
 // Interface for the Torrent Details API response
 export interface TorrentDetails {
+  name: string | null;
   info_hash: string;
   files: Array<TorrentFile>;
 }
