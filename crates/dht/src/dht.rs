@@ -27,7 +27,7 @@ use futures::{stream::FuturesUnordered, Stream, StreamExt, TryFutureExt};
 
 use leaky_bucket::RateLimiter;
 use librqbit_core::{
-    id20::Id20,
+    hash_id::Id20,
     peer_id::generate_peer_id,
     spawn_utils::{spawn, spawn_with_cancel},
 };

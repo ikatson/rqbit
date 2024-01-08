@@ -1,6 +1,6 @@
 pub mod constants;
 pub mod directories;
-pub mod id20;
+pub mod hash_id;
 pub mod lengths;
 pub mod magnet;
 pub mod peer_id;

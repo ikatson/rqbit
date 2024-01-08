@@ -7,7 +7,7 @@ use std::{
 
 use bencode::ByteString;
 use chrono::{DateTime, Utc};
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 use parking_lot::RwLock;
 use rand::RngCore;
 use serde::{

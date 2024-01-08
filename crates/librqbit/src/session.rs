@@ -548,7 +548,7 @@ impl Session {
             ));
         }
 
-        bail!("didn't find a matching torrent for {:?}", Id20(h.info_hash))
+        bail!("didn't find a matching torrent for {:?}", Id20::new(h.info_hash))
     }
 
     async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
@@ -753,10 +753,8 @@ impl Session {
 
         let (info_hash, info, dht_rx, trackers, initial_peers) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
-                let Magnet {
-                    info_hash,
-                    trackers,
-                } = Magnet::parse(&magnet).context("provided path is not a valid magnet URL")?;
+                let magnet = Magnet::parse(&magnet).context("provided path is not a valid magnet URL")?;
+                let info_hash = magnet.as_id20().context("magnet link didn't contain a BTv1 infohash")?;
 
                 let dht_rx = self
                     .dht
@@ -764,7 +762,7 @@ impl Session {
                     .context("magnet links without DHT are not supported")?
                     .get_peers(info_hash, announce_port)?;
 
-                let trackers = trackers
+                let trackers = magnet.trackers
                     .into_iter()
                     .filter_map(|url| match reqwest::Url::parse(&url) {
                         Ok(url) => Some(url),

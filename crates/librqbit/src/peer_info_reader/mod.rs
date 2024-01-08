@@ -4,7 +4,7 @@ use bencode::from_bytes;
 use buffers::{ByteBuf, ByteString};
 use librqbit_core::{
     constants::CHUNK_SIZE,
-    id20::Id20,
+    hash_id::Id20,
     lengths::{ceil_div_u64, last_element_size_u64, ChunkInfo},
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -226,7 +226,7 @@ impl PeerConnectionHandler for Handler {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Once};
 
-    use librqbit_core::id20::Id20;
+    use librqbit_core::hash_id::Id20;
     use librqbit_core::peer_id::generate_peer_id;
 
     use crate::spawn_utils::BlockingSpawner;

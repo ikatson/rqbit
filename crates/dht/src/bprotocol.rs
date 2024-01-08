@@ -6,7 +6,7 @@ use std::{
 
 use bencode::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 use serde::{
     de::{IgnoredAny, Unexpected},
     Deserialize, Deserializer, Serialize,
@@ -229,7 +229,7 @@ impl<'de> Deserialize<'de> for CompactNodeInfo {
                     let ip = Ipv4Addr::new(chunk[20], chunk[21], chunk[22], chunk[23]);
                     let port = ((chunk[24] as u16) << 8) + chunk[25] as u16;
                     buf.push(Node {
-                        id: Id20(node_id),
+                        id: Id20::new(node_id),
                         addr: SocketAddrV4::new(ip, port),
                     })
                 }

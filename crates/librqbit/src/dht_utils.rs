@@ -9,7 +9,7 @@ use tracing::debug;
 use crate::{
     peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,
 };
-use librqbit_core::id20::Id20;
+use librqbit_core::hash_id::Id20;
 
 #[derive(Debug)]
 pub enum ReadMetainfoResult<Rx> {

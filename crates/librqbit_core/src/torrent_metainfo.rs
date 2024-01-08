@@ -7,7 +7,7 @@ use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 
-use crate::id20::Id20;
+use crate::hash_id::Id20;
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
@@ -19,7 +19,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     let mut de = BencodeDeserializer::new_from_buf(buf);
     de.is_torrent_info = true;
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
-    t.info_hash = Id20(
+    t.info_hash = Id20::new(
         de.torrent_info_digest
             .ok_or_else(|| anyhow::anyhow!("programming error"))?,
     );
