@@ -1867,7 +1867,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.4.0"
+version = "5.4.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1936,7 +1936,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.4.0"
+version = "3.5.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -3022,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "5.4.0"
+version = "5.4.1"
 dependencies = [
  "anyhow",
  "base64 0.21.5",
