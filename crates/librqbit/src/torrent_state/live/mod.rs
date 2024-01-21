@@ -132,6 +132,10 @@ fn dummy_file() -> anyhow::Result<std::fs::File> {
         .with_context(|| format!("error opening {}", DEVNULL))
 }
 
+fn make_piece_bitfield(lengths: &Lengths) -> BF {
+    BF::from_vec(vec![0; lengths.piece_bitfield_bytes()])
+}
+
 pub(crate) struct TorrentStateLocked {
     // What chunks we have and need.
     // If this is None, the torrent was paused, and this live state is useless, and needs to be dropped.
@@ -429,10 +433,7 @@ impl TorrentStateLive {
             addr: checked_peer.addr,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
-            locked: RwLock::new(PeerHandlerLocked {
-                i_am_choked: true,
-                previously_requested_pieces: BF::new(),
-            }),
+            locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
             requests_sem: Semaphore::new(0),
             state: self.clone(),
             tx,
@@ -493,10 +494,7 @@ impl TorrentStateLive {
             addr,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
-            locked: RwLock::new(PeerHandlerLocked {
-                i_am_choked: true,
-                previously_requested_pieces: BF::new(),
-            }),
+            locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
             requests_sem: Semaphore::new(0),
             state: state.clone(),
             tx,
@@ -780,10 +778,6 @@ impl TorrentStateLive {
 
 struct PeerHandlerLocked {
     pub i_am_choked: bool,
-
-    // This is used to only request a piece from a peer once when stealing from others.
-    // So that you don't steal then re-steal the same piece in a loop.
-    pub previously_requested_pieces: BF,
 }
 
 // All peer state that would never be used by other actors should pe put here.
@@ -1117,8 +1111,7 @@ impl PeerHandler {
                 // If bitfield wasn't allocated yet, let's do it. Some clients start empty so they never
                 // send bitfields.
                 if live.bitfield.is_empty() {
-                    live.bitfield =
-                        BF::from_vec(vec![0; self.state.lengths.piece_bitfield_bytes()]);
+                    live.bitfield = make_piece_bitfield(&self.state.lengths);
                 }
                 match live.bitfield.get_mut(have as usize) {
                     Some(mut v) => *v = true,
@@ -1128,8 +1121,8 @@ impl PeerHandler {
                     }
                 };
                 trace!("updated bitfield with have={}", have);
-                self.on_bitfield_notify.notify_waiters();
             });
+        self.on_bitfield_notify.notify_waiters();
     }
 
     fn on_bitfield(&self, bitfield: ByteString) -> anyhow::Result<()> {
@@ -1140,7 +1133,6 @@ impl PeerHandler {
                 self.state.lengths.piece_bitfield_bytes(),
             );
         }
-        self.locked.write().previously_requested_pieces = BF::from_vec(vec![0; bitfield.len()]);
         self.state
             .peers
             .update_bitfield_from_vec(self.addr, bitfield.0);
@@ -1228,11 +1220,6 @@ impl PeerHandler {
                     continue;
                 }
             };
-
-            self.locked
-                .write()
-                .previously_requested_pieces
-                .set(next.get() as usize, true);
 
             for chunk in self.state.lengths.iter_chunk_infos(next) {
                 let request = Request {
