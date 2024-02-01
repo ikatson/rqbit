@@ -72,6 +72,10 @@ pub struct TorrentMetaV1Info<BufType> {
     // Multi-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
+
+    // BEP_0027 Private torrents
+    pub private: Option<bool>,
+    pub source: Option<BufType>,
 }
 
 #[derive(Clone, Copy)]
@@ -236,6 +240,8 @@ where
             length: self.length,
             md5sum: self.md5sum.clone_to_owned(),
             files: self.files.clone_to_owned(),
+            private: self.private,
+            source: self.source.clone_to_owned(),
         }
     }
 }
