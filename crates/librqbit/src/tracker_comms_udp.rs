@@ -3,6 +3,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use anyhow::{bail, Context};
 use librqbit_core::hash_id::Id20;
 use rand::Rng;
+use tokio::net::ToSocketAddrs;
 
 const ACTION_CONNECT: u32 = 0;
 const ACTION_ANNOUNCE: u32 = 1;
@@ -71,14 +72,17 @@ impl Request {
 }
 
 #[derive(Debug)]
+pub struct AnnounceResponse {
+    pub interval: u32,
+    pub leechers: u32,
+    pub seeders: u32,
+    pub addrs: Vec<SocketAddrV4>,
+}
+
+#[derive(Debug)]
 pub enum Response {
     Connect(ConnectionId),
-    Announce {
-        interval: u32,
-        leechers: u32,
-        seeders: u32,
-        addrs: Vec<SocketAddrV4>,
-    },
+    Announce(AnnounceResponse),
 }
 
 fn split_slice(s: &[u8], first_len: usize) -> Option<(&[u8], &[u8])> {
@@ -144,12 +148,12 @@ impl Response {
                     addrs.push(SocketAddrV4::new(ip, port));
                 }
                 buf = b;
-                Response::Announce {
+                Response::Announce(AnnounceResponse {
                     interval,
                     leechers,
                     seeders,
                     addrs,
-                }
+                })
             }
             _ => bail!("unsupported action {action}"),
         };
@@ -162,6 +166,83 @@ impl Response {
         }
 
         Ok((tid, response))
+    }
+}
+
+pub struct UdpTrackerRequester {
+    sock: tokio::net::UdpSocket,
+    connection_id: ConnectionId,
+    read_buf: Vec<u8>,
+    write_buf: Vec<u8>,
+}
+
+impl UdpTrackerRequester {
+    // Addr is "host:port"
+    pub async fn new(addr: impl ToSocketAddrs) -> anyhow::Result<Self> {
+        let sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
+            .await
+            .context("error binding UDP socket")?;
+        sock.connect(addr)
+            .await
+            .context("error connecting UDP socket")?;
+
+        let tid = new_transaction_id();
+        let mut write_buf = Vec::new();
+        let mut read_buf = vec![0u8; 4096];
+
+        Request::Connect.serialize(tid, &mut write_buf);
+
+        sock.send(&write_buf)
+            .await
+            .context("error sending to socket")?;
+
+        let size = sock
+            .recv(&mut read_buf)
+            .await
+            .context("error receiving from socket")?;
+
+        let (rtid, response) =
+            Response::parse(&read_buf[..size]).context("error parsing response")?;
+        if tid != rtid {
+            bail!("expected transaction id {} == {}", tid, rtid);
+        }
+
+        let connection_id = match response {
+            Response::Connect(connection_id) => connection_id,
+            other => bail!("unexpected response {other:?}"),
+        };
+
+        Ok(Self {
+            sock,
+            connection_id,
+            read_buf,
+            write_buf,
+        })
+    }
+
+    pub async fn announce(&mut self, fields: AnnounceFields) -> anyhow::Result<AnnounceResponse> {
+        let request = Request::Announce(self.connection_id, fields);
+        let response = self.request(request).await?;
+        match response {
+            Response::Announce(r) => Ok(r),
+            other => bail!("unexpected response {other:?}, expected announce"),
+        }
+    }
+
+    pub async fn request(&mut self, request: Request) -> anyhow::Result<Response> {
+        let tid = new_transaction_id();
+        self.write_buf.clear();
+        let size = request.serialize(tid, &mut self.write_buf);
+
+        self.sock
+            .send(&self.write_buf[..size])
+            .await
+            .context("error sending")?;
+        let size = self.sock.recv(&mut self.read_buf).await.unwrap();
+
+        let (rtid, response) = Response::parse(&self.read_buf[..size]).unwrap();
+        assert_eq!(tid, rtid);
+        Ok(response)
     }
 }
 
@@ -244,13 +325,8 @@ mod tests {
         let (rtid, response) = Response::parse(&read_buf[..size]).unwrap();
         assert_eq!(tid, rtid);
         match response {
-            Response::Announce {
-                interval,
-                leechers,
-                seeders,
-                addrs,
-            } => {
-                dbg!(interval, leechers, seeders, addrs);
+            Response::Announce(r) => {
+                dbg!(r);
             }
             other => panic!("unexpected response {other:?}"),
         }
