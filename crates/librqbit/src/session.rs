@@ -43,7 +43,7 @@ use crate::{
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
-    tracker_comms::{TorrentStatsForTrackerDummy, TrackerComms},
+    tracker_comms::{self, TorrentStatsForTrackerDummy, TrackerComms},
     type_aliases::PeerStream,
 };
 
@@ -768,7 +768,7 @@ impl Session {
             self.tcp_listen_port
         };
 
-        let (info_hash, info, peer_rx, initial_peers) = match add {
+        let (info_hash, info, trackers, peer_rx, initial_peers) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                 let magnet =
                     Magnet::parse(&magnet).context("provided path is not a valid magnet URL")?;
@@ -785,7 +785,7 @@ impl Session {
                 let tracker_peer_rx = TrackerComms::start(
                     info_hash,
                     self.peer_id,
-                    magnet.trackers,
+                    magnet.trackers.clone(),
                     Box::new(TorrentStatsForTrackerDummy {}),
                     opts.force_tracker_interval,
                     self.cancellation_token().clone(),
@@ -816,6 +816,7 @@ impl Session {
                 (
                     info_hash,
                     info,
+                    magnet.trackers,
                     if opts.paused || opts.list_only {
                         None
                     } else {
@@ -856,7 +857,7 @@ impl Session {
                         Ok(url) => Some(url.to_owned()),
                         Err(_) => {
                             warn!("cannot parse tracker url as utf-8, ignoring");
-                            return None;
+                            None
                         }
                     })
                     .collect::<Vec<_>>();
@@ -864,7 +865,7 @@ impl Session {
                 let tracker_peer_rx = TrackerComms::start(
                     torrent.info_hash,
                     self.peer_id,
-                    trackers,
+                    trackers.clone(),
                     Box::new(TorrentStatsForTrackerDummy {}),
                     opts.force_tracker_interval,
                     self.cancellation_token().clone(),
@@ -876,6 +877,7 @@ impl Session {
                 (
                     torrent.info_hash,
                     torrent.info,
+                    trackers,
                     peer_rx,
                     opts.initial_peers
                         .clone()
@@ -889,6 +891,7 @@ impl Session {
         self.main_torrent_info(
             info_hash,
             info,
+            trackers,
             peer_rx,
             initial_peers.into_iter().collect(),
             opts,
@@ -901,6 +904,7 @@ impl Session {
         &self,
         info_hash: Id20,
         info: TorrentMetaV1Info<ByteString>,
+        trackers: Vec<String>,
         peer_rx: Option<PeerStream>,
         initial_peers: Vec<SocketAddr>,
         opts: AddTorrentOptions,
@@ -988,6 +992,7 @@ impl Session {
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
             .cancellation_token(self.cancellation_token.child_token())
+            .trackers(trackers)
             .peer_id(self.peer_id);
 
         if let Some(only_files) = only_files {
@@ -1074,13 +1079,22 @@ impl Session {
     }
 
     pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let peer_rx = self
+        let dht_rx = self
             .dht
             .as_ref()
             .map(|dht| dht.get_peers(handle.info_hash(), self.tcp_listen_port))
             .transpose()?;
-        todo!();
-        let peer_rx = None;
+        let trackers = handle.info().trackers.clone();
+        let peer_rx = TrackerComms::start(
+            handle.info.info_hash,
+            handle.info.peer_id,
+            trackers.into_iter().collect(),
+            Box::new(tracker_comms::TorrentStatsForTrackerDummy {}),
+            None,
+            self.cancellation_token.clone(),
+            self.tcp_listen_port,
+        );
+        let peer_rx = merge_peer_rx(dht_rx, peer_rx);
         handle.start(Default::default(), peer_rx, false)?;
         Ok(())
     }

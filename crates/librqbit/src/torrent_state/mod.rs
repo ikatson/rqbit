@@ -84,7 +84,7 @@ pub struct ManagedTorrentInfo {
     pub info_hash: Id20,
     pub out_dir: PathBuf,
     pub(crate) spawner: BlockingSpawner,
-    pub trackers: HashSet<Url>,
+    pub trackers: HashSet<String>,
     pub peer_id: Id20,
     pub lengths: Lengths,
     pub span: tracing::Span,
@@ -422,7 +422,7 @@ pub struct ManagedTorrentBuilder {
     peer_connect_timeout: Option<Duration>,
     peer_read_write_timeout: Option<Duration>,
     only_files: Option<Vec<usize>>,
-    trackers: Vec<Url>,
+    trackers: Vec<String>,
     peer_id: Option<Id20>,
     overwrite: bool,
     spawner: Option<BlockingSpawner>,
@@ -461,7 +461,7 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub fn trackers(&mut self, trackers: Vec<Url>) -> &mut Self {
+    pub fn trackers(&mut self, trackers: Vec<String>) -> &mut Self {
         self.trackers = trackers;
         self
     }
