@@ -41,6 +41,21 @@ pub trait TorrentStatsForTracker: Send + Sync {
     }
 }
 
+pub struct TorrentStatsForTrackerDummy {}
+impl TorrentStatsForTracker for TorrentStatsForTrackerDummy {
+    fn get_uploaded_bytes(&self) -> u64 {
+        0
+    }
+
+    fn get_downloaded_bytes(&self) -> u64 {
+        0
+    }
+
+    fn get_total_bytes(&self) -> u64 {
+        0
+    }
+}
+
 type Sender = tokio::sync::mpsc::Sender<SocketAddr>;
 
 impl TrackerComms {
@@ -52,7 +67,7 @@ impl TrackerComms {
         force_interval: Option<Duration>,
         cancellation_token: CancellationToken,
         tcp_listen_port: Option<u16>,
-    ) -> anyhow::Result<impl Stream<Item = SocketAddr> + Send + Sync + Unpin + 'static> {
+    ) -> Option<impl Stream<Item = SocketAddr> + Send + Sync + Unpin + 'static> {
         let (tx, rx) = tokio::sync::mpsc::channel::<SocketAddr>(16);
         let comms = Arc::new(Self {
             info_hash,
@@ -63,12 +78,18 @@ impl TrackerComms {
             tx,
             tcp_listen_port,
         });
+        let mut added = false;
         for tracker in trackers {
             if let Err(e) = comms.clone().add_tracker(&tracker) {
                 info!(tracker = tracker, "error adding tracker: {:#}", e)
+            } else {
+                added = true;
             }
         }
-        Ok(tokio_stream::wrappers::ReceiverStream::new(rx))
+        if !added {
+            return None;
+        }
+        Some(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 
     fn add_tracker(self: Arc<Self>, tracker: &str) -> anyhow::Result<()> {

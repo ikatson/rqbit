@@ -37,6 +37,7 @@ use url::Url;
 use crate::chunk_tracker::ChunkTracker;
 use crate::spawn_utils::BlockingSpawner;
 use crate::torrent_state::stats::LiveStats;
+use crate::type_aliases::PeerStream;
 
 use initializing::TorrentStateInitializing;
 
@@ -173,7 +174,7 @@ impl ManagedTorrent {
     pub(crate) fn start(
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
-        peer_rx: Option<RequestPeersStream>,
+        peer_rx: Option<PeerStream>,
         start_paused: bool,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
@@ -204,7 +205,7 @@ impl ManagedTorrent {
         fn spawn_peer_adder(
             live: &Arc<TorrentStateLive>,
             initial_peers: Vec<SocketAddr>,
-            peer_rx: Option<RequestPeersStream>,
+            peer_rx: Option<PeerStream>,
         ) {
             live.spawn(
                 error_span!(parent: live.meta().span.clone(), "external_peer_adder"),
