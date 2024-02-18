@@ -13,10 +13,8 @@ use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
-use dht::{
-    Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig, RequestPeersStream,
-};
-use futures::{stream::FuturesUnordered, Stream, TryFutureExt};
+use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
+use futures::{stream::FuturesUnordered, TryFutureExt};
 use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -43,7 +41,7 @@ use crate::{
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
-    tracker_comms::{self, TorrentStatsForTrackerDummy, TrackerComms},
+    tracker_comms::{self, TrackerComms},
     type_aliases::PeerStream,
 };
 
@@ -366,18 +364,6 @@ async fn create_tcp_listener(
         }
     }
     bail!("no free TCP ports in range {port_range:?}");
-}
-
-fn merge_peer_rx(
-    dht_rx: Option<RequestPeersStream>,
-    peer_rx: Option<impl Stream<Item = SocketAddr> + Unpin + Send + Sync + 'static>,
-) -> Option<PeerStream> {
-    match (dht_rx, peer_rx) {
-        (Some(dht_rx), None) => Some(Box::new(dht_rx)),
-        (None, Some(peer_rx)) => Some(Box::new(peer_rx)),
-        (None, None) => None,
-        (Some(dht_rx), Some(peer_rx)) => Some(Box::new(dht_rx.merge(peer_rx))),
-    }
 }
 
 pub(crate) struct CheckedIncomingConnection {
@@ -1073,6 +1059,7 @@ impl Session {
         }
     }
 
+    // Get a peer stream from both DHT and trackers.
     fn make_peer_rx(
         &self,
         info_hash: Id20,
@@ -1095,8 +1082,14 @@ impl Session {
             cancel,
             announce_port,
         );
-        let peer_rx = merge_peer_rx(dht_rx, peer_rx);
-        Ok(peer_rx)
+
+        // Merge DHT rx and tracker comms peer rx.
+        match (dht_rx, peer_rx) {
+            (Some(dht_rx), None) => Ok(Some(Box::new(dht_rx))),
+            (None, Some(peer_rx)) => Ok(Some(Box::new(peer_rx))),
+            (None, None) => Ok(None),
+            (Some(dht_rx), Some(peer_rx)) => Ok(Some(Box::new(dht_rx.merge(peer_rx)))),
+        }
     }
 
     pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
