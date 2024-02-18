@@ -3,7 +3,7 @@ services:
     image: docker.io/rqbit/rqbit:latest
     container_name: rqbit
     volumes:
-      - /path/to/download:/app/downloads
+      - /path/to/download:/home/appuser/downloads
     ports:
       - 3030:3030
     restart: unless-stopped
