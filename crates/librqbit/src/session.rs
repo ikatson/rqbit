@@ -30,7 +30,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::serde_as;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::StreamExt;
-use tokio_util::sync::CancellationToken;
+use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
@@ -172,6 +172,9 @@ pub struct Session {
     tcp_listen_port: Option<u16>,
 
     cancellation_token: CancellationToken,
+
+    // This is stored for all tasks to stop when session is dropped.
+    _cancellation_token_drop_guard: DropGuard,
 }
 
 async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
@@ -440,6 +443,7 @@ impl Session {
             spawner,
             output_folder,
             db: RwLock::new(Default::default()),
+            _cancellation_token_drop_guard: token.clone().drop_guard(),
             cancellation_token: token,
             tcp_listen_port,
         });
@@ -770,6 +774,7 @@ impl Session {
                     magnet.trackers.clone(),
                     cancellation_token.clone(),
                     announce_port,
+                    opts.force_tracker_interval,
                 )?;
                 let peer_rx = match peer_rx {
                     Some(peer_rx) => peer_rx,
@@ -840,6 +845,7 @@ impl Session {
                     trackers.clone(),
                     cancellation_token.clone(),
                     announce_port,
+                    opts.force_tracker_interval,
                 )?;
 
                 (
@@ -1066,6 +1072,7 @@ impl Session {
         trackers: Vec<String>,
         cancel: CancellationToken,
         announce_port: Option<u16>,
+        force_tracker_interval: Option<Duration>,
     ) -> anyhow::Result<Option<PeerStream>> {
         let announce_port = announce_port.or(self.tcp_listen_port);
         let dht_rx = self
@@ -1077,8 +1084,9 @@ impl Session {
             info_hash,
             self.peer_id,
             trackers,
+            // TODO: report actual bytes, not zeroes.
             Box::new(tracker_comms::TorrentStatsForTrackerDummy {}),
-            None,
+            force_tracker_interval,
             cancel,
             announce_port,
         );
@@ -1099,6 +1107,7 @@ impl Session {
             handle.info().trackers.clone().into_iter().collect(),
             token.clone(),
             self.tcp_listen_port,
+            handle.info().options.force_tracker_interval,
         )?;
         handle.start(Default::default(), peer_rx, false, token)?;
         Ok(())
