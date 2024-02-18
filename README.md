@@ -50,6 +50,30 @@ If you have rust toolchain installed, this should work:
 cargo install rqbit
 ```
 
+### Docker Compose
+
+```yaml
+services:
+  rqbit:
+    image: docker.io/rqbit/rqbit:latest
+    container_name: rqbit
+    volumes:
+      - /path/to/download:/app/downloads
+    ports:
+      - 3030:3030
+    restart: unless-stopped
+```
+
+### Docker CLI
+```sh
+docker run -d \
+    --name=rqbit \
+    -p 3030:3030 \
+    -v /path/to/download:/home/appuser/downloads \
+    --restart unless-stopped \
+    docker.io/rqbit/rqbit:latest
+```
+
 ## Build
 Just a regular Rust binary build process.
 
