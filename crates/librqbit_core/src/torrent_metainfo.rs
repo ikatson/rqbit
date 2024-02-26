@@ -159,6 +159,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         Some(expected_hash == hash)
     }
 
+    #[inline(never)]
     pub fn iter_filenames_and_lengths(
         &self,
     ) -> anyhow::Result<impl Iterator<Item = (FileIteratorName<'_, BufType>, u64)>> {

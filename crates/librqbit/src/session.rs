@@ -298,6 +298,7 @@ pub enum AddTorrent<'a> {
 
 impl<'a> AddTorrent<'a> {
     // Don't call this from HTTP API.
+    #[inline(never)]
     pub fn from_cli_argument(path: &'a str) -> anyhow::Result<Self> {
         if SUPPORTED_SCHEMES.iter().any(|s| path.starts_with(s)) {
             return Ok(Self::Url(Cow::Borrowed(path)));
@@ -314,6 +315,7 @@ impl<'a> AddTorrent<'a> {
     }
 
     // Don't call this from HTTP API.
+    #[inline(never)]
     pub fn from_local_filename(filename: &str) -> anyhow::Result<Self> {
         let file = read_local_file_including_stdin(filename)
             .with_context(|| format!("error reading local file {filename:?}"))?;
@@ -744,6 +746,7 @@ impl Session {
     }
 
     /// Add a torrent to the session.
+    #[inline(never)]
     pub fn add_torrent<'a>(
         &'a self,
         add: AddTorrent<'a>,

@@ -45,6 +45,7 @@ impl HttpApi {
 
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
+    #[inline(never)]
     pub fn make_http_api_and_run(
         self,
         addr: SocketAddr,

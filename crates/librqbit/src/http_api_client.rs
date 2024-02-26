@@ -1,4 +1,7 @@
+use std::pin::Pin;
+
 use anyhow::Context;
+use futures::{Future, FutureExt};
 use serde::Deserialize;
 
 use crate::{
@@ -59,6 +62,7 @@ async fn json_response<T: serde::de::DeserializeOwned + std::any::Any>(
 }
 
 impl HttpApiClient {
+    #[inline(never)]
     pub fn new(url: &str) -> anyhow::Result<Self> {
         Ok(Self {
             base_url: reqwest::Url::parse(url)?,
@@ -70,40 +74,47 @@ impl HttpApiClient {
         &self.base_url
     }
 
-    pub async fn validate_rqbit_server(&self) -> anyhow::Result<()> {
-        let response = self.client.get(self.base_url.clone()).send().await?;
-        let root: ApiRoot = json_response(response).await?;
-        if root.server == "rqbit" {
-            return Ok(());
+    #[inline(never)]
+    pub fn validate_rqbit_server(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + '_>> {
+        async move {
+            let response = self.client.get(self.base_url.clone()).send().await?;
+            let root: ApiRoot = json_response(response).await?;
+            if root.server == "rqbit" {
+                return Ok(());
+            }
+            anyhow::bail!("not an rqbit server at {}", &self.base_url)
         }
-        anyhow::bail!("not an rqbit server at {}", &self.base_url)
+        .boxed()
     }
 
-    pub async fn add_torrent(
-        &self,
-        torrent: AddTorrent<'_>,
+    pub fn add_torrent<'a>(
+        &'a self,
+        torrent: AddTorrent<'a>,
         opts: Option<AddTorrentOptions>,
-    ) -> anyhow::Result<ApiAddTorrentResponse> {
-        let opts = opts.unwrap_or_default();
-        let params = TorrentAddQueryParams {
-            overwrite: Some(opts.overwrite),
-            only_files_regex: opts.only_files_regex,
-            only_files: None,
-            output_folder: opts.output_folder,
-            sub_folder: opts.sub_folder,
-            list_only: Some(opts.list_only),
-            ..Default::default()
-        };
-        let qs = serde_urlencoded::to_string(&params).unwrap();
-        let url = format!("{}torrents?{}", &self.base_url, qs);
-        let response = check_response(
-            self.client
-                .post(&url)
-                .body(torrent.into_bytes())
-                .send()
-                .await?,
-        )
-        .await?;
-        json_response(response).await
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ApiAddTorrentResponse>> + 'a>> {
+        async move {
+            let opts = opts.unwrap_or_default();
+            let params = TorrentAddQueryParams {
+                overwrite: Some(opts.overwrite),
+                only_files_regex: opts.only_files_regex,
+                only_files: None,
+                output_folder: opts.output_folder,
+                sub_folder: opts.sub_folder,
+                list_only: Some(opts.list_only),
+                ..Default::default()
+            };
+            let qs = serde_urlencoded::to_string(&params).unwrap();
+            let url = format!("{}torrents?{}", &self.base_url, qs);
+            let response = check_response(
+                self.client
+                    .post(&url)
+                    .body(torrent.into_bytes())
+                    .send()
+                    .await?,
+            )
+            .await?;
+            json_response(response).await
+        }
+        .boxed()
     }
 }
