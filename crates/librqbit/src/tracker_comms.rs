@@ -20,21 +20,24 @@ use librqbit_core::hash_id::Id20;
 pub struct TrackerComms {
     info_hash: Id20,
     peer_id: Id20,
-    stats: Box<dyn TorrentStatsForTracker>,
+    stats: Box<dyn TorrentStatsProvider>,
     force_tracker_interval: Option<Duration>,
     cancellation_token: CancellationToken,
     tx: Sender,
     tcp_listen_port: Option<u16>,
 }
 
-pub trait TorrentStatsForTracker: Send + Sync {
-    fn get_uploaded_bytes(&self) -> u64;
-    fn get_downloaded_bytes(&self) -> u64;
-    fn get_total_bytes(&self) -> u64;
+#[derive(Default)]
+pub struct TrackerCommsStats {
+    pub uploaded_bytes: u64,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+}
 
-    fn get_left_to_download_bytes(&self) -> u64 {
-        let total = self.get_total_bytes();
-        let down = self.get_downloaded_bytes();
+impl TrackerCommsStats {
+    pub fn get_left_to_download_bytes(&self) -> u64 {
+        let total = self.total_bytes;
+        let down = self.downloaded_bytes;
         if total >= down {
             return total - down;
         }
@@ -42,18 +45,13 @@ pub trait TorrentStatsForTracker: Send + Sync {
     }
 }
 
-pub struct TorrentStatsForTrackerDummy {}
-impl TorrentStatsForTracker for TorrentStatsForTrackerDummy {
-    fn get_uploaded_bytes(&self) -> u64 {
-        0
-    }
+pub trait TorrentStatsProvider: Send + Sync {
+    fn get(&self) -> TrackerCommsStats;
+}
 
-    fn get_downloaded_bytes(&self) -> u64 {
-        0
-    }
-
-    fn get_total_bytes(&self) -> u64 {
-        0
+impl TorrentStatsProvider for () {
+    fn get(&self) -> TrackerCommsStats {
+        Default::default()
     }
 }
 
@@ -64,7 +62,7 @@ impl TrackerComms {
         info_hash: Id20,
         peer_id: Id20,
         trackers: Vec<String>,
-        stats: Box<dyn TorrentStatsForTracker>,
+        stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
         cancellation_token: CancellationToken,
         tcp_listen_port: Option<u16>,
@@ -131,13 +129,14 @@ impl TrackerComms {
     ) -> anyhow::Result<()> {
         let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
         loop {
+            let stats = self.stats.get();
             let request = tracker_comms_http::TrackerRequest {
                 info_hash: self.info_hash,
                 peer_id: self.peer_id,
                 port: 6778,
-                uploaded: self.stats.get_uploaded_bytes(),
-                downloaded: self.stats.get_downloaded_bytes(),
-                left: self.stats.get_left_to_download_bytes(),
+                uploaded: stats.uploaded_bytes,
+                downloaded: stats.downloaded_bytes,
+                left: stats.get_left_to_download_bytes(),
                 compact: true,
                 no_peer_id: false,
                 event,
@@ -212,12 +211,13 @@ impl TrackerComms {
                 tokio::time::sleep(i).await;
             }
 
+            let stats = self.stats.get();
             let request = AnnounceFields {
                 info_hash: self.info_hash,
                 peer_id: self.peer_id,
-                downloaded: self.stats.get_downloaded_bytes(),
-                left: self.stats.get_left_to_download_bytes(),
-                uploaded: self.stats.get_uploaded_bytes(),
+                downloaded: stats.downloaded_bytes,
+                left: stats.get_left_to_download_bytes(),
+                uploaded: stats.uploaded_bytes,
                 event: EVENT_NONE,
                 key: 0, // whatever that is?
                 port: self.tcp_listen_port.unwrap_or(0),

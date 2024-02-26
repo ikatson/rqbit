@@ -41,7 +41,7 @@ use crate::{
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
-    tracker_comms::{self, TrackerComms},
+    tracker_comms::TrackerComms,
     type_aliases::PeerStream,
 };
 
@@ -1093,7 +1093,7 @@ impl Session {
             self.peer_id,
             trackers,
             // TODO: report actual bytes, not zeroes.
-            Box::new(tracker_comms::TorrentStatsForTrackerDummy {}),
+            Box::new(()),
             force_tracker_interval,
             cancel,
             announce_port,
