@@ -972,7 +972,6 @@ impl Session {
         builder
             .overwrite(opts.overwrite)
             .spawner(self.spawner)
-            .cancellation_token(cancellation_token.clone())
             .trackers(trackers)
             .peer_id(self.peer_id);
 
@@ -1101,7 +1100,7 @@ impl Session {
     }
 
     pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let token = handle.cancellation_token.child_token();
+        let token = self.cancellation_token.child_token();
         let peer_rx = self.make_peer_rx(
             handle.info_hash(),
             handle.info().trackers.clone().into_iter().collect(),

@@ -91,7 +91,6 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    pub cancellation_token: CancellationToken,
     pub(crate) only_files: Option<Vec<usize>>,
     locked: RwLock<ManagedTorrentLocked>,
 }
@@ -428,7 +427,6 @@ pub struct ManagedTorrentBuilder {
     peer_id: Option<Id20>,
     overwrite: bool,
     spawner: Option<BlockingSpawner>,
-    cancellation_token: Option<CancellationToken>,
 }
 
 impl ManagedTorrentBuilder {
@@ -449,13 +447,7 @@ impl ManagedTorrentBuilder {
             trackers: Default::default(),
             peer_id: None,
             overwrite: false,
-            cancellation_token: None,
         }
-    }
-
-    pub fn cancellation_token(&mut self, token: CancellationToken) -> &mut Self {
-        self.cancellation_token = Some(token);
-        self
     }
 
     pub fn only_files(&mut self, only_files: Vec<usize>) -> &mut Self {
@@ -498,7 +490,7 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub(crate) fn build(mut self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
+    pub(crate) fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
         let info = Arc::new(ManagedTorrentInfo {
             span,
@@ -525,7 +517,6 @@ impl ManagedTorrentBuilder {
             locked: RwLock::new(ManagedTorrentLocked {
                 state: ManagedTorrentState::Initializing(initializing),
             }),
-            cancellation_token: self.cancellation_token.take().unwrap_or_default(),
             info,
         }))
     }
