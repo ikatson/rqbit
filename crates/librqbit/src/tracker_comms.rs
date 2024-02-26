@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error_span;
 use tracing::info;
+use tracing::trace;
 use url::Url;
 
 use crate::tracker_comms_http;
@@ -96,6 +97,7 @@ impl TrackerComms {
         if tracker.starts_with("http://") || tracker.starts_with("https://") {
             spawn_with_cancel(
                 error_span!(
+                    parent: None,
                     "http_tracker",
                     tracker = tracker,
                     info_hash = ?self.info_hash
@@ -109,7 +111,7 @@ impl TrackerComms {
             );
         } else if tracker.starts_with("udp://") {
             spawn_with_cancel(
-                error_span!("udp_tracker", tracker = tracker),
+                error_span!(parent: None, "udp_tracker", tracker = tracker, info_hash = ?self.info_hash),
                 self.cancellation_token.clone(),
                 {
                     let comms = self;
@@ -206,6 +208,7 @@ impl TrackerComms {
         let mut sleep_interval: Option<Duration> = None;
         loop {
             if let Some(i) = sleep_interval {
+                trace!(interval=?sleep_interval, "sleeping");
                 tokio::time::sleep(i).await;
             }
 
@@ -222,6 +225,7 @@ impl TrackerComms {
 
             match requester.announce(request).await {
                 Ok(response) => {
+                    trace!(len = response.addrs.len(), "received announce response");
                     for addr in response.addrs {
                         self.tx
                             .send(SocketAddr::V4(addr))

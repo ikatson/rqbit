@@ -96,7 +96,6 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
             std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .write(true)
                 .open(&log_file)
                 .with_context(|| format!("error opening log file {:?}", log_file))?,
         ));

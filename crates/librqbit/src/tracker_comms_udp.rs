@@ -4,6 +4,7 @@ use anyhow::{bail, Context};
 use librqbit_core::hash_id::Id20;
 use rand::Rng;
 use tokio::net::ToSocketAddrs;
+use tracing::trace;
 
 const ACTION_CONNECT: u32 = 0;
 const ACTION_ANNOUNCE: u32 = 1;
@@ -190,6 +191,7 @@ impl UdpTrackerRequester {
         let mut write_buf = Vec::new();
         let mut read_buf = vec![0u8; 4096];
 
+        trace!("sending connect request");
         Request::Connect.serialize(tid, &mut write_buf);
 
         sock.send(&write_buf)
@@ -206,11 +208,14 @@ impl UdpTrackerRequester {
         if tid != rtid {
             bail!("expected transaction id {} == {}", tid, rtid);
         }
+        trace!(response=?response, "received");
 
         let connection_id = match response {
             Response::Connect(connection_id) => connection_id,
             other => bail!("unexpected response {other:?}"),
         };
+
+        trace!(connection_id);
 
         Ok(Self {
             sock,
@@ -233,7 +238,7 @@ impl UdpTrackerRequester {
         let tid = new_transaction_id();
         self.write_buf.clear();
         let size = request.serialize(tid, &mut self.write_buf);
-
+        trace!(request=?request, tid, "sending");
         self.sock
             .send(&self.write_buf[..size])
             .await
@@ -241,7 +246,10 @@ impl UdpTrackerRequester {
         let size = self.sock.recv(&mut self.read_buf).await.unwrap();
 
         let (rtid, response) = Response::parse(&self.read_buf[..size]).unwrap();
-        assert_eq!(tid, rtid);
+        trace!("received response");
+        if tid != rtid {
+            bail!("unexpected transaction id");
+        }
         Ok(response)
     }
 }
@@ -251,7 +259,6 @@ mod tests {
     use std::{io::Write, str::FromStr};
 
     use librqbit_core::{hash_id::Id20, peer_id::generate_peer_id};
-    pub use rand::Rng;
 
     use crate::tracker_comms_udp::{
         new_transaction_id, AnnounceFields, Request, Response, EVENT_NONE,
