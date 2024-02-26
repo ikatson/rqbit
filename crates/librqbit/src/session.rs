@@ -509,8 +509,6 @@ impl Session {
         addr: SocketAddr,
         mut stream: TcpStream,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
-        // TODO: move buffer handling to peer_connection
-
         let rwtimeout = self
             .peer_opts
             .read_write_timeout
@@ -761,6 +759,10 @@ impl Session {
         let cancellation_token = self.cancellation_token.child_token();
         let cancellation_token_drop_guard = cancellation_token.clone().drop_guard();
         let paused = opts.list_only || opts.paused;
+
+        // The main difference between magnet link and torrent file, is that we need to resolve the magnet link
+        // into a torrent file by connecting to peers that support extended handshakes.
+        // So we must discover at least one peer and connect to it to be able to proceed further.
 
         let (info_hash, info, trackers, peer_rx, initial_peers, cancellation_token) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
