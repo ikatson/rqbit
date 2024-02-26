@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -66,7 +67,7 @@ impl TrackerComms {
         stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
         tcp_listen_port: Option<u16>,
-    ) -> Option<impl Stream<Item = SocketAddr> + Unpin + Send + 'static> {
+    ) -> Option<Pin<Box<dyn Stream<Item = SocketAddr> + Send + 'static>>> {
         let trackers = trackers
             .into_iter()
             .filter_map(|t| match Url::parse(&t) {
