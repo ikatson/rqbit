@@ -15,7 +15,6 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
-use dht::RequestPeersStream;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
 use librqbit_core::peer_id::generate_peer_id;
@@ -32,11 +31,11 @@ use tracing::debug;
 use tracing::error_span;
 use tracing::trace;
 use tracing::warn;
-use url::Url;
 
 use crate::chunk_tracker::ChunkTracker;
 use crate::spawn_utils::BlockingSpawner;
 use crate::torrent_state::stats::LiveStats;
+use crate::type_aliases::PeerStream;
 
 use initializing::TorrentStateInitializing;
 
@@ -83,7 +82,7 @@ pub struct ManagedTorrentInfo {
     pub info_hash: Id20,
     pub out_dir: PathBuf,
     pub(crate) spawner: BlockingSpawner,
-    pub trackers: HashSet<Url>,
+    pub trackers: HashSet<String>,
     pub peer_id: Id20,
     pub lengths: Lengths,
     pub span: tracing::Span,
@@ -92,7 +91,6 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    pub cancellation_token: CancellationToken,
     pub(crate) only_files: Option<Vec<usize>>,
     locked: RwLock<ManagedTorrentLocked>,
 }
@@ -173,15 +171,17 @@ impl ManagedTorrent {
     pub(crate) fn start(
         self: &Arc<Self>,
         initial_peers: Vec<SocketAddr>,
-        peer_rx: Option<RequestPeersStream>,
+        peer_rx: Option<PeerStream>,
         start_paused: bool,
+        live_cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
 
         let spawn_fatal_errors_receiver =
-            |state: &Arc<Self>, rx: tokio::sync::oneshot::Receiver<anyhow::Error>| {
+            |state: &Arc<Self>,
+             rx: tokio::sync::oneshot::Receiver<anyhow::Error>,
+             token: CancellationToken| {
                 let span = state.info.span.clone();
-                let token = state.cancellation_token.clone();
                 let state = Arc::downgrade(state);
                 spawn_with_cancel(
                     error_span!(parent: span, "fatal_errors_receiver"),
@@ -204,7 +204,7 @@ impl ManagedTorrent {
         fn spawn_peer_adder(
             live: &Arc<TorrentStateLive>,
             initial_peers: Vec<SocketAddr>,
-            peer_rx: Option<RequestPeersStream>,
+            peer_rx: Option<PeerStream>,
         ) {
             live.spawn(
                 error_span!(parent: live.meta().span.clone(), "external_peer_adder"),
@@ -257,7 +257,7 @@ impl ManagedTorrent {
                 drop(g);
                 let t = self.clone();
                 let span = self.info().span.clone();
-                let token = self.cancellation_token.clone();
+                let token = live_cancellation_token.clone();
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
@@ -277,10 +277,11 @@ impl ManagedTorrent {
                                 }
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
-                                let live = TorrentStateLive::new(paused, tx, token.child_token());
+                                let live =
+                                    TorrentStateLive::new(paused, tx, live_cancellation_token);
                                 g.state = ManagedTorrentState::Live(live.clone());
 
-                                spawn_fatal_errors_receiver(&t, rx);
+                                spawn_fatal_errors_receiver(&t, rx, token);
                                 spawn_peer_adder(&live, initial_peers, peer_rx);
 
                                 Ok(())
@@ -298,13 +299,9 @@ impl ManagedTorrent {
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(
-                    paused,
-                    tx,
-                    self.cancellation_token.child_token().clone(),
-                );
+                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone());
                 g.state = ManagedTorrentState::Live(live.clone());
-                spawn_fatal_errors_receiver(self, rx);
+                spawn_fatal_errors_receiver(self, rx, live_cancellation_token);
                 spawn_peer_adder(&live, initial_peers, peer_rx);
                 Ok(())
             }
@@ -317,7 +314,12 @@ impl ManagedTorrent {
                 drop(g);
 
                 // Recurse.
-                self.start(initial_peers, peer_rx, start_paused)
+                self.start(
+                    initial_peers,
+                    peer_rx,
+                    start_paused,
+                    live_cancellation_token,
+                )
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }
@@ -421,11 +423,10 @@ pub struct ManagedTorrentBuilder {
     peer_connect_timeout: Option<Duration>,
     peer_read_write_timeout: Option<Duration>,
     only_files: Option<Vec<usize>>,
-    trackers: Vec<Url>,
+    trackers: Vec<String>,
     peer_id: Option<Id20>,
     overwrite: bool,
     spawner: Option<BlockingSpawner>,
-    cancellation_token: Option<CancellationToken>,
 }
 
 impl ManagedTorrentBuilder {
@@ -446,13 +447,7 @@ impl ManagedTorrentBuilder {
             trackers: Default::default(),
             peer_id: None,
             overwrite: false,
-            cancellation_token: None,
         }
-    }
-
-    pub fn cancellation_token(&mut self, token: CancellationToken) -> &mut Self {
-        self.cancellation_token = Some(token);
-        self
     }
 
     pub fn only_files(&mut self, only_files: Vec<usize>) -> &mut Self {
@@ -460,7 +455,7 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub fn trackers(&mut self, trackers: Vec<Url>) -> &mut Self {
+    pub fn trackers(&mut self, trackers: Vec<String>) -> &mut Self {
         self.trackers = trackers;
         self
     }
@@ -495,7 +490,7 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub(crate) fn build(mut self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
+    pub(crate) fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
         let info = Arc::new(ManagedTorrentInfo {
             span,
@@ -522,7 +517,6 @@ impl ManagedTorrentBuilder {
             locked: RwLock::new(ManagedTorrentLocked {
                 state: ManagedTorrentState::Initializing(initializing),
             }),
-            cancellation_token: self.cancellation_token.take().unwrap_or_default(),
             info,
         }))
     }
