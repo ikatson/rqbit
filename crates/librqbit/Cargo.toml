@@ -68,6 +68,7 @@ serde_with = "3.4.0"
 tokio-util = "0.7.10"
 bytes = "1.5.0"
 rlimit = "0.10.1"
+async-stream = "0.3.5"
 
 [dev-dependencies]
 futures = {version = "0.3"}

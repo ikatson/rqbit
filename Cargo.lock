@@ -1257,6 +1257,7 @@ name = "librqbit"
 version = "5.5.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "axum 0.7.4",
  "backoff",
  "base64",

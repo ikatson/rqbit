@@ -756,15 +756,13 @@ impl Session {
             self.tcp_listen_port
         };
 
-        let cancellation_token = self.cancellation_token.child_token();
-        let cancellation_token_drop_guard = cancellation_token.clone().drop_guard();
         let paused = opts.list_only || opts.paused;
 
         // The main difference between magnet link and torrent file, is that we need to resolve the magnet link
         // into a torrent file by connecting to peers that support extended handshakes.
         // So we must discover at least one peer and connect to it to be able to proceed further.
 
-        let (info_hash, info, trackers, peer_rx, initial_peers, cancellation_token) = match add {
+        let (info_hash, info, trackers, peer_rx, initial_peers) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                 let magnet =
                     Magnet::parse(&magnet).context("provided path is not a valid magnet URL")?;
@@ -772,11 +770,9 @@ impl Session {
                     .as_id20()
                     .context("magnet link didn't contain a BTv1 infohash")?;
 
-                let peer_token = cancellation_token.child_token();
                 let peer_rx = self.make_peer_rx(
                     info_hash,
                     magnet.trackers.clone(),
-                    peer_token.clone(),
                     announce_port,
                     opts.force_tracker_interval,
                 )?;
@@ -800,9 +796,6 @@ impl Session {
                         anyhow::bail!("DHT died, no way to discover torrent metainfo")
                     }
                 };
-                if paused {
-                    peer_token.cancel();
-                }
                 debug!(?info, "received result from DHT");
                 (
                     info_hash,
@@ -810,7 +803,6 @@ impl Session {
                     magnet.trackers,
                     Some(peer_rx),
                     initial_peers,
-                    cancellation_token,
                 )
             }
             other => {
@@ -849,7 +841,6 @@ impl Session {
                     self.make_peer_rx(
                         torrent.info_hash,
                         trackers.clone(),
-                        cancellation_token.clone(),
                         announce_port,
                         opts.force_tracker_interval,
                     )?
@@ -865,12 +856,9 @@ impl Session {
                         .unwrap_or_default()
                         .into_iter()
                         .collect(),
-                    cancellation_token,
                 )
             }
         };
-
-        cancellation_token_drop_guard.disarm();
 
         self.main_torrent_info(
             info_hash,
@@ -879,7 +867,6 @@ impl Session {
             peer_rx,
             initial_peers.into_iter().collect(),
             opts,
-            cancellation_token,
         )
         .await
     }
@@ -893,11 +880,8 @@ impl Session {
         peer_rx: Option<PeerStream>,
         initial_peers: Vec<SocketAddr>,
         opts: AddTorrentOptions,
-        cancellation_token: CancellationToken,
     ) -> anyhow::Result<AddTorrentResponse> {
         debug!("Torrent info: {:#?}", &info);
-
-        let drop_guard = cancellation_token.clone().drop_guard();
 
         let get_only_files =
             |only_files: Option<Vec<usize>>, only_files_regex: Option<String>, list_only: bool| {
@@ -1016,20 +1000,16 @@ impl Session {
             let span = managed_torrent.info.span.clone();
             let _ = span.enter();
 
-            // Just in case, cancel all tasks started for this torrent so far.
-            // This is defensive, and not proven necessary.
-            let token = if opts.paused {
-                cancellation_token.cancel();
-                self.cancellation_token.child_token()
-            } else {
-                cancellation_token
-            };
             managed_torrent
-                .start(initial_peers, peer_rx, opts.paused, token)
+                .start(
+                    initial_peers,
+                    peer_rx,
+                    opts.paused,
+                    self.cancellation_token.child_token(),
+                )
                 .context("error starting torrent")?;
         }
 
-        drop_guard.disarm();
         Ok(AddTorrentResponse::Added(id, managed_torrent))
     }
 
@@ -1080,7 +1060,6 @@ impl Session {
         &self,
         info_hash: Id20,
         trackers: Vec<String>,
-        cancel: CancellationToken,
         announce_port: Option<u16>,
         force_tracker_interval: Option<Duration>,
     ) -> anyhow::Result<Option<PeerStream>> {
@@ -1097,7 +1076,6 @@ impl Session {
             // TODO: report actual bytes, not zeroes.
             Box::new(()),
             force_tracker_interval,
-            cancel,
             announce_port,
         );
 
@@ -1111,15 +1089,18 @@ impl Session {
     }
 
     pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let token = self.cancellation_token.child_token();
         let peer_rx = self.make_peer_rx(
             handle.info_hash(),
             handle.info().trackers.clone().into_iter().collect(),
-            token.clone(),
             self.tcp_listen_port,
             handle.info().options.force_tracker_interval,
         )?;
-        handle.start(Default::default(), peer_rx, false, token)?;
+        handle.start(
+            Default::default(),
+            peer_rx,
+            false,
+            self.cancellation_token.child_token(),
+        )?;
         Ok(())
     }
 }
