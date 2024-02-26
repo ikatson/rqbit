@@ -666,7 +666,7 @@ impl Session {
                 .collect();
             let info = TorrentMetaV1Owned {
                 announce: trackers
-                    .get(0)
+                    .first()
                     .cloned()
                     .unwrap_or_else(|| ByteString(b"http://retracker.local/announce".to_vec())),
                 announce_list: vec![trackers],
@@ -760,6 +760,7 @@ impl Session {
 
         let cancellation_token = self.cancellation_token.child_token();
         let cancellation_token_drop_guard = cancellation_token.clone().drop_guard();
+        let paused = opts.list_only || opts.paused;
 
         let (info_hash, info, trackers, peer_rx, initial_peers, cancellation_token) = match add {
             AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
@@ -769,10 +770,11 @@ impl Session {
                     .as_id20()
                     .context("magnet link didn't contain a BTv1 infohash")?;
 
+                let peer_token = cancellation_token.child_token();
                 let peer_rx = self.make_peer_rx(
                     info_hash,
                     magnet.trackers.clone(),
-                    cancellation_token.clone(),
+                    peer_token.clone(),
                     announce_port,
                     opts.force_tracker_interval,
                 )?;
@@ -796,16 +798,15 @@ impl Session {
                         anyhow::bail!("DHT died, no way to discover torrent metainfo")
                     }
                 };
+                if paused {
+                    peer_token.cancel();
+                }
                 debug!(?info, "received result from DHT");
                 (
                     info_hash,
                     info,
                     magnet.trackers,
-                    if opts.paused || opts.list_only {
-                        None
-                    } else {
-                        Some(peer_rx)
-                    },
+                    Some(peer_rx),
                     initial_peers,
                     cancellation_token,
                 )
@@ -840,13 +841,17 @@ impl Session {
                     })
                     .collect::<Vec<_>>();
 
-                let peer_rx = self.make_peer_rx(
-                    torrent.info_hash,
-                    trackers.clone(),
-                    cancellation_token.clone(),
-                    announce_port,
-                    opts.force_tracker_interval,
-                )?;
+                let peer_rx = if paused {
+                    None
+                } else {
+                    self.make_peer_rx(
+                        torrent.info_hash,
+                        trackers.clone(),
+                        cancellation_token.clone(),
+                        announce_port,
+                        opts.force_tracker_interval,
+                    )?
+                };
 
                 (
                     torrent.info_hash,
@@ -1008,13 +1013,17 @@ impl Session {
         {
             let span = managed_torrent.info.span.clone();
             let _ = span.enter();
+
+            // Just in case, cancel all tasks started for this torrent so far.
+            // This is defensive, and not proven necessary.
+            let token = if opts.paused {
+                cancellation_token.cancel();
+                self.cancellation_token.child_token()
+            } else {
+                cancellation_token
+            };
             managed_torrent
-                .start(
-                    initial_peers,
-                    peer_rx,
-                    opts.paused,
-                    cancellation_token.child_token(),
-                )
+                .start(initial_peers, peer_rx, opts.paused, token)
                 .context("error starting torrent")?;
         }
 
