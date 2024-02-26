@@ -9,6 +9,16 @@ use std::{
     time::Duration,
 };
 
+use crate::{
+    dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
+    peer_connection::PeerConnectionOptions,
+    read_buf::ReadBuf,
+    spawn_utils::BlockingSpawner,
+    torrent_state::{
+        ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
+    },
+    type_aliases::PeerStream,
+};
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufT, ByteString};
@@ -32,18 +42,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
-
-use crate::{
-    dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
-    peer_connection::PeerConnectionOptions,
-    read_buf::ReadBuf,
-    spawn_utils::BlockingSpawner,
-    torrent_state::{
-        ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
-    },
-    tracker_comms::TrackerComms,
-    type_aliases::PeerStream,
-};
+use tracker_comms::TrackerComms;
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 

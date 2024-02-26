@@ -12,9 +12,9 @@ const ACTION_ANNOUNCE: u32 = 1;
 // const ACTION_ERROR: u32 = 3;
 
 pub const EVENT_NONE: u32 = 0;
-pub const EVENT_COMPLETED: u32 = 1;
-pub const EVENT_STARTED: u32 = 2;
-pub const EVENT_STOPPED: u32 = 3;
+// pub const EVENT_COMPLETED: u32 = 1;
+// pub const EVENT_STARTED: u32 = 2;
+// pub const EVENT_STOPPED: u32 = 3;
 
 pub type ConnectionId = u64;
 const CONNECTION_ID_MAGIC: ConnectionId = 0x41727101980;
@@ -293,7 +293,7 @@ mod tests {
             Response::Connect(connection_id) => {
                 dbg!(connection_id)
             }
-            other => panic!("unexpected response {other:?}"),
+            other => panic!("unexpected response {:?}", other),
         };
 
         let hash = Id20::from_str("775459190aa65566591634203f8d9f17d341f969").unwrap();
@@ -335,7 +335,7 @@ mod tests {
             Response::Announce(r) => {
                 dbg!(r);
             }
-            other => panic!("unexpected response {other:?}"),
+            other => panic!("unexpected response {:?}", other),
         }
     }
 }

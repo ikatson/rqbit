@@ -1278,6 +1278,7 @@ dependencies = [
  "librqbit-dht",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
+ "librqbit-tracker-comms",
  "librqbit-upnp",
  "openssl",
  "parking_lot",
@@ -1395,6 +1396,26 @@ dependencies = [
  "crypto-hash",
  "openssl",
  "sha1",
+]
+
+[[package]]
+name = "librqbit-tracker-comms"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "byteorder",
+ "futures",
+ "librqbit-bencode",
+ "librqbit-buffers",
+ "librqbit-core",
+ "rand",
+ "reqwest",
+ "serde",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]

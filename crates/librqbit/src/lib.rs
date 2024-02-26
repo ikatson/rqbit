@@ -36,9 +36,6 @@ mod session;
 mod spawn_utils;
 mod torrent_state;
 pub mod tracing_subscriber_config_utils;
-pub mod tracker_comms;
-pub mod tracker_comms_http;
-pub mod tracker_comms_udp;
 mod type_aliases;
 
 pub use api::Api;
