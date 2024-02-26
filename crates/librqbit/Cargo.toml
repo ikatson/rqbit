@@ -32,7 +32,7 @@ dht = {path = "../dht", package="librqbit-dht", version="5.0.0"}
 librqbit-upnp = {path = "../upnp", version = "0.1.0"}
 
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
-axum = {version = "0.7"}
+axum = {version = "0.7.4"}
 tower-http = {version = "0.5", features = ["cors", "trace"]}
 tokio-stream = "0.1"
 serde = {version = "1", features=["derive"]}
