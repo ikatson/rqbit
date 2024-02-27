@@ -33,7 +33,7 @@ Download it in [Releases](https://github.com/ikatson/rqbit/releases).
 <img width="1136" alt="Rqbit desktop" src="https://github.com/ikatson/rqbit/assets/221386/51f56542-667f-4f5e-a1e0-942b1df4cd5a">
 
 ## Performance
-As you can see from the Desktop app screenshot, it's fast. Anecdotally from a few reports, it's faster than other clients they've tried, at least with their default settings.
+Anecdotally from a few reports, rqbit is faster than other clients they've tried, at least with their default settings.
 
 Memory usage for the server is usually within a few tens of megabytes, which makes it great for e.g. RaspberryPI.
 
