@@ -30,7 +30,7 @@ The desktop app is a [thin wrapper](https://github.com/ikatson/rqbit/blob/main/d
 
 Download it in [Releases](https://github.com/ikatson/rqbit/releases).
 
-<img width="1104" alt="rqbit Desktop" src="https://github.com/ikatson/rqbit/assets/221386/fbc39db1-f598-46d1-bc6b-1a55bc4b15be">
+<img width="1136" alt="Rqbit desktop" src="https://github.com/ikatson/rqbit/assets/221386/51f56542-667f-4f5e-a1e0-942b1df4cd5a">
 
 ## Performance
 As you can see from the Desktop app screenshot, it's fast. Anecdotally from a few reports, it's faster than other clients they've tried, at least with their default settings.
