@@ -74,7 +74,9 @@ pub struct TorrentMetaV1Info<BufType> {
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
 
     // BEP_0027 Private torrents
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub private: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<BufType>,
 }
 
