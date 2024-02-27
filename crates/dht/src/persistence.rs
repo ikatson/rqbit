@@ -1,6 +1,7 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
-use futures::{Future, FutureExt};
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use librqbit_core::directories::get_configuration_directory;
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use serde::{Deserialize, Serialize};
@@ -8,7 +9,6 @@ use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -81,7 +81,7 @@ impl PersistentDht {
     pub fn create(
         config: Option<PersistentDhtConfig>,
         cancellation_token: Option<CancellationToken>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Dht>> + Send>> {
+    ) -> BoxFuture<'static, anyhow::Result<Dht>> {
         async move {
             let mut config = config.unwrap_or_default();
             let config_filename = match config.config_filename.take() {

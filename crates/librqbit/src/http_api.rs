@@ -3,12 +3,12 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use futures::{Future, FutureExt, TryStreamExt};
+use futures::future::BoxFuture;
+use futures::{FutureExt, TryStreamExt};
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info};
@@ -46,10 +46,7 @@ impl HttpApi {
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
-    pub fn make_http_api_and_run(
-        self,
-        addr: SocketAddr,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>> {
+    pub fn make_http_api_and_run(self, addr: SocketAddr) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {

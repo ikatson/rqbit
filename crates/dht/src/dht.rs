@@ -1,7 +1,6 @@
 use std::{
     cmp::Reverse,
     net::SocketAddr,
-    pin::Pin,
     str::FromStr,
     sync::{
         atomic::{AtomicU16, Ordering},
@@ -24,7 +23,9 @@ use anyhow::{bail, Context};
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use bencode::ByteString;
 use dashmap::DashMap;
-use futures::{stream::FuturesUnordered, Future, FutureExt, Stream, StreamExt, TryFutureExt};
+use futures::{
+    future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, StreamExt, TryFutureExt,
+};
 
 use leaky_bucket::RateLimiter;
 use librqbit_core::{
@@ -1147,9 +1148,7 @@ impl DhtState {
     }
 
     #[inline(never)]
-    pub fn with_config(
-        mut config: DhtConfig,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<Self>>> + Send>> {
+    pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
             let socket = match config.listen_addr {
                 Some(addr) => UdpSocket::bind(addr)

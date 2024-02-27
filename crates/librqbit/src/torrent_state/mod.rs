@@ -8,7 +8,6 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +15,7 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
-use futures::Future;
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
@@ -399,7 +398,7 @@ impl ManagedTorrent {
     }
 
     #[inline(never)]
-    pub fn wait_until_completed(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + '_>> {
+    pub fn wait_until_completed(&self) -> BoxFuture<'_, anyhow::Result<()>> {
         async move {
             // TODO: rewrite, this polling is horrible
             let live = loop {

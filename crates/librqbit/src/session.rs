@@ -4,7 +4,6 @@ use std::{
     io::{BufReader, BufWriter, Read},
     net::SocketAddr,
     path::PathBuf,
-    pin::Pin,
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -25,7 +24,7 @@ use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
-use futures::{stream::FuturesUnordered, Future, FutureExt, TryFutureExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, TryFutureExt};
 use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -381,7 +380,7 @@ pub(crate) struct CheckedIncomingConnection {
 impl Session {
     /// Create a new session. The passed in folder will be used as a default unless overriden per torrent.
     #[inline(never)]
-    pub fn new(output_folder: PathBuf) -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<Self>>>>> {
+    pub fn new(output_folder: PathBuf) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         Self::new_with_opts(output_folder, SessionOptions::default())
     }
 
@@ -399,7 +398,7 @@ impl Session {
     pub fn new_with_opts(
         output_folder: PathBuf,
         mut opts: SessionOptions,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Arc<Self>>>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
             let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
             let token = CancellationToken::new();
@@ -751,7 +750,7 @@ impl Session {
         &'a self,
         add: AddTorrent<'a>,
         opts: Option<AddTorrentOptions>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<AddTorrentResponse>> + Send + 'a>> {
+    ) -> BoxFuture<'a, anyhow::Result<AddTorrentResponse>> {
         async move {
             // Magnet links are different in that we first need to discover the metadata.
             let span = error_span!("add_torrent");

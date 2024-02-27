@@ -1,7 +1,5 @@
-use std::pin::Pin;
-
 use anyhow::Context;
-use futures::{Future, FutureExt};
+use futures::{future::BoxFuture, FutureExt};
 use serde::Deserialize;
 
 use crate::{
@@ -75,7 +73,7 @@ impl HttpApiClient {
     }
 
     #[inline(never)]
-    pub fn validate_rqbit_server(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + '_>> {
+    pub fn validate_rqbit_server(&self) -> BoxFuture<'_, anyhow::Result<()>> {
         async move {
             let response = self.client.get(self.base_url.clone()).send().await?;
             let root: ApiRoot = json_response(response).await?;
@@ -91,7 +89,7 @@ impl HttpApiClient {
         &'a self,
         torrent: AddTorrent<'a>,
         opts: Option<AddTorrentOptions>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<ApiAddTorrentResponse>> + 'a>> {
+    ) -> BoxFuture<'a, anyhow::Result<ApiAddTorrentResponse>> {
         async move {
             let opts = opts.unwrap_or_default();
             let params = TorrentAddQueryParams {
