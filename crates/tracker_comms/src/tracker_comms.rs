@@ -1,14 +1,13 @@
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Context;
 use futures::future::Either;
+use futures::stream::BoxStream;
 use futures::stream::FuturesUnordered;
 use futures::FutureExt;
-use futures::Stream;
 use futures::StreamExt;
 use tracing::debug;
 use tracing::error_span;
@@ -67,7 +66,7 @@ impl TrackerComms {
         stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
         tcp_listen_port: Option<u16>,
-    ) -> Option<Pin<Box<dyn Stream<Item = SocketAddr> + Send + 'static>>> {
+    ) -> Option<BoxStream<'static, SocketAddr>> {
         let trackers = trackers
             .into_iter()
             .filter_map(|t| match Url::parse(&t) {
