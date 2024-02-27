@@ -4,7 +4,6 @@ use anyhow::Context;
 
 use crate::hash_id::{Id20, Id32};
 
-
 /// A parsed magnet link.
 pub struct Magnet {
     id20: Option<Id20>,
@@ -45,7 +44,7 @@ impl Magnet {
                     } else {
                         anyhow::bail!("expected xt to start with btih or btmh");
                     }
-                },
+                }
                 "tr" => trackers.push(value.into()),
                 _ => {}
             }
@@ -93,7 +92,6 @@ impl std::fmt::Display for Magnet {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -109,8 +107,10 @@ mod tests {
         use std::str::FromStr;
         let magnet = "magnet:?xt=urn:btmh:1220caf1e1c30e81cb361b9ee167c4aa64228a7fa4fa9f6105232b28ad099f3a302e&dn=bittorrent-v2-test
 ";
-        let info_hash = Id32::from_str("caf1e1c30e81cb361b9ee167c4aa64228a7fa4fa9f6105232b28ad099f3a302e").unwrap();
-        let m = Magnet::parse(&magnet).unwrap();
+        let info_hash =
+            Id32::from_str("caf1e1c30e81cb361b9ee167c4aa64228a7fa4fa9f6105232b28ad099f3a302e")
+                .unwrap();
+        let m = Magnet::parse(magnet).unwrap();
         assert!(m.as_id32() == Some(info_hash));
     }
 }

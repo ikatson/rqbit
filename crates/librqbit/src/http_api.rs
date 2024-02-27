@@ -3,7 +3,8 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use futures::TryStreamExt;
+use futures::future::BoxFuture;
+use futures::{FutureExt, TryStreamExt};
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
@@ -44,7 +45,8 @@ impl HttpApi {
 
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
-    pub async fn make_http_api_and_run(self, addr: SocketAddr) -> anyhow::Result<()> {
+    #[inline(never)]
+    pub fn make_http_api_and_run(self, addr: SocketAddr) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {
@@ -288,11 +290,15 @@ impl HttpApi {
         info!(%addr, "starting HTTP server");
 
         use tokio::net::TcpListener;
-        let listener = TcpListener::bind(&addr)
-            .await
-            .with_context(|| format!("error binding to {addr}"))?;
-        axum::serve(listener, app).await?;
-        Ok(())
+
+        async move {
+            let listener = TcpListener::bind(&addr)
+                .await
+                .with_context(|| format!("error binding to {addr}"))?;
+            axum::serve(listener, app).await?;
+            Ok(())
+        }
+        .boxed()
     }
 }
 

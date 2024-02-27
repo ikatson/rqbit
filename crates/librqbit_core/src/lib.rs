@@ -7,3 +7,5 @@ pub mod peer_id;
 pub mod spawn_utils;
 pub mod speed_estimator;
 pub mod torrent_metainfo;
+
+pub use hash_id::Id20;
