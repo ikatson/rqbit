@@ -15,6 +15,8 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteString;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
 use librqbit_core::peer_id::generate_peer_id;
@@ -395,23 +397,29 @@ impl ManagedTorrent {
         })
     }
 
-    pub async fn wait_until_completed(&self) -> anyhow::Result<()> {
-        // TODO: rewrite, this polling is horrible
-        let live = loop {
-            let live = self.with_state(|s| match s {
-                ManagedTorrentState::Initializing(_) | ManagedTorrentState::Paused(_) => Ok(None),
-                ManagedTorrentState::Live(l) => Ok(Some(l.clone())),
-                ManagedTorrentState::Error(e) => bail!("{:?}", e),
-                ManagedTorrentState::None => bail!("bug: torrent state is None"),
-            })?;
-            if let Some(live) = live {
-                break live;
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        };
+    #[inline(never)]
+    pub fn wait_until_completed(&self) -> BoxFuture<'_, anyhow::Result<()>> {
+        async move {
+            // TODO: rewrite, this polling is horrible
+            let live = loop {
+                let live = self.with_state(|s| match s {
+                    ManagedTorrentState::Initializing(_) | ManagedTorrentState::Paused(_) => {
+                        Ok(None)
+                    }
+                    ManagedTorrentState::Live(l) => Ok(Some(l.clone())),
+                    ManagedTorrentState::Error(e) => bail!("{:?}", e),
+                    ManagedTorrentState::None => bail!("bug: torrent state is None"),
+                })?;
+                if let Some(live) = live {
+                    break live;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            };
 
-        live.wait_until_completed().await;
-        Ok(())
+            live.wait_until_completed().await;
+            Ok(())
+        }
+        .boxed()
     }
 }
 

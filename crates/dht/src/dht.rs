@@ -23,7 +23,9 @@ use anyhow::{bail, Context};
 use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
 use bencode::ByteString;
 use dashmap::DashMap;
-use futures::{stream::FuturesUnordered, Stream, StreamExt, TryFutureExt};
+use futures::{
+    future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, StreamExt, TryFutureExt,
+};
 
 use leaky_bucket::RateLimiter;
 use librqbit_core::{
@@ -232,6 +234,7 @@ impl Drop for RequestPeersStream {
 impl Stream for RequestPeersStream {
     type Item = SocketAddr;
 
+    #[inline(never)]
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -1144,49 +1147,54 @@ impl DhtState {
         &self.cancellation_token
     }
 
-    pub async fn with_config(mut config: DhtConfig) -> anyhow::Result<Arc<Self>> {
-        let socket = match config.listen_addr {
-            Some(addr) => UdpSocket::bind(addr)
-                .await
-                .with_context(|| format!("error binding socket, address {addr}")),
-            None => UdpSocket::bind("0.0.0.0:0")
-                .await
-                .context("error binding socket, address 0.0.0.0:0"),
-        }?;
+    #[inline(never)]
+    pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
+        async move {
+            let socket = match config.listen_addr {
+                Some(addr) => UdpSocket::bind(addr)
+                    .await
+                    .with_context(|| format!("error binding socket, address {addr}")),
+                None => UdpSocket::bind("0.0.0.0:0")
+                    .await
+                    .context("error binding socket, address 0.0.0.0:0"),
+            }?;
 
-        let listen_addr = socket
-            .local_addr()
-            .context("cannot determine UDP listen addr")?;
-        info!("DHT listening on {:?}", listen_addr);
+            let listen_addr = socket
+                .local_addr()
+                .context("cannot determine UDP listen addr")?;
+            info!("DHT listening on {:?}", listen_addr);
 
-        let peer_id = config.peer_id.unwrap_or_else(generate_peer_id);
-        info!("starting up DHT with peer id {:?}", peer_id);
-        let bootstrap_addrs = config
-            .bootstrap_addrs
-            .unwrap_or_else(|| crate::DHT_BOOTSTRAP.iter().map(|v| v.to_string()).collect());
+            let peer_id = config.peer_id.unwrap_or_else(generate_peer_id);
+            info!("starting up DHT with peer id {:?}", peer_id);
+            let bootstrap_addrs = config
+                .bootstrap_addrs
+                .unwrap_or_else(|| crate::DHT_BOOTSTRAP.iter().map(|v| v.to_string()).collect());
 
-        let token = config.cancellation_token.take().unwrap_or_default();
+            let token = config.cancellation_token.take().unwrap_or_default();
 
-        let (in_tx, in_rx) = unbounded_channel();
-        let state = Arc::new(Self::new_internal(
-            peer_id,
-            in_tx,
-            config.routing_table,
-            listen_addr,
-            config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
-            token,
-        ));
+            let (in_tx, in_rx) = unbounded_channel();
+            let state = Arc::new(Self::new_internal(
+                peer_id,
+                in_tx,
+                config.routing_table,
+                listen_addr,
+                config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
+                token,
+            ));
 
-        spawn_with_cancel(error_span!("dht"), state.cancellation_token.clone(), {
-            let state = state.clone();
-            async move {
-                let worker = DhtWorker { socket, dht: state };
-                worker.start(in_rx, &bootstrap_addrs).await
-            }
-        });
-        Ok(state)
+            spawn_with_cancel(error_span!("dht"), state.cancellation_token.clone(), {
+                let state = state.clone();
+                async move {
+                    let worker = DhtWorker { socket, dht: state };
+                    worker.start(in_rx, &bootstrap_addrs).await
+                }
+            });
+            Ok(state)
+        }
+        .boxed()
     }
 
+    #[inline(never)]
     pub fn get_peers(
         self: &Arc<Self>,
         info_hash: Id20,

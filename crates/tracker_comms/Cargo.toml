@@ -1,0 +1,27 @@
+[package]
+name = "librqbit-tracker-comms"
+version = "1.0.0"
+edition = "2018"
+description = "Common interface around various sha1 implementations used in rqbit torrent client."
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-tracker-comms"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = "1"
+anyhow = "1"
+futures = "0.3"
+async-stream = "0.3.5"
+buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
+librqbit-core = {path = "../librqbit_core", version = "3.5.0"}
+byteorder = "1.5"
+serde = {version = "1", features=["derive"]}
+urlencoding = "2"
+rand = "0.8"
+tracing = "0.1.40"
+reqwest = {version="0.11.22", default-features=false, features = ["json"]}
+bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
+url = "2"

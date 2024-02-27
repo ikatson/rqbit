@@ -23,6 +23,7 @@ rust-tls = ["reqwest/rustls-tls"]
 
 [dependencies]
 bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
+tracker_comms = {path = "../tracker_comms", default-features=false, package="librqbit-tracker-comms", version="1.0.0"}
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
 librqbit-core = {path = "../librqbit_core", version = "3.5.0"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
@@ -68,6 +69,7 @@ serde_with = "3.4.0"
 tokio-util = "0.7.10"
 bytes = "1.5.0"
 rlimit = "0.10.1"
+async-stream = "0.3.5"
 
 [dev-dependencies]
 futures = {version = "0.3"}

@@ -60,6 +60,7 @@ pub struct InitLoggingResult {
     pub line_broadcast: LineBroadcast,
 }
 
+#[inline(never)]
 pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResult> {
     let stderr_filter = EnvFilter::builder()
         .with_default_directive(

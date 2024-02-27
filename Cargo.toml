@@ -10,7 +10,8 @@ members = [
     "crates/librqbit_core",
     "crates/peer_binary_protocol",
     "crates/dht",
-    "crates/upnp"
+    "crates/upnp",
+    "crates/tracker_comms",
 ]
 
 [profile.dev]
