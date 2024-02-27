@@ -1254,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.5.0"
+version = "5.5.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2048,7 +2048,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "5.5.0"
+version = "5.5.1"
 dependencies = [
  "anyhow",
  "bytes",
