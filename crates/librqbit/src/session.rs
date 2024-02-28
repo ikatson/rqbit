@@ -25,6 +25,7 @@ use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, TryFutureExt};
+use itertools::Itertools;
 use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -181,7 +182,7 @@ async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
         .await
         .context("error downloading torrent metadata")?;
     if !response.status().is_success() {
-        anyhow::bail!("GET {} returned {}", url, response.status())
+        bail!("GET {} returned {}", url, response.status())
     }
     let b = response
         .bytes()
@@ -190,7 +191,7 @@ async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
     torrent_from_bytes(&b).context("error decoding torrent")
 }
 
-fn compute_only_files<ByteBuf: AsRef<[u8]>>(
+fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
     torrent: &TorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
 ) -> anyhow::Result<Vec<usize>> {
@@ -205,9 +206,44 @@ fn compute_only_files<ByteBuf: AsRef<[u8]>>(
         }
     }
     if only_files.is_empty() {
-        anyhow::bail!("none of the filenames match the given regex")
+        bail!("none of the filenames match the given regex")
     }
     Ok(only_files)
+}
+
+fn compute_only_files(
+    info: &TorrentMetaV1Info<ByteString>,
+    only_files: Option<Vec<usize>>,
+    only_files_regex: Option<String>,
+    list_only: bool,
+) -> anyhow::Result<Option<Vec<usize>>> {
+    match (only_files, only_files_regex) {
+        (Some(_), Some(_)) => {
+            bail!("only_files and only_files_regex are mutually exclusive");
+        }
+        (Some(only_files), None) => {
+            let total_files = info.iter_file_lengths()?.count();
+            for id in only_files.iter().copied() {
+                if id >= total_files {
+                    bail!("file id {} is out of range", id);
+                }
+            }
+            Ok(Some(only_files))
+        }
+        (None, Some(filename_re)) => {
+            let only_files = compute_only_files_regex(info, &filename_re)?;
+            for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
+                if !only_files.contains(&idx) {
+                    continue;
+                }
+                if !list_only {
+                    info!(?filename, "will download");
+                }
+            }
+            Ok(Some(only_files))
+        }
+        (None, None) => Ok(None),
+    }
 }
 
 /// Options for adding new torrents to the session.
@@ -797,14 +833,14 @@ impl Session {
                     {
                         ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
                         ReadMetainfoResult::ChannelClosed { .. } => {
-                            anyhow::bail!("DHT died, no way to discover torrent metainfo")
+                            bail!("DHT died, no way to discover torrent metainfo")
                         }
                     };
                     debug!(?info, "received result from DHT");
                     (
                         info_hash,
                         info,
-                        magnet.trackers,
+                        magnet.trackers.into_iter().unique().collect(),
                         Some(peer_rx),
                         initial_peers,
                     )
@@ -830,6 +866,7 @@ impl Session {
 
                     let trackers = torrent
                         .iter_announce()
+                        .unique()
                         .filter_map(|tracker| match std::str::from_utf8(tracker.as_ref()) {
                             Ok(url) => Some(url.to_owned()),
                             Err(_) => {
@@ -877,6 +914,33 @@ impl Session {
         .boxed()
     }
 
+    fn get_default_subfolder_for_torrent(
+        &self,
+        info: &TorrentMetaV1Info<ByteString>,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let files = info
+            .iter_filenames_and_lengths()?
+            .map(|(f, l)| Ok((f.to_pathbuf()?, l)))
+            .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
+        if files.len() < 2 {
+            return Ok(None);
+        }
+        if let Some(name) = &info.name {
+            let s =
+                std::str::from_utf8(name.as_slice()).context("invalid UTF-8 in torrent name")?;
+            return Ok(Some(PathBuf::from(s)));
+        };
+        // Let the subfolder name be the longest filename
+        let longest = files
+            .iter()
+            .max_by_key(|(_, l)| l)
+            .unwrap()
+            .0
+            .file_stem()
+            .context("can't determine longest filename")?;
+        Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn main_torrent_info(
         &self,
@@ -889,67 +953,18 @@ impl Session {
     ) -> anyhow::Result<AddTorrentResponse> {
         debug!("Torrent info: {:#?}", &info);
 
-        let get_only_files =
-            |only_files: Option<Vec<usize>>, only_files_regex: Option<String>, list_only: bool| {
-                match (only_files, only_files_regex) {
-                    (Some(_), Some(_)) => {
-                        bail!("only_files and only_files_regex are mutually exclusive");
-                    }
-                    (Some(only_files), None) => {
-                        let total_files = info.iter_file_lengths()?.count();
-                        for id in only_files.iter().copied() {
-                            if id >= total_files {
-                                anyhow::bail!("file id {} is out of range", id);
-                            }
-                        }
-                        Ok(Some(only_files))
-                    }
-                    (None, Some(filename_re)) => {
-                        let only_files = compute_only_files(&info, &filename_re)?;
-                        for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
-                            if !only_files.contains(&idx) {
-                                continue;
-                            }
-                            if !list_only {
-                                info!(?filename, "will download");
-                            }
-                        }
-                        Ok(Some(only_files))
-                    }
-                    (None, None) => Ok(None),
-                }
-            };
-
-        let only_files = get_only_files(opts.only_files, opts.only_files_regex, opts.list_only)?;
-
-        let get_default_subfolder = || {
-            let files = info
-                .iter_filenames_and_lengths()?
-                .map(|(f, l)| Ok((f.to_pathbuf()?, l)))
-                .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
-            if files.len() < 2 {
-                return Ok(None);
-            }
-            if let Some(name) = &info.name {
-                let s = std::str::from_utf8(name.as_slice())
-                    .context("invalid UTF-8 in torrent name")?;
-                return Ok(Some(PathBuf::from(s)));
-            };
-            // Let the subfolder name be the longest filename
-            let longest = files
-                .iter()
-                .max_by_key(|(_, l)| l)
-                .unwrap()
-                .0
-                .file_stem()
-                .context("can't determine longest filename")?;
-            Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
-        };
+        let only_files = compute_only_files(
+            &info,
+            opts.only_files,
+            opts.only_files_regex,
+            opts.list_only,
+        )?;
 
         let output_folder = match (opts.output_folder, opts.sub_folder) {
-            (None, None) => self
-                .output_folder
-                .join(get_default_subfolder()?.unwrap_or_default()),
+            (None, None) => self.output_folder.join(
+                self.get_default_subfolder_for_torrent(&info)?
+                    .unwrap_or_default(),
+            ),
             (Some(o), None) => PathBuf::from(o),
             (Some(_), Some(_)) => bail!("you can't provide both output_folder and sub_folder"),
             (None, Some(s)) => self.output_folder.join(s),
@@ -1043,10 +1058,9 @@ impl Session {
             .context("error pausing torrent");
 
         match (paused, delete_files) {
-            (Err(e), true) => Err(e).context("torrent deleted, but could not delete files"),
+            (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
             (Err(e), false) => {
-                warn!(error=?e, "could not delete torrent files");
-                Ok(())
+                warn!(error=?e, "error deleting torrent cleanly");
             }
             (Ok(Some(paused)), true) => {
                 drop(paused.files);
@@ -1055,10 +1069,10 @@ impl Session {
                         warn!(?file, error=?e, "could not delete file");
                     }
                 }
-                Ok(())
             }
-            _ => Ok(()),
-        }
+            _ => {}
+        };
+        Ok(())
     }
 
     // Get a peer stream from both DHT and trackers.

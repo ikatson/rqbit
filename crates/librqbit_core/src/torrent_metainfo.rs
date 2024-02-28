@@ -49,7 +49,10 @@ pub struct TorrentMetaV1<BufType> {
 
 impl<BufType> TorrentMetaV1<BufType> {
     pub fn iter_announce(&self) -> impl Iterator<Item = &BufType> {
-        once(&self.announce).chain(self.announce_list.iter().flatten())
+        if self.announce_list.iter().flatten().next().is_some() {
+            return itertools::Either::Left(self.announce_list.iter().flatten());
+        }
+        itertools::Either::Right(once(&self.announce))
     }
 }
 
