@@ -758,13 +758,9 @@ impl Session {
 
             let opts = opts.unwrap_or_default();
 
-            let announce_port = if opts.list_only {
-                None
-            } else {
-                self.tcp_listen_port
-            };
-
             let paused = opts.list_only || opts.paused;
+
+            let announce_port = if paused { None } else { self.tcp_listen_port };
 
             // The main difference between magnet link and torrent file, is that we need to resolve the magnet link
             // into a torrent file by connecting to peers that support extended handshakes.
