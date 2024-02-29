@@ -815,6 +815,8 @@ impl Session {
                         magnet.trackers.clone(),
                         announce_port,
                         opts.force_tracker_interval,
+                        // We assume that all magnet links are public torrents
+                        false,
                     )?;
                     let peer_rx = match peer_rx {
                         Some(peer_rx) => peer_rx,
@@ -875,6 +877,7 @@ impl Session {
                             }
                         })
                         .collect::<Vec<_>>();
+                    let private = torrent.info.private.unwrap_or_default();
 
                     let peer_rx = if paused {
                         None
@@ -884,6 +887,7 @@ impl Session {
                             trackers.clone(),
                             announce_port,
                             opts.force_tracker_interval,
+                            private,
                         )?
                     };
 
@@ -1082,13 +1086,19 @@ impl Session {
         trackers: Vec<String>,
         announce_port: Option<u16>,
         force_tracker_interval: Option<Duration>,
+        private: bool,
     ) -> anyhow::Result<Option<PeerStream>> {
         let announce_port = announce_port.or(self.tcp_listen_port);
-        let dht_rx = self
+
+        let dht_rx = if private { 
+            None
+        } else {
+            self
             .dht
             .as_ref()
             .map(|dht| dht.get_peers(info_hash, announce_port))
-            .transpose()?;
+            .transpose()?
+        };
         let peer_rx = TrackerComms::start(
             info_hash,
             self.peer_id,
@@ -1114,6 +1124,7 @@ impl Session {
             handle.info().trackers.clone().into_iter().collect(),
             self.tcp_listen_port,
             handle.info().options.force_tracker_interval,
+            handle.info().info.private.unwrap_or_default(),
         )?;
         handle.start(
             Default::default(),
