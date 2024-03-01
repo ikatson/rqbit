@@ -42,7 +42,7 @@ use crate::type_aliases::PeerStream;
 use initializing::TorrentStateInitializing;
 
 use self::paused::TorrentStatePaused;
-use self::stats::TorrentStats;
+pub use self::stats::{TorrentStats, TorrentStatsState};
 
 pub enum ManagedTorrentState {
     Initializing(Arc<TorrentStateInitializing>),
@@ -351,11 +351,13 @@ impl ManagedTorrent {
 
     /// Get stats.
     pub fn stats(&self) -> TorrentStats {
+        use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
             total_bytes: self.info().lengths.total_length(),
-            state: "",
+            state: S::Error,
             error: None,
             progress_bytes: 0,
+            uploaded_bytes: 0,
             finished: false,
             live: None,
         };
@@ -363,17 +365,17 @@ impl ManagedTorrent {
         self.with_state(|s| {
             match s {
                 ManagedTorrentState::Initializing(i) => {
-                    resp.state = "initializing";
+                    resp.state = S::Initializing;
                     resp.progress_bytes = i.checked_bytes.load(Ordering::Relaxed);
                 }
                 ManagedTorrentState::Paused(p) => {
-                    resp.state = "paused";
+                    resp.state = S::Paused;
                     resp.total_bytes = p.chunk_tracker.get_total_selected_bytes();
                     resp.progress_bytes = resp.total_bytes - p.needed_bytes;
                     resp.finished = resp.progress_bytes == resp.total_bytes;
                 }
                 ManagedTorrentState::Live(l) => {
-                    resp.state = "live";
+                    resp.state = S::Live;
                     let live_stats = LiveStats::from(l.as_ref());
                     let total = l.get_total_selected_bytes();
                     let remaining = l.get_left_to_download_bytes();
@@ -382,14 +384,15 @@ impl ManagedTorrent {
                     resp.progress_bytes = progress;
                     resp.total_bytes = total;
                     resp.finished = remaining == 0;
+                    resp.uploaded_bytes = l.get_uploaded_bytes();
                     resp.live = Some(live_stats);
                 }
                 ManagedTorrentState::Error(e) => {
-                    resp.state = "error";
+                    resp.state = S::Error;
                     resp.error = Some(format!("{:?}", e))
                 }
                 ManagedTorrentState::None => {
-                    resp.state = "error";
+                    resp.state = S::Error;
                     resp.error = Some("bug: torrent in broken \"None\" state".to_string());
                 }
             }
