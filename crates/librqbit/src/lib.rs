@@ -47,7 +47,7 @@ pub use session::{
     SUPPORTED_SCHEMES,
 };
 pub use spawn_utils::spawn as librqbit_spawn;
-pub use torrent_state::{ManagedTorrent, ManagedTorrentState};
+pub use torrent_state::{ManagedTorrent, ManagedTorrentState, TorrentStats, TorrentStatsState};
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;

@@ -783,7 +783,7 @@ impl Session {
     /// Add a torrent to the session.
     #[inline(never)]
     pub fn add_torrent<'a>(
-        &'a self,
+        self: &'a Arc<Self>,
         add: AddTorrent<'a>,
         opts: Option<AddTorrentOptions>,
     ) -> BoxFuture<'a, anyhow::Result<AddTorrentResponse>> {
@@ -1077,7 +1077,7 @@ impl Session {
 
     // Get a peer stream from both DHT and trackers.
     fn make_peer_rx(
-        &self,
+        self: &Arc<Self>,
         info_hash: Id20,
         trackers: Vec<String>,
         announce_port: Option<u16>,
@@ -1089,12 +1089,16 @@ impl Session {
             .as_ref()
             .map(|dht| dht.get_peers(info_hash, announce_port))
             .transpose()?;
+
+        let peer_rx_stats = PeerRxTorrentInfo {
+            info_hash,
+            session: self.clone(),
+        };
         let peer_rx = TrackerComms::start(
             info_hash,
             self.peer_id,
             trackers,
-            // TODO: report actual bytes, not zeroes.
-            Box::new(()),
+            Box::new(peer_rx_stats),
             force_tracker_interval,
             announce_port,
         );
@@ -1108,7 +1112,7 @@ impl Session {
         }
     }
 
-    pub fn unpause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+    pub fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
         let peer_rx = self.make_peer_rx(
             handle.info_hash(),
             handle.info().trackers.clone().into_iter().collect(),
@@ -1122,5 +1126,47 @@ impl Session {
             self.cancellation_token.child_token(),
         )?;
         Ok(())
+    }
+}
+
+// Ad adapter for converting stats into the format that tracker_comms accepts.
+struct PeerRxTorrentInfo {
+    info_hash: Id20,
+    session: Arc<Session>,
+}
+
+impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
+    fn get(&self) -> tracker_comms::TrackerCommsStats {
+        let mt = self.session.with_torrents(|torrents| {
+            for (_, mt) in torrents {
+                if mt.info_hash() == self.info_hash {
+                    return Some(mt.clone());
+                }
+            }
+            None
+        });
+        let mt = match mt {
+            Some(mt) => mt,
+            None => {
+                warn!(info_hash=?self.info_hash, "can't find torrent in the session");
+                return Default::default();
+            }
+        };
+        let stats = mt.stats();
+
+        use crate::torrent_state::stats::TorrentStatsState as TS;
+        use tracker_comms::TrackerCommsStatsState as S;
+
+        tracker_comms::TrackerCommsStats {
+            downloaded_bytes: stats.progress_bytes,
+            total_bytes: stats.total_bytes,
+            uploaded_bytes: stats.uploaded_bytes,
+            torrent_state: match stats.state {
+                TS::Initializing => S::Initializing,
+                TS::Live => S::Live,
+                TS::Paused => S::Paused,
+                TS::Error => S::None,
+            },
+        }
     }
 }

@@ -29,10 +29,20 @@ pub struct TrackerComms {
 }
 
 #[derive(Default)]
+pub enum TrackerCommsStatsState {
+    #[default]
+    None,
+    Initializing,
+    Paused,
+    Live,
+}
+
+#[derive(Default)]
 pub struct TrackerCommsStats {
     pub uploaded_bytes: u64,
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
+    pub torrent_state: TrackerCommsStatsState,
 }
 
 impl TrackerCommsStats {
@@ -43,6 +53,10 @@ impl TrackerCommsStats {
             return total - down;
         }
         0
+    }
+
+    pub fn is_completed(&self) -> bool {
+        self.downloaded_bytes >= self.total_bytes
     }
 }
 
@@ -164,7 +178,7 @@ impl TrackerComms {
             let request = tracker_comms_http::TrackerRequest {
                 info_hash: self.info_hash,
                 peer_id: self.peer_id,
-                port: 6778,
+                port: self.tcp_listen_port.unwrap_or(0),
                 uploaded: stats.uploaded_bytes,
                 downloaded: stats.downloaded_bytes,
                 left: stats.get_left_to_download_bytes(),
@@ -249,7 +263,18 @@ impl TrackerComms {
                 downloaded: stats.downloaded_bytes,
                 left: stats.get_left_to_download_bytes(),
                 uploaded: stats.uploaded_bytes,
-                event: EVENT_NONE,
+                event: match stats.torrent_state {
+                    TrackerCommsStatsState::None => EVENT_NONE,
+                    TrackerCommsStatsState::Initializing => EVENT_STARTED,
+                    TrackerCommsStatsState::Paused => EVENT_STOPPED,
+                    TrackerCommsStatsState::Live => {
+                        if stats.is_completed() {
+                            EVENT_COMPLETED
+                        } else {
+                            EVENT_STARTED
+                        }
+                    }
+                },
                 key: 0, // whatever that is?
                 port: self.tcp_listen_port.unwrap_or(0),
             };

@@ -43,11 +43,35 @@ impl From<&TorrentStateLive> for LiveStats {
     }
 }
 
+#[derive(Clone, Copy, Serialize, Debug)]
+pub enum TorrentStatsState {
+    #[serde(rename = "initializing")]
+    Initializing,
+    #[serde(rename = "live")]
+    Live,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "error")]
+    Error,
+}
+
+impl std::fmt::Display for TorrentStatsState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TorrentStatsState::Initializing => f.write_str("initializing"),
+            TorrentStatsState::Live => f.write_str("live"),
+            TorrentStatsState::Paused => f.write_str("paused"),
+            TorrentStatsState::Error => f.write_str("error"),
+        }
+    }
+}
+
 #[derive(Serialize, Debug)]
 pub struct TorrentStats {
-    pub state: &'static str,
+    pub state: TorrentStatsState,
     pub error: Option<String>,
     pub progress_bytes: u64,
+    pub uploaded_bytes: u64,
     pub total_bytes: u64,
     pub finished: bool,
     pub live: Option<LiveStats>,
