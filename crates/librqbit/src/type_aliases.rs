@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
-use futures::Stream;
+use futures::stream::BoxStream;
 
 pub type BF = bitvec::vec::BitVec<u8, bitvec::order::Msb0>;
 
 pub type PeerHandle = SocketAddr;
-pub type PeerStream = Box<dyn Stream<Item = SocketAddr> + Unpin + Send + 'static>;
+pub type PeerStream = BoxStream<'static, SocketAddr>;

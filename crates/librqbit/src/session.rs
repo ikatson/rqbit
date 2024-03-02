@@ -24,7 +24,11 @@ use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, TryFutureExt};
+use futures::{
+    future::BoxFuture,
+    stream::{BoxStream, FuturesUnordered},
+    FutureExt, Stream, TryFutureExt,
+};
 use itertools::Itertools;
 use librqbit_core::{
     directories::get_configuration_directory,
@@ -247,13 +251,13 @@ fn compute_only_files(
 }
 
 fn merge_two_optional_streams<T>(
-    s1: Option<impl Stream<Item = T> + Send + Unpin + 'static>,
-    s2: Option<impl Stream<Item = T> + Send + Unpin + 'static>,
-) -> Option<Box<dyn Stream<Item = T> + Send + Unpin + 'static>> {
+    s1: Option<impl Stream<Item = T> + Send + 'static>,
+    s2: Option<impl Stream<Item = T> + Send + 'static>,
+) -> Option<BoxStream<'static, T>> {
     match (s1, s2) {
-        (Some(s1), None) => Some(Box::new(s1)),
-        (None, Some(s2)) => Some(Box::new(s2)),
-        (Some(s1), Some(s2)) => Some(Box::new(s1.chain(s2))),
+        (Some(s1), None) => Some(Box::pin(s1)),
+        (None, Some(s2)) => Some(Box::pin(s2)),
+        (Some(s1), Some(s2)) => Some(Box::pin(s1.chain(s2))),
         (None, None) => None,
     }
 }
