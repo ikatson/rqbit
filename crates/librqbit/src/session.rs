@@ -941,7 +941,6 @@ impl Session {
         Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn main_torrent_info(
         &self,
         info_hash: Id20,
@@ -1017,17 +1016,26 @@ impl Session {
             (managed_torrent, id)
         };
 
+        // Merge "initial_peers" and "peer_rx" into one stream.
+        let peer_rx: Option<PeerStream> = if !initial_peers.is_empty() || peer_rx.is_some() {
+            use futures::future::Either;
+            Some(Box::new(
+                futures::stream::iter(initial_peers).chain(
+                    peer_rx
+                        .map(Either::Left)
+                        .unwrap_or(Either::Right(futures::stream::empty())),
+                ),
+            ))
+        } else {
+            peer_rx
+        };
+
         {
             let span = managed_torrent.info.span.clone();
             let _ = span.enter();
 
             managed_torrent
-                .start(
-                    initial_peers,
-                    peer_rx,
-                    opts.paused,
-                    self.cancellation_token.child_token(),
-                )
+                .start(peer_rx, opts.paused, self.cancellation_token.child_token())
                 .context("error starting torrent")?;
         }
 
@@ -1119,12 +1127,7 @@ impl Session {
             self.tcp_listen_port,
             handle.info().options.force_tracker_interval,
         )?;
-        handle.start(
-            Default::default(),
-            peer_rx,
-            false,
-            self.cancellation_token.child_token(),
-        )?;
+        handle.start(peer_rx, false, self.cancellation_token.child_token())?;
         Ok(())
     }
 }
