@@ -12,7 +12,7 @@ use sha1w::{ISha1, Sha1};
 
 use crate::spawn_utils::BlockingSpawner;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateTorrentOptions<'a> {
     pub name: Option<&'a str>,
     pub piece_length: Option<u32>,
@@ -167,6 +167,7 @@ async fn create_torrent_raw<'a>(
     })
 }
 
+#[derive(Debug)]
 pub struct CreateTorrentResult {
     meta: TorrentMetaV1Owned,
 }
@@ -207,4 +208,10 @@ pub async fn create_torrent<'a>(
             info_hash,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn create_test() {}
 }

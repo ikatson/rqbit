@@ -84,7 +84,7 @@ impl Lengths {
         }
         if chunk_length > piece_length {
             anyhow::bail!(
-                "chunk length {} should be smaller than or equal to piece length {}",
+                "chunk length {} should be >= piece length {}",
                 chunk_length,
                 piece_length
             );
