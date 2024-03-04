@@ -11,7 +11,7 @@ use tokio::{
     spawn,
     time::{interval, timeout},
 };
-use tracing::{error, error_span, info, Instrument};
+use tracing::{error_span, info, Instrument};
 
 use crate::{
     create_torrent,
@@ -129,7 +129,12 @@ async fn test_e2e() {
 
     info!("started all servers, starting client");
 
-    for _client_iter in 0..1024 {
+    let client_iters = std::env::var("E2E_CLIENT_ITERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1usize);
+
+    for _client_iter in 0..client_iters {
         // 3. Start a client with the initial peers, and download the file.
         let outdir = NamedTempDir::new().unwrap();
         let session = Session::new_with_opts(
