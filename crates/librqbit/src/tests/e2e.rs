@@ -6,6 +6,10 @@ use std::{
 };
 
 use anyhow::bail;
+use futures::{
+    stream::{FuturesOrdered, FuturesUnordered},
+    StreamExt,
+};
 use tokio::spawn;
 
 use crate::{
@@ -34,11 +38,10 @@ async fn test_e2e() {
     .await
     .unwrap();
 
-    let num_servers = 1;
+    let num_servers = 32;
 
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
-
-    let mut peers = Vec::<SocketAddr>::new();
+    let mut futs = FuturesUnordered::new();
 
     for _ in 0..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
@@ -104,13 +107,15 @@ async fn test_e2e() {
                 session.tcp_listen_port().unwrap(),
             ))
         });
-        peers.push(
-            tokio::time::timeout(Duration::from_secs(10), rx)
-                .await
-                .unwrap()
-                .unwrap(),
-        );
+        futs.push(tokio::time::timeout(Duration::from_secs(10), rx));
     }
+
+    let mut peers = Vec::new();
+    while let Some(addr) = futs.next().await {
+        peers.push(addr.unwrap().unwrap());
+    }
+
+    dbg!(peers);
 
     // 3. Start a client with the initial peers, and download the file.
 
