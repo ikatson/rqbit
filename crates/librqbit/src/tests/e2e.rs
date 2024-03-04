@@ -20,7 +20,7 @@ async fn test_e2e() {
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
 
     let piece_length = 16384u32; // TODO: figure out if this should be multiple of chunk size or not
-    let file_length = piece_length * 10;
+    let file_length = piece_length * 3 + 1;
     let num_files = 64;
 
     let tempdir = create_default_random_dir_with_torrents(num_files, file_length as usize);
@@ -33,8 +33,6 @@ async fn test_e2e() {
     )
     .await
     .unwrap();
-
-    let temp_out = NamedTempDir::new().unwrap();
 
     let num_servers = 1;
 

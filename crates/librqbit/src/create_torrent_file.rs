@@ -120,9 +120,9 @@ async fn create_torrent_raw<'a>(
         );
 
         loop {
-            let bytes_to_read = remaining_piece_length.min(READ_SIZE);
+            let max_bytes_to_read = remaining_piece_length.min(READ_SIZE) as usize;
             let size = spawner
-                .spawn_block_in_place(|| fd.read(&mut read_buf))
+                .spawn_block_in_place(|| fd.read(&mut read_buf[..max_bytes_to_read]))
                 .with_context(|| format!("error reading {:?}", filename))?;
 
             // EOF: swap file
@@ -141,7 +141,7 @@ async fn create_torrent_raw<'a>(
             length += size as u64;
             piece_checksum.update(&read_buf[..size]);
 
-            remaining_piece_length -= bytes_to_read;
+            remaining_piece_length -= size as u32;
             if remaining_piece_length == 0 {
                 remaining_piece_length = piece_length;
                 piece_hashes.extend_from_slice(&piece_checksum.finish());
