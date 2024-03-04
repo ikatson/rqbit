@@ -4,6 +4,7 @@ use std::{
 };
 
 use rand::RngCore;
+use tracing::info;
 
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     let mut file = std::fs::OpenOptions::new()
@@ -56,6 +57,8 @@ impl NamedTempDir {
 
 impl Drop for NamedTempDir {
     fn drop(&mut self) {
+        info!(name = ?self.name(), "removing NamedTempDir");
         std::fs::remove_dir_all(self.name()).unwrap();
+        info!(name = ?self.name(), "removed NamedTempDir");
     }
 }

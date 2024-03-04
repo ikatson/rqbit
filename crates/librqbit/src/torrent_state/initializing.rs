@@ -53,10 +53,6 @@ impl TorrentStateInitializing {
                 full_path.push(relative_path);
 
                 std::fs::create_dir_all(full_path.parent().unwrap())?;
-                #[cfg(test)]
-                {
-                    eprintln!("opening {:?}", full_path);
-                }
                 let file = if self.meta.options.overwrite {
                     OpenOptions::new()
                         .create(true)
@@ -126,14 +122,6 @@ impl TorrentStateInitializing {
                 }
             }
         });
-
-        #[cfg(test)]
-        {
-            dbg!(&initial_check_results.needed_pieces);
-            dbg!(&initial_check_results.have_pieces);
-            dbg!(self.meta.lengths);
-            dbg!(initial_check_results.total_selected_bytes);
-        }
 
         let chunk_tracker = ChunkTracker::new(
             initial_check_results.needed_pieces,
