@@ -44,6 +44,8 @@ impl NamedTempDir {
     pub fn new() -> anyhow::Result<Self> {
         let out = std::process::Command::new("mktemp")
             .arg("-d")
+            .arg("rqbit_test_XXXXXX")
+            .arg("--tmpdir")
             .output()
             .unwrap();
         let path = out.stdout;

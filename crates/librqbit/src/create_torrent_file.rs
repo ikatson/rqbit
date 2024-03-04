@@ -212,6 +212,23 @@ pub async fn create_torrent<'a>(
 
 #[cfg(test)]
 mod tests {
+    use buffers::ByteBuf;
+    use librqbit_core::torrent_metainfo::torrent_from_bytes;
+
+    use crate::create_torrent;
+
     #[tokio::test]
-    async fn create_test() {}
+    async fn test_create_torrent() {
+        use crate::tests::test_util;
+
+        let dir = test_util::create_default_random_dir_with_torrents(3, 1000 * 1000);
+        let torrent = create_torrent(dir.name(), Default::default())
+            .await
+            .unwrap();
+
+        let bytes = torrent.as_bytes().unwrap();
+
+        let deserialized = torrent_from_bytes::<ByteBuf>(&bytes).unwrap();
+        assert_eq!(torrent.info_hash(), deserialized.info_hash);
+    }
 }
