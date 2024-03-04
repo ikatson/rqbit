@@ -6,7 +6,10 @@ use std::{
 
 use anyhow::bail;
 use futures::{stream::FuturesUnordered, StreamExt};
-use tokio::spawn;
+use tokio::{
+    spawn,
+    time::{interval, timeout},
+};
 use tracing::{error_span, info, Instrument};
 
 use crate::{
@@ -80,7 +83,7 @@ async fn test_e2e() {
                     .await
                     .unwrap();
                 let h = handle.into_handle().unwrap();
-                let mut interval = tokio::time::interval(Duration::from_millis(100));
+                let mut interval = interval(Duration::from_millis(100));
 
                 info!("added torrent");
                 loop {
@@ -109,7 +112,7 @@ async fn test_e2e() {
             }
             .instrument(error_span!("server", server = i)),
         );
-        futs.push(tokio::time::timeout(Duration::from_secs(10), rx));
+        futs.push(timeout(Duration::from_secs(10), rx));
     }
 
     let mut peers = Vec::new();
@@ -164,7 +167,7 @@ async fn test_e2e() {
     let stats_printer = spawn({
         let handle = handle.clone();
         async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(100));
+            let mut interval = interval(Duration::from_millis(100));
             loop {
                 interval.tick().await;
                 let stats = handle.stats();
@@ -173,7 +176,7 @@ async fn test_e2e() {
         }
     });
 
-    tokio::time::timeout(Duration::from_secs(60), handle.wait_until_completed())
+    timeout(Duration::from_secs(60), handle.wait_until_completed())
         .await
         .unwrap()
         .unwrap();
@@ -201,23 +204,27 @@ async fn test_e2e() {
 
     info!("re-added handle");
 
-    let mut interval = tokio::time::interval(Duration::from_millis(100));
-    for i in 0..100 {
-        interval.tick().await;
-        let b = handle
-            .with_state(|s| match s {
-                crate::ManagedTorrentState::Initializing(_) => Ok(false),
-                crate::ManagedTorrentState::Paused(p) => {
-                    assert_eq!(p.needed_bytes, 0);
-                    Ok(true)
-                }
-                _ => bail!("bugged state"),
-            })
-            .unwrap();
-        if b {
-            break;
+    timeout(Duration::from_secs(10), async {
+        let mut interval = interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            let b = handle
+                .with_state(|s| match s {
+                    crate::ManagedTorrentState::Initializing(_) => Ok(false),
+                    crate::ManagedTorrentState::Paused(p) => {
+                        assert_eq!(p.needed_bytes, 0);
+                        Ok(true)
+                    }
+                    _ => bail!("bugged state"),
+                })
+                .unwrap();
+            if b {
+                break;
+            }
         }
-    }
+    })
+    .await
+    .unwrap();
 
     info!("all good");
 }
