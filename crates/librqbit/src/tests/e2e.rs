@@ -19,11 +19,11 @@ async fn test_e2e() {
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
 
-    let piece_length = 16384; // TODO: figure out if this should be multiple of chunk size or not
-    let file_length = 16386;
+    let piece_length = 16384u32; // TODO: figure out if this should be multiple of chunk size or not
+    let file_length = piece_length * 10;
     let num_files = 64;
 
-    let tempdir = create_default_random_dir_with_torrents(num_files, file_length);
+    let tempdir = create_default_random_dir_with_torrents(num_files, file_length as usize);
     let torrent_file = create_torrent(
         dbg!(tempdir.name()),
         crate::CreateTorrentOptions {
