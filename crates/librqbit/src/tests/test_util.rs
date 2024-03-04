@@ -73,7 +73,7 @@ pub struct TestPeerMetadata {
 }
 
 impl TestPeerMetadata {
-    pub fn into_peer_id(&self) -> Id20 {
+    pub fn as_peer_id(&self) -> Id20 {
         let mut peer_id = Id20::default();
         peer_id.0[0] = self.server_id;
         peer_id.0[1] = self.max_random_sleep_ms;
@@ -85,5 +85,12 @@ impl TestPeerMetadata {
             server_id: peer_id.0[0],
             max_random_sleep_ms: peer_id.0[1],
         }
+    }
+
+    pub fn disconnect_probability(&self) -> f64 {
+        if self.server_id % 2 == 0 {
+            return 0.005f64;
+        }
+        0f64
     }
 }

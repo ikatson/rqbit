@@ -277,7 +277,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             use crate::tests::test_util::TestPeerMetadata;
                             let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
                             use rand::Rng;
-                            if rand::thread_rng().gen_bool(0.01) {
+                            if rand::thread_rng().gen_bool(tpm.disconnect_probability()) {
                                 bail!("I'm fucked");
                             }
 

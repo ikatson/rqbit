@@ -11,15 +11,15 @@ use tokio::{
     spawn,
     time::{interval, timeout},
 };
-use tracing::{error_span, info, Instrument};
+use tracing::{error, error_span, info, Instrument};
 
 use crate::{
     create_torrent,
-    tests::test_util::{create_default_random_dir_with_torrents, TestPeerMetadata},
+    tests::test_util::{create_default_random_dir_with_torrents, NamedTempDir, TestPeerMetadata},
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e() {
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -58,7 +58,7 @@ async fn test_e2e() {
                     server_id: i,
                     max_random_sleep_ms: rand::thread_rng().gen_range(0u8..30),
                 }
-                .into_peer_id();
+                .as_peer_id();
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
@@ -129,109 +129,137 @@ async fn test_e2e() {
 
     info!("started all servers, starting client");
 
-    // 3. Start a client with the initial peers, and download the file.
-    let outdir = tempdir.name().join("output");
-    let session = Session::new_with_opts(
-        outdir,
-        SessionOptions {
-            disable_dht: true,
-            disable_dht_persistence: true,
-            dht_config: None,
-            persistence: false,
-            persistence_filename: None,
-            listen_port_range: None,
-            enable_upnp_port_forwarding: false,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
+    for _client_iter in 0..1024 {
+        // 3. Start a client with the initial peers, and download the file.
+        let outdir = NamedTempDir::new().unwrap();
+        let session = Session::new_with_opts(
+            outdir.name().to_owned(),
+            SessionOptions {
+                disable_dht: true,
+                disable_dht_persistence: true,
+                dht_config: None,
+                persistence: false,
+                persistence_filename: None,
+                listen_port_range: None,
+                enable_upnp_port_forwarding: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
-    info!("started client session");
+        info!("started client session");
 
-    let (id, handle) = {
-        let r = session
+        let (id, handle) = {
+            let r = session
+                .add_torrent(
+                    crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes.clone())),
+                    Some(AddTorrentOptions {
+                        initial_peers: Some(peers.clone()),
+                        overwrite: false,
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .unwrap();
+
+            match r {
+                AddTorrentResponse::AlreadyManaged(_, _) => todo!(),
+                AddTorrentResponse::ListOnly(_) => todo!(),
+                AddTorrentResponse::Added(id, h) => (id, h),
+            }
+        };
+
+        info!("added handle");
+
+        {
+            let stats_printer = {
+                let handle = handle.clone();
+                async move {
+                    let mut interval = interval(Duration::from_millis(100));
+
+                    loop {
+                        interval.tick().await;
+                        let stats = handle.stats();
+                        let live = match &stats.live {
+                            Some(live) => live,
+                            None => continue,
+                        };
+                        let pstats = &live.snapshot.peer_stats;
+
+                        info!(
+                            progress_percent =
+                                format!("{}", stats.progress_percent_human_readable()),
+                            peers = format!("{:?}", pstats),
+                        );
+                    }
+                }
+            }
+            .instrument(error_span!("stats_printer"));
+
+            let timeout = timeout(Duration::from_secs(60), handle.wait_until_completed());
+
+            tokio::pin!(stats_printer);
+            tokio::pin!(timeout);
+
+            let mut stats_finished = false;
+            loop {
+                tokio::select! {
+                    r = &mut timeout => {
+                        r.unwrap().unwrap();
+                        break;
+                    }
+                    _ = &mut stats_printer, if !stats_finished => {
+                        stats_finished = true;
+                    }
+                }
+            }
+        }
+
+        info!("handle is completed");
+        session.delete(id, false).unwrap();
+
+        info!("deleted handle");
+
+        // 4. After downloading, recheck its integrity.
+        let handle = session
             .add_torrent(
                 crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes.clone())),
                 Some(AddTorrentOptions {
-                    initial_peers: Some(peers),
-                    overwrite: false,
+                    paused: true,
+                    overwrite: true,
                     ..Default::default()
                 }),
             )
             .await
+            .unwrap()
+            .into_handle()
             .unwrap();
 
-        match r {
-            AddTorrentResponse::AlreadyManaged(_, _) => todo!(),
-            AddTorrentResponse::ListOnly(_) => todo!(),
-            AddTorrentResponse::Added(id, h) => (id, h),
-        }
-    };
+        info!("re-added handle");
 
-    info!("added handle");
-
-    let stats_printer = spawn({
-        let handle = handle.clone();
-        async move {
+        timeout(Duration::from_secs(10), async {
             let mut interval = interval(Duration::from_millis(100));
             loop {
                 interval.tick().await;
-                let stats = handle.stats();
-                info!(progress_percent = format!("{}", stats.progress_percent_human_readable()));
+                let b = handle
+                    .with_state(|s| match s {
+                        crate::ManagedTorrentState::Initializing(_) => Ok(false),
+                        crate::ManagedTorrentState::Paused(p) => {
+                            assert_eq!(p.needed_bytes, 0);
+                            Ok(true)
+                        }
+                        _ => bail!("bugged state"),
+                    })
+                    .unwrap();
+                if b {
+                    break;
+                }
             }
-        }
-    });
-
-    timeout(Duration::from_secs(60), handle.wait_until_completed())
+        })
         .await
-        .unwrap()
-        .unwrap();
-    stats_printer.abort();
-
-    info!("handle is completed");
-    session.delete(id, false).unwrap();
-
-    info!("deleted handle");
-
-    // 4. After downloading, recheck its integrity.
-    let handle = session
-        .add_torrent(
-            crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes)),
-            Some(AddTorrentOptions {
-                paused: true,
-                overwrite: true,
-                ..Default::default()
-            }),
-        )
-        .await
-        .unwrap()
-        .into_handle()
         .unwrap();
 
-    info!("re-added handle");
-
-    timeout(Duration::from_secs(10), async {
-        let mut interval = interval(Duration::from_millis(100));
-        loop {
-            interval.tick().await;
-            let b = handle
-                .with_state(|s| match s {
-                    crate::ManagedTorrentState::Initializing(_) => Ok(false),
-                    crate::ManagedTorrentState::Paused(p) => {
-                        assert_eq!(p.needed_bytes, 0);
-                        Ok(true)
-                    }
-                    _ => bail!("bugged state"),
-                })
-                .unwrap();
-            if b {
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
-
-    info!("all good");
+        info!("all good");
+    }
 }
