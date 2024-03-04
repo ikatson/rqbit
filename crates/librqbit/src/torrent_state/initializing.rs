@@ -123,6 +123,14 @@ impl TorrentStateInitializing {
             }
         });
 
+        #[cfg(test)]
+        {
+            dbg!(&initial_check_results.needed_pieces);
+            dbg!(&initial_check_results.have_pieces);
+            dbg!(self.meta.lengths);
+            dbg!(initial_check_results.total_selected_bytes);
+        }
+
         let chunk_tracker = ChunkTracker::new(
             initial_check_results.needed_pieces,
             initial_check_results.have_pieces,

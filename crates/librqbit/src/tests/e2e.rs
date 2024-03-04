@@ -25,7 +25,7 @@ async fn test_e2e() {
 
     let tempdir = create_default_random_dir_with_torrents(num_files, file_length);
     let torrent_file = create_torrent(
-        tempdir.name(),
+        dbg!(tempdir.name()),
         crate::CreateTorrentOptions {
             piece_length: Some(piece_length),
             ..Default::default()
@@ -35,7 +35,6 @@ async fn test_e2e() {
     .unwrap();
 
     let temp_out = NamedTempDir::new().unwrap();
-    let no_write_dir = temp_out.name().join("no_write");
 
     let num_servers = 1;
 
