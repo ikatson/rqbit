@@ -27,20 +27,27 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
 }
 
 /// A parsed .torrent file.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TorrentMetaV1<BufType> {
     pub announce: BufType,
-    #[serde(rename = "announce-list", default = "Vec::new")]
+    #[serde(
+        rename = "announce-list",
+        default = "Vec::new",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub announce_list: Vec<Vec<BufType>>,
     pub info: TorrentMetaV1Info<BufType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
-    #[serde(rename = "created by")]
+    #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
     pub created_by: Option<BufType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub encoding: Option<BufType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub publisher: Option<BufType>,
-    #[serde(rename = "publisher-url")]
+    #[serde(rename = "publisher-url", skip_serializing_if = "Option::is_none")]
     pub publisher_url: Option<BufType>,
-    #[serde(rename = "creation date")]
+    #[serde(rename = "creation date", skip_serializing_if = "Option::is_none")]
     pub creation_date: Option<usize>,
 
     #[serde(skip)]
