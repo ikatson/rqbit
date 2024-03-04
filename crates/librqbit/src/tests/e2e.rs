@@ -46,14 +46,14 @@ async fn test_e2e() {
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
     let mut futs = FuturesUnordered::new();
 
+    // 2. Start N servers that are serving that torrent, and return their IP:port combos.
+    //    Disable DHT on each.
     for i in 0u8..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tempdir = tempdir.name().to_owned();
         spawn(
             async move {
-                // 2. Start N servers that are serving that torrent, and return their IP:port combos.
-                //    Disable DHT on each.
                 let peer_id = TestPeerMetadata {
                     server_id: i,
                     max_random_sleep_ms: rand::thread_rng().gen_range(0u8..30),
@@ -134,8 +134,8 @@ async fn test_e2e() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1usize);
 
-    for _client_iter in 0..client_iters {
-        // 3. Start a client with the initial peers, and download the file.
+    // 3. Start a client with the initial peers, and download the file.
+    for _ in 0..client_iters {
         let outdir = NamedTempDir::new().unwrap();
         let session = Session::new_with_opts(
             outdir.name().to_owned(),
