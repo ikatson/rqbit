@@ -181,7 +181,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .await
             .context("error reading handshake")?;
         let h_supports_extended = h.supports_extended();
-        trace!("connected: id={:?}", try_decode_peer_id(Id20::new(h.peer_id)));
+        trace!(
+            "connected: id={:?}",
+            try_decode_peer_id(Id20::new(h.peer_id))
+        );
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
         }
@@ -269,6 +272,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             .and_then(|e| e.ut_metadata())
                     })?,
                     WriterRequest::ReadChunkRequest(chunk) => {
+                        #[cfg(test)]
+                        {
+                            use rand::Rng;
+                            if rand::thread_rng().gen_bool(0.01) {
+                                bail!("I'm fucked");
+                            }
+                            let sleep_ms = (rand::thread_rng().gen::<f64>() * 30f64) as u64;
+                            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                        }
+
                         // this whole section is an optimization
                         write_buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
                         let preamble_len = serialize_piece_preamble(chunk, &mut write_buf);

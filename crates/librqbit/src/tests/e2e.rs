@@ -21,11 +21,11 @@ async fn test_e2e() {
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
 
-    let piece_length = 16384u32; // TODO: figure out if this should be multiple of chunk size or not
-    let file_length = piece_length * 3 + 1;
-    let num_files = 64;
+    let piece_length: u32 = 16384 * 2; // TODO: figure out if this should be multiple of chunk size or not
+    let file_length: usize = 1000 * 1000;
+    let num_files: usize = 64;
 
-    let tempdir = create_default_random_dir_with_torrents(num_files, file_length as usize);
+    let tempdir = create_default_random_dir_with_torrents(num_files, file_length);
     let torrent_file = create_torrent(
         dbg!(tempdir.name()),
         crate::CreateTorrentOptions {
@@ -161,10 +161,23 @@ async fn test_e2e() {
 
     info!("added handle");
 
-    tokio::time::timeout(Duration::from_secs(10), handle.wait_until_completed())
+    let stats_printer = spawn({
+        let handle = handle.clone();
+        async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(100));
+            loop {
+                interval.tick().await;
+                let stats = handle.stats();
+                info!(progress_percent = format!("{}", stats.progress_percent_human_readable()));
+            }
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(60), handle.wait_until_completed())
         .await
         .unwrap()
         .unwrap();
+    stats_printer.abort();
 
     info!("handle is completed");
     session.delete(id, false).unwrap();
@@ -189,7 +202,7 @@ async fn test_e2e() {
     info!("re-added handle");
 
     let mut interval = tokio::time::interval(Duration::from_millis(100));
-    for _ in 0..100 {
+    for i in 0..100 {
         interval.tick().await;
         let b = handle
             .with_state(|s| match s {

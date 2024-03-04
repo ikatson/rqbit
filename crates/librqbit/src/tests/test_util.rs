@@ -15,10 +15,12 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
 
     eprintln!("creating temp file {:?}", path);
 
-    let mut write_buf = [0; 8192];
+    const BUF_SIZE: usize = 8192 * 16;
+    let mut rng = rand::rngs::OsRng;
+    let mut write_buf = [0; BUF_SIZE];
     while size > 0 {
-        rand::thread_rng().fill_bytes(&mut write_buf[..]);
-        let written = file.write(&write_buf[..size.min(8192)]).unwrap();
+        rng.fill_bytes(&mut write_buf[..]);
+        let written = file.write(&write_buf[..size.min(BUF_SIZE)]).unwrap();
         size -= written;
     }
 }
