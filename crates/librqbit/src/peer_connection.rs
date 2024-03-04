@@ -274,11 +274,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     WriterRequest::ReadChunkRequest(chunk) => {
                         #[cfg(test)]
                         {
+                            use crate::tests::test_util::TestPeerMetadata;
+                            let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
                             use rand::Rng;
                             if rand::thread_rng().gen_bool(0.01) {
                                 bail!("I'm fucked");
                             }
-                            let sleep_ms = (rand::thread_rng().gen::<f64>() * 30f64) as u64;
+
+                            let sleep_ms = (rand::thread_rng().gen::<f64>()
+                                * (tpm.max_random_sleep_ms as f64))
+                                as u64;
                             tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
                         }
 

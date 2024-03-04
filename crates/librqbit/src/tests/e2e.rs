@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::bail;
 use futures::{stream::FuturesUnordered, StreamExt};
+use rand::Rng;
 use tokio::{
     spawn,
     time::{interval, timeout},
@@ -13,8 +14,9 @@ use tokio::{
 use tracing::{error_span, info, Instrument};
 
 use crate::{
-    create_torrent, tests::test_util::create_default_random_dir_with_torrents, AddTorrentOptions,
-    AddTorrentResponse, Session, SessionOptions,
+    create_torrent,
+    tests::test_util::{create_default_random_dir_with_torrents, TestPeerMetadata},
+    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -44,7 +46,7 @@ async fn test_e2e() {
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
     let mut futs = FuturesUnordered::new();
 
-    for i in 0..num_servers {
+    for i in 0u8..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tempdir = tempdir.name().to_owned();
@@ -52,6 +54,11 @@ async fn test_e2e() {
             async move {
                 // 2. Start N servers that are serving that torrent, and return their IP:port combos.
                 //    Disable DHT on each.
+                let peer_id = TestPeerMetadata {
+                    server_id: i,
+                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..30),
+                }
+                .into_peer_id();
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
@@ -60,7 +67,7 @@ async fn test_e2e() {
                         dht_config: None,
                         persistence: false,
                         persistence_filename: None,
-                        peer_id: None,
+                        peer_id: Some(peer_id),
                         peer_opts: None,
                         listen_port_range: Some(15100..15200),
                         enable_upnp_port_forwarding: false,

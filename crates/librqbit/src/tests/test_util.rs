@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use librqbit_core::Id20;
 use rand::RngCore;
 use tracing::info;
 
@@ -62,5 +63,27 @@ impl Drop for NamedTempDir {
         info!(name = ?self.name(), "removing NamedTempDir");
         std::fs::remove_dir_all(self.name()).unwrap();
         info!(name = ?self.name(), "removed NamedTempDir");
+    }
+}
+
+#[derive(Debug)]
+pub struct TestPeerMetadata {
+    pub server_id: u8,
+    pub max_random_sleep_ms: u8,
+}
+
+impl TestPeerMetadata {
+    pub fn into_peer_id(&self) -> Id20 {
+        let mut peer_id = Id20::default();
+        peer_id.0[0] = self.server_id;
+        peer_id.0[1] = self.max_random_sleep_ms;
+        peer_id
+    }
+
+    pub fn from_peer_id(peer_id: Id20) -> Self {
+        Self {
+            server_id: peer_id.0[0],
+            max_random_sleep_ms: peer_id.0[1],
+        }
     }
 }
