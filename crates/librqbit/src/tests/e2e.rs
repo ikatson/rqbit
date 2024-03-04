@@ -19,7 +19,7 @@ async fn test_e2e() {
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
 
-    let piece_length = 16385;
+    let piece_length = 16384; // TODO: figure out if this should be multiple of chunk size or not
     let file_length = 16386;
     let num_files = 64;
 
@@ -59,7 +59,7 @@ async fn test_e2e() {
                     persistence_filename: None,
                     peer_id: None,
                     peer_opts: None,
-                    listen_port_range: None,
+                    listen_port_range: Some(15100..15200),
                     enable_upnp_port_forwarding: false,
                 },
             )
@@ -71,15 +71,7 @@ async fn test_e2e() {
                     crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes)),
                     Some(AddTorrentOptions {
                         overwrite: true,
-                        output_folder: Some(
-                            tempdir
-                                .parent()
-                                .unwrap()
-                                .to_owned()
-                                .to_str()
-                                .unwrap()
-                                .to_owned(),
-                        ),
+                        output_folder: Some(tempdir.to_str().unwrap().to_owned()),
                         ..Default::default()
                     }),
                 )
@@ -96,7 +88,12 @@ async fn test_e2e() {
                 let is_live = h
                     .with_state(|s| match s {
                         crate::ManagedTorrentState::Initializing(_) => Ok(false),
-                        crate::ManagedTorrentState::Live(_) => Ok(true),
+                        crate::ManagedTorrentState::Live(l) => {
+                            if !l.is_finished() {
+                                bail!("torrent went live, but expected it to be finished");
+                            }
+                            Ok(true)
+                        }
                         _ => bail!("broken state"),
                     })
                     .unwrap();

@@ -38,7 +38,7 @@ pub struct Lengths {
     piece_length: u32,
     last_piece_id: u32,
     last_piece_length: u32,
-    chunks_per_piece: u32,
+    max_chunks_per_piece: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,7 +97,7 @@ impl Lengths {
             chunk_length,
             piece_length,
             total_length,
-            chunks_per_piece: ceil_div_u64(piece_length as u64, chunk_length as u64) as u32,
+            max_chunks_per_piece: ceil_div_u64(piece_length as u64, chunk_length as u64) as u32,
             last_piece_id: total_pieces - 1,
             last_piece_length: last_element_size_u64(total_length, piece_length as u64) as u32,
         })
@@ -123,8 +123,8 @@ impl Lengths {
     pub const fn default_chunk_length(&self) -> u32 {
         self.chunk_length
     }
-    pub const fn default_chunks_per_piece(&self) -> u32 {
-        self.chunks_per_piece
+    pub const fn default_max_chunks_per_piece(&self) -> u32 {
+        self.max_chunks_per_piece
     }
     pub const fn total_chunks(&self) -> u32 {
         ceil_div_u64(self.total_length, self.chunk_length as u64) as u32
@@ -161,7 +161,7 @@ impl Lengths {
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
         let mut remaining = self.piece_length(index);
         let chunk_size = self.chunk_length;
-        let absolute_offset = index.0 * self.chunks_per_piece;
+        let absolute_offset = index.0 * self.max_chunks_per_piece;
         (0u32..).scan(0, move |offset, idx| {
             if remaining == 0 {
                 return None;
@@ -195,7 +195,7 @@ impl Lengths {
         if expected_chunk_size != chunk_size {
             return None;
         }
-        let absolute_index = self.chunks_per_piece * piece_index.get() + index;
+        let absolute_index = self.max_chunks_per_piece * piece_index.get() + index;
         Some(ChunkInfo {
             piece_index,
             chunk_index: index,
@@ -214,7 +214,7 @@ impl Lengths {
         self.chunk_info_from_received_data(self.validate_piece_index(index)?, begin, block_len)
     }
     pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
-        let start = index.0 * self.chunks_per_piece;
+        let start = index.0 * self.max_chunks_per_piece;
         let end = start + self.chunks_per_piece(index);
         start as usize..end as usize
     }
@@ -222,7 +222,7 @@ impl Lengths {
         if index.0 == self.last_piece_id {
             return (self.last_piece_length + self.chunk_length - 1) / self.chunk_length;
         }
-        self.chunks_per_piece
+        self.max_chunks_per_piece
     }
     pub const fn chunk_offset_in_piece(
         &self,

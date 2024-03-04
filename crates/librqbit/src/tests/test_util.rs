@@ -12,6 +12,8 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
         .open(path)
         .unwrap();
 
+    eprintln!("creating temp file {:?}", path);
+
     let mut write_buf = [0; 8192];
     while size > 0 {
         rand::thread_rng().fill_bytes(&mut write_buf[..]);
