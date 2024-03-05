@@ -1,6 +1,6 @@
 use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::io::{BufWriter, Read};
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use anyhow::Context;
@@ -72,6 +72,10 @@ fn choose_piece_length(_input_files: &[Cow<'_, Path>]) -> u32 {
     2 * 1024 * 1024
 }
 
+fn osstr_to_bytes(o: &OsStr) -> Vec<u8> {
+    o.to_str().unwrap().to_owned().into_bytes()
+}
+
 async fn create_torrent_raw<'a>(
     path: &'a Path,
     options: CreateTorrentOptions<'a>,
@@ -85,7 +89,7 @@ async fn create_torrent_raw<'a>(
     let single_file_mode = !is_dir;
     let name: ByteString = match options.name {
         Some(name) => name.as_bytes().into(),
-        None => basename.as_bytes().into(),
+        None => osstr_to_bytes(basename).into(),
     };
 
     let mut input_files: Vec<Cow<'a, Path>> = Default::default();
@@ -132,7 +136,7 @@ async fn create_torrent_raw<'a>(
                     .context("internal error, can't strip prefix")?;
                 let path = filename
                     .components()
-                    .map(|c| c.as_os_str().as_bytes().into())
+                    .map(|c| osstr_to_bytes(c.as_os_str()).into())
                     .collect();
                 output_files.push(TorrentMetaV1File { length, path });
                 continue 'outer;
