@@ -41,7 +41,7 @@ async fn test_e2e() {
     .await
     .unwrap();
 
-    let num_servers = 32;
+    let num_servers = 128;
 
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
     let mut futs = FuturesUnordered::new();
@@ -56,7 +56,7 @@ async fn test_e2e() {
             async move {
                 let peer_id = TestPeerMetadata {
                     server_id: i,
-                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..30),
+                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..128),
                 }
                 .as_peer_id();
                 let session = crate::Session::new_with_opts(
@@ -69,7 +69,7 @@ async fn test_e2e() {
                         persistence_filename: None,
                         peer_id: Some(peer_id),
                         peer_opts: None,
-                        listen_port_range: Some(15100..15200),
+                        listen_port_range: Some(15100..17000),
                         enable_upnp_port_forwarding: false,
                     },
                 )

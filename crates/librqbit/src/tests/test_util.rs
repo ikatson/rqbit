@@ -91,7 +91,7 @@ impl TestPeerMetadata {
 
     pub fn disconnect_probability(&self) -> f64 {
         if self.server_id % 2 == 0 {
-            return 0.005f64;
+            return 0.05f64;
         }
         0f64
     }
