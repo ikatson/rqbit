@@ -1,7 +1,7 @@
 use std::{io::Write, path::Path};
 
 use librqbit_core::Id20;
-use rand::RngCore;
+use rand::{RngCore, SeedableRng};
 use tempfile::TempDir;
 
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
@@ -14,7 +14,7 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     eprintln!("creating temp file {:?}", path);
 
     const BUF_SIZE: usize = 8192 * 16;
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = rand::rngs::SmallRng::from_entropy();
     let mut write_buf = [0; BUF_SIZE];
     while size > 0 {
         rng.fill_bytes(&mut write_buf[..]);

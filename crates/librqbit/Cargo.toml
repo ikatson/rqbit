@@ -76,3 +76,4 @@ futures = {version = "0.3"}
 tracing-subscriber = "0.3"
 tokio-test = "0.4"
 tempfile = "3"
+rand = {version = "0.8", features = ["small_rng"]}
