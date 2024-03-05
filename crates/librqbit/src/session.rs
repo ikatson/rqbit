@@ -1136,6 +1136,10 @@ impl Session {
         handle.start(peer_rx, false, self.cancellation_token.child_token())?;
         Ok(())
     }
+
+    pub fn tcp_listen_port(&self) -> Option<u16> {
+        self.tcp_listen_port
+    }
 }
 
 // Ad adapter for converting stats into the format that tracker_comms accepts.

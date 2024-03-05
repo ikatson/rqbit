@@ -25,6 +25,7 @@
 pub mod api;
 mod api_error;
 mod chunk_tracker;
+mod create_torrent_file;
 mod dht_utils;
 mod file_ops;
 pub mod http_api;
@@ -40,6 +41,7 @@ mod type_aliases;
 
 pub use api::Api;
 pub use api_error::ApiError;
+pub use create_torrent_file::{create_torrent, CreateTorrentOptions};
 pub use dht;
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
@@ -54,6 +56,9 @@ pub use clone_to_owned::CloneToOwned;
 pub use librqbit_core::magnet::*;
 pub use librqbit_core::peer_id::*;
 pub use librqbit_core::torrent_metainfo::*;
+
+#[cfg(test)]
+mod tests;
 
 /// The cargo version of librqbit.
 pub fn version() -> &'static str {
