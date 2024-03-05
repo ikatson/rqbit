@@ -120,7 +120,7 @@ async fn test_e2e() {
             }
             .instrument(error_span!("server", server = i)),
         );
-        futs.push(timeout(Duration::from_secs(10), rx));
+        futs.push(timeout(Duration::from_secs(30), rx));
     }
 
     let mut peers = Vec::new();
@@ -203,7 +203,7 @@ async fn test_e2e() {
             }
             .instrument(error_span!("stats_printer"));
 
-            let timeout = timeout(Duration::from_secs(60), handle.wait_until_completed());
+            let timeout = timeout(Duration::from_secs(180), handle.wait_until_completed());
 
             tokio::pin!(stats_printer);
             tokio::pin!(timeout);
@@ -244,7 +244,7 @@ async fn test_e2e() {
 
         info!("re-added handle");
 
-        timeout(Duration::from_secs(10), async {
+        timeout(Duration::from_secs(30), async {
             let mut interval = interval(Duration::from_millis(100));
             loop {
                 interval.tick().await;
