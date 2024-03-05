@@ -221,8 +221,12 @@ mod tests {
     async fn test_create_torrent() {
         use crate::tests::test_util;
 
-        let dir = test_util::create_default_random_dir_with_torrents(3, 1000 * 1000);
-        let torrent = create_torrent(dir.name(), Default::default())
+        let dir = test_util::create_default_random_dir_with_torrents(
+            3,
+            1000 * 1000,
+            Some("rqbit_test_create_torrent"),
+        );
+        let torrent = create_torrent(dir.path(), Default::default())
             .await
             .unwrap();
 

@@ -274,11 +274,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     WriterRequest::ReadChunkRequest(chunk) => {
                         #[cfg(test)]
                         {
+                            // This is poor-mans fault injection for running e2e tests.
                             use crate::tests::test_util::TestPeerMetadata;
                             let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
                             use rand::Rng;
                             if rand::thread_rng().gen_bool(tpm.disconnect_probability()) {
-                                bail!("I'm fucked");
+                                bail!("disconnecting, to simulate failure in tests");
                             }
 
                             let sleep_ms = (rand::thread_rng().gen::<f64>()

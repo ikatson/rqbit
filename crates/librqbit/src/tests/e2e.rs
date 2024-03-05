@@ -15,7 +15,7 @@ use tracing::{error_span, info, Instrument};
 
 use crate::{
     create_torrent,
-    tests::test_util::{create_default_random_dir_with_torrents, NamedTempDir, TestPeerMetadata},
+    tests::test_util::{create_default_random_dir_with_torrents, TestPeerMetadata},
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
@@ -30,9 +30,10 @@ async fn test_e2e() {
     let file_length: usize = 1000 * 1000;
     let num_files: usize = 64;
 
-    let tempdir = create_default_random_dir_with_torrents(num_files, file_length);
+    let tempdir =
+        create_default_random_dir_with_torrents(num_files, file_length, Some("rqbit_e2e"));
     let torrent_file = create_torrent(
-        dbg!(tempdir.name()),
+        dbg!(tempdir.path()),
         crate::CreateTorrentOptions {
             piece_length: Some(piece_length),
             ..Default::default()
@@ -51,7 +52,7 @@ async fn test_e2e() {
     for i in 0u8..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let tempdir = tempdir.name().to_owned();
+        let tempdir = tempdir.path().to_owned();
         spawn(
             async move {
                 let peer_id = TestPeerMetadata {
@@ -136,9 +137,9 @@ async fn test_e2e() {
 
     // 3. Start a client with the initial peers, and download the file.
     for _ in 0..client_iters {
-        let outdir = NamedTempDir::new().unwrap();
+        let outdir = tempfile::TempDir::with_prefix("rqbit_e2e_client").unwrap();
         let session = Session::new_with_opts(
-            outdir.name().to_owned(),
+            outdir.path().to_owned(),
             SessionOptions {
                 disable_dht: true,
                 disable_dht_persistence: true,
