@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Context;
+use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::stream::BoxStream;
 use futures::stream::FuturesUnordered;
@@ -57,7 +58,7 @@ pub trait TorrentStatsProvider: Send + Sync {
 }
 
 pub trait TorrentActionsProvider: Send + Sync {
-    fn forget_all_peers(&self) -> anyhow::Result<()>;
+    fn forget_all_peers(&self) -> BoxFuture<'_, anyhow::Result<()>>;
 }
 
 impl TorrentStatsProvider for () {
@@ -67,8 +68,8 @@ impl TorrentStatsProvider for () {
 }
 
 impl TorrentActionsProvider for () {
-    fn forget_all_peers(&self) -> anyhow::Result<()> {
-        Ok(())
+    fn forget_all_peers(&self) -> BoxFuture<'_, anyhow::Result<()>> {
+        async { Ok(()) }.boxed()
     }
 }
 

@@ -102,7 +102,7 @@ impl Api {
     pub fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         self.session
-            .unpause(&handle)
+            .unpause(&handle, None)
             .context("error unpausing torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())

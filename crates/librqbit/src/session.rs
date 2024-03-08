@@ -1110,7 +1110,7 @@ impl Session {
             .map(|dht| dht.get_peers(info_hash, announce_port))
             .transpose()?;
 
-        let peer_rx_stats = PeerRxTorrentInfo {
+        let tracker_comms_adapter = TorrentAdapterForTrackerComms {
             info_hash,
             session: self.clone(),
         };
@@ -1118,8 +1118,8 @@ impl Session {
             ManagedTorrentInfoForTrackerMonitor {
                 info_hash,
                 peer_id: self.peer_id,
-                stats: Box::new(peer_rx_stats),
-                actions: Box::new(()),
+                stats: Box::new(tracker_comms_adapter.clone()),
+                actions: Box::new(tracker_comms_adapter),
                 force_interval: force_tracker_interval,
                 tcp_listen_port: announce_port,
             },
@@ -1129,13 +1129,20 @@ impl Session {
         Ok(merge_two_optional_streams(dht_rx, peer_rx))
     }
 
-    pub fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let peer_rx = self.make_peer_rx(
-            handle.info_hash(),
-            handle.info().trackers.clone().into_iter().collect(),
-            self.tcp_listen_port,
-            handle.info().options.force_tracker_interval,
-        )?;
+    pub fn unpause(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        peer_rx: Option<PeerStream>,
+    ) -> anyhow::Result<()> {
+        let peer_rx = match peer_rx {
+            Some(peer_rx) => Some(peer_rx),
+            None => self.make_peer_rx(
+                handle.info_hash(),
+                handle.info().trackers.clone().into_iter().collect(),
+                self.tcp_listen_port,
+                handle.info().options.force_tracker_interval,
+            )?,
+        };
         handle.start(peer_rx, false, self.cancellation_token.child_token())?;
         Ok(())
     }
@@ -1146,21 +1153,28 @@ impl Session {
 }
 
 // Ad adapter for converting stats into the format that tracker_comms accepts.
-struct PeerRxTorrentInfo {
+#[derive(Clone)]
+struct TorrentAdapterForTrackerComms {
     info_hash: Id20,
     session: Arc<Session>,
 }
 
-impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
-    fn get(&self) -> tracker_comms::TrackerCommsStats {
-        let mt = self.session.with_torrents(|torrents| {
+impl TorrentAdapterForTrackerComms {
+    fn get_managed_torrent(&self) -> Option<ManagedTorrentHandle> {
+        self.session.with_torrents(|torrents| {
             for (_, mt) in torrents {
                 if mt.info_hash() == self.info_hash {
                     return Some(mt.clone());
                 }
             }
             None
-        });
+        })
+    }
+}
+
+impl tracker_comms::TorrentStatsProvider for TorrentAdapterForTrackerComms {
+    fn get(&self) -> tracker_comms::TrackerCommsStats {
+        let mt = self.get_managed_torrent();
         let mt = match mt {
             Some(mt) => mt,
             None => {
@@ -1184,5 +1198,27 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
                 TS::Error => S::None,
             },
         }
+    }
+}
+
+impl tracker_comms::TorrentActionsProvider for TorrentAdapterForTrackerComms {
+    fn forget_all_peers(&self) -> BoxFuture<'_, anyhow::Result<()>> {
+        // Pause, then unpause the torrent preserving peer_rx
+        async {
+            let mt = match self.get_managed_torrent() {
+                Some(mt) => mt,
+                None => {
+                    warn!("bug: expected to find ManagedTorrent");
+                    return Ok(());
+                }
+            };
+            let peer_rx_join_handle = mt.pause()?;
+            if let Some(h) = peer_rx_join_handle {
+                let peer_rx = h.await??;
+                self.session.unpause(&mt, Some(peer_rx))?;
+            }
+            Ok(())
+        }
+        .boxed()
     }
 }
