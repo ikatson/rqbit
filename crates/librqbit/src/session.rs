@@ -47,7 +47,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
-use tracker_comms::{ManagedTorrentInfoForTrackerMonitor, TrackerComms};
+use tracker_comms::{ManagedTorrentInfoForTrackerMonitor, TrackerCommsStandard};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -1114,7 +1114,7 @@ impl Session {
             info_hash,
             session: self.clone(),
         };
-        let peer_rx = TrackerComms::start(
+        let peer_rx = TrackerCommsStandard::start(
             ManagedTorrentInfoForTrackerMonitor {
                 info_hash,
                 peer_id: self.peer_id,
