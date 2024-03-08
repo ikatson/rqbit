@@ -1070,7 +1070,7 @@ impl Session {
             .with_state_mut(|s| {
                 let paused = match s.take() {
                     ManagedTorrentState::Paused(p) => p,
-                    ManagedTorrentState::Live(l) => l.pause()?,
+                    ManagedTorrentState::Live(l) => l.pause()?.0,
                     _ => return Ok(None),
                 };
                 Ok::<_, anyhow::Error>(Some(paused))

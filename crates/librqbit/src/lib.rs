@@ -43,12 +43,12 @@ pub use api::Api;
 pub use api_error::ApiError;
 pub use create_torrent_file::{create_torrent, CreateTorrentOptions};
 pub use dht;
+pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, SessionOptions,
     SUPPORTED_SCHEMES,
 };
-pub use spawn_utils::spawn as librqbit_spawn;
 pub use torrent_state::{ManagedTorrent, ManagedTorrentState, TorrentStats, TorrentStatsState};
 
 pub use buffers::*;

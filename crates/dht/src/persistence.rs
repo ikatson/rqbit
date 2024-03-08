@@ -167,6 +167,8 @@ impl PersistentDht {
                                 }
                             }
                         }
+                        #[allow(unreachable_code)]
+                        Ok::<(), anyhow::Error>(())
                     }
                 },
             );

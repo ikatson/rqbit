@@ -3,10 +3,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, trace, Instrument};
 
 /// Spawns a future with tracing instrumentation.
-pub fn spawn(
+pub fn spawn<R: Send + 'static>(
     span: tracing::Span,
-    fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
-) -> tokio::task::JoinHandle<()> {
+    fut: impl std::future::Future<Output = anyhow::Result<R>> + Send + 'static,
+) -> tokio::task::JoinHandle<anyhow::Result<R>> {
     let fut = async move {
         trace!("started");
         tokio::pin!(fut);
@@ -18,7 +18,7 @@ pub fn spawn(
                     trace!("still running");
                 },
                 r = &mut fut => {
-                    match r {
+                    match &r {
                         Ok(_) => {
                             trace!("finished");
                         }
@@ -26,7 +26,7 @@ pub fn spawn(
                             error!("finished with error: {:#}", e)
                         }
                     }
-                    return;
+                    return r;
                 }
             }
         }
@@ -35,11 +35,11 @@ pub fn spawn(
     tokio::task::spawn(fut)
 }
 
-pub fn spawn_with_cancel(
+pub fn spawn_with_cancel<R: Send + 'static>(
     span: tracing::Span,
     cancellation_token: CancellationToken,
-    fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
-) -> tokio::task::JoinHandle<()> {
+    fut: impl std::future::Future<Output = anyhow::Result<R>> + Send + 'static,
+) -> tokio::task::JoinHandle<anyhow::Result<R>> {
     spawn(span, async move {
         tokio::select! {
             _ = cancellation_token.cancelled() => {

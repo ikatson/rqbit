@@ -321,6 +321,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 });
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+        #[allow(unreachable_code)]
+        Ok(())
     };
 
     match &opts.subcommand {
@@ -334,11 +336,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
                         .await
                         .context("error initializing rqbit session")?;
-                librqbit_spawn(
-                    "stats_printer",
-                    trace_span!("stats_printer"),
-                    stats_printer(session.clone()),
-                );
+                librqbit_spawn(trace_span!("stats_printer"), stats_printer(session.clone()));
                 let api = Api::new(
                     session,
                     Some(log_config.rust_log_reload_tx),
@@ -419,11 +417,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 .await
                 .context("error initializing rqbit session")?;
 
-                librqbit_spawn(
-                    "stats_printer",
-                    trace_span!("stats_printer"),
-                    stats_printer(session.clone()),
-                );
+                librqbit_spawn(trace_span!("stats_printer"), stats_printer(session.clone()));
                 let api = Api::new(
                     session.clone(),
                     Some(log_config.rust_log_reload_tx),
@@ -432,7 +426,6 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: true }));
                 let http_api_listen_addr = opts.http_api_listen_addr;
                 librqbit_spawn(
-                    "http_api",
                     error_span!("http_api"),
                     http_api.make_http_api_and_run(http_api_listen_addr),
                 );

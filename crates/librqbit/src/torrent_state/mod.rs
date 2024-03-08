@@ -25,8 +25,6 @@ use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 pub use live::*;
 use parking_lot::RwLock;
 
-use tokio::time::timeout;
-use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error_span;
@@ -200,44 +198,6 @@ impl ManagedTorrent {
                 );
             };
 
-        fn spawn_peer_adder(live: &Arc<TorrentStateLive>, peer_rx: Option<PeerStream>) {
-            live.spawn(
-                error_span!(parent: live.meta().span.clone(), "external_peer_adder"),
-                {
-                    let live = live.clone();
-                    async move {
-                        let live = {
-                            let weak = Arc::downgrade(&live);
-                            drop(live);
-                            weak
-                        };
-
-                        let mut peer_rx = if let Some(peer_rx) = peer_rx {
-                            peer_rx
-                        } else {
-                            return Ok(());
-                        };
-
-                        loop {
-                            match timeout(Duration::from_secs(5), peer_rx.next()).await {
-                                Ok(Some(peer)) => {
-                                    let live = match live.upgrade() {
-                                        Some(live) => live,
-                                        None => return Ok(()),
-                                    };
-                                    live.add_peer_if_not_seen(peer).context("torrent closed")?;
-                                }
-                                Ok(None) => return Ok(()),
-                                // If timeout, check if the torrent is live.
-                                Err(_) if live.strong_count() == 0 => return Ok(()),
-                                Err(_) => continue,
-                            }
-                        }
-                    }
-                },
-            );
-        }
-
         match &g.state {
             ManagedTorrentState::Live(_) => {
                 bail!("torrent is already live");
@@ -266,13 +226,16 @@ impl ManagedTorrent {
                                     return Ok(());
                                 }
 
-                                let (tx, rx) = tokio::sync::oneshot::channel();
-                                let live =
-                                    TorrentStateLive::new(paused, tx, live_cancellation_token);
+                                let (fatal_tx, fatal_rx) = tokio::sync::oneshot::channel();
+                                let live = TorrentStateLive::new(
+                                    paused,
+                                    peer_rx,
+                                    fatal_tx,
+                                    live_cancellation_token,
+                                );
                                 g.state = ManagedTorrentState::Live(live.clone());
 
-                                spawn_fatal_errors_receiver(&t, rx, token);
-                                spawn_peer_adder(&live, peer_rx);
+                                spawn_fatal_errors_receiver(&t, fatal_rx, token);
 
                                 Ok(())
                             }
@@ -288,11 +251,15 @@ impl ManagedTorrent {
             }
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone());
+                let (fatal_tx, fatal_rx) = tokio::sync::oneshot::channel();
+                let live = TorrentStateLive::new(
+                    paused,
+                    peer_rx,
+                    fatal_tx,
+                    live_cancellation_token.clone(),
+                );
                 g.state = ManagedTorrentState::Live(live.clone());
-                spawn_fatal_errors_receiver(self, rx, live_cancellation_token);
-                spawn_peer_adder(&live, peer_rx);
+                spawn_fatal_errors_receiver(self, fatal_rx, live_cancellation_token);
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
@@ -311,13 +278,15 @@ impl ManagedTorrent {
     }
 
     /// Pause the torrent if it's live.
-    pub fn pause(&self) -> anyhow::Result<()> {
+    pub fn pause(
+        &self,
+    ) -> anyhow::Result<Option<tokio::task::JoinHandle<anyhow::Result<PeerStream>>>> {
         let mut g = self.locked.write();
         match &g.state {
             ManagedTorrentState::Live(live) => {
-                let paused = live.pause()?;
+                let (paused, peer_rx) = live.pause()?;
                 g.state = ManagedTorrentState::Paused(paused);
-                Ok(())
+                Ok(peer_rx)
             }
             ManagedTorrentState::Initializing(_) => {
                 bail!("torrent is initializing, can't pause");

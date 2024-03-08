@@ -193,7 +193,7 @@ struct RecursiveRequest<C: RecursiveRequestCallbacks> {
 
 pub struct RequestPeersStream {
     rx: tokio::sync::mpsc::UnboundedReceiver<SocketAddr>,
-    cancel_join_handle: tokio::task::JoinHandle<()>,
+    cancel_join_handle: tokio::task::JoinHandle<anyhow::Result<()>>,
 }
 
 impl RequestPeersStream {
@@ -324,7 +324,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
     fn request_peers_forever(
         self: &Arc<Self>,
         mut node_rx: tokio::sync::mpsc::UnboundedReceiver<(Option<Id20>, SocketAddr, usize)>,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
         let this = self.clone();
         spawn(
             error_span!(parent: None, "get_peers", info_hash = format!("{:?}", self.info_hash)),
@@ -342,7 +342,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                                 Ok(_) => REQUERY_INTERVAL,
                                 Err(e) => {
                                     error!("error in get_peers_root(): {e:?}");
-                                    return Err::<(), anyhow::Error>(e);
+                                    return Err::<(), _>(e);
                                 }
                             };
                             tokio::time::sleep(sleep).await;
