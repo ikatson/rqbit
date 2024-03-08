@@ -20,12 +20,8 @@ use crate::tracker_comms_udp;
 use librqbit_core::hash_id::Id20;
 
 pub struct TrackerComms {
-    info_hash: Id20,
-    peer_id: Id20,
-    stats: Box<dyn TorrentStatsProvider>,
-    force_tracker_interval: Option<Duration>,
+    info: ManagedTorrentInfoForTrackerMonitor,
     tx: Sender,
-    tcp_listen_port: Option<u16>,
 }
 
 #[derive(Default)]
@@ -77,14 +73,18 @@ enum SupportedTracker {
     Http(Url),
 }
 
+pub struct ManagedTorrentInfoForTrackerMonitor {
+    pub info_hash: Id20,
+    pub peer_id: Id20,
+    pub stats: Box<dyn TorrentStatsProvider>,
+    pub force_interval: Option<Duration>,
+    pub tcp_listen_port: Option<u16>,
+}
+
 impl TrackerComms {
     pub fn start(
-        info_hash: Id20,
-        peer_id: Id20,
+        info: ManagedTorrentInfoForTrackerMonitor,
         trackers: Vec<String>,
-        stats: Box<dyn TorrentStatsProvider>,
-        force_interval: Option<Duration>,
-        tcp_listen_port: Option<u16>,
     ) -> Option<BoxStream<'static, SocketAddr>> {
         let trackers = trackers
             .into_iter()
@@ -112,12 +112,8 @@ impl TrackerComms {
         let s = async_stream::stream! {
             use futures::StreamExt;
             let comms = Arc::new(Self {
-                info_hash,
-                peer_id,
-                stats,
-                force_tracker_interval: force_interval,
+                info,
                 tx,
-                tcp_listen_port,
             });
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {
@@ -149,7 +145,7 @@ impl TrackerComms {
         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
     > {
-        let info_hash = self.info_hash;
+        let info_hash = self.info.info_hash;
         match url {
             SupportedTracker::Udp(url) => {
                 let span = error_span!(parent: None, "udp_tracker", tracker = %url, info_hash = ?info_hash);
@@ -174,11 +170,11 @@ impl TrackerComms {
     async fn task_single_tracker_monitor_http(&self, mut tracker_url: Url) -> anyhow::Result<()> {
         let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
         loop {
-            let stats = self.stats.get();
+            let stats = self.info.stats.get();
             let request = tracker_comms_http::TrackerRequest {
-                info_hash: self.info_hash,
-                peer_id: self.peer_id,
-                port: self.tcp_listen_port.unwrap_or(0),
+                info_hash: self.info.info_hash,
+                peer_id: self.info.peer_id,
+                port: self.info.tcp_listen_port.unwrap_or(0),
                 uploaded: stats.uploaded_bytes,
                 downloaded: stats.downloaded_bytes,
                 left: stats.get_left_to_download_bytes(),
@@ -198,7 +194,8 @@ impl TrackerComms {
                 Ok(interval) => {
                     event = None;
                     let interval = self
-                        .force_tracker_interval
+                        .info
+                        .force_interval
                         .unwrap_or_else(|| Duration::from_secs(interval));
                     debug!(
                         "sleeping for {:?} after calling tracker {}",
@@ -256,10 +253,10 @@ impl TrackerComms {
                 tokio::time::sleep(i).await;
             }
 
-            let stats = self.stats.get();
+            let stats = self.info.stats.get();
             let request = AnnounceFields {
-                info_hash: self.info_hash,
-                peer_id: self.peer_id,
+                info_hash: self.info.info_hash,
+                peer_id: self.info.peer_id,
                 downloaded: stats.downloaded_bytes,
                 left: stats.get_left_to_download_bytes(),
                 uploaded: stats.uploaded_bytes,
@@ -276,7 +273,7 @@ impl TrackerComms {
                     }
                 },
                 key: 0, // whatever that is?
-                port: self.tcp_listen_port.unwrap_or(0),
+                port: self.info.tcp_listen_port.unwrap_or(0),
             };
 
             match requester.announce(request).await {
@@ -290,15 +287,13 @@ impl TrackerComms {
                     }
                     let new_interval = response.interval.max(5);
                     let new_interval = Duration::from_secs(new_interval as u64);
-                    sleep_interval = Some(self.force_tracker_interval.unwrap_or(new_interval));
+                    sleep_interval = Some(self.info.force_interval.unwrap_or(new_interval));
                 }
                 Err(e) => {
                     debug!(url = ?url, "error reading announce response: {e:#}");
                     if sleep_interval.is_none() {
-                        sleep_interval = Some(
-                            self.force_tracker_interval
-                                .unwrap_or(Duration::from_secs(60)),
-                        );
+                        sleep_interval =
+                            Some(self.info.force_interval.unwrap_or(Duration::from_secs(60)));
                     }
                 }
             }
