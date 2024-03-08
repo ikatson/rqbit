@@ -10,8 +10,10 @@ use futures::stream::FuturesUnordered;
 use futures::FutureExt;
 use futures::StreamExt;
 use tracing::debug;
+use tracing::error;
 use tracing::error_span;
 use tracing::trace;
+use tracing::warn;
 use tracing::Instrument;
 use url::Url;
 
@@ -73,6 +75,7 @@ impl TorrentActionsProvider for () {
     }
 }
 
+#[derive(Debug, Clone)]
 enum SupportedTracker {
     Udp(Url),
     Http(Url),
@@ -256,6 +259,7 @@ fn task_single_tracker_monitor<'a>(
     }
 }
 
+// Tracker comms that polls all trackers at the same time.
 impl TrackerCommsStandard {
     pub fn start(
         info: ManagedTorrentInfoForTrackerMonitor,
@@ -301,6 +305,74 @@ impl TrackerCommsStandard {
                         if let Some(Err(e)) = e {
                             debug!("error: {e}");
                         }
+                    }
+                }
+            }
+        };
+
+        Some(s.boxed())
+    }
+}
+
+// BEP-27 tracker comms.
+pub struct TrackerCommsPrivateTorrent {}
+
+impl TrackerCommsPrivateTorrent {
+    pub fn start(
+        info: ManagedTorrentInfoForTrackerMonitor,
+        trackers: Vec<String>,
+    ) -> Option<BoxStream<'static, SocketAddr>> {
+        let trackers = trackers
+            .into_iter()
+            .filter_map(|t| match Url::parse(&t) {
+                Ok(parsed) => match parsed.scheme() {
+                    "http" | "https" => Some(SupportedTracker::Http(parsed)),
+                    "udp" => Some(SupportedTracker::Udp(parsed)),
+                    _ => {
+                        debug!("unsuppoted tracker URL: {}", t);
+                        None
+                    }
+                },
+                Err(e) => {
+                    debug!("error parsing tracker URL {}: {}", t, e);
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if trackers.is_empty() {
+            return None;
+        }
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<SocketAddr>(16);
+
+        let s = async_stream::stream! {
+            let main = async {
+                loop {
+                    for tracker in trackers.iter() {
+                        if let Err(e) = task_single_tracker_monitor(&info, &tx, tracker.clone()).await {
+                            debug!("error monitoring tracker {:?}: {:?}. will forget all peers.", tracker, e);
+                        }
+                        info.actions.forget_all_peers().await?;
+                    }
+                    warn!("exhausted all trackers, sleeping for a minute");
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+                #[allow(unreachable_code)]
+                Ok::<_, anyhow::Error>(())
+            };
+
+            tokio::pin!(main);
+
+            loop {
+                tokio::select! {
+                    addr = rx.recv() => {
+                        if let Some(addr) = addr {
+                            yield addr;
+                        }
+                    }
+                    r = &mut main => {
+                        error!("{:?}", r);
+                        break;
                     }
                 }
             }
