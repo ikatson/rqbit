@@ -1119,6 +1119,7 @@ impl Session {
                 info_hash,
                 peer_id: self.peer_id,
                 stats: Box::new(peer_rx_stats),
+                actions: Box::new(()),
                 force_interval: force_tracker_interval,
                 tcp_listen_port: announce_port,
             },

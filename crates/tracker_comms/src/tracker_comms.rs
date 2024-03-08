@@ -56,9 +56,19 @@ pub trait TorrentStatsProvider: Send + Sync {
     fn get(&self) -> TrackerCommsStats;
 }
 
+pub trait TorrentActionsProvider: Send + Sync {
+    fn forget_all_peers(&self) -> anyhow::Result<()>;
+}
+
 impl TorrentStatsProvider for () {
     fn get(&self) -> TrackerCommsStats {
         Default::default()
+    }
+}
+
+impl TorrentActionsProvider for () {
+    fn forget_all_peers(&self) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -71,6 +81,7 @@ pub struct ManagedTorrentInfoForTrackerMonitor {
     pub info_hash: Id20,
     pub peer_id: Id20,
     pub stats: Box<dyn TorrentStatsProvider>,
+    pub actions: Box<dyn TorrentActionsProvider>,
     pub force_interval: Option<Duration>,
     pub tcp_listen_port: Option<u16>,
 }
