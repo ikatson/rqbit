@@ -9,6 +9,7 @@ pub struct Magnet {
     id20: Option<Id20>,
     id32: Option<Id32>,
     pub trackers: Vec<String>,
+    pub is_private: bool,
 }
 
 impl Magnet {
@@ -30,6 +31,7 @@ impl Magnet {
         let mut id20: Option<Id20> = None;
         let mut id32: Option<Id32> = None;
         let mut trackers = Vec::<String>::new();
+        let mut is_private = false;
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
                 "xt" => {
@@ -46,6 +48,8 @@ impl Magnet {
                     }
                 }
                 "tr" => trackers.push(value.into()),
+                // TODO: is it the correct key?
+                "private" => is_private = true,
                 _ => {}
             }
         }
@@ -54,6 +58,7 @@ impl Magnet {
                 id20,
                 id32,
                 trackers,
+                is_private,
             }),
             false => {
                 anyhow::bail!("did not find infohash")

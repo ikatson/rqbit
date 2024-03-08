@@ -47,7 +47,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
-use tracker_comms::{ManagedTorrentInfoForTrackerMonitor, TrackerCommsStandard};
+use tracker_comms::{
+    ManagedTorrentInfoForTrackerMonitor, TrackerCommsPrivateTorrent, TrackerCommsStandard,
+};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -831,6 +833,7 @@ impl Session {
                         magnet.trackers.clone(),
                         announce_port,
                         opts.force_tracker_interval,
+                        magnet.is_private,
                     )?;
                     let peer_rx = match peer_rx {
                         Some(peer_rx) => peer_rx,
@@ -900,6 +903,7 @@ impl Session {
                             trackers.clone(),
                             announce_port,
                             opts.force_tracker_interval,
+                            torrent.info.is_private(),
                         )?
                     };
 
@@ -1102,29 +1106,35 @@ impl Session {
         trackers: Vec<String>,
         announce_port: Option<u16>,
         force_tracker_interval: Option<Duration>,
+        is_private: bool,
     ) -> anyhow::Result<Option<PeerStream>> {
         let announce_port = announce_port.or(self.tcp_listen_port);
-        let dht_rx = self
-            .dht
-            .as_ref()
-            .map(|dht| dht.get_peers(info_hash, announce_port))
-            .transpose()?;
+        let dht_rx = if is_private {
+            None
+        } else {
+            self.dht
+                .as_ref()
+                .map(|dht| dht.get_peers(info_hash, announce_port))
+                .transpose()?
+        };
 
         let tracker_comms_adapter = TorrentAdapterForTrackerComms {
             info_hash,
             session: self.clone(),
         };
-        let peer_rx = TrackerCommsStandard::start(
-            ManagedTorrentInfoForTrackerMonitor {
-                info_hash,
-                peer_id: self.peer_id,
-                stats: Box::new(tracker_comms_adapter.clone()),
-                actions: Box::new(tracker_comms_adapter),
-                force_interval: force_tracker_interval,
-                tcp_listen_port: announce_port,
-            },
-            trackers,
-        );
+        let info = ManagedTorrentInfoForTrackerMonitor {
+            info_hash,
+            peer_id: self.peer_id,
+            stats: Box::new(tracker_comms_adapter.clone()),
+            actions: Box::new(tracker_comms_adapter),
+            force_interval: force_tracker_interval,
+            tcp_listen_port: announce_port,
+        };
+        let peer_rx = if is_private {
+            TrackerCommsPrivateTorrent::start(info, trackers)
+        } else {
+            TrackerCommsStandard::start(info, trackers)
+        };
 
         Ok(merge_two_optional_streams(dht_rx, peer_rx))
     }
@@ -1141,6 +1151,7 @@ impl Session {
                 handle.info().trackers.clone().into_iter().collect(),
                 self.tcp_listen_port,
                 handle.info().options.force_tracker_interval,
+                handle.info().info.is_private(),
             )?,
         };
         handle.start(peer_rx, false, self.cancellation_token.child_token())?;

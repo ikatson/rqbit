@@ -163,6 +163,7 @@ async fn create_torrent_raw<'a>(
         piece_length,
         length: if single_file_mode { Some(length) } else { None },
         md5sum: None,
+        private: None,
         files: if single_file_mode {
             None
         } else {

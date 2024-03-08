@@ -79,6 +79,9 @@ pub struct TorrentMetaV1Info<BufType> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub md5sum: Option<BufType>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private: Option<u32>,
+
     // Multi-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
@@ -198,6 +201,10 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
         Ok(self.iter_filenames_and_lengths()?.map(|(_, l)| l))
     }
+
+    pub fn is_private(&self) -> bool {
+        self.private.map(|v| v == 1).unwrap_or(false)
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
@@ -246,6 +253,7 @@ where
             piece_length: self.piece_length,
             length: self.length,
             md5sum: self.md5sum.clone_to_owned(),
+            private: self.private.clone_to_owned(),
             files: self.files.clone_to_owned(),
         }
     }
