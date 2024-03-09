@@ -524,6 +524,13 @@ impl Handshake<ByteBuf<'static>> {
         let pstr_len = *b
             .first()
             .ok_or(MessageDeserializeError::NotEnoughData(1, "handshake"))?;
+        if pstr_len as usize != PSTR_BT1.len() {
+            return Err(MessageDeserializeError::Other(anyhow::anyhow!(
+                "pstr should be {} bytes long, but received {}",
+                PSTR_BT1.len(),
+                pstr_len
+            )));
+        }
         let expected_len = 1usize + pstr_len as usize + 48;
         let hbuf = b
             .get(..expected_len)
