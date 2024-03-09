@@ -531,12 +531,15 @@ impl Handshake<ByteBuf<'static>> {
                 expected_len,
                 "handshake",
             ))?;
-        Ok((
-            Self::bopts()
-                .deserialize(hbuf)
-                .map_err(|e| MessageDeserializeError::Other(e.into()))?,
-            expected_len,
-        ))
+        let h = Self::bopts()
+            .deserialize::<Handshake<ByteBuf<'_>>>(hbuf)
+            .map_err(|e| MessageDeserializeError::Other(e.into()))?;
+        if h.pstr.0 != PSTR_BT1.as_bytes() {
+            return Err(MessageDeserializeError::Other(anyhow::anyhow!(
+                "pstr doesn't match bittorrent V1"
+            )));
+        }
+        Ok((h, expected_len))
     }
 }
 
