@@ -1,7 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Context;
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
+use clap_complete::Shell;
 use librqbit::{
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
@@ -172,6 +173,12 @@ impl From<&str> for InitialPeers {
     }
 }
 
+#[derive(Parser)]
+struct CompletionsOpts {
+    /// The shell to generate completions for
+    shell: Shell,
+}
+
 // server start
 // download [--connect-to-existing] --output-folder(required) [file1] [file2]
 
@@ -179,6 +186,7 @@ impl From<&str> for InitialPeers {
 enum SubCommand {
     Server(ServerOpts),
     Download(DownloadOpts),
+    Completions(CompletionsOpts),
 }
 
 fn _start_deadlock_detector_thread() {
@@ -518,6 +526,15 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     anyhow::bail!("no torrents were added")
                 }
             }
+        }
+        SubCommand::Completions(completions_opts) => {
+            clap_complete::generate(
+                completions_opts.shell,
+                &mut Opts::command(),
+                "rqbit",
+                &mut io::stdout(),
+            );
+            Ok(())
         }
     }
 }
