@@ -44,6 +44,8 @@ CPU is spent mostly on SHA1 checksumming.
 There are pre-built binaries in [Releases](https://github.com/ikatson/rqbit/releases).
 If someone wants to put rqbit into e.g. homebrew, PRs welcome :)
 
+[![](https://repology.org/badge/vertical-allrepos/rqbit.svg)](https://repology.org/project/rqbit/versions)
+
 If you have rust toolchain installed, this should work:
 
 ```
