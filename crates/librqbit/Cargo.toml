@@ -43,7 +43,7 @@ anyhow = "1"
 itertools = "0.12"
 http = "1"
 regex = "1"
-reqwest = {version="0.11.22", default-features=false, features = ["json"]}
+reqwest = {version="0.12", default-features=false, features = ["json"]}
 urlencoding = "2"
 byteorder = "1"
 bincode = "1"

@@ -28,15 +28,14 @@ librqbit = {path="../librqbit", default-features=false, version = "5.4.2"}
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 console-subscriber = {version = "0.2", optional = true}
 anyhow = "1"
-clap = {version = "4", features = ["derive", "deprecated"]}
-clap_complete = "4.4.5"
+clap = {version = "~4.4", features = ["derive", "deprecated"]}
+clap_complete = "~4.4"
 tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 regex = "1"
 futures = "0.3"
 parse_duration = "2"
 parking_lot = {version = "0.12", features = ["deadlock_detection"]}
-reqwest = "0.11"
 serde = {version = "1", features=["derive"]}
 serde_json = "1"
 size_format = "1"
