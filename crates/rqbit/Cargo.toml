@@ -28,7 +28,7 @@ librqbit = {path="../librqbit", default-features=false, version = "5.4.2"}
 tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
 console-subscriber = {version = "0.2", optional = true}
 anyhow = "1"
-clap = {version = "4", features = ["derive", "deprecated"]}
+clap = {version = "~4.4", features = ["derive", "deprecated"]}
 clap_complete = "4.4.5"
 tracing = "0.1"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
