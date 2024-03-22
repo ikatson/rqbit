@@ -36,7 +36,6 @@ regex = "1"
 futures = "0.3"
 parse_duration = "2"
 parking_lot = {version = "0.12", features = ["deadlock_detection"]}
-reqwest = "0.11"
 serde = {version = "1", features=["derive"]}
 serde_json = "1"
 size_format = "1"
