@@ -200,7 +200,7 @@ pub async fn create_torrent<'a>(
     let info_hash = compute_info_hash(&info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
-            announce: b""[..].into(),
+            announce: None,
             announce_list: Vec::new(),
             info,
             comment: None,

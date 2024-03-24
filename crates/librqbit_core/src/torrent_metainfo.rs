@@ -29,7 +29,8 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
 /// A parsed .torrent file.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TorrentMetaV1<BufType> {
-    pub announce: BufType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub announce: Option<BufType>,
     #[serde(
         rename = "announce-list",
         default = "Vec::new",
@@ -59,7 +60,7 @@ impl<BufType> TorrentMetaV1<BufType> {
         if self.announce_list.iter().flatten().next().is_some() {
             return itertools::Either::Left(self.announce_list.iter().flatten());
         }
-        itertools::Either::Right(once(&self.announce))
+        itertools::Either::Right(self.announce.iter())
     }
 }
 
