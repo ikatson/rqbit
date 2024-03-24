@@ -721,10 +721,7 @@ impl Session {
                 .map(|t| ByteString(t.into_bytes()))
                 .collect();
             let info = TorrentMetaV1Owned {
-                announce: trackers
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| ByteString(b"http://retracker.local/announce".to_vec())),
+                announce: trackers.first().cloned(),
                 announce_list: vec![trackers],
                 info: storrent.info,
                 comment: None,
