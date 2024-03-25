@@ -16,7 +16,7 @@ anyhow = "1"
 futures = "0.3"
 async-stream = "0.3.5"
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
-librqbit-core = {path = "../librqbit_core", version = "3.5.0"}
+librqbit-core = {path = "../librqbit_core", version = "3.6.0"}
 byteorder = "1.5"
 serde = {version = "1", features=["derive"]}
 urlencoding = "2"
