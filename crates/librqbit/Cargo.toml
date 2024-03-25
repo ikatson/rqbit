@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "5.5.1"
+version = "5.5.2"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -27,7 +27,7 @@ tracker_comms = {path = "../tracker_comms", default-features=false, package="lib
 buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
 librqbit-core = {path = "../librqbit_core", version = "3.5.0"}
 clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.4.0"}
+peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.5.0"}
 sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
 dht = {path = "../dht", package="librqbit-dht", version="5.0.0"}
 librqbit-upnp = {path = "../upnp", version = "0.1.0"}
