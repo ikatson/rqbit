@@ -1323,7 +1323,6 @@ dependencies = [
  "anyhow",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
- "librqbit-sha1-wrapper",
  "serde",
 ]
 
