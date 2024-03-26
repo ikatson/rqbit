@@ -18,6 +18,9 @@ pub trait ISha1 {
     fn new() -> Self;
     fn update(&mut self, buf: &[u8]);
     fn finish(self) -> [u8; 20];
+    fn write(&mut self) -> Sha1Writer<Self> {
+        Sha1Writer(self)
+    }
 }
 
 #[cfg(feature = "sha1-rust")]
@@ -92,5 +95,23 @@ impl ISha1 for Sha1System {
         let mut result_arr = [0u8; 20];
         result_arr.copy_from_slice(&result);
         result_arr
+    }
+}
+
+pub struct Sha1Writer<'a, T>(&'a mut T)
+where
+    T: ISha1 + ?Sized;
+
+impl<T> std::io::Write for Sha1Writer<'_, T>
+where
+    T: ISha1,
+{
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }

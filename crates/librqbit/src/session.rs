@@ -731,7 +731,6 @@ impl Session {
                 publisher: None,
                 publisher_url: None,
                 creation_date: None,
-                info_hash: Id20::from_str(&storrent.info_hash)?,
             };
             futures.push({
                 let session = self.clone();
@@ -894,7 +893,7 @@ impl Session {
                         None
                     } else {
                         self.make_peer_rx(
-                            torrent.info_hash,
+                            torrent.v1_info_hash(),
                             trackers.clone(),
                             announce_port,
                             opts.force_tracker_interval,
@@ -902,7 +901,7 @@ impl Session {
                     };
 
                     (
-                        torrent.info_hash,
+                        torrent.v1_info_hash(),
                         bencode::from_value(torrent.info)?,
                         trackers,
                         peer_rx,

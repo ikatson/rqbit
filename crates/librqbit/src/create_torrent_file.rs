@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::{BufWriter, Read};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 
 use anyhow::Context;
@@ -46,25 +46,10 @@ fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Resu
 }
 
 fn compute_info_hash(t: &TorrentMetaV1Info<ByteString>) -> anyhow::Result<Id20> {
-    struct W {
-        hash: sha1w::Sha1,
-    }
-    impl std::io::Write for W {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.hash.update(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut writer = BufWriter::new(W { hash: Sha1::new() });
-    bencode_serialize_to_writer(t, &mut writer)?;
-    let hash = writer
-        .into_inner()
-        .map_err(|_| anyhow::anyhow!("into_inner errored"))?
-        .hash;
+    let mut hash = Sha1::new();
+    bencode_serialize_to_writer(t, &mut hash.write())?;
+    // There was a flush here before, but the hash writer doesn't need flushing. What's the correct
+    // practice to ensure flushing would occur if it were needed for an arbitrary Write?
     Ok(Id20::new(hash.finish()))
 }
 
@@ -183,7 +168,7 @@ impl CreateTorrentResult {
     }
 
     pub fn info_hash(&self) -> Id20 {
-        self.meta.info_hash
+        self.meta.v1_info_hash()
     }
 
     pub fn as_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -211,7 +196,6 @@ pub async fn create_torrent<'a>(
             publisher: None,
             publisher_url: None,
             creation_date: None,
-            info_hash,
         },
     })
 }
@@ -239,6 +223,6 @@ mod tests {
         let bytes = torrent.as_bytes().unwrap();
 
         let deserialized = torrent_from_bytes::<ByteBuf>(&bytes).unwrap();
-        assert_eq!(torrent.info_hash(), deserialized.info_hash);
+        assert_eq!(torrent.info_hash(), deserialized.v1_info_hash());
     }
 }

@@ -1350,6 +1350,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
+ "librqbit-sha1-wrapper",
  "parking_lot",
  "serde",
  "serde_json",
