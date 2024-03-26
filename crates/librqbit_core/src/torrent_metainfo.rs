@@ -334,10 +334,8 @@ mod tests {
         let torrent = torrent_from_bytes::<ByteString>(&buf).unwrap().info;
         let mut writer = Vec::new();
         bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
-        let deserialized = RawInfo::deserialize(
-            &mut BencodeDeserializer::new_from_buf(&writer),
-        )
-        .unwrap();
+        let deserialized =
+            RawInfo::deserialize(&mut BencodeDeserializer::new_from_buf(&writer)).unwrap();
 
         assert_eq!(torrent, deserialized);
     }
