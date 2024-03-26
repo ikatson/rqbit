@@ -4,6 +4,7 @@
 
 pub mod extended;
 
+use bencode::BencodeValueBufConstraint;
 use bincode::Options;
 use buffers::{ByteBuf, ByteString};
 use byteorder::{ByteOrder, BE};
@@ -168,7 +169,7 @@ impl From<anyhow::Error> for MessageDeserializeError {
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf: std::hash::Hash + Eq> {
+pub enum Message<ByteBuf: BencodeValueBufConstraint> {
     Request(Request),
     Cancel(Request),
     Bitfield(ByteBuf),
@@ -194,8 +195,8 @@ pub struct Bitfield<'a> {
 
 impl<ByteBuf> CloneToOwned for Message<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq,
+    ByteBuf: CloneToOwned + BencodeValueBufConstraint,
+    <ByteBuf as CloneToOwned>::Target: BencodeValueBufConstraint,
 {
     type Target = Message<<ByteBuf as CloneToOwned>::Target>;
 
@@ -239,7 +240,7 @@ impl<'a> std::fmt::Debug for Bitfield<'a> {
 
 impl<ByteBuf> Message<ByteBuf>
 where
-    ByteBuf: AsRef<[u8]> + std::hash::Hash + Eq + Serialize,
+    ByteBuf: AsRef<[u8]> + BencodeValueBufConstraint + Serialize,
 {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {

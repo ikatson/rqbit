@@ -1,6 +1,6 @@
-use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use bencode::BencodeValue;
+use bencode::{bencode_serialize_to_writer, BencodeValueBufConstraint};
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub mod ut_metadata;
 use super::MY_EXTENDED_UT_METADATA;
 
 #[derive(Debug)]
-pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq> {
+pub enum ExtendedMessage<ByteBuf: BencodeValueBufConstraint> {
     Handshake(ExtendedHandshake<ByteBuf>),
     UtMetadata(UtMetadata<ByteBuf>),
     Dyn(u8, BencodeValue<ByteBuf>),
@@ -22,8 +22,8 @@ pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq> {
 
 impl<ByteBuf> CloneToOwned for ExtendedMessage<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq,
+    ByteBuf: CloneToOwned + BencodeValueBufConstraint,
+    <ByteBuf as CloneToOwned>::Target: BencodeValueBufConstraint,
 {
     type Target = ExtendedMessage<<ByteBuf as CloneToOwned>::Target>;
 
@@ -36,7 +36,7 @@ where
     }
 }
 
-impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf> {
+impl<'a, ByteBuf: 'a + BencodeValueBufConstraint + Serialize> ExtendedMessage<ByteBuf> {
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
