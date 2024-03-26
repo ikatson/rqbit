@@ -58,6 +58,7 @@ impl TorrentStateInitializing {
                         .create(true)
                         .read(true)
                         .write(true)
+                        .truncate(false)
                         .open(&full_path)
                         .with_context(|| {
                             format!("error opening {full_path:?} in read/write mode")

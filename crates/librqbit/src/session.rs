@@ -4,7 +4,6 @@ use std::{
     io::{BufReader, BufWriter, Read},
     net::SocketAddr,
     path::PathBuf,
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -720,24 +719,24 @@ impl Session {
                 .into_iter()
                 .map(|t| ByteString(t.into_bytes()))
                 .collect();
-            let info = TorrentMetaV1Owned {
+            let info_value = bencode::serialize_to_value(storrent.info)?;
+            let meta_info = TorrentMetaV1Owned {
                 announce: trackers.first().cloned(),
                 announce_list: vec![trackers],
-                info: storrent.info,
+                info: info_value,
                 comment: None,
                 created_by: None,
                 encoding: None,
                 publisher: None,
                 publisher_url: None,
                 creation_date: None,
-                info_hash: Id20::from_str(&storrent.info_hash)?,
             };
             futures.push({
                 let session = self.clone();
                 async move {
                     session
                         .add_torrent(
-                            AddTorrent::TorrentInfo(Box::new(info)),
+                            AddTorrent::TorrentInfo(Box::new(meta_info)),
                             Some(AddTorrentOptions {
                                 paused: storrent.is_paused,
                                 output_folder: Some(
@@ -893,7 +892,7 @@ impl Session {
                         None
                     } else {
                         self.make_peer_rx(
-                            torrent.info_hash,
+                            torrent.v1_info_hash(),
                             trackers.clone(),
                             announce_port,
                             opts.force_tracker_interval,
@@ -901,8 +900,8 @@ impl Session {
                     };
 
                     (
-                        torrent.info_hash,
-                        torrent.info,
+                        torrent.v1_info_hash(),
+                        bencode::from_value(torrent.info)?,
                         trackers,
                         peer_rx,
                         opts.initial_peers

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Serialize, Serializer};
 
+use crate::{dyn_from_bytes, BencodeValueOwned};
 use buffers::ByteString;
 
 #[derive(Debug)]
@@ -488,4 +489,10 @@ pub fn bencode_serialize_to_writer<T: Serialize, W: std::io::Write>(
     let mut serializer = BencodeSerializer::new(writer);
     value.serialize(&mut serializer)?;
     Ok(())
+}
+
+pub fn serialize_to_value(value: impl Serialize) -> anyhow::Result<BencodeValueOwned> {
+    let mut bytes = vec![];
+    bencode_serialize_to_writer(value, &mut bytes)?;
+    dyn_from_bytes(&bytes)
 }

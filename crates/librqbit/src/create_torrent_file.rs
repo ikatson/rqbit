@@ -1,14 +1,15 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::{BufWriter, Read};
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::Context;
+
 use bencode::bencode_serialize_to_writer;
 use buffers::ByteString;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use librqbit_core::Id20;
-use sha1w::{ISha1, Sha1};
+use sha1w::ISha1;
 
 use crate::spawn_utils::BlockingSpawner;
 
@@ -42,29 +43,6 @@ fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Resu
         }
     }
     Ok(())
-}
-
-fn compute_info_hash(t: &TorrentMetaV1Info<ByteString>) -> anyhow::Result<Id20> {
-    struct W {
-        hash: sha1w::Sha1,
-    }
-    impl std::io::Write for W {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.hash.update(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut writer = BufWriter::new(W { hash: Sha1::new() });
-    bencode_serialize_to_writer(t, &mut writer)?;
-    let hash = writer
-        .into_inner()
-        .map_err(|_| anyhow::anyhow!("into_inner errored"))?
-        .hash;
-    Ok(Id20::new(hash.finish()))
 }
 
 fn choose_piece_length(_input_files: &[Cow<'_, Path>]) -> u32 {
@@ -182,7 +160,7 @@ impl CreateTorrentResult {
     }
 
     pub fn info_hash(&self) -> Id20 {
-        self.meta.info_hash
+        self.meta.v1_info_hash()
     }
 
     pub fn as_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -197,7 +175,7 @@ pub async fn create_torrent<'a>(
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentResult> {
     let info = create_torrent_raw(path, options).await?;
-    let info_hash = compute_info_hash(&info).context("error computing info hash")?;
+    let info = bencode::serialize_to_value(info)?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,
@@ -209,7 +187,6 @@ pub async fn create_torrent<'a>(
             publisher: None,
             publisher_url: None,
             creation_date: None,
-            info_hash,
         },
     })
 }
@@ -237,6 +214,6 @@ mod tests {
         let bytes = torrent.as_bytes().unwrap();
 
         let deserialized = torrent_from_bytes::<ByteBuf>(&bytes).unwrap();
-        assert_eq!(torrent.info_hash(), deserialized.info_hash);
+        assert_eq!(torrent.info_hash(), deserialized.v1_info_hash());
     }
 }

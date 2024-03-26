@@ -96,7 +96,7 @@ where
 // A dynamic value when we don't know exactly what we are deserializing.
 // Useful for debugging.
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub enum BencodeValue<BufT: std::hash::Hash + Eq> {
     Bytes(BufT),
     Integer(i64),

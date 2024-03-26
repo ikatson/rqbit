@@ -1,15 +1,13 @@
+use serde::de::{DeserializeOwned, Error as DeError};
+
 use buffers::ByteBuf;
-use serde::de::Error as DeError;
-use sha1w::{ISha1, Sha1};
+
+use crate::{bencode_serialize_to_writer, BencodeValueOwned};
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
     field_context: Vec<ByteBuf<'de>>,
     parsing_key: bool,
-
-    // This is a f**ing hack
-    pub is_torrent_info: bool,
-    pub torrent_info_digest: Option<[u8; 20]>,
 }
 
 impl<'de> BencodeDeserializer<'de> {
@@ -18,8 +16,6 @@ impl<'de> BencodeDeserializer<'de> {
             buf,
             field_context: Default::default(),
             parsing_key: false,
-            is_torrent_info: false,
-            torrent_info_digest: None,
         }
     }
     pub fn into_remaining(self) -> &'de [u8] {
@@ -537,15 +533,7 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
     where
         V: serde::de::DeserializeSeed<'de>,
     {
-        let buf_before = self.de.buf;
         let value = seed.deserialize(&mut *self.de)?;
-        if self.de.is_torrent_info && self.de.field_context.as_slice() == [ByteBuf(b"info")] {
-            let len = self.de.buf.as_ptr() as usize - buf_before.as_ptr() as usize;
-            let mut hash = Sha1::new();
-            hash.update(&buf_before[..len]);
-            let digest = hash.finish();
-            self.de.torrent_info_digest = Some(digest)
-        }
         self.de.field_context.pop();
         Ok(value)
     }
@@ -564,4 +552,13 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for SeqAccess<'a, 'de> {
         }
         Ok(Some(seed.deserialize(&mut *self.de)?))
     }
+}
+
+pub fn from_value<T>(value: BencodeValueOwned) -> anyhow::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let mut bytes = vec![];
+    bencode_serialize_to_writer(value, &mut bytes)?;
+    from_bytes(&bytes)
 }

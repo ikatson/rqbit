@@ -644,6 +644,7 @@ mod tests {
                 let mut f = std::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
+                    .truncate(true)
                     .open("/tmp/test_deserialize_serialize_extended_is_same")
                     .unwrap();
                 f.write_all(&write_buf).unwrap();

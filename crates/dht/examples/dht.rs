@@ -12,7 +12,9 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .expect("first argument should be a magnet link");
     let magnet = Magnet::parse(&magnet).unwrap();
-    let info_hash = magnet.as_id20().context("Supplied magnet link didn't contain a BTv1 infohash")?;
+    let info_hash = magnet
+        .as_id20()
+        .context("Supplied magnet link didn't contain a BTv1 infohash")?;
 
     tracing_subscriber::fmt::init();
 
