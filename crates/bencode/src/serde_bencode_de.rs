@@ -1,8 +1,8 @@
-use crate::{bencode_serialize_to_writer, BencodeValue, BencodeValueOwned};
-use buffers::ByteBuf;
 use serde::de::{DeserializeOwned, Error as DeError};
-use serde::Deserialize;
-use sha1w::{ISha1, Sha1};
+
+use buffers::ByteBuf;
+
+use crate::{bencode_serialize_to_writer, BencodeValueOwned};
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
@@ -533,7 +533,6 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
     where
         V: serde::de::DeserializeSeed<'de>,
     {
-        let buf_before = self.de.buf;
         let value = seed.deserialize(&mut *self.de)?;
         self.de.field_context.pop();
         Ok(value)
@@ -555,7 +554,7 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for SeqAccess<'a, 'de> {
     }
 }
 
-pub fn from_value<'a, T>(value: BencodeValueOwned) -> anyhow::Result<T>
+pub fn from_value<T>(value: BencodeValueOwned) -> anyhow::Result<T>
 where
     T: DeserializeOwned,
 {

@@ -4,7 +4,6 @@ use std::{
     io::{BufReader, BufWriter, Read},
     net::SocketAddr,
     path::PathBuf,
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };

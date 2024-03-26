@@ -1,15 +1,15 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
-use std::io::{BufWriter, Read, Write};
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::Context;
+
 use bencode::bencode_serialize_to_writer;
 use buffers::ByteString;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use librqbit_core::Id20;
-use serde::Serialize;
-use sha1w::{ISha1, Sha1};
+use sha1w::ISha1;
 
 use crate::spawn_utils::BlockingSpawner;
 
@@ -43,14 +43,6 @@ fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Resu
         }
     }
     Ok(())
-}
-
-fn compute_info_hash(t: &TorrentMetaV1Info<ByteString>) -> anyhow::Result<Id20> {
-    let mut hash = Sha1::new();
-    bencode_serialize_to_writer(t, &mut hash.write())?;
-    // There was a flush here before, but the hash writer doesn't need flushing. What's the correct
-    // practice to ensure flushing would occur if it were needed for an arbitrary Write?
-    Ok(Id20::new(hash.finish()))
 }
 
 fn choose_piece_length(_input_files: &[Cow<'_, Path>]) -> u32 {
@@ -183,13 +175,12 @@ pub async fn create_torrent<'a>(
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentResult> {
     let info = create_torrent_raw(path, options).await?;
-    let info_value = bencode::serialize_to_value(&info)?;
-    let info_hash = compute_info_hash(&info).context("error computing info hash")?;
+    let info = bencode::serialize_to_value(info)?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,
             announce_list: Vec::new(),
-            info: info_value,
+            info,
             comment: None,
             created_by: None,
             encoding: Some(b"utf-8"[..].into()),

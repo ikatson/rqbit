@@ -8,7 +8,7 @@ use itertools::Either;
 use serde::{Deserialize, Serialize};
 
 use crate::hash_id::Id20;
-use sha1w::{ISha1, Sha1};
+use sha1w::ISha1;
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
@@ -18,7 +18,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     buf: &'de [u8],
 ) -> anyhow::Result<TorrentMetaV1<ByteBuf>> {
     let mut de = BencodeDeserializer::new_from_buf(buf);
-    let mut t = TorrentMetaV1::deserialize(&mut de)?;
+    let t = TorrentMetaV1::deserialize(&mut de)?;
     Ok(t)
 }
 
