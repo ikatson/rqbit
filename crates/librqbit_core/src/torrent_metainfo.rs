@@ -37,7 +37,7 @@ pub struct TorrentMetaV1<BufType> {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub announce_list: Vec<Vec<BufType>>,
-    pub info: TorrentMetaV1Info<BufType>,
+    pub info: RawInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
     #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
@@ -63,6 +63,8 @@ impl<BufType> TorrentMetaV1<BufType> {
         itertools::Either::Right(self.announce.iter())
     }
 }
+
+type RawInfo = bencode::BencodeValueOwned;
 
 /// Main torrent information, shared by .torrent files and magnet link contents.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -329,10 +331,10 @@ mod tests {
             .read_to_end(&mut buf)
             .unwrap();
 
-        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(&buf).unwrap().info;
+        let torrent = torrent_from_bytes::<ByteString>(&buf).unwrap().info;
         let mut writer = Vec::new();
         bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
-        let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
+        let deserialized = RawInfo::deserialize(
             &mut BencodeDeserializer::new_from_buf(&writer),
         )
         .unwrap();

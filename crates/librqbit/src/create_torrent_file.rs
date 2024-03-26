@@ -8,6 +8,7 @@ use bencode::bencode_serialize_to_writer;
 use buffers::ByteString;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use librqbit_core::Id20;
+use serde::Serialize;
 use sha1w::{ISha1, Sha1};
 
 use crate::spawn_utils::BlockingSpawner;
@@ -197,12 +198,13 @@ pub async fn create_torrent<'a>(
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentResult> {
     let info = create_torrent_raw(path, options).await?;
+    let info_value = bencode::serialize_to_value(&info)?;
     let info_hash = compute_info_hash(&info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,
             announce_list: Vec::new(),
-            info,
+            info: info_value,
             comment: None,
             created_by: None,
             encoding: Some(b"utf-8"[..].into()),

@@ -1,5 +1,7 @@
+use crate::{bencode_serialize_to_writer, BencodeValue, BencodeValueOwned};
 use buffers::ByteBuf;
-use serde::de::Error as DeError;
+use serde::de::{DeserializeOwned, Error as DeError};
+use serde::Deserialize;
 use sha1w::{ISha1, Sha1};
 
 pub struct BencodeDeserializer<'de> {
@@ -564,4 +566,13 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for SeqAccess<'a, 'de> {
         }
         Ok(Some(seed.deserialize(&mut *self.de)?))
     }
+}
+
+pub fn from_value<'a, T>(value: BencodeValueOwned) -> anyhow::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let mut bytes = vec![];
+    bencode_serialize_to_writer(value, &mut bytes)?;
+    from_bytes(&bytes)
 }
