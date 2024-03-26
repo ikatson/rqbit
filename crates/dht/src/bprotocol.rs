@@ -583,6 +583,7 @@ mod tests {
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(full)
             .unwrap();
         f.write_all(data).unwrap()
