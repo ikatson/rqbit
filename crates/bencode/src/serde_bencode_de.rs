@@ -1,6 +1,8 @@
 use buffers::ByteBuf;
-use serde::de::Error as DeError;
+use serde::de::{value::BorrowedBytesDeserializer, Error as DeError};
 use sha1w::{ISha1, Sha1};
+
+use crate::raw_value;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
@@ -465,14 +467,20 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
 
     fn deserialize_struct<V>(
         self,
-        _name: &'static str,
+        name: &'static str,
         _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_map(visitor)
+        if name == raw_value::TOKEN {
+            visitor
+                .visit_seq(RawValueAccess::new(self))
+                .map_err(|e: Self::Error| e.set_context(self))
+        } else {
+            self.deserialize_map(visitor)
+        }
     }
 
     fn deserialize_enum<V>(
@@ -505,6 +513,54 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         V: serde::de::Visitor<'de>,
     {
         self.deserialize_any(visitor)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RawValueAccessState {
+    Initial,
+    ObjectReturned,
+    BytesReturned,
+}
+
+struct RawValueAccess<'a, 'de> {
+    de: &'a mut BencodeDeserializer<'de>,
+    starting_buf: &'de [u8],
+    state: RawValueAccessState,
+}
+
+impl<'a, 'de> RawValueAccess<'a, 'de> {
+    fn new(de: &'a mut BencodeDeserializer<'de>) -> Self {
+        Self {
+            starting_buf: de.buf,
+            de,
+            state: RawValueAccessState::Initial,
+        }
+    }
+}
+
+impl<'a, 'de> serde::de::SeqAccess<'de> for RawValueAccess<'a, 'de> {
+    type Error = Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+    where
+        T: serde::de::DeserializeSeed<'de>,
+    {
+        match self.state {
+            RawValueAccessState::Initial => {
+                let val = seed.deserialize(&mut *self.de)?;
+                self.state = RawValueAccessState::ObjectReturned;
+                Ok(Some(val))
+            }
+            RawValueAccessState::ObjectReturned => {
+                let len = self.de.buf.as_ptr() as usize - self.starting_buf.as_ptr() as usize;
+                let bbde = BorrowedBytesDeserializer::new(&self.starting_buf[..len]);
+                let bytes = seed.deserialize(bbde)?;
+                self.state = RawValueAccessState::BytesReturned;
+                Ok(Some(bytes))
+            }
+            RawValueAccessState::BytesReturned => Ok(None),
+        }
     }
 }
 
