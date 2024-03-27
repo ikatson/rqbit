@@ -1,8 +1,25 @@
 use super::*;
 use serde::ser::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct RawValue<T>(pub T);
+
+impl<T> PartialEq<Self> for RawValue<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(other)
+    }
+}
+
+impl<T> Eq for RawValue<T> where T: Eq {}
+
+impl<T: Clone> Clone for RawValue<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 // This can't go in RawValue because it doesn't depend on T.
 pub(crate) const TOKEN: &str = "$librqbit_bencode::private::RawValue";
@@ -256,5 +273,47 @@ impl<'ser, W: std::io::Write> Serializer for RawValueSerializer<'ser, W> {
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Self::expected_err()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_raw_value_field() {
+        #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+        struct Object {
+            cow: String,
+            spam: RawValue<ByteString>,
+        }
+
+        let input = b"d3:cow3:moo4:spam4:eggse";
+        let object: Object = from_bytes(input).unwrap();
+        assert_eq!(
+            object,
+            Object {
+                cow: "moo".to_owned(),
+                spam: RawValue(b"4:eggs"[..].into())
+            }
+        );
+
+        let buf = to_bytes(&object).unwrap();
+        assert_eq!(input, buf.as_slice())
+    }
+
+    #[test]
+    fn test_entire_value() {
+        #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+        struct Object {
+            cow: String,
+            spam: String,
+        }
+
+        let input = &b"d3:cow3:moo4:spam4:eggse"[..];
+        let wrapper: RawValue<ByteBuf> = from_bytes(input).unwrap();
+        assert_eq!(wrapper, RawValue(input.into()));
+
+        let buf = to_bytes(&wrapper).unwrap();
+        assert_eq!(input, buf.as_slice())
     }
 }

@@ -1,3 +1,5 @@
+#![warn(clippy::used_underscore_binding)]
+
 mod bencode_value;
 mod raw_value;
 mod serde_bencode_de;

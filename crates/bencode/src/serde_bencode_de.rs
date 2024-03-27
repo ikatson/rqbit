@@ -436,16 +436,16 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
 
     fn deserialize_newtype_struct<V>(
         self,
-        _name: &'static str,
-        _visitor: V,
+        name: &'static str,
+        visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        if _name == TOKEN {
+        if name == TOKEN {
             self.start_raw();
             self.deserialize_any(serde::de::IgnoredAny)?;
-            _visitor.visit_borrowed_bytes(self.end_raw())
+            visitor.visit_borrowed_bytes(self.end_raw())
         } else {
             Err(Error::new_from_kind(ErrorKind::NotSupported("newtype structs")).set_context(self))
         }

@@ -19,7 +19,6 @@ use crate::{
     type_aliases::PeerStream,
 };
 use anyhow::{anyhow, bail, Context};
-use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
@@ -40,7 +39,7 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::StreamExt;
@@ -126,32 +125,6 @@ struct SerializedTorrent {
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
     is_paused: bool,
-}
-
-fn serialize_torrent<S>(t: &TorrentMetaV1Info<ByteString>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    use base64::{engine::general_purpose, Engine as _};
-    use serde::ser::Error;
-    let mut writer = Vec::new();
-    bencode_serialize_to_writer(t, &mut writer).map_err(S::Error::custom)?;
-    let s = general_purpose::STANDARD_NO_PAD.encode(&writer);
-    s.serialize(serializer)
-}
-
-fn deserialize_torrent<'de, D>(deserializer: D) -> Result<TorrentMetaV1Info<ByteString>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    use base64::{engine::general_purpose, Engine as _};
-    use serde::de::Error;
-    let s = String::deserialize(deserializer)?;
-    let b = general_purpose::STANDARD_NO_PAD
-        .decode(s)
-        .map_err(D::Error::custom)?;
-    TorrentMetaV1Info::<ByteString>::deserialize(&mut BencodeDeserializer::new_from_buf(&b))
-        .map_err(D::Error::custom)
 }
 
 #[derive(Serialize, Deserialize)]

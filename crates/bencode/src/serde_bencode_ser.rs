@@ -487,10 +487,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
 
     fn serialize_struct(
         self,
-        _name: &'static str,
+        name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        if _name == TOKEN {
+        if name == TOKEN {
             return Ok(SerializeStructCompound::RawValue(SerializeRawValue {
                 ser: self,
             }));
