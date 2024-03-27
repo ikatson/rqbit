@@ -5,7 +5,7 @@ use serde::ser::Error;
 pub struct RawValue<T>(pub T);
 
 // This can't go in RawValue because it doesn't depend on T.
-pub(crate) const TOKEN: &str = "$librq_bencode::private::RawValue";
+pub(crate) const TOKEN: &str = "$librqbit_bencode::private::RawValue";
 
 impl<T> Serialize for RawValue<T>
 where
