@@ -175,7 +175,7 @@ pub async fn create_torrent<'a>(
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentResult> {
     let info = create_torrent_raw(path, options).await?;
-    let info = bencode::serialize_to_value(info)?;
+    let info = Some(bencode::RawValue( bencode::to_bytes(info)?.into()));
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,

@@ -1,75 +1,112 @@
-use serde::de::{DeserializeOwned, Error as DeError};
-
-use buffers::ByteBuf;
-
-use crate::{bencode_serialize_to_writer, BencodeValueOwned};
+use super::*;
 
 pub struct BencodeDeserializer<'de> {
-    buf: &'de [u8],
+    raw_buf: &'de [u8],
+    offset: usize,
+    raw_start: Option<usize>,
     field_context: Vec<ByteBuf<'de>>,
     parsing_key: bool,
 }
 
 impl<'de> BencodeDeserializer<'de> {
+    fn start_raw(&mut self) {
+        assert!(self.raw_start.replace(self.offset).is_none());
+    }
+
+    fn end_raw(&mut self) -> &'de [u8] {
+        &self.raw_buf[self.raw_start.take().unwrap()..self.offset]
+    }
+
+    fn buf(&'de self) -> &'de [u8] {
+        &self.raw_buf[self.offset..]
+    }
+
+    fn advance(&mut self, bytes: usize) {
+        self.offset += bytes;
+    }
+
     pub fn new_from_buf(buf: &'de [u8]) -> BencodeDeserializer<'de> {
         Self {
-            buf,
+            raw_buf: buf,
+            offset: 0,
+            raw_start: None,
             field_context: Default::default(),
             parsing_key: false,
         }
     }
     pub fn into_remaining(self) -> &'de [u8] {
-        self.buf
+        self.raw_buf
     }
     fn parse_integer(&mut self) -> Result<i64, Error> {
-        match self.buf.iter().copied().position(|e| e == b'e') {
+        match self.buf().iter().copied().position(|e| e == b'e') {
             Some(end) => {
-                let intbytes = &self.buf[1..end];
+                let intbytes = &self.buf()[1..end];
                 let value: i64 = std::str::from_utf8(intbytes)
                     .map_err(|e| Error::new_from_err(e).set_context(self))?
                     .parse()
                     .map_err(|e| Error::new_from_err(e).set_context(self))?;
-                let rem = self.buf.get(end + 1..).unwrap_or_default();
-                self.buf = rem;
+                self.advance(end + 1);
                 Ok(value)
             }
-            None => Err(Error::custom("cannot parse integer, unexpected EOF").set_context(self)),
+            None => Err(Error::custom_with_de(
+                "cannot parse integer, unexpected EOF",
+                self,
+            )),
         }
     }
 
     fn parse_bytes(&mut self) -> Result<&'de [u8], Error> {
-        match self.buf.iter().copied().position(|e| e == b':') {
+        match self.buf().iter().copied().position(|e| e == b':') {
             Some(length_delim) => {
-                let lenbytes = &self.buf[..length_delim];
+                let lenbytes = &self.buf()[..length_delim];
                 let length: usize = std::str::from_utf8(lenbytes)
                     .map_err(|e| Error::new_from_err(e).set_context(self))?
                     .parse()
                     .map_err(|e| Error::new_from_err(e).set_context(self))?;
                 let bytes_start = length_delim + 1;
                 let bytes_end = bytes_start + length;
-                let bytes = &self.buf.get(bytes_start..bytes_end).ok_or_else(|| {
-                    Error::custom(format!(
-                        "could not get byte range {}..{}, data in the buffer: {:?}",
-                        bytes_start, bytes_end, &self.buf
-                    ))
-                    .set_context(self)
+                // How can I do this without getting already borrowed immutably when doing the advance below?
+                let slice_index = bytes_start + self.offset..bytes_end + self.offset;
+                let bytes = self.raw_buf.get(slice_index.clone()).ok_or_else(|| {
+                    Error::custom_with_de(
+                        format!(
+                            "could not get byte range {:?}, data in the buffer: {:?}",
+                            slice_index,
+                            String::from_utf8(
+                                self.buf()
+                                    .iter()
+                                    .copied()
+                                    .flat_map(std::ascii::escape_default)
+                                    .collect()
+                            )
+                            .unwrap()
+                        ),
+                        self,
+                    )
                 })?;
-                let rem = self.buf.get(bytes_end..).unwrap_or_default();
-                self.buf = rem;
+                self.advance(bytes_end);
                 Ok(bytes)
             }
-            None => Err(Error::custom("cannot parse bytes, unexpected EOF").set_context(self)),
+            None => Err(Error::custom_with_de(
+                "cannot parse bytes, unexpected EOF",
+                self,
+            )),
         }
     }
 
     fn parse_bytes_checked(&mut self) -> Result<&'de [u8], Error> {
-        let first = match self.buf.first().copied() {
+        let first = match self.buf().first().copied() {
             Some(first) => first,
-            None => return Err(Error::custom("expected bencode bytes, got EOF").set_context(self)),
+            None => {
+                return Err(Error::custom_with_de(
+                    "expected bencode bytes, got EOF",
+                    self,
+                ))
+            }
         };
         match first {
             b'0'..=b'9' => {}
-            _ => return Err(Error::custom("expected bencode bytes").set_context(self)),
+            _ => return Err(Error::custom_with_de("expected bencode bytes", self)),
         }
         let b = self.parse_bytes()?;
         if self.parsing_key {
@@ -85,10 +122,10 @@ where
 {
     let mut de = BencodeDeserializer::new_from_buf(buf);
     let v = T::deserialize(&mut de)?;
-    if !de.buf.is_empty() {
+    if !de.buf().is_empty() {
         anyhow::bail!(
             "deserialized successfully, but {} bytes remaining",
-            de.buf.len()
+            de.buf().len()
         )
     }
     Ok(v)
@@ -204,7 +241,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
     where
         V: serde::de::Visitor<'de>,
     {
-        match self.buf.first().copied() {
+        match self.buf().first().copied() {
             Some(b'd') => self.deserialize_map(visitor),
             Some(b'i') => self.deserialize_u64(visitor),
             Some(b'l') => self.deserialize_seq(visitor),
@@ -248,7 +285,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"i") {
+        if !self.buf().starts_with(b"i") {
             return Err(Error::custom_with_de("expected bencode int", self));
         }
         visitor
@@ -318,7 +355,7 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
     where
         V: serde::de::Visitor<'de>,
     {
-        let first = match self.buf.first().copied() {
+        let first = match self.buf().first().copied() {
             Some(first) => first,
             None => {
                 return Err(Error::custom_with_de(
@@ -405,23 +442,26 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(
-            Error::new_from_kind(ErrorKind::NotSupported("bencode doesn't newtype structs"))
-                .set_context(self),
-        )
+        if _name == TOKEN {
+            self.start_raw();
+            self.deserialize_any(serde::de::IgnoredAny)?;
+            _visitor.visit_borrowed_bytes(self.end_raw())
+        } else {
+            Err(Error::new_from_kind(ErrorKind::NotSupported("newtype structs")).set_context(self))
+        }
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"l") {
+        if !self.buf().starts_with(b"l") {
             return Err(Error::custom(format!(
                 "expected bencode list, but got {}",
-                self.buf[0] as char,
+                self.buf()[0] as char,
             )));
         }
-        self.buf = self.buf.get(1..).unwrap_or_default();
+        self.advance(1);
         visitor
             .visit_seq(SeqAccess { de: self })
             .map_err(|e: Self::Error| e.set_context(self))
@@ -450,10 +490,10 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"d") {
+        if !self.buf().starts_with(b"d") {
             return Err(Error::custom("expected bencode dict"));
         }
-        self.buf = self.buf.get(1..).unwrap_or_default();
+        self.advance(1);
         visitor
             .visit_map(MapAccess { de: self })
             .map_err(|e: Self::Error| e.set_context(self))
@@ -519,8 +559,8 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
     where
         K: serde::de::DeserializeSeed<'de>,
     {
-        if self.de.buf.starts_with(b"e") {
-            self.de.buf = self.de.buf.get(1..).unwrap_or_default();
+        if self.de.buf().starts_with(b"e") {
+            self.de.advance(1);
             return Ok(None);
         }
         self.de.parsing_key = true;
@@ -546,8 +586,8 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for SeqAccess<'a, 'de> {
     where
         T: serde::de::DeserializeSeed<'de>,
     {
-        if self.de.buf.starts_with(b"e") {
-            self.de.buf = self.de.buf.get(1..).unwrap_or_default();
+        if self.de.buf().starts_with(b"e") {
+            self.de.advance(1);
             return Ok(None);
         }
         Ok(Some(seed.deserialize(&mut *self.de)?))

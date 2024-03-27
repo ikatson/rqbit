@@ -18,7 +18,7 @@ use crate::{
     },
     type_aliases::PeerStream,
 };
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
@@ -105,7 +105,7 @@ impl SessionDatabase {
                                 .map(|u| u.to_string())
                                 .collect(),
                             info_hash: torrent.info_hash().as_string(),
-                            info: torrent.info().info.clone(),
+                            info: torrent.info().info_bytes.clone(),
                             only_files: torrent.only_files.clone(),
                             is_paused: torrent
                                 .with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
@@ -121,11 +121,7 @@ impl SessionDatabase {
 #[derive(Serialize, Deserialize)]
 struct SerializedTorrent {
     info_hash: String,
-    #[serde(
-        serialize_with = "serialize_torrent",
-        deserialize_with = "deserialize_torrent"
-    )]
-    info: TorrentMetaV1Info<ByteString>,
+    info: ByteString,
     trackers: HashSet<String>,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
@@ -719,11 +715,11 @@ impl Session {
                 .into_iter()
                 .map(|t| ByteString(t.into_bytes()))
                 .collect();
-            let info_value = bencode::serialize_to_value(storrent.info)?;
+            let info=Some(bencode::RawValue(storrent.info));
             let meta_info = TorrentMetaV1Owned {
                 announce: trackers.first().cloned(),
                 announce_list: vec![trackers],
-                info: info_value,
+                info,
                 comment: None,
                 created_by: None,
                 encoding: None,
@@ -901,7 +897,7 @@ impl Session {
 
                     (
                         torrent.v1_info_hash(),
-                        bencode::from_value(torrent.info)?,
+                        bencode::from_bytes(&torrent.info.ok_or(anyhow!("missing info"))?)?,
                         trackers,
                         peer_rx,
                         opts.initial_peers

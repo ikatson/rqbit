@@ -78,6 +78,7 @@ pub(crate) struct ManagedTorrentOptions {
 }
 
 pub struct ManagedTorrentInfo {
+    pub info_bytes: ByteString,
     pub info: TorrentMetaV1Info<ByteString>,
     pub info_hash: Id20,
     pub out_dir: PathBuf,
@@ -488,6 +489,7 @@ impl ManagedTorrentBuilder {
         let lengths = Lengths::from_torrent(&self.info)?;
         let info = Arc::new(ManagedTorrentInfo {
             span,
+            info_bytes: bencode::to_bytes(&self.info)?.into(),
             info: self.info,
             info_hash: self.info_hash,
             out_dir: self.output_folder,

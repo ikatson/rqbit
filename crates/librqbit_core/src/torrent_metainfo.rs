@@ -22,9 +22,11 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     Ok(t)
 }
 
+type RawInfo = bencode::RawValue<ByteString>;
+
 /// A parsed .torrent file.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TorrentMetaV1<BufType> {
+pub struct TorrentMetaV1<BufType>  {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub announce: Option<BufType>,
     #[serde(
@@ -33,7 +35,7 @@ pub struct TorrentMetaV1<BufType> {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub announce_list: Vec<Vec<BufType>>,
-    pub info: RawInfo,
+    pub info: Option<RawInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
     #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
@@ -63,8 +65,6 @@ impl<BufType> TorrentMetaV1<BufType> {
         Id20::new(h.finish())
     }
 }
-
-type RawInfo = bencode::BencodeValueOwned;
 
 /// Main torrent information, shared by .torrent files and magnet link contents.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -264,7 +264,7 @@ where
         TorrentMetaV1 {
             announce: self.announce.clone_to_owned(),
             announce_list: self.announce_list.clone_to_owned(),
-            info: self.info.clone_to_owned(),
+            info: self.info.clone(),
             comment: self.comment.clone_to_owned(),
             created_by: self.created_by.clone_to_owned(),
             encoding: self.encoding.clone_to_owned(),
@@ -336,6 +336,6 @@ mod tests {
         let deserialized =
             RawInfo::deserialize(&mut BencodeDeserializer::new_from_buf(&writer)).unwrap();
 
-        assert_eq!(torrent, deserialized);
+        assert_eq!(torrent, Some(deserialized));
     }
 }
