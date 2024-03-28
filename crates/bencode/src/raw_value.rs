@@ -1,7 +1,4 @@
-use std::marker::PhantomData;
-use serde::de::value::BorrowedBytesDeserializer;
 use super::*;
-use serde::ser::Error;
 
 #[derive(Debug)]
 pub struct RawValue<T>(pub T);
@@ -23,6 +20,14 @@ impl<T: Clone> Clone for RawValue<T> {
     }
 }
 
+impl<T: CloneToOwned> CloneToOwned for RawValue<T> {
+    type Target = RawValue<<T as CloneToOwned>::Target>;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        // Why can't I use Self::Target here?
+        RawValue(self.0.clone_to_owned())
+    }
+}
 // This can't go in RawValue because it doesn't depend on T.
 pub(crate) const TOKEN: &str = "$librqbit_bencode::private::RawValue";
 
@@ -40,8 +45,16 @@ where
     }
 }
 
+impl<T> From<T> for RawValue<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+
 impl<'de, T> Deserialize<'de> for RawValue<T>
 where
+    // Using T: Deserialize instead of From<&[u8]> avoids lifetime issues with 'de. It does mean we use
+    // the BorrowedBytesDeserializer to get the bytes into T.
     T: Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -49,25 +62,54 @@ where
         D: Deserializer<'de>,
     {
         struct V<T> {
-            phantom: PhantomData<T>
+            phantom: PhantomData<T>,
         }
         impl<'de, T: serde::Deserialize<'de>> Visitor<'de> for V<T> {
             type Value = T;
 
-            fn expecting(&self, _formatter: &mut Formatter) -> std::fmt::Result {
-                todo!()
+            fn expecting(&self, f: &mut Formatter) -> std::fmt::Result {
+                f.write_str("borrowed bytes")
             }
 
             fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
+                // This calls Deserialize for the inner type, which hopefully supports &[u8]?
                 Self::Value::deserialize(BorrowedBytesDeserializer::new(v))
+            }
+
+            fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_map(self)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let (key, value): (&str, T) = map
+                    .next_entry()?
+                    .ok_or(A::Error::invalid_length(0, &"token field"))?;
+                if key != TOKEN {
+                    return Err(A::Error::unknown_field(key, &[TOKEN]));
+                }
+                if let Some(key) = map.next_key()? {
+                    return Err(A::Error::unknown_field(key, &[TOKEN]));
+                }
+                Ok(value)
             }
         }
         deserializer
-            .deserialize_newtype_struct(TOKEN, V{phantom: Default::default()})
-            .map(|x| RawValue(x))
+            .deserialize_newtype_struct(
+                TOKEN,
+                V::<T> {
+                    phantom: Default::default(),
+                },
+            )
+            .map(Into::into)
     }
 }
 
@@ -319,5 +361,30 @@ mod tests {
 
         let buf = to_bytes(&wrapper).unwrap();
         assert_eq!(input, buf.as_slice())
+    }
+
+    #[test]
+    fn test_to_json_and_back() -> anyhow::Result<()> {
+        #[derive(Serialize)]
+        struct Info<Buf> {
+            files: Vec<Buf>,
+        }
+        #[derive(Serialize, PartialEq, Deserialize, Debug)]
+        struct MetainfoLike<Buf> {
+            comment: String,
+            info: Option<RawValue<Buf>>,
+        }
+        let orig_info = Info {
+            files: vec!["awesome movie".to_string()],
+        };
+        let orig_meta = MetainfoLike {
+            comment: "leet ripper".to_string(),
+            info: Some(to_bytes(orig_info)?.into()),
+        };
+        let json = serde_json::to_string(&orig_meta)?;
+        dbg!(&json);
+        let json_meta = serde_json::from_str(&json)?;
+        assert_eq!(orig_meta, json_meta);
+        Ok(())
     }
 }

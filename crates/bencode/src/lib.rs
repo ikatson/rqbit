@@ -5,6 +5,8 @@ mod raw_value;
 mod serde_bencode_de;
 mod serde_bencode_ser;
 
+pub use buffers::{ByteBuf, ByteString};
+
 pub use bencode_value::*;
 pub use raw_value::*;
 pub use serde_bencode_de::*;
@@ -12,9 +14,32 @@ pub use serde_bencode_ser::*;
 
 use std::collections::BTreeMap;
 use std::fmt::Formatter;
+use std::marker::PhantomData;
 
-use serde::de::{DeserializeOwned, Error as _, Visitor};
-use serde::ser::{Impossible, SerializeStruct};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    de::{
+        value::BorrowedBytesDeserializer,
+        MapAccess,
+        DeserializeOwned,
+        Error as _,
+        Visitor
+    },
+    ser::{Impossible, SerializeStruct, Error as _},
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer
+};
 
-pub use buffers::{ByteBuf, ByteString};
+use clone_to_owned::CloneToOwned;
+
+fn escape_bytes(bytes: &[u8]) -> String {
+    String::from_utf8(
+        bytes
+            .iter()
+            .copied()
+            .flat_map(std::ascii::escape_default)
+            .collect(),
+    )
+    .unwrap()
+}

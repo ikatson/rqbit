@@ -27,7 +27,7 @@ impl<'de> BencodeDeserializer<'de> {
     pub fn into_remaining(self) -> &'de [u8] {
         self.raw_buf
     }
-    
+
     fn parse_integer(&mut self) -> Result<i64, Error> {
         match self.buf().iter().copied().position(|e| e == b'e') {
             Some(end) => {
@@ -63,14 +63,7 @@ impl<'de> BencodeDeserializer<'de> {
                         format!(
                             "could not get byte range {:?}, data in the buffer: {:?}",
                             slice_index,
-                            String::from_utf8(
-                                self.buf()
-                                    .iter()
-                                    .copied()
-                                    .flat_map(std::ascii::escape_default)
-                                    .collect()
-                            )
-                            .unwrap()
+                            escape_bytes(self.buf())
                         ),
                         self,
                     )

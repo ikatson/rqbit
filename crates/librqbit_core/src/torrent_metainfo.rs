@@ -1,14 +1,15 @@
 use std::{iter::once, path::PathBuf};
 
 use anyhow::Context;
-use bencode::BencodeDeserializer;
-use buffers::{ByteBuf, ByteString};
-use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 
-use crate::hash_id::Id20;
+use bencode::BencodeDeserializer;
+use buffers::{ByteBuf, ByteString};
+use clone_to_owned::CloneToOwned;
 use sha1w::ISha1;
+
+use crate::hash_id::Id20;
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
@@ -22,7 +23,7 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     Ok(t)
 }
 
-type RawInfo = bencode::RawValue<ByteString>;
+type RawInfo<BufType> = bencode::RawValue<BufType>;
 
 /// A parsed .torrent file.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -35,7 +36,7 @@ pub struct TorrentMetaV1<BufType>  {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub announce_list: Vec<Vec<BufType>>,
-    pub info: Option<RawInfo>,
+    pub info: Option<RawInfo<BufType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
     #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
@@ -57,11 +58,13 @@ impl<BufType> TorrentMetaV1<BufType> {
         }
         itertools::Either::Right(self.announce.iter())
     }
+}
 
+impl<BufType: AsRef<[u8]>> TorrentMetaV1<BufType> {
     /// v1 called out, because v2 is a thing, and migration is a PITA.
     pub fn v1_info_hash(&self) -> Id20 {
         let mut h = sha1w::Sha1::new();
-        bencode::bencode_serialize_to_writer(&self.info, &mut h.write()).unwrap();
+        h.update(self.info.as_ref().unwrap().as_ref());
         Id20::new(h.finish())
     }
 }
@@ -264,7 +267,7 @@ where
         TorrentMetaV1 {
             announce: self.announce.clone_to_owned(),
             announce_list: self.announce_list.clone_to_owned(),
-            info: self.info.clone(),
+            info: self.info.clone_to_owned(),
             comment: self.comment.clone_to_owned(),
             created_by: self.created_by.clone_to_owned(),
             encoding: self.encoding.clone_to_owned(),
