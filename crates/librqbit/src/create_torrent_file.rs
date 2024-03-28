@@ -160,7 +160,7 @@ impl CreateTorrentResult {
     }
 
     pub fn info_hash(&self) -> Id20 {
-        self.meta.v1_info_hash()
+        self.meta.v1_hash_info().expect("info to be present")
     }
 
     pub fn as_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -175,7 +175,7 @@ pub async fn create_torrent<'a>(
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentResult> {
     let info = create_torrent_raw(path, options).await?;
-    let info = Some(bencode::RawValue( bencode::to_bytes(info)?.into()));
+    let info = Some(bencode::RawValue(bencode::to_bytes(info)?.into()));
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,
@@ -214,6 +214,6 @@ mod tests {
         let bytes = torrent.as_bytes().unwrap();
 
         let deserialized = torrent_from_bytes::<ByteBuf>(&bytes).unwrap();
-        assert_eq!(torrent.info_hash(), deserialized.v1_info_hash());
+        assert_eq!(Some(torrent.info_hash()), deserialized.v1_hash_info());
     }
 }

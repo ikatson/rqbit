@@ -17,18 +17,9 @@ use std::fmt::Formatter;
 use std::marker::PhantomData;
 
 use serde::{
-    de::{
-        value::BorrowedBytesDeserializer,
-        MapAccess,
-        DeserializeOwned,
-        Error as _,
-        Visitor
-    },
-    ser::{Impossible, SerializeStruct, Error as _},
-    Deserialize,
-    Deserializer,
-    Serialize,
-    Serializer
+    de::{value::BorrowedBytesDeserializer, DeserializeOwned, Error as _, MapAccess, Visitor},
+    ser::{Impossible},
+    Deserialize, Deserializer, Serialize, Serializer,
 };
 
 use clone_to_owned::CloneToOwned;

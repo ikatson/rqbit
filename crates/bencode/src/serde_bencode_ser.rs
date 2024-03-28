@@ -214,37 +214,6 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W>
     }
 }
 
-pub(crate) enum SerializeStructCompound<'ser, W: std::io::Write> {
-    RawValue(SerializeRawValue<'ser, W>),
-    Struct(SerializeStruct<'ser, W>),
-}
-
-impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStructCompound<'ser, W> {
-    type Ok = ();
-    type Error = SerError;
-
-    fn serialize_field<T: ?Sized>(
-        &mut self,
-        key: &'static str,
-        value: &T,
-    ) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
-        match self {
-            SerializeStructCompound::RawValue(a) => a.serialize_field(key, value),
-            SerializeStructCompound::Struct(a) => a.serialize_field(key, value),
-        }
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        match self {
-            SerializeStructCompound::RawValue(a) => a.end(),
-            SerializeStructCompound::Struct(a) => a.end(),
-        }
-    }
-}
-
 pub(crate) struct SerializeStruct<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
     tmp: BTreeMap<&'static str, ByteString>,
@@ -319,7 +288,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
 
     type SerializeMap = SerializeMap<'ser, W>;
 
-    type SerializeStruct = SerializeStructCompound<'ser, W>;
+    type SerializeStruct = SerializeStruct<'ser, W>;
 
     type SerializeStructVariant = SerializeStructVariant<'ser, W>;
 
@@ -427,13 +396,17 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
 
     fn serialize_newtype_struct<T: ?Sized>(
         self,
-        _name: &'static str,
-        _value: &T,
+        name: &'static str,
+        value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: serde::Serialize,
     {
-        todo!()
+        if name == TOKEN {
+            value.serialize(RawValueSerializer { ser: self })
+        } else {
+            todo!()
+        }
     }
 
     fn serialize_newtype_variant<T: ?Sized>(
@@ -487,19 +460,14 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
 
     fn serialize_struct(
         self,
-        name: &'static str,
+        _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        if name == TOKEN {
-            return Ok(SerializeStructCompound::RawValue(SerializeRawValue {
-                ser: self,
-            }));
-        }
         self.write_byte(b'd')?;
-        Ok(SerializeStructCompound::Struct(SerializeStruct {
+        Ok(SerializeStruct {
             ser: self,
             tmp: Default::default(),
-        }))
+        })
     }
 
     fn serialize_struct_variant(

@@ -688,7 +688,7 @@ impl Session {
                 .into_iter()
                 .map(|t| ByteString(t.into_bytes()))
                 .collect();
-            let info=Some(bencode::RawValue(storrent.info));
+            let info = Some(bencode::RawValue(storrent.info));
             let meta_info = TorrentMetaV1Owned {
                 announce: trackers.first().cloned(),
                 announce_list: vec![trackers],
@@ -861,7 +861,7 @@ impl Session {
                         None
                     } else {
                         self.make_peer_rx(
-                            torrent.v1_info_hash(),
+                            torrent.v1_hash_info().unwrap(),
                             trackers.clone(),
                             announce_port,
                             opts.force_tracker_interval,
@@ -869,7 +869,7 @@ impl Session {
                     };
 
                     (
-                        torrent.v1_info_hash(),
+                        torrent.v1_hash_info().unwrap(),
                         bencode::from_bytes(&torrent.info.ok_or(anyhow!("missing info"))?)?,
                         trackers,
                         peer_rx,

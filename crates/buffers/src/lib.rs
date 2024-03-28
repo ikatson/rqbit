@@ -4,6 +4,8 @@
 // Not useful outside of librqbit.
 
 use serde::{Deserialize, Deserializer};
+use serde::de::SeqAccess;
+use serde::de::value::SeqAccessDeserializer;
 
 use clone_to_owned::CloneToOwned;
 
@@ -188,6 +190,10 @@ impl<'de> serde::de::Deserialize<'de> for ByteString {
                 E: serde::de::Error,
             {
                 Ok(v.to_owned())
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
+                Self::Value::deserialize(SeqAccessDeserializer::new(seq))
             }
         }
         Ok(ByteString(deserializer.deserialize_byte_buf(Visitor {})?))

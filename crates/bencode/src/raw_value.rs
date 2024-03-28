@@ -1,3 +1,6 @@
+use serde::de::SeqAccess;
+use serde::de::value::{SeqAccessDeserializer};
+use buffers::ByteBufT;
 use super::*;
 
 #[derive(Debug)]
@@ -33,15 +36,13 @@ pub(crate) const TOKEN: &str = "$librqbit_bencode::private::RawValue";
 
 impl<T> Serialize for RawValue<T>
 where
-    T: Serialize,
+    T: Serialize + ByteBufT,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut s = serializer.serialize_struct(TOKEN, 1)?;
-        s.serialize_field(TOKEN, &self.0)?;
-        s.end()
+        serializer.serialize_newtype_struct(TOKEN, &self.0)
     }
 }
 
@@ -55,7 +56,7 @@ impl<'de, T> Deserialize<'de> for RawValue<T>
 where
     // Using T: Deserialize instead of From<&[u8]> avoids lifetime issues with 'de. It does mean we use
     // the BorrowedBytesDeserializer to get the bytes into T.
-    T: Deserialize<'de>,
+    T: Deserialize<'de>+ByteBufT,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -79,11 +80,15 @@ where
                 Self::Value::deserialize(BorrowedBytesDeserializer::new(v))
             }
 
+            fn visit_bytes<E>(self, _v: &[u8]) -> Result<Self::Value, E> where E: serde::de::Error {
+                todo!()
+            }
+
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
                 D: Deserializer<'de>,
             {
-                deserializer.deserialize_map(self)
+                deserializer.deserialize_bytes(self)
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -100,6 +105,10 @@ where
                     return Err(A::Error::unknown_field(key, &[TOKEN]));
                 }
                 Ok(value)
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
+                Self::Value::deserialize(SeqAccessDeserializer::new(seq))
             }
         }
         deserializer
@@ -121,11 +130,11 @@ impl<T> std::ops::Deref for RawValue<T> {
     }
 }
 
-pub(crate) struct SerializeRawValue<'ser, W: std::io::Write> {
+pub(crate) struct RawValueSerializer<'ser, W: std::io::Write> {
     pub(crate) ser: &'ser mut BencodeSerializer<W>,
 }
 
-impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeRawValue<'ser, W> {
+impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for RawValueSerializer<'ser, W> {
     type Ok = ();
     type Error = SerError;
 
@@ -138,7 +147,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeRawValue<
         T: Serialize,
     {
         assert_eq!(key, TOKEN);
-        value.serialize(RawValueSerializer(self.ser))
+        value.serialize(RawValueSerializer { ser: self.ser })
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -146,18 +155,30 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeRawValue<
     }
 }
 
-pub(crate) struct RawValueSerializer<'ser, W: std::io::Write>(&'ser mut BencodeSerializer<W>);
-
 impl<'ser, W: std::io::Write> RawValueSerializer<'ser, W> {
     fn expected_err<T>() -> Result<T, SerError> {
-        Err(SerError::custom("expected RawValue"))
+        todo!()
+        // Err(SerError::custom("expected RawValue"))
+    }
+}
+
+impl<'ser, W: std::io::Write> serde::ser::SerializeSeq for RawValueSerializer<'ser, W> {
+    type Ok = ();
+    type Error = SerError;
+
+    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<Self::Ok, Self::Error> where T: Serialize {
+        value.serialize(RawValueSerializer{ser: self.ser})
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(())
     }
 }
 
 impl<'ser, W: std::io::Write> Serializer for RawValueSerializer<'ser, W> {
     type Ok = ();
     type Error = SerError;
-    type SerializeSeq = Impossible<(), SerError>;
+    type SerializeSeq = RawValueSerializer<'ser, W>;
     type SerializeTuple = Impossible<(), SerError>;
     type SerializeTupleStruct = Impossible<(), SerError>;
     type SerializeTupleVariant = Impossible<(), SerError>;
@@ -185,8 +206,8 @@ impl<'ser, W: std::io::Write> Serializer for RawValueSerializer<'ser, W> {
         Self::expected_err()
     }
 
-    fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
-        Self::expected_err()
+    fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
+        self.ser.write_raw(&[v])
     }
 
     fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
@@ -218,7 +239,7 @@ impl<'ser, W: std::io::Write> Serializer for RawValueSerializer<'ser, W> {
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        self.0.write_raw(v)
+        self.ser.write_raw(v)
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
@@ -274,7 +295,7 @@ impl<'ser, W: std::io::Write> Serializer for RawValueSerializer<'ser, W> {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Self::expected_err()
+        Ok(self)
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
@@ -360,30 +381,53 @@ mod tests {
         assert_eq!(wrapper, RawValue(input.into()));
 
         let buf = to_bytes(&wrapper).unwrap();
-        assert_eq!(input, buf.as_slice())
+        assert_eq!(
+            input,
+            buf.as_slice(),
+            "{} {}",
+            input.escape_ascii(),
+            buf.escape_ascii()
+        )
+    }
+
+    #[derive(Serialize)]
+    struct Info<Buf> {
+        files: Vec<Buf>,
+    }
+    #[derive(Serialize, PartialEq, Deserialize, Debug)]
+    struct MetainfoLike<Buf: ByteBufT> {
+        comment: String,
+        info: Option<RawValue<Buf>>,
     }
 
     #[test]
     fn test_to_json_and_back() -> anyhow::Result<()> {
-        #[derive(Serialize)]
-        struct Info<Buf> {
-            files: Vec<Buf>,
-        }
-        #[derive(Serialize, PartialEq, Deserialize, Debug)]
-        struct MetainfoLike<Buf> {
-            comment: String,
-            info: Option<RawValue<Buf>>,
-        }
         let orig_info = Info {
             files: vec!["awesome movie".to_string()],
         };
         let orig_meta = MetainfoLike {
             comment: "leet ripper".to_string(),
-            info: Some(to_bytes(orig_info)?.into()),
+            info: Some(ByteString::from(to_bytes(orig_info)?).into()),
         };
         let json = serde_json::to_string(&orig_meta)?;
         dbg!(&json);
         let json_meta = serde_json::from_str(&json)?;
+        assert_eq!(orig_meta, json_meta);
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialize_raw_info_and_back() -> anyhow::Result<()> {
+        let orig_info = Info {
+            files: vec!["awesome movie".to_string()],
+        };
+        let orig_meta = MetainfoLike {
+            comment: "leet ripper".to_string(),
+            info: Some(ByteString(to_bytes(orig_info)?).into()),
+        };
+        let bytes = to_bytes(&orig_meta)?;
+        dbg!(&bytes);
+        let json_meta = from_bytes(&bytes)?;
         assert_eq!(orig_meta, json_meta);
         Ok(())
     }
