@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+use serde::de::value::BorrowedBytesDeserializer;
 use super::*;
 use serde::ser::Error;
 
@@ -40,15 +42,17 @@ where
 
 impl<'de, T> Deserialize<'de> for RawValue<T>
 where
-    T: From<&'de [u8]>,
+    T: Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = &'de [u8];
+        struct V<T> {
+            phantom: PhantomData<T>
+        }
+        impl<'de, T: serde::Deserialize<'de>> Visitor<'de> for V<T> {
+            type Value = T;
 
             fn expecting(&self, _formatter: &mut Formatter) -> std::fmt::Result {
                 todo!()
@@ -58,12 +62,12 @@ where
             where
                 E: serde::de::Error,
             {
-                Ok(v)
+                Self::Value::deserialize(BorrowedBytesDeserializer::new(v))
             }
         }
         deserializer
-            .deserialize_newtype_struct(TOKEN, V)
-            .map(|x| RawValue(x.into()))
+            .deserialize_newtype_struct(TOKEN, V{phantom: Default::default()})
+            .map(|x| RawValue(x))
     }
 }
 
