@@ -3,20 +3,11 @@ use super::*;
 pub struct BencodeDeserializer<'de> {
     raw_buf: &'de [u8],
     offset: usize,
-    raw_start: Option<usize>,
     field_context: Vec<ByteBuf<'de>>,
     parsing_key: bool,
 }
 
 impl<'de> BencodeDeserializer<'de> {
-    fn start_raw(&mut self) {
-        assert!(self.raw_start.replace(self.offset).is_none());
-    }
-
-    fn end_raw(&mut self) -> &'de [u8] {
-        &self.raw_buf[self.raw_start.take().unwrap()..self.offset]
-    }
-
     fn buf(&'de self) -> &'de [u8] {
         &self.raw_buf[self.offset..]
     }
@@ -29,7 +20,6 @@ impl<'de> BencodeDeserializer<'de> {
         Self {
             raw_buf: buf,
             offset: 0,
-            raw_start: None,
             field_context: Default::default(),
             parsing_key: false,
         }
@@ -37,6 +27,7 @@ impl<'de> BencodeDeserializer<'de> {
     pub fn into_remaining(self) -> &'de [u8] {
         self.raw_buf
     }
+    
     fn parse_integer(&mut self) -> Result<i64, Error> {
         match self.buf().iter().copied().position(|e| e == b'e') {
             Some(end) => {
@@ -443,9 +434,9 @@ impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> 
         V: serde::de::Visitor<'de>,
     {
         if name == TOKEN {
-            self.start_raw();
+            let start_offset = self.offset;
             self.deserialize_any(serde::de::IgnoredAny)?;
-            visitor.visit_borrowed_bytes(self.end_raw())
+            visitor.visit_borrowed_bytes(&self.raw_buf[start_offset..self.offset])
         } else {
             Err(Error::new_from_kind(ErrorKind::NotSupported("newtype structs")).set_context(self))
         }
