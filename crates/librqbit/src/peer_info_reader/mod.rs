@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use bencode::from_bytes;
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::{ByteBuf, ByteString};
 use librqbit_core::{
     constants::CHUNK_SIZE,
     hash_id::Id20,
@@ -30,9 +30,9 @@ pub(crate) async fn read_metainfo_from_peer(
     info_hash: Id20,
     peer_connection_options: Option<PeerConnectionOptions>,
     spawner: BlockingSpawner,
-) -> anyhow::Result<TorrentMetaV1Info<ByteBufOwned>> {
+) -> anyhow::Result<TorrentMetaV1Info<ByteString>> {
     let (result_tx, result_rx) =
-        tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteBufOwned>>>();
+        tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteString>>>();
     let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
     let handler = Handler {
         addr,
@@ -131,9 +131,8 @@ struct Handler {
     addr: SocketAddr,
     info_hash: Id20,
     writer_tx: UnboundedSender<WriterRequest>,
-    result_tx: Mutex<
-        Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentMetaV1Info<ByteBufOwned>>>>,
-    >,
+    result_tx:
+        Mutex<Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentMetaV1Info<ByteString>>>>>,
     locked: RwLock<Option<HandlerLocked>>,
 }
 
@@ -170,7 +169,7 @@ impl PeerConnectionHandler for Handler {
                     .record_piece(piece, &data, self.info_hash)?;
             if piece_ready {
                 let buf = self.locked.write().take().unwrap().buffer;
-                let info = from_bytes::<TorrentMetaV1Info<ByteBufOwned>>(&buf);
+                let info = from_bytes::<TorrentMetaV1Info<ByteString>>(&buf);
                 self.result_tx
                     .lock()
                     .take()

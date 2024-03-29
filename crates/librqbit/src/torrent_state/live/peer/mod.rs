@@ -198,7 +198,7 @@ impl LivePeerState {
         LivePeerState {
             peer_id,
             peer_interested: false,
-            bitfield: BF::default(),
+            bitfield: BF::new(),
             inflight_requests: Default::default(),
             tx,
         }

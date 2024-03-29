@@ -1,6 +1,6 @@
 use std::{collections::HashMap, marker::PhantomData};
 
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use serde::Deserializer;
 
@@ -133,7 +133,7 @@ where
 }
 
 pub type BencodeValueBorrowed<'a> = BencodeValue<ByteBuf<'a>>;
-pub type BencodeValueOwned = BencodeValue<ByteBufOwned>;
+pub type BencodeValueOwned = BencodeValue<ByteString>;
 
 #[cfg(test)]
 mod tests {

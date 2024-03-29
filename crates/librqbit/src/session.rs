@@ -21,7 +21,7 @@ use crate::{
 };
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufT, ByteString};
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
 use futures::{
@@ -126,17 +126,14 @@ struct SerializedTorrent {
         serialize_with = "serialize_torrent",
         deserialize_with = "deserialize_torrent"
     )]
-    info: TorrentMetaV1Info<ByteBufOwned>,
+    info: TorrentMetaV1Info<ByteString>,
     trackers: HashSet<String>,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
     is_paused: bool,
 }
 
-fn serialize_torrent<S>(
-    t: &TorrentMetaV1Info<ByteBufOwned>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_torrent<S>(t: &TorrentMetaV1Info<ByteString>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -148,7 +145,7 @@ where
     s.serialize(serializer)
 }
 
-fn deserialize_torrent<'de, D>(deserializer: D) -> Result<TorrentMetaV1Info<ByteBufOwned>, D::Error>
+fn deserialize_torrent<'de, D>(deserializer: D) -> Result<TorrentMetaV1Info<ByteString>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -158,7 +155,7 @@ where
     let b = general_purpose::STANDARD_NO_PAD
         .decode(s)
         .map_err(D::Error::custom)?;
-    TorrentMetaV1Info::<ByteBufOwned>::deserialize(&mut BencodeDeserializer::new_from_buf(&b))
+    TorrentMetaV1Info::<ByteString>::deserialize(&mut BencodeDeserializer::new_from_buf(&b))
         .map_err(D::Error::custom)
 }
 
@@ -219,7 +216,7 @@ fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
 }
 
 fn compute_only_files(
-    info: &TorrentMetaV1Info<ByteBufOwned>,
+    info: &TorrentMetaV1Info<ByteString>,
     only_files: Option<Vec<usize>>,
     only_files_regex: Option<String>,
     list_only: bool,
@@ -306,7 +303,7 @@ pub struct AddTorrentOptions {
 
 pub struct ListOnlyResponse {
     pub info_hash: Id20,
-    pub info: TorrentMetaV1Info<ByteBufOwned>,
+    pub info: TorrentMetaV1Info<ByteString>,
     pub only_files: Option<Vec<usize>>,
     pub output_folder: PathBuf,
     pub seen_peers: Vec<SocketAddr>,
@@ -429,7 +426,7 @@ pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
     pub stream: tokio::net::TcpStream,
     pub read_buf: ReadBuf,
-    pub handshake: Handshake<ByteBufOwned>,
+    pub handshake: Handshake<ByteString>,
 }
 
 impl Session {
@@ -718,10 +715,10 @@ impl Session {
             serde_json::from_reader(&mut rdr).context("error deserializing session database")?;
         let mut futures = Vec::new();
         for (id, storrent) in db.torrents.into_iter() {
-            let trackers: Vec<ByteBufOwned> = storrent
+            let trackers: Vec<ByteString> = storrent
                 .trackers
                 .into_iter()
-                .map(|t| ByteBufOwned::from(t.into_bytes()))
+                .map(|t| ByteString(t.into_bytes()))
                 .collect();
             let info = TorrentMetaV1Owned {
                 announce: trackers.first().cloned(),
@@ -932,7 +929,7 @@ impl Session {
 
     fn get_default_subfolder_for_torrent(
         &self,
-        info: &TorrentMetaV1Info<ByteBufOwned>,
+        info: &TorrentMetaV1Info<ByteString>,
     ) -> anyhow::Result<Option<PathBuf>> {
         let files = info
             .iter_filenames_and_lengths()?
@@ -960,7 +957,7 @@ impl Session {
     async fn main_torrent_info(
         &self,
         info_hash: Id20,
-        info: TorrentMetaV1Info<ByteBufOwned>,
+        info: TorrentMetaV1Info<ByteString>,
         trackers: Vec<String>,
         peer_rx: Option<PeerStream>,
         initial_peers: Vec<SocketAddr>,

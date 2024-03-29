@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
-use buffers::ByteBufOwned;
+use buffers::ByteString;
 use dht::{DhtStats, Id20};
 use futures::Stream;
 use http::StatusCode;
@@ -268,7 +268,7 @@ pub struct ApiAddTorrentResponse {
 
 fn make_torrent_details(
     info_hash: &Id20,
-    info: &TorrentMetaV1Info<ByteBufOwned>,
+    info: &TorrentMetaV1Info<ByteString>,
     only_files: Option<&[usize]>,
 ) -> Result<TorrentDetailsResponse> {
     let files = info

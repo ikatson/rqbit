@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{bail, Context};
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{hash_id::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
 use parking_lot::RwLock;
@@ -100,7 +100,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         &self,
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         read_buf: ReadBuf,
-        handshake: Handshake<ByteBufOwned>,
+        handshake: Handshake<ByteString>,
         mut conn: tokio::net::TcpStream,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
@@ -220,7 +220,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let extended_handshake: RwLock<Option<ExtendedHandshake<ByteBufOwned>>> = RwLock::new(None);
+        let extended_handshake: RwLock<Option<ExtendedHandshake<ByteString>>> = RwLock::new(None);
         let extended_handshake_ref = &extended_handshake;
         let supports_extended = handshake_supports_extended;
 

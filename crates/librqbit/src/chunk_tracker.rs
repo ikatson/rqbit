@@ -35,7 +35,7 @@ pub struct ChunkTracker {
 fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
     let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
-    let mut chunk_bf = BF::from_boxed_slice(vec.into_boxed_slice());
+    let mut chunk_bf = BF::from_vec(vec);
     for piece_index in needed_pieces
         .get(0..lengths.total_pieces() as usize)
         .unwrap()
