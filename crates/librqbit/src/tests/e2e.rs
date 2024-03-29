@@ -105,6 +105,7 @@ async fn test_e2e() {
                                 }
                                 Ok(true)
                             }
+                            crate::ManagedTorrentState::Error(e) => bail!("error: {e:?}"),
                             _ => bail!("broken state"),
                         })
                         .unwrap();
