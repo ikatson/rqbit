@@ -8,7 +8,6 @@ use serde::Deserialize;
 use clone_to_owned::CloneToOwned;
 
 #[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-#[serde(transparent)]
 pub struct ByteBufOwned(pub Box<[u8]>);
 
 #[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
