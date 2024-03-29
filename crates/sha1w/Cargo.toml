@@ -11,4 +11,4 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-crypto-hash = {version="0.3", optional=true}
+crypto-hash = "0.3"
