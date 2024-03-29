@@ -13,9 +13,9 @@ pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteBufOwned>;
 
 /// Parse torrent metainfo from bytes.
-pub fn torrent_from_bytes<'de, BufType: Deserialize<'de>>(
+pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(
     buf: &'de [u8],
-) -> anyhow::Result<TorrentMetaV1<BufType>> {
+) -> anyhow::Result<TorrentMetaV1<ByteBuf>> {
     let mut de = BencodeDeserializer::new_from_buf(buf);
     de.is_torrent_info = true;
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
@@ -86,14 +86,14 @@ pub struct TorrentMetaV1Info<BufType> {
 }
 
 #[derive(Clone, Copy)]
-pub enum FileIteratorName<'a, BufType> {
-    Single(Option<&'a BufType>),
-    Tree(&'a [BufType]),
+pub enum FileIteratorName<'a, ByteBuf> {
+    Single(Option<&'a ByteBuf>),
+    Tree(&'a [ByteBuf]),
 }
 
-impl<'a, BufType> std::fmt::Debug for FileIteratorName<'a, BufType>
+impl<'a, ByteBuf> std::fmt::Debug for FileIteratorName<'a, ByteBuf>
 where
-    BufType: AsRef<[u8]>,
+    ByteBuf: AsRef<[u8]>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.to_string() {
@@ -103,9 +103,9 @@ where
     }
 }
 
-impl<'a, BufType> FileIteratorName<'a, BufType>
+impl<'a, ByteBuf> FileIteratorName<'a, ByteBuf>
 where
-    BufType: AsRef<[u8]>,
+    ByteBuf: AsRef<[u8]>,
 {
     pub fn to_vec(&self) -> anyhow::Result<Vec<String>> {
         self.iter_components()
@@ -143,8 +143,12 @@ where
             if bit == ".." {
                 anyhow::bail!("path traversal detected, \"..\" in filename bit {:?}", bit);
             }
-            if bit.contains('/') || bit.contains('\\') {
-                anyhow::bail!("suspicios separator in filename bit {:?}", bit);
+            if bit.contains(std::path::MAIN_SEPARATOR) {
+                anyhow::bail!(
+                    "suspicios separator {:?} in filename bit {:?}",
+                    std::path::MAIN_SEPARATOR,
+                    bit
+                );
             }
             Ok(bit)
         }))
@@ -216,11 +220,11 @@ where
     }
 }
 
-impl<BufType> CloneToOwned for TorrentMetaV1File<BufType>
+impl<ByteBuf> CloneToOwned for TorrentMetaV1File<ByteBuf>
 where
-    BufType: CloneToOwned,
+    ByteBuf: CloneToOwned,
 {
-    type Target = TorrentMetaV1File<<BufType as CloneToOwned>::Target>;
+    type Target = TorrentMetaV1File<<ByteBuf as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         TorrentMetaV1File {
@@ -230,11 +234,11 @@ where
     }
 }
 
-impl<BufType> CloneToOwned for TorrentMetaV1Info<BufType>
+impl<ByteBuf> CloneToOwned for TorrentMetaV1Info<ByteBuf>
 where
-    BufType: CloneToOwned,
+    ByteBuf: CloneToOwned,
 {
-    type Target = TorrentMetaV1Info<<BufType as CloneToOwned>::Target>;
+    type Target = TorrentMetaV1Info<<ByteBuf as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         TorrentMetaV1Info {
@@ -248,11 +252,11 @@ where
     }
 }
 
-impl<BufType> CloneToOwned for TorrentMetaV1<BufType>
+impl<ByteBuf> CloneToOwned for TorrentMetaV1<ByteBuf>
 where
-    BufType: CloneToOwned,
+    ByteBuf: CloneToOwned,
 {
-    type Target = TorrentMetaV1<<BufType as CloneToOwned>::Target>;
+    type Target = TorrentMetaV1<<ByteBuf as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         TorrentMetaV1 {
