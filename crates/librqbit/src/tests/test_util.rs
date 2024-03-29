@@ -63,4 +63,11 @@ impl TestPeerMetadata {
         }
         0f64
     }
+
+    pub fn bad_data_probability(&self) -> f64 {
+        if self.server_id % 2 == 0 {
+            return 0.05f64;
+        }
+        0f64
+    }
 }
