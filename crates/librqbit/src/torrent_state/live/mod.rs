@@ -248,10 +248,8 @@ impl TorrentStateLive {
                         let stats = state.stats_snapshot();
                         let fetched = stats.fetched_bytes;
                         let needed = state.initially_needed();
-                        // fetched can be too high in theory, so for safety make sure that it doesn't wrap around u64.
-                        let remaining = needed
-                            .wrapping_sub(fetched)
-                            .min(needed - stats.downloaded_and_checked_bytes);
+                        // TODO: this is too coarse.
+                        let remaining = needed - stats.downloaded_and_checked_bytes;
                         state
                             .down_speed_estimator
                             .add_snapshot(fetched, Some(remaining), now);
