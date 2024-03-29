@@ -20,7 +20,7 @@ rust-tls = ["reqwest/rustls-tls"]
 
 [dependencies]
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.2" }
-tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "1.0.0" }
+tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "1.0.1" }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.0" }
 librqbit-core = { path = "../librqbit_core", version = "3.6.2" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
