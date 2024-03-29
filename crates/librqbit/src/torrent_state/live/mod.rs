@@ -1396,11 +1396,15 @@ impl PeerHandler {
                         self.state.maybe_transmit_haves(chunk_info.piece_index);
                     }
                     false => {
-                        warn!("checksum for piece={} did not validate", index,);
+                        warn!(
+                            "checksum for piece={} did not validate. disconecting peer.",
+                            index
+                        );
                         self.state
                             .lock_write("mark_piece_broken")
                             .get_chunks_mut()?
                             .mark_piece_broken_if_not_have(chunk_info.piece_index);
+                        anyhow::bail!("i am probably a bogus peer. dying.")
                     }
                 };
                 Ok::<_, anyhow::Error>(())

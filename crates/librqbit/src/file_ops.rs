@@ -283,7 +283,7 @@ impl<'a> FileOps<'a> {
             piece_remaining_bytes -= to_read_in_file;
 
             if piece_remaining_bytes == 0 {
-                return Ok(true);
+                break;
             }
 
             absolute_offset = 0;

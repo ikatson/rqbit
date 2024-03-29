@@ -25,9 +25,15 @@ pub struct PieceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkInfo {
     pub piece_index: ValidPieceIndex,
+
+    // Index of chunk within the piece.
     pub chunk_index: u32,
+
+    // Absolute chunk index if the first chunk of the first piece was 0.
     pub absolute_index: u32,
     pub size: u32,
+
+    // Offset of chunk in bytes within the piece.
     pub offset: u32,
 }
 
