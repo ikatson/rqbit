@@ -3,12 +3,12 @@
 //
 // Not useful outside of librqbit.
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 use clone_to_owned::CloneToOwned;
 
-#[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-pub struct ByteString(pub Vec<u8>);
+#[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+pub struct ByteBufOwned(pub Box<[u8]>);
 
 #[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 #[serde(transparent)]
@@ -18,7 +18,7 @@ pub trait ByteBufT {
     fn as_slice(&self) -> &[u8];
 }
 
-impl ByteBufT for ByteString {
+impl ByteBufT for ByteBufOwned {
     fn as_slice(&self) -> &[u8] {
         self.as_ref()
     }
@@ -78,31 +78,31 @@ impl<'a> std::fmt::Display for ByteBuf<'a> {
     }
 }
 
-impl std::fmt::Debug for ByteString {
+impl std::fmt::Debug for ByteBufOwned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_bytes(&self.0, f, true)
     }
 }
 
-impl std::fmt::Display for ByteString {
+impl std::fmt::Display for ByteBufOwned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_bytes(&self.0, f, false)
     }
 }
 
 impl<'a> CloneToOwned for ByteBuf<'a> {
-    type Target = ByteString;
+    type Target = ByteBufOwned;
 
     fn clone_to_owned(&self) -> Self::Target {
-        ByteString(self.as_slice().to_owned())
+        ByteBufOwned(self.as_slice().to_owned().into_boxed_slice())
     }
 }
 
-impl CloneToOwned for ByteString {
-    type Target = ByteString;
+impl CloneToOwned for ByteBufOwned {
+    type Target = ByteBufOwned;
 
     fn clone_to_owned(&self) -> Self::Target {
-        ByteString(self.as_slice().to_owned())
+        ByteBufOwned(self.0.clone())
     }
 }
 
@@ -112,7 +112,7 @@ impl<'a> std::convert::AsRef<[u8]> for ByteBuf<'a> {
     }
 }
 
-impl std::convert::AsRef<[u8]> for ByteString {
+impl std::convert::AsRef<[u8]> for ByteBufOwned {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
@@ -126,7 +126,7 @@ impl<'a> std::ops::Deref for ByteBuf<'a> {
     }
 }
 
-impl std::ops::Deref for ByteString {
+impl std::ops::Deref for ByteBufOwned {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -140,15 +140,15 @@ impl<'a> From<&'a [u8]> for ByteBuf<'a> {
     }
 }
 
-impl<'a> From<&'a [u8]> for ByteString {
+impl<'a> From<&'a [u8]> for ByteBufOwned {
     fn from(b: &'a [u8]) -> Self {
         Self(b.into())
     }
 }
 
-impl From<Vec<u8>> for ByteString {
+impl From<Vec<u8>> for ByteBufOwned {
     fn from(b: Vec<u8>) -> Self {
-        Self(b)
+        Self(b.into_boxed_slice())
     }
 }
 
@@ -161,35 +161,11 @@ impl<'a> serde::ser::Serialize for ByteBuf<'a> {
     }
 }
 
-impl serde::ser::Serialize for ByteString {
+impl serde::ser::Serialize for ByteBufOwned {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         serializer.serialize_bytes(self.as_slice())
-    }
-}
-
-impl<'de> serde::de::Deserialize<'de> for ByteString {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = Vec<u8>;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("byte string")
-            }
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(v.to_owned())
-            }
-        }
-        Ok(ByteString(deserializer.deserialize_byte_buf(Visitor {})?))
     }
 }

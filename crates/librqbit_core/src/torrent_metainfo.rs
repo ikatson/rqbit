@@ -2,7 +2,7 @@ use std::{iter::once, path::PathBuf};
 
 use anyhow::Context;
 use bencode::BencodeDeserializer;
-use buffers::{ByteBuf, ByteString};
+use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::hash_id::Id20;
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
-pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
+pub type TorrentMetaV1Owned = TorrentMetaV1<ByteBufOwned>;
 
 /// Parse torrent metainfo from bytes.
 pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>>(

@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::Context;
-use buffers::ByteString;
+use buffers::ByteBufOwned;
 use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
@@ -55,7 +55,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
 }
 
 pub(crate) struct FileOps<'a, Sha1> {
-    torrent: &'a TorrentMetaV1Info<ByteString>,
+    torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
     files: &'a [Arc<Mutex<File>>],
     lengths: &'a Lengths,
     phantom_data: PhantomData<Sha1>,
@@ -63,7 +63,7 @@ pub(crate) struct FileOps<'a, Sha1> {
 
 impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
     pub fn new(
-        torrent: &'a TorrentMetaV1Info<ByteString>,
+        torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
         files: &'a [Arc<Mutex<File>>],
         lengths: &'a Lengths,
     ) -> Self {
@@ -80,8 +80,10 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         only_files: Option<&[usize]>,
         progress: &AtomicU64,
     ) -> anyhow::Result<InitialCheckResults> {
-        let mut needed_pieces = BF::from_vec(vec![0u8; self.lengths.piece_bitfield_bytes()]);
-        let mut have_pieces = BF::from_vec(vec![0u8; self.lengths.piece_bitfield_bytes()]);
+        let mut needed_pieces =
+            BF::from_boxed_slice(vec![0u8; self.lengths.piece_bitfield_bytes()].into());
+        let mut have_pieces =
+            BF::from_boxed_slice(vec![0u8; self.lengths.piece_bitfield_bytes()].into());
 
         let mut have_bytes = 0u64;
         let mut needed_bytes = 0u64;
@@ -92,7 +94,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
             index: usize,
             fd: &'a Arc<Mutex<File>>,
             len: u64,
-            name: FileIteratorName<'a, ByteString>,
+            name: FileIteratorName<'a, ByteBufOwned>,
             full_file_required: bool,
             processed_bytes: u64,
             is_broken: bool,

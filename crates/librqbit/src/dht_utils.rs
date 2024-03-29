@@ -1,7 +1,7 @@
 use std::{collections::HashSet, net::SocketAddr};
 
 use anyhow::Context;
-use buffers::ByteString;
+use buffers::ByteBufOwned;
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use tracing::debug;
@@ -14,7 +14,7 @@ use librqbit_core::hash_id::Id20;
 #[derive(Debug)]
 pub enum ReadMetainfoResult<Rx> {
     Found {
-        info: TorrentMetaV1Info<ByteString>,
+        info: TorrentMetaV1Info<ByteBufOwned>,
         rx: Rx,
         seen: HashSet<SocketAddr>,
     },

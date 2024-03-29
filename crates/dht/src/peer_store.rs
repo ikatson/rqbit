@@ -5,7 +5,7 @@ use std::{
     sync::atomic::AtomicU32,
 };
 
-use bencode::ByteString;
+use bencode::ByteBufOwned;
 use chrono::{DateTime, Utc};
 use librqbit_core::hash_id::Id20;
 use parking_lot::RwLock;
@@ -134,7 +134,7 @@ impl PeerStore {
         token
     }
 
-    pub fn store_peer(&self, announce: &AnnouncePeer<ByteString>, addr: SocketAddr) -> bool {
+    pub fn store_peer(&self, announce: &AnnouncePeer<ByteBufOwned>, addr: SocketAddr) -> bool {
         // If the info_hash in announce is too far away from us, don't store it.
         // If the token doesn't match, don't store it.
         // If we are out of capacity, don't store it.
