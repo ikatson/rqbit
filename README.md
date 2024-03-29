@@ -18,14 +18,16 @@ Assuming you are downloading to ~/Downloads.
 
 ### Download torrents
 
-Assuming you are downloading to ~/Downloads. If the server is already started, ```-o ~/Downloads``` can be omitted.
+Assuming you are downloading to ~/Downloads. If the server is already started, `-o ~/Downloads` can be omitted.
 
     rqbit download -o ~/Downloads 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
 
 ## Web UI
+
 Access with http://localhost:3030/web/. It looks similar to Desktop app, see screenshot below.
 
 ## Desktop app
+
 The desktop app is a [thin wrapper](https://github.com/ikatson/rqbit/blob/main/desktop/src-tauri/src/main.rs) on top of the Web UI frontend.
 
 Download it in [Releases](https://github.com/ikatson/rqbit/releases).
@@ -33,6 +35,7 @@ Download it in [Releases](https://github.com/ikatson/rqbit/releases).
 <img width="1136" alt="Rqbit desktop" src="https://github.com/ikatson/rqbit/assets/221386/51f56542-667f-4f5e-a1e0-942b1df4cd5a">
 
 ## Performance
+
 Anecdotally from a few reports, rqbit is faster than other clients they've tried, at least with their default settings.
 
 Memory usage for the server is usually within a few tens of megabytes, which makes it great for e.g. RaspberryPI.
@@ -53,6 +56,7 @@ cargo install rqbit
 ```
 
 ## Build
+
 Just a regular Rust binary build process.
 
     cargo build --release
@@ -60,12 +64,15 @@ Just a regular Rust binary build process.
 ## Useful options
 
 ### -v <log-level>
+
 Increase verbosity. Possible values: trace, debug, info, warn, error.
 
 ### --list
+
 Will print the contents of the torrent file or the magnet link.
 
 ### --overwrite
+
 If you want to resume downloading a file that already exists, you'll need to add this option.
 
 ### --peer-connect-timeout=10s
@@ -79,6 +86,7 @@ Use a regex here to select files by their names.
 ## Features and missing features
 
 ### Some supported features
+
 - Sequential downloading (the default and only option)
 - Resume downloading file(s) if they already exist on disk
 - Selective downloading using a regular expression for filename
@@ -89,6 +97,7 @@ Use a regex here to select files by their names.
 - Web UI
 
 ### Bugs, missing features and other caveats
+
 PRs are very welcome.
 
 - Only supports BitTorrent V1 over TCP
@@ -123,23 +132,25 @@ By default it listens on http://127.0.0.1:3030.
 
 ### Add torrent through HTTP API
 
-```curl -d 'magnet:?...' http://127.0.0.1:3030/torrents```
+`curl -d 'magnet:?...' http://127.0.0.1:3030/torrents`
 
 OR
 
-```curl -d 'http://.../file.torrent' http://127.0.0.1:3030/torrents```
+`curl -d 'http://.../file.torrent' http://127.0.0.1:3030/torrents`
 
 OR
 
-```curl --data-binary @/tmp/xubuntu-23.04-minimal-amd64.iso.torrent http://127.0.0.1:3030/torrents```
+`curl --data-binary @/tmp/xubuntu-23.04-minimal-amd64.iso.torrent http://127.0.0.1:3030/torrents`
 
 Supported query parameters, all optional:
+
 - overwrite=true|false
 - only_files_regex - the regular expression string to match filenames
 - output_folder - the folder to download to. If not specified, defaults to the one that rqbit server started with
 - list_only=true|false - if you want to just list the files in the torrent instead of downloading
 
 ## Code organization
+
 - crates/rqbit - main binary
 - crates/librqbit - main library
 - crates/librqbit-core - torrent utils
