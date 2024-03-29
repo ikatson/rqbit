@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-bencode"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2021"
 description = "Bencode serialization and deserialization using Serde"
 license = "Apache-2.0"
@@ -17,8 +17,8 @@ sha1-openssl = ["sha1w/sha1-openssl"]
 sha1-rust = ["sha1w/sha1-rust"]
 
 [dependencies]
-serde = {version = "1", features=["derive"]}
-buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
-clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
+serde = { version = "1", features = ["derive"] }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "2.2.1" }
+clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
 anyhow = "1"
-sha1w = {path="../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
+sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "2.2.1" }

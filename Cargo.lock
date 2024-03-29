@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "2.2.1"
+version = "2.2.2"
 dependencies = [
  "anyhow",
  "librqbit-buffers",

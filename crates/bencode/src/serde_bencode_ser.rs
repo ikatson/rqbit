@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Serialize, Serializer};
+use serde::{ser::Impossible, Serialize, Serializer};
 
 use buffers::ByteString;
 
@@ -134,46 +134,6 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeTuple for SerializeTuple<'ser
     }
 }
 
-struct SerializeTupleStruct<'ser, W: std::io::Write> {
-    _ser: &'ser mut BencodeSerializer<W>,
-}
-impl<'ser, W: std::io::Write> serde::ser::SerializeTupleStruct for SerializeTupleStruct<'ser, W> {
-    type Ok = ();
-
-    type Error = SerError;
-
-    fn serialize_field<T: ?Sized>(&mut self, _value: &T) -> Result<(), Self::Error>
-    where
-        T: serde::Serialize,
-    {
-        todo!()
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
-    }
-}
-
-struct SerializeTupleVariant<'ser, W: std::io::Write> {
-    _ser: &'ser mut BencodeSerializer<W>,
-}
-impl<'ser, W: std::io::Write> serde::ser::SerializeTupleVariant for SerializeTupleVariant<'ser, W> {
-    type Ok = ();
-
-    type Error = SerError;
-
-    fn serialize_field<T: ?Sized>(&mut self, _value: &T) -> Result<(), Self::Error>
-    where
-        T: serde::Serialize,
-    {
-        todo!()
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
-    }
-}
-
 struct SerializeMap<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
     tmp: BTreeMap<ByteString, ByteString>,
@@ -251,50 +211,16 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'s
     }
 }
 
-struct SerializeStructVariant<'ser, W: std::io::Write> {
-    _ser: &'ser mut BencodeSerializer<W>,
-}
-impl<'ser, W: std::io::Write> serde::ser::SerializeStructVariant
-    for SerializeStructVariant<'ser, W>
-{
-    type Ok = ();
-
-    type Error = SerError;
-
-    fn serialize_field<T: ?Sized>(
-        &mut self,
-        _key: &'static str,
-        _value: &T,
-    ) -> Result<(), Self::Error>
-    where
-        T: serde::Serialize,
-    {
-        todo!()
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
-    }
-}
-
 impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     type Ok = ();
-
     type Error = SerError;
-
     type SerializeSeq = SerializeSeq<'ser, W>;
-
     type SerializeTuple = SerializeTuple<'ser, W>;
-
-    type SerializeTupleStruct = SerializeTupleStruct<'ser, W>;
-
-    type SerializeTupleVariant = SerializeTupleVariant<'ser, W>;
-
+    type SerializeTupleStruct = Impossible<(), SerError>;
+    type SerializeTupleVariant = Impossible<(), SerError>;
     type SerializeMap = SerializeMap<'ser, W>;
-
     type SerializeStruct = SerializeStruct<'ser, W>;
-
-    type SerializeStructVariant = SerializeStructVariant<'ser, W>;
+    type SerializeStructVariant = Impossible<(), SerError>;
 
     fn serialize_bool(self, _: bool) -> Result<Self::Ok, Self::Error> {
         Err(SerError::custom_with_ser(
@@ -386,7 +312,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support unit structs",
+            self,
+        ))
     }
 
     fn serialize_unit_variant(
@@ -395,7 +324,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _variant_index: u32,
         _variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support unit variants",
+            self,
+        ))
     }
 
     fn serialize_newtype_struct<T: ?Sized>(
@@ -406,7 +338,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     where
         T: serde::Serialize,
     {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support newtype structs",
+            self,
+        ))
     }
 
     fn serialize_newtype_variant<T: ?Sized>(
@@ -419,7 +354,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     where
         T: serde::Serialize,
     {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support newtype variants",
+            self,
+        ))
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -428,7 +366,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support tuples",
+            self,
+        ))
     }
 
     fn serialize_tuple_struct(
@@ -436,7 +377,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support tuple structs",
+            self,
+        ))
     }
 
     fn serialize_tuple_variant(
@@ -446,7 +390,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support tuple variants",
+            self,
+        ))
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
@@ -477,7 +424,10 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        todo!()
+        Err(SerError::custom_with_ser(
+            "bencode doesn't support struct variants",
+            self,
+        ))
     }
 }
 
