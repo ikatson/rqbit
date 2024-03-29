@@ -5,7 +5,7 @@
 pub mod extended;
 
 use bincode::Options;
-use buffers::{ByteBuf, ByteString};
+use buffers::{ByteBuf, ByteBufOwned};
 use byteorder::{ByteOrder, BE};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
@@ -183,7 +183,7 @@ pub enum Message<ByteBuf: std::hash::Hash + Eq> {
 }
 
 pub type MessageBorrowed<'a> = Message<ByteBuf<'a>>;
-pub type MessageOwned = Message<ByteString>;
+pub type MessageOwned = Message<ByteBufOwned>;
 
 pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<u8, bitvec::order::Lsb0>;
 pub type BitfieldOwned = bitvec::vec::BitVec<u8, bitvec::order::Lsb0>;

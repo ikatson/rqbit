@@ -81,9 +81,9 @@ impl PeerStates {
             prev
         })
     }
-    pub fn update_bitfield_from_vec(&self, handle: PeerHandle, bitfield: Vec<u8>) -> Option<()> {
+    pub fn update_bitfield_from_vec(&self, handle: PeerHandle, bitfield: Box<[u8]>) -> Option<()> {
         self.with_live_mut(handle, "update_bitfield_from_vec", |live| {
-            live.bitfield = BF::from_vec(bitfield);
+            live.bitfield = BF::from_boxed_slice(bitfield);
         })
     }
     pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<(PeerRx, PeerTx)> {

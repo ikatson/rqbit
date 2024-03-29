@@ -57,7 +57,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use backoff::backoff::Backoff;
-use buffers::{ByteBuf, ByteString};
+use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
@@ -130,7 +130,7 @@ fn dummy_file() -> anyhow::Result<std::fs::File> {
 }
 
 fn make_piece_bitfield(lengths: &Lengths) -> BF {
-    BF::from_vec(vec![0; lengths.piece_bitfield_bytes()])
+    BF::from_boxed_slice(vec![0; lengths.piece_bitfield_bytes()].into_boxed_slice())
 }
 
 pub(crate) struct TorrentStateLocked {
@@ -485,7 +485,7 @@ impl TorrentStateLive {
         &self.meta
     }
 
-    pub fn info(&self) -> &TorrentMetaV1Info<ByteString> {
+    pub fn info(&self) -> &TorrentMetaV1Info<ByteBufOwned> {
         &self.meta.info
     }
     pub fn info_hash(&self) -> Id20 {
@@ -1047,7 +1047,7 @@ impl PeerHandler {
         self.on_bitfield_notify.notify_waiters();
     }
 
-    fn on_bitfield(&self, bitfield: ByteString) -> anyhow::Result<()> {
+    fn on_bitfield(&self, bitfield: ByteBufOwned) -> anyhow::Result<()> {
         if bitfield.len() != self.state.lengths.piece_bitfield_bytes() {
             anyhow::bail!(
                 "dropping peer as its bitfield has unexpected size. Got {}, expected {}",
