@@ -10,15 +10,5 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-default = ["sha1-system"]
-sha1-system = ["crypto-hash"]
-sha1-openssl = ["openssl"]
-sha1-rust = ["sha1"]
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-openssl = {version="0.10", optional=true}
-crypto-hash = {version="0.3", optional=true}
-sha1 = {version = "0.10", optional=true}
+crypto-hash = "0.3"

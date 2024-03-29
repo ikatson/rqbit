@@ -12,14 +12,11 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["sha1-system", "default-tls", "webui"]
+default = ["default-tls", "webui"]
 openssl-vendored = ["openssl/vendored"]
 tokio-console = ["console-subscriber", "tokio/tracing"]
 webui = ["librqbit/webui"]
 timed_existence = ["librqbit/timed_existence"]
-sha1-system = ["librqbit/sha1-system"]
-sha1-openssl = ["librqbit/sha1-openssl"]
-sha1-rust = ["librqbit/sha1-rust"]
 default-tls = ["librqbit/default-tls"]
 rust-tls = ["librqbit/rust-tls"]
 

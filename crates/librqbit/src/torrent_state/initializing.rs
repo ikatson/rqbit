@@ -8,7 +8,6 @@ use anyhow::Context;
 
 use parking_lot::Mutex;
 
-use sha1w::Sha1;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
@@ -81,7 +80,7 @@ impl TorrentStateInitializing {
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
-            FileOps::<Sha1>::new(&self.meta.info, &files, &self.meta.lengths)
+            FileOps::new(&self.meta.info, &files, &self.meta.lengths)
                 .initial_check(self.only_files.as_deref(), &self.checked_bytes)
         })?;
 

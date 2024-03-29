@@ -72,7 +72,6 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
-use sha1w::Sha1;
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -492,7 +491,7 @@ impl TorrentStateLive {
     pub fn peer_id(&self) -> Id20 {
         self.meta.peer_id
     }
-    pub(crate) fn file_ops(&self) -> FileOps<'_, Sha1> {
+    pub(crate) fn file_ops(&self) -> FileOps<'_> {
         FileOps::new(&self.meta.info, &self.files, &self.lengths)
     }
     pub fn initially_needed(&self) -> u64 {

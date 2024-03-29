@@ -16,7 +16,7 @@ use librqbit_core::{
 };
 use parking_lot::Mutex;
 use peer_binary_protocol::Piece;
-use sha1w::ISha1;
+use sha1w::{ISha1, Sha1};
 use tracing::{debug, trace, warn};
 
 use crate::type_aliases::{PeerHandle, BF};
@@ -54,14 +54,14 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     Ok(())
 }
 
-pub(crate) struct FileOps<'a, Sha1> {
+pub(crate) struct FileOps<'a> {
     torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
     files: &'a [Arc<Mutex<File>>],
     lengths: &'a Lengths,
     phantom_data: PhantomData<Sha1>,
 }
 
-impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
+impl<'a> FileOps<'a> {
     pub fn new(
         torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
         files: &'a [Arc<Mutex<File>>],
@@ -136,7 +136,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         let mut read_buffer = vec![0u8; 65536];
 
         for piece_info in self.lengths.iter_piece_infos() {
-            let mut computed_hash = Sha1Impl::new();
+            let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
             let mut at_least_one_file_required = current_file.full_file_required;
@@ -242,7 +242,7 @@ impl<'a, Sha1Impl: ISha1> FileOps<'a, Sha1Impl> {
         piece_index: ValidPieceIndex,
         last_received_chunk: &ChunkInfo,
     ) -> anyhow::Result<bool> {
-        let mut h = Sha1Impl::new();
+        let mut h = Sha1::new();
         let piece_length = self.lengths.piece_length(piece_index);
         let mut absolute_offset = self.lengths.piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];

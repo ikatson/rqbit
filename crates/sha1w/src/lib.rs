@@ -5,13 +5,6 @@
 // openssl is 2-3x faster than rust's sha1.
 // system library is the best choice probably (it's the default anyway).
 
-#[cfg(feature = "sha1-openssl")]
-pub type Sha1 = Sha1Openssl;
-
-#[cfg(feature = "sha1-rust")]
-pub type Sha1 = Sha1Rust;
-
-#[cfg(feature = "sha1-system")]
 pub type Sha1 = Sha1System;
 
 pub trait ISha1 {
@@ -20,60 +13,10 @@ pub trait ISha1 {
     fn finish(self) -> [u8; 20];
 }
 
-#[cfg(feature = "sha1-rust")]
-pub struct Sha1Rust {
-    inner: sha1::Sha1,
-}
-
-#[cfg(feature = "sha1-rust")]
-impl ISha1 for Sha1Rust {
-    fn new() -> Self {
-        Sha1Rust {
-            inner: sha1::Sha1::default(),
-        }
-    }
-
-    fn update(&mut self, buf: &[u8]) {
-        use sha1::Digest;
-        sha1::Sha1::update(&mut self.inner, buf)
-    }
-
-    fn finish(self) -> [u8; 20] {
-        use sha1::Digest;
-        let mut output = [0u8; 20];
-        sha1::Sha1::finalize_into(self.inner, (&mut output[..]).into());
-        output
-    }
-}
-
-#[cfg(feature = "sha1-openssl")]
-pub struct Sha1Openssl {
-    inner: openssl::sha::Sha1,
-}
-
-#[cfg(feature = "sha1-openssl")]
-impl ISha1 for Sha1Openssl {
-    fn new() -> Self {
-        Self {
-            inner: openssl::sha::Sha1::new(),
-        }
-    }
-
-    fn update(&mut self, buf: &[u8]) {
-        self.inner.update(buf)
-    }
-
-    fn finish(self) -> [u8; 20] {
-        self.inner.finish()
-    }
-}
-
-#[cfg(feature = "sha1-system")]
 pub struct Sha1System {
     inner: crypto_hash::Hasher,
 }
 
-#[cfg(feature = "sha1-system")]
 impl ISha1 for Sha1System {
     fn new() -> Self {
         Self {
