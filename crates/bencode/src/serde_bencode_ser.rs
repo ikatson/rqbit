@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{ser::Impossible, Serialize, Serializer};
 
-use buffers::ByteString;
+use buffers::ByteBufOwned;
 
 #[derive(Debug)]
 pub enum SerErrorKind {
@@ -136,8 +136,8 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeTuple for SerializeTuple<'ser
 
 struct SerializeMap<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
-    tmp: BTreeMap<ByteString, ByteString>,
-    last_key: Option<ByteString>,
+    tmp: BTreeMap<ByteBufOwned, ByteBufOwned>,
+    last_key: Option<ByteBufOwned>,
 }
 impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W> {
     type Ok = ();
@@ -152,7 +152,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W>
         let mut ser = BencodeSerializer::new(&mut buf);
         ser.hack_no_bytestring_prefix = true;
         key.serialize(&mut ser)?;
-        self.last_key.replace(ByteString::from(buf));
+        self.last_key.replace(ByteBufOwned::from(buf));
         Ok(())
         // key.serialize(&mut *self.ser);
     }
@@ -165,7 +165,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W>
         let mut ser = BencodeSerializer::new(&mut buf);
         value.serialize(&mut ser)?;
         self.tmp
-            .insert(self.last_key.take().unwrap(), ByteString::from(buf));
+            .insert(self.last_key.take().unwrap(), ByteBufOwned::from(buf));
         Ok(())
     }
 
@@ -180,7 +180,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W>
 
 struct SerializeStruct<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
-    tmp: BTreeMap<&'static str, ByteString>,
+    tmp: BTreeMap<&'static str, ByteBufOwned>,
 }
 impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'ser, W> {
     type Ok = ();
@@ -198,7 +198,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'s
         let mut buf = Vec::new();
         let mut ser = BencodeSerializer::new(&mut buf);
         value.serialize(&mut ser)?;
-        self.tmp.insert(key, ByteString::from(buf));
+        self.tmp.insert(key, ByteBufOwned::from(buf));
         Ok(())
     }
 

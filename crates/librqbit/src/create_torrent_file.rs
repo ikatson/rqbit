@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use bencode::bencode_serialize_to_writer;
-use buffers::ByteString;
+use buffers::ByteBufOwned;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use librqbit_core::Id20;
 use sha1w::{ISha1, Sha1};
@@ -44,7 +44,7 @@ fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Resu
     Ok(())
 }
 
-fn compute_info_hash(t: &TorrentMetaV1Info<ByteString>) -> anyhow::Result<Id20> {
+fn compute_info_hash(t: &TorrentMetaV1Info<ByteBufOwned>) -> anyhow::Result<Id20> {
     struct W {
         hash: sha1w::Sha1,
     }
@@ -79,7 +79,7 @@ fn osstr_to_bytes(o: &OsStr) -> Vec<u8> {
 async fn create_torrent_raw<'a>(
     path: &'a Path,
     options: CreateTorrentOptions<'a>,
-) -> anyhow::Result<TorrentMetaV1Info<ByteString>> {
+) -> anyhow::Result<TorrentMetaV1Info<ByteBufOwned>> {
     path.try_exists()
         .with_context(|| format!("path {:?} doesn't exist", path))?;
     let basename = path
@@ -87,7 +87,7 @@ async fn create_torrent_raw<'a>(
         .ok_or_else(|| anyhow::anyhow!("cannot determine basename of {:?}", path))?;
     let is_dir = path.is_dir();
     let single_file_mode = !is_dir;
-    let name: ByteString = match options.name {
+    let name: ByteBufOwned = match options.name {
         Some(name) => name.as_bytes().into(),
         None => osstr_to_bytes(basename).into(),
     };
@@ -112,7 +112,7 @@ async fn create_torrent_raw<'a>(
     let mut remaining_piece_length = piece_length;
     let mut piece_checksum = sha1w::Sha1::new();
     let mut piece_hashes = Vec::<u8>::new();
-    let mut output_files: Vec<TorrentMetaV1File<ByteString>> = Vec::new();
+    let mut output_files: Vec<TorrentMetaV1File<ByteBufOwned>> = Vec::new();
 
     let spawner = BlockingSpawner::default();
 
@@ -216,7 +216,7 @@ pub async fn create_torrent<'a>(
 
 #[cfg(test)]
 mod tests {
-    use buffers::ByteBuf;
+    use buffers::{ByteBuf, ByteBufOwned};
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
     use crate::create_torrent;
@@ -237,6 +237,9 @@ mod tests {
         let bytes = torrent.as_bytes().unwrap();
 
         let deserialized = torrent_from_bytes::<ByteBuf>(&bytes).unwrap();
+        assert_eq!(torrent.info_hash(), deserialized.info_hash);
+
+        let deserialized = torrent_from_bytes::<ByteBufOwned>(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
     }
 }
