@@ -3,16 +3,16 @@
 //
 // Not useful outside of librqbit.
 
-use serde::Deserialize;
+use std::marker::PhantomData;
+
+use serde::Deserializer;
 
 use clone_to_owned::CloneToOwned;
 
-#[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-#[serde(transparent)]
+#[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub struct ByteBufOwned(pub Box<[u8]>);
 
-#[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-#[serde(transparent)]
+#[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub struct ByteBuf<'a>(pub &'a [u8]);
 
 pub trait ByteBufT {
@@ -168,5 +168,56 @@ impl serde::ser::Serialize for ByteBufOwned {
         S: serde::Serializer,
     {
         serializer.serialize_bytes(self.as_slice())
+    }
+}
+
+impl<'de> serde::de::Deserialize<'de> for ByteBufOwned {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ByteBufOwned;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("byte string")
+            }
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(ByteBufOwned::from(v.to_owned()))
+            }
+        }
+        Ok(deserializer.deserialize_byte_buf(Visitor {})?)
+    }
+}
+
+impl<'de: 'a, 'a> serde::de::Deserialize<'de> for ByteBuf<'a> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Default)]
+        struct Visitor<'a> {
+            _p: PhantomData<&'a ()>,
+        }
+
+        impl<'de: 'a, 'a> serde::de::Visitor<'de> for Visitor<'a> {
+            type Value = ByteBuf<'a>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("byte string")
+            }
+            fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(ByteBuf::from(v))
+            }
+        }
+        Ok(deserializer.deserialize_byte_buf(Visitor::default())?)
     }
 }
