@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "5.5.3"
+version = "5.5.4"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -19,28 +19,28 @@ default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
 
 [dependencies]
-bencode = {path = "../bencode", default-features=false, package="librqbit-bencode", version="2.2.1"}
-tracker_comms = {path = "../tracker_comms", default-features=false, package="librqbit-tracker-comms", version="1.0.0"}
-buffers = {path = "../buffers", package="librqbit-buffers", version = "2.2.1"}
-librqbit-core = {path = "../librqbit_core", version = "3.6.1"}
-clone_to_owned = {path = "../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
-peer_binary_protocol = {path = "../peer_binary_protocol", package="librqbit-peer-protocol", version = "3.5.0"}
-sha1w = {path = "../sha1w", default-features=false, package="librqbit-sha1-wrapper", version="2.2.1"}
-dht = {path = "../dht", package="librqbit-dht", version="5.0.0"}
-librqbit-upnp = {path = "../upnp", version = "0.1.0"}
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.2" }
+tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "1.0.1" }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.0" }
+librqbit-core = { path = "../librqbit_core", version = "3.6.2" }
+clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
+peer_binary_protocol = { path = "../peer_binary_protocol", package = "librqbit-peer-protocol", version = "3.5.1" }
+sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "3.0.0" }
+dht = { path = "../dht", package = "librqbit-dht", version = "5.0.2" }
+librqbit-upnp = { path = "../upnp", version = "0.1.0" }
 
-tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
-axum = {version = "0.7.4"}
-tower-http = {version = "0.5", features = ["cors", "trace"]}
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+axum = { version = "0.7.4" }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
 tokio-stream = "0.1"
-serde = {version = "1", features=["derive"]}
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 anyhow = "1"
 itertools = "0.12"
 http = "1"
 regex = "1"
-reqwest = {version="0.12", default-features=false, features = ["json"]}
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 urlencoding = "2"
 byteorder = "1"
 bincode = "1"
@@ -50,12 +50,16 @@ tracing = "0.1.40"
 size_format = "1"
 rand = "0.8"
 
-openssl = {version="0.10", optional=true}
-crypto-hash = {version="0.3", optional=true}
-sha1 = {version = "0.10", optional=true}
-tracing-subscriber = {version = "0.3", default-features = false, features = ["json", "fmt", "env-filter"]}
+openssl = { version = "0.10", optional = true }
+crypto-hash = { version = "0.3", optional = true }
+sha1 = { version = "0.10", optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "json",
+    "fmt",
+    "env-filter",
+] }
 
-uuid = {version = "1.2", features = ["v4"]}
+uuid = { version = "1.2", features = ["v4"] }
 futures = "0.3"
 url = "2"
 hex = "0.4"
@@ -69,8 +73,8 @@ rlimit = "0.10.1"
 async-stream = "0.3.5"
 
 [dev-dependencies]
-futures = {version = "0.3"}
+futures = { version = "0.3" }
 tracing-subscriber = "0.3"
 tokio-test = "0.4"
 tempfile = "3"
-rand = {version = "0.8", features = ["small_rng"]}
+rand = { version = "0.8", features = ["small_rng"] }

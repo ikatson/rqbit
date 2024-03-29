@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-buffers"
-version = "2.2.1"
+version = "3.0.0"
 edition = "2021"
 description = "Utils to work with &[u8] and Vec<u8> in librqbit source code."
 license = "Apache-2.0"
@@ -10,5 +10,5 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = {version = "1", features=["derive"]}
-clone_to_owned = {path="../clone_to_owned", package="librqbit-clone-to-owned", version = "2.2.1"}
+serde = { version = "1", features = ["derive"] }
+clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
