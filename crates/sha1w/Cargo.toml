@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-sha1-wrapper"
-version = "2.2.1"
+version = "3.0.0"
 edition = "2018"
 description = "Common interface around various sha1 implementations used in rqbit torrent client."
 license = "Apache-2.0"

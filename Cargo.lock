@@ -1329,7 +1329,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-buffers"
-version = "2.2.1"
+version = "3.0.0"
 dependencies = [
  "librqbit-clone-to-owned",
  "serde",
@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-sha1-wrapper"
-version = "2.2.1"
+version = "3.0.0"
 dependencies = [
  "crypto-hash",
 ]
