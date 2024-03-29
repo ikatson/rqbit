@@ -12,12 +12,9 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["sha1-system", "default-tls"]
+default = ["default-tls"]
 webui = []
 timed_existence = []
-sha1-system = ["sha1w/sha1-system"]
-sha1-openssl = ["sha1w/sha1-openssl"]
-sha1-rust = ["sha1w/sha1-rust"]
 default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
 
