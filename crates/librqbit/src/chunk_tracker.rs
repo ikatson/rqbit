@@ -220,3 +220,71 @@ impl ChunkTracker {
         Some(ChunkMarkingResult::NotCompleted)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use librqbit_core::{constants::CHUNK_SIZE, lengths::Lengths};
+
+    use crate::type_aliases::BF;
+
+    use super::compute_chunk_status;
+
+    #[test]
+    fn test_compute_chunk_status() {
+        // Create the most obnoxious lenghts, and ensure it doesn't break in that case.
+        let piece_length = CHUNK_SIZE * 2 + 1;
+        let l = Lengths::new(piece_length as u64 * 2 + 1, piece_length).unwrap();
+
+        assert_eq!(l.total_pieces(), 3);
+        assert_eq!(l.default_chunks_per_piece(), 3);
+        assert_eq!(l.total_chunks(), 7);
+
+        {
+            let mut needed_pieces =
+                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+            needed_pieces.set(0, true);
+
+            let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+            dbg!(&chunks);
+            assert_eq!(chunks[0], false);
+            assert_eq!(chunks[1], false);
+            assert_eq!(chunks[2], false);
+            assert_eq!(chunks[3], true);
+            assert_eq!(chunks[4], true);
+            assert_eq!(chunks[5], true);
+            assert_eq!(chunks[6], true);
+        }
+
+        {
+            let mut needed_pieces =
+                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+            needed_pieces.set(1, true);
+
+            let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+            dbg!(&chunks);
+            assert_eq!(chunks[0], true);
+            assert_eq!(chunks[1], true);
+            assert_eq!(chunks[2], true);
+            assert_eq!(chunks[3], false);
+            assert_eq!(chunks[4], false);
+            assert_eq!(chunks[5], false);
+            assert_eq!(chunks[6], true);
+        }
+
+        {
+            let mut needed_pieces =
+                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+            needed_pieces.set(2, true);
+
+            let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+            dbg!(&chunks);
+            assert_eq!(chunks[0], true);
+            assert_eq!(chunks[1], true);
+            assert_eq!(chunks[2], true);
+            assert_eq!(chunks[3], true);
+            assert_eq!(chunks[4], true);
+            assert_eq!(chunks[5], true);
+            assert_eq!(chunks[6], false);
+        }
+    }
+}
