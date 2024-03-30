@@ -22,18 +22,26 @@ use tracing::{debug, trace, warn};
 use crate::type_aliases::{PeerHandle, BF};
 
 pub(crate) struct InitialCheckResults {
-    // The pieces that we need to download.
-    pub needed_pieces: BF,
+    // A piece as flags based on these dimensions:
+    // - if the asked for it or not (only_files)
+    // - if we have it downloaded and verified
+    // - if we need to queue it for downloading
+    //   this one depends if we queued it already or not.
+
     // The pieces we have downloaded.
     pub have_pieces: BF,
+    // The pieces that the user selected to download.
+    pub selected_pieces: BF,
+
     // How many bytes we have. This can be MORE than "total_selected_bytes",
     // if we downloaded some pieces, and later the "only_files" was changed.
     pub have_bytes: u64,
     // How many bytes we need to download.
     pub needed_bytes: u64,
+
     // How many bytes are in selected pieces.
     // If all selected, this must be equal to total torrent length.
-    pub total_selected_bytes: u64,
+    pub selected_bytes: u64,
 }
 
 pub fn update_hash_from_file<Sha1: ISha1>(
@@ -82,8 +90,8 @@ impl<'a> FileOps<'a> {
     ) -> anyhow::Result<InitialCheckResults> {
         let mut needed_pieces =
             BF::from_boxed_slice(vec![0u8; self.lengths.piece_bitfield_bytes()].into());
-        let mut have_pieces =
-            BF::from_boxed_slice(vec![0u8; self.lengths.piece_bitfield_bytes()].into());
+        let mut have_pieces = needed_pieces.clone();
+        let mut selected_pieces = needed_pieces.clone();
 
         let mut have_bytes = 0u64;
         let mut needed_bytes = 0u64;
@@ -139,7 +147,7 @@ impl<'a> FileOps<'a> {
             let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
-            let mut at_least_one_file_required = current_file.full_file_required;
+            let mut piece_selected = current_file.full_file_required;
             progress.fetch_add(piece_info.len as u64, Ordering::Relaxed);
 
             while piece_remaining > 0 {
@@ -152,7 +160,7 @@ impl<'a> FileOps<'a> {
                         .next()
                         .ok_or_else(|| anyhow::anyhow!("broken torrent metadata"))?;
 
-                    at_least_one_file_required |= current_file.full_file_required;
+                    piece_selected |= current_file.full_file_required;
 
                     to_read_in_file =
                         std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
@@ -186,18 +194,18 @@ impl<'a> FileOps<'a> {
                 }
             }
 
-            if at_least_one_file_required {
+            if piece_selected {
                 total_selected_bytes += piece_info.len as u64;
+                selected_pieces.set(piece_info.piece_index.get() as usize, true);
             }
 
-            if at_least_one_file_required && some_files_broken {
+            if piece_selected && some_files_broken {
                 trace!(
                     "piece {} had errors, marking as needed",
                     piece_info.piece_index
                 );
 
                 needed_bytes += piece_info.len as u64;
-                needed_pieces.set(piece_info.piece_index.get() as usize, true);
                 continue;
             }
 
@@ -212,7 +220,7 @@ impl<'a> FileOps<'a> {
                 );
                 have_bytes += piece_info.len as u64;
                 have_pieces.set(piece_info.piece_index.get() as usize, true);
-            } else if at_least_one_file_required {
+            } else if piece_selected {
                 trace!(
                     "piece {} hash does not match, marking as needed",
                     piece_info.piece_index
@@ -228,11 +236,11 @@ impl<'a> FileOps<'a> {
         }
 
         Ok(InitialCheckResults {
-            needed_pieces,
             have_pieces,
+            selected_pieces,
             have_bytes,
             needed_bytes,
-            total_selected_bytes,
+            selected_bytes: total_selected_bytes,
         })
     }
 
