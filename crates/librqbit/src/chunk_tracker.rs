@@ -43,7 +43,7 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> anyhow::Result
         .with_context(|| format!("error getting range {range:?} from needed_pieces"))?
         .iter_zeros()
     {
-        let offset = piece_index * lengths.default_max_chunks_per_piece() as usize;
+        let offset = piece_index * lengths.default_chunks_per_piece() as usize;
         let chunks_per_piece = lengths
             .chunks_per_piece(lengths.try_validate_piece_index(piece_index as u32)?)
             as usize;
