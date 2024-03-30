@@ -339,14 +339,13 @@ impl ChunkTracker {
                     match (current_piece_selected, current_piece_have) {
                         (true, true) => {}
                         (true, false) => {
-                            dbg!(self.mark_piece_broken_if_not_have(current_piece.piece_index))
+                            self.mark_piece_broken_if_not_have(current_piece.piece_index)
                         }
                         (false, true) => {}
                         (false, false) => {
                             // don't need the piece, and don't have it - cancel downloading it
-                            dbg!(self
-                                .queue_pieces
-                                .set(current_piece.piece_index.get() as usize, false));
+                            self.queue_pieces
+                                .set(current_piece.piece_index.get() as usize, false);
                         }
                     }
 
