@@ -44,23 +44,19 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> anyhow::Result
     let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
     let mut chunk_bf = BF::from_boxed_slice(vec.into_boxed_slice());
-    let range = 0..lengths.total_pieces() as usize;
-    for piece_index in needed_pieces
-        .get(range.clone())
-        .with_context(|| format!("bug: error getting range {range:?} from needed_pieces. needed_pieces.len() = {}, range={:?}", needed_pieces.len(), range))?
-        .iter_zeros()
-    {
-        let offset = piece_index * lengths.default_chunks_per_piece() as usize;
-        let chunks_per_piece = lengths.chunks_per_piece(
-            lengths
-                .try_validate_piece_index(piece_index as u32)
-                .context("bug")?,
-        ) as usize;
-        let range = offset..offset + chunks_per_piece;
-        chunk_bf
-            .get_mut(range.clone())
-            .with_context(|| format!("bug: error getting range {range:?} from chunk_bf"))?
-            .fill(true);
+
+    for piece in lengths.iter_piece_infos() {
+        let chunks = lengths.chunks_per_piece(piece.piece_index) as usize;
+        let offset = (lengths.default_chunks_per_piece() * piece.piece_index.get()) as usize;
+        let range = offset..(offset + chunks);
+        if !needed_pieces[piece.piece_index.get() as usize] {
+            chunk_bf
+                .get_mut(range.clone())
+                .with_context(|| {
+                    format!("bug in bitvec: error getting range {range:?} from chunk_bf")
+                })?
+                .fill(true);
+        }
     }
     Ok(chunk_bf)
 }
@@ -254,7 +250,6 @@ mod tests {
             needed_pieces.set(0, true);
 
             let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
-            dbg!(&chunks);
             assert_eq!(chunks[0], false);
             assert_eq!(chunks[1], false);
             assert_eq!(chunks[2], false);
