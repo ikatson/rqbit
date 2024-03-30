@@ -647,6 +647,9 @@ impl TorrentStateLive {
 
         let mut g = self.locked.write();
 
+        // It should be impossible to make a fatal error after pausing.
+        g.fatal_errors_tx.take();
+
         let files = self
             .files
             .iter()
