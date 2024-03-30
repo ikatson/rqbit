@@ -67,6 +67,7 @@ impl ManagedTorrentState {
 
 pub(crate) struct ManagedTorrentLocked {
     pub state: ManagedTorrentState,
+    pub(crate) only_files: Option<Vec<usize>>,
 }
 
 #[derive(Default)]
@@ -91,7 +92,6 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    pub(crate) only_files: Option<Vec<usize>>,
     locked: RwLock<ManagedTorrentLocked>,
 }
 
@@ -109,7 +109,7 @@ impl ManagedTorrent {
     }
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
-        self.only_files.clone()
+        self.locked.read().only_files.clone()
     }
 
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
@@ -298,7 +298,7 @@ impl ManagedTorrent {
             ManagedTorrentState::Error(_) => {
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.info.clone(),
-                    self.only_files.clone(),
+                    g.only_files.clone(),
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
                 drop(g);
@@ -407,6 +407,45 @@ impl ManagedTorrent {
         }
         .boxed()
     }
+
+    // Returns true if needed to unpause torrent.
+    // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
+    pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<bool> {
+        if only_files.is_empty() {
+            anyhow::bail!("you need to select at least one file");
+        }
+        let file_count = self.info().info.iter_file_lengths()?.count();
+        for f in only_files.iter().copied() {
+            if f >= file_count {
+                anyhow::bail!("only_files contains invalid value {f}")
+            }
+        }
+
+        // if live, need to update chunk tracker
+        // - if already finished: need to pause, then unpause (to reopen files etc)
+        // if paused, need to update chunk tracker
+
+        let mut g = self.locked.write();
+        let need_to_unpause = match &mut g.state {
+            ManagedTorrentState::Initializing(_) => bail!("can't update initializing torrent"),
+            ManagedTorrentState::Error(_) => false,
+            ManagedTorrentState::None => false,
+            ManagedTorrentState::Paused(p) => {
+                p.update_only_files(only_files)?;
+                false
+            }
+            ManagedTorrentState::Live(l) => {
+                let mut p = l.pause()?;
+                let e = p.update_only_files(only_files);
+                g.state = ManagedTorrentState::Paused(p);
+                e?;
+                true
+            }
+        };
+
+        g.only_files = Some(only_files.iter().copied().collect());
+        Ok(need_to_unpause)
+    }
 }
 
 pub struct ManagedTorrentBuilder {
@@ -507,9 +546,9 @@ impl ManagedTorrentBuilder {
             self.only_files.clone(),
         ));
         Ok(Arc::new(ManagedTorrent {
-            only_files: self.only_files,
             locked: RwLock::new(ManagedTorrentLocked {
                 state: ManagedTorrentState::Initializing(initializing),
+                only_files: self.only_files,
             }),
             info,
         }))

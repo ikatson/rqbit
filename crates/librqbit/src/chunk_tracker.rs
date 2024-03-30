@@ -1,11 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-use buffers::ByteBufOwned;
-use librqbit_core::{
-    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
-};
+use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
 
