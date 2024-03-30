@@ -399,7 +399,7 @@ mod tests {
             match (a, b, c, d) {
                 // (true, true, ___)
                 (true, true, true, true) => {
-                    let l = check(Lengths::new(65536, 32768).unwrap());
+                    let l = check(Lengths::new(65536, 32768, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 4);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -408,7 +408,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 2), None);
                 }
                 (true, true, true, false) => {
-                    let l = check(Lengths::new(32768, 16384).unwrap());
+                    let l = check(Lengths::new(32768, 16384, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -416,7 +416,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (true, true, false, true) => {
-                    let l = check(Lengths::new(32768, 32768).unwrap());
+                    let l = check(Lengths::new(32768, 32768, None).unwrap());
                     dbg!(l.total_length().div_ceil(l.default_piece_length() as u64));
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 2);
@@ -426,7 +426,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 2), None);
                 }
                 (true, true, false, false) => {
-                    let l = check(Lengths::new(16384, 16384).unwrap());
+                    let l = check(Lengths::new(16384, 16384, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -436,7 +436,7 @@ mod tests {
 
                 // (true, false, ___)
                 (true, false, true, true) => {
-                    let l = check(Lengths::new(40000, 20000).unwrap());
+                    let l = check(Lengths::new(40000, 20000, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 4);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -445,7 +445,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 2), None);
                 }
                 (true, false, true, false) => {
-                    let l = check(Lengths::new(20000, 10000).unwrap());
+                    let l = check(Lengths::new(20000, 10000, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -453,7 +453,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (true, false, false, true) => {
-                    let l = check(Lengths::new(20000, 20000).unwrap());
+                    let l = check(Lengths::new(20000, 20000, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -462,7 +462,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 2), None);
                 }
                 (true, false, false, false) => {
-                    let l = check(Lengths::new(10000, 10000).unwrap());
+                    let l = check(Lengths::new(10000, 10000, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -472,7 +472,7 @@ mod tests {
 
                 // (false, true, ___)
                 (false, true, true, true) => {
-                    let l = check(Lengths::new(35000, 32768).unwrap());
+                    let l = check(Lengths::new(35000, 32768, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 3);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -480,7 +480,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (false, true, true, false) => {
-                    let l = check(Lengths::new(20000, 16384).unwrap());
+                    let l = check(Lengths::new(20000, 16384, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -488,7 +488,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (false, true, false, true) => {
-                    let l = check(Lengths::new(20000, 32768).unwrap());
+                    let l = check(Lengths::new(20000, 32768, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -497,7 +497,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 2), None);
                 }
                 (false, true, false, false) => {
-                    let l = check(Lengths::new(15000, 16384).unwrap());
+                    let l = check(Lengths::new(15000, 16384, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -507,7 +507,7 @@ mod tests {
 
                 // (false, false, ___)
                 (false, false, true, true) => {
-                    let l = check(Lengths::new(21000, 20000).unwrap());
+                    let l = check(Lengths::new(21000, 20000, None).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 3);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -518,7 +518,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (false, false, true, false) => {
-                    let l = check(Lengths::new(21000, 10000).unwrap());
+                    let l = check(Lengths::new(21000, 10000, None).unwrap());
                     assert_eq!(l.total_pieces(), 3);
                     assert_eq!(l.total_chunks(), 3);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -528,7 +528,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(2), 1), None);
                 }
                 (false, false, false, true) => {
-                    let l = check(Lengths::new(11000, 20000).unwrap());
+                    let l = check(Lengths::new(11000, 20000, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -536,7 +536,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 1), None);
                 }
                 (false, false, false, false) => {
-                    let l = check(Lengths::new(9000, 10000).unwrap());
+                    let l = check(Lengths::new(9000, 10000, None).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -548,8 +548,8 @@ mod tests {
 
         // A few more examples with longer values and weird inputs.
 
-        let l = Lengths::new(16384_1_1, 16384_1).unwrap();
-        assert_eq!(l.default_chunks_per_piece(), 11);
+        let l = Lengths::new(16384_1_1, 16384_1, None).unwrap();
+        assert_eq!(l.max_chunks_per_piece, 11);
         assert_eq!(l.total_pieces(), 11);
         assert_eq!(l.total_chunks(), 111);
         assert_eq!(l.piece_bitfield_bytes(), 2);
