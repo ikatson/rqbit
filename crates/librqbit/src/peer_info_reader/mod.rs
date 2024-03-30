@@ -5,7 +5,7 @@ use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     constants::CHUNK_SIZE,
     hash_id::Id20,
-    lengths::{ceil_div_u64, last_element_size_u64, ChunkInfo},
+    lengths::{last_element_size_u64, ChunkInfo},
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{Mutex, RwLock};
@@ -76,7 +76,7 @@ impl HandlerLocked {
             anyhow::bail!("metadata size {} is too big", metadata_size);
         }
         let buffer = vec![0u8; metadata_size as usize];
-        let total_pieces = ceil_div_u64(metadata_size as u64, CHUNK_SIZE as u64);
+        let total_pieces = (metadata_size as u64).div_ceil(CHUNK_SIZE as u64);
         let received_pieces = vec![false; total_pieces as usize];
         Ok(Self {
             metadata_size,

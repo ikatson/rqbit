@@ -6,10 +6,6 @@ const fn is_power_of_two(x: u64) -> bool {
     (x != 0) && ((x & (x - 1)) == 0)
 }
 
-pub const fn ceil_div_u64(a: u64, b: u64) -> u64 {
-    (a + b - 1) / b
-}
-
 pub const fn last_element_size_u64(total: u64, chunk_size: u64) -> u64 {
     let rem = total % chunk_size;
     if rem == 0 {
@@ -100,21 +96,21 @@ impl Lengths {
         if total_length == 0 {
             anyhow::bail!("torrent with 0 length")
         }
-        let total_pieces = ceil_div_u64(total_length, piece_length as u64) as u32;
+        let total_pieces = total_length.div_ceil(piece_length as u64) as u32;
         Ok(Self {
             chunk_length,
             piece_length,
             total_length,
-            max_chunks_per_piece: ceil_div_u64(piece_length as u64, chunk_length as u64) as u32,
+            max_chunks_per_piece: (piece_length as u64).div_ceil(chunk_length as u64) as u32,
             last_piece_id: total_pieces - 1,
             last_piece_length: last_element_size_u64(total_length, piece_length as u64) as u32,
         })
     }
     pub const fn piece_bitfield_bytes(&self) -> usize {
-        ceil_div_u64(self.total_pieces() as u64, 8) as usize
+        self.total_pieces().div_ceil(8) as usize
     }
     pub const fn chunk_bitfield_bytes(&self) -> usize {
-        ceil_div_u64(self.total_chunks() as u64, 8) as usize
+        self.total_chunks().div_ceil(8) as usize
     }
     pub const fn total_length(&self) -> u64 {
         self.total_length
@@ -139,7 +135,7 @@ impl Lengths {
         self.max_chunks_per_piece
     }
     pub const fn total_chunks(&self) -> u32 {
-        ceil_div_u64(self.total_length, self.chunk_length as u64) as u32
+        self.total_length.div_ceil(self.chunk_length as u64) as u32
     }
     pub const fn last_piece_id(&self) -> ValidPieceIndex {
         ValidPieceIndex(self.last_piece_id)
