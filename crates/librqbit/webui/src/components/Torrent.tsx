@@ -18,7 +18,7 @@ export const Torrent: React.FC<{
   const [detailsResponse, updateDetailsResponse] =
     useState<TorrentDetails | null>(null);
   const [statsResponse, updateStatsResponse] = useState<TorrentStats | null>(
-    null
+    null,
   );
   const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
   const API = useContext(APIContext);
@@ -27,14 +27,12 @@ export const Torrent: React.FC<{
     setForceStatsRefresh(forceStatsRefresh + 1);
   };
 
-  // Update details once.
+  // Update details once then when asked for.
   useEffect(() => {
-    if (detailsResponse === null) {
-      return loopUntilSuccess(async () => {
-        await API.getTorrentDetails(torrent.id).then(updateDetailsResponse);
-      }, 1000);
-    }
-  }, [detailsResponse]);
+    return loopUntilSuccess(async () => {
+      await API.getTorrentDetails(torrent.id).then(updateDetailsResponse);
+    }, 1000);
+  }, [forceStatsRefresh]);
 
   // Update stats once then forever.
   useEffect(
@@ -61,10 +59,10 @@ export const Torrent: React.FC<{
             },
             () => {
               return errorInterval;
-            }
+            },
           );
       }, 0),
-    [forceStatsRefresh]
+    [forceStatsRefresh],
   );
 
   return (

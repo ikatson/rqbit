@@ -1,6 +1,5 @@
 import { createContext } from "react";
 import { RqbitAPI } from "./api-types";
-import { ContextType } from "./rqbit-web";
 
 export const APIContext = createContext<RqbitAPI>({
   listTorrents: () => {
@@ -13,6 +12,9 @@ export const APIContext = createContext<RqbitAPI>({
     throw new Error("Function not implemented.");
   },
   uploadTorrent: () => {
+    throw new Error("Function not implemented.");
+  },
+  updateOnlyFiles: () => {
     throw new Error("Function not implemented.");
   },
   pause: () => {
