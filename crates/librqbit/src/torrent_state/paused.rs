@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, fs::File, path::PathBuf, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -15,11 +15,13 @@ pub struct TorrentStatePaused {
     pub(crate) needed_bytes: u64,
 }
 
-// impl TorrentStatePaused {
-//     pub fn get_have_bytes(&self) -> u64 {
-//         self.have_bytes
-//     }
-//     pub fn get_needed_bytes(&self) -> u64 {
-//         self.needed_bytes
-//     }
-// }
+impl TorrentStatePaused {
+    pub(crate) fn update_only_files(&mut self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
+        let hn = self
+            .chunk_tracker
+            .update_only_files(self.info.info.iter_file_lengths()?, only_files)?;
+        self.have_bytes = hn.have_bytes;
+        self.needed_bytes = hn.needed_bytes;
+        Ok(())
+    }
+}

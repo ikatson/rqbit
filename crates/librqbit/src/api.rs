@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use buffers::ByteBufOwned;
@@ -119,6 +119,18 @@ impl Api {
         self.session
             .delete(idx, true)
             .context("error deleting torrent with files")?;
+        Ok(Default::default())
+    }
+
+    pub fn api_torrent_action_update_only_files(
+        &self,
+        idx: TorrentId,
+        only_files: &HashSet<usize>,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .update_only_files(&handle, only_files)
+            .context("error updating only_files")?;
         Ok(Default::default())
     }
 

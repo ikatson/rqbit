@@ -181,6 +181,21 @@ impl HttpApi {
             state.api_torrent_action_delete(idx).map(axum::Json)
         }
 
+        #[derive(Deserialize)]
+        struct UpdateOnlyFilesRequest {
+            only_files: Vec<usize>,
+        }
+
+        async fn torrent_action_update_only_files(
+            State(state): State<ApiState>,
+            Path(idx): Path<usize>,
+            axum::Json(req): axum::Json<UpdateOnlyFilesRequest>,
+        ) -> Result<impl IntoResponse> {
+            state
+                .api_torrent_action_update_only_files(idx, &req.only_files.into_iter().collect())
+                .map(axum::Json)
+        }
+
         async fn set_rust_log(
             State(state): State<ApiState>,
             new_value: String,
@@ -215,7 +230,11 @@ impl HttpApi {
                 .route("/torrents/:id/pause", post(torrent_action_pause))
                 .route("/torrents/:id/start", post(torrent_action_start))
                 .route("/torrents/:id/forget", post(torrent_action_forget))
-                .route("/torrents/:id/delete", post(torrent_action_delete));
+                .route("/torrents/:id/delete", post(torrent_action_delete))
+                .route(
+                    "/torrents/:id/update_only_files",
+                    post(torrent_action_update_only_files),
+                );
         }
 
         #[cfg(feature = "webui")]

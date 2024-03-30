@@ -107,7 +107,7 @@ impl SessionDatabase {
                                 .collect(),
                             info_hash: torrent.info_hash().as_string(),
                             info: torrent.info().info.clone(),
-                            only_files: torrent.only_files.clone(),
+                            only_files: torrent.only_files().clone(),
                             is_paused: torrent
                                 .with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
                             output_folder: torrent.info().out_dir.clone(),
@@ -1134,6 +1134,18 @@ impl Session {
             handle.info().options.force_tracker_interval,
         )?;
         handle.start(peer_rx, false, self.cancellation_token.child_token())?;
+        Ok(())
+    }
+
+    pub fn update_only_files(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        only_files: &HashSet<usize>,
+    ) -> anyhow::Result<()> {
+        let need_to_unpause = handle.update_only_files(only_files)?;
+        if need_to_unpause {
+            self.unpause(handle)?;
+        }
         Ok(())
     }
 
