@@ -13,7 +13,7 @@ pub struct ChunkTracker {
     // it's set to 0.
     //
     // Initially this is the opposite of "have", until we start making requests.
-    // An in-flight request is not in "needed", and not in "have".
+    // An in-flight request is not in in the queue, and not in "have".
     //
     // needed initial value = selected & !have
     queue_pieces: BF,
@@ -37,8 +37,12 @@ pub struct ChunkTracker {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct HaveNeededSelected {
+    // How many bytes we have downloaded and verified.
     pub have_bytes: u64,
+    // How many bytes do we need to download for selected to be
+    // a subset of have.
     pub needed_bytes: u64,
+    // How many bytes the user selected (by picking files).
     pub selected_bytes: u64,
 }
 
@@ -307,19 +311,11 @@ impl ChunkTracker {
             while remaining_file_len > 0 {
                 current_piece_selected |= len > 0 && file_required;
                 let shift = std::cmp::min(current_piece_remaining as u64, remaining_file_len);
-                assert!(shift > 0);
+                if shift == 0 {
+                    anyhow::bail!("bug: shift = 0, this shouldn't have happened")
+                }
                 remaining_file_len -= shift;
                 current_piece_remaining -= shift as u32;
-
-                // dbg!(
-                //     idx,
-                //     shift,
-                //     remaining_file_len,
-                //     current_piece_remaining,
-                //     current_piece_needed,
-                //     file_required,
-                //     current_piece
-                // );
 
                 if current_piece_remaining == 0 {
                     let current_piece_have = self.have[current_piece.piece_index.get() as usize];
