@@ -198,15 +198,6 @@ impl Lengths {
             absolute_index,
         })
     }
-
-    pub fn chunk_info_from_received_piece(
-        &self,
-        index: u32,
-        begin: u32,
-        block_len: u32,
-    ) -> Option<ChunkInfo> {
-        self.chunk_info_from_received_data(self.validate_piece_index(index)?, begin, block_len)
-    }
     pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
         let start = index.0 * self.chunks_per_piece;
         let end = start + self.chunks_per_piece(index);

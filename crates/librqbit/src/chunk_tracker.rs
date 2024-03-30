@@ -196,8 +196,8 @@ impl ChunkTracker {
     where
         ByteBuf: AsRef<[u8]>,
     {
-        let chunk_info = self.lengths.chunk_info_from_received_piece(
-            piece.index,
+        let chunk_info = self.lengths.chunk_info_from_received_data(
+            self.lengths.validate_piece_index(piece.index)?,
             piece.begin,
             piece.block.as_ref().len() as u32,
         )?;
