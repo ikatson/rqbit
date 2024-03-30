@@ -83,7 +83,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, trace, warn};
 
 use crate::{
-    chunk_tracker::{ChunkMarkingResult, ChunkTracker},
+    chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
     file_ops::FileOps,
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
@@ -203,9 +203,9 @@ impl TorrentStateLive {
         let down_speed_estimator = SpeedEstimator::new(5);
         let up_speed_estimator = SpeedEstimator::new(5);
 
-        let have_bytes = paused.have_bytes;
-        let needed_bytes = paused.needed_bytes;
-        let total_selected_bytes = paused.chunk_tracker.get_total_selected_bytes();
+        let have_bytes = paused.hns.have_bytes;
+        let needed_bytes = paused.hns.needed_bytes;
+        let total_selected_bytes = paused.hns.selected_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
         let state = Arc::new(TorrentStateLive {
@@ -676,8 +676,11 @@ impl TorrentStateLive {
             files,
             filenames,
             chunk_tracker,
-            have_bytes,
-            needed_bytes,
+            hns: HaveNeededSelected {
+                have_bytes,
+                needed_bytes,
+                selected_bytes: self.total_selected_bytes,
+            },
         })
     }
 
@@ -916,7 +919,7 @@ impl PeerHandler {
                 let n = {
                     let mut n_opt = None;
                     let bf = &live.bitfield;
-                    for n in g.get_chunks()?.iter_needed_pieces() {
+                    for n in g.get_chunks()?.iter_queued_pieces() {
                         if bf.get(n).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
                             break;
