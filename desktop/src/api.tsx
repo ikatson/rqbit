@@ -18,7 +18,7 @@ interface InvokeErrorResponse {
 }
 
 function errorToUIError(
-  path: string
+  path: string,
 ): (e: InvokeErrorResponse) => Promise<never> {
   return (e: InvokeErrorResponse) => {
     console.log(e);
@@ -35,11 +35,11 @@ function errorToUIError(
 
 export async function invokeAPI<Response>(
   name: string,
-  params?: InvokeArgs
+  params?: InvokeArgs,
 ): Promise<Response> {
   console.log("invoking", name, params);
   const result = await invoke<Response>(name, params).catch(
-    errorToUIError(name)
+    errorToUIError(name),
   );
   console.log(result);
   return result;
@@ -96,12 +96,18 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
           {
             contents,
             opts: opts ?? {},
-          }
+          },
         );
       }
       return await invokeAPI<AddTorrentResponse>("torrent_create_from_url", {
         url: data,
         opts: opts ?? {},
+      });
+    },
+    updateOnlyFiles: function (id, files): Promise<void> {
+      return invokeAPI<void>("torrent_action_configure", {
+        id: id,
+        onlyFiles: files,
       });
     },
     pause: function (id: number): Promise<void> {
