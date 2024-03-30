@@ -990,7 +990,6 @@ impl PeerHandler {
             }
         };
 
-        // TODO: we don't need chunk info to send data. We can just read the file.
         let chunk_info = match self.state.lengths.chunk_info_from_received_data(
             piece_index,
             request.begin,
@@ -1005,8 +1004,6 @@ impl PeerHandler {
             }
         };
 
-        // TODO: we only need to check if we have the piece verified. We shouldn't be
-        // sending unvalidated chunks.
         if !self
             .state
             .lock_read("is_chunk_ready_to_upload")
