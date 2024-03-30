@@ -294,6 +294,17 @@ async fn torrent_action_start(
 }
 
 #[tauri::command]
+async fn torrent_action_configure(
+    state: tauri::State<'_, State>,
+    id: usize,
+    only_files: Vec<usize>,
+) -> Result<EmptyJsonResponse, ApiError> {
+    state
+        .api()?
+        .api_torrent_action_update_only_files(id, &only_files.into_iter().collect())
+}
+
+#[tauri::command]
 fn get_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
@@ -325,6 +336,7 @@ async fn start() {
             torrent_action_pause,
             torrent_action_forget,
             torrent_action_start,
+            torrent_action_configure,
             torrent_create_from_base64_file,
             get_version,
             config_default,
