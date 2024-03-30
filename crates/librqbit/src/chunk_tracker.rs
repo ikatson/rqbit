@@ -29,15 +29,14 @@ pub struct ChunkTracker {
     total_selected_bytes: u64,
 }
 
-// TODO: this should be redone from "have" pieces, not from "needed" pieces.
-// Needed pieces are the ones we need to download, not necessarily the ones we have.
-// E.g. we might have more pieces, but the client asks to download only some files
-// partially.
-fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> anyhow::Result<BF> {
-    if needed_pieces.len() < lengths.total_pieces() as usize {
+// Comput the have-status of chunks.
+//
+// Save as "have_pieces", but there's one bit per chunk (not per piece).
+fn compute_chunk_have_status(lengths: &Lengths, have_pieces: &BF) -> anyhow::Result<BF> {
+    if have_pieces.len() < lengths.total_pieces() as usize {
         anyhow::bail!(
-            "bug: needed_pieces.len() < lengths.total_pieces(); {} < {}",
-            needed_pieces.len(),
+            "bug: have_pieces.len() < lengths.total_pieces(); {} < {}",
+            have_pieces.len(),
             lengths.total_pieces()
         );
     }
@@ -49,7 +48,7 @@ fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> anyhow::Result
         let chunks = lengths.chunks_per_piece(piece.piece_index) as usize;
         let offset = (lengths.default_chunks_per_piece() * piece.piece_index.get()) as usize;
         let range = offset..(offset + chunks);
-        if !needed_pieces[piece.piece_index.get() as usize] {
+        if have_pieces[piece.piece_index.get() as usize] {
             chunk_bf
                 .get_mut(range.clone())
                 .with_context(|| {
@@ -69,7 +68,11 @@ pub enum ChunkMarkingResult {
 
 impl ChunkTracker {
     pub fn new(
+        // Needed pieces are the ones we need to download. NOTE: if all files are selected,
+        // this is the inverse of have_pieces. But if partial files are selected, we may need more/less
+        // than we have.
         needed_pieces: BF,
+        // Have pieces are the ones we have already downloaded and verified.
         have_pieces: BF,
         lengths: Lengths,
         total_selected_bytes: u64,
@@ -90,7 +93,7 @@ impl ChunkTracker {
         // players look into it, and it's better be there.
         let priority_piece_ids = last_needed_piece_id.into_iter().collect();
         Ok(Self {
-            chunk_status: compute_chunk_status(&lengths, &needed_pieces)
+            chunk_status: compute_chunk_have_status(&lengths, &have_pieces)
                 .context("error computing chunk status")?,
             needed_pieces,
             lengths,
@@ -232,7 +235,7 @@ mod tests {
 
     use crate::type_aliases::BF;
 
-    use super::compute_chunk_status;
+    use super::compute_chunk_have_status;
 
     #[test]
     fn test_compute_chunk_status() {
@@ -245,11 +248,11 @@ mod tests {
         assert_eq!(l.total_chunks(), 7);
 
         {
-            let mut needed_pieces =
-                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
-            needed_pieces.set(0, true);
+            let mut have_pieces =
+                BF::from_boxed_slice(vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice());
+            have_pieces.set(0, false);
 
-            let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+            let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
             assert_eq!(chunks[0], false);
             assert_eq!(chunks[1], false);
             assert_eq!(chunks[2], false);
@@ -260,11 +263,11 @@ mod tests {
         }
 
         {
-            let mut needed_pieces =
-                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
-            needed_pieces.set(1, true);
+            let mut have_pieces =
+                BF::from_boxed_slice(vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice());
+            have_pieces.set(1, false);
 
-            let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+            let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
             dbg!(&chunks);
             assert_eq!(chunks[0], true);
             assert_eq!(chunks[1], true);
@@ -276,11 +279,11 @@ mod tests {
         }
 
         {
-            let mut needed_pieces =
-                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
-            needed_pieces.set(2, true);
+            let mut have_pieces =
+                BF::from_boxed_slice(vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice());
+            have_pieces.set(2, false);
 
-            let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+            let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
             dbg!(&chunks);
             assert_eq!(chunks[0], true);
             assert_eq!(chunks[1], true);
@@ -301,11 +304,12 @@ mod tests {
             assert_eq!(l.total_chunks(), 5);
 
             {
-                let mut needed_pieces =
-                    BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
-                needed_pieces.set(1, true);
+                let mut have_pieces = BF::from_boxed_slice(
+                    vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice(),
+                );
+                have_pieces.set(1, false);
 
-                let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+                let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
                 dbg!(&chunks);
                 assert_eq!(chunks[0], true);
                 assert_eq!(chunks[1], true);
@@ -315,11 +319,12 @@ mod tests {
             }
 
             {
-                let mut needed_pieces =
-                    BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
-                needed_pieces.set(2, true);
+                let mut have_pieces = BF::from_boxed_slice(
+                    vec![u8::MAX; l.piece_bitfield_bytes()].into_boxed_slice(),
+                );
+                have_pieces.set(2, false);
 
-                let chunks = compute_chunk_status(&l, &needed_pieces).unwrap();
+                let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
                 dbg!(&chunks);
                 assert_eq!(chunks[0], true);
                 assert_eq!(chunks[1], true);
