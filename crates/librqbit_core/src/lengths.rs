@@ -2,14 +2,10 @@ use anyhow::Context;
 
 use crate::{constants::CHUNK_SIZE, torrent_metainfo::TorrentMetaV1Info};
 
-const fn is_power_of_two(x: u64) -> bool {
-    (x != 0) && ((x & (x - 1)) == 0)
-}
-
-pub const fn last_element_size_u64(total: u64, chunk_size: u64) -> u64 {
-    let rem = total % chunk_size;
+pub const fn last_element_size_u64(total_length: u64, piece_length: u64) -> u64 {
+    let rem = total_length % piece_length;
     if rem == 0 {
-        return chunk_size;
+        return piece_length;
     }
     rem
 }
@@ -37,12 +33,18 @@ pub struct ChunkInfo {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Lengths {
-    chunk_length: u32,
+    // The total length of the torrent in bytes.
     total_length: u64,
+
+    // The length in bytes of each piece (except the last one).
     piece_length: u32,
+
+    // The id and length of the last piece (which may be truncated).
     last_piece_id: u32,
     last_piece_length: u32,
-    max_chunks_per_piece: u32,
+
+    // How many chunks are there per normal piece (except the last piece).
+    chunks_per_piece: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,7 +61,7 @@ impl std::fmt::Debug for ValidPieceIndex {
 }
 
 impl ValidPieceIndex {
-    pub fn get(&self) -> u32 {
+    pub const fn get(&self) -> u32 {
         self.0
     }
 }
@@ -69,46 +71,29 @@ impl Lengths {
         torrent: &TorrentMetaV1Info<ByteBuf>,
     ) -> anyhow::Result<Lengths> {
         let total_length = torrent.iter_file_lengths()?.sum();
-        Lengths::new(total_length, torrent.piece_length, None)
+        Lengths::new(total_length, torrent.piece_length)
     }
 
-    pub fn new(
-        total_length: u64,
-        piece_length: u32,
-        chunk_length: Option<u32>,
-    ) -> anyhow::Result<Self> {
-        let chunk_length = chunk_length.unwrap_or(CHUNK_SIZE);
-        // I guess this is not needed? Don't recall why I put this check here.
-        //
-        // if !(is_power_of_two(piece_length as u64)) {
-        //     anyhow::bail!("piece length {} is not a power of 2", piece_length);
-        // }
-        if !(is_power_of_two(chunk_length as u64)) {
-            anyhow::bail!("chunk length {} is not a power of 2", chunk_length);
-        }
-        if chunk_length > piece_length {
-            anyhow::bail!(
-                "chunk length {} should be >= piece length {}",
-                chunk_length,
-                piece_length
-            );
-        }
+    pub fn new(total_length: u64, piece_length: u32) -> anyhow::Result<Self> {
         if total_length == 0 {
-            anyhow::bail!("torrent with 0 length")
+            anyhow::bail!("torrent with 0 length is useless")
         }
         let total_pieces = total_length.div_ceil(piece_length as u64) as u32;
         Ok(Self {
-            chunk_length,
             piece_length,
             total_length,
-            max_chunks_per_piece: (piece_length as u64).div_ceil(chunk_length as u64) as u32,
+            chunks_per_piece: (piece_length as u64).div_ceil(CHUNK_SIZE as u64) as u32,
             last_piece_id: total_pieces - 1,
             last_piece_length: last_element_size_u64(total_length, piece_length as u64) as u32,
         })
     }
+
+    // How many bytes are required to store a bitfield where there's one bit for each piece.
     pub const fn piece_bitfield_bytes(&self) -> usize {
         self.total_pieces().div_ceil(8) as usize
     }
+
+    // How many bytes are required to store a bitfield where there's one bit for each chunk.
     pub const fn chunk_bitfield_bytes(&self) -> usize {
         self.total_chunks().div_ceil(8) as usize
     }
@@ -128,14 +113,13 @@ impl Lengths {
     pub const fn default_piece_length(&self) -> u32 {
         self.piece_length
     }
-    pub const fn default_chunk_length(&self) -> u32 {
-        self.chunk_length
-    }
-    pub const fn default_max_chunks_per_piece(&self) -> u32 {
-        self.max_chunks_per_piece
+    pub const fn default_chunks_per_piece(&self) -> u32 {
+        self.chunks_per_piece
     }
     pub const fn total_chunks(&self) -> u32 {
-        self.total_length.div_ceil(self.chunk_length as u64) as u32
+        // TODO: test
+        self.last_piece_id * self.default_chunks_per_piece()
+            + self.chunks_per_piece(self.last_piece_id())
     }
     pub const fn last_piece_id(&self) -> ValidPieceIndex {
         ValidPieceIndex(self.last_piece_id)
@@ -167,14 +151,14 @@ impl Lengths {
     }
 
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
+        // TODO: test
         let mut remaining = self.piece_length(index);
-        let chunk_size = self.chunk_length;
-        let absolute_offset = index.0 * self.max_chunks_per_piece;
+        let absolute_offset = index.0 * self.chunks_per_piece;
         (0u32..).scan(0, move |offset, idx| {
             if remaining == 0 {
                 return None;
             }
-            let s = std::cmp::min(remaining, chunk_size);
+            let s = std::cmp::min(remaining, CHUNK_SIZE);
             let result = ChunkInfo {
                 piece_index: index,
                 chunk_index: idx,
@@ -194,7 +178,7 @@ impl Lengths {
         begin: u32,
         chunk_size: u32,
     ) -> Option<ChunkInfo> {
-        let index = begin / self.chunk_length;
+        let index = begin / CHUNK_SIZE;
         let expected_chunk_size = self.chunk_size(piece_index, index)?;
         let offset = self.chunk_offset_in_piece(piece_index, index)?;
         if offset != begin {
@@ -203,7 +187,7 @@ impl Lengths {
         if expected_chunk_size != chunk_size {
             return None;
         }
-        let absolute_index = self.max_chunks_per_piece * piece_index.get() + index;
+        let absolute_index = self.chunks_per_piece * piece_index.get() + index;
         Some(ChunkInfo {
             piece_index,
             chunk_index: index,
@@ -222,15 +206,15 @@ impl Lengths {
         self.chunk_info_from_received_data(self.validate_piece_index(index)?, begin, block_len)
     }
     pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
-        let start = index.0 * self.max_chunks_per_piece;
+        let start = index.0 * self.chunks_per_piece;
         let end = start + self.chunks_per_piece(index);
         start as usize..end as usize
     }
     pub const fn chunks_per_piece(&self, index: ValidPieceIndex) -> u32 {
         if index.0 == self.last_piece_id {
-            return (self.last_piece_length + self.chunk_length - 1) / self.chunk_length;
+            return (self.last_piece_length + CHUNK_SIZE - 1) / CHUNK_SIZE;
         }
-        self.max_chunks_per_piece
+        self.chunks_per_piece
     }
     pub const fn chunk_offset_in_piece(
         &self,
@@ -240,7 +224,7 @@ impl Lengths {
         if chunk_index >= self.chunks_per_piece(piece_index) {
             return None;
         }
-        Some(chunk_index * self.chunk_length)
+        Some(chunk_index * CHUNK_SIZE)
     }
     pub fn chunk_size(&self, piece_index: ValidPieceIndex, chunk_index: u32) -> Option<u32> {
         // TODO: simplify
@@ -249,8 +233,8 @@ impl Lengths {
         if chunk_index >= chunks_per_piece {
             return None;
         }
-        let offset = chunk_index * self.chunk_length;
-        Some(std::cmp::min(self.chunk_length, pl - offset))
+        let offset = chunk_index * CHUNK_SIZE;
+        Some(std::cmp::min(CHUNK_SIZE, pl - offset))
     }
 }
 
@@ -259,7 +243,7 @@ mod tests {
     use super::*;
 
     fn make_lengths() -> Lengths {
-        Lengths::new(1174243328, 262144, None).unwrap()
+        Lengths::new(1174243328, 262144).unwrap()
     }
 
     #[test]
@@ -270,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_total_pieces_2() {
-        let l = Lengths::new(4148166656, 2097152, None).unwrap();
+        let l = Lengths::new(4148166656, 2097152).unwrap();
         assert_eq!(l.total_pieces(), 1978);
     }
 
@@ -399,7 +383,7 @@ mod tests {
             match (a, b, c, d) {
                 // (true, true, ___)
                 (true, true, true, true) => {
-                    let l = check(Lengths::new(65536, 32768, None).unwrap());
+                    let l = check(Lengths::new(65536, 32768).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 4);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -408,7 +392,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 2), None);
                 }
                 (true, true, true, false) => {
-                    let l = check(Lengths::new(32768, 16384, None).unwrap());
+                    let l = check(Lengths::new(32768, 16384).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -416,7 +400,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (true, true, false, true) => {
-                    let l = check(Lengths::new(32768, 32768, None).unwrap());
+                    let l = check(Lengths::new(32768, 32768).unwrap());
                     dbg!(l.total_length().div_ceil(l.default_piece_length() as u64));
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 2);
@@ -426,7 +410,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 2), None);
                 }
                 (true, true, false, false) => {
-                    let l = check(Lengths::new(16384, 16384, None).unwrap());
+                    let l = check(Lengths::new(16384, 16384).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -436,7 +420,7 @@ mod tests {
 
                 // (true, false, ___)
                 (true, false, true, true) => {
-                    let l = check(Lengths::new(40000, 20000, None).unwrap());
+                    let l = check(Lengths::new(40000, 20000).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 4);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -445,7 +429,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 2), None);
                 }
                 (true, false, true, false) => {
-                    let l = check(Lengths::new(20000, 10000, None).unwrap());
+                    let l = check(Lengths::new(20000, 10000).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -453,7 +437,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (true, false, false, true) => {
-                    let l = check(Lengths::new(20000, 20000, None).unwrap());
+                    let l = check(Lengths::new(20000, 20000).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -462,7 +446,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 2), None);
                 }
                 (true, false, false, false) => {
-                    let l = check(Lengths::new(10000, 10000, None).unwrap());
+                    let l = check(Lengths::new(10000, 10000).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -472,7 +456,7 @@ mod tests {
 
                 // (false, true, ___)
                 (false, true, true, true) => {
-                    let l = check(Lengths::new(35000, 32768, None).unwrap());
+                    let l = check(Lengths::new(35000, 32768).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 3);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -480,7 +464,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (false, true, true, false) => {
-                    let l = check(Lengths::new(20000, 16384, None).unwrap());
+                    let l = check(Lengths::new(20000, 16384).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -488,7 +472,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (false, true, false, true) => {
-                    let l = check(Lengths::new(20000, 32768, None).unwrap());
+                    let l = check(Lengths::new(20000, 32768).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 2);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 2);
@@ -497,7 +481,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 2), None);
                 }
                 (false, true, false, false) => {
-                    let l = check(Lengths::new(15000, 16384, None).unwrap());
+                    let l = check(Lengths::new(15000, 16384).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -507,7 +491,7 @@ mod tests {
 
                 // (false, false, ___)
                 (false, false, true, true) => {
-                    let l = check(Lengths::new(21000, 20000, None).unwrap());
+                    let l = check(Lengths::new(21000, 20000).unwrap());
                     assert_eq!(l.total_pieces(), 2);
                     assert_eq!(l.total_chunks(), 3);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -518,7 +502,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(1), 1), None);
                 }
                 (false, false, true, false) => {
-                    let l = check(Lengths::new(21000, 10000, None).unwrap());
+                    let l = check(Lengths::new(21000, 10000).unwrap());
                     assert_eq!(l.total_pieces(), 3);
                     assert_eq!(l.total_chunks(), 3);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -528,7 +512,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(2), 1), None);
                 }
                 (false, false, false, true) => {
-                    let l = check(Lengths::new(11000, 20000, None).unwrap());
+                    let l = check(Lengths::new(11000, 20000).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -536,7 +520,7 @@ mod tests {
                     assert_eq!(l.chunk_size(i!(0), 1), None);
                 }
                 (false, false, false, false) => {
-                    let l = check(Lengths::new(9000, 10000, None).unwrap());
+                    let l = check(Lengths::new(9000, 10000).unwrap());
                     assert_eq!(l.total_pieces(), 1);
                     assert_eq!(l.total_chunks(), 1);
                     assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
@@ -548,8 +532,8 @@ mod tests {
 
         // A few more examples with longer values and weird inputs.
 
-        let l = Lengths::new(16384_1_1, 16384_1, None).unwrap();
-        assert_eq!(l.max_chunks_per_piece, 11);
+        let l = Lengths::new(16384_1_1, 16384_1).unwrap();
+        assert_eq!(l.default_chunks_per_piece(), 11);
         assert_eq!(l.total_pieces(), 11);
         assert_eq!(l.total_chunks(), 111);
         assert_eq!(l.piece_bitfield_bytes(), 2);
