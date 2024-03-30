@@ -125,7 +125,8 @@ By default it listens on http://127.0.0.1:3030.
             "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
             "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
             "POST /torrents/{index}/pause": "Pause torrent",
-            "POST /torrents/{index}/start": "Resume torrent"
+            "POST /torrents/{index}/start": "Resume torrent",
+            "POST /torrents/{index}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {"only_files": [0, 1, 2]}"
         },
         "server": "rqbit"
     }

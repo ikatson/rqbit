@@ -64,6 +64,7 @@ impl HttpApi {
                     "POST /torrents/{index}/start": "Resume torrent",
                     "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
                     "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
+                    "POST /torrents/{index}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
                     "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
                     "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
                     "GET /web/": "Web UI",
