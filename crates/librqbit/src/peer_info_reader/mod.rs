@@ -5,7 +5,7 @@ use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     constants::CHUNK_SIZE,
     hash_id::Id20,
-    lengths::{last_element_size_u64, ChunkInfo},
+    lengths::{last_element_size, ChunkInfo},
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{Mutex, RwLock};
@@ -87,7 +87,7 @@ impl HandlerLocked {
     }
     fn piece_size(&self, index: u32) -> usize {
         if index as usize == self.total_pieces - 1 {
-            last_element_size_u64(self.metadata_size as u64, CHUNK_SIZE as u64) as usize
+            last_element_size(self.metadata_size as u64, CHUNK_SIZE as u64) as usize
         } else {
             CHUNK_SIZE as usize
         }
