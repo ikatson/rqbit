@@ -493,10 +493,10 @@ mod tests {
 
         let bf_len = l.piece_bitfield_bytes();
         let initial_have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
-        let initial_needed = BF::from_boxed_slice(vec![u8::MAX; bf_len].into_boxed_slice());
+        let initial_selected = BF::from_boxed_slice(vec![u8::MAX; bf_len].into_boxed_slice());
 
         // Initially, we need all files and all pieces.
-        let mut ct = ChunkTracker::new(initial_needed.clone(), initial_have.clone(), l).unwrap();
+        let mut ct = ChunkTracker::new(initial_have.clone(), initial_selected.clone(), l).unwrap();
 
         // Select all file, no changes.
         assert_eq!(
@@ -509,7 +509,7 @@ mod tests {
             }
         );
         assert_eq!(ct.have, initial_have);
-        assert_eq!(ct.queue_pieces, initial_needed);
+        assert_eq!(ct.queue_pieces, initial_selected);
 
         // Select only the first file.
         println!("Select only the first file.");
