@@ -1225,8 +1225,13 @@ impl PeerHandler {
     }
 
     fn on_received_piece(&self, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
-        let chunk_info = match self.state.lengths.chunk_info_from_received_piece(
-            piece.index,
+        let piece_index = self
+            .state
+            .lengths
+            .validate_piece_index(piece.index)
+            .with_context(|| format!("peer sent an invalid piece {}", piece.index))?;
+        let chunk_info = match self.state.lengths.chunk_info_from_received_data(
+            piece_index,
             piece.begin,
             piece.block.len() as u32,
         ) {
