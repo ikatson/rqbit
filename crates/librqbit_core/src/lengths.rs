@@ -2,9 +2,12 @@ use anyhow::Context;
 
 use crate::{constants::CHUNK_SIZE, torrent_metainfo::TorrentMetaV1Info};
 
-pub const fn last_element_size_u64(total_length: u64, piece_length: u64) -> u64 {
+pub fn last_element_size<T>(total_length: T, piece_length: T) -> T
+where
+    T: std::ops::Rem<Output = T> + Default + Eq + Copy,
+{
     let rem = total_length % piece_length;
-    if rem == 0 {
+    if rem == T::default() {
         return piece_length;
     }
     rem
@@ -84,7 +87,7 @@ impl Lengths {
             total_length,
             chunks_per_piece: (piece_length as u64).div_ceil(CHUNK_SIZE as u64) as u32,
             last_piece_id: total_pieces - 1,
-            last_piece_length: last_element_size_u64(total_length, piece_length as u64) as u32,
+            last_piece_length: last_element_size(total_length, piece_length as u64) as u32,
         })
     }
 
@@ -151,7 +154,6 @@ impl Lengths {
     }
 
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
-        // TODO: test
         let mut remaining = self.piece_length(index);
         let absolute_offset = index.0 * self.chunks_per_piece;
         (0u32..).scan(0, move |offset, idx| {
@@ -212,7 +214,7 @@ impl Lengths {
     }
     pub const fn chunks_per_piece(&self, index: ValidPieceIndex) -> u32 {
         if index.0 == self.last_piece_id {
-            return (self.last_piece_length + CHUNK_SIZE - 1) / CHUNK_SIZE;
+            return self.last_piece_length.div_ceil(CHUNK_SIZE);
         }
         self.chunks_per_piece
     }
@@ -227,14 +229,15 @@ impl Lengths {
         Some(chunk_index * CHUNK_SIZE)
     }
     pub fn chunk_size(&self, piece_index: ValidPieceIndex, chunk_index: u32) -> Option<u32> {
-        // TODO: simplify
-        let chunks_per_piece = self.chunks_per_piece(piece_index);
-        let pl = self.piece_length(piece_index);
-        if chunk_index >= chunks_per_piece {
-            return None;
+        let piece_length = self.piece_length(piece_index);
+        let last_chunk_id = piece_length.div_ceil(CHUNK_SIZE) - 1;
+        if chunk_index < last_chunk_id {
+            return Some(CHUNK_SIZE);
         }
-        let offset = chunk_index * CHUNK_SIZE;
-        Some(std::cmp::min(CHUNK_SIZE, pl - offset))
+        if chunk_index == last_chunk_id {
+            return Some(last_element_size(piece_length, CHUNK_SIZE));
+        }
+        return None;
     }
 }
 
