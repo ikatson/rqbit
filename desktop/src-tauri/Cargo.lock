@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.5.3"
+version = "5.5.4"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1890,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "2.2.1"
+version = "2.2.2"
 dependencies = [
  "anyhow",
  "librqbit-buffers",
@@ -1901,7 +1901,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-buffers"
-version = "2.2.1"
+version = "3.0.0"
 dependencies = [
  "librqbit-clone-to-owned",
  "serde",
@@ -1913,7 +1913,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.6.1"
+version = "3.6.2"
 dependencies = [
  "anyhow",
  "directories",
@@ -1933,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "5.0.1"
+version = "5.0.2"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1973,14 +1973,14 @@ dependencies = [
 
 [[package]]
 name = "librqbit-sha1-wrapper"
-version = "2.2.1"
+version = "3.0.0"
 dependencies = [
  "crypto-hash",
 ]
 
 [[package]]
 name = "librqbit-tracker-comms"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "5.5.3"
+version = "5.5.4"
 dependencies = [
  "anyhow",
  "base64 0.21.5",

@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::{constants::CHUNK_SIZE, torrent_metainfo::TorrentMetaV1Info};
 
 const fn is_power_of_two(x: u64) -> bool {
@@ -122,6 +124,10 @@ impl Lengths {
             return None;
         }
         Some(ValidPieceIndex(index))
+    }
+    pub fn try_validate_piece_index(&self, index: u32) -> anyhow::Result<ValidPieceIndex> {
+        self.validate_piece_index(index)
+            .with_context(|| format!("invalid piece index {index}"))
     }
     pub const fn default_piece_length(&self) -> u32 {
         self.piece_length

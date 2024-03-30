@@ -127,7 +127,8 @@ impl TorrentStateInitializing {
             initial_check_results.have_pieces,
             self.meta.lengths,
             initial_check_results.total_selected_bytes,
-        );
+        )
+        .context("error creating chunk tracker")?;
 
         let paused = TorrentStatePaused {
             info: self.meta.clone(),

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
@@ -32,25 +33,27 @@ pub struct ChunkTracker {
 // Needed pieces are the ones we need to download, not necessarily the ones we have.
 // E.g. we might have more pieces, but the client asks to download only some files
 // partially.
-fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> BF {
+fn compute_chunk_status(lengths: &Lengths, needed_pieces: &BF) -> anyhow::Result<BF> {
     let required_size = lengths.chunk_bitfield_bytes();
     let vec = vec![0u8; required_size];
     let mut chunk_bf = BF::from_boxed_slice(vec.into_boxed_slice());
+    let range = 0..lengths.total_pieces() as usize;
     for piece_index in needed_pieces
-        .get(0..lengths.total_pieces() as usize)
-        .unwrap()
+        .get(range.clone())
+        .with_context(|| format!("error getting range {range:?} from needed_pieces"))?
         .iter_zeros()
     {
         let offset = piece_index * lengths.default_max_chunks_per_piece() as usize;
         let chunks_per_piece = lengths
-            .chunks_per_piece(lengths.validate_piece_index(piece_index as u32).unwrap())
+            .chunks_per_piece(lengths.try_validate_piece_index(piece_index as u32)?)
             as usize;
+        let range = offset..offset + chunks_per_piece;
         chunk_bf
-            .get_mut(offset..offset + chunks_per_piece)
-            .unwrap()
+            .get_mut(range.clone())
+            .with_context(|| format!("error getting range {range:?} from chunk_bf"))?
             .fill(true);
     }
-    chunk_bf
+    Ok(chunk_bf)
 }
 
 pub enum ChunkMarkingResult {
@@ -65,7 +68,7 @@ impl ChunkTracker {
         have_pieces: BF,
         lengths: Lengths,
         total_selected_bytes: u64,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         // TODO: ideally this needs to be a list based on needed files, e.g.
         // last needed piece for each file. But let's keep simple for now.
 
@@ -81,14 +84,15 @@ impl ChunkTracker {
         // E.g. if it's a video file, than the last piece often contains some index, or just
         // players look into it, and it's better be there.
         let priority_piece_ids = last_needed_piece_id.into_iter().collect();
-        Self {
-            chunk_status: compute_chunk_status(&lengths, &needed_pieces),
+        Ok(Self {
+            chunk_status: compute_chunk_status(&lengths, &needed_pieces)
+                .context("error computing chunk status")?,
             needed_pieces,
             lengths,
             have: have_pieces,
             priority_piece_ids,
             total_selected_bytes,
-        }
+        })
     }
 
     pub fn get_total_selected_bytes(&self) -> u64 {
