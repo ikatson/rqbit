@@ -39,7 +39,7 @@ export const FileSelectionModal = (props: {
 
   useEffect(() => {
     setSelectedFiles(
-      new Set(listTorrentResponse?.details.files.map((_, i) => i))
+      new Set(listTorrentResponse?.details.files.map((_, i) => i)),
     );
     setOutputFolder(listTorrentResponse?.output_folder || "");
   }, [listTorrentResponse]);
@@ -79,7 +79,7 @@ export const FileSelectionModal = (props: {
         },
         (e) => {
           setUploadError({ text: "Error starting torrent", details: e });
-        }
+        },
       )
       .finally(() => setUploading(false));
   };
@@ -104,7 +104,7 @@ export const FileSelectionModal = (props: {
             <FileListInput
               selectedFiles={selectedFiles}
               setSelectedFiles={setSelectedFiles}
-              listTorrentResponse={listTorrentResponse}
+              torrentDetails={listTorrentResponse.details}
             />
           </Fieldset>
 

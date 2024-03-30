@@ -167,10 +167,11 @@ export interface RqbitAPI {
   getTorrentStats: (index: number) => Promise<TorrentStats>;
   uploadTorrent: (
     data: string | File,
-    opts?: AddTorrentOptions
+    opts?: AddTorrentOptions,
   ) => Promise<AddTorrentResponse>;
 
   pause: (index: number) => Promise<void>;
+  updateOnlyFiles: (index: number, files: number[]) => Promise<void>;
   start: (index: number) => Promise<void>;
   forget: (index: number) => Promise<void>;
   delete: (index: number) => Promise<void>;

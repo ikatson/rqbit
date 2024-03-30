@@ -1,24 +1,28 @@
 import { useContext, useState } from "react";
-import { TorrentStats } from "../../api-types";
+import { TorrentDetails, TorrentStats } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
-import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
+import { TorrentSettingsModal } from "../modal/TorrentSettingsModal";
+import { FaCog, FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
 
 export const TorrentActions: React.FC<{
   id: number;
+  detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats;
-}> = ({ id, statsResponse }) => {
+}> = ({ id, detailsResponse, statsResponse }) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
+  let [configuring, setConfiguring] = useState<boolean>(false);
 
   let refreshCtx = useContext(RefreshTorrentStatsContext);
 
   const canPause = state == "live";
   const canUnpause = state == "paused" || state == "error";
+  const canConfigure = state == "paused" || state == "live";
 
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
 
@@ -36,7 +40,7 @@ export const TorrentActions: React.FC<{
             text: `Error starting torrent id=${id}`,
             details: e,
           });
-        }
+        },
       )
       .finally(() => setDisabled(false));
   };
@@ -53,9 +57,13 @@ export const TorrentActions: React.FC<{
             text: `Error pausing torrent id=${id}`,
             details: e,
           });
-        }
+        },
       )
       .finally(() => setDisabled(false));
+  };
+
+  const openConfigureModal = () => {
+    setConfiguring(true);
   };
 
   const startDeleting = () => {
@@ -80,10 +88,23 @@ export const TorrentActions: React.FC<{
           <FaPause className="hover:text-amber-500" />
         </IconButton>
       )}
+      {canConfigure && (
+        <IconButton onClick={openConfigureModal} disabled={disabled}>
+          <FaCog className="hover:text-green-600" />
+        </IconButton>
+      )}
       <IconButton onClick={startDeleting} disabled={disabled}>
         <FaTrash className="hover:text-red-500" />
       </IconButton>
       <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
+      {detailsResponse && configuring && (
+        <TorrentSettingsModal
+          id={id}
+          show={configuring}
+          details={detailsResponse}
+          onHide={() => setConfiguring(false)}
+        />
+      )}
     </div>
   );
 };

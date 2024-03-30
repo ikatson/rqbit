@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AddTorrentResponse, TorrentFile } from "../api-types";
+import { TorrentDetails } from "../api-types";
 import { FormCheckbox } from "./forms/FormCheckbox";
 import { CiSquarePlus, CiSquareMinus } from "react-icons/ci";
 import { IconButton } from "./buttons/IconButton";
@@ -19,12 +19,12 @@ type FileTree = {
   files: TorrentFileForCheckbox[];
 };
 
-const newFileTree = (listTorrentResponse: AddTorrentResponse): FileTree => {
+const newFileTree = (torrentDetails: TorrentDetails): FileTree => {
   const newFileTreeInner = (
     name: string,
     id: string,
     files: TorrentFileForCheckbox[],
-    depth: number
+    depth: number,
   ): FileTree => {
     let directFiles: TorrentFileForCheckbox[] = [];
     let groups: FileTree[] = [];
@@ -59,7 +59,7 @@ const newFileTree = (listTorrentResponse: AddTorrentResponse): FileTree => {
   return newFileTreeInner(
     "",
     "filetree-root",
-    listTorrentResponse.details.files.map((file, id) => {
+    torrentDetails.files.map((file, id) => {
       return {
         id,
         filename: file.components[file.components.length - 1],
@@ -67,13 +67,13 @@ const newFileTree = (listTorrentResponse: AddTorrentResponse): FileTree => {
         length: file.length,
       };
     }),
-    0
+    0,
   );
 };
 
 const FileTreeComponent: React.FC<{
   tree: FileTree;
-  listTorrentResponse: AddTorrentResponse;
+  torrentDetails: TorrentDetails;
   selectedFiles: Set<number>;
   setSelectedFiles: React.Dispatch<React.SetStateAction<Set<number>>>;
   initialExpanded: boolean;
@@ -82,7 +82,7 @@ const FileTreeComponent: React.FC<{
   selectedFiles,
   setSelectedFiles,
   initialExpanded,
-  listTorrentResponse,
+  torrentDetails,
 }) => {
   let [expanded, setExpanded] = useState(initialExpanded);
   let children = useMemo(() => {
@@ -125,7 +125,7 @@ const FileTreeComponent: React.FC<{
   const getTotalSelectedBytes = () => {
     return children
       .filter((c) => selectedFiles.has(c))
-      .map((c) => listTorrentResponse.details.files[c].length)
+      .map((c) => torrentDetails.files[c].length)
       .reduce((a, b) => a + b, 0);
   };
 
@@ -140,7 +140,7 @@ const FileTreeComponent: React.FC<{
           label={`${
             tree.name ? tree.name + ", " : ""
           } ${getTotalSelectedFiles()} files, ${formatBytes(
-            getTotalSelectedBytes()
+            getTotalSelectedBytes(),
           )}`}
           name={tree.id}
           onChange={handleToggleTree}
@@ -150,7 +150,7 @@ const FileTreeComponent: React.FC<{
       <div className="pl-5" hidden={!expanded}>
         {tree.dirs.map((dir) => (
           <FileTreeComponent
-            listTorrentResponse={listTorrentResponse}
+            torrentDetails={torrentDetails}
             key={dir.name}
             tree={dir}
             selectedFiles={selectedFiles}
@@ -175,19 +175,16 @@ const FileTreeComponent: React.FC<{
 };
 
 export const FileListInput: React.FC<{
-  listTorrentResponse: AddTorrentResponse;
+  torrentDetails: TorrentDetails;
   selectedFiles: Set<number>;
   setSelectedFiles: React.Dispatch<React.SetStateAction<Set<number>>>;
-}> = ({ listTorrentResponse, selectedFiles, setSelectedFiles }) => {
-  let fileTree = useMemo(
-    () => newFileTree(listTorrentResponse),
-    [listTorrentResponse]
-  );
+}> = ({ torrentDetails, selectedFiles, setSelectedFiles }) => {
+  let fileTree = useMemo(() => newFileTree(torrentDetails), [torrentDetails]);
 
   return (
     <>
       <FileTreeComponent
-        listTorrentResponse={listTorrentResponse}
+        torrentDetails={torrentDetails}
         tree={fileTree}
         selectedFiles={selectedFiles}
         setSelectedFiles={setSelectedFiles}

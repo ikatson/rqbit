@@ -105,7 +105,11 @@ export const TorrentRow: React.FC<{
       {/* Actions */}
       {statsResponse && (
         <div className="">
-          <TorrentActions id={id} statsResponse={statsResponse} />
+          <TorrentActions
+            id={id}
+            detailsResponse={detailsResponse}
+            statsResponse={statsResponse}
+          />
         </div>
       )}
     </section>
