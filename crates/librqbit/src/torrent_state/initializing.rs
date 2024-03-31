@@ -76,6 +76,7 @@ impl TorrentStateInitializing {
                     0,
                     file_details.len,
                     file_details.offset,
+                    file_details.pieces,
                 ));
             }
             files

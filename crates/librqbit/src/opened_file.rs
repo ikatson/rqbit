@@ -10,6 +10,7 @@ pub(crate) struct OpenedFile {
     pub filename: PathBuf,
     pub offset_in_torrent: u64,
     pub have: AtomicU64,
+    pub piece_range: std::ops::Range<u32>,
     pub len: u64,
 }
 
@@ -26,13 +27,21 @@ pub(crate) fn dummy_file() -> anyhow::Result<std::fs::File> {
 }
 
 impl OpenedFile {
-    pub fn new(f: File, filename: PathBuf, have: u64, len: u64, offset_in_torrent: u64) -> Self {
+    pub fn new(
+        f: File,
+        filename: PathBuf,
+        have: u64,
+        len: u64,
+        offset_in_torrent: u64,
+        piece_range: std::ops::Range<u32>,
+    ) -> Self {
         Self {
             file: Mutex::new(f),
             filename,
             have: AtomicU64::new(have),
             len,
             offset_in_torrent,
+            piece_range,
         }
     }
     pub fn reopen(&self, read_only: bool) -> anyhow::Result<()> {
@@ -67,6 +76,7 @@ impl OpenedFile {
             offset_in_torrent: self.offset_in_torrent,
             have: AtomicU64::new(self.have.load(std::sync::atomic::Ordering::Relaxed)),
             len: self.len,
+            piece_range: self.piece_range.clone(),
         })
     }
 }
