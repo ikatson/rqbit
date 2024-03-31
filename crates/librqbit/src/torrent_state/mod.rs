@@ -416,9 +416,10 @@ impl ManagedTorrent {
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        if only_files.is_empty() {
-            anyhow::bail!("you need to select at least one file");
-        }
+        // if only_files.is_empty() {
+        //     anyhow::bail!("you need to select at least one file");
+        // }
+
         let file_count = self.info().info.iter_file_lengths()?.count();
         for f in only_files.iter().copied() {
             if f >= file_count {

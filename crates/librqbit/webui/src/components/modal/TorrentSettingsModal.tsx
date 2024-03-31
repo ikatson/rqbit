@@ -67,6 +67,7 @@ export const TorrentSettingsModal: React.FC<{
         <ErrorComponent error={error}></ErrorComponent>
         <FileListInput
           torrentDetails={details}
+          torrentStats={null}
           selectedFiles={selectedFiles}
           setSelectedFiles={setSelectedFiles}
         />

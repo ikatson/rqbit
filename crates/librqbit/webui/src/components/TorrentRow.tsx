@@ -28,7 +28,11 @@ export const TorrentRow: React.FC<{
   const totalBytes = statsResponse?.total_bytes ?? 1;
   const progressBytes = statsResponse?.progress_bytes ?? 0;
   const finished = statsResponse?.finished || false;
-  const progressPercentage = error ? 100 : (progressBytes / totalBytes) * 100;
+  const progressPercentage = error
+    ? 100
+    : totalBytes == 0
+      ? 100
+      : (progressBytes / totalBytes) * 100;
 
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;

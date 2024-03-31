@@ -58,7 +58,6 @@ use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
-use itertools::Itertools;
 use librqbit_core::{
     hash_id::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
