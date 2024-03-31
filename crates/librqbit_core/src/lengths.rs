@@ -153,6 +153,42 @@ impl Lengths {
         })
     }
 
+    // A helper to iterate over pieces in a file.
+    pub fn iter_pieces_within(
+        &self,
+        offset: u64,
+        len: u64,
+    ) -> impl Iterator<Item = ValidPieceIndex> {
+        let start_piece_id = (offset / self.piece_length as u64) as u32;
+        let start_piece_offset = offset % self.piece_length as u64;
+        let max_pieces = len.div_ceil(self.piece_length as u64) as u32 + 1;
+        let this = *self;
+        (start_piece_id..(start_piece_id + max_pieces))
+            .filter_map(move |piece_id| {
+                let piece = this.validate_piece_index(piece_id)?;
+                let piece_len = this.piece_length(piece) as u64;
+                if piece_id == start_piece_id {
+                    let piece_len = piece_len.saturating_sub(start_piece_offset);
+                    if piece_len == 0 {
+                        // out of bounds
+                        None
+                    } else {
+                        dbg!(Some((piece, piece_len)))
+                    }
+                } else {
+                    dbg!(Some((piece, piece_len)))
+                }
+            })
+            .scan(len, move |remaining_len, (piece_id, piece_len)| {
+                if *remaining_len == 0 {
+                    None
+                } else {
+                    *remaining_len -= std::cmp::min(*remaining_len, piece_len);
+                    Some(piece_id)
+                }
+            })
+    }
+
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
         let mut remaining = self.piece_length(index);
         let absolute_offset = index.0 * self.chunks_per_piece;
@@ -534,5 +570,45 @@ mod tests {
         assert_eq!(l.chunk_bitfield_bytes(), 14);
 
         assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
+    }
+
+    #[test]
+    fn test_iter_pieces_within() {
+        // Macro to preserve line numbers
+        macro_rules! check {
+            ($l:expr, $offset:expr, $len:expr, $expected:expr) => {
+                let e: &[u32] = $expected;
+                println!("case: offset={}, len={}, expected={:?}", $offset, $len, e);
+                assert_eq!(
+                    &$l.iter_pieces_within($offset, $len)
+                        .map(|p| p.get())
+                        .collect::<Vec<_>>()[..],
+                    $expected
+                );
+            };
+        }
+
+        let l = Lengths::new(21, 10).unwrap();
+        check!(&l, 0, 5, &[0]);
+        check!(&l, 0, 10, &[0]);
+        check!(&l, 0, 11, &[0, 1]);
+        check!(&l, 0, 0, &[]);
+        check!(&l, 10, 0, &[]);
+        check!(&l, 10, 1, &[1]);
+        check!(&l, 10, 10, &[1]);
+        check!(&l, 10, 11, &[1, 2]);
+
+        check!(&l, 5, 5, &[0]);
+        check!(&l, 5, 6, &[0, 1]);
+        check!(&l, 5, 15, &[0, 1]);
+        check!(&l, 5, 16, &[0, 1, 2]);
+
+        check!(&l, 20, 1, &[2]);
+        check!(&l, 20, 2, &[2]);
+        check!(&l, 20, 1000, &[2]);
+        check!(&l, 21, 0, &[]);
+        check!(&l, 21, 1, &[]);
+        check!(&l, 22, 0, &[]);
+        check!(&l, 22, 1, &[]);
     }
 }
