@@ -39,13 +39,7 @@ impl OpenedFile {
         }
 
         let mut g = self.file.lock();
-        // this should close the original file
-        // putting in a block just in case to guarantee drop.
-        {
-            *g = dummy_file()?;
-        }
-        *g = std::fs::OpenOptions::new()
-            .read(true)
+        *g = open_opts
             .open(&self.filename)
             .with_context(|| format!("error re-opening {:?}{log_suffix}", self.filename))?;
         debug!("reopened {:?}{log_suffix}", self.filename);

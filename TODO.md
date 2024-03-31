@@ -74,3 +74,4 @@ refactor:
   - [ ] initializing: open read-only if file has all pieces
   - [ ] on piece validated open read-only all files that were copleted
   - [ ] would be nice to have some abstraction that walks files and their pieces
+  - [ ] nit: optimize open write/read/write right away on first start

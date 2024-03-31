@@ -163,6 +163,7 @@ async fn test_e2e() {
                     crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes.clone())),
                     Some(AddTorrentOptions {
                         initial_peers: Some(peers.clone()),
+                        // only_files: Some(vec![0]),
                         overwrite: false,
                         ..Default::default()
                     }),
