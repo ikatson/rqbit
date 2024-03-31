@@ -519,18 +519,6 @@ impl TorrentStateLive {
         self.stats.have_bytes.load(Ordering::Relaxed)
     }
 
-    pub fn is_finished(&self) -> bool {
-        self.get_left_to_download_bytes() == 0
-    }
-
-    pub fn get_left_to_download_bytes(&self) -> u64 {
-        self.lock_read("get_left_to_download_bytes")
-            .get_chunks()
-            .ok()
-            .map(|c| c.get_remaining_bytes())
-            .unwrap_or_default()
-    }
-
     pub fn get_hns(&self) -> Option<HaveNeededSelected> {
         self.lock_read("get_hns")
             .get_chunks()
@@ -693,6 +681,10 @@ impl TorrentStateLive {
             .get_chunks_mut()?
             .update_only_files(self.info().iter_file_lengths()?, only_files)?;
         Ok(())
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.get_hns().map(|h| h.finished()).unwrap_or_default()
     }
 }
 
