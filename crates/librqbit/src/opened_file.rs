@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
-use librqbit_core::lengths::{Lengths, ValidPieceIndex};
+use librqbit_core::lengths::Lengths;
 use parking_lot::Mutex;
 use tracing::debug;
 
@@ -89,8 +89,9 @@ impl OpenedFile {
         self.piece_range.start as usize..self.piece_range.end as usize
     }
 
-    pub fn update_have_on_piece_completed(&self, piece_id: u32, lengths: &Lengths) {
+    pub fn update_have_on_piece_completed(&self, piece_id: u32, lengths: &Lengths) -> u64 {
         let size = lengths.size_of_piece_in_file(piece_id, self.offset_in_torrent, self.len);
         self.have.fetch_add(size, Ordering::Relaxed);
+        size
     }
 }

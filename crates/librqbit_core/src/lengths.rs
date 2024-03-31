@@ -250,6 +250,7 @@ impl Lengths {
         return None;
     }
 
+    // How many bytes out of the given piece are present in the given file (by offset and len).
     pub fn size_of_piece_in_file(&self, piece_id: u32, file_offset: u64, file_len: u64) -> u64 {
         let piece_offset = piece_id as u64 * self.default_piece_length() as u64;
         let piece_end = piece_offset + self.default_piece_length() as u64;

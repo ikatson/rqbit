@@ -692,12 +692,18 @@ impl TorrentStateLive {
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
         // if we have all the pieces of the file, reopen it read only
-        for opened_file in self
+        for (idx, opened_file) in self
             .files
             .iter()
-            .skip_while(|fd| !fd.piece_range.contains(&id.get()))
-            .take_while(|fd| fd.piece_range.contains(&id.get()))
+            .enumerate()
+            .skip_while(|fd| !fd.1.piece_range.contains(&id.get()))
+            .take_while(|fd| fd.1.piece_range.contains(&id.get()))
         {
+            let bytes = opened_file.update_have_on_piece_completed(id.get(), &self.lengths);
+            if bytes == 0 {
+                warn!(file_id=idx, piece_id=id.get(), "bug: update_have_on_piece_completed() returned 0, although this piece is present in the file");
+            }
+
             let have_all = self
                 .lock_read("on_piece_completed_reopen")
                 .get_chunks()?
