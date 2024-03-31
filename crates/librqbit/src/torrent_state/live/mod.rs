@@ -682,8 +682,11 @@ impl TorrentStateLive {
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
-        ct.update_only_files(self.info().iter_file_lengths()?, only_files)?;
+        let hns = ct.update_only_files(self.info().iter_file_lengths()?, only_files)?;
         reopen_necessary_files_for_write(ct, self.info(), &self.files)?;
+        if !hns.finished() {
+            self.reconnect_all_not_needed_peers();
+        }
         Ok(())
     }
 
@@ -733,6 +736,16 @@ impl TorrentStateLive {
                         .unwrap()
                         .tx
                         .send(WriterRequest::Disconnect);
+                }
+            }
+        }
+    }
+
+    fn reconnect_all_not_needed_peers(&self) {
+        for pe in self.peers.states.iter() {
+            if let PeerState::NotNeeded = pe.value().state.get() {
+                if self.peer_queue_tx.send(*pe.key()).is_err() {
+                    return;
                 }
             }
         }
