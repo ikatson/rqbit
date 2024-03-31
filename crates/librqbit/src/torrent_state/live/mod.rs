@@ -645,7 +645,14 @@ impl TorrentStateLive {
         // It should be impossible to make a fatal error after pausing.
         g.fatal_errors_tx.take();
 
-        let files = self.files.iter().map(|f| f.take_clone()).try_collect()?;
+        let files = self
+            .files
+            .iter()
+            .map(|f| f.take_clone())
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        for file in files.iter() {
+            file.reopen(true)?;
+        }
         let mut chunk_tracker = g
             .chunks
             .take()
