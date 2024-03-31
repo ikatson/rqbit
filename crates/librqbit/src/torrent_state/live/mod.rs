@@ -677,14 +677,56 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        self.lock_write("update_only_files")
+        let mut g = self.lock_write("update_only_files");
+        let hns = g
             .get_chunks_mut()?
             .update_only_files(self.info().iter_file_lengths()?, only_files)?;
+        if !hns.finished() {
+            self.reopen(false, false)?;
+        }
         Ok(())
     }
 
     pub(crate) fn is_finished(&self) -> bool {
         self.get_hns().map(|h| h.finished()).unwrap_or_default()
+    }
+
+    fn reopen(&self, read_only: bool, lock: bool) -> anyhow::Result<()> {
+        // TODO: close files that are done, don't reopen/close the whole torrent.
+
+        // Lock exclusive just in case to ensure in-flight operations finish.??
+        let mut _guard = None;
+        if lock {
+            _guard = Some(self.lock_write(if read_only {
+                "reopen_read_only"
+            } else {
+                "reopen"
+            }));
+        }
+
+        let log_suffix = if read_only { " read only" } else { "" };
+
+        let mut open_opts = std::fs::OpenOptions::new();
+        open_opts.read(true);
+        if !read_only {
+            open_opts.write(true).create(false);
+        }
+
+        for (file, filename) in self.files.iter().zip(self.filenames.iter()) {
+            let mut g = file.lock();
+            // this should close the original file
+            // putting in a block just in case to guarantee drop.
+            {
+                *g = dummy_file()?;
+            }
+            *g = std::fs::OpenOptions::new()
+                .read(true)
+                .open(filename)
+                .with_context(|| format!("error re-opening {filename:?}{log_suffix}"))?;
+            debug!("reopened {filename:?}{log_suffix}");
+        }
+        debug!("reopened all files {log_suffix}");
+        Ok(())
     }
 }
 
@@ -1189,27 +1231,6 @@ impl PeerHandler {
         self.state.peers.mark_peer_interested(self.addr, true);
     }
 
-    fn reopen_read_only(&self) -> anyhow::Result<()> {
-        // Lock exclusive just in case to ensure in-flight operations finish.??
-        let _guard = self.state.lock_write("reopen_read_only");
-
-        for (file, filename) in self.state.files.iter().zip(self.state.filenames.iter()) {
-            let mut g = file.lock();
-            // this should close the original file
-            // putting in a block just in case to guarantee drop.
-            {
-                *g = dummy_file()?;
-            }
-            *g = std::fs::OpenOptions::new()
-                .read(true)
-                .open(filename)
-                .with_context(|| format!("error re-opening {:?} readonly", filename))?;
-            debug!("reopened {:?} read-only", filename);
-        }
-        info!("reopened all torrent files in read-only mode");
-        Ok(())
-    }
-
     fn on_i_am_unchoked(&self) {
         trace!("we are unchoked");
         self.locked.write().i_am_choked = false;
@@ -1389,7 +1410,7 @@ impl PeerHandler {
                             info!("torrent finished downloading");
                             self.state.finished_notify.notify_waiters();
                             self.disconnect_all_peers_that_have_full_torrent();
-                            self.reopen_read_only()?;
+                            self.state.reopen(true, true)?;
                         }
 
                         self.state.maybe_transmit_haves(chunk_info.piece_index);
