@@ -89,6 +89,7 @@ impl TorrentStateInitializing {
             SF::new(initial_check_results.selected_bytes)
         );
 
+        // Ensure file lenghts are correct, and reopen read-only.
         self.meta.spawner.spawn_block_in_place(|| {
             for (idx, (file, (name, length))) in files
                 .iter()
@@ -98,27 +99,29 @@ impl TorrentStateInitializing {
                 if self
                     .only_files
                     .as_ref()
-                    .map(|v| !v.contains(&idx))
-                    .unwrap_or(false)
+                    .map(|v| v.contains(&idx))
+                    .unwrap_or(true)
                 {
-                    continue;
+                    let now = Instant::now();
+                    if let Err(err) = ensure_file_length(&file.file.lock(), length) {
+                        warn!(
+                            "Error setting length for file {:?} to {}: {:#?}",
+                            name, length, err
+                        );
+                    } else {
+                        debug!(
+                            "Set length for file {:?} to {} in {:?}",
+                            name,
+                            SF::new(length),
+                            now.elapsed()
+                        );
+                    }
                 }
-                let now = Instant::now();
-                if let Err(err) = ensure_file_length(&file.file.lock(), length) {
-                    warn!(
-                        "Error setting length for file {:?} to {}: {:#?}",
-                        name, length, err
-                    );
-                } else {
-                    debug!(
-                        "Set length for file {:?} to {} in {:?}",
-                        name,
-                        SF::new(length),
-                        now.elapsed()
-                    );
-                }
+
+                file.reopen(true)?;
             }
-        });
+            Ok::<_, anyhow::Error>(())
+        })?;
 
         let chunk_tracker = ChunkTracker::new(
             initial_check_results.have_pieces,
