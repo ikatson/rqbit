@@ -4,6 +4,7 @@ import {
   TorrentStats,
   STATE_INITIALIZING,
   STATE_LIVE,
+  ErrorDetails,
 } from "../api-types";
 import { TorrentActions } from "./buttons/TorrentActions";
 import { ProgressBar } from "./ProgressBar";
@@ -13,7 +14,9 @@ import { torrentDisplayName } from "../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
 import { FileListInput } from "./FileListInput";
-import { SetStateAction, useState } from "react";
+import { SetStateAction, useContext, useEffect, useState } from "react";
+import { APIContext, RefreshTorrentStatsContext } from "../context";
+import { useErrorStore } from "../stores/errorStore";
 
 export const TorrentRow: React.FC<{
   id: number;
@@ -47,6 +50,43 @@ export const TorrentRow: React.FC<{
   };
 
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    let sel = new Set<number>();
+    detailsResponse?.files.forEach((f, id) => {
+      if (f.included) {
+        sel.add(id);
+      }
+    });
+    setSelectedFiles(sel);
+  }, [detailsResponse]);
+
+  const API = useContext(APIContext);
+
+  const refreshCtx = useContext(RefreshTorrentStatsContext);
+
+  const [savingSelectedFiles, setSavingSelectedFiles] = useState(false);
+
+  let setCloseableError = useErrorStore((state) => state.setCloseableError);
+
+  const updateSelectedFiles = (selectedFiles: Set<number>) => {
+    setSavingSelectedFiles(true);
+    API.updateOnlyFiles(id, Array.from(selectedFiles)).then(
+      () => {
+        setSavingSelectedFiles(false);
+        refreshCtx.refresh();
+        close();
+        setCloseableError(null);
+      },
+      (e) => {
+        setSavingSelectedFiles(false);
+        setCloseableError({
+          text: "Error configuring torrent",
+          details: e as ErrorDetails,
+        });
+      },
+    );
+  };
+
   const [extendedView, setExtendedView] = useState(false);
 
   return (
@@ -129,7 +169,7 @@ export const TorrentRow: React.FC<{
             torrentDetails={detailsResponse}
             torrentStats={statsResponse}
             selectedFiles={selectedFiles}
-            setSelectedFiles={setSelectedFiles}
+            setSelectedFiles={updateSelectedFiles}
             showProgressBar
           />
         </div>
