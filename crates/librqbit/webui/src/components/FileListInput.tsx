@@ -171,14 +171,19 @@ const FileTreeComponent: React.FC<{
         ))}
         <div className="pl-1">
           {tree.files.map((file) => (
-            <div className="grid grid-cols-2 items-start">
+            <div
+              className={`${
+                showProgressBar
+                  ? "grid grid-cols-1 items-start lg:grid-cols-2 mb-2 lg:mb-0"
+                  : ""
+              }`}
+            >
               <FormCheckbox
                 checked={selectedFiles.has(file.id)}
                 key={file.id}
                 label={`${file.filename} (${formatBytes(file.length)})`}
                 name={`file-${file.id}`}
                 onChange={() => handleToggleFile(file.id)}
-                classNames="grid grid-cols-2"
               ></FormCheckbox>
               {showProgressBar && (
                 <ProgressBar now={file.have_bytes / file.length} />
