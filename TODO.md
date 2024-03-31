@@ -76,3 +76,4 @@ refactor:
   - [x] would be nice to have some abstraction that walks files and their pieces
   - [ ] nit: optimize open write/read/write right away on first start
   - [ ] peers: if finished they are all paused forever, but if we change the list of files, we need to restart them
+- opened_files: track HAVE progress

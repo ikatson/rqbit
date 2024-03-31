@@ -43,9 +43,10 @@ impl TorrentStateInitializing {
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         let files = {
             let mut files = OpenedFiles::with_capacity(self.meta.info.iter_file_lengths()?.count());
-            for (path_bits, _) in self.meta.info.iter_filenames_and_lengths()? {
+            for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
                 let mut full_path = self.meta.out_dir.clone();
-                let relative_path = path_bits
+                let relative_path = file_details
+                    .filename
                     .to_pathbuf()
                     .context("error converting file to path")?;
                 full_path.push(relative_path);
@@ -69,7 +70,13 @@ impl TorrentStateInitializing {
                         .with_context(|| format!("error creating {:?}", &full_path))?;
                     OpenOptions::new().read(true).write(true).open(&full_path)?
                 };
-                files.push(OpenedFile::new(file, full_path));
+                files.push(OpenedFile::new(
+                    file,
+                    full_path,
+                    0,
+                    file_details.len,
+                    file_details.offset,
+                ));
             }
             files
         };

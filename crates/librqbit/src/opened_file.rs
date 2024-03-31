@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::PathBuf, sync::atomic::AtomicU64};
 
 use anyhow::Context;
 use parking_lot::Mutex;
@@ -8,6 +8,9 @@ use tracing::debug;
 pub(crate) struct OpenedFile {
     pub file: Mutex<File>,
     pub filename: PathBuf,
+    pub offset_in_torrent: u64,
+    pub have: AtomicU64,
+    pub len: u64,
 }
 
 pub(crate) fn dummy_file() -> anyhow::Result<std::fs::File> {
@@ -23,10 +26,13 @@ pub(crate) fn dummy_file() -> anyhow::Result<std::fs::File> {
 }
 
 impl OpenedFile {
-    pub fn new(f: File, filename: PathBuf) -> Self {
+    pub fn new(f: File, filename: PathBuf, have: u64, len: u64, offset_in_torrent: u64) -> Self {
         Self {
             file: Mutex::new(f),
             filename,
+            have: AtomicU64::new(have),
+            len,
+            offset_in_torrent,
         }
     }
     pub fn reopen(&self, read_only: bool) -> anyhow::Result<()> {
@@ -55,6 +61,12 @@ impl OpenedFile {
 
     pub fn take_clone(&self) -> anyhow::Result<Self> {
         let f = self.take()?;
-        Ok(Self::new(f, self.filename.clone()))
+        Ok(Self {
+            file: Mutex::new(f),
+            filename: self.filename.clone(),
+            offset_in_torrent: self.offset_in_torrent,
+            have: AtomicU64::new(self.have.load(std::sync::atomic::Ordering::Relaxed)),
+            len: self.len,
+        })
     }
 }
