@@ -9,7 +9,7 @@ use anyhow::Context;
 use buffers::ByteBufOwned;
 use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
+    torrent_metainfo::TorrentMetaV1Info,
 };
 use peer_binary_protocol::Piece;
 use sha1w::{ISha1, Sha1};
@@ -100,41 +100,32 @@ impl<'a> FileOps<'a> {
         struct CurrentFile<'a> {
             index: usize,
             fd: &'a OpenedFile,
-            len: u64,
-            name: FileIteratorName<'a, ByteBufOwned>,
             full_file_required: bool,
             processed_bytes: u64,
             is_broken: bool,
         }
         impl<'a> CurrentFile<'a> {
             fn remaining(&self) -> u64 {
-                self.len - self.processed_bytes
+                self.fd.len - self.processed_bytes
             }
             fn mark_processed_bytes(&mut self, bytes: u64) {
                 self.processed_bytes += bytes
             }
         }
-        let mut file_iterator = self
-            .files
-            .iter()
-            .zip(self.torrent.iter_filenames_and_lengths()?)
-            .enumerate()
-            .map(|(idx, (fd, (name, len)))| {
-                let full_file_required = if let Some(only_files) = only_files {
-                    only_files.contains(&idx)
-                } else {
-                    true
-                };
-                CurrentFile {
-                    index: idx,
-                    fd,
-                    len,
-                    name,
-                    full_file_required,
-                    processed_bytes: 0,
-                    is_broken: false,
-                }
-            });
+        let mut file_iterator = self.files.iter().enumerate().map(|(idx, fd)| {
+            let full_file_required = if let Some(only_files) = only_files {
+                only_files.contains(&idx)
+            } else {
+                true
+            };
+            CurrentFile {
+                index: idx,
+                fd,
+                full_file_required,
+                processed_bytes: 0,
+                is_broken: false,
+            }
+        });
 
         let mut current_file = file_iterator
             .next()
@@ -186,7 +177,7 @@ impl<'a> FileOps<'a> {
                 ) {
                     debug!(
                         "error reading from file {} ({:?}) at {}: {:#}",
-                        current_file.index, current_file.name, pos, &err
+                        current_file.index, current_file.fd.filename, pos, &err
                     );
                     current_file.is_broken = true;
                     some_files_broken = true;

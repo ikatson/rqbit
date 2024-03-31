@@ -99,11 +99,7 @@ impl TorrentStateInitializing {
 
         // Ensure file lenghts are correct, and reopen read-only.
         self.meta.spawner.spawn_block_in_place(|| {
-            for (idx, (file, (name, length))) in files
-                .iter()
-                .zip(self.meta.info.iter_filenames_and_lengths().unwrap())
-                .enumerate()
-            {
+            for (idx, file) in files.iter().enumerate() {
                 if self
                     .only_files
                     .as_ref()
@@ -111,16 +107,16 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
-                    if let Err(err) = ensure_file_length(&file.file.lock(), length) {
+                    if let Err(err) = ensure_file_length(&file.file.lock(), file.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
-                            name, length, err
+                            file.filename, file.len, err
                         );
                     } else {
                         debug!(
                             "Set length for file {:?} to {} in {:?}",
-                            name,
-                            SF::new(length),
+                            file.filename,
+                            SF::new(file.len),
                             now.elapsed()
                         );
                     }

@@ -174,14 +174,10 @@ pub struct TorrentStateLive {
     cancellation_token: CancellationToken,
 }
 
-fn reopen_necessary_files_for_write(
-    ct: &ChunkTracker,
-    info: &TorrentMetaV1Info<ByteBufOwned>,
-    files: &OpenedFiles,
-) -> anyhow::Result<()> {
+fn reopen_necessary_files_for_write(ct: &ChunkTracker, files: &OpenedFiles) -> anyhow::Result<()> {
     // Reopen files that we don't have, but have selected in write-only mode.
-    for (file_details, opened_file) in info.iter_file_details(ct.get_lengths())?.zip(files) {
-        let prange = file_details.pieces_usize();
+    for opened_file in files.iter() {
+        let prange = opened_file.piece_range_usize();
         if prange.is_empty() {
             continue;
         }
@@ -218,7 +214,7 @@ impl TorrentStateLive {
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
-        reopen_necessary_files_for_write(&paused.chunk_tracker, &paused.info.info, &paused.files)?;
+        reopen_necessary_files_for_write(&paused.chunk_tracker, &paused.files)?;
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
@@ -682,8 +678,8 @@ impl TorrentStateLive {
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
-        let hns = ct.update_only_files(self.info().iter_file_lengths()?, only_files)?;
-        reopen_necessary_files_for_write(ct, self.info(), &self.files)?;
+        let hns = ct.update_only_files(self.files.iter().map(|f| f.len), only_files)?;
+        reopen_necessary_files_for_write(ct, &self.files)?;
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -696,19 +692,20 @@ impl TorrentStateLive {
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
         // if we have all the pieces of the file, reopen it read only
-        for (details, opened_file) in self
-            .info()
-            .iter_file_details(&self.lengths)?
-            .zip(&self.files)
-            .skip_while(|(d, _)| !d.pieces.contains(&id.get()))
-            .take_while(|(d, _)| d.pieces.contains(&id.get()))
+        for opened_file in self
+            .files
+            .iter()
+            .skip_while(|fd| !fd.piece_range.contains(&id.get()))
+            .take_while(|fd| fd.piece_range.contains(&id.get()))
         {
             let have_all = self
                 .lock_read("on_piece_completed_reopen")
                 .get_chunks()?
                 .get_have_pieces()
-                .get(details.pieces_usize())
-                .with_context(|| format!("bug: invalid range {:?}", details.pieces_usize()))?
+                .get(opened_file.piece_range_usize())
+                .with_context(|| {
+                    format!("bug: invalid range {:?}", opened_file.piece_range_usize())
+                })?
                 .all();
             if have_all {
                 opened_file.reopen(true)?;

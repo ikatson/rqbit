@@ -79,4 +79,8 @@ impl OpenedFile {
             piece_range: self.piece_range.clone(),
         })
     }
+
+    pub fn piece_range_usize(&self) -> std::ops::Range<usize> {
+        self.piece_range.start as usize..self.piece_range.end as usize
+    }
 }
