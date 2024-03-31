@@ -162,7 +162,7 @@ const FileTreeComponent: React.FC<{
           <FileTreeComponent
             torrentDetails={torrentDetails}
             torrentStats={torrentStats}
-            key={dir.name}
+            key={dir.name ?? "root"}
             tree={dir}
             selectedFiles={selectedFiles}
             setSelectedFiles={setSelectedFiles}
@@ -171,18 +171,19 @@ const FileTreeComponent: React.FC<{
         ))}
         <div className="pl-1">
           {tree.files.map((file) => (
-            <>
+            <div className="grid grid-cols-2 items-start">
               <FormCheckbox
                 checked={selectedFiles.has(file.id)}
                 key={file.id}
                 label={`${file.filename} (${formatBytes(file.length)})`}
                 name={`file-${file.id}`}
                 onChange={() => handleToggleFile(file.id)}
+                classNames="grid grid-cols-2"
               ></FormCheckbox>
               {showProgressBar && (
                 <ProgressBar now={file.have_bytes / file.length} />
               )}
-            </>
+            </div>
           ))}
         </div>
       </div>

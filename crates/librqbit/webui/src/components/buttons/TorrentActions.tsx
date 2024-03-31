@@ -11,7 +11,15 @@ export const TorrentActions: React.FC<{
   id: number;
   detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats;
-}> = ({ id, detailsResponse, statsResponse }) => {
+  extendedView: boolean;
+  setExtendedView: (extendedView: boolean) => void;
+}> = ({
+  id,
+  detailsResponse,
+  statsResponse,
+  extendedView,
+  setExtendedView,
+}) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
@@ -89,7 +97,14 @@ export const TorrentActions: React.FC<{
         </IconButton>
       )}
       {canConfigure && (
-        <IconButton onClick={openConfigureModal} disabled={disabled}>
+        // <IconButton onClick={openConfigureModal} disabled={disabled}>
+        //   <FaCog className="hover:text-green-600" />
+        // </IconButton>
+
+        <IconButton
+          onClick={() => setExtendedView(!extendedView)}
+          disabled={disabled}
+        >
           <FaCog className="hover:text-green-600" />
         </IconButton>
       )}

@@ -47,10 +47,11 @@ export const TorrentRow: React.FC<{
   };
 
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
+  const [extendedView, setExtendedView] = useState(false);
 
   return (
-    <>
-      <section className="flex flex-col sm:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
+    <div className="flex flex-col border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
+      <section className="flex flex-col sm:flex-row items-center gap-2">
         {/* Icon */}
         <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
         {/* Name, progress, stats */}
@@ -114,12 +115,16 @@ export const TorrentRow: React.FC<{
               id={id}
               detailsResponse={detailsResponse}
               statsResponse={statsResponse}
+              extendedView={extendedView}
+              setExtendedView={setExtendedView}
             />
           </div>
         )}
       </section>
-      <section>
-        {detailsResponse && (
+
+      {/* extended view */}
+      {detailsResponse && extendedView && (
+        <div className="p-3">
           <FileListInput
             torrentDetails={detailsResponse}
             torrentStats={statsResponse}
@@ -127,8 +132,8 @@ export const TorrentRow: React.FC<{
             setSelectedFiles={setSelectedFiles}
             showProgressBar
           />
-        )}
-      </section>
-    </>
+        </div>
+      )}
+    </div>
   );
 };
