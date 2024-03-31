@@ -691,32 +691,48 @@ impl TorrentStateLive {
         self.get_hns().map(|h| h.finished()).unwrap_or_default()
     }
 
-    fn reopen(&self, read_only: bool, lock: bool) -> anyhow::Result<()> {
-        // TODO: close files that are done, don't reopen/close the whole torrent.
-
-        // Lock exclusive just in case to ensure in-flight operations finish.??
-        let mut _guard = None;
-        if lock {
-            _guard = Some(self.lock_write(if read_only {
-                "reopen_read_only"
-            } else {
-                "reopen"
-            }));
+    fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
+        // if we have all the pieces of the file, reopen it read only
+        for (details, opened_file) in self
+            .info()
+            .iter_file_details(&self.lengths)?
+            .zip(&self.files)
+            .skip_while(|(d, _)| !d.pieces.contains(&id.get()))
+            .take_while(|(d, _)| d.pieces.contains(&id.get()))
+        {
+            let have_all = self
+                .lock_read("on_piece_completed_reopen")
+                .get_chunks()?
+                .get_have_pieces()
+                .get(details.pieces_usize())
+                .with_context(|| format!("bug: invalid range {:?}", details.pieces_usize()))?
+                .all();
+            if have_all {
+                opened_file.reopen(true)?;
+            }
         }
 
-        let log_suffix = if read_only { " read only" } else { "" };
-
-        let mut open_opts = std::fs::OpenOptions::new();
-        open_opts.read(true);
-        if !read_only {
-            open_opts.write(true).create(false);
+        if self.is_finished() {
+            info!("torrent finished downloading");
+            self.finished_notify.notify_waiters();
+            self.disconnect_all_peers_that_have_full_torrent();
         }
-
-        for file in self.files.iter() {
-            file.reopen(read_only)?;
-        }
-        debug!("reopened all files {log_suffix}");
         Ok(())
+    }
+
+    fn disconnect_all_peers_that_have_full_torrent(&self) {
+        for mut pe in self.peers.states.iter_mut() {
+            if let PeerState::Live(l) = pe.value().state.get() {
+                if l.has_full_torrent(self.lengths.total_pieces() as usize) {
+                    let prev = pe.value_mut().state.set_not_needed(&self.peers.stats);
+                    let _ = prev
+                        .take_live_no_counters()
+                        .unwrap()
+                        .tx
+                        .send(WriterRequest::Disconnect);
+                }
+            }
+        }
     }
 }
 
@@ -1396,12 +1412,7 @@ impl PeerHandler {
 
                         debug!("piece={} successfully downloaded and verified", index);
 
-                        if self.state.is_finished() {
-                            info!("torrent finished downloading");
-                            self.state.finished_notify.notify_waiters();
-                            self.disconnect_all_peers_that_have_full_torrent();
-                            self.state.reopen(true, true)?;
-                        }
+                        self.state.on_piece_completed(chunk_info.piece_index)?;
 
                         self.state.maybe_transmit_haves(chunk_info.piece_index);
                     }
@@ -1421,20 +1432,5 @@ impl PeerHandler {
             })
             .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         Ok(())
-    }
-
-    fn disconnect_all_peers_that_have_full_torrent(&self) {
-        for mut pe in self.state.peers.states.iter_mut() {
-            if let PeerState::Live(l) = pe.value().state.get() {
-                if l.has_full_torrent(self.state.lengths.total_pieces() as usize) {
-                    let prev = pe.value_mut().state.set_not_needed(&self.state.peers.stats);
-                    let _ = prev
-                        .take_live_no_counters()
-                        .unwrap()
-                        .tx
-                        .send(WriterRequest::Disconnect);
-                }
-            }
-        }
     }
 }
