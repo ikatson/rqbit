@@ -268,7 +268,7 @@ impl ManagedTorrent {
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
                                 let live =
-                                    TorrentStateLive::new(paused, tx, live_cancellation_token);
+                                    TorrentStateLive::new(paused, tx, live_cancellation_token)?;
                                 g.state = ManagedTorrentState::Live(live.clone());
 
                                 spawn_fatal_errors_receiver(&t, rx, token);
@@ -289,7 +289,7 @@ impl ManagedTorrent {
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone());
+                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone())?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 spawn_fatal_errors_receiver(self, rx, live_cancellation_token);
                 spawn_peer_adder(&live, peer_rx);

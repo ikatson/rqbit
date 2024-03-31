@@ -174,12 +174,42 @@ pub struct TorrentStateLive {
     cancellation_token: CancellationToken,
 }
 
+fn reopen_necessary_files_for_write(
+    ct: &ChunkTracker,
+    info: &TorrentMetaV1Info<ByteBufOwned>,
+    files: &OpenedFiles,
+) -> anyhow::Result<()> {
+    // Reopen files that we don't have, but have selected in write-only mode.
+    for (file_details, opened_file) in info.iter_file_details(ct.get_lengths())?.zip(files) {
+        let prange = file_details.pieces_usize();
+        if prange.is_empty() {
+            continue;
+        }
+        let selected = ct
+            .get_selected_pieces()
+            .get(prange.clone())
+            .with_context(|| format!("bug: bad range get_selected_pieces(), {prange:?}"))?;
+        let have = ct
+            .get_have_pieces()
+            .get(prange.clone())
+            .with_context(|| format!("bug: bad range get_have_pieces(), {prange:?}"))?;
+        let need_write = selected
+            .iter()
+            .zip(have.iter())
+            .any(|(selected, have)| *selected && !*have);
+        if need_write {
+            opened_file.reopen(false)?;
+        }
+    }
+    Ok(())
+}
+
 impl TorrentStateLive {
     pub(crate) fn new(
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
-    ) -> Arc<Self> {
+    ) -> anyhow::Result<Arc<Self>> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
         let down_speed_estimator = SpeedEstimator::new(5);
@@ -187,6 +217,8 @@ impl TorrentStateLive {
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
+
+        reopen_necessary_files_for_write(&paused.chunk_tracker, &paused.info.info, &paused.files)?;
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
@@ -240,7 +272,7 @@ impl TorrentStateLive {
             error_span!(parent: state.meta.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
         );
-        state
+        Ok(state)
     }
 
     pub(crate) fn spawn(

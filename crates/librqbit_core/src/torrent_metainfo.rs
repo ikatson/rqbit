@@ -158,6 +158,12 @@ pub struct FileDetails<'a, BufType> {
     pub pieces: std::ops::Range<u32>,
 }
 
+impl<'a, BufType> FileDetails<'a, BufType> {
+    pub fn pieces_usize(&self) -> std::ops::Range<usize> {
+        self.pieces.start as usize..self.pieces.end as usize
+    }
+}
+
 impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn get_hash(&self, piece: u32) -> Option<&[u8]> {
         let start = piece as usize * 20;
