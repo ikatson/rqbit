@@ -337,6 +337,7 @@ impl ManagedTorrent {
         use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
             total_bytes: self.info().lengths.total_length(),
+            file_progress: Vec::new(),
             state: S::Error,
             error: None,
             progress_bytes: 0,
@@ -357,6 +358,11 @@ impl ManagedTorrent {
                     resp.total_bytes = hns.total();
                     resp.progress_bytes = hns.progress();
                     resp.finished = hns.finished();
+                    resp.file_progress = p
+                        .files
+                        .iter()
+                        .map(|f| f.have.load(Ordering::Relaxed))
+                        .collect();
                 }
                 ManagedTorrentState::Live(l) => {
                     resp.state = S::Live;
@@ -366,6 +372,7 @@ impl ManagedTorrent {
                     resp.progress_bytes = hns.progress();
                     resp.finished = hns.finished();
                     resp.uploaded_bytes = l.get_uploaded_bytes();
+                    resp.file_progress = l.get_file_progress();
                     resp.live = Some(live_stats);
                 }
                 ManagedTorrentState::Error(e) => {

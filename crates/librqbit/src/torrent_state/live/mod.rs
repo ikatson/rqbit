@@ -753,6 +753,13 @@ impl TorrentStateLive {
             }
         }
     }
+
+    pub(crate) fn get_file_progress(&self) -> Vec<u64> {
+        self.files
+            .iter()
+            .map(|fd| fd.have.load(Ordering::Relaxed))
+            .collect()
+    }
 }
 
 struct PeerHandlerLocked {

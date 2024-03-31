@@ -69,6 +69,7 @@ impl std::fmt::Display for TorrentStatsState {
 #[derive(Serialize, Debug)]
 pub struct TorrentStats {
     pub state: TorrentStatsState,
+    pub file_progress: Vec<u64>,
     pub error: Option<String>,
     pub progress_bytes: u64,
     pub uploaded_bytes: u64,

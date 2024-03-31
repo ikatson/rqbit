@@ -70,10 +70,14 @@ refactor:
 - [ ] .rqbit-session.json file has 0 bytes when disk full. I guess fs::rename does this when disk is full? at least on linux. Couldn't repro on MacOS
 
 - reopen:
+
   - [x] in general, the only time the file should be write-only, is when it's live and not yet fully downloaded
   - [x] initializing: open read-only if file has all pieces
   - [x] on piece validated open read-only all files that were copleted
   - [x] would be nice to have some abstraction that walks files and their pieces
   - [ ] nit: optimize open write/read/write right away on first start
   - [ ] peers: if finished they are all paused forever, but if we change the list of files, we need to restart them
-- opened_files: track HAVE progress
+
+- [ ] opened_files: track HAVE progress
+  - [x] actually track
+  - [ ] show in API and UI
