@@ -156,37 +156,21 @@ impl Lengths {
     // A helper to iterate over pieces in a file.
     pub fn iter_pieces_within(
         &self,
-        offset: u64,
+        offset_bytes: u64,
         len: u64,
     ) -> impl Iterator<Item = ValidPieceIndex> {
-        let start_piece_id = (offset / self.piece_length as u64) as u32;
-        let start_piece_offset = offset % self.piece_length as u64;
-        let max_pieces = len.div_ceil(self.piece_length as u64) as u32 + 1;
+        // Validation and correction
+        let offset_bytes = offset_bytes.min(self.total_length);
+        let end_bytes = (offset_bytes + len).min(self.total_length);
+
+        let start_piece_id = (offset_bytes / self.piece_length as u64) as u32;
+        let end_piece_id = if end_bytes == offset_bytes {
+            start_piece_id
+        } else {
+            end_bytes.div_ceil(self.piece_length as u64) as u32
+        };
         let this = *self;
-        (start_piece_id..(start_piece_id + max_pieces))
-            .filter_map(move |piece_id| {
-                let piece = this.validate_piece_index(piece_id)?;
-                let piece_len = this.piece_length(piece) as u64;
-                if piece_id == start_piece_id {
-                    let piece_len = piece_len.saturating_sub(start_piece_offset);
-                    if piece_len == 0 {
-                        // out of bounds
-                        None
-                    } else {
-                        dbg!(Some((piece, piece_len)))
-                    }
-                } else {
-                    dbg!(Some((piece, piece_len)))
-                }
-            })
-            .scan(len, move |remaining_len, (piece_id, piece_len)| {
-                if *remaining_len == 0 {
-                    None
-                } else {
-                    *remaining_len -= std::cmp::min(*remaining_len, piece_len);
-                    Some(piece_id)
-                }
-            })
+        (start_piece_id..end_piece_id).filter_map(move |i| this.validate_piece_index(i))
     }
 
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
