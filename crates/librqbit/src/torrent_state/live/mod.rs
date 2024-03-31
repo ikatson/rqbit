@@ -715,6 +715,9 @@ impl TorrentStateLive {
         if self.is_finished() {
             info!("torrent finished downloading");
             self.finished_notify.notify_waiters();
+
+            // There is not poing being connected to peers that have all the torrent, when
+            // we don't need anything from them, and they don't need anything from us.
             self.disconnect_all_peers_that_have_full_torrent();
         }
         Ok(())
