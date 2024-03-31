@@ -174,6 +174,7 @@ export const TorrentRow: React.FC<{
             torrentStats={statsResponse}
             selectedFiles={selectedFiles}
             setSelectedFiles={updateSelectedFiles}
+            disabled={savingSelectedFiles}
             showProgressBar
           />
         </div>

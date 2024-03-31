@@ -23,7 +23,7 @@ type FileTree = {
 
 const newFileTree = (
   torrentDetails: TorrentDetails,
-  stats?: TorrentStats | null,
+  stats: TorrentStats | null,
 ): FileTree => {
   const newFileTreeInner = (
     name: string,
@@ -189,7 +189,7 @@ const FileTreeComponent: React.FC<{
                 onChange={() => handleToggleFile(file.id)}
               ></FormCheckbox>
               {showProgressBar && (
-                <ProgressBar now={file.have_bytes / file.length} />
+                <ProgressBar now={(file.have_bytes / file.length) * 100} />
               )}
             </div>
           ))}
@@ -214,7 +214,10 @@ export const FileListInput: React.FC<{
   showProgressBar,
   disabled,
 }) => {
-  let fileTree = useMemo(() => newFileTree(torrentDetails), [torrentDetails]);
+  let fileTree = useMemo(
+    () => newFileTree(torrentDetails, torrentStats),
+    [torrentDetails],
+  );
 
   return (
     <>
