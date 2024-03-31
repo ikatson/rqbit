@@ -249,6 +249,18 @@ impl Lengths {
         }
         return None;
     }
+
+    pub fn size_of_piece_in_file(&self, piece_id: u32, file_offset: u64, file_len: u64) -> u64 {
+        let piece_offset = piece_id as u64 * self.default_piece_length() as u64;
+        let piece_end = piece_offset + self.default_piece_length() as u64;
+
+        let file_end = file_offset + file_len;
+
+        let offset = file_offset.max(piece_offset);
+        let end = file_end.min(piece_end);
+
+        end.saturating_sub(offset)
+    }
 }
 
 #[cfg(test)]
@@ -592,5 +604,33 @@ mod tests {
         check!(&l, 21, 1, &[]);
         check!(&l, 22, 0, &[]);
         check!(&l, 22, 1, &[]);
+    }
+
+    #[test]
+    fn test_size_of_piece_in_file() {
+        let l = Lengths::new(10, 5).unwrap();
+
+        assert_eq!(l.size_of_piece_in_file(0, 0, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(0, 1, 10), 4);
+        assert_eq!(l.size_of_piece_in_file(0, 5, 10), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 6, 10), 0);
+
+        assert_eq!(l.size_of_piece_in_file(0, 0, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 1, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 5, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 6, 0), 0);
+
+        assert_eq!(l.size_of_piece_in_file(1, 0, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(1, 4, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(1, 5, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(1, 6, 10), 4);
+        assert_eq!(l.size_of_piece_in_file(1, 9, 10), 1);
+        assert_eq!(l.size_of_piece_in_file(1, 10, 10), 0);
+
+        // garbage data
+        assert_eq!(l.size_of_piece_in_file(2, 0, 10), 0);
+        assert_eq!(l.size_of_piece_in_file(3, 0, 10), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 10, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 10, 5), 0);
     }
 }

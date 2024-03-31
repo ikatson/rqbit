@@ -1,6 +1,11 @@
-use std::{fs::File, path::PathBuf, sync::atomic::AtomicU64};
+use std::{
+    fs::File,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use anyhow::Context;
+use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 use parking_lot::Mutex;
 use tracing::debug;
 
@@ -74,7 +79,7 @@ impl OpenedFile {
             file: Mutex::new(f),
             filename: self.filename.clone(),
             offset_in_torrent: self.offset_in_torrent,
-            have: AtomicU64::new(self.have.load(std::sync::atomic::Ordering::Relaxed)),
+            have: AtomicU64::new(self.have.load(Ordering::Relaxed)),
             len: self.len,
             piece_range: self.piece_range.clone(),
         })
@@ -82,5 +87,10 @@ impl OpenedFile {
 
     pub fn piece_range_usize(&self) -> std::ops::Range<usize> {
         self.piece_range.start as usize..self.piece_range.end as usize
+    }
+
+    pub fn update_have_on_piece_completed(&self, piece_id: u32, lengths: &Lengths) {
+        let size = lengths.size_of_piece_in_file(piece_id, self.offset_in_torrent, self.len);
+        self.have.fetch_add(size, Ordering::Relaxed);
     }
 }
