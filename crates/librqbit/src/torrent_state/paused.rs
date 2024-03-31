@@ -1,15 +1,15 @@
-use std::{collections::HashSet, fs::File, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
-use parking_lot::Mutex;
-
-use crate::chunk_tracker::{ChunkTracker, HaveNeededSelected};
+use crate::{
+    chunk_tracker::{ChunkTracker, HaveNeededSelected},
+    type_aliases::OpenedFiles,
+};
 
 use super::ManagedTorrentInfo;
 
 pub struct TorrentStatePaused {
     pub(crate) info: Arc<ManagedTorrentInfo>,
-    pub(crate) files: Vec<Arc<Mutex<File>>>,
-    pub(crate) filenames: Vec<PathBuf>,
+    pub(crate) files: OpenedFiles,
     pub(crate) chunk_tracker: ChunkTracker,
 }
 

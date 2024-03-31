@@ -2,10 +2,7 @@ use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
     marker::PhantomData,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use anyhow::Context;
@@ -14,12 +11,14 @@ use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::{FileIteratorName, TorrentMetaV1Info},
 };
-use parking_lot::Mutex;
 use peer_binary_protocol::Piece;
 use sha1w::{ISha1, Sha1};
 use tracing::{debug, trace, warn};
 
-use crate::type_aliases::{PeerHandle, BF};
+use crate::{
+    opened_file::OpenedFile,
+    type_aliases::{OpenedFiles, PeerHandle, BF},
+};
 
 pub(crate) struct InitialCheckResults {
     // A piece as flags based on these dimensions:
@@ -64,7 +63,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
 
 pub(crate) struct FileOps<'a> {
     torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
-    files: &'a [Arc<Mutex<File>>],
+    files: &'a OpenedFiles,
     lengths: &'a Lengths,
     phantom_data: PhantomData<Sha1>,
 }
@@ -72,7 +71,7 @@ pub(crate) struct FileOps<'a> {
 impl<'a> FileOps<'a> {
     pub fn new(
         torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
-        files: &'a [Arc<Mutex<File>>],
+        files: &'a OpenedFiles,
         lengths: &'a Lengths,
     ) -> Self {
         Self {
@@ -100,7 +99,7 @@ impl<'a> FileOps<'a> {
         #[derive(Debug)]
         struct CurrentFile<'a> {
             index: usize,
-            fd: &'a Arc<Mutex<File>>,
+            fd: &'a OpenedFile,
             len: u64,
             name: FileIteratorName<'a, ByteBufOwned>,
             full_file_required: bool,
@@ -175,7 +174,7 @@ impl<'a> FileOps<'a> {
                     continue;
                 }
 
-                let mut fd = current_file.fd.lock();
+                let mut fd = current_file.fd.file.lock();
 
                 fd.seek(SeekFrom::Start(pos))
                     .context("bug? error seeking")?;
@@ -266,7 +265,7 @@ impl<'a> FileOps<'a> {
 
             let to_read_in_file =
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64) as usize;
-            let mut file_g = self.files[file_idx].lock();
+            let mut file_g = self.files[file_idx].file.lock();
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
                 piece_index,
@@ -334,7 +333,7 @@ impl<'a> FileOps<'a> {
             let file_remaining_len = file_len - absolute_offset;
             let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64) as usize;
 
-            let mut file_g = self.files[file_idx].lock();
+            let mut file_g = self.files[file_idx].file.lock();
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
                 chunk_info.piece_index,
@@ -387,7 +386,7 @@ impl<'a> FileOps<'a> {
             let remaining_len = file_len - absolute_offset;
             let to_write = std::cmp::min(buf.len(), remaining_len as usize);
 
-            let mut file_g = self.files[file_idx].lock();
+            let mut file_g = self.files[file_idx].file.lock();
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
                 chunk_info.piece_index,

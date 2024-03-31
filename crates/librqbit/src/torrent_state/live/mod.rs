@@ -45,9 +45,7 @@ pub mod stats;
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
     net::SocketAddr,
-    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -68,7 +66,7 @@ use librqbit_core::{
     speed_estimator::SpeedEstimator,
     torrent_metainfo::TorrentMetaV1Info,
 };
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
 };
@@ -90,7 +88,7 @@ use crate::{
     },
     session::CheckedIncomingConnection,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{PeerHandle, BF},
+    type_aliases::{OpenedFiles, PeerHandle, BF},
 };
 
 use self::{
@@ -114,18 +112,6 @@ use super::{
 struct InflightPiece {
     peer: PeerHandle,
     started: Instant,
-}
-
-fn dummy_file() -> anyhow::Result<std::fs::File> {
-    #[cfg(target_os = "windows")]
-    const DEVNULL: &str = "NUL";
-    #[cfg(not(target_os = "windows"))]
-    const DEVNULL: &str = "/dev/null";
-
-    std::fs::OpenOptions::new()
-        .read(true)
-        .open(DEVNULL)
-        .with_context(|| format!("error opening {}", DEVNULL))
 }
 
 fn make_piece_bitfield(lengths: &Lengths) -> BF {
@@ -170,8 +156,7 @@ pub struct TorrentStateLive {
     meta: Arc<ManagedTorrentInfo>,
     locked: RwLock<TorrentStateLocked>,
 
-    files: Vec<Arc<Mutex<File>>>,
-    filenames: Vec<PathBuf>,
+    files: OpenedFiles,
 
     stats: AtomicStats,
     lengths: Lengths,
@@ -212,7 +197,6 @@ impl TorrentStateLive {
                 fatal_errors_tx: Some(fatal_errors_tx),
             }),
             files: paused.files,
-            filenames: paused.filenames,
             stats: AtomicStats {
                 have_bytes: AtomicU64::new(have_bytes),
                 ..Default::default()
@@ -633,19 +617,7 @@ impl TorrentStateLive {
         // It should be impossible to make a fatal error after pausing.
         g.fatal_errors_tx.take();
 
-        let files = self
-            .files
-            .iter()
-            .map(|f| {
-                let mut f = f.lock();
-                let dummy = dummy_file()?;
-                let f = std::mem::replace(&mut *f, dummy);
-                Ok::<_, anyhow::Error>(Arc::new(Mutex::new(f)))
-            })
-            .try_collect()?;
-
-        let filenames = self.filenames.clone();
-
+        let files = self.files.iter().map(|f| f.take_clone()).try_collect()?;
         let mut chunk_tracker = g
             .chunks
             .take()
@@ -658,7 +630,6 @@ impl TorrentStateLive {
         Ok(TorrentStatePaused {
             info: self.meta.clone(),
             files,
-            filenames,
             chunk_tracker,
         })
     }
@@ -712,18 +683,8 @@ impl TorrentStateLive {
             open_opts.write(true).create(false);
         }
 
-        for (file, filename) in self.files.iter().zip(self.filenames.iter()) {
-            let mut g = file.lock();
-            // this should close the original file
-            // putting in a block just in case to guarantee drop.
-            {
-                *g = dummy_file()?;
-            }
-            *g = std::fs::OpenOptions::new()
-                .read(true)
-                .open(filename)
-                .with_context(|| format!("error re-opening {filename:?}{log_suffix}"))?;
-            debug!("reopened {filename:?}{log_suffix}");
+        for file in self.files.iter() {
+            file.reopen(read_only)?;
         }
         debug!("reopened all files {log_suffix}");
         Ok(())

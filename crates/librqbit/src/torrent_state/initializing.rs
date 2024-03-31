@@ -6,12 +6,13 @@ use std::{
 
 use anyhow::Context;
 
-use parking_lot::Mutex;
-
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
-use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps};
+use crate::{
+    chunk_tracker::ChunkTracker, file_ops::FileOps, opened_file::OpenedFile,
+    type_aliases::OpenedFiles,
+};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
@@ -40,10 +41,8 @@ impl TorrentStateInitializing {
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
-        let (files, filenames) = {
-            let mut files =
-                Vec::<Arc<Mutex<File>>>::with_capacity(self.meta.info.iter_file_lengths()?.count());
-            let mut filenames = Vec::new();
+        let files = {
+            let mut files = OpenedFiles::with_capacity(self.meta.info.iter_file_lengths()?.count());
             for (path_bits, _) in self.meta.info.iter_filenames_and_lengths()? {
                 let mut full_path = self.meta.out_dir.clone();
                 let relative_path = path_bits
@@ -70,10 +69,9 @@ impl TorrentStateInitializing {
                         .with_context(|| format!("error creating {:?}", &full_path))?;
                     OpenOptions::new().read(true).write(true).open(&full_path)?
                 };
-                filenames.push(full_path);
-                files.push(Arc::new(Mutex::new(file)))
+                files.push(OpenedFile::new(file, full_path));
             }
-            (files, filenames)
+            files
         };
 
         debug!("computed lengths: {:?}", &self.meta.lengths);
@@ -106,7 +104,7 @@ impl TorrentStateInitializing {
                     continue;
                 }
                 let now = Instant::now();
-                if let Err(err) = ensure_file_length(&file.lock(), length) {
+                if let Err(err) = ensure_file_length(&file.file.lock(), length) {
                     warn!(
                         "Error setting length for file {:?} to {}: {:#?}",
                         name, length, err
@@ -132,7 +130,6 @@ impl TorrentStateInitializing {
         let paused = TorrentStatePaused {
             info: self.meta.clone(),
             files,
-            filenames,
             chunk_tracker,
         };
         Ok(paused)
