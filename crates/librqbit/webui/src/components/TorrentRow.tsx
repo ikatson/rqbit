@@ -12,6 +12,8 @@ import { formatBytes } from "../helper/formatBytes";
 import { torrentDisplayName } from "../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
+import { FileListInput } from "./FileListInput";
+import { SetStateAction, useState } from "react";
 
 export const TorrentRow: React.FC<{
   id: number;
@@ -44,74 +46,89 @@ export const TorrentRow: React.FC<{
     );
   };
 
+  const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
+
   return (
-    <section className="flex flex-col sm:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
-      {/* Icon */}
-      <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
-      {/* Name, progress, stats */}
-      <div className="w-full flex flex-col gap-2">
-        {detailsResponse && (
-          <div className="flex items-center gap-2">
-            <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-            <div className="text-left text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
-              {torrentDisplayName(detailsResponse)}
+    <>
+      <section className="flex flex-col sm:flex-row items-center gap-2 border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
+        {/* Icon */}
+        <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
+        {/* Name, progress, stats */}
+        <div className="w-full flex flex-col gap-2">
+          {detailsResponse && (
+            <div className="flex items-center gap-2">
+              <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
+              <div className="text-left text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
+                {torrentDisplayName(detailsResponse)}
+              </div>
             </div>
+          )}
+          {error ? (
+            <p className="text-red-500 text-sm">
+              <strong>Error:</strong> {error}
+            </p>
+          ) : (
+            <>
+              <div>
+                <ProgressBar
+                  now={progressPercentage}
+                  label={error}
+                  variant={
+                    state == STATE_INITIALIZING
+                      ? "warn"
+                      : finished
+                        ? "success"
+                        : "info"
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
+                <div className="flex gap-2 items-center">
+                  <GoPeople /> {formatPeersString().toString()}
+                </div>
+                <div className="flex gap-2 items-center">
+                  <GoFile />
+                  <div>
+                    {formatBytes(progressBytes)}/{formatBytes(totalBytes)}
+                  </div>
+                </div>
+                {statsResponse && (
+                  <>
+                    <div className="flex gap-2 items-center">
+                      <GoClock />
+                      {getCompletionETA(statsResponse)}
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <Speed statsResponse={statsResponse} />
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        {/* Actions */}
+        {statsResponse && (
+          <div className="">
+            <TorrentActions
+              id={id}
+              detailsResponse={detailsResponse}
+              statsResponse={statsResponse}
+            />
           </div>
         )}
-        {error ? (
-          <p className="text-red-500 text-sm">
-            <strong>Error:</strong> {error}
-          </p>
-        ) : (
-          <>
-            <div>
-              <ProgressBar
-                now={progressPercentage}
-                label={error}
-                variant={
-                  state == STATE_INITIALIZING
-                    ? "warn"
-                    : finished
-                      ? "success"
-                      : "info"
-                }
-              />
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
-              <div className="flex gap-2 items-center">
-                <GoPeople /> {formatPeersString().toString()}
-              </div>
-              <div className="flex gap-2 items-center">
-                <GoFile />
-                <div>
-                  {formatBytes(progressBytes)}/{formatBytes(totalBytes)}
-                </div>
-              </div>
-              {statsResponse && (
-                <>
-                  <div className="flex gap-2 items-center">
-                    <GoClock />
-                    {getCompletionETA(statsResponse)}
-                  </div>
-                  <div className="flex gap-2 items-center">
-                    <Speed statsResponse={statsResponse} />
-                  </div>
-                </>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-      {/* Actions */}
-      {statsResponse && (
-        <div className="">
-          <TorrentActions
-            id={id}
-            detailsResponse={detailsResponse}
-            statsResponse={statsResponse}
+      </section>
+      <section>
+        {detailsResponse && (
+          <FileListInput
+            torrentDetails={detailsResponse}
+            torrentStats={statsResponse}
+            selectedFiles={selectedFiles}
+            setSelectedFiles={setSelectedFiles}
+            showProgressBar
           />
-        </div>
-      )}
-    </section>
+        )}
+      </section>
+    </>
   );
 };

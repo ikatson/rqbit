@@ -4,6 +4,7 @@ import { FormCheckbox } from "./forms/FormCheckbox";
 import { CiSquarePlus, CiSquareMinus } from "react-icons/ci";
 import { IconButton } from "./buttons/IconButton";
 import { formatBytes } from "../helper/formatBytes";
+import { ProgressBar } from "./ProgressBar";
 
 type TorrentFileForCheckbox = {
   id: number;
@@ -83,6 +84,7 @@ const FileTreeComponent: React.FC<{
   selectedFiles: Set<number>;
   setSelectedFiles: React.Dispatch<React.SetStateAction<Set<number>>>;
   initialExpanded: boolean;
+  showProgressBar?: boolean;
 }> = ({
   tree,
   selectedFiles,
@@ -90,6 +92,7 @@ const FileTreeComponent: React.FC<{
   initialExpanded,
   torrentDetails,
   torrentStats,
+  showProgressBar,
 }) => {
   let [expanded, setExpanded] = useState(initialExpanded);
   let children = useMemo(() => {
@@ -168,13 +171,18 @@ const FileTreeComponent: React.FC<{
         ))}
         <div className="pl-1">
           {tree.files.map((file) => (
-            <FormCheckbox
-              checked={selectedFiles.has(file.id)}
-              key={file.id}
-              label={`${file.filename} (${formatBytes(file.length)})`}
-              name={`file-${file.id}`}
-              onChange={() => handleToggleFile(file.id)}
-            ></FormCheckbox>
+            <>
+              <FormCheckbox
+                checked={selectedFiles.has(file.id)}
+                key={file.id}
+                label={`${file.filename} (${formatBytes(file.length)})`}
+                name={`file-${file.id}`}
+                onChange={() => handleToggleFile(file.id)}
+              ></FormCheckbox>
+              {showProgressBar && (
+                <ProgressBar now={file.have_bytes / file.length} />
+              )}
+            </>
           ))}
         </div>
       </div>
@@ -187,7 +195,14 @@ export const FileListInput: React.FC<{
   torrentStats: TorrentStats | null;
   selectedFiles: Set<number>;
   setSelectedFiles: React.Dispatch<React.SetStateAction<Set<number>>>;
-}> = ({ torrentDetails, selectedFiles, setSelectedFiles, torrentStats }) => {
+  showProgressBar?: boolean;
+}> = ({
+  torrentDetails,
+  selectedFiles,
+  setSelectedFiles,
+  torrentStats,
+  showProgressBar,
+}) => {
   let fileTree = useMemo(() => newFileTree(torrentDetails), [torrentDetails]);
 
   return (
@@ -199,6 +214,7 @@ export const FileListInput: React.FC<{
         selectedFiles={selectedFiles}
         setSelectedFiles={setSelectedFiles}
         initialExpanded={true}
+        showProgressBar={showProgressBar}
       />
     </>
   );
