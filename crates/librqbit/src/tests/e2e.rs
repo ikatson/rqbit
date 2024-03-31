@@ -253,7 +253,7 @@ async fn test_e2e() {
                     .with_state(|s| match s {
                         crate::ManagedTorrentState::Initializing(_) => Ok(false),
                         crate::ManagedTorrentState::Paused(p) => {
-                            assert_eq!(p.hns.needed_bytes, 0);
+                            assert_eq!(p.chunk_tracker.get_hns().needed_bytes, 0);
                             Ok(true)
                         }
                         _ => bail!("bugged state"),

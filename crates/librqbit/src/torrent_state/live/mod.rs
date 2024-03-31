@@ -44,7 +44,7 @@ pub mod peers;
 pub mod stats;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     net::SocketAddr,
     path::PathBuf,
@@ -173,9 +173,6 @@ pub struct TorrentStateLive {
     files: Vec<Arc<Mutex<File>>>,
     filenames: Vec<PathBuf>,
 
-    initially_needed_bytes: u64,
-    total_selected_bytes: u64,
-
     stats: AtomicStats,
     lengths: Lengths,
 
@@ -203,9 +200,7 @@ impl TorrentStateLive {
         let down_speed_estimator = SpeedEstimator::new(5);
         let up_speed_estimator = SpeedEstimator::new(5);
 
-        let have_bytes = paused.hns.have_bytes;
-        let needed_bytes = paused.hns.needed_bytes;
-        let total_selected_bytes = paused.hns.selected_bytes;
+        let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
 
         let state = Arc::new(TorrentStateLive {
@@ -222,9 +217,7 @@ impl TorrentStateLive {
                 have_bytes: AtomicU64::new(have_bytes),
                 ..Default::default()
             },
-            initially_needed_bytes: needed_bytes,
             lengths,
-            total_selected_bytes,
             peer_semaphore: Arc::new(Semaphore::new(128)),
             peer_queue_tx,
             finished_notify: Notify::new(),
@@ -246,9 +239,7 @@ impl TorrentStateLive {
                         let now = Instant::now();
                         let stats = state.stats_snapshot();
                         let fetched = stats.fetched_bytes;
-                        let needed = state.initially_needed();
-                        // TODO: this is too coarse.
-                        let remaining = needed - stats.downloaded_and_checked_bytes;
+                        let remaining = state.locked.read().get_chunks()?.get_remaining_bytes();
                         state
                             .down_speed_estimator
                             .add_snapshot(fetched, Some(remaining), now);
@@ -494,9 +485,6 @@ impl TorrentStateLive {
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
         FileOps::new(&self.meta.info, &self.files, &self.lengths)
     }
-    pub fn initially_needed(&self) -> u64 {
-        self.initially_needed_bytes
-    }
 
     pub(crate) fn lock_read(
         &self,
@@ -518,10 +506,6 @@ impl TorrentStateLive {
         });
     }
 
-    pub fn get_total_selected_bytes(&self) -> u64 {
-        self.total_selected_bytes
-    }
-
     pub fn get_uploaded_bytes(&self) -> u64 {
         self.stats.uploaded_bytes.load(Ordering::Relaxed)
     }
@@ -540,7 +524,18 @@ impl TorrentStateLive {
     }
 
     pub fn get_left_to_download_bytes(&self) -> u64 {
-        self.initially_needed_bytes - self.get_downloaded_bytes()
+        self.lock_read("get_left_to_download_bytes")
+            .get_chunks()
+            .ok()
+            .map(|c| c.get_remaining_bytes())
+            .unwrap_or_default()
+    }
+
+    pub fn get_hns(&self) -> Option<HaveNeededSelected> {
+        self.lock_read("get_hns")
+            .get_chunks()
+            .ok()
+            .map(|c| *c.get_hns())
     }
 
     fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
@@ -670,8 +665,6 @@ impl TorrentStateLive {
         for piece_id in g.inflight_pieces.keys().copied() {
             chunk_tracker.mark_piece_broken_if_not_have(piece_id);
         }
-        let have_bytes = chunk_tracker.calc_have_bytes();
-        let needed_bytes = chunk_tracker.calc_needed_bytes();
 
         // g.chunks;
         Ok(TorrentStatePaused {
@@ -679,11 +672,6 @@ impl TorrentStateLive {
             files,
             filenames,
             chunk_tracker,
-            hns: HaveNeededSelected {
-                have_bytes,
-                needed_bytes,
-                selected_bytes: self.total_selected_bytes,
-            },
         })
     }
 
@@ -698,6 +686,13 @@ impl TorrentStateLive {
             warn!("there's nowhere to send fatal error, receiver is dead");
         }
         Err(res)
+    }
+
+    pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
+        self.lock_write("update_only_files")
+            .get_chunks_mut()?
+            .update_only_files(self.info().iter_file_lengths()?, only_files)?;
+        Ok(())
     }
 }
 

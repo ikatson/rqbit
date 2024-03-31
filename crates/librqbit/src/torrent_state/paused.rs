@@ -11,15 +11,16 @@ pub struct TorrentStatePaused {
     pub(crate) files: Vec<Arc<Mutex<File>>>,
     pub(crate) filenames: Vec<PathBuf>,
     pub(crate) chunk_tracker: ChunkTracker,
-    pub(crate) hns: HaveNeededSelected,
 }
 
 impl TorrentStatePaused {
     pub(crate) fn update_only_files(&mut self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let hns = self
-            .chunk_tracker
+        self.chunk_tracker
             .update_only_files(self.info.info.iter_file_lengths()?, only_files)?;
-        self.hns = hns;
         Ok(())
+    }
+
+    pub(crate) fn hns(&self) -> &HaveNeededSelected {
+        self.chunk_tracker.get_hns()
     }
 }

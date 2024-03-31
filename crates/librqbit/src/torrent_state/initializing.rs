@@ -11,10 +11,7 @@ use parking_lot::Mutex;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
-use crate::{
-    chunk_tracker::{ChunkTracker, HaveNeededSelected},
-    file_ops::FileOps,
-};
+use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
@@ -137,11 +134,6 @@ impl TorrentStateInitializing {
             files,
             filenames,
             chunk_tracker,
-            hns: HaveNeededSelected {
-                have_bytes: initial_check_results.have_bytes,
-                needed_bytes: initial_check_results.needed_bytes,
-                selected_bytes: initial_check_results.selected_bytes,
-            },
         };
         Ok(paused)
     }
