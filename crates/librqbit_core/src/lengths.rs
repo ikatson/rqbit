@@ -154,11 +154,7 @@ impl Lengths {
     }
 
     // A helper to iterate over pieces in a file.
-    pub fn iter_pieces_within(
-        &self,
-        offset_bytes: u64,
-        len: u64,
-    ) -> impl Iterator<Item = ValidPieceIndex> {
+    pub fn iter_pieces_within(&self, offset_bytes: u64, len: u64) -> std::ops::Range<u32> {
         // Validation and correction
         let offset_bytes = offset_bytes.min(self.total_length);
         let end_bytes = (offset_bytes + len).min(self.total_length);
@@ -169,8 +165,7 @@ impl Lengths {
         } else {
             end_bytes.div_ceil(self.piece_length as u64) as u32
         };
-        let this = *self;
-        (start_piece_id..end_piece_id).filter_map(move |i| this.validate_piece_index(i))
+        start_piece_id..end_piece_id
     }
 
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
@@ -564,9 +559,7 @@ mod tests {
                 let e: &[u32] = $expected;
                 println!("case: offset={}, len={}, expected={:?}", $offset, $len, e);
                 assert_eq!(
-                    &$l.iter_pieces_within($offset, $len)
-                        .map(|p| p.get())
-                        .collect::<Vec<_>>()[..],
+                    &$l.iter_pieces_within($offset, $len).collect::<Vec<_>>()[..],
                     $expected
                 );
             };
