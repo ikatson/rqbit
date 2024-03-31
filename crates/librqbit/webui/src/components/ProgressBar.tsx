@@ -17,7 +17,9 @@ export const ProgressBar: React.FC<{
     variantClassNames[variant ?? "info"] ?? variantClassNames["info"];
 
   return (
-    <div className={`bg-gray-200 rounded-full dark:bg-gray-500 ${classNames}`}>
+    <div
+      className={`bg-gray-200 rounded-md mb-1 dark:bg-gray-500 ${classNames} p-0.5`}
+    >
       <div
         className={`text-xs font-medium transition-all text-center p-0.5 leading-none rounded-full ${variantClassName}`}
         style={{ width: `${now}%` }}
