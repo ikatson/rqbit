@@ -176,7 +176,7 @@ const FileTreeComponent: React.FC<{
             <div
               className={`${
                 showProgressBar
-                  ? "grid grid-cols-1 items-start lg:grid-cols-2 mb-2 lg:mb-0"
+                  ? "grid grid-cols-1 gap-1 items-start lg:grid-cols-2 mb-2 lg:mb-0"
                   : ""
               }`}
             >

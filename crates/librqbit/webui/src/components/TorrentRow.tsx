@@ -78,7 +78,6 @@ export const TorrentRow: React.FC<{
       () => {
         setSavingSelectedFiles(false);
         refreshCtx.refresh();
-        close();
         setCloseableError(null);
       },
       (e) => {
@@ -95,7 +94,7 @@ export const TorrentRow: React.FC<{
 
   return (
     <div className="flex flex-col border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
-      <section className="flex flex-col sm:flex-row items-center gap-2">
+      <section className="flex flex-col lg:flex-row items-center gap-2">
         {/* Icon */}
         <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
         {/* Name, progress, stats */}
@@ -168,7 +167,7 @@ export const TorrentRow: React.FC<{
 
       {/* extended view */}
       {detailsResponse && extendedView && (
-        <div className="p-3">
+        <div className="">
           <FileListInput
             torrentDetails={detailsResponse}
             torrentStats={statsResponse}
