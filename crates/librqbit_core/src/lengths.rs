@@ -154,7 +154,11 @@ impl Lengths {
     }
 
     // A helper to iterate over pieces in a file.
-    pub fn iter_pieces_within(&self, offset_bytes: u64, len: u64) -> std::ops::Range<u32> {
+    pub(crate) fn iter_pieces_within_offset(
+        &self,
+        offset_bytes: u64,
+        len: u64,
+    ) -> std::ops::Range<u32> {
         // Validation and correction
         let offset_bytes = offset_bytes.min(self.total_length);
         let end_bytes = (offset_bytes + len).min(self.total_length);
@@ -559,7 +563,8 @@ mod tests {
                 let e: &[u32] = $expected;
                 println!("case: offset={}, len={}, expected={:?}", $offset, $len, e);
                 assert_eq!(
-                    &$l.iter_pieces_within($offset, $len).collect::<Vec<_>>()[..],
+                    &$l.iter_pieces_within_offset($offset, $len)
+                        .collect::<Vec<_>>()[..],
                     $expected
                 );
             };
