@@ -76,8 +76,8 @@ refactor:
   - [x] on piece validated open read-only all files that were copleted
   - [x] would be nice to have some abstraction that walks files and their pieces
   - [ ] nit: optimize open write/read/write right away on first start
-  - [ ] peers: if finished they are all paused forever, but if we change the list of files, we need to restart them
+  - [x] peers: if finished they are all paused forever, but if we change the list of files, we need to restart them
 
-- [ ] opened_files: track HAVE progress
+- [x] opened_files: track HAVE progress
   - [x] actually track
-  - [ ] show in API and UI
+  - [x] show in API and UI
