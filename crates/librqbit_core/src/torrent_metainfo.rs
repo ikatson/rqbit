@@ -5,17 +5,17 @@ use itertools::Either;
 use serde::{Deserialize, Serialize};
 
 use bencode::BencodeDeserializer;
-use buffers::{ByteBuf, ByteBufT, ByteString};
+use buffers::{ByteBuf, ByteString};
 use clone_to_owned::CloneToOwned;
 use sha1w::ISha1;
 
 use crate::hash_id::Id20;
 
-pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
-pub type TorrentMetaV1Owned = TorrentMetaV1<ByteString>;
+pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<'a, ByteBuf<'a>>;
+pub type TorrentMetaV1Owned = TorrentMetaV1<'static, ByteString>;
 
 /// Parse torrent metainfo from bytes.
-pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de> + ByteBufT>(
+pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de>+TorrentMetaV1BufTypeConstraints<'de>>(
     buf: &'de [u8],
 ) -> anyhow::Result<TorrentMetaV1<ByteBuf>> {
     let mut de = BencodeDeserializer::new_from_buf(buf);
@@ -24,17 +24,17 @@ pub fn torrent_from_bytes<'de, ByteBuf: Deserialize<'de> + ByteBufT>(
 }
 
 /// Info as pristine bytes.
-type RawInfo<BufType> = bencode::RawValue<BufType>;
+type RawInfo<'a, BufType> = bencode::RawValue<'a, BufType>;
 
 /// Constraints on embedded raw info. Ensures the buffer type supports visiting by bytes during
 /// deserialization. Vec<u8> expects a sequence.
-pub trait TorrentMetaV1BufTypeConstraints: ByteBufT {}
+pub trait TorrentMetaV1BufTypeConstraints<'a>: AsRef<[u8]>+serde_bytes::Deserialize<'a> {}
 
-impl<T: ByteBufT> TorrentMetaV1BufTypeConstraints for T {}
+impl<'a, T: AsRef<[u8]>+serde_bytes::Deserialize<'a>> TorrentMetaV1BufTypeConstraints<'a> for T {}
 
 /// A parsed .torrent file.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TorrentMetaV1<BufType: TorrentMetaV1BufTypeConstraints> {
+pub struct TorrentMetaV1<'a, BufType: TorrentMetaV1BufTypeConstraints<'a>> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub announce: Option<BufType>,
     #[serde(
@@ -45,7 +45,8 @@ pub struct TorrentMetaV1<BufType: TorrentMetaV1BufTypeConstraints> {
     pub announce_list: Vec<Vec<BufType>>,
     /// Unmodified bytes corresponding to the info value. Used for computing infohash and
     /// communicated to peers via the metadata extension.
-    pub info: Option<RawInfo<BufType>>,
+    #[serde(borrow = "'a")]
+    pub info: Option<RawInfo<'a, BufType>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
     #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
@@ -60,7 +61,7 @@ pub struct TorrentMetaV1<BufType: TorrentMetaV1BufTypeConstraints> {
     pub creation_date: Option<usize>,
 }
 
-impl<BufType: TorrentMetaV1BufTypeConstraints> TorrentMetaV1<BufType> {
+impl<'a, BufType: TorrentMetaV1BufTypeConstraints<'a>> TorrentMetaV1<'a, BufType> {
     pub fn iter_announce(&self) -> impl Iterator<Item = &BufType> {
         if self.announce_list.iter().flatten().next().is_some() {
             return itertools::Either::Left(self.announce_list.iter().flatten());
@@ -69,12 +70,12 @@ impl<BufType: TorrentMetaV1BufTypeConstraints> TorrentMetaV1<BufType> {
     }
 }
 
-impl<BufType: TorrentMetaV1BufTypeConstraints> TorrentMetaV1<BufType> {
+impl<'a, BufType: TorrentMetaV1BufTypeConstraints<'a>> TorrentMetaV1<'a, BufType> {
     /// v1 called out, because v2 is a thing, and migration is a PITA.
     pub fn v1_hash_info(&self) -> Option<Id20> {
         self.info.as_ref().map(|bytes| {
             let mut h = sha1w::Sha1::new();
-            h.update(bytes.as_slice());
+            h.update(bytes.as_ref());
             Id20::new(h.finish())
         })
     }
@@ -268,12 +269,12 @@ where
     }
 }
 
-impl<ByteBuf: TorrentMetaV1BufTypeConstraints> CloneToOwned for TorrentMetaV1<ByteBuf>
+impl<'a, ByteBuf: TorrentMetaV1BufTypeConstraints<'a>> CloneToOwned for TorrentMetaV1<'a, ByteBuf>
 where
     ByteBuf: CloneToOwned,
-    <ByteBuf as CloneToOwned>::Target: TorrentMetaV1BufTypeConstraints,
+    <ByteBuf as CloneToOwned>::Target: TorrentMetaV1BufTypeConstraints<'static>,
 {
-    type Target = TorrentMetaV1<<ByteBuf as CloneToOwned>::Target>;
+    type Target = TorrentMetaV1<'static, <ByteBuf as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         TorrentMetaV1 {

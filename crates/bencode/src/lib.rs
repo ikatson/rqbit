@@ -18,7 +18,7 @@ use std::marker::PhantomData;
 
 use serde::{
     de::{value::BorrowedBytesDeserializer, DeserializeOwned, Error as _, MapAccess, Visitor},
-    ser::{Impossible},
+    ser::Impossible,
     Deserialize, Deserializer, Serialize, Serializer,
 };
 

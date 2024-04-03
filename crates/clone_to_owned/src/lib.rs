@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 pub trait CloneToOwned {
-    type Target;
+    type Target: 'static;
 
     fn clone_to_owned(&self) -> Self::Target;
 }

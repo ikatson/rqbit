@@ -1313,6 +1313,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "serde",
+ "serde_bytes",
  "serde_json",
 ]
 
@@ -1342,6 +1343,7 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "parking_lot",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -2208,6 +2210,15 @@ dependencies = [
  "serde",
  "thiserror",
  "xml-rs",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b8497c313fd43ab992087548117643f6fcd935cbf36f176ffda0aacf9591734"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

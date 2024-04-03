@@ -1,62 +1,76 @@
-use serde::de::SeqAccess;
-use serde::de::value::{SeqAccessDeserializer};
-use buffers::ByteBufT;
 use super::*;
+use serde::de::value::SeqAccessDeserializer;
+use serde::de::SeqAccess;
 
 #[derive(Debug)]
-pub struct RawValue<T>(pub T);
+pub struct RawValue<'a, T>{
+    bytes: T,
+    phantom: PhantomData<&'a T>,
+}
 
-impl<T> PartialEq<Self> for RawValue<T>
+impl<T> RawValue<'_, T> {
+    pub fn new(value: T) -> Self {
+        value.into()
+    }
+}
+
+impl<T, U> PartialEq<RawValue<'_, U>> for RawValue<'_, T>
 where
-    T: PartialEq,
+    T: PartialEq<U>,
 {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.eq(other)
+    fn eq(&self, other: &RawValue<U>) -> bool {
+        self.bytes.eq(&other.bytes)
     }
 }
 
-impl<T> Eq for RawValue<T> where T: Eq {}
+impl<T> Eq for RawValue<'_, T> where T: Eq {}
 
-impl<T: Clone> Clone for RawValue<T> {
+impl<T: Clone> Clone for RawValue<'_, T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self {
+            bytes: self.bytes.clone(),
+            phantom: self.phantom.clone(),
+        }
     }
 }
 
-impl<T: CloneToOwned> CloneToOwned for RawValue<T> {
-    type Target = RawValue<<T as CloneToOwned>::Target>;
+impl<T: CloneToOwned> CloneToOwned for RawValue<'_, T> {
+    type Target = RawValue<'static, <T as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         // Why can't I use Self::Target here?
-        RawValue(self.0.clone_to_owned())
+        RawValue {
+            bytes: self.bytes.clone_to_owned(),
+            phantom: PhantomData::default(),
+        }
     }
 }
 // This can't go in RawValue because it doesn't depend on T.
 pub(crate) const TOKEN: &str = "$librqbit_bencode::private::RawValue";
 
-impl<T> Serialize for RawValue<T>
+impl<T> Serialize for RawValue<'_, T>
 where
-    T: Serialize + ByteBufT,
+    T: AsRef<[u8]>,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_newtype_struct(TOKEN, &self.0)
+        serializer.serialize_newtype_struct(TOKEN, serde_bytes::Bytes::new(self.bytes.as_ref()))
     }
 }
 
-impl<T> From<T> for RawValue<T> {
+impl<T> From<T> for RawValue<'_, T> {
     fn from(value: T) -> Self {
-        Self(value)
+        Self{bytes:value, phantom:Default::default()}
     }
 }
 
-impl<'de, T> Deserialize<'de> for RawValue<T>
+impl<'de, T> Deserialize<'de> for RawValue<'_, T>
 where
     // Using T: Deserialize instead of From<&[u8]> avoids lifetime issues with 'de. It does mean we use
     // the BorrowedBytesDeserializer to get the bytes into T.
-    T: Deserialize<'de>+ByteBufT,
+    T: serde::Deserialize<'de> +serde_bytes::Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -65,11 +79,18 @@ where
         struct V<T> {
             phantom: PhantomData<T>,
         }
-        impl<'de, T: serde::Deserialize<'de>> Visitor<'de> for V<T> {
+        impl<'de, T: serde::Deserialize<'de>+serde_bytes::Deserialize<'de>> Visitor<'de> for V<T> {
             type Value = T;
 
             fn expecting(&self, f: &mut Formatter) -> std::fmt::Result {
                 f.write_str("borrowed bytes")
+            }
+
+            fn visit_bytes<E>(self, _v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                todo!()
             }
 
             fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
@@ -77,11 +98,7 @@ where
                 E: serde::de::Error,
             {
                 // This calls Deserialize for the inner type, which hopefully supports &[u8]?
-                Self::Value::deserialize(BorrowedBytesDeserializer::new(v))
-            }
-
-            fn visit_bytes<E>(self, _v: &[u8]) -> Result<Self::Value, E> where E: serde::de::Error {
-                todo!()
+                serde_bytes::deserialize(BorrowedBytesDeserializer::new(v))
             }
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -89,6 +106,13 @@ where
                 D: Deserializer<'de>,
             {
                 deserializer.deserialize_bytes(self)
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                <Self::Value as serde::Deserialize>::deserialize(SeqAccessDeserializer::new(seq))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -106,10 +130,6 @@ where
                 }
                 Ok(value)
             }
-
-            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error> where A: SeqAccess<'de> {
-                Self::Value::deserialize(SeqAccessDeserializer::new(seq))
-            }
         }
         deserializer
             .deserialize_newtype_struct(
@@ -122,11 +142,11 @@ where
     }
 }
 
-impl<T> std::ops::Deref for RawValue<T> {
+impl<T> std::ops::Deref for RawValue<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.bytes
     }
 }
 
@@ -166,8 +186,11 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeSeq for RawValueSerializer<'s
     type Ok = ();
     type Error = SerError;
 
-    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<Self::Ok, Self::Error> where T: Serialize {
-        value.serialize(RawValueSerializer{ser: self.ser})
+    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: Serialize,
+    {
+        value.serialize(RawValueSerializer { ser: self.ser })
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
@@ -342,6 +365,7 @@ impl<'ser, W: std::io::Write> Serializer for RawValueSerializer<'ser, W> {
         Self::expected_err()
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,7 +375,7 @@ mod tests {
         #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
         struct Object {
             cow: String,
-            spam: RawValue<ByteString>,
+            spam: RawValue<'static, Vec<u8>>,
         }
 
         let input = b"d3:cow3:moo4:spam4:eggse";
@@ -360,7 +384,7 @@ mod tests {
             object,
             Object {
                 cow: "moo".to_owned(),
-                spam: RawValue(b"4:eggs"[..].into())
+                spam: RawValue::new(b"4:eggs"[..].into())
             }
         );
 
@@ -377,8 +401,8 @@ mod tests {
         }
 
         let input = &b"d3:cow3:moo4:spam4:eggse"[..];
-        let wrapper: RawValue<ByteBuf> = from_bytes(input).unwrap();
-        assert_eq!(wrapper, RawValue(input.into()));
+        let wrapper: RawValue<&[u8]> = from_bytes(input).unwrap();
+        assert_eq!(wrapper, input.into());
 
         let buf = to_bytes(&wrapper).unwrap();
         assert_eq!(
@@ -395,9 +419,10 @@ mod tests {
         files: Vec<Buf>,
     }
     #[derive(Serialize, PartialEq, Deserialize, Debug)]
-    struct MetainfoLike<Buf: ByteBufT> {
+    struct MetainfoLike<'a, Buf: AsRef<[u8]>+serde_bytes::Deserialize<'a>> {
         comment: String,
-        info: Option<RawValue<Buf>>,
+        #[serde(borrow)]
+        info: Option<RawValue<'a, Buf>>,
     }
 
     #[test]
@@ -407,11 +432,12 @@ mod tests {
         };
         let orig_meta = MetainfoLike {
             comment: "leet ripper".to_string(),
-            info: Some(ByteString::from(to_bytes(orig_info)?).into()),
+            info: Some(to_bytes(orig_info)?.into()),
         };
         let json = serde_json::to_string(&orig_meta)?;
         dbg!(&json);
-        let json_meta = serde_json::from_str(&json)?;
+        // Need to allocate on deserialization from JSON array
+        let json_meta: MetainfoLike<Vec<u8>> = serde_json::from_str(&json)?;
         assert_eq!(orig_meta, json_meta);
         Ok(())
     }
@@ -423,7 +449,7 @@ mod tests {
         };
         let orig_meta = MetainfoLike {
             comment: "leet ripper".to_string(),
-            info: Some(ByteString(to_bytes(orig_info)?).into()),
+            info: Some(to_bytes(orig_info)?.into()),
         };
         let bytes = to_bytes(&orig_meta)?;
         dbg!(&bytes);
