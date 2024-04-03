@@ -688,7 +688,7 @@ impl Session {
                 .into_iter()
                 .map(|t| ByteString(t.into_bytes()))
                 .collect();
-            let info = Some(bencode::RawValue(storrent.info));
+            let info = Some(bencode::RawValue::new(storrent.info));
             let meta_info = TorrentMetaV1Owned {
                 announce: trackers.first().cloned(),
                 announce_list: vec![trackers],

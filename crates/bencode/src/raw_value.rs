@@ -3,18 +3,17 @@ use serde::de::value::SeqAccessDeserializer;
 use serde::de::SeqAccess;
 
 #[derive(Debug)]
-pub struct RawValue<'a, T>{
+pub struct RawValue<T> {
     bytes: T,
-    phantom: PhantomData<&'a T>,
 }
 
-impl<T> RawValue<'_, T> {
+impl<T> RawValue<T> {
     pub fn new(value: T) -> Self {
         value.into()
     }
 }
 
-impl<T, U> PartialEq<RawValue<'_, U>> for RawValue<'_, T>
+impl<T, U> PartialEq<RawValue<U>> for RawValue<T>
 where
     T: PartialEq<U>,
 {
@@ -23,32 +22,30 @@ where
     }
 }
 
-impl<T> Eq for RawValue<'_, T> where T: Eq {}
+impl<T> Eq for RawValue<T> where T: Eq {}
 
-impl<T: Clone> Clone for RawValue<'_, T> {
+impl<T: Clone> Clone for RawValue<T> {
     fn clone(&self) -> Self {
         Self {
             bytes: self.bytes.clone(),
-            phantom: self.phantom.clone(),
         }
     }
 }
 
-impl<T: CloneToOwned> CloneToOwned for RawValue<'_, T> {
-    type Target = RawValue<'static, <T as CloneToOwned>::Target>;
+impl<T: CloneToOwned> CloneToOwned for RawValue<T> {
+    type Target = RawValue<<T as CloneToOwned>::Target>;
 
     fn clone_to_owned(&self) -> Self::Target {
         // Why can't I use Self::Target here?
         RawValue {
             bytes: self.bytes.clone_to_owned(),
-            phantom: PhantomData::default(),
         }
     }
 }
 // This can't go in RawValue because it doesn't depend on T.
 pub(crate) const TOKEN: &str = "$librqbit_bencode::private::RawValue";
 
-impl<T> Serialize for RawValue<'_, T>
+impl<T> Serialize for RawValue<T>
 where
     T: AsRef<[u8]>,
 {
@@ -60,17 +57,17 @@ where
     }
 }
 
-impl<T> From<T> for RawValue<'_, T> {
+impl<T> From<T> for RawValue<T> {
     fn from(value: T) -> Self {
-        Self{bytes:value, phantom:Default::default()}
+        Self { bytes: value }
     }
 }
 
-impl<'de, T> Deserialize<'de> for RawValue<'_, T>
+impl<'de, T> Deserialize<'de> for RawValue<T>
 where
     // Using T: Deserialize instead of From<&[u8]> avoids lifetime issues with 'de. It does mean we use
     // the BorrowedBytesDeserializer to get the bytes into T.
-    T: serde::Deserialize<'de> +serde_bytes::Deserialize<'de>,
+    T: serde::Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -79,7 +76,7 @@ where
         struct V<T> {
             phantom: PhantomData<T>,
         }
-        impl<'de, T: serde::Deserialize<'de>+serde_bytes::Deserialize<'de>> Visitor<'de> for V<T> {
+        impl<'de, T: serde::Deserialize<'de>> Visitor<'de> for V<T> {
             type Value = T;
 
             fn expecting(&self, f: &mut Formatter) -> std::fmt::Result {
@@ -98,7 +95,7 @@ where
                 E: serde::de::Error,
             {
                 // This calls Deserialize for the inner type, which hopefully supports &[u8]?
-                serde_bytes::deserialize(BorrowedBytesDeserializer::new(v))
+                T::deserialize(BorrowedBytesDeserializer::new(v))
             }
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -131,18 +128,16 @@ where
                 Ok(value)
             }
         }
+        let visitor: V<T> = V {
+            phantom: Default::default(),
+        };
         deserializer
-            .deserialize_newtype_struct(
-                TOKEN,
-                V::<T> {
-                    phantom: Default::default(),
-                },
-            )
+            .deserialize_newtype_struct(TOKEN, visitor)
             .map(Into::into)
     }
 }
 
-impl<T> std::ops::Deref for RawValue<'_, T> {
+impl<T> std::ops::Deref for RawValue<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -375,7 +370,7 @@ mod tests {
         #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
         struct Object {
             cow: String,
-            spam: RawValue<'static, Vec<u8>>,
+            spam: RawValue<ByteString>,
         }
 
         let input = b"d3:cow3:moo4:spam4:eggse";
@@ -419,10 +414,9 @@ mod tests {
         files: Vec<Buf>,
     }
     #[derive(Serialize, PartialEq, Deserialize, Debug)]
-    struct MetainfoLike<'a, Buf: AsRef<[u8]>+serde_bytes::Deserialize<'a>> {
+    struct MetainfoLike<Buf: Serialize + AsRef<[u8]>> {
         comment: String,
-        #[serde(borrow)]
-        info: Option<RawValue<'a, Buf>>,
+        info: Option<RawValue<Buf>>,
     }
 
     #[test]
@@ -445,11 +439,11 @@ mod tests {
     #[test]
     fn test_serialize_raw_info_and_back() -> anyhow::Result<()> {
         let orig_info = Info {
-            files: vec!["awesome movie".to_string()],
+            files: vec![ByteString(b"awesome movie"[..].to_owned())],
         };
         let orig_meta = MetainfoLike {
             comment: "leet ripper".to_string(),
-            info: Some(to_bytes(orig_info)?.into()),
+            info: Some(RawValue::new(ByteString(to_bytes(orig_info)?))),
         };
         let bytes = to_bytes(&orig_meta)?;
         dbg!(&bytes);
