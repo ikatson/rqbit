@@ -1,0 +1,28 @@
+create serializer
+call value.serialize(serializer)
+calls serializer.serialize_struct(TOKEN, len) consuming the serializer
+sees the token and returns serialize struct implementor
+calls serialize_field on the struct serializer, passing the value which must implement Serialize
+calls value.serialize but passes a custom serializer that writes the value directly to the buffer
+
+dude's version
+
+create serializer
+call value.serialize(serializer)
+calls serializer.serialize_newtype_struct(TOKEN, value wrapped in RawSerializer) consuming the serializer
+sees the token and calls value.serialize with a serializer that writes directly to the buffer
+
+deserializer for Bencode:
+
+RawValue.deserialize
+BencodeDeserializer.deserialize_newtype_struct
+Creates wrapper deserializer that remembers buffer start. Throws away a value, then calls the RawValue.deserialize visitor with the bytes that were skipped
+
+deserialize for JSON
+
+RawValue.deserialize
+BencodeDeserializer.deserialize_newtype_struct
+sees nothing and calls visit_newtype_struct
+calls deserializer.deserialize_bytes
+json sees a sequence and calls visit_seq
+RawValue wraps the given seq access in SeqAccessDeserializer and tries to get the wrapped value to deserialize on it. for &[u8] this fails since it needs allocation.
