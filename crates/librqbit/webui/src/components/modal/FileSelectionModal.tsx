@@ -105,6 +105,7 @@ export const FileSelectionModal = (props: {
               selectedFiles={selectedFiles}
               setSelectedFiles={setSelectedFiles}
               torrentDetails={listTorrentResponse.details}
+              torrentStats={null}
             />
           </Fieldset>
 

@@ -189,7 +189,10 @@ const FileTreeComponent: React.FC<{
                 onChange={() => handleToggleFile(file.id)}
               ></FormCheckbox>
               {showProgressBar && (
-                <ProgressBar now={(file.have_bytes / file.length) * 100} />
+                <ProgressBar
+                  now={(file.have_bytes / file.length) * 100}
+                  variant={file.have_bytes == file.length ? "success" : "info"}
+                />
               )}
             </div>
           ))}
