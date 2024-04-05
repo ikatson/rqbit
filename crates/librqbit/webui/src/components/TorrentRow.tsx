@@ -3,7 +3,6 @@ import {
   TorrentDetails,
   TorrentStats,
   STATE_INITIALIZING,
-  STATE_LIVE,
   ErrorDetails,
 } from "../api-types";
 import { TorrentActions } from "./buttons/TorrentActions";
@@ -14,7 +13,7 @@ import { torrentDisplayName } from "../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
 import { FileListInput } from "./FileListInput";
-import { SetStateAction, useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { APIContext, RefreshTorrentStatsContext } from "../context";
 import { useErrorStore } from "../stores/errorStore";
 
