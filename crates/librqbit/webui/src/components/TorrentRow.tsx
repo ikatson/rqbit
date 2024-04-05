@@ -54,14 +54,17 @@ export const TorrentRow: React.FC<{
   };
 
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
+
+  // Update selected files whenever details are updated.
   useEffect(() => {
-    let sel = new Set<number>();
-    detailsResponse?.files.forEach((f, id) => {
-      if (f.included) {
-        sel.add(id);
-      }
-    });
-    setSelectedFiles(sel);
+    setSelectedFiles(
+      new Set<number>(
+        detailsResponse?.files
+          .map((f, id) => ({ f, id }))
+          .filter(({ f }) => f.included)
+          .map(({ id }) => id) ?? [],
+      ),
+    );
   }, [detailsResponse]);
 
   const API = useContext(APIContext);
@@ -74,20 +77,20 @@ export const TorrentRow: React.FC<{
 
   const updateSelectedFiles = (selectedFiles: Set<number>) => {
     setSavingSelectedFiles(true);
-    API.updateOnlyFiles(id, Array.from(selectedFiles)).then(
-      () => {
-        setSavingSelectedFiles(false);
-        refreshCtx.refresh();
-        setCloseableError(null);
-      },
-      (e) => {
-        setSavingSelectedFiles(false);
-        setCloseableError({
-          text: "Error configuring torrent",
-          details: e as ErrorDetails,
-        });
-      },
-    );
+    API.updateOnlyFiles(id, Array.from(selectedFiles))
+      .then(
+        () => {
+          refreshCtx.refresh();
+          setCloseableError(null);
+        },
+        (e) => {
+          setCloseableError({
+            text: "Error configuring torrent",
+            details: e as ErrorDetails,
+          });
+        },
+      )
+      .finally(() => setSavingSelectedFiles(false));
   };
 
   const [extendedView, setExtendedView] = useState(false);
