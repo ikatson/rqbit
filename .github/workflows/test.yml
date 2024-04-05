@@ -19,14 +19,14 @@ jobs:
       - name: rustup toolchain install ${{ matrix.rust_version }}
         run: |
           rustup toolchain install ${{ matrix.rust_version }}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - run: rustup override set ${{ matrix.rust_version }}
       - name: cargo check
         run: cargo check
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
