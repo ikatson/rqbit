@@ -219,7 +219,7 @@ export const FileListInput: React.FC<{
 }) => {
   let fileTree = useMemo(
     () => newFileTree(torrentDetails, torrentStats),
-    [torrentDetails],
+    [torrentDetails, torrentStats],
   );
 
   return (
