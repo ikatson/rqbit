@@ -85,6 +85,8 @@ impl<'a> FileOps<'a> {
     pub fn initial_check(
         &self,
         only_files: Option<&[usize]>,
+        opened_files: &OpenedFiles,
+        lengths: &Lengths,
         progress: &AtomicU64,
     ) -> anyhow::Result<InitialCheckResults> {
         let mut needed_pieces =
@@ -95,6 +97,7 @@ impl<'a> FileOps<'a> {
         let mut have_bytes = 0u64;
         let mut needed_bytes = 0u64;
         let mut total_selected_bytes = 0u64;
+        let mut piece_files = Vec::<usize>::new();
 
         #[derive(Debug)]
         struct CurrentFile<'a> {
@@ -134,6 +137,7 @@ impl<'a> FileOps<'a> {
         let mut read_buffer = vec![0u8; 65536];
 
         for piece_info in self.lengths.iter_piece_infos() {
+            piece_files.clear();
             let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
@@ -155,6 +159,8 @@ impl<'a> FileOps<'a> {
                     to_read_in_file =
                         std::cmp::min(current_file.remaining(), piece_remaining as u64) as usize;
                 }
+
+                piece_files.push(current_file.index);
 
                 let pos = current_file.processed_bytes;
                 piece_remaining -= to_read_in_file;
@@ -209,6 +215,10 @@ impl<'a> FileOps<'a> {
                     piece_info.piece_index
                 );
                 have_bytes += piece_info.len as u64;
+                for file_id in piece_files.drain(..) {
+                    opened_files[file_id]
+                        .update_have_on_piece_completed(piece_info.piece_index.get(), lengths);
+                }
                 have_pieces.set(piece_info.piece_index.get() as usize, true);
             } else if piece_selected {
                 trace!(

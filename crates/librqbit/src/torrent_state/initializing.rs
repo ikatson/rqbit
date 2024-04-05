@@ -86,8 +86,12 @@ impl TorrentStateInitializing {
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
-            FileOps::new(&self.meta.info, &files, &self.meta.lengths)
-                .initial_check(self.only_files.as_deref(), &self.checked_bytes)
+            FileOps::new(&self.meta.info, &files, &self.meta.lengths).initial_check(
+                self.only_files.as_deref(),
+                &files,
+                &self.meta.lengths,
+                &self.checked_bytes,
+            )
         })?;
 
         info!(
