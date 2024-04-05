@@ -81,5 +81,5 @@ refactor:
 - [x] opened_files: track HAVE progress
   - [x] actually track
   - [x] show in API and UI
-  - [ ] refresh when downloading (it doesn't somehow)
-  - [ ] on restart, this is not computed, compute
+  - [x] refresh when downloading (it doesn't somehow)
+  - [x] on restart, this is not computed, compute

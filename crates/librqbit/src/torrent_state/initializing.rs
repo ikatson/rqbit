@@ -42,7 +42,7 @@ impl TorrentStateInitializing {
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         let files = {
-            let mut files = OpenedFiles::with_capacity(self.meta.info.iter_file_lengths()?.count());
+            let mut files = OpenedFiles::new();
             for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
                 let mut full_path = self.meta.out_dir.clone();
                 let relative_path = file_details
@@ -51,7 +51,7 @@ impl TorrentStateInitializing {
                     .context("error converting file to path")?;
                 full_path.push(relative_path);
 
-                std::fs::create_dir_all(full_path.parent().unwrap())?;
+                std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
                 let file = if self.meta.options.overwrite {
                     OpenOptions::new()
                         .create(true)
