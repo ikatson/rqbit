@@ -223,17 +223,15 @@ export const FileListInput: React.FC<{
   );
 
   return (
-    <>
-      <FileTreeComponent
-        torrentDetails={torrentDetails}
-        torrentStats={torrentStats}
-        tree={fileTree}
-        selectedFiles={selectedFiles}
-        setSelectedFiles={setSelectedFiles}
-        initialExpanded={true}
-        showProgressBar={showProgressBar}
-        disabled={disabled}
-      />
-    </>
+    <FileTreeComponent
+      torrentDetails={torrentDetails}
+      torrentStats={torrentStats}
+      tree={fileTree}
+      selectedFiles={selectedFiles}
+      setSelectedFiles={setSelectedFiles}
+      initialExpanded={true}
+      showProgressBar={showProgressBar}
+      disabled={disabled}
+    />
   );
 };
