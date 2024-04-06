@@ -1,6 +1,6 @@
 [package]
 name = "rqbit"
-version = "5.6.0-beta.0"
+version = "5.6.0-beta.1"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "A bittorrent command line client and server."
