@@ -14,7 +14,7 @@ export const RqbitDesktop: React.FC<{
 }> = ({ version, defaultConfig, currentState }) => {
   let [configured, setConfigured] = useState<boolean>(currentState.configured);
   let [config, setConfig] = useState<RqbitDesktopConfig>(
-    currentState.config ?? defaultConfig
+    currentState.config ?? defaultConfig,
   );
   let [configurationOpened, setConfigurationOpened] = useState<boolean>(false);
 
@@ -32,7 +32,8 @@ export const RqbitDesktop: React.FC<{
     <APIContext.Provider value={makeAPI(config)}>
       {configured && (
         <RqbitWebUI
-          title={`Rqbit Desktop - v${version}`}
+          title={`Rqbit Desktop`}
+          version={version}
           menuButtons={[configButton]}
         ></RqbitWebUI>
       )}

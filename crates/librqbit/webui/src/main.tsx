@@ -7,26 +7,26 @@ import { API } from "./http-api";
 import "./globals.css";
 
 const RootWithVersion = () => {
-  let [title, setTitle] = useState<string>("rqbit web UI");
+  let [version, setVersion] = useState<string>("");
   useEffect(() => {
     const refreshVersion = () =>
       API.getVersion().then(
         (version) => {
+          setVersion(version);
           const title = `rqbit web UI - v${version}`;
-          setTitle(title);
           document.title = title;
           return 10000;
         },
         (e) => {
           return 1000;
-        }
+        },
       );
     return customSetInterval(refreshVersion, 0);
   }, []);
 
   return (
     <APIContext.Provider value={API}>
-      <RqbitWebUI title={title} />
+      <RqbitWebUI title="rqbit web UI" version={version} />
     </APIContext.Provider>
   );
 };
@@ -34,5 +34,5 @@ const RootWithVersion = () => {
 ReactDOM.createRoot(document.getElementById("app") as HTMLInputElement).render(
   <StrictMode>
     <RootWithVersion />
-  </StrictMode>
+  </StrictMode>,
 );
