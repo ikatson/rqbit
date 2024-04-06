@@ -41,46 +41,41 @@ impl TorrentStateInitializing {
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
-        let files = {
-            let mut files = OpenedFiles::new();
-            for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
-                let mut full_path = self.meta.out_dir.clone();
-                let relative_path = file_details
-                    .filename
-                    .to_pathbuf()
-                    .context("error converting file to path")?;
-                full_path.push(relative_path);
+        let mut files = OpenedFiles::new();
+        for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
+            let mut full_path = self.meta.out_dir.clone();
+            let relative_path = file_details
+                .filename
+                .to_pathbuf()
+                .context("error converting file to path")?;
+            full_path.push(relative_path);
 
-                std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-                let file = if self.meta.options.overwrite {
-                    OpenOptions::new()
-                        .create(true)
-                        .read(true)
-                        .write(true)
-                        .open(&full_path)
-                        .with_context(|| {
-                            format!("error opening {full_path:?} in read/write mode")
-                        })?
-                } else {
-                    // TODO: create_new does not seem to work with read(true), so calling this twice.
-                    OpenOptions::new()
-                        .create_new(true)
-                        .write(true)
-                        .open(&full_path)
-                        .with_context(|| format!("error creating {:?}", &full_path))?;
-                    OpenOptions::new().read(true).write(true).open(&full_path)?
-                };
-                files.push(OpenedFile::new(
-                    file,
-                    full_path,
-                    0,
-                    file_details.len,
-                    file_details.offset,
-                    file_details.pieces,
-                ));
-            }
-            files
-        };
+            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+            let file = if self.meta.options.overwrite {
+                OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+            } else {
+                // TODO: create_new does not seem to work with read(true), so calling this twice.
+                OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error creating {:?}", &full_path))?;
+                OpenOptions::new().read(true).write(true).open(&full_path)?
+            };
+            files.push(OpenedFile::new(
+                file,
+                full_path,
+                0,
+                file_details.len,
+                file_details.offset,
+                file_details.pieces,
+            ));
+        }
 
         debug!("computed lengths: {:?}", &self.meta.lengths);
 
