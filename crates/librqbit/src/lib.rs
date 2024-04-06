@@ -31,6 +31,7 @@ mod dht_utils;
 mod file_ops;
 pub mod http_api;
 pub mod http_api_client;
+mod opened_file;
 mod peer_connection;
 mod peer_info_reader;
 mod read_buf;

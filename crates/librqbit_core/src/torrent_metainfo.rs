@@ -7,7 +7,7 @@ use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 
-use crate::hash_id::Id20;
+use crate::{hash_id::Id20, lengths::Lengths};
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteBufOwned>;
@@ -151,6 +151,19 @@ where
     }
 }
 
+pub struct FileDetails<'a, BufType> {
+    pub filename: FileIteratorName<'a, BufType>,
+    pub offset: u64,
+    pub len: u64,
+    pub pieces: std::ops::Range<u32>,
+}
+
+impl<'a, BufType> FileDetails<'a, BufType> {
+    pub fn pieces_usize(&self) -> std::ops::Range<usize> {
+        self.pieces.start as usize..self.pieces.end as usize
+    }
+}
+
 impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn get_hash(&self, piece: u32) -> Option<&[u8]> {
         let start = piece as usize * 20;
@@ -194,6 +207,26 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
 
     pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
         Ok(self.iter_filenames_and_lengths()?.map(|(_, l)| l))
+    }
+
+    // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
+    // the yielded results will be garbage.
+    pub fn iter_file_details<'a>(
+        &'a self,
+        lengths: &'a Lengths,
+    ) -> anyhow::Result<impl Iterator<Item = FileDetails<'a, BufType>> + 'a> {
+        Ok(self
+            .iter_filenames_and_lengths()?
+            .scan(0u64, |acc_offset, (filename, len)| {
+                let offset = *acc_offset;
+                *acc_offset += len;
+                Some(FileDetails {
+                    filename,
+                    pieces: lengths.iter_pieces_within_offset(offset, len),
+                    offset,
+                    len,
+                })
+            }))
     }
 }
 

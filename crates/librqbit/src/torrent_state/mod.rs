@@ -268,7 +268,7 @@ impl ManagedTorrent {
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
                                 let live =
-                                    TorrentStateLive::new(paused, tx, live_cancellation_token);
+                                    TorrentStateLive::new(paused, tx, live_cancellation_token)?;
                                 g.state = ManagedTorrentState::Live(live.clone());
 
                                 spawn_fatal_errors_receiver(&t, rx, token);
@@ -289,7 +289,7 @@ impl ManagedTorrent {
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone());
+                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone())?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 spawn_fatal_errors_receiver(self, rx, live_cancellation_token);
                 spawn_peer_adder(&live, peer_rx);
@@ -337,6 +337,7 @@ impl ManagedTorrent {
         use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
             total_bytes: self.info().lengths.total_length(),
+            file_progress: Vec::new(),
             state: S::Error,
             error: None,
             progress_bytes: 0,
@@ -353,21 +354,25 @@ impl ManagedTorrent {
                 }
                 ManagedTorrentState::Paused(p) => {
                     resp.state = S::Paused;
-                    resp.total_bytes = p.hns.total();
-                    resp.progress_bytes = p.hns.progress();
-                    resp.finished = p.hns.finished();
+                    let hns = p.hns();
+                    resp.total_bytes = hns.total();
+                    resp.progress_bytes = hns.progress();
+                    resp.finished = hns.finished();
+                    resp.file_progress = p
+                        .files
+                        .iter()
+                        .map(|f| f.have.load(Ordering::Relaxed))
+                        .collect();
                 }
                 ManagedTorrentState::Live(l) => {
                     resp.state = S::Live;
                     let live_stats = LiveStats::from(l.as_ref());
-                    let total = l.get_total_selected_bytes();
-                    let remaining = l.get_left_to_download_bytes();
-                    let progress = total - remaining;
-
-                    resp.progress_bytes = progress;
-                    resp.total_bytes = total;
-                    resp.finished = remaining == 0;
+                    let hns = l.get_hns().unwrap_or_default();
+                    resp.total_bytes = hns.total();
+                    resp.progress_bytes = hns.progress();
+                    resp.finished = hns.finished();
                     resp.uploaded_bytes = l.get_uploaded_bytes();
+                    resp.file_progress = l.get_file_progress();
                     resp.live = Some(live_stats);
                 }
                 ManagedTorrentState::Error(e) => {
@@ -410,10 +415,7 @@ impl ManagedTorrent {
 
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
-    pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<bool> {
-        if only_files.is_empty() {
-            anyhow::bail!("you need to select at least one file");
-        }
+    pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
         let file_count = self.info().info.iter_file_lengths()?.count();
         for f in only_files.iter().copied() {
             if f >= file_count {
@@ -426,25 +428,20 @@ impl ManagedTorrent {
         // if paused, need to update chunk tracker
 
         let mut g = self.locked.write();
-        let need_to_unpause = match &mut g.state {
+        match &mut g.state {
             ManagedTorrentState::Initializing(_) => bail!("can't update initializing torrent"),
-            ManagedTorrentState::Error(_) => false,
-            ManagedTorrentState::None => false,
+            ManagedTorrentState::Error(_) => {}
+            ManagedTorrentState::None => {}
             ManagedTorrentState::Paused(p) => {
                 p.update_only_files(only_files)?;
-                false
             }
             ManagedTorrentState::Live(l) => {
-                let mut p = l.pause()?;
-                let e = p.update_only_files(only_files);
-                g.state = ManagedTorrentState::Paused(p);
-                e?;
-                true
+                l.update_only_files(only_files)?;
             }
         };
 
         g.only_files = Some(only_files.iter().copied().collect());
-        Ok(need_to_unpause)
+        Ok(())
     }
 }
 

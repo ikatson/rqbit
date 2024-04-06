@@ -6,14 +6,12 @@ use std::{
 
 use anyhow::Context;
 
-use parking_lot::Mutex;
-
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
 use crate::{
-    chunk_tracker::{ChunkTracker, HaveNeededSelected},
-    file_ops::FileOps,
+    chunk_tracker::ChunkTracker, file_ops::FileOps, opened_file::OpenedFile,
+    type_aliases::OpenedFiles,
 };
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
@@ -43,48 +41,52 @@ impl TorrentStateInitializing {
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
-        let (files, filenames) = {
-            let mut files =
-                Vec::<Arc<Mutex<File>>>::with_capacity(self.meta.info.iter_file_lengths()?.count());
-            let mut filenames = Vec::new();
-            for (path_bits, _) in self.meta.info.iter_filenames_and_lengths()? {
-                let mut full_path = self.meta.out_dir.clone();
-                let relative_path = path_bits
-                    .to_pathbuf()
-                    .context("error converting file to path")?;
-                full_path.push(relative_path);
+        let mut files = OpenedFiles::new();
+        for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
+            let mut full_path = self.meta.out_dir.clone();
+            let relative_path = file_details
+                .filename
+                .to_pathbuf()
+                .context("error converting file to path")?;
+            full_path.push(relative_path);
 
-                std::fs::create_dir_all(full_path.parent().unwrap())?;
-                let file = if self.meta.options.overwrite {
-                    OpenOptions::new()
-                        .create(true)
-                        .read(true)
-                        .write(true)
-                        .open(&full_path)
-                        .with_context(|| {
-                            format!("error opening {full_path:?} in read/write mode")
-                        })?
-                } else {
-                    // TODO: create_new does not seem to work with read(true), so calling this twice.
-                    OpenOptions::new()
-                        .create_new(true)
-                        .write(true)
-                        .open(&full_path)
-                        .with_context(|| format!("error creating {:?}", &full_path))?;
-                    OpenOptions::new().read(true).write(true).open(&full_path)?
-                };
-                filenames.push(full_path);
-                files.push(Arc::new(Mutex::new(file)))
-            }
-            (files, filenames)
-        };
+            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+            let file = if self.meta.options.overwrite {
+                OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+            } else {
+                // TODO: create_new does not seem to work with read(true), so calling this twice.
+                OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error creating {:?}", &full_path))?;
+                OpenOptions::new().read(true).write(true).open(&full_path)?
+            };
+            files.push(OpenedFile::new(
+                file,
+                full_path,
+                0,
+                file_details.len,
+                file_details.offset,
+                file_details.pieces,
+            ));
+        }
 
         debug!("computed lengths: {:?}", &self.meta.lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
-            FileOps::new(&self.meta.info, &files, &self.meta.lengths)
-                .initial_check(self.only_files.as_deref(), &self.checked_bytes)
+            FileOps::new(&self.meta.info, &files, &self.meta.lengths).initial_check(
+                self.only_files.as_deref(),
+                &files,
+                &self.meta.lengths,
+                &self.checked_bytes,
+            )
         })?;
 
         info!(
@@ -94,36 +96,35 @@ impl TorrentStateInitializing {
             SF::new(initial_check_results.selected_bytes)
         );
 
+        // Ensure file lenghts are correct, and reopen read-only.
         self.meta.spawner.spawn_block_in_place(|| {
-            for (idx, (file, (name, length))) in files
-                .iter()
-                .zip(self.meta.info.iter_filenames_and_lengths().unwrap())
-                .enumerate()
-            {
+            for (idx, file) in files.iter().enumerate() {
                 if self
                     .only_files
                     .as_ref()
-                    .map(|v| !v.contains(&idx))
-                    .unwrap_or(false)
+                    .map(|v| v.contains(&idx))
+                    .unwrap_or(true)
                 {
-                    continue;
+                    let now = Instant::now();
+                    if let Err(err) = ensure_file_length(&file.file.lock(), file.len) {
+                        warn!(
+                            "Error setting length for file {:?} to {}: {:#?}",
+                            file.filename, file.len, err
+                        );
+                    } else {
+                        debug!(
+                            "Set length for file {:?} to {} in {:?}",
+                            file.filename,
+                            SF::new(file.len),
+                            now.elapsed()
+                        );
+                    }
                 }
-                let now = Instant::now();
-                if let Err(err) = ensure_file_length(&file.lock(), length) {
-                    warn!(
-                        "Error setting length for file {:?} to {}: {:#?}",
-                        name, length, err
-                    );
-                } else {
-                    debug!(
-                        "Set length for file {:?} to {} in {:?}",
-                        name,
-                        SF::new(length),
-                        now.elapsed()
-                    );
-                }
+
+                file.reopen(true)?;
             }
-        });
+            Ok::<_, anyhow::Error>(())
+        })?;
 
         let chunk_tracker = ChunkTracker::new(
             initial_check_results.have_pieces,
@@ -135,13 +136,7 @@ impl TorrentStateInitializing {
         let paused = TorrentStatePaused {
             info: self.meta.clone(),
             files,
-            filenames,
             chunk_tracker,
-            hns: HaveNeededSelected {
-                have_bytes: initial_check_results.have_bytes,
-                needed_bytes: initial_check_results.needed_bytes,
-                selected_bytes: initial_check_results.selected_bytes,
-            },
         };
         Ok(paused)
     }

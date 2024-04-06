@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react";
-import { TorrentDetails } from "../api-types";
+import { TorrentDetails, TorrentStats } from "../api-types";
 import { FormCheckbox } from "./forms/FormCheckbox";
 import { CiSquarePlus, CiSquareMinus } from "react-icons/ci";
 import { IconButton } from "./buttons/IconButton";
 import { formatBytes } from "../helper/formatBytes";
+import { ProgressBar } from "./ProgressBar";
+import sortBy from "lodash.sortby";
 
 type TorrentFileForCheckbox = {
   id: number;
   filename: string;
   pathComponents: string[];
   length: number;
+  have_bytes: number;
 };
 
 type FileTree = {
@@ -19,7 +22,10 @@ type FileTree = {
   files: TorrentFileForCheckbox[];
 };
 
-const newFileTree = (torrentDetails: TorrentDetails): FileTree => {
+const newFileTree = (
+  torrentDetails: TorrentDetails,
+  stats: TorrentStats | null,
+): FileTree => {
   const newFileTreeInner = (
     name: string,
     id: string,
@@ -43,8 +49,15 @@ const newFileTree = (torrentDetails: TorrentDetails): FileTree => {
       getGroup(file.pathComponents[0]).push(file);
     });
 
+    directFiles = sortBy(directFiles, (f) => f.filename);
+
+    let sortedGroupsByName = sortBy(
+      Object.entries(groupsByName),
+      ([k, _]) => k,
+    );
+
     let childId = 0;
-    for (const [key, value] of Object.entries(groupsByName)) {
+    for (const [key, value] of sortedGroupsByName) {
       groups.push(newFileTreeInner(key, id + "." + childId, value, depth + 1));
       childId += 1;
     }
@@ -65,6 +78,7 @@ const newFileTree = (torrentDetails: TorrentDetails): FileTree => {
         filename: file.components[file.components.length - 1],
         pathComponents: file.components,
         length: file.length,
+        have_bytes: stats ? stats.file_progress[id] ?? 0 : 0,
       };
     }),
     0,
@@ -74,15 +88,21 @@ const newFileTree = (torrentDetails: TorrentDetails): FileTree => {
 const FileTreeComponent: React.FC<{
   tree: FileTree;
   torrentDetails: TorrentDetails;
+  torrentStats: TorrentStats | null;
   selectedFiles: Set<number>;
-  setSelectedFiles: React.Dispatch<React.SetStateAction<Set<number>>>;
+  setSelectedFiles: (_: Set<number>) => void;
   initialExpanded: boolean;
+  showProgressBar?: boolean;
+  disabled?: boolean;
 }> = ({
   tree,
   selectedFiles,
   setSelectedFiles,
   initialExpanded,
   torrentDetails,
+  torrentStats,
+  showProgressBar,
+  disabled,
 }) => {
   let [expanded, setExpanded] = useState(initialExpanded);
   let children = useMemo(() => {
@@ -151,6 +171,7 @@ const FileTreeComponent: React.FC<{
         {tree.dirs.map((dir) => (
           <FileTreeComponent
             torrentDetails={torrentDetails}
+            torrentStats={torrentStats}
             key={dir.name}
             tree={dir}
             selectedFiles={selectedFiles}
@@ -160,13 +181,28 @@ const FileTreeComponent: React.FC<{
         ))}
         <div className="pl-1">
           {tree.files.map((file) => (
-            <FormCheckbox
-              checked={selectedFiles.has(file.id)}
+            <div
               key={file.id}
-              label={`${file.filename} (${formatBytes(file.length)})`}
-              name={`file-${file.id}`}
-              onChange={() => handleToggleFile(file.id)}
-            ></FormCheckbox>
+              className={`${
+                showProgressBar
+                  ? "grid grid-cols-1 gap-1 items-start lg:grid-cols-2 mb-2 lg:mb-0"
+                  : ""
+              }`}
+            >
+              <FormCheckbox
+                checked={selectedFiles.has(file.id)}
+                label={`${file.filename} (${formatBytes(file.length)})`}
+                name={`file-${file.id}`}
+                disabled={disabled}
+                onChange={() => handleToggleFile(file.id)}
+              ></FormCheckbox>
+              {showProgressBar && (
+                <ProgressBar
+                  now={(file.have_bytes / file.length) * 100}
+                  variant={file.have_bytes == file.length ? "success" : "info"}
+                />
+              )}
+            </div>
           ))}
         </div>
       </div>
@@ -176,20 +212,34 @@ const FileTreeComponent: React.FC<{
 
 export const FileListInput: React.FC<{
   torrentDetails: TorrentDetails;
+  torrentStats: TorrentStats | null;
   selectedFiles: Set<number>;
-  setSelectedFiles: React.Dispatch<React.SetStateAction<Set<number>>>;
-}> = ({ torrentDetails, selectedFiles, setSelectedFiles }) => {
-  let fileTree = useMemo(() => newFileTree(torrentDetails), [torrentDetails]);
+  setSelectedFiles: (_: Set<number>) => void;
+  showProgressBar?: boolean;
+  disabled?: boolean;
+}> = ({
+  torrentDetails,
+  selectedFiles,
+  setSelectedFiles,
+  torrentStats,
+  showProgressBar,
+  disabled,
+}) => {
+  let fileTree = useMemo(
+    () => newFileTree(torrentDetails, torrentStats),
+    [torrentDetails, torrentStats],
+  );
 
   return (
-    <>
-      <FileTreeComponent
-        torrentDetails={torrentDetails}
-        tree={fileTree}
-        selectedFiles={selectedFiles}
-        setSelectedFiles={setSelectedFiles}
-        initialExpanded={true}
-      />
-    </>
+    <FileTreeComponent
+      torrentDetails={torrentDetails}
+      torrentStats={torrentStats}
+      tree={fileTree}
+      selectedFiles={selectedFiles}
+      setSelectedFiles={setSelectedFiles}
+      initialExpanded={true}
+      showProgressBar={showProgressBar}
+      disabled={disabled}
+    />
   );
 };

@@ -33,9 +33,13 @@ pub struct ChunkTracker {
 
     // What pieces to download first.
     priority_piece_ids: Vec<usize>,
+
+    // Quick to retrieve stats, that MUST be in sync with the BFs
+    // above (have/selected).
+    hns: HaveNeededSelected,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct HaveNeededSelected {
     // How many bytes we have downloaded and verified.
     pub have_bytes: u64,
@@ -146,7 +150,7 @@ impl ChunkTracker {
         // E.g. if it's a video file, than the last piece often contains some index, or just
         // players look into it, and it's better be there.
         let priority_piece_ids = last_needed_piece_id.into_iter().collect();
-        Ok(Self {
+        let mut ct = Self {
             chunk_status: compute_chunk_have_status(&lengths, &have_pieces)
                 .context("error computing chunk status")?,
             queue_pieces: needed_pieces,
@@ -154,7 +158,10 @@ impl ChunkTracker {
             lengths,
             have: have_pieces,
             priority_piece_ids,
-        })
+            hns: HaveNeededSelected::default(),
+        };
+        ct.hns = ct.calc_hns();
+        Ok(ct)
     }
 
     pub fn get_lengths(&self) -> &Lengths {
@@ -164,34 +171,31 @@ impl ChunkTracker {
     pub fn get_have_pieces(&self) -> &BF {
         &self.have
     }
+
+    pub fn get_selected_pieces(&self) -> &BF {
+        &self.selected
+    }
     pub fn reserve_needed_piece(&mut self, index: ValidPieceIndex) {
         self.queue_pieces.set(index.get() as usize, false)
     }
 
-    pub fn calc_have_bytes(&self) -> u64 {
-        self.have
-            .iter_ones()
-            .filter_map(|piece_id| {
-                let piece_id = self.lengths.validate_piece_index(piece_id as u32)?;
-                Some(self.lengths.piece_length(piece_id) as u64)
-            })
-            .sum()
+    pub fn get_hns(&self) -> &HaveNeededSelected {
+        &self.hns
     }
 
-    pub fn calc_needed_bytes(&self) -> u64 {
-        self.have
-            .iter()
-            .zip(self.selected.iter())
-            .enumerate()
-            .filter_map(|(piece_id, (have, selected))| {
-                if *selected && !*have {
-                    let piece_id = self.lengths.validate_piece_index(piece_id as u32)?;
-                    Some(self.lengths.piece_length(piece_id) as u64)
-                } else {
-                    None
-                }
-            })
-            .sum()
+    fn calc_hns(&self) -> HaveNeededSelected {
+        let mut hns = HaveNeededSelected::default();
+        for piece in self.lengths.iter_piece_infos() {
+            let id = piece.piece_index.get() as usize;
+            let len = piece.len as u64;
+            let is_have = self.have[id];
+            let is_selected = self.selected[id];
+            let is_needed = is_selected && !is_have;
+            hns.have_bytes += len * (is_have as u64);
+            hns.selected_bytes += len * (is_selected as u64);
+            hns.needed_bytes += len * (is_needed as u64);
+        }
+        hns
     }
 
     pub fn iter_queued_pieces(&self) -> impl Iterator<Item = usize> + '_ {
@@ -242,7 +246,15 @@ impl ChunkTracker {
     }
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
-        self.have.set(idx.get() as usize, true);
+        let id = idx.get() as usize;
+        if !self.have[id] {
+            self.have.set(id, true);
+            let len = self.lengths.piece_length(idx) as u64;
+            self.hns.have_bytes += len;
+            if self.selected[id] {
+                self.hns.needed_bytes -= len;
+            }
+        }
     }
 
     pub fn is_chunk_ready_to_upload(&self, chunk: &ChunkInfo) -> bool {
@@ -250,6 +262,10 @@ impl ChunkTracker {
             .get(chunk.piece_index.get() as usize)
             .map(|b| *b)
             .unwrap_or(false)
+    }
+
+    pub fn get_remaining_bytes(&self) -> u64 {
+        self.hns.needed_bytes
     }
 
     // return true if the whole piece is marked downloaded
@@ -356,11 +372,13 @@ impl ChunkTracker {
             }
         }
 
-        Ok(HaveNeededSelected {
+        let res = HaveNeededSelected {
             have_bytes,
             needed_bytes,
             selected_bytes,
-        })
+        };
+        self.hns = res;
+        Ok(res)
     }
 }
 

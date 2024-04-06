@@ -81,6 +81,7 @@ export const STATE_ERROR = "error";
 export interface TorrentStats {
   state: "initializing" | "paused" | "live" | "error";
   error: string | null;
+  file_progress: number[];
   progress_bytes: number;
   finished: boolean;
   total_bytes: number;

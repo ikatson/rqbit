@@ -10,6 +10,7 @@
   "dependencies": {
     "@restart/ui": "^1.6.6",
     "lodash.debounce": "^4.0.8",
+    "lodash.sortby": "^4.7",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^4.12.0",
@@ -17,6 +18,7 @@
   },
   "devDependencies": {
     "@types/lodash.debounce": "^4.0.9",
+    "@types/lodash.sortby": "^4.7.9",
     "@types/react": "^18.2.38",
     "@types/react-dom": "^18.2.16",
     "@vitejs/plugin-react": "^4.2.1",

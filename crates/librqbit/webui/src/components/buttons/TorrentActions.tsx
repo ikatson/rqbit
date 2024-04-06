@@ -1,22 +1,21 @@
 import { useContext, useState } from "react";
-import { TorrentDetails, TorrentStats } from "../../api-types";
+import { TorrentStats } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
-import { TorrentSettingsModal } from "../modal/TorrentSettingsModal";
 import { FaCog, FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
 
 export const TorrentActions: React.FC<{
   id: number;
-  detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats;
-}> = ({ id, detailsResponse, statsResponse }) => {
+  extendedView: boolean;
+  setExtendedView: (extendedView: boolean) => void;
+}> = ({ id, statsResponse, extendedView, setExtendedView }) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
-  let [configuring, setConfiguring] = useState<boolean>(false);
 
   let refreshCtx = useContext(RefreshTorrentStatsContext);
 
@@ -62,10 +61,6 @@ export const TorrentActions: React.FC<{
       .finally(() => setDisabled(false));
   };
 
-  const openConfigureModal = () => {
-    setConfiguring(true);
-  };
-
   const startDeleting = () => {
     setDisabled(true);
     setDeleting(true);
@@ -89,7 +84,10 @@ export const TorrentActions: React.FC<{
         </IconButton>
       )}
       {canConfigure && (
-        <IconButton onClick={openConfigureModal} disabled={disabled}>
+        <IconButton
+          onClick={() => setExtendedView(!extendedView)}
+          disabled={disabled}
+        >
           <FaCog className="hover:text-green-600" />
         </IconButton>
       )}
@@ -97,14 +95,6 @@ export const TorrentActions: React.FC<{
         <FaTrash className="hover:text-red-500" />
       </IconButton>
       <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
-      {detailsResponse && configuring && (
-        <TorrentSettingsModal
-          id={id}
-          show={configuring}
-          details={detailsResponse}
-          onHide={() => setConfiguring(false)}
-        />
-      )}
     </div>
   );
 };

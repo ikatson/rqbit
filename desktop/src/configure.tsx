@@ -130,7 +130,7 @@ export const ConfigModal: React.FC<{
   };
 
   const handleToggleChange: React.ChangeEventHandler<HTMLInputElement> = (
-    e
+    e,
   ) => {
     const name: string = e.target.name;
     const [mainField, subField] = name.split(".", 2);
@@ -166,7 +166,7 @@ export const ConfigModal: React.FC<{
           text: "Error saving configuration",
           details: e,
         });
-      }
+      },
     );
   };
 
@@ -179,7 +179,7 @@ export const ConfigModal: React.FC<{
     >
       <ModalBody>
         <ErrorComponent error={error}></ErrorComponent>
-        <div className="flex border-b mb-4">
+        <div className="mb-4 flex border-b">
           {TABS.map((t, i) => {
             const isActive = t === tab;
             let classNames = "text-slate-300";

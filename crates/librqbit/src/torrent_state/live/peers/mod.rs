@@ -90,7 +90,7 @@ impl PeerStates {
         let rx = self
             .with_peer_mut(h, "mark_peer_connecting", |peer| {
                 peer.state
-                    .queued_to_connecting(&self.stats)
+                    .idle_to_connecting(&self.stats)
                     .context("invalid peer state")
             })
             .context("peer not found in states")??;

@@ -153,6 +153,25 @@ impl Lengths {
         })
     }
 
+    // A helper to iterate over pieces in a file.
+    pub(crate) fn iter_pieces_within_offset(
+        &self,
+        offset_bytes: u64,
+        len: u64,
+    ) -> std::ops::Range<u32> {
+        // Validation and correction
+        let offset_bytes = offset_bytes.min(self.total_length);
+        let end_bytes = (offset_bytes + len).min(self.total_length);
+
+        let start_piece_id = (offset_bytes / self.piece_length as u64) as u32;
+        let end_piece_id = if end_bytes == offset_bytes {
+            start_piece_id
+        } else {
+            end_bytes.div_ceil(self.piece_length as u64) as u32
+        };
+        start_piece_id..end_piece_id
+    }
+
     pub fn iter_chunk_infos(&self, index: ValidPieceIndex) -> impl Iterator<Item = ChunkInfo> {
         let mut remaining = self.piece_length(index);
         let absolute_offset = index.0 * self.chunks_per_piece;
@@ -229,6 +248,19 @@ impl Lengths {
             return Some(last_element_size(piece_length, CHUNK_SIZE));
         }
         return None;
+    }
+
+    // How many bytes out of the given piece are present in the given file (by offset and len).
+    pub fn size_of_piece_in_file(&self, piece_id: u32, file_offset: u64, file_len: u64) -> u64 {
+        let piece_offset = piece_id as u64 * self.default_piece_length() as u64;
+        let piece_end = piece_offset + self.default_piece_length() as u64;
+
+        let file_end = file_offset + file_len;
+
+        let offset = file_offset.max(piece_offset);
+        let end = file_end.min(piece_end);
+
+        end.saturating_sub(offset)
     }
 }
 
@@ -534,5 +566,72 @@ mod tests {
         assert_eq!(l.chunk_bitfield_bytes(), 14);
 
         assert_eq!(l.chunks_per_piece(l.last_piece_id()), 1);
+    }
+
+    #[test]
+    fn test_iter_pieces_within() {
+        // Macro to preserve line numbers
+        macro_rules! check {
+            ($l:expr, $offset:expr, $len:expr, $expected:expr) => {
+                let e: &[u32] = $expected;
+                println!("case: offset={}, len={}, expected={:?}", $offset, $len, e);
+                assert_eq!(
+                    &$l.iter_pieces_within_offset($offset, $len)
+                        .collect::<Vec<_>>()[..],
+                    $expected
+                );
+            };
+        }
+
+        let l = Lengths::new(21, 10).unwrap();
+        check!(&l, 0, 5, &[0]);
+        check!(&l, 0, 10, &[0]);
+        check!(&l, 0, 11, &[0, 1]);
+        check!(&l, 0, 0, &[]);
+        check!(&l, 10, 0, &[]);
+        check!(&l, 10, 1, &[1]);
+        check!(&l, 10, 10, &[1]);
+        check!(&l, 10, 11, &[1, 2]);
+
+        check!(&l, 5, 5, &[0]);
+        check!(&l, 5, 6, &[0, 1]);
+        check!(&l, 5, 15, &[0, 1]);
+        check!(&l, 5, 16, &[0, 1, 2]);
+
+        check!(&l, 20, 1, &[2]);
+        check!(&l, 20, 2, &[2]);
+        check!(&l, 20, 1000, &[2]);
+        check!(&l, 21, 0, &[]);
+        check!(&l, 21, 1, &[]);
+        check!(&l, 22, 0, &[]);
+        check!(&l, 22, 1, &[]);
+    }
+
+    #[test]
+    fn test_size_of_piece_in_file() {
+        let l = Lengths::new(10, 5).unwrap();
+
+        assert_eq!(l.size_of_piece_in_file(0, 0, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(0, 1, 10), 4);
+        assert_eq!(l.size_of_piece_in_file(0, 5, 10), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 6, 10), 0);
+
+        assert_eq!(l.size_of_piece_in_file(0, 0, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 1, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 5, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 6, 0), 0);
+
+        assert_eq!(l.size_of_piece_in_file(1, 0, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(1, 4, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(1, 5, 10), 5);
+        assert_eq!(l.size_of_piece_in_file(1, 6, 10), 4);
+        assert_eq!(l.size_of_piece_in_file(1, 9, 10), 1);
+        assert_eq!(l.size_of_piece_in_file(1, 10, 10), 0);
+
+        // garbage data
+        assert_eq!(l.size_of_piece_in_file(2, 0, 10), 0);
+        assert_eq!(l.size_of_piece_in_file(3, 0, 10), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 10, 0), 0);
+        assert_eq!(l.size_of_piece_in_file(0, 10, 5), 0);
     }
 }

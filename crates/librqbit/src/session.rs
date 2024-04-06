@@ -1083,10 +1083,10 @@ impl Session {
                 warn!(error=?e, "error deleting torrent cleanly");
             }
             (Ok(Some(paused)), true) => {
-                drop(paused.files);
-                for file in paused.filenames {
-                    if let Err(e) = std::fs::remove_file(&file) {
-                        warn!(?file, error=?e, "could not delete file");
+                for file in paused.files.iter() {
+                    drop(file.take()?);
+                    if let Err(e) = std::fs::remove_file(&file.filename) {
+                        warn!(?file.filename, error=?e, "could not delete file");
                     }
                 }
             }
@@ -1142,10 +1142,7 @@ impl Session {
         handle: &ManagedTorrentHandle,
         only_files: &HashSet<usize>,
     ) -> anyhow::Result<()> {
-        let need_to_unpause = handle.update_only_files(only_files)?;
-        if need_to_unpause {
-            self.unpause(handle)?;
-        }
+        handle.update_only_files(only_files)?;
         Ok(())
     }
 
