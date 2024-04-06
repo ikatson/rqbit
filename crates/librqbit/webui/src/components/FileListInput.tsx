@@ -5,6 +5,7 @@ import { CiSquarePlus, CiSquareMinus } from "react-icons/ci";
 import { IconButton } from "./buttons/IconButton";
 import { formatBytes } from "../helper/formatBytes";
 import { ProgressBar } from "./ProgressBar";
+import sortBy from "lodash.sortby";
 
 type TorrentFileForCheckbox = {
   id: number;
@@ -48,8 +49,15 @@ const newFileTree = (
       getGroup(file.pathComponents[0]).push(file);
     });
 
+    directFiles = sortBy(directFiles, (f) => f.filename);
+
+    let sortedGroupsByName = sortBy(
+      Object.entries(groupsByName),
+      ([k, _]) => k,
+    );
+
     let childId = 0;
-    for (const [key, value] of Object.entries(groupsByName)) {
+    for (const [key, value] of sortedGroupsByName) {
       groups.push(newFileTreeInner(key, id + "." + childId, value, depth + 1));
       childId += 1;
     }
