@@ -23,26 +23,26 @@ export interface ContextType {
 
 export const RqbitWebUI = (props: {
   title: string;
+  version: string;
   menuButtons?: JSX.Element[];
 }) => {
   let [logsOpened, setLogsOpened] = useState<boolean>(false);
-  const setCloseableError = useErrorStore((state) => state.setCloseableError);
   const setOtherError = useErrorStore((state) => state.setOtherError);
 
   const API = useContext(APIContext);
 
   const setTorrents = useTorrentStore((state) => state.setTorrents);
   const setTorrentsLoading = useTorrentStore(
-    (state) => state.setTorrentsLoading
+    (state) => state.setTorrentsLoading,
   );
   const setRefreshTorrents = useTorrentStore(
-    (state) => state.setRefreshTorrents
+    (state) => state.setRefreshTorrents,
   );
 
   const refreshTorrents = async () => {
     setTorrentsLoading(true);
     let torrents = await API.listTorrents().finally(() =>
-      setTorrentsLoading(false)
+      setTorrentsLoading(false),
     );
     setTorrents(torrents.torrents);
   };
@@ -60,20 +60,15 @@ export const RqbitWebUI = (props: {
             setOtherError({ text: "Error refreshing torrents", details: e });
             console.error(e);
             return 5000;
-          }
+          },
         ),
-      0
+      0,
     );
   }, []);
 
-  const context: ContextType = {
-    setCloseableError,
-    refreshTorrents,
-  };
-
   return (
     <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen">
-      <Header title={props.title} />
+      <Header title={props.title} version={props.version} />
       <div className="relative">
         {/* Menu buttons */}
         <div className="absolute top-0 start-0 pl-2 z-10">
