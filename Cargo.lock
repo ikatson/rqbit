@@ -1337,7 +1337,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.6.2"
+version = "3.7.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -1358,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "5.0.2"
+version = "5.0.3"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.5.1"
+version = "3.5.2"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-tracker-comms"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "async-stream",

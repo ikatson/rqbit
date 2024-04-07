@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "3.6.2"
+version = "3.7.0"
 edition = "2021"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
