@@ -177,6 +177,8 @@ const FileTreeComponent: React.FC<{
             selectedFiles={selectedFiles}
             setSelectedFiles={setSelectedFiles}
             initialExpanded={false}
+            showProgressBar={showProgressBar}
+            disabled={disabled}
           />
         ))}
         <div className="pl-1">
