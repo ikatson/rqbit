@@ -3,7 +3,7 @@ pub mod stats;
 use std::collections::HashSet;
 
 use librqbit_core::hash_id::Id20;
-use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
+use librqbit_core::lengths::ChunkInfo;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -12,21 +12,7 @@ use crate::type_aliases::BF;
 
 use super::peers::stats::atomic::AggregatePeerStatsAtomic;
 
-#[derive(Debug, Hash, PartialEq, Eq)]
-pub(crate) struct InflightRequest {
-    pub piece: ValidPieceIndex,
-    pub chunk: u32,
-}
-
-impl From<&ChunkInfo> for InflightRequest {
-    fn from(c: &ChunkInfo) -> Self {
-        Self {
-            piece: c.piece_index,
-            chunk: c.chunk_index,
-        }
-    }
-}
-
+pub(crate) type InflightRequest = ChunkInfo;
 pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 

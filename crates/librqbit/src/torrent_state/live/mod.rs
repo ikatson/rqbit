@@ -96,7 +96,7 @@ use self::{
             atomic::PeerCountersAtomic as AtomicPeerCounters,
             snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         },
-        InflightRequest, PeerRx, PeerState, PeerTx,
+        PeerRx, PeerState, PeerTx,
     },
     peers::PeerStates,
     stats::{atomic::AtomicStats, snapshot::StatsSnapshot},
@@ -894,11 +894,11 @@ impl PeerHandler {
                 for req in live.inflight_requests {
                     debug!(
                         "peer dead, marking chunk request cancelled, index={}, chunk={}",
-                        req.piece.get(),
-                        req.chunk
+                        req.piece_index.get(),
+                        req.chunk_index
                     );
                     g.get_chunks_mut()?
-                        .mark_chunk_request_cancelled(req.piece, req.chunk);
+                        .mark_chunk_request_cancelled(req.piece_index, req.chunk_index);
                 }
             }
             PeerState::NotNeeded => {
@@ -1030,26 +1030,37 @@ impl PeerHandler {
             None => return None,
         };
 
-        let mut g = self.state.lock_write("try_steal_old_slow_piece");
-        let (idx, elapsed, piece_req) = g
-            .inflight_pieces
-            .iter_mut()
-            // don't steal from myself
-            .filter(|(_, r)| r.peer != self.addr)
-            .map(|(p, r)| (p, r.started.elapsed(), r))
-            .max_by_key(|(_, e, _)| *e)?;
+        let (stolen_idx, from_peer) = {
+            let mut g = self.state.lock_write("try_steal_old_slow_piece");
+            let (idx, elapsed, piece_req) = g
+                .inflight_pieces
+                .iter_mut()
+                // don't steal from myself
+                .filter(|(_, r)| r.peer != self.addr)
+                .map(|(p, r)| (p, r.started.elapsed(), r))
+                .max_by_key(|(_, e, _)| *e)?;
 
-        // heuristic for "too slow peer"
-        if elapsed.as_secs_f64() > my_avg_time.as_secs_f64() * threshold {
-            debug!(
-                "will steal piece {} from {}: elapsed time {:?}, my avg piece time: {:?}",
-                idx, piece_req.peer, elapsed, my_avg_time
-            );
-            piece_req.peer = self.addr;
-            piece_req.started = Instant::now();
-            return Some(*idx);
+            // heuristic for "too slow peer"
+            if elapsed.as_secs_f64() > my_avg_time.as_secs_f64() * threshold {
+                debug!(
+                    "will steal piece {} from {}: elapsed time {:?}, my avg piece time: {:?}",
+                    idx, piece_req.peer, elapsed, my_avg_time
+                );
+                let old = piece_req.peer;
+                piece_req.peer = self.addr;
+                piece_req.started = Instant::now();
+                (*idx, old)
+            } else {
+                return None;
+            }
+        };
+
+        // Send cancellations to old peer.
+        {
+            self.state.peers.send_cancellations(from_peer, stolen_idx);
         }
-        None
+
+        Some(stolen_idx)
     }
 
     fn on_download_request(&self, request: Request) -> anyhow::Result<()> {
@@ -1225,7 +1236,7 @@ impl PeerHandler {
                     .state
                     .peers
                     .with_live_mut(handle, "add chunk request", |live| {
-                        live.inflight_requests.insert(InflightRequest::from(&chunk))
+                        live.inflight_requests.insert(chunk)
                     }) {
                     Some(true) => {}
                     Some(false) => {
@@ -1310,10 +1321,7 @@ impl PeerHandler {
         self.state
             .peers
             .with_live_mut(self.addr, "inflight_requests.remove", |h| {
-                if !h
-                    .inflight_requests
-                    .remove(&InflightRequest::from(&chunk_info))
-                {
+                if !h.inflight_requests.remove(&chunk_info) {
                     anyhow::bail!(
                         "peer sent us a piece we did not ask. Requested pieces: {:?}. Got: {:?}",
                         &h.inflight_requests,
