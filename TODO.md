@@ -79,7 +79,13 @@ refactor:
   - [x] peers: if finished they are all paused forever, but if we change the list of files, we need to restart them
 
 - [x] opened_files: track HAVE progress
+
   - [x] actually track
   - [x] show in API and UI
   - [x] refresh when downloading (it doesn't somehow)
   - [x] on restart, this is not computed, compute
+
+- [ ] send cancellation to peers who we stole chunks from
+- [ ] don't account for stolen pieces in mesuring speed
+- [ ] file priority
+- [ ] start/end priority pieces per selected file, not per torrent
