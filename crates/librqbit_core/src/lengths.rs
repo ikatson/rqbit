@@ -19,7 +19,7 @@ pub struct PieceInfo {
     pub len: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkInfo {
     pub piece_index: ValidPieceIndex,
 
