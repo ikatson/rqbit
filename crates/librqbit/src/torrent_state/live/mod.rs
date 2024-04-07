@@ -1055,10 +1055,8 @@ impl PeerHandler {
             }
         };
 
-        // Send cancellations to old peer.
-        {
-            self.state.peers.send_cancellations(from_peer, stolen_idx);
-        }
+        // Send cancellations to old peer and bump counters.
+        self.state.peers.on_steal(from_peer, self.addr, stolen_idx);
 
         Some(stolen_idx)
     }

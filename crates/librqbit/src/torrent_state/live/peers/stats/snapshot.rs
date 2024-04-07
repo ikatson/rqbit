@@ -12,6 +12,7 @@ pub struct AggregatePeerStats {
     pub seen: usize,
     pub dead: usize,
     pub not_needed: usize,
+    pub steals: usize,
 }
 
 impl<'a> From<&'a AggregatePeerStatsAtomic> for AggregatePeerStats {
@@ -24,6 +25,7 @@ impl<'a> From<&'a AggregatePeerStatsAtomic> for AggregatePeerStats {
             seen: s.seen.load(ordering) as usize,
             dead: s.dead.load(ordering) as usize,
             not_needed: s.not_needed.load(ordering) as usize,
+            steals: s.steals.load(ordering) as usize,
         }
     }
 }

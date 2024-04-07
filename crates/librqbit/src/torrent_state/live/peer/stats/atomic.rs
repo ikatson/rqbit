@@ -20,6 +20,8 @@ pub(crate) struct PeerCountersAtomic {
     pub downloaded_and_checked_pieces: AtomicU32,
     pub downloaded_and_checked_bytes: AtomicU64,
     pub total_piece_download_ms: AtomicU64,
+    pub times_stolen_from_me: AtomicU32,
+    pub times_i_stole: AtomicU32,
 }
 
 impl PeerCountersAtomic {
