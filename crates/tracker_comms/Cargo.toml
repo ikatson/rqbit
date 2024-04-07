@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-tracker-comms"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2018"
 description = "Common interface around various sha1 implementations used in rqbit torrent client."
 license = "Apache-2.0"
@@ -16,7 +16,7 @@ anyhow = "1"
 futures = "0.3"
 async-stream = "0.3.5"
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.0" }
-librqbit-core = { path = "../librqbit_core", version = "3.6.2" }
+librqbit-core = { path = "../librqbit_core", version = "3.7.0" }
 byteorder = "1.5"
 serde = { version = "1", features = ["derive"] }
 urlencoding = "2"

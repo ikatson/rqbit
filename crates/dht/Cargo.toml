@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-dht"
-version = "5.0.2"
+version = "5.0.3"
 edition = "2021"
 description = "DHT implementation, used in rqbit torrent client."
 license = "Apache-2.0"
@@ -32,7 +32,7 @@ rand = "0.8"
 indexmap = "2"
 dashmap = { version = "5.5.3", features = ["serde"] }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
-librqbit-core = { path = "../librqbit_core", version = "3.6.2" }
+librqbit-core = { path = "../librqbit_core", version = "3.7.0" }
 chrono = { version = "0.4.31", features = ["serde"] }
 tokio-util = "0.7.10"
 
