@@ -113,7 +113,20 @@ impl PeerStates {
         Some(prev)
     }
 
-    pub(crate) fn send_cancellations(&self, from_peer: SocketAddr, stolen_idx: ValidPieceIndex) {
+    pub(crate) fn on_steal(
+        &self,
+        from_peer: SocketAddr,
+        to_peer: SocketAddr,
+        stolen_idx: ValidPieceIndex,
+    ) {
+        self.with_peer(to_peer, |p| {
+            atomic_inc(&p.stats.counters.times_i_stole);
+        });
+        self.with_peer(from_peer, |p| {
+            atomic_inc(&p.stats.counters.times_stolen_from_me);
+        });
+        self.stats.inc_steals();
+
         self.with_live_mut(from_peer, "send_cancellations", |live| {
             let to_remove = live
                 .inflight_requests

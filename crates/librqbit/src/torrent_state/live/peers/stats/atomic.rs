@@ -15,6 +15,7 @@ pub(crate) struct AggregatePeerStatsAtomic {
     pub seen: AtomicU32,
     pub dead: AtomicU32,
     pub not_needed: AtomicU32,
+    pub steals: AtomicU32,
 }
 
 impl AggregatePeerStatsAtomic {
@@ -39,5 +40,9 @@ impl AggregatePeerStatsAtomic {
     pub fn incdec(&self, old: &PeerState, new: &PeerState) {
         self.dec(old);
         self.inc(new);
+    }
+
+    pub fn inc_steals(&self) {
+        atomic_inc(&self.steals);
     }
 }
