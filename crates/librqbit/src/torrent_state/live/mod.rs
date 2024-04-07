@@ -1310,12 +1310,6 @@ impl PeerHandler {
             .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
 
-        // Global chunk/byte counters.
-        self.state
-            .stats
-            .fetched_bytes
-            .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
-
         self.state
             .peers
             .with_live_mut(self.addr, "inflight_requests.remove", |h| {
@@ -1400,6 +1394,12 @@ impl PeerHandler {
                         return self.state.on_fatal_error(e);
                     }
                 }
+
+                // Global chunk/byte counters.
+                self.state
+                    .stats
+                    .fetched_bytes
+                    .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
 
                 let full_piece_download_time = match full_piece_download_time {
                     Some(t) => t,
