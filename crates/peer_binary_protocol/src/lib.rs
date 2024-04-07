@@ -243,7 +243,8 @@ where
 {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
-            Message::Request(_) | Message::Cancel(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
+            Message::Request(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
+            Message::Cancel(_) => (LEN_PREFIX_REQUEST, MSGID_CANCEL),
             Message::Bitfield(b) => (1 + b.as_ref().len() as u32, MSGID_BITFIELD),
             Message::Choke => (LEN_PREFIX_CHOKE, MSGID_CHOKE),
             Message::Unchoke => (LEN_PREFIX_UNCHOKE, MSGID_UNCHOKE),
