@@ -85,7 +85,7 @@ refactor:
   - [x] refresh when downloading (it doesn't somehow)
   - [x] on restart, this is not computed, compute
 
-- [ ] send cancellation to peers who we stole chunks from
-- [ ] don't account for stolen pieces in mesuring speed
+- [x] send cancellation to peers who we stole chunks from
+- [x] don't account for stolen pieces in mesuring speed
 - [ ] file priority
 - [ ] start/end priority pieces per selected file, not per torrent
