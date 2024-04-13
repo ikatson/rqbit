@@ -5,7 +5,7 @@ use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
 
-use crate::type_aliases::BF;
+use crate::type_aliases::{FilePriorities, OpenedFiles, BF};
 
 pub struct ChunkTracker {
     // This forms the basis of a "queue" to pull from.
@@ -30,9 +30,6 @@ pub struct ChunkTracker {
     selected: BF,
 
     lengths: Lengths,
-
-    // What pieces to download first.
-    priority_piece_ids: Vec<usize>,
 
     // Quick to retrieve stats, that MUST be in sync with the BFs
     // above (have/selected).
@@ -138,18 +135,6 @@ impl ChunkTracker {
         // TODO: ideally this needs to be a list based on needed files, e.g.
         // last needed piece for each file. But let's keep simple for now.
 
-        // TODO: bitvec is bugged, the short version panics.
-        // let last_needed_piece_id = needed_pieces.iter_ones().next_back();
-        let last_needed_piece_id = needed_pieces
-            .iter()
-            .enumerate()
-            .filter_map(|(id, b)| if *b { Some(id) } else { None })
-            .last();
-
-        // The last pieces first. Often important information is stored in the last piece.
-        // E.g. if it's a video file, than the last piece often contains some index, or just
-        // players look into it, and it's better be there.
-        let priority_piece_ids = last_needed_piece_id.into_iter().collect();
         let mut ct = Self {
             chunk_status: compute_chunk_have_status(&lengths, &have_pieces)
                 .context("error computing chunk status")?,
@@ -157,7 +142,6 @@ impl ChunkTracker {
             selected: selected_pieces,
             lengths,
             have: have_pieces,
-            priority_piece_ids,
             hns: HaveNeededSelected::default(),
         };
         ct.hns = ct.calc_hns();
@@ -198,16 +182,16 @@ impl ChunkTracker {
         hns
     }
 
-    pub fn iter_queued_pieces(&self) -> impl Iterator<Item = usize> + '_ {
-        self.priority_piece_ids
+    pub fn iter_queued_pieces<'a>(
+        &'a self,
+        file_priorities: &'a FilePriorities,
+        opened_files: &'a OpenedFiles,
+    ) -> impl Iterator<Item = usize> + 'a {
+        file_priorities
             .iter()
-            .copied()
-            .filter(move |piece_id| self.queue_pieces[*piece_id])
-            .chain(
-                self.queue_pieces
-                    .iter_ones()
-                    .filter(move |id| !self.priority_piece_ids.contains(id)),
-            )
+            .filter_map(|p| opened_files.get(*p))
+            .flat_map(|f| f.iter_piece_priorities())
+            .filter(|id| self.queue_pieces[*id])
     }
 
     // None if wrong chunk
