@@ -87,7 +87,7 @@ use crate::{
     },
     session::CheckedIncomingConnection,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{OpenedFiles, PeerHandle, BF},
+    type_aliases::{FilePriorities, OpenedFiles, PeerHandle, BF},
 };
 
 use self::{
@@ -121,6 +121,9 @@ pub(crate) struct TorrentStateLocked {
     // What chunks we have and need.
     // If this is None, the torrent was paused, and this live state is useless, and needs to be dropped.
     pub(crate) chunks: Option<ChunkTracker>,
+
+    // The sorted file list in which order to download them.
+    file_priorities: FilePriorities,
 
     // At a moment in time, we are expecting a piece from only one peer.
     // inflight_pieces stores this information.
@@ -215,12 +218,16 @@ impl TorrentStateLive {
 
         reopen_necessary_files_for_write(&paused.chunk_tracker, &paused.files)?;
 
+        // TODO: make it configurable
+        let file_priorities = (0..paused.files.len()).collect();
+
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
             peers: Default::default(),
             locked: RwLock::new(TorrentStateLocked {
                 chunks: Some(paused.chunk_tracker),
                 inflight_pieces: Default::default(),
+                file_priorities,
                 fatal_errors_tx: Some(fatal_errors_tx),
             }),
             files: paused.files,
@@ -989,7 +996,10 @@ impl PeerHandler {
                 let n = {
                     let mut n_opt = None;
                     let bf = &live.bitfield;
-                    for n in g.get_chunks()?.iter_queued_pieces() {
+                    for n in g
+                        .get_chunks()?
+                        .iter_queued_pieces(&g.file_priorities, &self.state.files)
+                    {
                         if bf.get(n).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
                             break;
