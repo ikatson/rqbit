@@ -219,7 +219,12 @@ impl TorrentStateLive {
         reopen_necessary_files_for_write(&paused.chunk_tracker, &paused.files)?;
 
         // TODO: make it configurable
-        let file_priorities = (0..paused.files.len()).collect();
+        let file_priorities = {
+            let mut pri = (0..paused.files.len()).collect::<Vec<usize>>();
+            // sort by filename, cause many torrents have random sort order.
+            pri.sort_unstable_by_key(|id| paused.files.get(*id).map(|op| op.filename.as_path()));
+            pri
+        };
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
