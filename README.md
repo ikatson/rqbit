@@ -6,7 +6,7 @@
 
 **rqbit** is a bittorrent client written in Rust. Has HTTP API and Web UI, and can be used as a library.
 
-Also has a desktop app built with [Tauri](https://tauri.app/) (on Windows and OSX).
+Also has a desktop app built with [Tauri](https://tauri.app/).
 
 ## Usage quick start
 
@@ -30,7 +30,9 @@ Access with http://localhost:3030/web/. It looks similar to Desktop app, see scr
 
 The desktop app is a [thin wrapper](https://github.com/ikatson/rqbit/blob/main/desktop/src-tauri/src/main.rs) on top of the Web UI frontend.
 
-Download it in [Releases](https://github.com/ikatson/rqbit/releases).
+Download it in [Releases](https://github.com/ikatson/rqbit/releases) for OSX and Windows. For Linux, build manually with
+
+    cargo tauri build
 
 <img width="1136" alt="Rqbit desktop" src="https://github.com/ikatson/rqbit/assets/221386/51f56542-667f-4f5e-a1e0-942b1df4cd5a">
 
