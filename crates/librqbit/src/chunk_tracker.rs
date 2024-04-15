@@ -182,7 +182,7 @@ impl ChunkTracker {
         hns
     }
 
-    pub fn iter_queued_pieces<'a>(
+    pub(crate) fn iter_queued_pieces<'a>(
         &'a self,
         file_priorities: &'a FilePriorities,
         opened_files: &'a OpenedFiles,
