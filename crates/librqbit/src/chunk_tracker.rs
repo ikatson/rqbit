@@ -190,6 +190,7 @@ impl ChunkTracker {
         file_priorities
             .iter()
             .filter_map(|p| opened_files.get(*p))
+            .filter(|f| !f.approx_is_finished())
             .flat_map(|f| f.iter_piece_priorities())
             .filter(|id| self.queue_pieces[*id])
     }

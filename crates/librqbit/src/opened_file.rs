@@ -109,6 +109,10 @@ impl OpenedFile {
         size
     }
 
+    pub fn approx_is_finished(&self) -> bool {
+        self.have.load(Ordering::Relaxed) == self.len
+    }
+
     pub fn iter_piece_priorities(&self) -> impl Iterator<Item = usize> {
         iter_piece_priorities(self.piece_range_usize())
     }

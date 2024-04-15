@@ -35,7 +35,7 @@ struct Opts {
     log_file: Option<String>,
 
     /// The value for RUST_LOG in the log file
-    #[arg(long = "log-file-rust-log", default_value = "librqbit=trace,info")]
+    #[arg(long = "log-file-rust-log", default_value = "librqbit=debug,info")]
     log_file_rust_log: String,
 
     /// The interval to poll trackers, e.g. 30s.
