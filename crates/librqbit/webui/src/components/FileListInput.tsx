@@ -46,7 +46,7 @@ const newFileTree = (
         directFiles.push(file);
         return;
       }
-      getGroup(file.pathComponents[0]).push(file);
+      getGroup(file.pathComponents[depth]).push(file);
     });
 
     directFiles = sortBy(directFiles, (f) => f.filename);
