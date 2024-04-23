@@ -828,7 +828,11 @@ impl Session {
 
                     let peer_rx = self.make_peer_rx(
                         info_hash,
-                        magnet.trackers.clone(),
+                        if opts.disable_trackers {
+                            Default::default()
+                        } else {
+                            magnet.trackers.clone()
+                        },
                         announce_port,
                         opts.force_tracker_interval,
                     )?;
@@ -897,7 +901,11 @@ impl Session {
                     } else {
                         self.make_peer_rx(
                             torrent.info_hash,
-                            trackers.clone(),
+                            if opts.disable_trackers {
+                                Default::default()
+                            } else {
+                                trackers.clone()
+                            },
                             announce_port,
                             opts.force_tracker_interval,
                         )?
