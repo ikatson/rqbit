@@ -385,7 +385,7 @@ impl<'a> FileOps<'a> {
             }
 
             let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(buf.len(), remaining_len as usize);
+            let to_write = std::cmp::min(buf.len() as u64, remaining_len) as usize;
 
             let mut file_g = self.files[file_idx].file.lock();
             trace!(
