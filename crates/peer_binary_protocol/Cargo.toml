@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-peer-protocol"
-version = "3.5.2"
+version = "3.5.3"
 edition = "2021"
 description = "Protocol for working with torrent peers. Used in rqbit torrent client."
 license = "Apache-2.0"

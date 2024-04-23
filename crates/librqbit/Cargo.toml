@@ -24,7 +24,7 @@ tracker_comms = { path = "../tracker_comms", default-features = false, package =
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.0" }
 librqbit-core = { path = "../librqbit_core", version = "3.7.0" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
-peer_binary_protocol = { path = "../peer_binary_protocol", package = "librqbit-peer-protocol", version = "3.5.2" }
+peer_binary_protocol = { path = "../peer_binary_protocol", package = "librqbit-peer-protocol", version = "3.5.3" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "3.0.0" }
 dht = { path = "../dht", package = "librqbit-dht", version = "5.0.3" }
 librqbit-upnp = { path = "../upnp", version = "0.1.0" }
