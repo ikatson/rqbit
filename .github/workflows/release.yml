@@ -79,7 +79,7 @@ jobs:
 
       - name: install linux cross compiler
         run: brew tap messense/macos-cross-toolchains &&
-          brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf
+          brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf armv7-unknown-linux-gnueabihf armv7-unknown-linux-musleabihf
 
       - name: Build release linux x86_64 binary
         run: rustup target install x86_64-unknown-linux-gnu &&
@@ -111,6 +111,16 @@ jobs:
           generate_release_notes: true
           files: |
             target/artifacts/rqbit-linux-static-armv7
+
+      - name: Build release linux armv7 musl binary
+        run: rustup target install armv7-unknown-linux-musleabihf &&
+          make release-linux-armv7-musl &&
+          mv target/armv7-unknown-linux-musleabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv7-musl
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            target/artifacts/rqbit-linux-static-armv7-musl
 
       - name: Build release linux aarch64 binary
         run: rustup target install aarch64-unknown-linux-gnu &&
