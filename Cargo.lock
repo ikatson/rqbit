@@ -1337,7 +1337,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.7.0"
+version = "3.8.0"
 dependencies = [
  "anyhow",
  "directories",
