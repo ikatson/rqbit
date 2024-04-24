@@ -23,6 +23,8 @@
 //! a facade that works with simple serializable types.
 //!
 
+#![warn(clippy::cast_possible_truncation)]
+
 pub mod api;
 mod api_error;
 mod chunk_tracker;

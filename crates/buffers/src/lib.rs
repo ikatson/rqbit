@@ -190,6 +190,6 @@ impl<'de> serde::de::Deserialize<'de> for ByteBufOwned {
                 Ok(v.to_owned().into())
             }
         }
-        Ok(deserializer.deserialize_byte_buf(Visitor {})?)
+        deserializer.deserialize_byte_buf(Visitor {})
     }
 }

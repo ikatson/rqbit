@@ -26,6 +26,7 @@ pub(crate) struct PeerCountersAtomic {
 
 impl PeerCountersAtomic {
     pub(crate) fn on_piece_downloaded(&self, piece_len: u64, elapsed: Duration) {
+        #[allow(clippy::cast_possible_truncation)]
         let elapsed = elapsed.as_millis() as u64;
         self.total_piece_download_ms
             .fetch_add(elapsed, Ordering::Release);

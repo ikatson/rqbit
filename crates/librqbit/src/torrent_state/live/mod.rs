@@ -816,6 +816,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         self.counters
             .outgoing_connections
             .fetch_add(1, Ordering::Relaxed);
+        #[allow(clippy::cast_possible_truncation)]
         self.counters
             .total_time_connecting_ms
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);
@@ -1005,21 +1006,16 @@ impl PeerHandler {
                         .get_chunks()?
                         .iter_queued_pieces(&g.file_priorities, &self.state.files)
                     {
-                        if bf.get(n).map(|v| *v) == Some(true) {
+                        if bf.get(n.get() as usize).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
                             break;
                         }
                     }
 
-                    let n_opt = match n_opt {
+                    match n_opt {
                         Some(n_opt) => n_opt,
                         None => return Ok(None),
-                    };
-
-                    self.state
-                        .lengths
-                        .validate_piece_index(n_opt as u32)
-                        .context("bug: invalid piece")?
+                    }
                 };
                 g.inflight_pieces.insert(
                     n,
@@ -1309,7 +1305,7 @@ impl PeerHandler {
         let chunk_info = match self.state.lengths.chunk_info_from_received_data(
             piece_index,
             piece.begin,
-            piece.block.len() as u32,
+            piece.block.len().try_into().context("bug")?,
         ) {
             Some(i) => i,
             None => {
@@ -1453,6 +1449,7 @@ impl PeerHandler {
                             .stats
                             .have_bytes
                             .fetch_add(piece_len, Ordering::Relaxed);
+                        #[allow(clippy::cast_possible_truncation)]
                         self.state.stats.total_piece_download_ms.fetch_add(
                             full_piece_download_time.as_millis() as u64,
                             Ordering::Relaxed,

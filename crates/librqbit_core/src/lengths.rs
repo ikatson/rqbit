@@ -247,7 +247,7 @@ impl Lengths {
         if chunk_index == last_chunk_id {
             return Some(last_element_size(piece_length, CHUNK_SIZE));
         }
-        return None;
+        None
     }
 
     // How many bytes out of the given piece are present in the given file (by offset and len).
@@ -558,7 +558,7 @@ mod tests {
 
         // A few more examples with longer values and weird inputs.
 
-        let l = Lengths::new(16384_1_1, 16384_1).unwrap();
+        let l = Lengths::new(1_638_411, 163_841).unwrap();
         assert_eq!(l.default_chunks_per_piece(), 11);
         assert_eq!(l.total_pieces(), 11);
         assert_eq!(l.total_chunks(), 111);

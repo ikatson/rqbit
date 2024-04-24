@@ -186,13 +186,15 @@ impl ChunkTracker {
         &'a self,
         file_priorities: &'a FilePriorities,
         opened_files: &'a OpenedFiles,
-    ) -> impl Iterator<Item = usize> + 'a {
+    ) -> impl Iterator<Item = ValidPieceIndex> + 'a {
         file_priorities
             .iter()
             .filter_map(|p| opened_files.get(*p))
             .filter(|f| !f.approx_is_finished())
             .flat_map(|f| f.iter_piece_priorities())
             .filter(|id| self.queue_pieces[*id])
+            .filter_map(|id| id.try_into().ok())
+            .filter_map(|id| self.lengths.validate_piece_index(id))
     }
 
     // None if wrong chunk
@@ -264,7 +266,7 @@ impl ChunkTracker {
         let chunk_info = self.lengths.chunk_info_from_received_data(
             self.lengths.validate_piece_index(piece.index)?,
             piece.begin,
-            piece.block.as_ref().len() as u32,
+            piece.block.as_ref().len().try_into().unwrap(),
         )?;
         let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
         let chunk_range = self.chunk_status.get_mut(chunk_range).unwrap();
@@ -316,7 +318,7 @@ impl ChunkTracker {
                     anyhow::bail!("bug: shift = 0, this shouldn't have happened")
                 }
                 remaining_file_len -= shift;
-                current_piece_remaining -= shift as u32;
+                current_piece_remaining -= TryInto::<u32>::try_into(shift)?;
 
                 if current_piece_remaining == 0 {
                     let current_piece_have = self.have[current_piece.piece_index.get() as usize];
@@ -393,13 +395,13 @@ mod tests {
             have_pieces.set(0, false);
 
             let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
-            assert_eq!(chunks[0], false);
-            assert_eq!(chunks[1], false);
-            assert_eq!(chunks[2], false);
-            assert_eq!(chunks[3], true);
-            assert_eq!(chunks[4], true);
-            assert_eq!(chunks[5], true);
-            assert_eq!(chunks[6], true);
+            assert!(!chunks[0]);
+            assert!(!chunks[1]);
+            assert!(!chunks[2]);
+            assert!(chunks[3]);
+            assert!(chunks[4]);
+            assert!(chunks[5]);
+            assert!(chunks[6]);
         }
 
         {
@@ -409,13 +411,13 @@ mod tests {
 
             let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
             dbg!(&chunks);
-            assert_eq!(chunks[0], true);
-            assert_eq!(chunks[1], true);
-            assert_eq!(chunks[2], true);
-            assert_eq!(chunks[3], false);
-            assert_eq!(chunks[4], false);
-            assert_eq!(chunks[5], false);
-            assert_eq!(chunks[6], true);
+            assert!(chunks[0]);
+            assert!(chunks[1]);
+            assert!(chunks[2]);
+            assert!(!chunks[3]);
+            assert!(!chunks[4]);
+            assert!(!chunks[5]);
+            assert!(chunks[6]);
         }
 
         {
@@ -425,13 +427,13 @@ mod tests {
 
             let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
             dbg!(&chunks);
-            assert_eq!(chunks[0], true);
-            assert_eq!(chunks[1], true);
-            assert_eq!(chunks[2], true);
-            assert_eq!(chunks[3], true);
-            assert_eq!(chunks[4], true);
-            assert_eq!(chunks[5], true);
-            assert_eq!(chunks[6], false);
+            assert!(chunks[0]);
+            assert!(chunks[1]);
+            assert!(chunks[2]);
+            assert!(chunks[3]);
+            assert!(chunks[4]);
+            assert!(chunks[5]);
+            assert!(!chunks[6]);
         }
 
         {
@@ -451,11 +453,11 @@ mod tests {
 
                 let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
                 dbg!(&chunks);
-                assert_eq!(chunks[0], true);
-                assert_eq!(chunks[1], true);
-                assert_eq!(chunks[2], false);
-                assert_eq!(chunks[3], false);
-                assert_eq!(chunks[4], true);
+                assert!(chunks[0]);
+                assert!(chunks[1]);
+                assert!(!chunks[2]);
+                assert!(!chunks[3]);
+                assert!(chunks[4]);
             }
 
             {
@@ -466,11 +468,11 @@ mod tests {
 
                 let chunks = compute_chunk_have_status(&l, &have_pieces).unwrap();
                 dbg!(&chunks);
-                assert_eq!(chunks[0], true);
-                assert_eq!(chunks[1], true);
-                assert_eq!(chunks[2], true);
-                assert_eq!(chunks[3], true);
-                assert_eq!(chunks[4], false);
+                assert!(chunks[0]);
+                assert!(chunks[1]);
+                assert!(chunks[2]);
+                assert!(chunks[3]);
+                assert!(!chunks[4]);
             }
         }
     }
@@ -521,9 +523,9 @@ mod tests {
                 needed_bytes: all_files[0],
             }
         );
-        assert_eq!(ct.queue_pieces[0], true);
-        assert_eq!(ct.queue_pieces[1], false);
-        assert_eq!(ct.queue_pieces[2], false);
+        assert!(ct.queue_pieces[0]);
+        assert!(!ct.queue_pieces[1]);
+        assert!(!ct.queue_pieces[2]);
 
         // Select only the second file.
         assert_eq!(
@@ -535,9 +537,9 @@ mod tests {
                 needed_bytes: piece_len as u64,
             }
         );
-        assert_eq!(ct.queue_pieces[0], false);
-        assert_eq!(ct.queue_pieces[1], true);
-        assert_eq!(ct.queue_pieces[2], false);
+        assert!(!ct.queue_pieces[0]);
+        assert!(ct.queue_pieces[1]);
+        assert!(!ct.queue_pieces[2]);
 
         // Select only the third file (zero sized one!).
         assert_eq!(
@@ -549,9 +551,9 @@ mod tests {
                 needed_bytes: 0,
             }
         );
-        assert_eq!(ct.queue_pieces[0], false);
-        assert_eq!(ct.queue_pieces[1], false);
-        assert_eq!(ct.queue_pieces[2], false);
+        assert!(!ct.queue_pieces[0]);
+        assert!(!ct.queue_pieces[1]);
+        assert!(!ct.queue_pieces[2]);
 
         // Select only the fourth file.
         assert_eq!(
@@ -563,13 +565,13 @@ mod tests {
                 needed_bytes: (piece_len + 1) as u64,
             }
         );
-        assert_eq!(ct.queue_pieces[0], false);
-        assert_eq!(ct.queue_pieces[1], true);
-        assert_eq!(ct.queue_pieces[2], true);
+        assert!(!ct.queue_pieces[0]);
+        assert!(ct.queue_pieces[1]);
+        assert!(ct.queue_pieces[2]);
 
         // Select first and last file
         assert_eq!(
-            ct.update_only_files(all_files.clone(), &HashSet::from_iter([0, 3]))
+            ct.update_only_files(all_files, &HashSet::from_iter([0, 3]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
@@ -577,13 +579,13 @@ mod tests {
                 needed_bytes: all_files[0] + all_files[3] + 1,
             }
         );
-        assert_eq!(ct.queue_pieces[0], true);
-        assert_eq!(ct.queue_pieces[1], true);
-        assert_eq!(ct.queue_pieces[2], true);
+        assert!(ct.queue_pieces[0]);
+        assert!(ct.queue_pieces[1]);
+        assert!(ct.queue_pieces[2]);
 
         // Select all files
         assert_eq!(
-            ct.update_only_files(all_files.clone(), &HashSet::from_iter([0, 1, 2, 3]))
+            ct.update_only_files(all_files, &HashSet::from_iter([0, 1, 2, 3]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
@@ -591,8 +593,8 @@ mod tests {
                 needed_bytes: total_len
             }
         );
-        assert_eq!(ct.queue_pieces[0], true);
-        assert_eq!(ct.queue_pieces[1], true);
-        assert_eq!(ct.queue_pieces[2], true);
+        assert!(ct.queue_pieces[0]);
+        assert!(ct.queue_pieces[1]);
+        assert!(ct.queue_pieces[2]);
     }
 }

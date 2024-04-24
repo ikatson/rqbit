@@ -145,7 +145,7 @@ async fn create_torrent_raw<'a>(
             length += size as u64;
             piece_checksum.update(&read_buf[..size]);
 
-            remaining_piece_length -= size as u32;
+            remaining_piece_length -= TryInto::<u32>::try_into(size)?;
             if remaining_piece_length == 0 {
                 remaining_piece_length = piece_length;
                 piece_hashes.extend_from_slice(&piece_checksum.finish());

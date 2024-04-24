@@ -76,18 +76,22 @@ impl HandlerLocked {
             anyhow::bail!("metadata size {} is too big", metadata_size);
         }
         let buffer = vec![0u8; metadata_size as usize];
-        let total_pieces = (metadata_size as u64).div_ceil(CHUNK_SIZE as u64);
-        let received_pieces = vec![false; total_pieces as usize];
+        let total_pieces: usize = (metadata_size as u64)
+            .div_ceil(CHUNK_SIZE as u64)
+            .try_into()?;
+        let received_pieces = vec![false; total_pieces];
         Ok(Self {
             metadata_size,
             received_pieces,
             buffer,
-            total_pieces: total_pieces as usize,
+            total_pieces,
         })
     }
     fn piece_size(&self, index: u32) -> usize {
         if index as usize == self.total_pieces - 1 {
-            last_element_size(self.metadata_size as u64, CHUNK_SIZE as u64) as usize
+            last_element_size(self.metadata_size as u64, CHUNK_SIZE as u64)
+                .try_into()
+                .unwrap()
         } else {
             CHUNK_SIZE as usize
         }
@@ -216,7 +220,7 @@ impl PeerConnectionHandler for Handler {
         for i in 0..total_pieces {
             self.writer_tx
                 .send(WriterRequest::Message(Message::Extended(
-                    ExtendedMessage::UtMetadata(UtMetadata::Request(i as u32)),
+                    ExtendedMessage::UtMetadata(UtMetadata::Request(i.try_into()?)),
                 )))?;
         }
         Ok(())

@@ -286,6 +286,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                                 bail!("disconnecting, to simulate failure in tests");
                             }
 
+                            #[allow(clippy::cast_possible_truncation)]
                             let sleep_ms = (rand::thread_rng().gen::<f64>()
                                 * (tpm.max_random_sleep_ms as f64))
                                 as u64;

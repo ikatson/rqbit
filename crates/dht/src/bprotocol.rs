@@ -582,6 +582,7 @@ mod tests {
         let full = format!("/tmp/{filename}.bin");
         let mut f = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(full)
             .unwrap();

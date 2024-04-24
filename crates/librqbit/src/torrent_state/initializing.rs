@@ -54,6 +54,7 @@ impl TorrentStateInitializing {
             let file = if self.meta.options.overwrite {
                 OpenOptions::new()
                     .create(true)
+                    .truncate(false)
                     .read(true)
                     .write(true)
                     .open(&full_path)
