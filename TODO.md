@@ -89,3 +89,7 @@ refactor:
 - [x] don't account for stolen pieces in mesuring speed
 - [ ] file priority
 - [ ] start/end priority pieces per selected file, not per torrent
+
+Streaming:
+
+- "queued" pieces need to be inversed probably. Not sure. But when streaming, I want to stream files even if they are not checkboxed.
