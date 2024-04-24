@@ -7,7 +7,10 @@ use futures::Stream;
 use http::StatusCode;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::{
+    io::{AsyncRead, AsyncSeek},
+    sync::mpsc::UnboundedSender,
+};
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing::warn;
 
@@ -238,6 +241,11 @@ impl Api {
     pub fn api_dump_haves(&self, idx: usize) -> Result<String> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
+    }
+
+    pub fn api_stream(&self, idx: TorrentId, file_id: usize) -> Result<impl AsyncRead + AsyncSeek> {
+        let mgr = self.mgr_handle(idx)?;
+        Ok(mgr.stream(file_id)?)
     }
 }
 
