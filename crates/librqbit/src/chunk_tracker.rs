@@ -194,6 +194,14 @@ impl ChunkTracker {
             .filter_map(|id| self.lengths.validate_piece_index(id))
     }
 
+    pub(crate) fn is_piece_queued(&self, id: ValidPieceIndex) -> bool {
+        self.queue_pieces[id.get() as usize]
+    }
+
+    pub(crate) fn is_piece_have(&self, id: ValidPieceIndex) -> bool {
+        self.have[id.get() as usize]
+    }
+
     // None if wrong chunk
     // true if did something
     // false if didn't do anything

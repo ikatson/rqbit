@@ -163,9 +163,6 @@ impl HttpApi {
             headers: http::HeaderMap,
         ) -> Result<impl IntoResponse> {
             let mut stream = state.api_stream(idx, file_id)?;
-
-            dbg!(&headers);
-
             let mut status = StatusCode::OK;
             let mut output_headers = HeaderMap::new();
             output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));

@@ -965,10 +965,18 @@ impl PeerHandler {
                 let n = {
                     let mut n_opt = None;
                     let bf = &live.bitfield;
-                    for n in g
-                        .get_chunks()?
-                        .iter_queued_pieces(&g.file_priorities, &self.state.files)
-                    {
+                    let chunk_tracker = g.get_chunks()?;
+                    let priority_streamed_pieces = self
+                        .state
+                        .streams
+                        .iter_next_pieces(&self.state.lengths)
+                        .filter(|pid| {
+                            !chunk_tracker.is_piece_have(*pid)
+                                && chunk_tracker.is_piece_queued(*pid)
+                        });
+                    let natural_order_pieces =
+                        chunk_tracker.iter_queued_pieces(&g.file_priorities, &self.state.files);
+                    for n in priority_streamed_pieces.chain(natural_order_pieces) {
                         if bf.get(n.get() as usize).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
                             break;
