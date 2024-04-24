@@ -158,7 +158,7 @@ pub struct TorrentStateLive {
     meta: Arc<ManagedTorrentInfo>,
     locked: RwLock<TorrentStateLocked>,
 
-    files: OpenedFiles,
+    pub(crate) files: OpenedFiles,
 
     stats: AtomicStats,
     lengths: Lengths,
