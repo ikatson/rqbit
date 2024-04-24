@@ -11,6 +11,7 @@ use anyhow::Context;
 use dashmap::DashMap;
 use librqbit_core::lengths::ValidPieceIndex;
 use tokio::io::{AsyncRead, AsyncSeek};
+use tracing::{debug, trace};
 
 use crate::{opened_file::OpenedFile, ManagedTorrent};
 
@@ -37,6 +38,11 @@ impl TorrentStreams {
         let mut woken = Vec::new();
         for w in self.wakers_by_stream.iter() {
             if w.value().0 == piece_id {
+                trace!(
+                    stream_id = *w.key(),
+                    piece_id = piece_id.get(),
+                    "waking stream"
+                );
                 w.value().1.wake_by_ref();
                 woken.push(*w.key());
             }
@@ -47,11 +53,12 @@ impl TorrentStreams {
     }
 
     fn drop_stream(&self, stream_id: StreamId) {
+        trace!(stream_id, "dropping stream");
         self.wakers_by_stream.remove(&stream_id);
     }
 }
 
-struct FileStream {
+pub struct FileStream {
     torrent: ManagedTorrentHandle,
     streams: Arc<TorrentStreams>,
     stream_id: usize,
@@ -74,7 +81,10 @@ macro_rules! poll_try_io {
         let e = map_io_err!($e);
         match e {
             Ok(r) => r,
-            Err(e) => return Poll::Ready(Err(e)),
+            Err(e) => {
+                debug!("stream error {e:?}");
+                return Poll::Ready(Err(e));
+            }
         }
     }};
 }
@@ -83,10 +93,15 @@ impl AsyncRead for FileStream {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        tbuf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         // if the file is over, return 0
         if self.position == self.file_len {
+            trace!(
+                stream_id = self.stream_id,
+                file_id = self.file_id,
+                "stream completed, EOF"
+            );
             return Poll::Ready(Ok(()));
         }
 
@@ -119,11 +134,12 @@ impl AsyncRead for FileStream {
             have
         }));
         if !have {
+            trace!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %piece_id, "poll pending, not have");
             return Poll::Pending;
         }
 
         // actually stream the piece
-        let buf = buf.initialize_unfilled();
+        let buf = tbuf.initialize_unfilled();
         let file_remaining = self.file_len - self.position;
         let bytes_to_read: usize = poll_try_io!((piece_len as u64)
             .min(buf.len() as u64)
@@ -132,6 +148,12 @@ impl AsyncRead for FileStream {
             .try_into());
 
         let buf = &mut buf[..bytes_to_read];
+        trace!(
+            buflen = buf.len(),
+            stream_id = self.stream_id,
+            file_id = self.file_id,
+            "will write bytes"
+        );
 
         poll_try_io!(poll_try_io!(self.torrent.with_opened_file(
             self.file_id,
@@ -144,6 +166,7 @@ impl AsyncRead for FileStream {
         )));
 
         self.as_mut().position += buf.len() as u64;
+        tbuf.advance(bytes_to_read);
 
         Poll::Ready(Ok(()))
     }
@@ -213,7 +236,7 @@ impl ManagedTorrent {
         })
     }
 
-    pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<impl AsyncRead + AsyncSeek> {
+    pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
         let (fd_len, fd_offset) =
             self.with_opened_file(file_id, |fd| (fd.len, fd.offset_in_torrent))?;
         let streams = self.streams()?;
@@ -227,5 +250,15 @@ impl ManagedTorrent {
             file_torrent_abs_offset: fd_offset,
             torrent: self,
         })
+    }
+}
+
+impl FileStream {
+    pub fn position(&self) -> u64 {
+        self.position
+    }
+
+    pub fn len(&self) -> u64 {
+        self.file_len
     }
 }
