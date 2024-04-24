@@ -122,5 +122,8 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     delete: function (id: number): Promise<void> {
       return invokeAPI<void>("torrent_action_delete", { id });
     },
+    getTorrentStreamUrl: () => {
+      return "";
+    },
   };
 };

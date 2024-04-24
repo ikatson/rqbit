@@ -176,7 +176,6 @@ impl HttpApi {
                     .and_then(|s| s.parse().ok());
                 if let Some(offset) = offset {
                     status = StatusCode::PARTIAL_CONTENT;
-                    info!(offset, "range request offset");
                     stream
                         .seek(SeekFrom::Start(offset))
                         .await

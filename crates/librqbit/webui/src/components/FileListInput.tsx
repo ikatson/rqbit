@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { TorrentDetails, TorrentStats } from "../api-types";
 import { FormCheckbox } from "./forms/FormCheckbox";
 import { CiSquarePlus, CiSquareMinus } from "react-icons/ci";
@@ -6,6 +6,7 @@ import { IconButton } from "./buttons/IconButton";
 import { formatBytes } from "../helper/formatBytes";
 import { ProgressBar } from "./ProgressBar";
 import sortBy from "lodash.sortby";
+import { APIContext } from "../context";
 
 type TorrentFileForCheckbox = {
   id: number;
@@ -86,6 +87,7 @@ const newFileTree = (
 };
 
 const FileTreeComponent: React.FC<{
+  torrentId?: number;
   tree: FileTree;
   torrentDetails: TorrentDetails;
   torrentStats: TorrentStats | null;
@@ -94,7 +96,9 @@ const FileTreeComponent: React.FC<{
   initialExpanded: boolean;
   showProgressBar?: boolean;
   disabled?: boolean;
+  allowStream?: boolean;
 }> = ({
+  torrentId,
   tree,
   selectedFiles,
   setSelectedFiles,
@@ -103,7 +107,9 @@ const FileTreeComponent: React.FC<{
   torrentStats,
   showProgressBar,
   disabled,
+  allowStream,
 }) => {
+  const API = useContext(APIContext);
   let [expanded, setExpanded] = useState(initialExpanded);
   let children = useMemo(() => {
     let getAllChildren = (tree: FileTree): number[] => {
@@ -149,6 +155,16 @@ const FileTreeComponent: React.FC<{
       .reduce((a, b) => a + b, 0);
   };
 
+  const fileLink = (file: TorrentFileForCheckbox) => {
+    if (
+      allowStream &&
+      torrentId != null &&
+      /\.(mp4|mkv|avi)$/.test(file.filename)
+    ) {
+      return API.getTorrentStreamUrl(torrentId, file.id);
+    }
+  };
+
   return (
     <>
       <div className="flex items-center">
@@ -170,6 +186,7 @@ const FileTreeComponent: React.FC<{
       <div className="pl-5" hidden={!expanded}>
         {tree.dirs.map((dir) => (
           <FileTreeComponent
+            torrentId={torrentId}
             torrentDetails={torrentDetails}
             torrentStats={torrentStats}
             key={dir.name}
@@ -179,6 +196,7 @@ const FileTreeComponent: React.FC<{
             initialExpanded={false}
             showProgressBar={showProgressBar}
             disabled={disabled}
+            allowStream={allowStream}
           />
         ))}
         <div className="pl-1">
@@ -197,6 +215,7 @@ const FileTreeComponent: React.FC<{
                 name={`file-${file.id}`}
                 disabled={disabled}
                 onChange={() => handleToggleFile(file.id)}
+                labelLink={fileLink(file)}
               ></FormCheckbox>
               {showProgressBar && (
                 <ProgressBar
@@ -213,19 +232,23 @@ const FileTreeComponent: React.FC<{
 };
 
 export const FileListInput: React.FC<{
+  torrentId?: number;
   torrentDetails: TorrentDetails;
   torrentStats: TorrentStats | null;
   selectedFiles: Set<number>;
   setSelectedFiles: (_: Set<number>) => void;
   showProgressBar?: boolean;
   disabled?: boolean;
+  allowStream?: boolean;
 }> = ({
+  torrentId,
   torrentDetails,
   selectedFiles,
   setSelectedFiles,
   torrentStats,
   showProgressBar,
   disabled,
+  allowStream,
 }) => {
   let fileTree = useMemo(
     () => newFileTree(torrentDetails, torrentStats),
@@ -234,6 +257,7 @@ export const FileListInput: React.FC<{
 
   return (
     <FileTreeComponent
+      torrentId={torrentId}
       torrentDetails={torrentDetails}
       torrentStats={torrentStats}
       tree={fileTree}
@@ -242,6 +266,7 @@ export const FileListInput: React.FC<{
       initialExpanded={true}
       showProgressBar={showProgressBar}
       disabled={disabled}
+      allowStream={allowStream}
     />
   );
 };
