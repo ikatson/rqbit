@@ -10,6 +10,7 @@ export const FormCheckbox: React.FC<{
   onChange?: ChangeEventHandler<HTMLInputElement>;
   children?: React.ReactNode;
   classNames?: string;
+  labelLink?: string | null;
 }> = ({
   checked,
   name,
@@ -19,6 +20,7 @@ export const FormCheckbox: React.FC<{
   help,
   inputType,
   children,
+  labelLink,
 }) => {
   return (
     <div className={`flex gap-3 items-start`}>
@@ -34,7 +36,17 @@ export const FormCheckbox: React.FC<{
         />
       </div>
       <div className="text-sm flex flex-col gap-1">
-        <label htmlFor={name}>{label}</label>
+        {labelLink ? (
+          <a
+            href={labelLink}
+            className="text-blue-600 dark:text-blue-500 hover:underline"
+          >
+            {label}
+          </a>
+        ) : (
+          <label htmlFor={name}>{label}</label>
+        )}
+
         {help && (
           <div className="text-xs text-slate-500 dark:text-slate-300 mb-3">
             {help}

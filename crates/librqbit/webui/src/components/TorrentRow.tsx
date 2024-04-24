@@ -170,11 +170,13 @@ export const TorrentRow: React.FC<{
       {detailsResponse && extendedView && (
         <div className="">
           <FileListInput
+            torrentId={id}
             torrentDetails={detailsResponse}
             torrentStats={statsResponse}
             selectedFiles={selectedFiles}
             setSelectedFiles={updateSelectedFiles}
             disabled={savingSelectedFiles}
+            allowStream
             showProgressBar
           />
         </div>

@@ -166,6 +166,7 @@ export interface RqbitAPI {
   listTorrents: () => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
+  getTorrentStreamUrl: (index: number, file_id: number) => string | null;
   uploadTorrent: (
     data: string | File,
     opts?: AddTorrentOptions,

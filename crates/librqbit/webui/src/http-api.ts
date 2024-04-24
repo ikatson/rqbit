@@ -140,4 +140,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     const r = await makeRequest("GET", "/");
     return r.version;
   },
+  getTorrentStreamUrl: (index: number, file_id: number) => {
+    return apiUrl + `/torrents/${index}/stream/${file_id}`;
+  },
 };
