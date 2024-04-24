@@ -136,6 +136,7 @@ impl TorrentStateInitializing {
             info: self.meta.clone(),
             files,
             chunk_tracker,
+            streams: Arc::new(Default::default()),
         };
         Ok(paused)
     }

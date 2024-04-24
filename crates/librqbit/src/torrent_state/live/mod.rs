@@ -104,6 +104,7 @@ use self::{
 
 use super::{
     paused::TorrentStatePaused,
+    streaming::TorrentStreams,
     utils::{timeit, TimedExistence},
     ManagedTorrentInfo,
 };
@@ -174,6 +175,8 @@ pub struct TorrentStateLive {
     down_speed_estimator: SpeedEstimator,
     up_speed_estimator: SpeedEstimator,
     cancellation_token: CancellationToken,
+
+    pub(crate) streams: Arc<TorrentStreams>,
 }
 
 impl TorrentStateLive {
@@ -219,6 +222,7 @@ impl TorrentStateLive {
             down_speed_estimator,
             up_speed_estimator,
             cancellation_token,
+            streams: paused.streams,
         });
 
         state.spawn(
@@ -647,6 +651,7 @@ impl TorrentStateLive {
             info: self.meta.clone(),
             files,
             chunk_tracker,
+            streams: self.streams.clone(),
         })
     }
 
@@ -691,6 +696,8 @@ impl TorrentStateLive {
                 warn!(file_id=idx, piece_id=id.get(), "bug: update_have_on_piece_completed() returned 0, although this piece is present in the file");
             }
         }
+
+        self.streams.wake_streams_on_piece_completed(id);
 
         if self.is_finished() {
             info!("torrent finished downloading");

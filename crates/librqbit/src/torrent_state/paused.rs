@@ -5,12 +5,13 @@ use crate::{
     type_aliases::OpenedFiles,
 };
 
-use super::ManagedTorrentInfo;
+use super::{streaming::TorrentStreams, ManagedTorrentInfo};
 
 pub struct TorrentStatePaused {
     pub(crate) info: Arc<ManagedTorrentInfo>,
     pub(crate) files: OpenedFiles,
     pub(crate) chunk_tracker: ChunkTracker,
+    pub(crate) streams: Arc<TorrentStreams>,
 }
 
 impl TorrentStatePaused {

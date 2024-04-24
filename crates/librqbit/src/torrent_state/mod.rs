@@ -42,7 +42,6 @@ use initializing::TorrentStateInitializing;
 
 use self::paused::TorrentStatePaused;
 pub use self::stats::{TorrentStats, TorrentStatsState};
-use self::streaming::TorrentStreams;
 
 pub enum ManagedTorrentState {
     Initializing(Arc<TorrentStateInitializing>),
@@ -94,7 +93,6 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    pub(crate) streams: TorrentStreams,
     locked: RwLock<ManagedTorrentLocked>,
 }
 
@@ -551,7 +549,6 @@ impl ManagedTorrentBuilder {
                 only_files: self.only_files,
             }),
             info,
-            streams: Default::default(),
         }))
     }
 }
