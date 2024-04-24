@@ -7,10 +7,7 @@ use futures::Stream;
 use http::StatusCode;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{AsyncRead, AsyncSeek},
-    sync::mpsc::UnboundedSender,
-};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing::warn;
 
@@ -21,7 +18,7 @@ use crate::{
     },
     torrent_state::{
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
-        ManagedTorrentHandle,
+        FileStream, ManagedTorrentHandle,
     },
     tracing_subscriber_config_utils::LineBroadcast,
 };
@@ -243,7 +240,7 @@ impl Api {
         Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
     }
 
-    pub fn api_stream(&self, idx: TorrentId, file_id: usize) -> Result<impl AsyncRead + AsyncSeek> {
+    pub fn api_stream(&self, idx: TorrentId, file_id: usize) -> Result<FileStream> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.stream(file_id)?)
     }

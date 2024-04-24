@@ -5,6 +5,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryStreamExt};
+use http::{HeaderMap, HeaderValue, StatusCode};
 use itertools::Itertools;
 
 use serde::{Deserialize, Serialize};
@@ -162,6 +163,13 @@ impl HttpApi {
             headers: http::HeaderMap,
         ) -> Result<impl IntoResponse> {
             let mut stream = state.api_stream(idx, file_id)?;
+
+            dbg!(&headers);
+
+            let mut status = StatusCode::OK;
+            let mut output_headers = HeaderMap::new();
+            output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
+
             if let Some(range) = headers.get(http::header::RANGE) {
                 let offset: Option<u64> = range
                     .to_str()
@@ -170,15 +178,38 @@ impl HttpApi {
                     .and_then(|s| s.strip_suffix('-'))
                     .and_then(|s| s.parse().ok());
                 if let Some(offset) = offset {
+                    status = StatusCode::PARTIAL_CONTENT;
+                    info!(offset, "range request offset");
                     stream
                         .seek(SeekFrom::Start(offset))
                         .await
                         .context("error seeking")?;
+
+                    output_headers.insert(
+                        http::header::CONTENT_LENGTH,
+                        HeaderValue::from_str(&format!("{}", stream.len() - stream.position()))
+                            .context("bug")?,
+                    );
+                    output_headers.insert(
+                        http::header::CONTENT_RANGE,
+                        HeaderValue::from_str(&format!(
+                            "bytes {}-{}/{}",
+                            stream.position(),
+                            stream.len().saturating_sub(1),
+                            stream.len()
+                        ))
+                        .context("bug")?,
+                    );
+                } else {
+                    output_headers.insert(
+                        http::header::CONTENT_LENGTH,
+                        HeaderValue::from_str(&format!("{}", stream.len())).context("bug")?,
+                    );
                 }
             }
 
             let s = tokio_util::io::ReaderStream::new(stream);
-            Ok(axum::body::Body::from_stream(s))
+            Ok((status, (output_headers, axum::body::Body::from_stream(s))))
         }
 
         async fn torrent_action_pause(
