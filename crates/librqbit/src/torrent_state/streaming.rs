@@ -53,6 +53,7 @@ impl TorrentStreams {
 
 struct FileStream {
     torrent: ManagedTorrentHandle,
+    streams: Arc<TorrentStreams>,
     stream_id: usize,
     file_id: usize,
     position: u64,
@@ -112,8 +113,7 @@ impl AsyncRead for FileStream {
         let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
             let have = ct.get_have_pieces()[piece_id.get() as usize];
             if !have {
-                self.torrent
-                    .streams
+                self.streams
                     .register_waker(self.stream_id, piece_id, cx.waker().clone());
             }
             have
@@ -185,7 +185,7 @@ impl AsyncSeek for FileStream {
 
 impl Drop for FileStream {
     fn drop(&mut self) {
-        self.torrent.streams.drop_stream(self.stream_id)
+        self.streams.drop_stream(self.stream_id)
     }
 }
 
@@ -205,16 +205,21 @@ impl ManagedTorrent {
         })
     }
 
+    fn streams(&self) -> anyhow::Result<Arc<TorrentStreams>> {
+        self.with_state(|s| match s {
+            crate::ManagedTorrentState::Paused(p) => Ok(p.streams.clone()),
+            crate::ManagedTorrentState::Live(l) => Ok(l.streams.clone()),
+            _ => anyhow::bail!("invalid state"),
+        })
+    }
+
     pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<impl AsyncRead + AsyncSeek> {
         let (fd_len, fd_offset) =
             self.with_opened_file(file_id, |fd| (fd.len, fd.offset_in_torrent))?;
+        let streams = self.streams()?;
         Ok(FileStream {
-            stream_id: {
-                let this = &self;
-                &this.streams
-            }
-            .next_id(),
-
+            stream_id: streams.next_id(),
+            streams,
             file_id,
             position: 0,
 
