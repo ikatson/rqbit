@@ -1092,10 +1092,9 @@ impl Session {
                 warn!(error=?e, "error deleting torrent cleanly");
             }
             (Ok(Some(paused)), true) => {
-                for file in paused.files.iter() {
-                    drop(file.take()?);
-                    if let Err(e) = std::fs::remove_file(&file.filename) {
-                        warn!(?file.filename, error=?e, "could not delete file");
+                for (id, fi) in removed.info().file_infos.iter().enumerate() {
+                    if let Err(e) = paused.files.remove_file(id, &fi.filename) {
+                        warn!(?fi.filename, error=?e, "could not delete file");
                     }
                 }
             }

@@ -1,6 +1,4 @@
 use std::{
-    collections::VecDeque,
-    io::{Read, Seek, SeekFrom},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -10,11 +8,10 @@ use std::{
 
 use anyhow::Context;
 use dashmap::DashMap;
+use itertools::Itertools;
 use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 use tokio::io::{AsyncRead, AsyncSeek};
-use tracing::{debug, trace};
-
-use crate::{opened_file::OpenedFile, type_aliases::OpenedFiles, ManagedTorrent};
+use tracing::{debug, info, trace, warn};
 
 use super::ManagedTorrentHandle;
 
@@ -54,6 +51,7 @@ pub(crate) struct TorrentStreams {
 
 struct CurrentPiece {
     id: ValidPieceIndex,
+    piece_offset: u32,
     piece_remaining: u32,
 }
 
@@ -72,6 +70,7 @@ fn compute_current_piece(
     let piece_len = lengths.piece_length(piece_id);
     Some(CurrentPiece {
         id: piece_id,
+        piece_offset: (abs_pos % dpl as u64).try_into().ok()?,
         piece_remaining: (piece_len as u64 - (abs_pos % dpl as u64))
             .try_into()
             .ok()?,
@@ -236,18 +235,27 @@ impl AsyncRead for FileStream {
             "will write bytes"
         );
 
-        poll_try_io!(poll_try_io!(self.torrent.with_opened_file(
+        poll_try_io!(poll_try_io!(self.torrent.with_storage_and_file(
             self.file_id,
-            |fd| {
-                let mut g = fd.file.lock();
-                g.seek(SeekFrom::Start(self.position))?;
-                g.read_exact(buf)?;
+            |files, _fi| {
+                files.pread_exact(self.file_id, self.position, buf)?;
                 Ok::<_, anyhow::Error>(())
             }
         )));
 
         self.as_mut().advance(bytes_to_read as u64);
         tbuf.advance(bytes_to_read);
+        self.streams
+            .streams
+            .get_mut(&self.stream_id)
+            .unwrap()
+            .value_mut()
+            .position = self.position;
+
+        // If the piece was switched, gc the current one.
+        if bytes_to_read == current.piece_remaining as usize {
+            self.torrent.maybe_garbage_collect_piece(current.id);
+        }
 
         Poll::Ready(Ok(()))
     }
@@ -292,28 +300,31 @@ impl Drop for FileStream {
 }
 
 impl ManagedTorrent {
-    fn with_opened_files<F, R>(&self, f: F) -> anyhow::Result<R>
+    fn garbage_collection_needed(&self) -> bool {
+        self.with_state(|s| match s {
+            crate::ManagedTorrentState::Paused(p) => p.files.garbage_collection_needed(),
+            crate::ManagedTorrentState::Live(l) => l.files.garbage_collection_needed(),
+            _ => false,
+        })
+    }
+
+    fn with_storage_and_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
     where
-        F: FnOnce(&OpenedFiles) -> R,
+        F: FnOnce(&dyn TorrentStorage, &FileInfo) -> R,
     {
         self.with_state(|s| {
             let files = match s {
                 crate::ManagedTorrentState::Paused(p) => &p.files,
                 crate::ManagedTorrentState::Live(l) => &l.files,
-                s => anyhow::bail!("with_opened_file: invalid state {}", s.name()),
+                _ => anyhow::bail!("invalid state"),
             };
-            Ok(f(files))
+            let fi = self
+                .info()
+                .file_infos
+                .get(file_id)
+                .context("invalid file")?;
+            Ok(f(files, fi))
         })
-    }
-
-    fn with_opened_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
-    where
-        F: FnOnce(&OpenedFile) -> R,
-    {
-        self.with_opened_files(|opened_files| {
-            let fd = opened_files.get(file_id).context("invalid file id")?;
-            Ok(f(fd))
-        })?
     }
 
     fn streams(&self) -> anyhow::Result<Arc<TorrentStreams>> {
@@ -326,7 +337,7 @@ impl ManagedTorrent {
 
     fn maybe_reconnect_needed_peers_for_file(&self, file_id: usize) -> bool {
         // If we have the full file, don't bother.
-        if let Ok(true) = self.with_opened_file(file_id, |f| f.approx_is_finished()) {
+        if self.is_file_finished(file_id) {
             return false;
         }
         self.with_state(|state| {
@@ -337,9 +348,77 @@ impl ManagedTorrent {
         true
     }
 
+    fn is_file_finished(&self, file_id: usize) -> bool {
+        self.with_chunk_tracker(|ct| ct.is_file_finished(&self.info.file_infos[file_id]))
+            .unwrap_or(false)
+    }
+
+    fn maybe_garbage_collect_piece(&self, piece_id: ValidPieceIndex) {
+        fn gc(
+            piece_id: ValidPieceIndex,
+            lengths: &Lengths,
+            files: &dyn TorrentStorage,
+            streams: &TorrentStreams,
+            chunk_tracker: &mut ChunkTracker,
+        ) -> anyhow::Result<()> {
+            info!(
+                piece_id = piece_id.get(),
+                "gc: calling maybe_garbage_collect_piece()"
+            );
+
+            // TODO: maybe iterate all needed pieces, not just streamed?
+            if streams.iter_next_pieces(lengths).contains(&piece_id) {
+                info!(piece_id = piece_id.get(), "gc: still needed by someone");
+                // something still needs the piece, don't remove it.
+                return Ok(());
+            }
+
+            if files.garbage_collect_piece(piece_id) {
+                debug!(piece_id = piece_id.get(), "gc: removed piece");
+                chunk_tracker.mark_piece_broken(piece_id);
+            }
+            Ok(())
+        }
+
+        let res = self.with_state_mut(|s| match s {
+            crate::ManagedTorrentState::Initializing(_) => todo!(),
+            crate::ManagedTorrentState::Paused(p) => {
+                if p.files.garbage_collection_needed() {
+                    gc(
+                        piece_id,
+                        &self.info.lengths,
+                        &p.files,
+                        &p.streams,
+                        &mut p.chunk_tracker,
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            crate::ManagedTorrentState::Live(l) => {
+                if l.files.garbage_collection_needed() {
+                    let mut g = l.lock_write("gc");
+
+                    if let Ok(c) = g.get_chunks_mut() {
+                        gc(piece_id, &self.info.lengths, &l.files, &l.streams, c)
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+            crate::ManagedTorrentState::Error(_) => todo!(),
+            crate::ManagedTorrentState::None => todo!(),
+        });
+        if let Err(e) = res {
+            warn!("gc failed: {}", e);
+        }
+    }
+
     pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
         let (fd_len, fd_offset) =
-            self.with_opened_file(file_id, |fd| (fd.len, fd.offset_in_torrent))?;
+            self.with_storage_and_file(file_id, |_fd, fi| (fi.len, fi.offset_in_torrent))?;
         let streams = self.streams()?;
         let s = FileStream {
             stream_id: streams.next_id(),

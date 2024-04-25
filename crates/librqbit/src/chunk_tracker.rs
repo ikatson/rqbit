@@ -5,7 +5,10 @@ use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
 
-use crate::type_aliases::{FilePriorities, OpenedFiles, BF};
+use crate::{
+    file_info::FileInfo,
+    type_aliases::{FileInfos, FilePriorities, BF},
+};
 
 pub struct ChunkTracker {
     // This forms the basis of a "queue" to pull from.
@@ -28,6 +31,9 @@ pub struct ChunkTracker {
     // The pieces that the user selected. This doesn't change unless update_only_files
     // was called.
     selected: BF,
+
+    // How many bytes do we have per each file.
+    per_file_bytes: Vec<u64>,
 
     lengths: Lengths,
 
@@ -128,6 +134,7 @@ impl ChunkTracker {
         // Selected pieces are the ones the user has selected
         selected_pieces: BF,
         lengths: Lengths,
+        file_infos: &FileInfos,
     ) -> anyhow::Result<Self> {
         let needed_pieces = compute_queued_pieces(&have_pieces, &selected_pieces)
             .context("error computing needed pieces")?;
@@ -143,9 +150,42 @@ impl ChunkTracker {
             lengths,
             have: have_pieces,
             hns: HaveNeededSelected::default(),
+            per_file_bytes: vec![0; file_infos.len()],
         };
+        ct.recalculate_per_file_bytes(file_infos);
         ct.hns = ct.calc_hns();
         Ok(ct)
+    }
+
+    fn recalculate_per_file_bytes(&mut self, file_infos: &FileInfos) {
+        for (slot, fi) in self.per_file_bytes.iter_mut().zip(file_infos.iter()) {
+            *slot = fi
+                .piece_range
+                .clone()
+                .filter(|p| self.have[*p as usize])
+                .map(|id| {
+                    self.lengths
+                        .size_of_piece_in_file(id, fi.offset_in_torrent, fi.len)
+                })
+                .sum();
+        }
+    }
+
+    pub fn new_empty(lengths: Lengths, file_infos: &FileInfos) -> anyhow::Result<Self> {
+        let have = BF::from_boxed_slice(vec![0; lengths.piece_bitfield_bytes()].into_boxed_slice());
+        let selected = have.clone();
+        let chunk_status =
+            BF::from_boxed_slice(vec![0; lengths.chunk_bitfield_bytes()].into_boxed_slice());
+        let queued = have.clone();
+        Ok(Self {
+            queue_pieces: queued,
+            chunk_status,
+            have,
+            selected,
+            lengths,
+            per_file_bytes: vec![0; file_infos.len()],
+            hns: Default::default(),
+        })
     }
 
     pub fn get_lengths(&self) -> &Lengths {
@@ -182,12 +222,12 @@ impl ChunkTracker {
     pub(crate) fn iter_queued_pieces<'a>(
         &'a self,
         file_priorities: &'a FilePriorities,
-        opened_files: &'a OpenedFiles,
+        opened_files: &'a FileInfos,
     ) -> impl Iterator<Item = ValidPieceIndex> + 'a {
         file_priorities
             .iter()
             .filter_map(|p| opened_files.get(*p))
-            .filter(|f| !f.approx_is_finished())
+            // .filter(|f| !f.approx_is_finished())
             .flat_map(|f| f.iter_piece_priorities())
             .filter(|id| self.queue_pieces[*id])
             .filter_map(|id| id.try_into().ok())
@@ -226,7 +266,12 @@ impl ChunkTracker {
         {
             return;
         }
-        debug!("remarking piece={} as broken", index);
+        self.mark_piece_broken(index)
+    }
+
+    pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) {
+        debug!("marking piece={} as broken", index);
+        self.have.set(index.get() as usize, false);
         self.queue_pieces.set(index.get() as usize, true);
         if let Some(s) = self.chunk_status.get_mut(self.lengths.chunk_range(index)) {
             s.fill(false);
@@ -369,8 +414,39 @@ impl ChunkTracker {
         Ok(res)
     }
 
+
     pub(crate) fn get_selected_pieces(&self) -> &BF {
         &self.selected
+
+    pub fn is_file_finished(&self, file_info: &FileInfo) -> bool {
+        self.have
+            .get(file_info.piece_range_usize())
+            .map(|r| r.all())
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.get_hns().finished()
+    }
+
+    pub fn per_file_have_bytes(&self) -> &[u64] {
+        &self.per_file_bytes
+    }
+
+    // Returns remaining bytes
+    pub fn update_file_have_on_piece_completed(
+        &mut self,
+        piece_id: ValidPieceIndex,
+        file_id: usize,
+        file_info: &FileInfo,
+    ) -> u64 {
+        let diff_have = self.lengths.size_of_piece_in_file(
+            piece_id.get(),
+            file_info.offset_in_torrent,
+            file_info.len,
+        );
+        self.per_file_bytes[file_id] += diff_have;
+        file_info.len.saturating_sub(self.per_file_bytes[file_id])
     }
 }
 
@@ -502,7 +578,13 @@ mod tests {
         let initial_selected = BF::from_boxed_slice(vec![u8::MAX; bf_len].into_boxed_slice());
 
         // Initially, we need all files and all pieces.
-        let mut ct = ChunkTracker::new(initial_have.clone(), initial_selected.clone(), l).unwrap();
+        let mut ct = ChunkTracker::new(
+            initial_have.clone(),
+            initial_selected.clone(),
+            l,
+            &Default::default(),
+        )
+        .unwrap();
 
         // Select all file, no changes.
         assert_eq!(
