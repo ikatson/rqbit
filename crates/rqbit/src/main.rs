@@ -312,7 +312,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                         };
                         let peer_stats = &live_stats.snapshot.peer_stats;
                         info!(
-                            "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}}}",
+                            "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}, known: {}}}",
                             idx,
                             downloaded_pct,
                             SF::new(progress),
@@ -324,6 +324,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             peer_stats.live,
                             peer_stats.queued + peer_stats.connecting,
                             peer_stats.dead,
+                            peer_stats.seen,
                         );
                     }
                 });
