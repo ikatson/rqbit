@@ -984,7 +984,7 @@ impl PeerHandler {
                         .iter_next_pieces(&self.state.lengths)
                         .filter(|pid| {
                             !chunk_tracker.is_piece_have(*pid)
-                                && chunk_tracker.is_piece_queued(*pid)
+                                && !g.inflight_pieces.contains_key(pid)
                         });
                     let natural_order_pieces =
                         chunk_tracker.iter_queued_pieces(&g.file_priorities, &self.state.files);
