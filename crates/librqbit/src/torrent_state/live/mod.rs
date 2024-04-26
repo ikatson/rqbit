@@ -454,7 +454,7 @@ impl TorrentStateLive {
         let state = self;
         loop {
             let addr = peer_queue_rx.recv().await.context("torrent closed")?;
-            if state.is_finished() {
+            if state.is_finished_and_dont_need_peers() {
                 debug!("ignoring peer {} as we are finished", addr);
                 state.peers.mark_peer_not_needed(addr);
                 continue;
@@ -682,6 +682,16 @@ impl TorrentStateLive {
         self.get_hns().map(|h| h.finished()).unwrap_or_default()
     }
 
+    pub(crate) fn has_active_streams_unfinished_files(&self) -> bool {
+        self.streams
+            .streamed_file_ids()
+            .any(|file_id| !self.files[file_id].approx_is_finished())
+    }
+
+    pub(crate) fn is_finished_and_dont_need_peers(&self) -> bool {
+        self.is_finished() && !self.has_active_streams_unfinished_files()
+    }
+
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
         // if we have all the pieces of the file, reopen it read only
         for (idx, opened_file) in self
@@ -703,9 +713,11 @@ impl TorrentStateLive {
             info!("torrent finished downloading");
             self.finished_notify.notify_waiters();
 
-            // There is not poing being connected to peers that have all the torrent, when
-            // we don't need anything from them, and they don't need anything from us.
-            self.disconnect_all_peers_that_have_full_torrent();
+            if !self.has_active_streams_unfinished_files() {
+                // There is not poing being connected to peers that have all the torrent, when
+                // we don't need anything from them, and they don't need anything from us.
+                self.disconnect_all_peers_that_have_full_torrent();
+            }
         }
         Ok(())
     }
@@ -725,7 +737,7 @@ impl TorrentStateLive {
         }
     }
 
-    fn reconnect_all_not_needed_peers(&self) {
+    pub(crate) fn reconnect_all_not_needed_peers(&self) {
         for pe in self.peers.states.iter() {
             if let PeerState::NotNeeded = pe.value().state.get() {
                 if self.peer_queue_tx.send(*pe.key()).is_err() {
@@ -902,7 +914,7 @@ impl PeerHandler {
 
         self.counters.errors.fetch_add(1, Ordering::Relaxed);
 
-        if self.state.is_finished() {
+        if self.state.is_finished_and_dont_need_peers() {
             trace!("torrent finished, not re-queueing");
             pe.value_mut().state.set(PeerState::NotNeeded, pstats);
             return Ok(());
@@ -1155,7 +1167,7 @@ impl PeerHandler {
 
         // TODO: this check needs to happen more often, we need to update our
         // interested state with the other side, for now we send it only once.
-        if self.state.is_finished() {
+        if self.state.is_finished_and_dont_need_peers() {
             self.tx
                 .send(WriterRequest::Message(MessageOwned::NotInterested))?;
 
@@ -1181,11 +1193,9 @@ impl PeerHandler {
         loop {
             self.wait_for_unchoke().await;
 
-            if self.state.is_finished() {
-                debug!("nothing left to download, looping forever until manage_peer quits");
-                loop {
-                    tokio::time::sleep(Duration::from_secs(86400)).await;
-                }
+            if self.state.is_finished_and_dont_need_peers() {
+                debug!("nothing left to do, disconnecting peer");
+                return Ok(());
             }
 
             // Try steal a pice from a very slow peer first. Otherwise we might wait too long

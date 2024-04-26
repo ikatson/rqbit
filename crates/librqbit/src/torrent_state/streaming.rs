@@ -26,6 +26,7 @@ const PER_STREAM_BUF_PART: u64 = 10;
 const PER_STREAM_BUF_MIN: u64 = 32 * 1024 * 1024;
 
 struct StreamState {
+    file_id: usize,
     current_piece: ValidPieceIndex,
     file_len: u64,
     waker: Option<Waker>,
@@ -119,6 +120,10 @@ impl TorrentStreams {
     fn drop_stream(&self, stream_id: StreamId) {
         trace!(stream_id, "dropping stream");
         self.streams.remove(&stream_id);
+    }
+
+    pub(crate) fn streamed_file_ids(&self) -> impl Iterator<Item = usize> + '_ {
+        self.streams.iter().map(|s| s.value().file_id)
     }
 }
 
@@ -299,6 +304,18 @@ impl ManagedTorrent {
         })
     }
 
+    fn maybe_reconnect_needed_peers_for_file(&self, file_id: usize) {
+        // If we have the full file, don't bother.
+        if let Ok(true) = self.with_opened_file(file_id, |f| f.approx_is_finished()) {
+            return;
+        }
+        self.with_state(|state| {
+            if let crate::ManagedTorrentState::Live(l) = &state {
+                l.reconnect_all_not_needed_peers();
+            }
+        })
+    }
+
     pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
         let (fd_len, fd_offset) =
             self.with_opened_file(file_id, |fd| (fd.len, fd.offset_in_torrent))?;
@@ -314,14 +331,17 @@ impl ManagedTorrent {
             file_torrent_abs_offset: fd_offset,
             torrent: self,
         };
+        s.torrent.maybe_reconnect_needed_peers_for_file(file_id);
         streams.streams.insert(
             s.stream_id,
             StreamState {
+                file_id,
                 current_piece: first_piece,
                 waker: None,
                 file_len: s.file_len,
             },
         );
+
         Ok(s)
     }
 }
