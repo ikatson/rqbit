@@ -67,6 +67,9 @@ impl ValidPieceIndex {
     pub const fn get(&self) -> u32 {
         self.0
     }
+    pub const fn get_usize(&self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl Lengths {

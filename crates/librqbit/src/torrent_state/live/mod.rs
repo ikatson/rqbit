@@ -710,7 +710,9 @@ impl TorrentStateLive {
         self.streams.wake_streams_on_piece_completed(id);
 
         if self.is_finished() {
-            info!("torrent finished downloading");
+            if self.lock_read("chunks").get_chunks()?.get_selected_pieces()[id.get_usize()] {
+                info!("torrent finished downloading");
+            }
             self.finished_notify.notify_waiters();
 
             if !self.has_active_streams_unfinished_files() {
