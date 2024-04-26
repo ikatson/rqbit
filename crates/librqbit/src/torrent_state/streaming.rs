@@ -304,16 +304,17 @@ impl ManagedTorrent {
         })
     }
 
-    fn maybe_reconnect_needed_peers_for_file(&self, file_id: usize) {
+    fn maybe_reconnect_needed_peers_for_file(&self, file_id: usize) -> bool {
         // If we have the full file, don't bother.
         if let Ok(true) = self.with_opened_file(file_id, |f| f.approx_is_finished()) {
-            return;
+            return false;
         }
         self.with_state(|state| {
             if let crate::ManagedTorrentState::Live(l) = &state {
                 l.reconnect_all_not_needed_peers();
             }
-        })
+        });
+        true
     }
 
     pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
@@ -331,7 +332,9 @@ impl ManagedTorrent {
             file_torrent_abs_offset: fd_offset,
             torrent: self,
         };
-        s.torrent.maybe_reconnect_needed_peers_for_file(file_id);
+        if s.torrent.maybe_reconnect_needed_peers_for_file(file_id) {
+            s.torrent.with_opened_file(file_id, |f| f.reopen(false))??;
+        }
         streams.streams.insert(
             s.stream_id,
             StreamState {
