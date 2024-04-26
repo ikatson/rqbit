@@ -123,6 +123,14 @@ impl PeerStateNoMut {
         }
     }
 
+    pub fn not_needed_to_queued(&mut self, counters: &AggregatePeerStatsAtomic) -> bool {
+        if let PeerState::NotNeeded = &self.0 {
+            self.set(PeerState::Queued, counters);
+            return true;
+        }
+        false
+    }
+
     pub fn incoming_connection(
         &mut self,
         peer_id: Id20,

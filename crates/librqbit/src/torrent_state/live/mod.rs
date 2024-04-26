@@ -740,11 +740,11 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn reconnect_all_not_needed_peers(&self) {
-        for pe in self.peers.states.iter() {
-            if let PeerState::NotNeeded = pe.value().state.get() {
-                if self.peer_queue_tx.send(*pe.key()).is_err() {
-                    return;
-                }
+        for mut pe in self.peers.states.iter_mut() {
+            if pe.state.not_needed_to_queued(&self.peers.stats)
+                && self.peer_queue_tx.send(*pe.key()).is_err()
+            {
+                return;
             }
         }
     }
