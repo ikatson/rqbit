@@ -97,3 +97,4 @@ Streaming:
 Other:
 
 - [ ] keepalive is useless, the tieout is 120s, and read timeout is 10s. Need to send keepalive only if nothing was done recently.
+- [x] url should have the filename
