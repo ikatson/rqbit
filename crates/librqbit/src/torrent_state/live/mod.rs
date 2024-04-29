@@ -707,7 +707,8 @@ impl TorrentStateLive {
             }
         }
 
-        self.streams.wake_streams_on_piece_completed(id);
+        self.streams
+            .wake_streams_on_piece_completed(id, &self.meta.lengths);
 
         if self.is_finished() {
             if self.lock_read("chunks").get_chunks()?.get_selected_pieces()[id.get_usize()] {
