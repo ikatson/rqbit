@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use axum::Router;
 
@@ -166,6 +166,9 @@ impl HttpApi {
             let mut status = StatusCode::OK;
             let mut output_headers = HeaderMap::new();
             output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
+
+            let range_header = headers.get(http::header::RANGE);
+            trace!(torrent_id=idx, file_id=file_id, range=?range_header, "request for HTTP stream");
 
             if let Some(range) = headers.get(http::header::RANGE) {
                 let offset: Option<u64> = range

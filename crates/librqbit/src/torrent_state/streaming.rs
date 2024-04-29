@@ -113,8 +113,13 @@ impl TorrentStreams {
             }
         }
 
-        let all = self.streams.iter().map(|s| s.queue(lengths)).collect();
-        Interleave { all }
+        let mut all: Vec<_> = self.streams.iter().map(|s| s.queue(lengths)).collect();
+
+        // Shuffle to decrease determinism and make queueing fairer.
+        use rand::seq::SliceRandom;
+        all.shuffle(&mut rand::thread_rng());
+
+        Interleave { all: all.into() }
     }
 
     pub(crate) fn wake_streams_on_piece_completed(
@@ -241,14 +246,8 @@ impl AsyncRead for FileStream {
             }
         )));
 
-        self.as_mut().position += buf.len() as u64;
+        self.as_mut().advance(bytes_to_read as u64);
         tbuf.advance(bytes_to_read);
-        self.streams
-            .streams
-            .get_mut(&self.stream_id)
-            .unwrap()
-            .value_mut()
-            .position = self.position;
 
         Poll::Ready(Ok(()))
     }
@@ -273,7 +272,8 @@ impl AsyncSeek for FileStream {
             ));
         }
 
-        self.as_mut().position = map_io_err!(new_pos.try_into())?;
+        self.as_mut().set_position(map_io_err!(new_pos.try_into())?);
+        trace!(stream_id = self.stream_id, position = self.position, "seek");
         Ok(())
     }
 
@@ -357,6 +357,8 @@ impl ManagedTorrent {
             },
         );
 
+        debug!(stream_id = s.stream_id, file_id, "started stream");
+
         Ok(s)
     }
 }
@@ -364,6 +366,20 @@ impl ManagedTorrent {
 impl FileStream {
     pub fn position(&self) -> u64 {
         self.position
+    }
+
+    fn advance(&mut self, diff: u64) {
+        self.set_position(self.position + diff)
+    }
+
+    fn set_position(&mut self, new_pos: u64) {
+        self.position = new_pos;
+        self.streams
+            .streams
+            .get_mut(&self.stream_id)
+            .unwrap()
+            .value_mut()
+            .position = new_pos;
     }
 
     pub fn len(&self) -> u64 {
