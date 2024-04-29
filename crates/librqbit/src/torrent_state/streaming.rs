@@ -300,9 +300,9 @@ impl ManagedTorrent {
             let files = match s {
                 crate::ManagedTorrentState::Paused(p) => &p.files,
                 crate::ManagedTorrentState::Live(l) => &l.files,
-                _ => anyhow::bail!("invalid state"),
+                s => anyhow::bail!("with_opened_file: invalid state {}", s.name()),
             };
-            let fd = files.get(file_id).context("invalid file")?;
+            let fd = files.get(file_id).context("invalid file id")?;
             Ok(f(fd))
         })
     }
@@ -311,7 +311,7 @@ impl ManagedTorrent {
         self.with_state(|s| match s {
             crate::ManagedTorrentState::Paused(p) => Ok(p.streams.clone()),
             crate::ManagedTorrentState::Live(l) => Ok(l.streams.clone()),
-            _ => anyhow::bail!("invalid state"),
+            s => anyhow::bail!("streams: invalid state {}", s.name()),
         })
     }
 

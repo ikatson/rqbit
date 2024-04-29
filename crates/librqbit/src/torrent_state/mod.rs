@@ -55,6 +55,16 @@ pub enum ManagedTorrentState {
 }
 
 impl ManagedTorrentState {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ManagedTorrentState::Initializing(_) => "initializing",
+            ManagedTorrentState::Paused(_) => "paused",
+            ManagedTorrentState::Live(_) => "live",
+            ManagedTorrentState::Error(_) => "error",
+            ManagedTorrentState::None => "<invalid: none>",
+        }
+    }
+
     fn assert_paused(self) -> TorrentStatePaused {
         match self {
             Self::Paused(paused) => paused,
