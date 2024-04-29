@@ -161,7 +161,7 @@ const FileTreeComponent: React.FC<{
       torrentId != null &&
       /\.(mp4|mkv|avi)$/.test(file.filename)
     ) {
-      return API.getTorrentStreamUrl(torrentId, file.id);
+      return API.getTorrentStreamUrl(torrentId, file.id, file.filename);
     }
   };
 

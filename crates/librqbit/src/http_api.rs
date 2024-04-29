@@ -281,7 +281,11 @@ impl HttpApi {
             .route("/torrents/:id/stats", get(torrent_stats_v0))
             .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
             .route("/torrents/:id/peer_stats", get(peer_stats))
-            .route("/torrents/:id/stream/:file_id", get(torrent_stream_file));
+            .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
+            .route(
+                "/torrents/:id/stream/:file_id/*filename",
+                get(torrent_stream_file),
+            );
 
         if !self.opts.read_only {
             app = app
