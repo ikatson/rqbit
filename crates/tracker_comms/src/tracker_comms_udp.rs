@@ -243,9 +243,9 @@ impl UdpTrackerRequester {
             .send(&self.write_buf[..size])
             .await
             .context("error sending")?;
-        let size = self.sock.recv(&mut self.read_buf).await.unwrap();
+        let size = self.sock.recv(&mut self.read_buf).await?;
 
-        let (rtid, response) = Response::parse(&self.read_buf[..size]).unwrap();
+        let (rtid, response) = Response::parse(&self.read_buf[..size])?;
         trace!("received response");
         if tid != rtid {
             bail!("unexpected transaction id");
