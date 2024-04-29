@@ -11,6 +11,7 @@ export const IconButton: React.FC<{
     props;
   const onClickStopPropagation: MouseEventHandler<HTMLAnchorElement> = (e) => {
     e.stopPropagation();
+    e.preventDefault();
     if (disabled) {
       return;
     }
