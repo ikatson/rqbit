@@ -92,4 +92,8 @@ refactor:
 
 Streaming:
 
-- "queued" pieces need to be inversed probably. Not sure. But when streaming, I want to stream files even if they are not checkboxed.
+- [x] I want to stream files even if they are not checkboxed.
+
+Other:
+
+- [ ] keepalive is useless, the tieout is 120s, and read timeout is 10s. Need to send keepalive only if nothing was done recently.
