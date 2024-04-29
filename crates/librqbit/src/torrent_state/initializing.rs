@@ -121,8 +121,6 @@ impl TorrentStateInitializing {
                         );
                     }
                 }
-
-                file.reopen(true)?;
             }
             Ok::<_, anyhow::Error>(())
         })?;
