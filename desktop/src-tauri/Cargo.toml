@@ -1,6 +1,6 @@
 [package]
 name = "rqbit-desktop"
-version = "5.6.3"
+version = "5.6.4"
 description = "rqbit torrent client"
 authors = ["you"]
 license = ""
