@@ -34,8 +34,10 @@ use tracing::error_span;
 use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
+use crate::file_info::FileInfo;
 use crate::spawn_utils::BlockingSpawner;
 use crate::torrent_state::stats::LiveStats;
+use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
 
 use initializing::TorrentStateInitializing;
@@ -98,6 +100,7 @@ pub struct ManagedTorrentInfo {
     pub trackers: HashSet<String>,
     pub peer_id: Id20,
     pub lengths: Lengths,
+    pub file_infos: FileInfos,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
 }
@@ -370,11 +373,7 @@ impl ManagedTorrent {
                     resp.total_bytes = hns.total();
                     resp.progress_bytes = hns.progress();
                     resp.finished = hns.finished();
-                    resp.file_progress = p
-                        .files
-                        .iter()
-                        .map(|f| f.have.load(Ordering::Relaxed))
-                        .collect();
+                    resp.file_progress = p.chunk_tracker.per_file_have_bytes().to_owned();
                 }
                 ManagedTorrentState::Live(l) => {
                     resp.state = S::Live;
@@ -384,7 +383,12 @@ impl ManagedTorrent {
                     resp.progress_bytes = hns.progress();
                     resp.finished = hns.finished();
                     resp.uploaded_bytes = l.get_uploaded_bytes();
-                    resp.file_progress = l.get_file_progress();
+                    resp.file_progress = l
+                        .lock_read("file_progress")
+                        .get_chunks()
+                        .ok()
+                        .map(|c| c.per_file_have_bytes().to_owned())
+                        .unwrap_or_default();
                     resp.live = Some(live_stats);
                 }
                 ManagedTorrentState::Error(e) => {
@@ -534,8 +538,21 @@ impl ManagedTorrentBuilder {
 
     pub(crate) fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
+        let file_infos = self
+            .info
+            .iter_file_details(&lengths)?
+            .map(|fd| {
+                Ok::<_, anyhow::Error>(FileInfo {
+                    filename: self.output_folder.join(fd.filename.to_pathbuf()?),
+                    offset_in_torrent: fd.offset,
+                    piece_range: fd.pieces,
+                    len: fd.len,
+                })
+            })
+            .collect::<anyhow::Result<Vec<FileInfo>>>()?;
         let info = Arc::new(ManagedTorrentInfo {
             span,
+            file_infos,
             info: self.info,
             info_hash: self.info_hash,
             out_dir: self.output_folder,
