@@ -156,9 +156,6 @@ impl ChunkTracker {
         &self.have
     }
 
-    pub fn get_selected_pieces(&self) -> &BF {
-        &self.selected
-    }
     pub fn reserve_needed_piece(&mut self, index: ValidPieceIndex) {
         self.queue_pieces.set(index.get() as usize, false)
     }

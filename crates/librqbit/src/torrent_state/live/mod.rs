@@ -176,32 +176,6 @@ pub struct TorrentStateLive {
     cancellation_token: CancellationToken,
 }
 
-fn reopen_necessary_files_for_write(ct: &ChunkTracker, files: &OpenedFiles) -> anyhow::Result<()> {
-    // Reopen files that we don't have, but have selected in write-only mode.
-    for opened_file in files.iter() {
-        let prange = opened_file.piece_range_usize();
-        if prange.is_empty() {
-            continue;
-        }
-        let selected = ct
-            .get_selected_pieces()
-            .get(prange.clone())
-            .with_context(|| format!("bug: bad range get_selected_pieces(), {prange:?}"))?;
-        let have = ct
-            .get_have_pieces()
-            .get(prange.clone())
-            .with_context(|| format!("bug: bad range get_have_pieces(), {prange:?}"))?;
-        let need_write = selected
-            .iter()
-            .zip(have.iter())
-            .any(|(selected, have)| *selected && !*have);
-        if need_write {
-            opened_file.reopen(false)?;
-        }
-    }
-    Ok(())
-}
-
 impl TorrentStateLive {
     pub(crate) fn new(
         paused: TorrentStatePaused,
@@ -215,8 +189,6 @@ impl TorrentStateLive {
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
-
-        reopen_necessary_files_for_write(&paused.chunk_tracker, &paused.files)?;
 
         // TODO: make it configurable
         let file_priorities = {
@@ -661,9 +633,7 @@ impl TorrentStateLive {
             .iter()
             .map(|f| f.take_clone())
             .collect::<anyhow::Result<Vec<_>>>()?;
-        for file in files.iter() {
-            file.reopen(true)?;
-        }
+
         let mut chunk_tracker = g
             .chunks
             .take()
@@ -697,7 +667,6 @@ impl TorrentStateLive {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
         let hns = ct.update_only_files(self.files.iter().map(|f| f.len), only_files)?;
-        reopen_necessary_files_for_write(ct, &self.files)?;
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -720,19 +689,6 @@ impl TorrentStateLive {
             let bytes = opened_file.update_have_on_piece_completed(id.get(), &self.lengths);
             if bytes == 0 {
                 warn!(file_id=idx, piece_id=id.get(), "bug: update_have_on_piece_completed() returned 0, although this piece is present in the file");
-            }
-
-            let have_all = self
-                .lock_read("on_piece_completed_reopen")
-                .get_chunks()?
-                .get_have_pieces()
-                .get(opened_file.piece_range_usize())
-                .with_context(|| {
-                    format!("bug: invalid range {:?}", opened_file.piece_range_usize())
-                })?
-                .all();
-            if have_all {
-                opened_file.reopen(true)?;
             }
         }
 

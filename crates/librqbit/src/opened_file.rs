@@ -7,7 +7,6 @@ use std::{
 use anyhow::Context;
 use librqbit_core::lengths::Lengths;
 use parking_lot::Mutex;
-use tracing::debug;
 
 #[derive(Debug)]
 pub(crate) struct OpenedFile {
@@ -62,22 +61,6 @@ impl OpenedFile {
             offset_in_torrent,
             piece_range,
         }
-    }
-    pub fn reopen(&self, read_only: bool) -> anyhow::Result<()> {
-        let log_suffix = if read_only { " read only" } else { "" };
-
-        let mut open_opts = std::fs::OpenOptions::new();
-        open_opts.read(true);
-        if !read_only {
-            open_opts.write(true).create(false);
-        }
-
-        let mut g = self.file.lock();
-        *g = open_opts
-            .open(&self.filename)
-            .with_context(|| format!("error re-opening {:?}{log_suffix}", self.filename))?;
-        debug!("reopened {:?}{log_suffix}", self.filename);
-        Ok(())
     }
 
     pub fn take(&self) -> anyhow::Result<File> {
