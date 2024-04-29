@@ -16,10 +16,6 @@ use crate::{
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
-fn ensure_file_length(file: &File, length: u64) -> anyhow::Result<()> {
-    Ok(file.set_len(length)?)
-}
-
 pub struct TorrentStateInitializing {
     pub(crate) meta: Arc<ManagedTorrentInfo>,
     pub(crate) only_files: Option<Vec<usize>>,
@@ -107,7 +103,7 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
-                    if let Err(err) = ensure_file_length(&file.file.lock(), file.len) {
+                    if let Err(err) = file.file.lock().set_len(file.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
                             file.filename, file.len, err

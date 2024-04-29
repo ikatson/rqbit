@@ -343,8 +343,13 @@ impl ManagedTorrent {
             torrent: self,
         };
         if s.torrent.maybe_reconnect_needed_peers_for_file(file_id) {
-            s.torrent
-                .with_opened_file(file_id, |fd| fd.reopen(false))??;
+            s.torrent.with_opened_file(file_id, |fd| {
+                fd.reopen(false)?;
+                fd.file
+                    .lock()
+                    .set_len(fd.len)
+                    .context("error setting file length")
+            })??;
         }
         streams.streams.insert(
             s.stream_id,
