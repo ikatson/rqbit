@@ -212,7 +212,7 @@ const FileTreeComponent: React.FC<{
               <FormCheckbox
                 checked={selectedFiles.has(file.id)}
                 label={`${file.filename} (${formatBytes(file.length)})`}
-                name={`file-${file.id}`}
+                name={`torrent-${torrentId}-file-${file.id}`}
                 disabled={disabled}
                 onChange={() => handleToggleFile(file.id)}
                 labelLink={fileLink(file)}
