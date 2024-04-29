@@ -77,6 +77,15 @@ enum SupportedTracker {
     Http(Url),
 }
 
+impl std::fmt::Debug for SupportedTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SupportedTracker::Udp(u) => std::fmt::Display::fmt(u, f),
+            SupportedTracker::Http(u) => std::fmt::Display::fmt(u, f),
+        }
+    }
+}
+
 impl TrackerComms {
     pub fn start(
         info_hash: Id20,
@@ -104,8 +113,11 @@ impl TrackerComms {
             })
             .collect::<Vec<_>>();
         if trackers.is_empty() {
+            debug!(?info_hash, "trackers list is empty");
             return None;
         }
+
+        tracing::trace!(?trackers);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<SocketAddr>(16);
 
@@ -173,6 +185,7 @@ impl TrackerComms {
 
     async fn task_single_tracker_monitor_http(&self, mut tracker_url: Url) -> anyhow::Result<()> {
         let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
+        trace!(url=?tracker_url, "starting monitor");
         loop {
             let stats = self.stats.get();
             let request = tracker_comms_http::TrackerRequest {
@@ -216,6 +229,7 @@ impl TrackerComms {
     }
 
     async fn tracker_one_request_http(&self, tracker_url: Url) -> anyhow::Result<u64> {
+        debug!(url = ?tracker_url, "calling tracker over http");
         let response: reqwest::Response = reqwest::get(tracker_url).await?;
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());

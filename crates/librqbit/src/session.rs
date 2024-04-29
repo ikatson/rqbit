@@ -11,6 +11,7 @@ use std::{
 
 use crate::{
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
+    merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
@@ -254,13 +255,13 @@ fn compute_only_files(
 }
 
 fn merge_two_optional_streams<T>(
-    s1: Option<impl Stream<Item = T> + Send + 'static>,
-    s2: Option<impl Stream<Item = T> + Send + 'static>,
+    s1: Option<impl Stream<Item = T> + Unpin + Send + 'static>,
+    s2: Option<impl Stream<Item = T> + Unpin + Send + 'static>,
 ) -> Option<BoxStream<'static, T>> {
     match (s1, s2) {
         (Some(s1), None) => Some(Box::pin(s1)),
         (None, Some(s2)) => Some(Box::pin(s2)),
-        (Some(s1), Some(s2)) => Some(Box::pin(s1.chain(s2))),
+        (Some(s1), Some(s2)) => Some(Box::pin(merge_streams(s1, s2))),
         (None, None) => None,
     }
 }
