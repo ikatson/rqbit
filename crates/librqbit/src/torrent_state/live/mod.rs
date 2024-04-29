@@ -86,8 +86,9 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     session::CheckedIncomingConnection,
+    storage::TorrentStorage,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{FilePriorities, OpenedFiles, PeerHandle, BF},
+    type_aliases::{FilePriorities, FileStorage, PeerHandle, BF},
 };
 
 use self::{
@@ -141,7 +142,7 @@ impl TorrentStateLocked {
             .context("chunk tracker empty, torrent was paused")
     }
 
-    fn get_chunks_mut(&mut self) -> anyhow::Result<&mut ChunkTracker> {
+    pub(crate) fn get_chunks_mut(&mut self) -> anyhow::Result<&mut ChunkTracker> {
         self.chunks
             .as_mut()
             .context("chunk tracker empty, torrent was paused")
@@ -159,7 +160,7 @@ pub struct TorrentStateLive {
     meta: Arc<ManagedTorrentInfo>,
     locked: RwLock<TorrentStateLocked>,
 
-    pub(crate) files: OpenedFiles,
+    pub(crate) files: FileStorage,
 
     stats: AtomicStats,
     lengths: Lengths,
@@ -195,9 +196,15 @@ impl TorrentStateLive {
 
         // TODO: make it configurable
         let file_priorities = {
-            let mut pri = (0..paused.files.len()).collect::<Vec<usize>>();
+            let mut pri = (0..paused.info.file_infos.len()).collect::<Vec<usize>>();
             // sort by filename, cause many torrents have random sort order.
-            pri.sort_unstable_by_key(|id| paused.files.get(*id).map(|op| op.filename.as_path()));
+            pri.sort_unstable_by_key(|id| {
+                paused
+                    .info
+                    .file_infos
+                    .get(*id)
+                    .map(|fi| fi.filename.as_path())
+            });
             pri
         };
 
@@ -482,7 +489,12 @@ impl TorrentStateLive {
         self.meta.peer_id
     }
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
-        FileOps::new(&self.meta.info, &self.files, &self.lengths)
+        FileOps::new(
+            &self.meta.info,
+            &self.files,
+            &self.meta().file_infos,
+            &self.lengths,
+        )
     }
 
     pub(crate) fn lock_read(
@@ -632,12 +644,6 @@ impl TorrentStateLive {
         // It should be impossible to make a fatal error after pausing.
         g.fatal_errors_tx.take();
 
-        let files = self
-            .files
-            .iter()
-            .map(|f| f.take_clone())
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
         let mut chunk_tracker = g
             .chunks
             .take()
@@ -649,7 +655,7 @@ impl TorrentStateLive {
         // g.chunks;
         Ok(TorrentStatePaused {
             info: self.meta.clone(),
-            files,
+            files: self.files.take()?,
             chunk_tracker,
             streams: self.streams.clone(),
         })
@@ -671,7 +677,7 @@ impl TorrentStateLive {
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
-        let hns = ct.update_only_files(self.files.iter().map(|f| f.len), only_files)?;
+        let hns = ct.update_only_files(self.meta().file_infos.iter().map(|f| f.len), only_files)?;
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -682,41 +688,49 @@ impl TorrentStateLive {
         self.get_hns().map(|h| h.finished()).unwrap_or_default()
     }
 
-    pub(crate) fn has_active_streams_unfinished_files(&self) -> bool {
+    fn has_active_streams_unfinished_files(&self, state: &TorrentStateLocked) -> bool {
+        let chunks = match state.get_chunks() {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
         self.streams
             .streamed_file_ids()
-            .any(|file_id| !self.files[file_id].approx_is_finished())
+            .any(|file_id| !chunks.is_file_finished(&self.meta.file_infos[file_id]))
     }
 
-    pub(crate) fn is_finished_and_dont_need_peers(&self) -> bool {
-        self.is_finished() && !self.has_active_streams_unfinished_files()
+    fn is_finished_and_dont_need_peers(&self) -> bool {
+        self.is_finished()
+            && !self.has_active_streams_unfinished_files(
+                &self.lock_read("is_finished_and_dont_need_peers"),
+            )
     }
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
+        let mut g = self.lock_write("on_piece_completed");
+        let chunks = g.get_chunks_mut()?;
+
         // if we have all the pieces of the file, reopen it read only
-        for (idx, opened_file) in self
-            .files
+        for (idx, file_info) in self
+            .meta()
+            .file_infos
             .iter()
             .enumerate()
-            .skip_while(|fd| !fd.1.piece_range.contains(&id.get()))
-            .take_while(|fd| fd.1.piece_range.contains(&id.get()))
+            .skip_while(|(_, fi)| !fi.piece_range.contains(&id.get()))
+            .take_while(|(_, fi)| fi.piece_range.contains(&id.get()))
         {
-            let bytes = opened_file.update_have_on_piece_completed(id.get(), &self.lengths);
-            if bytes == 0 {
-                warn!(file_id=idx, piece_id=id.get(), "bug: update_have_on_piece_completed() returned 0, although this piece is present in the file");
-            }
+            let _remaining = chunks.update_file_have_on_piece_completed(id, idx, file_info);
         }
 
         self.streams
             .wake_streams_on_piece_completed(id, &self.meta.lengths);
 
-        if self.is_finished() {
-            if self.lock_read("chunks").get_chunks()?.get_selected_pieces()[id.get_usize()] {
+        if chunks.is_finished() {
+            if chunks.get_selected_pieces()[id.get_usize()] {
                 info!("torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
 
-            if !self.has_active_streams_unfinished_files() {
+            if !self.has_active_streams_unfinished_files(&g) {
                 // There is not poing being connected to peers that have all the torrent, when
                 // we don't need anything from them, and they don't need anything from us.
                 self.disconnect_all_peers_that_have_full_torrent();
@@ -748,13 +762,6 @@ impl TorrentStateLive {
                 return;
             }
         }
-    }
-
-    pub(crate) fn get_file_progress(&self) -> Vec<u64> {
-        self.files
-            .iter()
-            .map(|fd| fd.have.load(Ordering::Relaxed))
-            .collect()
     }
 }
 
@@ -989,8 +996,8 @@ impl PeerHandler {
                             !chunk_tracker.is_piece_have(*pid)
                                 && !g.inflight_pieces.contains_key(pid)
                         });
-                    let natural_order_pieces =
-                        chunk_tracker.iter_queued_pieces(&g.file_priorities, &self.state.files);
+                    let natural_order_pieces = chunk_tracker
+                        .iter_queued_pieces(&g.file_priorities, &self.state.meta().file_infos);
                     for n in priority_streamed_pieces.chain(natural_order_pieces) {
                         if bf.get(n.get() as usize).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
