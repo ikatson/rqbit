@@ -142,7 +142,6 @@ impl PeerStates {
                         begin: req.offset,
                         length: req.size,
                     })));
-                live.inflight_requests.remove(&req);
             }
         });
     }

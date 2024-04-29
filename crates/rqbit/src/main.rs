@@ -321,8 +321,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             up_speed.mbps(),
                             SF::new(live_stats.snapshot.uploaded_bytes),
                             eta,
-                            peer_stats.live + peer_stats.connecting,
-                            peer_stats.queued,
+                            peer_stats.live,
+                            peer_stats.queued + peer_stats.connecting,
                             peer_stats.dead,
                         );
                     }
