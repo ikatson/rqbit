@@ -10,8 +10,10 @@ use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
 use crate::{
-    chunk_tracker::ChunkTracker, file_ops::FileOps, opened_file::OpenedFile,
-    type_aliases::OpenedFiles,
+    chunk_tracker::ChunkTracker,
+    file_ops::FileOps,
+    opened_file::OpenedFile,
+    storage::{FilesystemStorage, InMemoryGarbageCollectingStorage, TorrentStorage},
 };
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
@@ -37,7 +39,23 @@ impl TorrentStateInitializing {
     }
 
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
-        let mut files = OpenedFiles::new();
+        // Return in-memory store
+        let store =
+            InMemoryGarbageCollectingStorage::new(self.meta.lengths, self.meta.file_infos.clone())?;
+        let ct = ChunkTracker::new_empty(self.meta.lengths, &self.meta.file_infos)?;
+
+        Ok(TorrentStatePaused {
+            info: self.meta.clone(),
+            files: Box::new(store),
+            chunk_tracker: ct,
+            streams: Arc::new(Default::default()),
+        })
+
+        // self.check_disk().await
+    }
+
+    pub async fn check_disk(&self) -> anyhow::Result<TorrentStatePaused> {
+        let mut files = Vec::<OpenedFile>::new();
         for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
             let mut full_path = self.meta.out_dir.clone();
             let relative_path = file_details
@@ -64,26 +82,21 @@ impl TorrentStateInitializing {
                     .with_context(|| format!("error creating {:?}", &full_path))?;
                 OpenOptions::new().read(true).write(true).open(&full_path)?
             };
-            files.push(OpenedFile::new(
-                file,
-                full_path,
-                0,
-                file_details.len,
-                file_details.offset,
-                file_details.pieces,
-            ));
+            files.push(OpenedFile::new(file));
         }
+        let files: Box<dyn TorrentStorage> = Box::new(FilesystemStorage::new(files));
 
         debug!("computed lengths: {:?}", &self.meta.lengths);
 
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
-            FileOps::new(&self.meta.info, &files, &self.meta.lengths).initial_check(
-                self.only_files.as_deref(),
+            FileOps::new(
+                &self.meta.info,
                 &files,
+                &self.meta.file_infos,
                 &self.meta.lengths,
-                &self.checked_bytes,
             )
+            .initial_check(self.only_files.as_deref(), &self.checked_bytes)
         })?;
 
         info!(
@@ -95,7 +108,7 @@ impl TorrentStateInitializing {
 
         // Ensure file lenghts are correct, and reopen read-only.
         self.meta.spawner.spawn_block_in_place(|| {
-            for (idx, file) in files.iter().enumerate() {
+            for (idx, fi) in self.meta.file_infos.iter().enumerate() {
                 if self
                     .only_files
                     .as_ref()
@@ -103,16 +116,16 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
-                    if let Err(err) = file.file.lock().set_len(file.len) {
+                    if let Err(err) = files.ensure_file_length(idx, fi.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
-                            file.filename, file.len, err
+                            fi.filename, fi.len, err
                         );
                     } else {
                         debug!(
                             "Set length for file {:?} to {} in {:?}",
-                            file.filename,
-                            SF::new(file.len),
+                            fi.filename,
+                            SF::new(fi.len),
                             now.elapsed()
                         );
                     }
@@ -125,6 +138,7 @@ impl TorrentStateInitializing {
             initial_check_results.have_pieces,
             initial_check_results.selected_pieces,
             self.meta.lengths,
+            &self.meta.file_infos,
         )
         .context("error creating chunk tracker")?;
 
