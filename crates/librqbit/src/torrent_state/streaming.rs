@@ -351,15 +351,7 @@ impl ManagedTorrent {
             file_torrent_abs_offset: fd_offset,
             torrent: self,
         };
-        if s.torrent.maybe_reconnect_needed_peers_for_file(file_id) {
-            // TODO: get rid of reopening files, it's such a source of bugs and complexity
-            s.torrent.with_opened_files(|files| {
-                for file in files {
-                    file.reopen(false)?;
-                }
-                Ok::<_, anyhow::Error>(())
-            })??;
-        }
+        s.torrent.maybe_reconnect_needed_peers_for_file(file_id);
         streams.streams.insert(
             s.stream_id,
             StreamState {

@@ -368,6 +368,10 @@ impl ChunkTracker {
         self.hns = res;
         Ok(res)
     }
+
+    pub(crate) fn get_selected_pieces(&self) -> &BF {
+        &self.selected
+    }
 }
 
 #[cfg(test)]
