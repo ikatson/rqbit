@@ -1,6 +1,4 @@
 use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -16,8 +14,9 @@ use sha1w::{ISha1, Sha1};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    opened_file::OpenedFile,
-    type_aliases::{OpenedFiles, PeerHandle, BF},
+    file_info::FileInfo,
+    storage::TorrentStorage,
+    type_aliases::{FileInfos, PeerHandle, BF},
 };
 
 pub(crate) struct InitialCheckResults {
@@ -44,7 +43,9 @@ pub(crate) struct InitialCheckResults {
 }
 
 pub fn update_hash_from_file<Sha1: ISha1>(
-    file: &mut File,
+    file_id: usize,
+    mut pos: u64,
+    files: &dyn TorrentStorage,
     hash: &mut Sha1,
     buf: &mut [u8],
     mut bytes_to_read: usize,
@@ -52,10 +53,12 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     let mut read = 0;
     while bytes_to_read > 0 {
         let chunk = std::cmp::min(buf.len(), bytes_to_read);
-        file.read_exact(&mut buf[..chunk])
+        files
+            .pread_exact(file_id, pos, &mut buf[..chunk])
             .with_context(|| format!("failed reading chunk of size {chunk}, read so far {read}"))?;
         bytes_to_read -= chunk;
         read += chunk;
+        pos += chunk as u64;
         hash.update(&buf[..chunk]);
     }
     Ok(())
@@ -63,7 +66,8 @@ pub fn update_hash_from_file<Sha1: ISha1>(
 
 pub(crate) struct FileOps<'a> {
     torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
-    files: &'a OpenedFiles,
+    files: &'a dyn TorrentStorage,
+    file_infos: &'a FileInfos,
     lengths: &'a Lengths,
     phantom_data: PhantomData<Sha1>,
 }
@@ -71,12 +75,14 @@ pub(crate) struct FileOps<'a> {
 impl<'a> FileOps<'a> {
     pub fn new(
         torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
-        files: &'a OpenedFiles,
+        files: &'a dyn TorrentStorage,
+        file_infos: &'a FileInfos,
         lengths: &'a Lengths,
     ) -> Self {
         Self {
             torrent,
             files,
+            file_infos,
             lengths,
             phantom_data: PhantomData,
         }
@@ -85,8 +91,6 @@ impl<'a> FileOps<'a> {
     pub fn initial_check(
         &self,
         only_files: Option<&[usize]>,
-        opened_files: &OpenedFiles,
-        lengths: &Lengths,
         progress: &AtomicU64,
     ) -> anyhow::Result<InitialCheckResults> {
         let mut needed_pieces =
@@ -102,20 +106,20 @@ impl<'a> FileOps<'a> {
         #[derive(Debug)]
         struct CurrentFile<'a> {
             index: usize,
-            fd: &'a OpenedFile,
+            fi: &'a FileInfo,
             full_file_required: bool,
             processed_bytes: u64,
             is_broken: bool,
         }
         impl<'a> CurrentFile<'a> {
             fn remaining(&self) -> u64 {
-                self.fd.len - self.processed_bytes
+                self.fi.len - self.processed_bytes
             }
             fn mark_processed_bytes(&mut self, bytes: u64) {
                 self.processed_bytes += bytes
             }
         }
-        let mut file_iterator = self.files.iter().enumerate().map(|(idx, fd)| {
+        let mut file_iterator = self.file_infos.iter().enumerate().map(|(idx, fi)| {
             let full_file_required = if let Some(only_files) = only_files {
                 only_files.contains(&idx)
             } else {
@@ -123,7 +127,7 @@ impl<'a> FileOps<'a> {
             };
             CurrentFile {
                 index: idx,
-                fd,
+                fi,
                 full_file_required,
                 processed_bytes: 0,
                 is_broken: false,
@@ -172,19 +176,17 @@ impl<'a> FileOps<'a> {
                     continue;
                 }
 
-                let mut fd = current_file.fd.file.lock();
-
-                fd.seek(SeekFrom::Start(pos))
-                    .context("bug? error seeking")?;
                 if let Err(err) = update_hash_from_file(
-                    &mut fd,
+                    current_file.index,
+                    pos,
+                    self.files,
                     &mut computed_hash,
                     &mut read_buffer,
                     to_read_in_file,
                 ) {
                     debug!(
                         "error reading from file {} ({:?}) at {}: {:#}",
-                        current_file.index, current_file.fd.filename, pos, &err
+                        current_file.index, current_file.fi.filename, pos, &err
                     );
                     current_file.is_broken = true;
                     some_files_broken = true;
@@ -216,10 +218,6 @@ impl<'a> FileOps<'a> {
                     piece_info.piece_index
                 );
                 have_bytes += piece_info.len as u64;
-                for file_id in piece_files.drain(..) {
-                    opened_files[file_id]
-                        .update_have_on_piece_completed(piece_info.piece_index.get(), lengths);
-                }
                 have_pieces.set(piece_info.piece_index.get() as usize, true);
             } else if piece_selected {
                 trace!(
@@ -265,9 +263,8 @@ impl<'a> FileOps<'a> {
             }
             let file_remaining_len = file_len - absolute_offset;
 
-            let to_read_in_file =
+            let to_read_in_file: usize =
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64).try_into()?;
-            let mut file_g = self.files[file_idx].file.lock();
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
                 piece_index,
@@ -276,18 +273,17 @@ impl<'a> FileOps<'a> {
                 absolute_offset,
                 &last_received_chunk
             );
-            file_g
-                .seek(SeekFrom::Start(absolute_offset))
-                .with_context(|| {
-                    format!("error seeking to {absolute_offset}, file id: {file_idx}")
-                })?;
-            update_hash_from_file(&mut file_g, &mut h, &mut buf, to_read_in_file).with_context(
-                || {
-                    format!(
-                        "error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{name:?}\")"
-                    )
-                },
-            )?;
+            update_hash_from_file(
+                file_idx,
+                absolute_offset,
+                self.files,
+                &mut h,
+                &mut buf,
+                to_read_in_file,
+            )
+            .with_context(|| {
+                format!("error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{name:?}\")")
+            })?;
 
             piece_remaining_bytes -= to_read_in_file;
 
@@ -335,7 +331,6 @@ impl<'a> FileOps<'a> {
             let file_remaining_len = file_len - absolute_offset;
             let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64).try_into()?;
 
-            let mut file_g = self.files[file_idx].file.lock();
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
                 chunk_info.piece_index,
@@ -344,13 +339,8 @@ impl<'a> FileOps<'a> {
                 absolute_offset,
                 &chunk_info
             );
-            file_g
-                .seek(SeekFrom::Start(absolute_offset))
-                .with_context(|| {
-                    format!("error seeking to {absolute_offset}, file id: {file_idx}")
-                })?;
-            file_g
-                .read_exact(&mut buf[..to_read_in_file])
+            self.files
+                .pread_exact(file_idx, absolute_offset, &mut buf[..to_read_in_file])
                 .with_context(|| {
                     format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
                 })?;
@@ -388,7 +378,6 @@ impl<'a> FileOps<'a> {
             let remaining_len = file_len - absolute_offset;
             let to_write = std::cmp::min(buf.len() as u64, remaining_len).try_into()?;
 
-            let mut file_g = self.files[file_idx].file.lock();
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
                 chunk_info.piece_index,
@@ -399,13 +388,8 @@ impl<'a> FileOps<'a> {
                 to_write,
                 absolute_offset
             );
-            file_g
-                .seek(SeekFrom::Start(absolute_offset))
-                .with_context(|| {
-                    format!("error seeking to {absolute_offset} in file {file_idx} (\"{name:?}\")")
-                })?;
-            file_g
-                .write_all(&buf[..to_write])
+            self.files
+                .pwrite_all(file_idx, absolute_offset, &buf[..to_write])
                 .with_context(|| format!("error writing to file {file_idx} (\"{name:?}\")"))?;
             buf = &buf[to_write..];
             if buf.is_empty() {
