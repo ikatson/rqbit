@@ -1,5 +1,5 @@
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     sync::{atomic::AtomicU64, Arc},
     time::Instant,
 };

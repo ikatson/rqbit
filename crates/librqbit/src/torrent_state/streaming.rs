@@ -14,7 +14,7 @@ use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{debug, trace};
 
-use crate::{opened_file::OpenedFile, ManagedTorrent};
+use crate::{opened_file::OpenedFile, type_aliases::OpenedFiles, ManagedTorrent};
 
 use super::ManagedTorrentHandle;
 
@@ -292,9 +292,9 @@ impl Drop for FileStream {
 }
 
 impl ManagedTorrent {
-    fn with_opened_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
+    fn with_opened_files<F, R>(&self, f: F) -> anyhow::Result<R>
     where
-        F: FnOnce(&OpenedFile) -> R,
+        F: FnOnce(&OpenedFiles) -> R,
     {
         self.with_state(|s| {
             let files = match s {
@@ -302,9 +302,18 @@ impl ManagedTorrent {
                 crate::ManagedTorrentState::Live(l) => &l.files,
                 s => anyhow::bail!("with_opened_file: invalid state {}", s.name()),
             };
-            let fd = files.get(file_id).context("invalid file id")?;
-            Ok(f(fd))
+            Ok(f(files))
         })
+    }
+
+    fn with_opened_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
+    where
+        F: FnOnce(&OpenedFile) -> R,
+    {
+        self.with_opened_files(|opened_files| {
+            let fd = opened_files.get(file_id).context("invalid file id")?;
+            Ok(f(fd))
+        })?
     }
 
     fn streams(&self) -> anyhow::Result<Arc<TorrentStreams>> {
@@ -343,12 +352,12 @@ impl ManagedTorrent {
             torrent: self,
         };
         if s.torrent.maybe_reconnect_needed_peers_for_file(file_id) {
-            s.torrent.with_opened_file(file_id, |fd| {
-                fd.reopen(false)?;
-                fd.file
-                    .lock()
-                    .set_len(fd.len)
-                    .context("error setting file length")
+            // TODO: get rid of reopening files, it's such a source of bugs and complexity
+            s.torrent.with_opened_files(|files| {
+                for file in files {
+                    file.reopen(false)?;
+                }
+                Ok::<_, anyhow::Error>(())
             })??;
         }
         streams.streams.insert(
