@@ -37,8 +37,6 @@ struct InMemoryExampleStorage {
     lengths: Lengths,
     file_infos: FileInfos,
     map: RwLock<HashMap<ValidPieceIndex, InMemoryPiece>>,
-    // TODO: chunk tracker - rename to PieceTracker and extract chunks out of it (only keep pieces)
-    // this sucker here would track chunks, and the storage above too.
 }
 
 impl InMemoryExampleStorage {

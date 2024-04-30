@@ -1,16 +1,12 @@
 pub mod example;
 pub mod filesystem;
 
-use std::path::Path;
+use std::{any::Any, path::Path};
 
 use crate::torrent_state::ManagedTorrentInfo;
 
-pub trait StorageFactory: Send + Sync {
+pub trait StorageFactory: Send + Sync + Any {
     fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>>;
-
-    fn output_folder(&self) -> Option<&Path> {
-        None
-    }
 }
 
 pub trait TorrentStorage: Send + Sync {
@@ -23,8 +19,4 @@ pub trait TorrentStorage: Send + Sync {
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
-
-    fn output_folder(&self) -> Option<&Path> {
-        None
-    }
 }

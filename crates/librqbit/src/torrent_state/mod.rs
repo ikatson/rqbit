@@ -6,7 +6,6 @@ mod streaming;
 pub mod utils;
 
 use std::collections::HashSet;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -37,7 +36,6 @@ use tracing::warn;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::spawn_utils::BlockingSpawner;
-use crate::storage::filesystem::FilesystemStorageFactory;
 use crate::storage::StorageFactory;
 use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::FileInfos;
@@ -92,6 +90,8 @@ pub(crate) struct ManagedTorrentOptions {
     pub force_tracker_interval: Option<Duration>,
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
+    pub allow_overwrite: bool,
+    pub output_folder: PathBuf,
 }
 
 pub struct ManagedTorrentInfo {
@@ -492,32 +492,9 @@ impl ManagedTorrent {
     }
 }
 
-enum ManagedTorrentBuilderStorage {
-    Filesystem {
-        overwrite: bool,
-        output_folder: PathBuf,
-    },
-    Custom(Box<dyn StorageFactory>),
-}
-
-impl ManagedTorrentBuilderStorage {
-    fn build(self) -> anyhow::Result<Box<dyn StorageFactory>> {
-        let s = match self {
-            ManagedTorrentBuilderStorage::Filesystem {
-                overwrite,
-                output_folder,
-            } => Box::new(FilesystemStorageFactory {
-                output_folder,
-                allow_overwrite: overwrite,
-            }),
-            ManagedTorrentBuilderStorage::Custom(s) => s,
-        };
-        Ok(s)
-    }
-}
-
-pub struct ManagedTorrentBuilder {
+pub(crate) struct ManagedTorrentBuilder {
     info: TorrentMetaV1Info<ByteBufOwned>,
+    output_folder: PathBuf,
     info_hash: Id20,
     force_tracker_interval: Option<Duration>,
     peer_connect_timeout: Option<Duration>,
@@ -526,15 +503,16 @@ pub struct ManagedTorrentBuilder {
     trackers: Vec<String>,
     peer_id: Option<Id20>,
     spawner: Option<BlockingSpawner>,
-    deferred_build_errors: Vec<String>,
-    storage: Option<ManagedTorrentBuilderStorage>,
+    allow_overwrite: bool,
+    storage_factory: Box<dyn StorageFactory>,
 }
 
 impl ManagedTorrentBuilder {
-    pub fn new<P: AsRef<Path>>(
+    pub fn new(
         info: TorrentMetaV1Info<ByteBufOwned>,
         info_hash: Id20,
-        output_folder: P,
+        output_folder: PathBuf,
+        storage_factory: Box<dyn StorageFactory>,
     ) -> Self {
         Self {
             info,
@@ -544,14 +522,11 @@ impl ManagedTorrentBuilder {
             peer_connect_timeout: None,
             peer_read_write_timeout: None,
             only_files: None,
-            deferred_build_errors: Default::default(),
             trackers: Default::default(),
             peer_id: None,
-            // default is filesystem to keep the old API unchanged for now
-            storage: Some(ManagedTorrentBuilderStorage::Filesystem {
-                overwrite: false,
-                output_folder: output_folder.as_ref().to_owned(),
-            }),
+            allow_overwrite: false,
+            output_folder,
+            storage_factory,
         }
     }
 
@@ -565,35 +540,23 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub fn overwrite(&mut self, new_overwrite: bool) -> &mut Self {
-        match self.storage.as_mut() {
-            Some(ManagedTorrentBuilderStorage::Filesystem { overwrite, .. }) => {
-                *overwrite = new_overwrite
-            }
-            _ => self
-                .deferred_build_errors
-                .push("overwrite() called when storage factory was not filesystem".to_owned()),
-        }
-        self
-    }
-
-    pub fn storage_factory(&mut self, factory: Box<dyn StorageFactory>) -> &mut Self {
-        self.storage = Some(ManagedTorrentBuilderStorage::Custom(factory));
-        self
-    }
-
     pub fn force_tracker_interval(&mut self, force_tracker_interval: Duration) -> &mut Self {
         self.force_tracker_interval = Some(force_tracker_interval);
         self
     }
 
-    pub(crate) fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
+    pub fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
         self.spawner = Some(spawner);
         self
     }
 
     pub fn peer_id(&mut self, peer_id: Id20) -> &mut Self {
         self.peer_id = Some(peer_id);
+        self
+    }
+
+    pub fn allow_overwrite(&mut self, value: bool) -> &mut Self {
+        self.allow_overwrite = value;
         self
     }
 
@@ -607,10 +570,7 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub(crate) fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
-        if !self.deferred_build_errors.is_empty() {
-            anyhow::bail!("Errors: {}", self.deferred_build_errors.join(";"))
-        }
+    pub fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
         let file_infos = self
             .info
@@ -625,11 +585,6 @@ impl ManagedTorrentBuilder {
             })
             .collect::<anyhow::Result<Vec<FileInfo>>>()?;
 
-        let storage_factory = self
-            .storage
-            .context("by the time build() is called you must set storage factory")?
-            .build()?;
-
         let info = Arc::new(ManagedTorrentInfo {
             span,
             file_infos,
@@ -643,6 +598,8 @@ impl ManagedTorrentBuilder {
                 force_tracker_interval: self.force_tracker_interval,
                 peer_connect_timeout: self.peer_connect_timeout,
                 peer_read_write_timeout: self.peer_read_write_timeout,
+                allow_overwrite: self.allow_overwrite,
+                output_folder: self.output_folder,
             },
         });
 
@@ -656,7 +613,7 @@ impl ManagedTorrentBuilder {
                 only_files: self.only_files,
             }),
             state_change_notify: Notify::new(),
-            storage_factory,
+            storage_factory: self.storage_factory,
             info,
         }))
     }
