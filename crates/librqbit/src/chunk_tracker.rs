@@ -171,23 +171,6 @@ impl ChunkTracker {
         }
     }
 
-    pub fn new_empty(lengths: Lengths, file_infos: &FileInfos) -> anyhow::Result<Self> {
-        let have = BF::from_boxed_slice(vec![0; lengths.piece_bitfield_bytes()].into_boxed_slice());
-        let selected = have.clone();
-        let chunk_status =
-            BF::from_boxed_slice(vec![0; lengths.chunk_bitfield_bytes()].into_boxed_slice());
-        let queued = have.clone();
-        Ok(Self {
-            queue_pieces: queued,
-            chunk_status,
-            have,
-            selected,
-            lengths,
-            per_file_bytes: vec![0; file_infos.len()],
-            hns: Default::default(),
-        })
-    }
-
     pub fn get_lengths(&self) -> &Lengths {
         &self.lengths
     }
