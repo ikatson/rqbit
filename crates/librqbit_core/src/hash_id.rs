@@ -69,8 +69,8 @@ impl<const N: usize> FromStr for Id<N> {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut out = [0u8; N];
-        if s.len() != N*2 {
-            anyhow::bail!("expected a hex string of length {}", N*2)
+        if s.len() != N * 2 {
+            anyhow::bail!("expected a hex string of length {}", N * 2)
         };
         hex::decode_to_slice(s, &mut out)?;
         Ok(Id(out))
@@ -97,8 +97,9 @@ impl<'de, const N: usize> Deserialize<'de> for Id<N> {
             type Value = Id<N>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a byte array of length ")
-                         .and_then(|_| formatter.write_fmt(format_args!("{}", N)))
+                formatter
+                    .write_str("a byte array of length ")
+                    .and_then(|_| formatter.write_fmt(format_args!("{}", N)))
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
@@ -135,7 +136,7 @@ impl<'de, const N: usize> Deserialize<'de> for Id<N> {
             }
         }
 
-        deserializer.deserialize_any(IdVisitor{})
+        deserializer.deserialize_any(IdVisitor {})
     }
 }
 
@@ -165,8 +166,8 @@ pub type Id32 = Id<32>;
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_set_bit_range() {
@@ -183,5 +184,4 @@ mod tests {
         let str = "06f04cc728bef957a658876ef807f0514e4d715392969998efef584d2c3e435e";
         let _ih = Id32::from_str(str).unwrap();
     }
-
 }
