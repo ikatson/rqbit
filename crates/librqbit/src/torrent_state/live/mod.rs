@@ -203,7 +203,7 @@ impl TorrentStateLive {
                     .info
                     .file_infos
                     .get(*id)
-                    .map(|fi| fi.filename.as_path())
+                    .map(|fi| fi.relative_filename.as_path())
             });
             pri
         };

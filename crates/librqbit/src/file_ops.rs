@@ -186,7 +186,7 @@ impl<'a> FileOps<'a> {
                 ) {
                     debug!(
                         "error reading from file {} ({:?}) at {}: {:#}",
-                        current_file.index, current_file.fi.filename, pos, &err
+                        current_file.index, current_file.fi.relative_filename, pos, &err
                     );
                     current_file.is_broken = true;
                     some_files_broken = true;
