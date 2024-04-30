@@ -1,14 +1,19 @@
 use std::{
     collections::HashMap,
+    fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Context;
 use librqbit_core::lengths::{Lengths, ValidPieceIndex};
 use parking_lot::RwLock;
 
-use crate::{opened_file::OpenedFile, type_aliases::FileInfos};
+use crate::{opened_file::OpenedFile, torrent_state::ManagedTorrentInfo, type_aliases::FileInfos};
+
+pub trait StorageFactory: Send + Sync {
+    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>>;
+}
 
 pub trait TorrentStorage: Send + Sync {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -22,14 +27,52 @@ pub trait TorrentStorage: Send + Sync {
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
 }
 
-pub struct FilesystemStorage {
-    opened_files: Vec<OpenedFile>,
+pub struct FilesystemStorageFactory {
+    pub output_folder: PathBuf,
+    pub allow_overwrite: bool,
 }
 
-impl FilesystemStorage {
-    pub fn new(opened_files: Vec<OpenedFile>) -> Self {
-        Self { opened_files }
+impl StorageFactory for FilesystemStorageFactory {
+    fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>> {
+        let mut files = Vec::<OpenedFile>::new();
+        for file_details in meta.info.iter_file_details(&meta.lengths)? {
+            let mut full_path = self.output_folder.clone();
+            let relative_path = file_details
+                .filename
+                .to_pathbuf()
+                .context("error converting file to path")?;
+            full_path.push(relative_path);
+
+            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+            let file = if self.allow_overwrite {
+                OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+            } else {
+                // create_new does not seem to work with read(true), so calling this twice.
+                OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error creating {:?}", &full_path))?;
+                OpenOptions::new().read(true).write(true).open(&full_path)?
+            };
+            files.push(OpenedFile::new(file));
+        }
+        Ok(Box::new(FilesystemStorage {
+            output_folder: self.output_folder.clone(),
+            opened_files: files,
+        }))
     }
+}
+
+pub struct FilesystemStorage {
+    output_folder: PathBuf,
+    opened_files: Vec<OpenedFile>,
 }
 
 impl TorrentStorage for FilesystemStorage {
@@ -56,7 +99,7 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
-        Ok(std::fs::remove_file(filename)?)
+        Ok(std::fs::remove_file(self.output_folder.join(filename))?)
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
@@ -64,12 +107,14 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(Self::new(
-            self.opened_files
+        Ok(Box::new(Self {
+            opened_files: self
+                .opened_files
                 .iter()
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
-        )))
+            output_folder: self.output_folder.clone(),
+        }))
     }
 }
 

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct FileInfo {
-    pub filename: PathBuf,
+    pub relative_filename: PathBuf,
     pub offset_in_torrent: u64,
     pub piece_range: std::ops::Range<u32>,
     pub len: u64,
