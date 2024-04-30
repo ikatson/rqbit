@@ -303,8 +303,8 @@ impl ManagedTorrent {
     {
         self.with_state(|s| {
             let files = match s {
-                crate::ManagedTorrentState::Paused(p) => &p.files,
-                crate::ManagedTorrentState::Live(l) => &l.files,
+                crate::ManagedTorrentState::Paused(p) => &*p.files,
+                crate::ManagedTorrentState::Live(l) => &*l.files,
                 _ => anyhow::bail!("invalid state"),
             };
             let fi = self
