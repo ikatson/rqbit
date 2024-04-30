@@ -406,6 +406,26 @@ impl ManagedTorrent {
     }
 
     #[inline(never)]
+    pub fn wait_until_initialized(&self) -> BoxFuture<'_, anyhow::Result<()>> {
+        async move {
+            // TODO: rewrite, this polling is horrible
+            loop {
+                let done = self.with_state(|s| match s {
+                    ManagedTorrentState::Initializing(_) => Ok(false),
+                    ManagedTorrentState::Error(e) => bail!("{:?}", e),
+                    ManagedTorrentState::None => bail!("bug: torrent state is None"),
+                    _ => Ok(true),
+                })?;
+                if done {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        .boxed()
+    }
+
+    #[inline(never)]
     pub fn wait_until_completed(&self) -> BoxFuture<'_, anyhow::Result<()>> {
         async move {
             // TODO: rewrite, this polling is horrible
