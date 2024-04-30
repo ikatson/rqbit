@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::{BufReader, BufWriter, Read},
@@ -15,7 +16,7 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
-    storage::StorageFactory,
+    storage::{filesystem::FilesystemStorageFactory, StorageFactory},
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
@@ -96,11 +97,12 @@ impl SessionDatabase {
             torrents: self
                 .torrents
                 .iter()
-                .filter_map(|(id, torrent)| {
-                    // This will skip serializing torrents that don't have an output folder.
-                    // This is for backwards compat not to change serialization format.
-                    let output_folder = torrent.storage_factory.output_folder()?;
-                    Some((
+                // We don't support serializing / deserializing of other storage types.
+                .filter(|(_, torrent)| {
+                    torrent.storage_factory.type_id() == TypeId::of::<FilesystemStorageFactory>()
+                })
+                .map(|(id, torrent)| {
+                    (
                         *id,
                         SerializedTorrent {
                             trackers: torrent
@@ -114,9 +116,9 @@ impl SessionDatabase {
                             only_files: torrent.only_files().clone(),
                             is_paused: torrent
                                 .with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
-                            output_folder: output_folder.to_owned(),
+                            output_folder: torrent.info().options.output_folder.clone(),
                         },
-                    ))
+                    )
                 })
                 .collect(),
         }
@@ -435,10 +437,12 @@ pub(crate) struct CheckedIncomingConnection {
 }
 
 impl Session {
-    /// Create a new session. The passed in folder will be used as a default unless overriden per torrent.
+    /// Create a new session with default options.
+    /// The passed in folder will be used as a default unless overriden per torrent.
+    /// It will run a DHT server/client, a TCP listener and .
     #[inline(never)]
-    pub fn new(output_folder: PathBuf) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
-        Self::new_with_opts(output_folder, SessionOptions::default())
+    pub fn new(default_output_folder: PathBuf) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
+        Self::new_with_opts(default_output_folder, SessionOptions::default())
     }
 
     pub fn default_persistence_filename() -> anyhow::Result<PathBuf> {
@@ -453,7 +457,7 @@ impl Session {
     /// Create a new session with options.
     #[inline(never)]
     pub fn new_with_opts(
-        output_folder: PathBuf,
+        default_output_folder: PathBuf,
         mut opts: SessionOptions,
     ) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
@@ -502,7 +506,7 @@ impl Session {
                 dht,
                 peer_opts,
                 spawner,
-                output_folder,
+                output_folder: default_output_folder,
                 db: RwLock::new(Default::default()),
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
                 cancellation_token: token,
@@ -991,9 +995,16 @@ impl Session {
                     .unwrap_or_default(),
             ),
             (Some(o), None) => PathBuf::from(o),
-            (Some(_), Some(_)) => bail!("you can't provide both output_folder and sub_folder"),
+            (Some(_), Some(_)) => {
+                bail!("you can't provide both output_folder and sub_folder")
+            }
             (None, Some(s)) => self.output_folder.join(s),
         };
+
+        let storage_factory = opts
+            .storage_factory
+            .take()
+            .unwrap_or_else(|| Box::<FilesystemStorageFactory>::default());
 
         if opts.list_only {
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
@@ -1005,9 +1016,10 @@ impl Session {
             }));
         }
 
-        let mut builder = ManagedTorrentBuilder::new(info, info_hash, output_folder.clone());
+        let mut builder =
+            ManagedTorrentBuilder::new(info, info_hash, output_folder, storage_factory);
         builder
-            .overwrite(opts.overwrite)
+            .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)
             .trackers(trackers)
             .peer_id(self.peer_id);
@@ -1027,10 +1039,6 @@ impl Session {
 
         if let Some(t) = peer_opts.read_write_timeout {
             builder.peer_read_write_timeout(t);
-        }
-
-        if let Some(storage_factory) = opts.storage_factory.take() {
-            builder.storage_factory(storage_factory);
         }
 
         let (managed_torrent, id) = {
