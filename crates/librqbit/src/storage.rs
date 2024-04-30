@@ -13,6 +13,10 @@ use crate::{opened_file::OpenedFile, torrent_state::ManagedTorrentInfo, type_ali
 
 pub trait StorageFactory: Send + Sync {
     fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>>;
+
+    fn output_folder(&self) -> Option<&Path> {
+        None
+    }
 }
 
 pub trait TorrentStorage: Send + Sync {
@@ -25,6 +29,10 @@ pub trait TorrentStorage: Send + Sync {
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
+
+    fn output_folder(&self) -> Option<&Path> {
+        None
+    }
 }
 
 pub struct FilesystemStorageFactory {
@@ -67,6 +75,10 @@ impl StorageFactory for FilesystemStorageFactory {
             output_folder: self.output_folder.clone(),
             opened_files: files,
         }))
+    }
+
+    fn output_folder(&self) -> Option<&Path> {
+        Some(&self.output_folder)
     }
 }
 
