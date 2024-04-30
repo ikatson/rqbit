@@ -491,7 +491,7 @@ impl TorrentStateLive {
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
         FileOps::new(
             &self.meta.info,
-            &self.files,
+            &*self.files,
             &self.meta().file_infos,
             &self.lengths,
         )
