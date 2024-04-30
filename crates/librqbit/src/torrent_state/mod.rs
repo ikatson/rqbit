@@ -107,7 +107,7 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    storage_factory: Box<dyn StorageFactory>,
+    pub(crate) storage_factory: Box<dyn StorageFactory>,
     locked: RwLock<ManagedTorrentLocked>,
 }
 
@@ -268,7 +268,7 @@ impl ManagedTorrent {
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
                     async move {
-                        match init.check(&*self.storage_factory).await {
+                        match init.check(&*t.storage_factory).await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
