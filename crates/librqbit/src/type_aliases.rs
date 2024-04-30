@@ -8,6 +8,6 @@ pub type BF = bitvec::boxed::BitBox<u8, bitvec::order::Msb0>;
 
 pub type PeerHandle = SocketAddr;
 pub type PeerStream = BoxStream<'static, SocketAddr>;
-pub(crate) type FileInfos = Vec<FileInfo>;
+pub type FileInfos = Vec<FileInfo>;
 pub(crate) type FileStorage = Box<dyn TorrentStorage>;
 pub(crate) type FilePriorities = Vec<usize>;
