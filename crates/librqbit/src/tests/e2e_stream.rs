@@ -87,8 +87,6 @@ async fn e2e_stream() -> anyhow::Result<()> {
                 paused: false,
                 storage_factory: Some(Box::new(InMemoryExampleStorageFactory {})),
                 initial_peers: Some(vec![peer]),
-                // Download no files automatically.
-                only_files: Some(vec![]),
                 ..Default::default()
             }),
         )
