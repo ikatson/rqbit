@@ -205,13 +205,13 @@ impl ChunkTracker {
     pub(crate) fn iter_queued_pieces<'a>(
         &'a self,
         file_priorities: &'a FilePriorities,
-        opened_files: &'a FileInfos,
+        file_infos: &'a FileInfos,
     ) -> impl Iterator<Item = ValidPieceIndex> + 'a {
         file_priorities
             .iter()
-            .filter_map(|p| opened_files.get(*p))
-            // .filter(|f| !f.approx_is_finished())
-            .flat_map(|f| f.iter_piece_priorities())
+            .filter_map(|p| Some((*p, file_infos.get(*p)?)))
+            .filter(|(id, f)| self.per_file_bytes[*id] != f.len)
+            .flat_map(|(_id, f)| f.iter_piece_priorities())
             .filter(|id| self.queue_pieces[*id])
             .filter_map(|id| id.try_into().ok())
             .filter_map(|id| self.lengths.validate_piece_index(id))
@@ -249,12 +249,7 @@ impl ChunkTracker {
         {
             return;
         }
-        self.mark_piece_broken(index)
-    }
-
-    pub fn mark_piece_broken(&mut self, index: ValidPieceIndex) {
         debug!("marking piece={} as broken", index);
-        self.have.set(index.get() as usize, false);
         self.queue_pieces.set(index.get() as usize, true);
         if let Some(s) = self.chunk_status.get_mut(self.lengths.chunk_range(index)) {
             s.fill(false);
