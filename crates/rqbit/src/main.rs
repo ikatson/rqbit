@@ -461,10 +461,9 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                         Ok(v) => match v {
                             AddTorrentResponse::AlreadyManaged(id, handle) => {
                                 info!(
-                                    "torrent {:?} is already managed, id={}, downloaded to {:?}",
+                                    "torrent {:?} is already managed, id={}",
                                     handle.info_hash(),
                                     id,
-                                    handle.info().out_dir
                                 );
                                 continue;
                             }

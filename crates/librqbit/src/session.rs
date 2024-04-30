@@ -96,8 +96,11 @@ impl SessionDatabase {
             torrents: self
                 .torrents
                 .iter()
-                .map(|(id, torrent)| {
-                    (
+                .filter_map(|(id, torrent)| {
+                    // This will skip serializing torrents that don't have an output folder.
+                    // This is for backwards compat not to change serialization format.
+                    let output_folder = torrent.storage_factory.output_folder()?;
+                    Some((
                         *id,
                         SerializedTorrent {
                             trackers: torrent
@@ -111,9 +114,9 @@ impl SessionDatabase {
                             only_files: torrent.only_files().clone(),
                             is_paused: torrent
                                 .with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
-                            output_folder: torrent.info().out_dir.clone(),
+                            output_folder: output_folder.to_owned(),
                         },
-                    )
+                    ))
                 })
                 .collect(),
         }
