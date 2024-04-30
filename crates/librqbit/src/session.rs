@@ -1093,8 +1093,8 @@ impl Session {
             }
             (Ok(Some(paused)), true) => {
                 for (id, fi) in removed.info().file_infos.iter().enumerate() {
-                    if let Err(e) = paused.files.remove_file(id, &fi.filename) {
-                        warn!(?fi.filename, error=?e, "could not delete file");
+                    if let Err(e) = paused.files.remove_file(id, &fi.relative_filename) {
+                        warn!(?fi.relative_filename, error=?e, "could not delete file");
                     }
                 }
             }

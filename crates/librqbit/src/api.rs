@@ -173,10 +173,9 @@ impl Api {
         {
             AddTorrentResponse::AlreadyManaged(id, managed) => {
                 return Err(anyhow::anyhow!(
-                    "{:?} is already managed, id={}, downloaded to {:?}",
+                    "{:?} is already managed, id={}",
                     managed.info_hash(),
                     id,
-                    &managed.info().out_dir
                 ))
                 .with_error_status_code(StatusCode::CONFLICT);
             }
@@ -203,8 +202,8 @@ impl Api {
                 ApiAddTorrentResponse {
                     id: Some(id),
                     details,
-                    output_folder: handle.info().out_dir.to_string_lossy().into_owned(),
                     seen_peers: None,
+                    output_folder: "".to_owned(),
                 }
             }
         };

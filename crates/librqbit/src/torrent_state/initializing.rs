@@ -1,5 +1,4 @@
 use std::{
-    fs::OpenOptions,
     sync::{atomic::AtomicU64, Arc},
     time::Instant,
 };
@@ -9,12 +8,7 @@ use anyhow::Context;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
-use crate::{
-    chunk_tracker::ChunkTracker,
-    file_ops::FileOps,
-    opened_file::OpenedFile,
-    storage::{FilesystemStorage, InMemoryGarbageCollectingStorage, TorrentStorage},
-};
+use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps, storage::StorageFactory};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
@@ -38,56 +32,11 @@ impl TorrentStateInitializing {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
-        // Return in-memory store
-        let store =
-            InMemoryGarbageCollectingStorage::new(self.meta.lengths, self.meta.file_infos.clone())?;
-        let ct = ChunkTracker::new_empty(self.meta.lengths, &self.meta.file_infos)?;
-
-        Ok(TorrentStatePaused {
-            info: self.meta.clone(),
-            files: Box::new(store),
-            chunk_tracker: ct,
-            streams: Arc::new(Default::default()),
-        })
-
-        // self.check_disk().await
-    }
-
-    pub async fn check_disk(&self) -> anyhow::Result<TorrentStatePaused> {
-        let mut files = Vec::<OpenedFile>::new();
-        for file_details in self.meta.info.iter_file_details(&self.meta.lengths)? {
-            let mut full_path = self.meta.out_dir.clone();
-            let relative_path = file_details
-                .filename
-                .to_pathbuf()
-                .context("error converting file to path")?;
-            full_path.push(relative_path);
-
-            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let file = if self.meta.options.overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
-            } else {
-                // TODO: create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error creating {:?}", &full_path))?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
-            };
-            files.push(OpenedFile::new(file));
-        }
-        let files: Box<dyn TorrentStorage> = Box::new(FilesystemStorage::new(files));
-
-        debug!("computed lengths: {:?}", &self.meta.lengths);
-
+    pub async fn check(
+        &self,
+        storage_factory: &dyn StorageFactory,
+    ) -> anyhow::Result<TorrentStatePaused> {
+        let files = storage_factory.init_storage(&self.meta)?;
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
             FileOps::new(
@@ -119,12 +68,12 @@ impl TorrentStateInitializing {
                     if let Err(err) = files.ensure_file_length(idx, fi.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
-                            fi.filename, fi.len, err
+                            fi.relative_filename, fi.len, err
                         );
                     } else {
                         debug!(
                             "Set length for file {:?} to {} in {:?}",
-                            fi.filename,
+                            fi.relative_filename,
                             SF::new(fi.len),
                             now.elapsed()
                         );
