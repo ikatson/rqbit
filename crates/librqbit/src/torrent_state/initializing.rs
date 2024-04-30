@@ -41,7 +41,7 @@ impl TorrentStateInitializing {
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
             FileOps::new(
                 &self.meta.info,
-                &files,
+                &*files,
                 &self.meta.file_infos,
                 &self.meta.lengths,
             )
