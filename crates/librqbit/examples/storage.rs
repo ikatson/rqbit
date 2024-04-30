@@ -8,26 +8,26 @@ struct DummyStorage {}
 impl StorageFactory for DummyStorage {
     fn init_storage(
         &self,
-        info: &ManagedTorrentInfo,
+        _info: &ManagedTorrentInfo,
     ) -> anyhow::Result<Box<dyn librqbit::storage::TorrentStorage>> {
         Ok(Box::new(DummyStorage {}))
     }
 }
 
 impl TorrentStorage for DummyStorage {
-    fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+    fn pread_exact(&self, _file_id: usize, _offset: u64, _buf: &mut [u8]) -> anyhow::Result<()> {
         anyhow::bail!("pread_exact")
     }
 
-    fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
+    fn pwrite_all(&self, _file_id: usize, _offset: u64, _buf: &[u8]) -> anyhow::Result<()> {
         anyhow::bail!("pwrite_all")
     }
 
-    fn remove_file(&self, file_id: usize, filename: &std::path::Path) -> anyhow::Result<()> {
+    fn remove_file(&self, _file_id: usize, _filename: &std::path::Path) -> anyhow::Result<()> {
         anyhow::bail!("remove_file")
     }
 
-    fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
+    fn ensure_file_length(&self, _file_id: usize, _length: u64) -> anyhow::Result<()> {
         anyhow::bail!("ensure_file_length")
     }
 
@@ -62,9 +62,13 @@ async fn main() -> anyhow::Result<()> {
             ),
             Some(librqbit::AddTorrentOptions {
                 storage_factory: Some(Box::new(DummyStorage {})),
+                paused: true,
                 ..Default::default()
             }),
         )
-        .await?;
+        .await?
+        .into_handle()
+        .unwrap();
+    handle.wait_until_initialized().await?;
     Ok(())
 }
