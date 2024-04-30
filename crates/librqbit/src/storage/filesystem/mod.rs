@@ -1,3 +1,5 @@
+mod opened_file;
+
 use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
@@ -6,7 +8,9 @@ use std::{
 
 use anyhow::Context;
 
-use crate::{opened_file::OpenedFile, torrent_state::ManagedTorrentInfo};
+use crate::torrent_state::ManagedTorrentInfo;
+
+use self::opened_file::OpenedFile;
 
 use super::{StorageFactory, TorrentStorage};
 
