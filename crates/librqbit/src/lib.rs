@@ -58,6 +58,7 @@ pub use spawn_utils::spawn as librqbit_spawn;
 pub use torrent_state::{
     ManagedTorrent, ManagedTorrentInfo, ManagedTorrentState, TorrentStats, TorrentStatsState,
 };
+pub use type_aliases::FileInfos;
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;
