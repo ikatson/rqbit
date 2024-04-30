@@ -203,7 +203,12 @@ impl Api {
                     id: Some(id),
                     details,
                     seen_peers: None,
-                    output_folder: "".to_owned(),
+                    output_folder: handle
+                        .info()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
                 }
             }
         };

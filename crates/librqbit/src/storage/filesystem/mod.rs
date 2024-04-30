@@ -14,16 +14,15 @@ use self::opened_file::OpenedFile;
 
 use super::{StorageFactory, TorrentStorage};
 
-pub struct FilesystemStorageFactory {
-    pub output_folder: PathBuf,
-    pub allow_overwrite: bool,
-}
+#[derive(Default)]
+pub struct FilesystemStorageFactory {}
 
 impl StorageFactory for FilesystemStorageFactory {
     fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>> {
         let mut files = Vec::<OpenedFile>::new();
+        let output_folder = &meta.options.output_folder;
         for file_details in meta.info.iter_file_details(&meta.lengths)? {
-            let mut full_path = self.output_folder.clone();
+            let mut full_path = output_folder.clone();
             let relative_path = file_details
                 .filename
                 .to_pathbuf()
@@ -31,7 +30,7 @@ impl StorageFactory for FilesystemStorageFactory {
             full_path.push(relative_path);
 
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let file = if self.allow_overwrite {
+            let file = if meta.options.allow_overwrite {
                 OpenOptions::new()
                     .create(true)
                     .truncate(false)
@@ -45,19 +44,20 @@ impl StorageFactory for FilesystemStorageFactory {
                     .create_new(true)
                     .write(true)
                     .open(&full_path)
-                    .with_context(|| format!("error creating {:?}", &full_path))?;
+                    .with_context(|| {
+                        format!(
+                            "error creating a new file (because allow_overwrite = false) {:?}",
+                            &full_path
+                        )
+                    })?;
                 OpenOptions::new().read(true).write(true).open(&full_path)?
             };
             files.push(OpenedFile::new(file));
         }
         Ok(Box::new(FilesystemStorage {
-            output_folder: self.output_folder.clone(),
+            output_folder: output_folder.clone(),
             opened_files: files,
         }))
-    }
-
-    fn output_folder(&self) -> Option<&Path> {
-        Some(&self.output_folder)
     }
 }
 
