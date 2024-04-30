@@ -41,7 +41,7 @@ mod peer_info_reader;
 mod read_buf;
 mod session;
 mod spawn_utils;
-mod storage;
+pub mod storage;
 mod torrent_state;
 pub mod tracing_subscriber_config_utils;
 mod type_aliases;
@@ -56,7 +56,9 @@ pub use session::{
     SUPPORTED_SCHEMES,
 };
 pub use spawn_utils::spawn as librqbit_spawn;
-pub use torrent_state::{ManagedTorrent, ManagedTorrentState, TorrentStats, TorrentStatsState};
+pub use torrent_state::{
+    ManagedTorrent, ManagedTorrentInfo, ManagedTorrentState, TorrentStats, TorrentStatsState,
+};
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;

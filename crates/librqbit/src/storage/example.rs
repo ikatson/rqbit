@@ -6,7 +6,7 @@ use parking_lot::RwLock;
 
 use crate::type_aliases::FileInfos;
 
-use super::TorrentStorage;
+use super::{StorageFactory, TorrentStorage};
 
 struct InMemoryPiece {
     bytes: Box<[u8]>,
@@ -19,7 +19,21 @@ impl InMemoryPiece {
     }
 }
 
-pub struct InMemoryExampleStorage {
+pub struct InMemoryExampleStorageFactory {}
+
+impl StorageFactory for InMemoryExampleStorageFactory {
+    fn init_storage(
+        &self,
+        info: &crate::torrent_state::ManagedTorrentInfo,
+    ) -> anyhow::Result<Box<dyn TorrentStorage>> {
+        Ok(Box::new(InMemoryExampleStorage::new(
+            info.lengths,
+            info.file_infos.clone(),
+        )?))
+    }
+}
+
+struct InMemoryExampleStorage {
     lengths: Lengths,
     file_infos: FileInfos,
     map: RwLock<HashMap<ValidPieceIndex, InMemoryPiece>>,
@@ -28,7 +42,7 @@ pub struct InMemoryExampleStorage {
 }
 
 impl InMemoryExampleStorage {
-    pub fn new(lengths: Lengths, file_infos: FileInfos) -> anyhow::Result<Self> {
+    fn new(lengths: Lengths, file_infos: FileInfos) -> anyhow::Result<Self> {
         // Max memory 128MiB. Make it tunable
         let max_pieces = 128 * 1024 * 1024 / lengths.default_piece_length();
         if max_pieces == 0 {
