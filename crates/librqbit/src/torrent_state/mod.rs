@@ -36,7 +36,7 @@ use tracing::warn;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::spawn_utils::BlockingSpawner;
-use crate::storage::FilesystemStorageFactory;
+use crate::storage::filesystem::FilesystemStorageFactory;
 use crate::storage::StorageFactory;
 use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::FileInfos;
@@ -544,6 +544,11 @@ impl ManagedTorrentBuilder {
                 .deferred_build_errors
                 .push("overwrite() called when storage factory was not filesystem".to_owned()),
         }
+        self
+    }
+
+    pub fn storage_factory(&mut self, factory: Box<dyn StorageFactory>) -> &mut Self {
+        self.storage = Some(ManagedTorrentBuilderStorage::Custom(factory));
         self
     }
 
