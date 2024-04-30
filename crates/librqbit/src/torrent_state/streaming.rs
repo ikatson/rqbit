@@ -247,12 +247,6 @@ impl AsyncRead for FileStream {
 
         self.as_mut().advance(bytes_to_read as u64);
         tbuf.advance(bytes_to_read);
-        self.streams
-            .streams
-            .get_mut(&self.stream_id)
-            .unwrap()
-            .value_mut()
-            .position = self.position;
 
         Poll::Ready(Ok(()))
     }
@@ -305,7 +299,7 @@ impl ManagedTorrent {
             let files = match s {
                 crate::ManagedTorrentState::Paused(p) => &*p.files,
                 crate::ManagedTorrentState::Live(l) => &*l.files,
-                _ => anyhow::bail!("invalid state"),
+                s => anyhow::bail!("with_storage_and_file: invalid state: {}", s.name()),
             };
             let fi = self
                 .info()
@@ -338,6 +332,7 @@ impl ManagedTorrent {
     }
 
     fn is_file_finished(&self, file_id: usize) -> bool {
+        // TODO: would be nice to remove locking
         self.with_chunk_tracker(|ct| ct.is_file_finished(&self.info.file_infos[file_id]))
             .unwrap_or(false)
     }
