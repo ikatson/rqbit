@@ -367,7 +367,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             }
             let http_api_url = format!("http://{}", opts.http_api_listen_addr);
             let client = http_api_client::HttpApiClient::new(&http_api_url)?;
-            let torrent_opts = AddTorrentOptions {
+            let torrent_opts = || AddTorrentOptions {
                 only_files_regex: download_opts.only_files_matching_regex.clone(),
                 overwrite: download_opts.overwrite,
                 list_only: download_opts.list,
@@ -393,7 +393,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     match client
                         .add_torrent(
                             AddTorrent::from_cli_argument(torrent_url)?,
-                            Some(torrent_opts.clone()),
+                            Some(torrent_opts()),
                         )
                         .await
                     {
@@ -452,10 +452,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
 
                 for path in &download_opts.torrent_path {
                     let handle = match session
-                        .add_torrent(
-                            AddTorrent::from_cli_argument(path)?,
-                            Some(torrent_opts.clone()),
-                        )
+                        .add_torrent(AddTorrent::from_cli_argument(path)?, Some(torrent_opts()))
                         .await
                     {
                         Ok(v) => match v {

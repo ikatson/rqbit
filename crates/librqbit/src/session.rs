@@ -15,6 +15,7 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
+    storage::StorageFactory,
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
@@ -43,7 +44,6 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_with::serde_as;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -270,9 +270,7 @@ fn merge_two_optional_streams<T>(
 }
 
 /// Options for adding new torrents to the session.
-#[serde_as]
-#[derive(Default, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Default)]
 pub struct AddTorrentOptions {
     /// Start in paused state.
     pub paused: bool,
@@ -295,7 +293,6 @@ pub struct AddTorrentOptions {
     pub peer_opts: Option<PeerConnectionOptions>,
 
     /// Force a refresh interval for polling trackers.
-    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub force_tracker_interval: Option<Duration>,
 
     pub disable_trackers: bool,
@@ -304,8 +301,9 @@ pub struct AddTorrentOptions {
     pub initial_peers: Option<Vec<SocketAddr>>,
 
     /// This is used to restore the session from serialized state.
-    #[serde(skip)]
     pub preferred_id: Option<usize>,
+
+    pub storage_factory: Option<Box<dyn StorageFactory>>,
 }
 
 pub struct ListOnlyResponse {
@@ -976,7 +974,7 @@ impl Session {
         trackers: Vec<String>,
         peer_rx: Option<PeerStream>,
         initial_peers: Vec<SocketAddr>,
-        opts: AddTorrentOptions,
+        mut opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
         debug!("Torrent info: {:#?}", &info);
 
@@ -1029,6 +1027,10 @@ impl Session {
 
         if let Some(t) = peer_opts.read_write_timeout {
             builder.peer_read_write_timeout(t);
+        }
+
+        if let Some(storage_factory) = opts.storage_factory.take() {
+            builder.storage_factory(storage_factory);
         }
 
         let (managed_torrent, id) = {

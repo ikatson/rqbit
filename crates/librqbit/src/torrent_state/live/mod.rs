@@ -86,7 +86,6 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     session::CheckedIncomingConnection,
-    storage::TorrentStorage,
     torrent_state::{peer::Peer, utils::atomic_inc},
     type_aliases::{FilePriorities, FileStorage, PeerHandle, BF},
 };
