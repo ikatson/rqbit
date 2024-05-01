@@ -1283,7 +1283,7 @@ impl PeerHandler {
         trace!("we are unchoked");
         self.locked.write().i_am_choked = false;
         self.unchoke_notify.notify_waiters();
-        self.requests_sem.add_permits(16);
+        self.requests_sem.add_permits(128);
     }
 
     fn on_received_piece(&self, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
