@@ -34,7 +34,7 @@ struct SlowStorage {
 fn random_sleep() {
     let sl = rand::thread_rng().gen_range(0f64..0.1f64);
     let sl = Duration::from_secs_f64(sl);
-    tracing::debug!(duration = ?sl, "sleeping");
+    tracing::trace!(duration = ?sl, "sleeping");
     std::thread::sleep(sl)
 }
 

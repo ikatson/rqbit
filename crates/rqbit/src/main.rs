@@ -7,7 +7,10 @@ use librqbit::{
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
-    storage::{filesystem::FilesystemStorageFactory, slow::SlowStorageFactory},
+    storage::{
+        filesystem::FilesystemStorageFactory, slow::SlowStorageFactory,
+        timing::TimingStorageFactory,
+    },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
     PeerConnectionOptions, Session, SessionOptions, TorrentStatsState,
@@ -368,6 +371,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             }
             let http_api_url = format!("http://{}", opts.http_api_listen_addr);
             let client = http_api_client::HttpApiClient::new(&http_api_url)?;
+
             let torrent_opts = || AddTorrentOptions {
                 only_files_regex: download_opts.only_files_matching_regex.clone(),
                 overwrite: download_opts.overwrite,
@@ -377,10 +381,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 sub_folder: download_opts.sub_folder.clone(),
                 initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
                 disable_trackers: download_opts.disable_trackers,
-                storage_factory: Some(Box::new(SlowStorageFactory::new(Box::<
-                    FilesystemStorageFactory,
-                >::default(
-                )))),
+                storage_factory: Some({
+                    let sf = Box::<FilesystemStorageFactory>::default();
+                    let sf = Box::new(SlowStorageFactory::new(sf));
+                    Box::new(TimingStorageFactory::new("hdd".to_owned(), sf))
+                }),
                 ..Default::default()
             };
             let connect_to_existing = match client.validate_rqbit_server().await {
