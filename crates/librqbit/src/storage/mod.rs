@@ -1,5 +1,6 @@
 pub mod example;
 pub mod filesystem;
+pub mod mmap;
 
 use std::{any::Any, path::Path};
 
