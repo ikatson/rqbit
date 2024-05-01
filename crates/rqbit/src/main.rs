@@ -8,7 +8,8 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     storage::{
-        filesystem::FilesystemStorageFactory, timing::TimingStorageFactory, StorageFactoryExt,
+        filesystem::FilesystemStorageFactory, slow::SlowStorageFactory,
+        timing::TimingStorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
@@ -382,7 +383,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 disable_trackers: download_opts.disable_trackers,
                 storage_factory: Some({
                     let sf = FilesystemStorageFactory::default();
-                    // let sf = SlowStorageFactory::new(sf);
+                    let sf = SlowStorageFactory::new(sf);
                     TimingStorageFactory::new("fs".to_owned(), sf).boxed()
                 }),
                 ..Default::default()

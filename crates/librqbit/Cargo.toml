@@ -71,6 +71,7 @@ bytes = "1.5.0"
 rlimit = "0.10.1"
 async-stream = "0.3.5"
 memmap2 = "0.9.4"
+rand_distr = "0.4.3"
 
 [dev-dependencies]
 futures = { version = "0.3" }
