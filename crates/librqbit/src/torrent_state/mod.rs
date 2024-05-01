@@ -92,6 +92,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_read_write_timeout: Option<Duration>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
+    pub defer_writes: bool,
 }
 
 pub struct ManagedTorrentInfo {
@@ -505,6 +506,7 @@ pub(crate) struct ManagedTorrentBuilder {
     spawner: Option<BlockingSpawner>,
     allow_overwrite: bool,
     storage_factory: Box<dyn StorageFactory>,
+    defer_writes: bool,
 }
 
 impl ManagedTorrentBuilder {
@@ -527,6 +529,7 @@ impl ManagedTorrentBuilder {
             allow_overwrite: false,
             output_folder,
             storage_factory,
+            defer_writes: false,
         }
     }
 
@@ -570,6 +573,11 @@ impl ManagedTorrentBuilder {
         self
     }
 
+    pub fn defer_writes(&mut self, value: bool) -> &mut Self {
+        self.defer_writes = value;
+        self
+    }
+
     pub fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
         let file_infos = self
@@ -600,6 +608,7 @@ impl ManagedTorrentBuilder {
                 peer_read_write_timeout: self.peer_read_write_timeout,
                 allow_overwrite: self.allow_overwrite,
                 output_folder: self.output_folder,
+                defer_writes: self.defer_writes,
             },
         });
 
