@@ -1503,7 +1503,9 @@ impl PeerHandler {
                     let _ = tx.send(WriterRequest::Disconnect(Err(e)));
                 }
             };
-            disk_work_queue_tx.blocking_send(Box::new(work))?;
+            self.state.spawn(error_span!("disk_work"), async move {
+                Ok(disk_work_queue_tx.send(Box::new(work)).await?)
+            });
         } else {
             self.state
                 .meta
