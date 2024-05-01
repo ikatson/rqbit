@@ -7,6 +7,7 @@ use librqbit::{
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
+    storage::mmap::MmapStorageFactory,
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
     PeerConnectionOptions, Session, SessionOptions, TorrentStatsState,
@@ -158,6 +159,10 @@ struct DownloadOpts {
 
     #[arg(long = "initial-peers")]
     initial_peers: Option<InitialPeers>,
+
+    /// Use mmap for storage. The only use for it is to test speed without disk.
+    #[arg(long)]
+    experimental_mmap_storage: bool,
 }
 
 #[derive(Clone)]
@@ -376,6 +381,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 sub_folder: download_opts.sub_folder.clone(),
                 initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
                 disable_trackers: download_opts.disable_trackers,
+                storage_factory: if download_opts.experimental_mmap_storage {
+                    Some(Box::new(MmapStorageFactory {}))
+                } else {
+                    None
+                },
                 ..Default::default()
             };
             let connect_to_existing = match client.validate_rqbit_server().await {
