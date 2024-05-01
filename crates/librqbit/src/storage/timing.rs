@@ -37,7 +37,7 @@ macro_rules! timeit {
             let start = std::time::Instant::now();
             let r = $op;
             let elapsed = start.elapsed();
-            tracing::debug!(name = $name, $($rest),*, elapsed_ms=elapsed.as_millis(), "timeit");
+            tracing::debug!(name = $name, $($rest),*, elapsed_micros=elapsed.as_micros(), "timeit");
             r
         }
     };
