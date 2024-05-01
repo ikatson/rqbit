@@ -4,19 +4,19 @@ use rand::Rng;
 
 use super::{StorageFactory, TorrentStorage};
 
-pub struct SlowStorageFactory {
-    underlying_factory: Box<dyn StorageFactory>,
+pub struct SlowStorageFactory<U> {
+    underlying_factory: U,
 }
 
-impl SlowStorageFactory {
-    pub fn new(underlying: Box<dyn StorageFactory>) -> Self {
+impl<U: StorageFactory> SlowStorageFactory<U> {
+    pub fn new(underlying: U) -> Self {
         Self {
             underlying_factory: underlying,
         }
     }
 }
 
-impl StorageFactory for SlowStorageFactory {
+impl<U: StorageFactory> StorageFactory for SlowStorageFactory<U> {
     fn init_storage(
         &self,
         info: &crate::ManagedTorrentInfo,
@@ -27,8 +27,8 @@ impl StorageFactory for SlowStorageFactory {
     }
 }
 
-struct SlowStorage {
-    underlying: Box<dyn TorrentStorage>,
+struct SlowStorage<U> {
+    underlying: U,
 }
 
 fn random_sleep() {
@@ -38,7 +38,7 @@ fn random_sleep() {
     std::thread::sleep(sl)
 }
 
-impl TorrentStorage for SlowStorage {
+impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         random_sleep();
         self.underlying.pread_exact(file_id, offset, buf)
@@ -58,7 +58,7 @@ impl TorrentStorage for SlowStorage {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(Self {
+        Ok(Box::new(SlowStorage {
             underlying: self.underlying.take()?,
         }))
     }

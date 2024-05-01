@@ -1,12 +1,12 @@
 use super::{StorageFactory, TorrentStorage};
 
-pub struct TimingStorageFactory {
+pub struct TimingStorageFactory<U> {
     name: String,
-    underlying_factory: Box<dyn StorageFactory>,
+    underlying_factory: U,
 }
 
-impl TimingStorageFactory {
-    pub fn new(name: String, underlying: Box<dyn StorageFactory>) -> Self {
+impl<U> TimingStorageFactory<U> {
+    pub fn new(name: String, underlying: U) -> Self {
         Self {
             name,
             underlying_factory: underlying,
@@ -14,7 +14,7 @@ impl TimingStorageFactory {
     }
 }
 
-impl StorageFactory for TimingStorageFactory {
+impl<U: StorageFactory> StorageFactory for TimingStorageFactory<U> {
     fn init_storage(
         &self,
         info: &crate::ManagedTorrentInfo,
@@ -26,9 +26,9 @@ impl StorageFactory for TimingStorageFactory {
     }
 }
 
-struct TimingStorage {
+struct TimingStorage<U> {
     name: String,
-    underlying: Box<dyn TorrentStorage>,
+    underlying: U,
 }
 
 macro_rules! timeit {
@@ -43,7 +43,7 @@ macro_rules! timeit {
     };
 }
 
-impl TorrentStorage for TimingStorage {
+impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let storage = &self.name;
         let len = buf.len();
@@ -79,7 +79,7 @@ impl TorrentStorage for TimingStorage {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(Self {
+        Ok(Box::new(TimingStorage {
             underlying: self.underlying.take()?,
             name: self.name.clone(),
         }))
