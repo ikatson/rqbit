@@ -75,24 +75,36 @@ pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize 
 }
 
 #[derive(Debug)]
-pub struct Piece<ByteBuf> {
+pub struct Piece<B> {
     pub index: u32,
     pub begin: u32,
-    pub block: ByteBuf,
+    pub block: B,
 }
 
-impl<ByteBuf> Piece<ByteBuf>
+impl<B: CloneToOwned> CloneToOwned for Piece<B> {
+    type Target = Piece<B::Target>;
+
+    fn clone_to_owned(&self) -> Self::Target {
+        Piece {
+            index: self.index,
+            begin: self.begin,
+            block: self.block.clone_to_owned(),
+        }
+    }
+}
+
+impl<B> Piece<B>
 where
-    ByteBuf: AsRef<[u8]>,
+    B: AsRef<[u8]>,
 {
-    pub fn from_data<T>(index: u32, begin: u32, block: T) -> Piece<ByteBuf>
+    pub fn from_data<T>(index: u32, begin: u32, block: T) -> Piece<B>
     where
-        ByteBuf: From<T>,
+        B: From<T>,
     {
         Piece {
             index,
             begin,
-            block: ByteBuf::from(block),
+            block: B::from(block),
         }
     }
 
@@ -103,13 +115,13 @@ where
         buf.copy_from_slice(self.block.as_ref());
         self.block.as_ref().len() + 8
     }
-    pub fn deserialize<'a>(buf: &'a [u8]) -> Piece<ByteBuf>
+    pub fn deserialize<'a>(buf: &'a [u8]) -> Piece<B>
     where
-        ByteBuf: From<&'a [u8]> + 'a,
+        B: From<&'a [u8]> + 'a,
     {
         let index = byteorder::BigEndian::read_u32(&buf[0..4]);
         let begin = byteorder::BigEndian::read_u32(&buf[4..8]);
-        let block = ByteBuf::from(&buf[8..]);
+        let block = B::from(&buf[8..]);
         Piece {
             index,
             begin,

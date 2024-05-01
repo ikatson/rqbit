@@ -1382,23 +1382,22 @@ impl PeerHandler {
 
         // By this time we reach here, no other peer can for this piece. All others, even if they steal pieces would
         // have fallen off above in one of the defensive checks.
-        self.state
-            .meta
-            .spawner
-            .spawn_block_in_place(move || {
+
+        let work = {
+            let state = self.state.clone();
+            let addr = self.addr;
+            let counters = self.counters.clone();
+            let piece = piece.clone_to_owned();
+            move || {
                 let index = piece.index;
 
                 // Not being able to write to storage is a fatal error. You need to unpause the
                 // torrent to recover from it.
-                match self
-                    .state
-                    .file_ops()
-                    .write_chunk(self.addr, &piece, &chunk_info)
-                {
+                match state.file_ops().write_chunk(addr, &piece, &chunk_info) {
                     Ok(()) => {}
                     Err(e) => {
                         error!("FATAL: error writing chunk to disk: {:?}", e);
-                        return self.state.on_fatal_error(e);
+                        return state.on_fatal_error(e);
                     }
                 }
 
@@ -1407,61 +1406,58 @@ impl PeerHandler {
                     None => return Ok(()),
                 };
 
-                match self
-                    .state
+                match state
                     .file_ops()
-                    .check_piece(self.addr, chunk_info.piece_index, &chunk_info)
+                    .check_piece(addr, chunk_info.piece_index, &chunk_info)
                     .with_context(|| format!("error checking piece={index}"))?
                 {
                     true => {
                         {
-                            let mut g = self.state.lock_write("mark_piece_downloaded");
+                            let mut g = state.lock_write("mark_piece_downloaded");
                             g.get_chunks_mut()?
                                 .mark_piece_downloaded(chunk_info.piece_index);
                         }
 
                         // Global piece counters.
-                        let piece_len =
-                            self.state.lengths.piece_length(chunk_info.piece_index) as u64;
-                        self.state
+                        let piece_len = state.lengths.piece_length(chunk_info.piece_index) as u64;
+                        state
                             .stats
                             .downloaded_and_checked_bytes
                             // This counter is used to compute "is_finished", so using
                             // stronger ordering.
                             .fetch_add(piece_len, Ordering::Release);
-                        self.state
+                        state
                             .stats
                             .downloaded_and_checked_pieces
                             // This counter is used to compute "is_finished", so using
                             // stronger ordering.
                             .fetch_add(1, Ordering::Release);
-                        self.state
+                        state
                             .stats
                             .have_bytes
                             .fetch_add(piece_len, Ordering::Relaxed);
                         #[allow(clippy::cast_possible_truncation)]
-                        self.state.stats.total_piece_download_ms.fetch_add(
+                        state.stats.total_piece_download_ms.fetch_add(
                             full_piece_download_time.as_millis() as u64,
                             Ordering::Relaxed,
                         );
 
                         // Per-peer piece counters.
-                        self.counters
-                            .on_piece_downloaded(piece_len, full_piece_download_time);
-                        self.state.peers.reset_peer_backoff(self.addr);
+                        counters.on_piece_completed(piece_len, full_piece_download_time);
+                        state.peers.reset_peer_backoff(addr);
 
                         debug!("piece={} successfully downloaded and verified", index);
 
-                        self.state.on_piece_completed(chunk_info.piece_index)?;
+                        state.on_piece_completed(chunk_info.piece_index)?;
 
-                        self.state.maybe_transmit_haves(chunk_info.piece_index);
+                        state.maybe_transmit_haves(chunk_info.piece_index);
                     }
                     false => {
                         warn!(
                             "checksum for piece={} did not validate. disconecting peer.",
                             index
                         );
-                        self.state
+                        state
                             .lock_write("mark_piece_broken")
                             .get_chunks_mut()?
                             .mark_piece_broken_if_not_have(chunk_info.piece_index);
@@ -1469,8 +1465,10 @@ impl PeerHandler {
                     }
                 };
                 Ok::<_, anyhow::Error>(())
-            })
-            .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
+            }
+        };
+
+        tokio::runtime::Handle::current().spawn_blocking(work);
         Ok(())
     }
 }
