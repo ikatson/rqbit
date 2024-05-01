@@ -383,8 +383,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 disable_trackers: download_opts.disable_trackers,
                 storage_factory: Some({
                     let sf = Box::<FilesystemStorageFactory>::default();
-                    let sf = Box::new(SlowStorageFactory::new(sf));
-                    Box::new(TimingStorageFactory::new("hdd".to_owned(), sf))
+                    // let sf = Box::new(SlowStorageFactory::new(sf));
+                    Box::new(TimingStorageFactory::new("fs".to_owned(), sf))
                 }),
                 ..Default::default()
             };
