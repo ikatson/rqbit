@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use rand::Rng;
+use rand_distr::Distribution;
 
 use super::{StorageFactory, TorrentStorage};
 
@@ -30,9 +31,23 @@ pub struct SlowStorage<U> {
     underlying: U,
 }
 
+fn random_duration() -> Duration {
+    use rand_distr::StandardNormal;
+
+    let s = StandardNormal {};
+
+    let sl: f64 = s.sample(&mut rand::thread_rng());
+    // let sl = Duration::from_secs_f64(sl);
+    // tracing::trace!(duration = ?sl, "sleeping");
+    // std::thread::sleep(sl)
+    //
+    let micros = 340f64 + sl * 200.;
+    let micros = micros.max(0.001) * 2.;
+    Duration::from_micros(micros as u64)
+}
+
 fn random_sleep() {
-    let sl = rand::thread_rng().gen_range(0f64..0.1f64);
-    let sl = Duration::from_secs_f64(sl);
+    let sl = random_duration();
     tracing::trace!(duration = ?sl, "sleeping");
     std::thread::sleep(sl)
 }
