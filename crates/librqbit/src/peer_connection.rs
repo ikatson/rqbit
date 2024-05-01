@@ -37,7 +37,7 @@ pub trait PeerConnectionHandler {
 pub enum WriterRequest {
     Message(MessageOwned),
     ReadChunkRequest(ChunkInfo),
-    Disconnect,
+    Disconnect(anyhow::Result<()>),
 }
 
 #[serde_as]
@@ -270,7 +270,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 let mut uploaded_add = None;
 
-                let len = match &req {
+                trace!("about to send: {:?}", &req);
+                let len = match req {
                     WriterRequest::Message(msg) => msg.serialize(&mut write_buf, &|| {
                         extended_handshake_ref
                             .read()
@@ -307,14 +308,14 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                         // this whole section is an optimization
                         write_buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
-                        let preamble_len = serialize_piece_preamble(chunk, &mut write_buf);
+                        let preamble_len = serialize_piece_preamble(&chunk, &mut write_buf);
                         let full_len = preamble_len + chunk.size as usize;
                         write_buf.resize(full_len, 0);
                         if !skip_reading_for_e2e_tests {
                             self.spawner
                                 .spawn_block_in_place(|| {
                                     self.handler
-                                        .read_chunk(chunk, &mut write_buf[preamble_len..])
+                                        .read_chunk(&chunk, &mut write_buf[preamble_len..])
                                 })
                                 .with_context(|| format!("error reading chunk {chunk:?}"))?;
                         }
@@ -322,13 +323,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         uploaded_add = Some(chunk.size);
                         full_len
                     }
-                    WriterRequest::Disconnect => {
+                    WriterRequest::Disconnect(res) => {
                         trace!("disconnect requested, closing writer");
-                        return Ok(());
+                        return res;
                     }
                 };
-
-                trace!("sending: {:?}, length={}", &req, len);
 
                 with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                     .await

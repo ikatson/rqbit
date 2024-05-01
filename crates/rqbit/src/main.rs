@@ -97,6 +97,16 @@ struct Opts {
 
     #[command(subcommand)]
     subcommand: SubCommand,
+
+    /// How many blocking tokio threads to spawn to process disk reads/writes.
+    /// Might want to increase if the disk is slow.
+    #[arg(long = "max-blocking-threads", default_value = "16")]
+    max_blocking_threads: u16,
+
+    /// If set, will write to disk in background and not inline with peer.
+    /// Might be useful if the disk is slow.
+    #[arg(long = "defer-writes", default_value = "false")]
+    defer_writes: bool,
 }
 
 #[derive(Parser)]
@@ -239,7 +249,7 @@ fn main() -> anyhow::Result<()> {
         // note: we aren't using spawn_blocking() anymore, so this doesn't apply,
         // however I'm still messing around, so in case we do, let's block the number of
         // spawned threads.
-        .max_blocking_threads(8)
+        .max_blocking_threads(opts.max_blocking_threads as usize)
         .build()?;
 
     rt.block_on(async_main(opts))
@@ -282,6 +292,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             None
         },
         enable_upnp_port_forwarding: !opts.disable_upnp,
+        default_defer_writes: opts.defer_writes,
     };
 
     let stats_printer = |session: Arc<Session>| async move {

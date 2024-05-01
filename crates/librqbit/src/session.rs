@@ -186,6 +186,8 @@ pub struct Session {
 
     cancellation_token: CancellationToken,
 
+    default_defer_writes: bool,
+
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
 }
@@ -306,6 +308,10 @@ pub struct AddTorrentOptions {
     pub preferred_id: Option<usize>,
 
     pub storage_factory: Option<BoxStorageFactory>,
+
+    // If true, will write to disk in separate threads. The downside is additional allocations.
+    // May be useful if the disk is slow.
+    pub defer_writes: Option<bool>,
 }
 
 pub struct ListOnlyResponse {
@@ -413,6 +419,10 @@ pub struct SessionOptions {
 
     pub listen_port_range: Option<std::ops::Range<u16>>,
     pub enable_upnp_port_forwarding: bool,
+
+    // If true, will write to disk in separate threads. The downside is additional allocations.
+    // May be useful if the disk is slow.
+    pub default_defer_writes: bool,
 }
 
 async fn create_tcp_listener(
@@ -511,6 +521,7 @@ impl Session {
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
                 cancellation_token: token,
                 tcp_listen_port,
+                default_defer_writes: opts.default_defer_writes,
             });
 
             if let Some(tcp_listener) = tcp_listener {
@@ -1022,6 +1033,7 @@ impl Session {
             .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)
             .trackers(trackers)
+            .defer_writes(opts.defer_writes.unwrap_or(self.default_defer_writes))
             .peer_id(self.peer_id);
 
         if let Some(only_files) = only_files {
