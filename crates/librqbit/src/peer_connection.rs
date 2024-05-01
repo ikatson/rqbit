@@ -103,9 +103,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         handshake: Handshake<ByteBufOwned>,
         mut conn: tokio::net::TcpStream,
     ) -> anyhow::Result<()> {
-        if self.addr.ip().to_string() != "213.189.217.38" {
-            bail!("DEBUG, NOT MY PEER")
-        }
         use tokio::io::AsyncWriteExt;
 
         let rwtimeout = self
@@ -153,9 +150,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
-        if self.addr.ip().to_string() != "213.189.217.38" {
-            bail!("DEBUG, NOT MY PEER")
-        }
 
         let rwtimeout = self
             .options
