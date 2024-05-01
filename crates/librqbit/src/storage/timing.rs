@@ -46,23 +46,27 @@ macro_rules! timeit {
 impl TorrentStorage for TimingStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let storage = &self.name;
+        let len = buf.len();
         timeit!(
             "pread_exact",
             self.underlying.pread_exact(file_id, offset, buf),
             file_id,
             offset,
-            storage
+            storage,
+            len
         )
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let storage = &self.name;
+        let len = buf.len();
         timeit!(
             "pwrite_all",
             self.underlying.pwrite_all(file_id, offset, buf),
             file_id,
             offset,
-            storage
+            storage,
+            len
         )
     }
 
