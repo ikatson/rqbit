@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use librqbit::{storage::mmap::MmapStorageFactory, SessionOptions};
+use librqbit::{
+    storage::{mmap::MmapStorageFactory, StorageFactoryExt},
+    SessionOptions,
+};
 use tracing::info;
 
 #[tokio::main]
@@ -28,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
                 include_bytes!("../resources/ubuntu-21.04-live-server-amd64.iso.torrent").into(),
             ),
             Some(librqbit::AddTorrentOptions {
-                storage_factory: Some(Box::new(MmapStorageFactory {})),
+                storage_factory: Some(MmapStorageFactory::default().boxed()),
                 paused: false,
                 ..Default::default()
             }),

@@ -18,7 +18,9 @@ use super::{StorageFactory, TorrentStorage};
 pub struct FilesystemStorageFactory {}
 
 impl StorageFactory for FilesystemStorageFactory {
-    fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>> {
+    type Storage = FilesystemStorage;
+
+    fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<FilesystemStorage> {
         let mut files = Vec::<OpenedFile>::new();
         let output_folder = &meta.options.output_folder;
         for file_details in meta.info.iter_file_details(&meta.lengths)? {
@@ -54,10 +56,10 @@ impl StorageFactory for FilesystemStorageFactory {
             };
             files.push(OpenedFile::new(file));
         }
-        Ok(Box::new(FilesystemStorage {
+        Ok(FilesystemStorage {
             output_folder: output_folder.clone(),
             opened_files: files,
-        }))
+        })
     }
 }
 

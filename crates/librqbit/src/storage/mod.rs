@@ -9,11 +9,40 @@ use std::{any::Any, path::Path};
 use crate::torrent_state::ManagedTorrentInfo;
 
 pub trait StorageFactory: Send + Sync + Any {
-    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>>;
+    type Storage: TorrentStorage;
+
+    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage>;
+}
+
+pub type BoxStorageFactory = Box<dyn StorageFactory<Storage = Box<dyn TorrentStorage>>>;
+
+pub trait StorageFactoryExt {
+    fn boxed(self) -> BoxStorageFactory;
+}
+
+impl<SF: StorageFactory> StorageFactoryExt for SF {
+    fn boxed(self) -> BoxStorageFactory {
+        struct BoxFactory<SF> {
+            sf: SF,
+        }
+
+        impl<SF: StorageFactory> StorageFactory for BoxFactory<SF> {
+            type Storage = Box<dyn TorrentStorage>;
+
+            fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+                let s = self.sf.init_storage(info)?;
+                Ok(Box::new(s))
+            }
+        }
+
+        Box::new(BoxFactory { sf: self })
+    }
 }
 
 impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
-    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Box<dyn TorrentStorage>> {
+    type Storage = U::Storage;
+
+    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<U::Storage> {
         (**self).init_storage(info)
     }
 }

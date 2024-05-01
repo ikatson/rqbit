@@ -17,17 +17,16 @@ impl<U: StorageFactory> SlowStorageFactory<U> {
 }
 
 impl<U: StorageFactory> StorageFactory for SlowStorageFactory<U> {
-    fn init_storage(
-        &self,
-        info: &crate::ManagedTorrentInfo,
-    ) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(SlowStorage {
+    type Storage = SlowStorage<U::Storage>;
+
+    fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+        Ok(SlowStorage {
             underlying: self.underlying_factory.init_storage(info)?,
-        }))
+        })
     }
 }
 
-struct SlowStorage<U> {
+pub struct SlowStorage<U> {
     underlying: U,
 }
 

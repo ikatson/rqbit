@@ -8,7 +8,11 @@ use anyhow::Context;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
-use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps, storage::StorageFactory};
+use crate::{
+    chunk_tracker::ChunkTracker,
+    file_ops::FileOps,
+    storage::{BoxStorageFactory, StorageFactory},
+};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
@@ -34,7 +38,7 @@ impl TorrentStateInitializing {
 
     pub async fn check(
         &self,
-        storage_factory: &dyn StorageFactory,
+        storage_factory: &BoxStorageFactory,
     ) -> anyhow::Result<TorrentStatePaused> {
         let files = storage_factory.init_storage(&self.meta)?;
         info!("Doing initial checksum validation, this might take a while...");
