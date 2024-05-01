@@ -2,6 +2,7 @@ pub mod example;
 pub mod filesystem;
 pub mod mmap;
 pub mod slow;
+pub mod timing;
 
 use std::{any::Any, path::Path};
 
