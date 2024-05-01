@@ -1502,7 +1502,8 @@ impl PeerHandler {
                     let _ = tx.send(WriterRequest::Disconnect(Err(e)));
                 }
             };
-            disk_work_queue_tx.send(Box::new(work))?;
+            tokio::runtime::Handle::current().spawn_blocking(work);
+            // disk_work_queue_tx.send(Box::new(work))?;
         } else {
             self.state
                 .meta
