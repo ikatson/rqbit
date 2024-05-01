@@ -16,7 +16,7 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
-    storage::{filesystem::FilesystemStorageFactory, StorageFactory},
+    storage::{filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt},
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
@@ -305,7 +305,7 @@ pub struct AddTorrentOptions {
     /// This is used to restore the session from serialized state.
     pub preferred_id: Option<usize>,
 
-    pub storage_factory: Option<Box<dyn StorageFactory>>,
+    pub storage_factory: Option<BoxStorageFactory>,
 }
 
 pub struct ListOnlyResponse {
@@ -1004,7 +1004,7 @@ impl Session {
         let storage_factory = opts
             .storage_factory
             .take()
-            .unwrap_or_else(|| Box::<FilesystemStorageFactory>::default());
+            .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
 
         if opts.list_only {
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {

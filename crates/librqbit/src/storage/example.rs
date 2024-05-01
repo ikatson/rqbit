@@ -19,21 +19,21 @@ impl InMemoryPiece {
     }
 }
 
+#[derive(Default)]
 pub struct InMemoryExampleStorageFactory {}
 
 impl StorageFactory for InMemoryExampleStorageFactory {
+    type Storage = InMemoryExampleStorage;
+
     fn init_storage(
         &self,
         info: &crate::torrent_state::ManagedTorrentInfo,
-    ) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(InMemoryExampleStorage::new(
-            info.lengths,
-            info.file_infos.clone(),
-        )?))
+    ) -> anyhow::Result<InMemoryExampleStorage> {
+        InMemoryExampleStorage::new(info.lengths, info.file_infos.clone())
     }
 }
 
-struct InMemoryExampleStorage {
+pub struct InMemoryExampleStorage {
     lengths: Lengths,
     file_infos: FileInfos,
     map: RwLock<HashMap<ValidPieceIndex, InMemoryPiece>>,

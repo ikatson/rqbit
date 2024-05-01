@@ -15,18 +15,17 @@ impl<U> TimingStorageFactory<U> {
 }
 
 impl<U: StorageFactory> StorageFactory for TimingStorageFactory<U> {
-    fn init_storage(
-        &self,
-        info: &crate::ManagedTorrentInfo,
-    ) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(TimingStorage {
+    type Storage = TimingStorage<U::Storage>;
+
+    fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+        Ok(TimingStorage {
             name: self.name.clone(),
             underlying: self.underlying_factory.init_storage(info)?,
-        }))
+        })
     }
 }
 
-struct TimingStorage<U> {
+pub struct TimingStorage<U> {
     name: String,
     underlying: U,
 }

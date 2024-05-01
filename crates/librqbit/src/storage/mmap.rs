@@ -6,26 +6,26 @@ use crate::{FileInfos, ManagedTorrentInfo};
 
 use super::{StorageFactory, TorrentStorage};
 
+#[derive(Default)]
 pub struct MmapStorageFactory {}
 
-struct MmapStorage {
+pub struct MmapStorage {
     mmap: RwLock<MmapMut>,
     file_infos: FileInfos,
 }
 
 impl StorageFactory for MmapStorageFactory {
-    fn init_storage(
-        &self,
-        info: &ManagedTorrentInfo,
-    ) -> anyhow::Result<Box<dyn crate::storage::TorrentStorage>> {
-        Ok(Box::new(MmapStorage {
+    type Storage = MmapStorage;
+
+    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+        Ok(MmapStorage {
             mmap: RwLock::new(
                 MmapOptions::new()
                     .len(info.lengths.total_length().try_into()?)
                     .map_anon()?,
             ),
             file_infos: info.file_infos.clone(),
-        }))
+        })
     }
 }
 

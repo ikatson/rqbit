@@ -36,7 +36,7 @@ use tracing::warn;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::spawn_utils::BlockingSpawner;
-use crate::storage::StorageFactory;
+use crate::storage::BoxStorageFactory;
 use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
@@ -108,7 +108,7 @@ pub struct ManagedTorrentInfo {
 
 pub struct ManagedTorrent {
     pub info: Arc<ManagedTorrentInfo>,
-    pub(crate) storage_factory: Box<dyn StorageFactory>,
+    pub(crate) storage_factory: BoxStorageFactory,
 
     state_change_notify: Notify,
     locked: RwLock<ManagedTorrentLocked>,
@@ -273,7 +273,7 @@ impl ManagedTorrent {
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
                     async move {
-                        match init.check(&*t.storage_factory).await {
+                        match init.check(&t.storage_factory).await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
@@ -504,7 +504,7 @@ pub(crate) struct ManagedTorrentBuilder {
     peer_id: Option<Id20>,
     spawner: Option<BlockingSpawner>,
     allow_overwrite: bool,
-    storage_factory: Box<dyn StorageFactory>,
+    storage_factory: BoxStorageFactory,
 }
 
 impl ManagedTorrentBuilder {
@@ -512,7 +512,7 @@ impl ManagedTorrentBuilder {
         info: TorrentMetaV1Info<ByteBufOwned>,
         info_hash: Id20,
         output_folder: PathBuf,
-        storage_factory: Box<dyn StorageFactory>,
+        storage_factory: BoxStorageFactory,
     ) -> Self {
         Self {
             info,
