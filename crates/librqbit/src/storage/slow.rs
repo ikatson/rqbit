@@ -42,7 +42,7 @@ fn random_duration() -> Duration {
     // std::thread::sleep(sl)
     //
     let micros = 340f64 + sl * 200.;
-    let micros = micros.max(0.001) * 2.;
+    let micros = micros.max(0.001) * 4.;
     Duration::from_micros(micros as u64)
 }
 
