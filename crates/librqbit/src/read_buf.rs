@@ -20,7 +20,7 @@ pub struct ReadBuf {
 impl ReadBuf {
     pub fn new() -> Self {
         Self {
-            buf: vec![0; PIECE_MESSAGE_DEFAULT_LEN * 2],
+            buf: vec![0; 16 * 1024 * 1024],
             filled: 0,
             processed: 0,
         }
