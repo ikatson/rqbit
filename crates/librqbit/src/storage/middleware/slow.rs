@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use rand_distr::Distribution;
 
-use crate::storage::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
+#[derive(Clone)]
 pub struct SlowStorageFactory<U> {
     underlying_factory: U,
 }
@@ -16,7 +17,7 @@ impl<U: StorageFactory> SlowStorageFactory<U> {
     }
 }
 
-impl<U: StorageFactory> StorageFactory for SlowStorageFactory<U> {
+impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
     type Storage = SlowStorage<U::Storage>;
 
     fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
@@ -27,6 +28,10 @@ impl<U: StorageFactory> StorageFactory for SlowStorageFactory<U> {
 
     fn is_type_id(&self, type_id: std::any::TypeId) -> bool {
         self.underlying_factory.is_type_id(type_id)
+    }
+
+    fn clone_box(&self) -> crate::storage::BoxStorageFactory {
+        self.clone().boxed()
     }
 }
 

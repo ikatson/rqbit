@@ -6,13 +6,13 @@ use std::{
 
 use anyhow::Context;
 
-use crate::torrent_state::ManagedTorrentInfo;
+use crate::{storage::StorageFactoryExt, torrent_state::ManagedTorrentInfo};
 
 use crate::storage::{StorageFactory, TorrentStorage};
 
 use super::opened_file::OpenedFile;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct FilesystemStorageFactory {}
 
 impl StorageFactory for FilesystemStorageFactory {
@@ -58,6 +58,10 @@ impl StorageFactory for FilesystemStorageFactory {
             output_folder: output_folder.clone(),
             opened_files: files,
         })
+    }
+
+    fn clone_box(&self) -> crate::storage::BoxStorageFactory {
+        self.boxed()
     }
 }
 

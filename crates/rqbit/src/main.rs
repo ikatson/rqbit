@@ -297,6 +297,13 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         },
         enable_upnp_port_forwarding: !opts.disable_upnp,
         default_defer_writes: opts.defer_writes,
+        default_storage_factory: Some({
+            if opts.experimental_mmap_storage {
+                MmapFilesystemStorageFactory::default().boxed()
+            } else {
+                FilesystemStorageFactory::default().boxed()
+            }
+        }),
     };
 
     let stats_printer = |session: Arc<Session>| async move {
