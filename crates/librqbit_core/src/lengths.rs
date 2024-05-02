@@ -265,6 +265,35 @@ impl Lengths {
 
         end.saturating_sub(offset)
     }
+
+    pub fn compute_current_piece(
+        self: &Lengths,
+        file_pos: u64,
+        file_torrent_abs_offset: u64,
+    ) -> Option<CurrentPiece> {
+        let dpl = self.default_piece_length();
+
+        let abs_pos = file_torrent_abs_offset + file_pos;
+        let piece_id = abs_pos / dpl as u64;
+        let piece_id: u32 = piece_id.try_into().ok()?;
+
+        let piece_id = self.validate_piece_index(piece_id)?;
+        let piece_len = self.piece_length(piece_id);
+        let piece_offset = (abs_pos / dpl as u64).try_into().ok()?;
+        Some(CurrentPiece {
+            id: piece_id,
+            piece_offset,
+            piece_remaining: (piece_len as u64 - (abs_pos % dpl as u64))
+                .try_into()
+                .ok()?,
+        })
+    }
+}
+
+pub struct CurrentPiece {
+    pub id: ValidPieceIndex,
+    pub piece_remaining: u32,
+    pub piece_offset: u32,
 }
 
 #[cfg(test)]
