@@ -1368,9 +1368,14 @@ impl PeerHandler {
             }
         };
 
+        // This one is used to calculate download speed.
+        self.state
+            .stats
+            .fetched_bytes
+            .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
+
         // By this time we reach here, no other peer can for this piece. All others, even if they steal pieces would
         // have fallen off above in one of the defensive checks.
-
         self.state
             .meta
             .spawner
@@ -1392,12 +1397,6 @@ impl PeerHandler {
                         return self.state.on_fatal_error(e);
                     }
                 }
-
-                // Global chunk/byte counters.
-                self.state
-                    .stats
-                    .fetched_bytes
-                    .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
 
                 let full_piece_download_time = match full_piece_download_time {
                     Some(t) => t,
