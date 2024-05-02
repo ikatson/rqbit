@@ -11,7 +11,7 @@ use std::{
 use anyhow::Context;
 use dashmap::DashMap;
 
-use librqbit_core::lengths::{Lengths, ValidPieceIndex};
+use librqbit_core::lengths::{CurrentPiece, Lengths, ValidPieceIndex};
 use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{debug, trace};
 
@@ -34,7 +34,7 @@ struct StreamState {
 
 impl StreamState {
     fn current_piece(&self, lengths: &Lengths) -> Option<CurrentPiece> {
-        compute_current_piece(lengths, self.position, self.file_abs_offset)
+        lengths.compute_current_piece(self.position, self.file_abs_offset)
     }
 
     fn queue<'a>(&self, lengths: &'a Lengths) -> impl Iterator<Item = ValidPieceIndex> + 'a {
@@ -51,32 +51,6 @@ impl StreamState {
 pub(crate) struct TorrentStreams {
     next_stream_id: AtomicUsize,
     streams: DashMap<StreamId, StreamState>,
-}
-
-struct CurrentPiece {
-    id: ValidPieceIndex,
-    piece_remaining: u32,
-}
-
-fn compute_current_piece(
-    lengths: &Lengths,
-    file_pos: u64,
-    file_torrent_abs_offset: u64,
-) -> Option<CurrentPiece> {
-    let dpl = lengths.default_piece_length();
-
-    let abs_pos = file_torrent_abs_offset + file_pos;
-    let piece_id = abs_pos / dpl as u64;
-    let piece_id: u32 = piece_id.try_into().ok()?;
-
-    let piece_id = lengths.validate_piece_index(piece_id)?;
-    let piece_len = lengths.piece_length(piece_id);
-    Some(CurrentPiece {
-        id: piece_id,
-        piece_remaining: (piece_len as u64 - (abs_pos % dpl as u64))
-            .try_into()
-            .ok()?,
-    })
 }
 
 impl TorrentStreams {
@@ -199,12 +173,12 @@ impl AsyncRead for FileStream {
             return Poll::Ready(Ok(()));
         }
 
-        let current = poll_try_io!(compute_current_piece(
-            &self.torrent.info().lengths,
-            self.position,
-            self.file_torrent_abs_offset
-        )
-        .context("invalid position"));
+        let current = poll_try_io!(self
+            .torrent
+            .info()
+            .lengths
+            .compute_current_piece(self.position, self.file_torrent_abs_offset)
+            .context("invalid position"));
 
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
