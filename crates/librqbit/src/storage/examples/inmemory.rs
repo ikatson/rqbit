@@ -6,7 +6,7 @@ use parking_lot::RwLock;
 
 use crate::type_aliases::FileInfos;
 
-use crate::storage::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
 struct InMemoryPiece {
     bytes: Box<[u8]>,
@@ -19,7 +19,7 @@ impl InMemoryPiece {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InMemoryExampleStorageFactory {}
 
 impl StorageFactory for InMemoryExampleStorageFactory {
@@ -30,6 +30,10 @@ impl StorageFactory for InMemoryExampleStorageFactory {
         info: &crate::torrent_state::ManagedTorrentInfo,
     ) -> anyhow::Result<InMemoryExampleStorage> {
         InMemoryExampleStorage::new(info.lengths, info.file_infos.clone())
+    }
+
+    fn clone_box(&self) -> crate::storage::BoxStorageFactory {
+        self.clone().boxed()
     }
 }
 

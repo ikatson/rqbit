@@ -1,5 +1,6 @@
-use crate::storage::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
+#[derive(Clone)]
 pub struct TimingStorageFactory<U> {
     name: String,
     underlying_factory: U,
@@ -14,7 +15,7 @@ impl<U> TimingStorageFactory<U> {
     }
 }
 
-impl<U: StorageFactory> StorageFactory for TimingStorageFactory<U> {
+impl<U: StorageFactory + Clone> StorageFactory for TimingStorageFactory<U> {
     type Storage = TimingStorage<U::Storage>;
 
     fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
@@ -26,6 +27,10 @@ impl<U: StorageFactory> StorageFactory for TimingStorageFactory<U> {
 
     fn is_type_id(&self, type_id: std::any::TypeId) -> bool {
         self.underlying_factory.is_type_id(type_id)
+    }
+
+    fn clone_box(&self) -> crate::storage::BoxStorageFactory {
+        self.clone().boxed()
     }
 }
 

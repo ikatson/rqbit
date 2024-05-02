@@ -16,6 +16,7 @@ pub trait StorageFactory: Send + Sync + Any {
     fn is_type_id(&self, type_id: TypeId) -> bool {
         Self::type_id(self) == type_id
     }
+    fn clone_box(&self) -> BoxStorageFactory;
 }
 
 pub type BoxStorageFactory = Box<dyn StorageFactory<Storage = Box<dyn TorrentStorage>>>;
@@ -41,6 +42,10 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
             fn is_type_id(&self, type_id: TypeId) -> bool {
                 self.sf.type_id() == type_id
             }
+
+            fn clone_box(&self) -> BoxStorageFactory {
+                self.sf.clone_box()
+            }
         }
 
         Box::new(Wrapper { sf: self })
@@ -52,6 +57,10 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
 
     fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<U::Storage> {
         (**self).init_storage(info)
+    }
+
+    fn clone_box(&self) -> BoxStorageFactory {
+        (**self).clone_box()
     }
 }
 

@@ -3,11 +3,11 @@ use memmap2::{MmapMut, MmapOptions};
 use parking_lot::RwLock;
 
 use crate::{
-    storage::{StorageFactory, TorrentStorage},
+    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
     FileInfos, ManagedTorrentInfo,
 };
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MmapStorageFactory {}
 
 pub struct MmapStorage {
@@ -27,6 +27,10 @@ impl StorageFactory for MmapStorageFactory {
             ),
             file_infos: info.file_infos.clone(),
         })
+    }
+
+    fn clone_box(&self) -> crate::storage::BoxStorageFactory {
+        self.clone().boxed()
     }
 }
 

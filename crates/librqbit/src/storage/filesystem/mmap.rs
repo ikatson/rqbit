@@ -6,11 +6,11 @@ use parking_lot::RwLock;
 
 use crate::torrent_state::ManagedTorrentInfo;
 
-use crate::storage::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
 use super::{FilesystemStorage, FilesystemStorageFactory};
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct MmapFilesystemStorageFactory {}
 
 type OpenedMmap = RwLock<MmapMut>;
@@ -35,6 +35,10 @@ impl StorageFactory for MmapFilesystemStorageFactory {
             opened_mmaps: mmaps,
             fs: fs_storage,
         })
+    }
+
+    fn clone_box(&self) -> crate::storage::BoxStorageFactory {
+        self.boxed()
     }
 }
 
