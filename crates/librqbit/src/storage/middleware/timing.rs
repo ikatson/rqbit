@@ -1,4 +1,4 @@
-use super::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, TorrentStorage};
 
 pub struct TimingStorageFactory<U> {
     name: String,

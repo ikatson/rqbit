@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use librqbit::{
-    storage::{mmap::MmapStorageFactory, StorageFactoryExt},
+    storage::{examples::mmap::MmapStorageFactory, StorageFactoryExt},
     SessionOptions,
 };
 use tracing::info;

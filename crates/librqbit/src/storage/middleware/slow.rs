@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rand_distr::Distribution;
 
-use super::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, TorrentStorage};
 
 pub struct SlowStorageFactory<U> {
     underlying_factory: U,

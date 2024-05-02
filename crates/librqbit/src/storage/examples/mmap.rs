@@ -2,9 +2,10 @@ use anyhow::Context;
 use memmap2::{MmapMut, MmapOptions};
 use parking_lot::RwLock;
 
-use crate::{FileInfos, ManagedTorrentInfo};
-
-use super::{StorageFactory, TorrentStorage};
+use crate::{
+    storage::{StorageFactory, TorrentStorage},
+    FileInfos, ManagedTorrentInfo,
+};
 
 #[derive(Default)]
 pub struct MmapStorageFactory {}

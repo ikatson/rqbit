@@ -1,8 +1,6 @@
-pub mod example;
+pub mod examples;
 pub mod filesystem;
-pub mod mmap;
-pub mod slow;
-pub mod timing;
+pub mod middleware;
 
 use std::{
     any::{Any, TypeId},

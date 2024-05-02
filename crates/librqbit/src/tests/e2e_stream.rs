@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::{
     create_torrent,
-    storage::{example::InMemoryExampleStorageFactory, StorageFactoryExt},
+    storage::{examples::inmemory::InMemoryExampleStorageFactory, StorageFactoryExt},
     AddTorrent, CreateTorrentOptions, Session,
 };
 
