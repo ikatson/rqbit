@@ -99,7 +99,9 @@ impl SessionDatabase {
                 .iter()
                 // We don't support serializing / deserializing of other storage types.
                 .filter(|(_, torrent)| {
-                    torrent.storage_factory.type_id() == TypeId::of::<FilesystemStorageFactory>()
+                    torrent
+                        .storage_factory
+                        .is_type_id(TypeId::of::<FilesystemStorageFactory>())
                 })
                 .map(|(id, torrent)| {
                     (

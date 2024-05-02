@@ -23,6 +23,10 @@ impl<U: StorageFactory> StorageFactory for TimingStorageFactory<U> {
             underlying: self.underlying_factory.init_storage(info)?,
         })
     }
+
+    fn is_type_id(&self, type_id: std::any::TypeId) -> bool {
+        self.underlying_factory.is_type_id(type_id)
+    }
 }
 
 pub struct TimingStorage<U> {

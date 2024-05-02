@@ -4,7 +4,10 @@ pub mod mmap;
 pub mod slow;
 pub mod timing;
 
-use std::{any::Any, path::Path};
+use std::{
+    any::{Any, TypeId},
+    path::Path,
+};
 
 use crate::torrent_state::ManagedTorrentInfo;
 
@@ -12,6 +15,9 @@ pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
 
     fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage>;
+    fn is_type_id(&self, type_id: TypeId) -> bool {
+        Self::type_id(self) == type_id
+    }
 }
 
 pub type BoxStorageFactory = Box<dyn StorageFactory<Storage = Box<dyn TorrentStorage>>>;
@@ -32,6 +38,10 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
             fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
                 let s = self.sf.init_storage(info)?;
                 Ok(Box::new(s))
+            }
+
+            fn is_type_id(&self, type_id: TypeId) -> bool {
+                self.sf.type_id() == type_id
             }
         }
 
