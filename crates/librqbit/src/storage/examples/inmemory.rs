@@ -6,7 +6,7 @@ use parking_lot::RwLock;
 
 use crate::type_aliases::FileInfos;
 
-use super::{StorageFactory, TorrentStorage};
+use crate::storage::{StorageFactory, TorrentStorage};
 
 struct InMemoryPiece {
     bytes: Box<[u8]>,

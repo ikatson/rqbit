@@ -8,8 +8,9 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     storage::{
-        filesystem::FilesystemStorageFactory, slow::SlowStorageFactory,
-        timing::TimingStorageFactory, StorageFactoryExt,
+        filesystem::FilesystemStorageFactory,
+        middleware::{slow::SlowStorageFactory, timing::TimingStorageFactory},
+        StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
