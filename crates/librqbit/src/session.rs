@@ -16,7 +16,10 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
-    storage::{filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt},
+    storage::{
+        filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
+        BoxStorageFactory, StorageFactoryExt,
+    },
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
@@ -189,6 +192,8 @@ pub struct Session {
     cancellation_token: CancellationToken,
 
     default_defer_writes: bool,
+
+    // default_storage_factory: Option<BoxStorageFactory>,
 
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
@@ -425,6 +430,7 @@ pub struct SessionOptions {
     // If true, will write to disk in separate threads. The downside is additional allocations.
     // May be useful if the disk is slow.
     pub default_defer_writes: bool,
+    // pub default_storage_factory: Option<BoxStorageFactory>,
 }
 
 async fn create_tcp_listener(
@@ -1017,7 +1023,9 @@ impl Session {
         let storage_factory = opts
             .storage_factory
             .take()
-            .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
+            // .unwrap_or_else(|| self.default_storage_factory.clone())
+            // .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
+            .unwrap_or_else(|| MmapFilesystemStorageFactory::default().boxed());
 
         if opts.list_only {
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
