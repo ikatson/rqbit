@@ -1382,10 +1382,8 @@ impl PeerHandler {
             .spawn_block_in_place(move || {
                 let index = piece.index;
 
-                // TODO: in theory we should unmark the piece as downloaded here. But if there was a disk error, what
-                // should we really do? If we unmark it, it will get requested forever...
-                //
-                // So let's just unwrap and abort.
+                // Not being able to write to storage is a fatal error. You need to unpause the
+                // torrent to recover from it.
                 match self
                     .state
                     .file_ops()
