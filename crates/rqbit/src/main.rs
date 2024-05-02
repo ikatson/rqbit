@@ -7,15 +7,10 @@ use librqbit::{
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
-<<<<<<< HEAD
     storage::{
-        filesystem::FilesystemStorageFactory,
-        middleware::{slow::SlowStorageFactory, timing::TimingStorageFactory},
+        filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
         StorageFactoryExt,
     },
-=======
-    storage::mmap::MmapStorageFactory,
->>>>>>> a557afc (Add --experimental-mmap-storage)
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
     PeerConnectionOptions, Session, SessionOptions, TorrentStatsState,
@@ -401,13 +396,6 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 sub_folder: download_opts.sub_folder.clone(),
                 initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
                 disable_trackers: download_opts.disable_trackers,
-
-                storage_factory: Some({
-                    let sf = FilesystemStorageFactory::default();
-                    let sf = SlowStorageFactory::new(sf);
-                    TimingStorageFactory::new("fs".to_owned(), sf).boxed()
-                }),
-
                 ..Default::default()
             };
             let connect_to_existing = match client.validate_rqbit_server().await {
