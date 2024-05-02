@@ -22,11 +22,11 @@ pub trait StorageFactoryExt {
 
 impl<SF: StorageFactory> StorageFactoryExt for SF {
     fn boxed(self) -> BoxStorageFactory {
-        struct BoxFactory<SF> {
+        struct Wrapper<SF> {
             sf: SF,
         }
 
-        impl<SF: StorageFactory> StorageFactory for BoxFactory<SF> {
+        impl<SF: StorageFactory> StorageFactory for Wrapper<SF> {
             type Storage = Box<dyn TorrentStorage>;
 
             fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
@@ -35,7 +35,7 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
             }
         }
 
-        Box::new(BoxFactory { sf: self })
+        Box::new(Wrapper { sf: self })
     }
 }
 

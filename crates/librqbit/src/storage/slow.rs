@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use rand::Rng;
 use rand_distr::Distribution;
 
 use super::{StorageFactory, TorrentStorage};
@@ -44,6 +43,7 @@ fn random_duration() -> Duration {
     let micros = 340f64 + sl * 200.;
     // 16 is max blocking threads
     let micros = micros.max(0.001) * 4. * 16.;
+    #[allow(clippy::cast_possible_truncation)]
     Duration::from_micros(micros as u64)
 }
 
