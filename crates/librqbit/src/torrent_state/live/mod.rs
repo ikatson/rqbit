@@ -1277,7 +1277,9 @@ impl PeerHandler {
         trace!("we are unchoked");
         self.locked.write().i_am_choked = false;
         self.unchoke_notify.notify_waiters();
-        // TODO: compute this better than hard coding.
+        // 128 should be more than enough to maintain 100mbps
+        // for a single peer that has 100ms ping
+        // https://www.desmos.com/calculator/x3szur87ps
         self.requests_sem.add_permits(128);
     }
 
