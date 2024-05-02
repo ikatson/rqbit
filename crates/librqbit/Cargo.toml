@@ -70,9 +70,10 @@ tokio-util = "0.7.10"
 bytes = "1.5.0"
 rlimit = "0.10.1"
 async-stream = "0.3.5"
-memmap2 = "0.9.4"
-rand_distr = "0.4.3"
-lru = "0.12.3"
+memmap2 = { version = "0.9.4" }
+
+rand_distr = { version = "0.4.3", optional = true }
+lru = { version = "0.12.3", optional = true }
 
 [dev-dependencies]
 futures = { version = "0.3" }

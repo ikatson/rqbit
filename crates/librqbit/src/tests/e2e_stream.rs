@@ -4,11 +4,7 @@ use anyhow::Context;
 use tokio::{io::AsyncReadExt, time::timeout};
 use tracing::info;
 
-use crate::{
-    create_torrent,
-    storage::{examples::inmemory::InMemoryExampleStorageFactory, StorageFactoryExt},
-    AddTorrent, CreateTorrentOptions, Session,
-};
+use crate::{create_torrent, AddTorrent, CreateTorrentOptions, Session};
 
 use super::test_util::create_default_random_dir_with_torrents;
 
@@ -86,7 +82,6 @@ async fn e2e_stream() -> anyhow::Result<()> {
             AddTorrent::from_bytes(torrent.as_bytes()?),
             Some(crate::AddTorrentOptions {
                 paused: false,
-                storage_factory: Some(InMemoryExampleStorageFactory::default().boxed()),
                 initial_peers: Some(vec![peer]),
                 ..Default::default()
             }),

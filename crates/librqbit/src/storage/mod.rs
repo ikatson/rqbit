@@ -1,5 +1,9 @@
-pub mod examples;
 pub mod filesystem;
+
+#[cfg(feature = "storage_examples")]
+pub mod examples;
+
+#[cfg(feature = "storage_middleware")]
 pub mod middleware;
 
 use std::{
@@ -65,14 +69,22 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
 }
 
 pub trait TorrentStorage: Send + Sync {
+    /// Given a file_id (which you can get more info from in init_storage() through torrent info)
+    /// read buf.len() bytes into buf at offset.
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 
+    /// Given a file_id (which you can get more info from in init_storage() through torrent info)
+    /// write buf.len() bytes into the file at offset.
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()>;
 
+    /// Remove a file from the storage. If not supported, or it doesn't matter, just return Ok(())
     fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()>;
 
+    /// E.g. for filesystem backend ensure that the file has a certain length, and grow/shrink as needed.
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
 
+    /// Replace the current storage with a dummy, and return a new one that should be used instead.
+    /// This is used to make the underlying object useless when e.g. pausing the torrent.
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
 }
 

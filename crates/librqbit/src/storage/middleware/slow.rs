@@ -1,3 +1,7 @@
+/*
+A storage middleware that slows down the underlying storage.
+*/
+
 use std::time::Duration;
 
 use rand_distr::Distribution;
