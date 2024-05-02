@@ -62,8 +62,21 @@ impl StorageFactory for FilesystemStorageFactory {
 }
 
 pub struct FilesystemStorage {
-    output_folder: PathBuf,
-    opened_files: Vec<OpenedFile>,
+    pub(super) output_folder: PathBuf,
+    pub(super) opened_files: Vec<OpenedFile>,
+}
+
+impl FilesystemStorage {
+    pub(super) fn take_fs(&self) -> anyhow::Result<Self> {
+        Ok(Self {
+            opened_files: self
+                .opened_files
+                .iter()
+                .map(|f| f.take_clone())
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            output_folder: self.output_folder.clone(),
+        })
+    }
 }
 
 impl TorrentStorage for FilesystemStorage {
