@@ -1,3 +1,10 @@
+/*
+A storage middleware that caches pieces in memory, so that subsequent reads (for checksumming) are
+free.
+
+An example, untested and unproven to be useful.
+*/
+
 use std::num::NonZeroUsize;
 
 use anyhow::Context;

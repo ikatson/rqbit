@@ -1,3 +1,7 @@
+/*
+A storage middleware that logs the time underlying storage operations took.
+*/
+
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
 #[derive(Clone)]
