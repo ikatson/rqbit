@@ -105,10 +105,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        // if self.addr.ip().to_string() != "213.189.217.38" {
-        //     bail!("bad ip")
-        // }
-
         let rwtimeout = self
             .options
             .read_write_timeout
@@ -153,10 +149,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         &self,
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     ) -> anyhow::Result<()> {
-        // if self.addr.ip().to_string() != "213.189.217.38" {
-        //     bail!("bad ip")
-        // }
-
         use tokio::io::AsyncWriteExt;
         let rwtimeout = self
             .options
