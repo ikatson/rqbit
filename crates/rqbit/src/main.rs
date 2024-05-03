@@ -9,7 +9,8 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-        StorageFactoryExt,
+        middleware::{slow::SlowStorageFactory, timing::TimingStorageFactory},
+        StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
@@ -298,10 +299,14 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         enable_upnp_port_forwarding: !opts.disable_upnp,
         default_defer_writes: opts.defer_writes,
         default_storage_factory: Some({
+            fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
+                TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
+            }
+
             if opts.experimental_mmap_storage {
-                MmapFilesystemStorageFactory::default().boxed()
+                wrap(MmapFilesystemStorageFactory::default()).boxed()
             } else {
-                FilesystemStorageFactory::default().boxed()
+                wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
     };
