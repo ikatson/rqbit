@@ -2,9 +2,13 @@
 A storage middleware that slows down the underlying storage.
 */
 
-use std::time::Duration;
+use std::{
+    fs::File,
+    io::{BufRead, BufReader, Lines},
+    time::Duration,
+};
 
-use rand_distr::Distribution;
+use parking_lot::Mutex;
 
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
@@ -27,6 +31,19 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
     fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         Ok(SlowStorage {
             underlying: self.underlying_factory.init_storage(info)?,
+            pwrite_all_bufread: Mutex::new(
+                BufReader::new(
+                    File::open("/Users/igor/Downloads/rqbit-log-slow-disk.log-pwrite_all").unwrap(),
+                )
+                .lines(),
+            ),
+            pread_exact_bufread: Mutex::new(
+                BufReader::new(
+                    File::open("/Users/igor/Downloads/rqbit-log-slow-disk.log-pread_exact")
+                        .unwrap(),
+                )
+                .lines(),
+            ),
         })
     }
 
@@ -41,39 +58,25 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
 
 pub struct SlowStorage<U> {
     underlying: U,
+    pwrite_all_bufread: Mutex<Lines<BufReader<File>>>,
+    pread_exact_bufread: Mutex<Lines<BufReader<File>>>,
 }
 
-fn random_duration() -> Duration {
-    use rand_distr::StandardNormal;
-
-    let s = StandardNormal {};
-
-    let sl: f64 = s.sample(&mut rand::thread_rng());
-    // let sl = Duration::from_secs_f64(sl);
-    // tracing::trace!(duration = ?sl, "sleeping");
-    // std::thread::sleep(sl)
-    //
-    let micros = 340f64 + sl * 200.;
-    // 16 is max blocking threads
-    let micros = micros.max(0.001) * 4. * 16.;
-    #[allow(clippy::cast_possible_truncation)]
-    Duration::from_micros(micros as u64)
-}
-
-fn random_sleep() {
-    let sl = random_duration();
-    tracing::trace!(duration = ?sl, "sleeping");
+fn sleep_from_reader(r: &Mutex<Lines<BufReader<File>>>) {
+    let mut g = r.lock();
+    let micros: u64 = g.next().unwrap().unwrap().parse().unwrap();
+    let sl = Duration::from_micros(micros);
     std::thread::sleep(sl)
 }
 
 impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        random_sleep();
+        sleep_from_reader(&self.pread_exact_bufread);
         self.underlying.pread_exact(file_id, offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        random_sleep();
+        sleep_from_reader(&self.pwrite_all_bufread);
         self.underlying.pwrite_all(file_id, offset, buf)
     }
 
@@ -86,8 +89,6 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(SlowStorage {
-            underlying: self.underlying.take()?,
-        }))
+        anyhow::bail!("not implemented")
     }
 }
