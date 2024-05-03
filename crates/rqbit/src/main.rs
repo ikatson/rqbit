@@ -104,10 +104,12 @@ struct Opts {
     #[arg(long = "max-blocking-threads", default_value = "8")]
     max_blocking_threads: u16,
 
-    /// If set, will write to disk in background and not inline with peer.
-    /// Useful if the disk is slow or its latency is very unstable (e.g. HDD or old SSD).
-    #[arg(long = "defer-writes", default_value = "false")]
-    defer_writes: bool,
+    // If you set this to something, all writes to disk will happen in background and be
+    // buffered in memory up to approximately the given number of megabytes.
+    //
+    // Might be useful for slow disks.
+    #[arg(long = "defer-writes-up-to")]
+    defer_writes_up_to: Option<usize>,
 
     /// Use mmap (file-backed) for storage. Any advantages are questionable and unproven.
     /// If you use it, you know what you are doing.
@@ -298,7 +300,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             None
         },
         enable_upnp_port_forwarding: !opts.disable_upnp,
-        default_defer_writes: opts.defer_writes,
+        defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
                 #[cfg(feature = "debug_slow_disk")]

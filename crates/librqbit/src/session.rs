@@ -20,7 +20,7 @@ use crate::{
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
-    type_aliases::PeerStream,
+    type_aliases::{DiskWorkQueueSender, PeerStream},
 };
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
@@ -34,6 +34,7 @@ use futures::{
 };
 use itertools::Itertools;
 use librqbit_core::{
+    constants::CHUNK_SIZE,
     directories::get_configuration_directory,
     magnet::Magnet,
     peer_id::generate_peer_id,
@@ -188,7 +189,7 @@ pub struct Session {
 
     cancellation_token: CancellationToken,
 
-    default_defer_writes: bool,
+    disk_write_tx: Option<DiskWorkQueueSender>,
 
     default_storage_factory: Option<BoxStorageFactory>,
 
@@ -424,9 +425,9 @@ pub struct SessionOptions {
     pub listen_port_range: Option<std::ops::Range<u16>>,
     pub enable_upnp_port_forwarding: bool,
 
-    // If true, will write to disk in separate threads. The downside is additional allocations.
-    // May be useful if the disk is slow.
-    pub default_defer_writes: bool,
+    // If you set this to something, all writes to disk will happen in background and be
+    // buffered in memory up to approximately the given number of megabytes.
+    pub defer_writes_up_to: Option<usize>,
 
     pub default_storage_factory: Option<BoxStorageFactory>,
 }
@@ -516,6 +517,16 @@ impl Session {
             };
             let spawner = BlockingSpawner::default();
 
+            let (disk_write_tx, disk_write_rx) = opts
+                .defer_writes_up_to
+                .map(|mb| {
+                    const DISK_WRITE_APPROX_WORK_ITEM_SIZE: usize = CHUNK_SIZE as usize + 300;
+                    let count = mb * 1024 * 1024 / DISK_WRITE_APPROX_WORK_ITEM_SIZE;
+                    let (tx, rx) = tokio::sync::mpsc::channel(count);
+                    (Some(tx), Some(rx))
+                })
+                .unwrap_or_default();
+
             let session = Arc::new(Self {
                 persistence_filename,
                 peer_id,
@@ -527,9 +538,19 @@ impl Session {
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
                 cancellation_token: token,
                 tcp_listen_port,
-                default_defer_writes: opts.default_defer_writes,
+                disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
             });
+
+            if let Some(mut disk_write_rx) = disk_write_rx {
+                session.spawn(error_span!("disk_writer"), async move {
+                    while let Some(work) = disk_write_rx.recv().await {
+                        trace!(disk_write_rx_queue_len = disk_write_rx.len());
+                        spawner.spawn_block_in_place(work);
+                    }
+                    Ok(())
+                });
+            }
 
             if let Some(tcp_listener) = tcp_listener {
                 session.spawn(
@@ -1041,8 +1062,11 @@ impl Session {
             .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)
             .trackers(trackers)
-            .defer_writes(opts.defer_writes.unwrap_or(self.default_defer_writes))
             .peer_id(self.peer_id);
+
+        if let Some(d) = self.disk_write_tx.clone() {
+            builder.disk_writer(d);
+        }
 
         if let Some(only_files) = only_files {
             builder.only_files(only_files);

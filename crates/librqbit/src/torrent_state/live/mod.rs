@@ -59,7 +59,6 @@ use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
-    constants::CHUNK_SIZE,
     hash_id::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     spawn_utils::spawn_with_cancel,
@@ -88,7 +87,7 @@ use crate::{
     },
     session::CheckedIncomingConnection,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{FilePriorities, FileStorage, PeerHandle, BF},
+    type_aliases::{DiskWorkQueueSender, FilePriorities, FileStorage, PeerHandle, BF},
 };
 
 use self::{
@@ -156,10 +155,6 @@ pub struct TorrentStateOptions {
     pub peer_read_write_timeout: Option<Duration>,
 }
 
-struct DiskWriteWorkItem {
-    work: Box<dyn FnOnce() + Send + Sync>,
-}
-
 pub struct TorrentStateLive {
     peers: PeerStates,
     meta: Arc<ManagedTorrentInfo>,
@@ -183,8 +178,6 @@ pub struct TorrentStateLive {
     down_speed_estimator: SpeedEstimator,
     up_speed_estimator: SpeedEstimator,
     cancellation_token: CancellationToken,
-
-    disk_work_tx: tokio::sync::mpsc::Sender<DiskWriteWorkItem>,
 
     pub(crate) streams: Arc<TorrentStreams>,
 }
@@ -217,15 +210,7 @@ impl TorrentStateLive {
             pri
         };
 
-        let defer_writes = paused.info.options.defer_writes;
-
-        // 8MB per torrent of disk buffering.
-        let (disk_work_tx, mut disk_work_rx) = tokio::sync::mpsc::channel(if defer_writes {
-            const APPROX_WORK_ITEM_SIZE: usize = CHUNK_SIZE as usize + 300;
-            8 * 1024 * 1024 / APPROX_WORK_ITEM_SIZE
-        } else {
-            1
-        });
+        let defer_writes = paused.info.options.disk_write_queue.is_some();
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
@@ -257,23 +242,7 @@ impl TorrentStateLive {
             } else {
                 vec![]
             },
-            disk_work_tx,
         });
-
-        if defer_writes {
-            state.spawn(
-                error_span!(parent: state.meta.span.clone(), "disk_writer"),
-                {
-                    let spawner = state.meta.spawner;
-                    async move {
-                        while let Some(work_item) = disk_work_rx.recv().await {
-                            spawner.spawn_block_in_place(work_item.work);
-                        }
-                        Ok(())
-                    }
-                },
-            );
-        }
 
         state.spawn(
             error_span!(parent: state.meta.span.clone(), "speed_estimator_updater"),
@@ -324,8 +293,8 @@ impl TorrentStateLive {
         &self.up_speed_estimator
     }
 
-    fn defer_writes(&self) -> bool {
-        self.meta.options.defer_writes
+    fn disk_work_tx(&self) -> Option<&DiskWorkQueueSender> {
+        self.meta.options.disk_write_queue.as_ref()
     }
 
     pub(crate) fn add_incoming_peer(
@@ -1546,7 +1515,7 @@ impl PeerHandler {
             Ok(())
         }
 
-        if self.state.defer_writes() {
+        if let Some(dtx) = self.state.disk_work_tx() {
             // TODO: shove all this into one thing to .clone() once rather than 5 times.
             let state = self.state.clone();
             let addr = self.addr;
@@ -1555,7 +1524,6 @@ impl PeerHandler {
             let tx = self.tx.clone();
 
             let span = tracing::error_span!("deferred_write");
-
             let work = move || {
                 span.in_scope(|| {
                     if let Err(e) = write_to_disk(&state, addr, &counters, &piece, &chunk_info) {
@@ -1563,12 +1531,7 @@ impl PeerHandler {
                     }
                 })
             };
-            self.state
-                .disk_work_tx
-                .send(DiskWriteWorkItem {
-                    work: Box::new(work),
-                })
-                .await?;
+            dtx.send(Box::new(work)).await?;
         } else {
             self.state
                 .meta

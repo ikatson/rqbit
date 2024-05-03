@@ -72,8 +72,8 @@ async fn test_e2e() {
                         peer_opts: None,
                         listen_port_range: Some(15100..17000),
                         enable_upnp_port_forwarding: false,
-                        default_defer_writes: false,
                         default_storage_factory: None,
+                        defer_writes_up_to: None,
                     },
                 )
                 .await

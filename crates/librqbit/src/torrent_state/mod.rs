@@ -38,6 +38,7 @@ use crate::file_info::FileInfo;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::torrent_state::stats::LiveStats;
+use crate::type_aliases::DiskWorkQueueSender;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
 
@@ -92,7 +93,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_read_write_timeout: Option<Duration>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
-    pub defer_writes: bool,
+    pub disk_write_queue: Option<DiskWorkQueueSender>,
 }
 
 pub struct ManagedTorrentInfo {
@@ -506,7 +507,7 @@ pub(crate) struct ManagedTorrentBuilder {
     spawner: Option<BlockingSpawner>,
     allow_overwrite: bool,
     storage_factory: BoxStorageFactory,
-    defer_writes: bool,
+    disk_writer: Option<DiskWorkQueueSender>,
 }
 
 impl ManagedTorrentBuilder {
@@ -529,7 +530,7 @@ impl ManagedTorrentBuilder {
             allow_overwrite: false,
             output_folder,
             storage_factory,
-            defer_writes: false,
+            disk_writer: None,
         }
     }
 
@@ -573,8 +574,8 @@ impl ManagedTorrentBuilder {
         self
     }
 
-    pub fn defer_writes(&mut self, value: bool) -> &mut Self {
-        self.defer_writes = value;
+    pub fn disk_writer(&mut self, value: DiskWorkQueueSender) -> &mut Self {
+        self.disk_writer = Some(value);
         self
     }
 
@@ -608,7 +609,7 @@ impl ManagedTorrentBuilder {
                 peer_read_write_timeout: self.peer_read_write_timeout,
                 allow_overwrite: self.allow_overwrite,
                 output_folder: self.output_folder,
-                defer_writes: self.defer_writes,
+                disk_write_queue: self.disk_writer,
             },
         });
 
