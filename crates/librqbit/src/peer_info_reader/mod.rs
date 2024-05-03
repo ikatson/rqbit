@@ -141,7 +141,6 @@ struct Handler {
     locked: RwLock<Option<HandlerLocked>>,
 }
 
-#[async_trait::async_trait]
 impl PeerConnectionHandler for Handler {
     fn get_have_bytes(&self) -> u64 {
         0
