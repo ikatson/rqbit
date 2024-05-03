@@ -11,3 +11,6 @@ pub type PeerStream = BoxStream<'static, SocketAddr>;
 pub type FileInfos = Vec<FileInfo>;
 pub(crate) type FileStorage = Box<dyn TorrentStorage>;
 pub(crate) type FilePriorities = Vec<usize>;
+
+pub(crate) type DiskWorkQueueItem = Box<dyn FnOnce() + Send + Sync>;
+pub(crate) type DiskWorkQueueSender = tokio::sync::mpsc::Sender<DiskWorkQueueItem>;
