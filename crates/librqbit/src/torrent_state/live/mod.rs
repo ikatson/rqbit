@@ -179,6 +179,7 @@ pub struct TorrentStateLive {
     cancellation_token: CancellationToken,
 
     pub(crate) streams: Arc<TorrentStreams>,
+    have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
 }
 
 impl TorrentStateLive {
@@ -211,6 +212,8 @@ impl TorrentStateLive {
 
         let defer_writes = paused.info.options.disk_write_queue.is_some();
 
+        let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
+
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
             peers: Default::default(),
@@ -233,6 +236,7 @@ impl TorrentStateLive {
             down_speed_estimator,
             up_speed_estimator,
             cancellation_token,
+            have_broadcast_tx,
             streams: paused.streams,
             per_piece_locks: if defer_writes {
                 (0..lengths.total_pieces())
@@ -391,7 +395,8 @@ impl TorrentStateLive {
                 rx,
                 checked_peer.read_buf,
                 checked_peer.handshake,
-                checked_peer.stream
+                checked_peer.stream,
+                self.have_broadcast_tx.subscribe()
             ) => {r}
         };
 
@@ -452,7 +457,7 @@ impl TorrentStateLive {
             .fetch_add(1, Ordering::Relaxed);
         let res = tokio::select! {
             r = requester => {r}
-            r = peer_connection.manage_peer_outgoing(rx) => {r}
+            r = peer_connection.manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe()) => {r}
         };
 
         match res {
@@ -553,33 +558,7 @@ impl TorrentStateLive {
     }
 
     fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
-        for pe in self.peers.states.iter() {
-            match &pe.value().state.get() {
-                PeerState::Live(live) => {
-                    if !live.peer_interested {
-                        continue;
-                    }
-
-                    if live
-                        .bitfield
-                        .get(index.get() as usize)
-                        .map(|v| *v)
-                        .unwrap_or(false)
-                    {
-                        continue;
-                    }
-
-                    if live
-                        .tx
-                        .send(WriterRequest::Message(Message::Have(index.get())))
-                        .is_err()
-                    {
-                        // whatever
-                    }
-                }
-                _ => continue,
-            }
-        }
+        let _ = self.have_broadcast_tx.send(index);
     }
 
     pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> anyhow::Result<bool> {

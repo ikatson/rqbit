@@ -6,7 +6,11 @@ use std::{
 use anyhow::{bail, Context};
 use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
-use librqbit_core::{hash_id::Id20, lengths::ChunkInfo, peer_id::try_decode_peer_id};
+use librqbit_core::{
+    hash_id::Id20,
+    lengths::{ChunkInfo, ValidPieceIndex},
+    peer_id::try_decode_peer_id,
+};
 use parking_lot::RwLock;
 use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ExtendedMessage},
@@ -102,6 +106,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         read_buf: ReadBuf,
         handshake: Handshake<ByteBufOwned>,
         mut conn: tokio::net::TcpStream,
+        have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
 
@@ -141,6 +146,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             write_buf,
             conn,
             outgoing_chan,
+            have_broadcast,
         )
         .await
     }
@@ -148,6 +154,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub async fn manage_peer_outgoing(
         &self,
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+        have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
         let rwtimeout = self
@@ -200,6 +207,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             write_buf,
             conn,
             outgoing_chan,
+            have_broadcast,
         )
         .await
     }
@@ -211,6 +219,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         mut write_buf: Vec<u8>,
         mut conn: tokio::net::TcpStream,
         mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+        mut have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
 
@@ -253,12 +262,21 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             }
 
             loop {
-                let req = match timeout(keep_alive_interval, outgoing_chan.recv()).await {
-                    Ok(Some(msg)) => msg,
-                    Ok(None) => {
-                        anyhow::bail!("closing writer, channel closed")
-                    }
-                    Err(_) => WriterRequest::Message(MessageOwned::KeepAlive),
+                let req = loop {
+                    break tokio::select! {
+                        r = have_broadcast.recv() => match r {
+                            Ok(id) => WriterRequest::Message(MessageOwned::Have(id.get())),
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => anyhow::bail!("closing writer, broadcast channel closed"),
+                            _ => continue
+                        },
+                        r = timeout(keep_alive_interval, outgoing_chan.recv()) => match r {
+                            Ok(Some(msg)) => msg,
+                            Ok(None) => {
+                                anyhow::bail!("closing writer, channel closed");
+                            }
+                            Err(_) => WriterRequest::Message(MessageOwned::KeepAlive),
+                        }
+                    };
                 };
 
                 let mut uploaded_add = None;
