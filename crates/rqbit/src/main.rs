@@ -300,7 +300,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         default_defer_writes: opts.defer_writes,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
-                TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
+                // TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
+                TimingStorageFactory::new("hdd".to_owned(), s)
             }
 
             if opts.experimental_mmap_storage {
