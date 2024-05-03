@@ -57,7 +57,6 @@ use anyhow::{bail, Context};
 use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
-use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
     hash_id::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
@@ -554,8 +553,6 @@ impl TorrentStateLive {
     }
 
     fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
-        let mut futures = Vec::new();
-
         for pe in self.peers.states.iter() {
             match &pe.value().state.get() {
                 PeerState::Live(live) => {
@@ -572,42 +569,17 @@ impl TorrentStateLive {
                         continue;
                     }
 
-                    let tx = live.tx.downgrade();
-                    futures.push(async move {
-                        if let Some(tx) = tx.upgrade() {
-                            if tx
-                                .send(WriterRequest::Message(Message::Have(index.get())))
-                                .is_err()
-                            {
-                                // whatever
-                            }
-                        }
-                    });
+                    if live
+                        .tx
+                        .send(WriterRequest::Message(Message::Have(index.get())))
+                        .is_err()
+                    {
+                        // whatever
+                    }
                 }
                 _ => continue,
             }
         }
-
-        if futures.is_empty() {
-            trace!("no peers to transmit Have={} to, saving some work", index);
-            return;
-        }
-
-        let mut unordered: FuturesUnordered<_> = futures.into_iter().collect();
-
-        // We don't want to remember this task as there may be too many.
-        self.spawn(
-            error_span!(
-                parent: self.meta.span.clone(),
-                "transmit_haves",
-                piece = index.get(),
-                count = unordered.len()
-            ),
-            async move {
-                while unordered.next().await.is_some() {}
-                Ok(())
-            },
-        );
     }
 
     pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> anyhow::Result<bool> {
