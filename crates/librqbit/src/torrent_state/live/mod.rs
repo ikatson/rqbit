@@ -59,6 +59,7 @@ use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use futures::{stream::FuturesUnordered, StreamExt};
 use librqbit_core::{
+    constants::CHUNK_SIZE,
     hash_id::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     spawn_utils::spawn_with_cancel,
@@ -155,6 +156,10 @@ pub struct TorrentStateOptions {
     pub peer_read_write_timeout: Option<Duration>,
 }
 
+struct DiskWriteWorkItem {
+    work: Box<dyn FnOnce() + Send + Sync>,
+}
+
 pub struct TorrentStateLive {
     peers: PeerStates,
     meta: Arc<ManagedTorrentInfo>,
@@ -178,6 +183,8 @@ pub struct TorrentStateLive {
     down_speed_estimator: SpeedEstimator,
     up_speed_estimator: SpeedEstimator,
     cancellation_token: CancellationToken,
+
+    disk_work_tx: tokio::sync::mpsc::Sender<DiskWriteWorkItem>,
 
     pub(crate) streams: Arc<TorrentStreams>,
 }
@@ -210,6 +217,10 @@ impl TorrentStateLive {
             pri
         };
 
+        // 8MB per torrent of disk buffering.
+        let (disk_work_tx, mut disk_work_rx) =
+            tokio::sync::mpsc::channel(8 * 1024 * 1024 / CHUNK_SIZE as usize);
+
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
             peers: Default::default(),
@@ -236,7 +247,18 @@ impl TorrentStateLive {
             per_piece_locks: (0..lengths.total_pieces())
                 .map(|_| RwLock::new(()))
                 .collect(),
+            disk_work_tx,
         });
+
+        state.spawn(
+            error_span!(parent: state.meta.span.clone(), "disk_writer"),
+            async move {
+                while let Some(work_item) = disk_work_rx.recv().await {
+                    tokio::task::spawn_blocking(work_item.work);
+                }
+                Ok(())
+            },
+        );
 
         state.spawn(
             error_span!(parent: state.meta.span.clone(), "speed_estimator_updater"),
@@ -802,6 +824,7 @@ struct PeerHandler {
     tx: PeerTx,
 }
 
+#[async_trait::async_trait]
 impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
@@ -812,7 +835,8 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             .total_time_connecting_ms
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);
     }
-    fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+
+    async fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
         match message {
             Message::Request(request) => {
                 self.on_download_request(request)
@@ -824,7 +848,10 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             Message::Choke => self.on_i_am_choked(),
             Message::Unchoke => self.on_i_am_unchoked(),
             Message::Interested => self.on_peer_interested(),
-            Message::Piece(piece) => self.on_received_piece(piece).context("on_received_piece")?,
+            Message::Piece(piece) => self
+                .on_received_piece(piece)
+                .await
+                .context("on_received_piece")?,
             Message::KeepAlive => {
                 trace!("keepalive received");
             }
@@ -1302,7 +1329,7 @@ impl PeerHandler {
         self.requests_sem.add_permits(128);
     }
 
-    fn on_received_piece(&self, piece: Piece<ByteBuf>) -> anyhow::Result<()> {
+    async fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
         let piece_index = self
             .state
             .lengths
@@ -1510,7 +1537,12 @@ impl PeerHandler {
                     }
                 })
             };
-            tokio::task::spawn_blocking(work);
+            self.state
+                .disk_work_tx
+                .send(DiskWriteWorkItem {
+                    work: Box::new(work),
+                })
+                .await?;
         } else {
             self.state
                 .meta

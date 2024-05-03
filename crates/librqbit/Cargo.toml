@@ -76,6 +76,7 @@ memmap2 = { version = "0.9.4" }
 
 rand_distr = { version = "0.4.3", optional = true }
 lru = { version = "0.12.3", optional = true }
+async-trait = "0.1.80"
 
 [dev-dependencies]
 futures = { version = "0.3" }
