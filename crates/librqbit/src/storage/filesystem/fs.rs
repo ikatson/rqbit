@@ -1,8 +1,13 @@
 use std::{
     fs::OpenOptions,
-    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
+
+#[cfg(not(target_family = "unix"))]
+use std::io::{Read, Seek, SeekFrom, Write};
+
+#[cfg(target_family = "unix")]
+use std::os::unix::fs::FileExt;
 
 use anyhow::Context;
 
@@ -85,25 +90,31 @@ impl FilesystemStorage {
 
 impl TorrentStorage for FilesystemStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let mut g = self
-            .opened_files
-            .get(file_id)
-            .context("no such file")?
-            .file
-            .lock();
-        g.seek(SeekFrom::Start(offset))?;
-        Ok(g.read_exact(buf)?)
+        let of = self.opened_files.get(file_id).context("no such file")?;
+        #[cfg(target_family = "unix")]
+        {
+            Ok(of.file.read().read_exact_at(buf, offset)?)
+        }
+        #[cfg(not(target_family = "unix"))]
+        {
+            let mut g = of.file.write();
+            g.seek(SeekFrom::Start(offset))?;
+            Ok(g.read_exact(buf)?)
+        }
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        let mut g = self
-            .opened_files
-            .get(file_id)
-            .context("no such file")?
-            .file
-            .lock();
-        g.seek(SeekFrom::Start(offset))?;
-        Ok(g.write_all(buf)?)
+        let of = self.opened_files.get(file_id).context("no such file")?;
+        #[cfg(target_family = "unix")]
+        {
+            Ok(of.file.read().write_all_at(buf, offset)?)
+        }
+        #[cfg(not(target_family = "unix"))]
+        {
+            let mut g = of.file.write();
+            g.seek(SeekFrom::Start(offset))?;
+            Ok(g.write_all(buf)?)
+        }
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
@@ -111,7 +122,7 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
-        Ok(self.opened_files[file_id].file.lock().set_len(len)?)
+        Ok(self.opened_files[file_id].file.write().set_len(len)?)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
