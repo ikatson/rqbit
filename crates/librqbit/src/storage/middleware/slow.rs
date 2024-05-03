@@ -37,7 +37,11 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
             underlying: self.underlying_factory.init_storage(info)?,
             pwrite_all_bufread: Mutex::new(Box::new(
                 BufReader::new(
-                    File::open(std::env::var("DBG_PWRITE_ALL_FILENAME").unwrap()).unwrap(),
+                    File::open(
+                        std::env::var("DBG_PWRITE_ALL_FILENAME")
+                            .expect("DBG_PWRITE_ALL_FILENAME env var not there"),
+                    )
+                    .unwrap(),
                 )
                 .lines()
                 .map(|l| l.unwrap().parse().unwrap())
@@ -46,7 +50,11 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
             )),
             pread_exact_bufread: Mutex::new(Box::new(
                 BufReader::new(
-                    File::open(std::env::var("DBG_PWRITE_ALL_FILENAME").unwrap()).unwrap(),
+                    File::open(
+                        std::env::var("DBG_PWRITE_ALL_FILENAME")
+                            .expect("DBG_PWRITE_ALL_FILENAME env var not there"),
+                    )
+                    .unwrap(),
                 )
                 .lines()
                 .map(|l| l.unwrap().parse().unwrap())
