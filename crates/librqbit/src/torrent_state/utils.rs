@@ -74,6 +74,7 @@ mod timed_existence {
         fn drop(&mut self) {
             let elapsed = self.started.elapsed();
             let reason = self.reason;
+            tracing::trace!(name=%self.reason, ?elapsed, "dropping guard");
             if elapsed > MAX {
                 warn!("elapsed on lock {reason:?}: {elapsed:?}")
             }
@@ -96,10 +97,12 @@ mod timed_existence {
 
     pub fn timeit<R>(name: impl std::fmt::Display, f: impl FnOnce() -> R) -> R {
         let now = Instant::now();
+        tracing::trace!(%name, "starting");
         let r = f();
+        tracing::trace!(%name, "done");
         let elapsed = now.elapsed();
         if elapsed > MAX {
-            warn!("elapsed on \"{name:}\": {elapsed:?}")
+            warn!(%name, ?elapsed, max = ?MAX, "elapsed > MAX");
         }
         r
     }
