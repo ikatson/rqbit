@@ -161,6 +161,8 @@ pub struct TorrentStateLive {
 
     pub(crate) files: FileStorage,
 
+    per_piece_locks: Vec<RwLock<()>>,
+
     stats: AtomicStats,
     lengths: Lengths,
 
@@ -212,6 +214,7 @@ impl TorrentStateLive {
             peers: Default::default(),
             locked: RwLock::new(TorrentStateLocked {
                 chunks: Some(paused.chunk_tracker),
+                // TODO: move under per_piece_locks
                 inflight_pieces: Default::default(),
                 file_priorities,
                 fatal_errors_tx: Some(fatal_errors_tx),
@@ -229,6 +232,9 @@ impl TorrentStateLive {
             up_speed_estimator,
             cancellation_token,
             streams: paused.streams,
+            per_piece_locks: (0..lengths.total_pieces())
+                .map(|_| RwLock::new(()))
+                .collect(),
         });
 
         state.spawn(
