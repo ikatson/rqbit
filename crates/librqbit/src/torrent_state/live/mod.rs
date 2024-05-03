@@ -306,7 +306,7 @@ impl TorrentStateLive {
         let permit = match self.peer_semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => {
-                warn!("limit of live peers reached, dropping incoming peer");
+                debug!("limit of live peers reached, dropping incoming peer");
                 self.peers.with_peer(checked_peer.addr, |p| {
                     atomic_inc(&p.stats.counters.incoming_connections);
                 });
@@ -1082,7 +1082,7 @@ impl PeerHandler {
                     piece_req.started = Instant::now();
                     (*idx, old)
                 } else {
-                    warn!(?idx, ?piece_req, "attempted to steal but peer was writing");
+                    debug!(?idx, ?piece_req, "attempted to steal but peer was writing");
                     return None;
                 }
             } else {
