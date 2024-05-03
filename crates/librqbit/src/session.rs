@@ -279,7 +279,9 @@ fn merge_two_optional_streams<T>(
 }
 
 /// Options for adding new torrents to the session.
-#[derive(Default)]
+//
+// Serialize/deserialize is for Tauri.
+#[derive(Default, Serialize, Deserialize)]
 pub struct AddTorrentOptions {
     /// Start in paused state.
     pub paused: bool,
@@ -312,6 +314,7 @@ pub struct AddTorrentOptions {
     /// This is used to restore the session from serialized state.
     pub preferred_id: Option<usize>,
 
+    #[serde(skip)]
     pub storage_factory: Option<BoxStorageFactory>,
 
     // If true, will write to disk in separate threads. The downside is additional allocations.
