@@ -26,7 +26,7 @@ impl StorageFactory for MmapFilesystemStorageFactory {
         let fs_storage = FilesystemStorageFactory::default().init_storage(meta)?;
         let mut mmaps = Vec::new();
         for file in fs_storage.opened_files.iter() {
-            let mmap = unsafe { MmapOptions::new().map_mut(&*file.file.lock()) }
+            let mmap = unsafe { MmapOptions::new().map_mut(&*file.file.read()) }
                 .context("error mapping file")?;
             mmaps.push(RwLock::new(mmap));
         }
