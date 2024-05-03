@@ -1293,7 +1293,6 @@ version = "5.6.4"
 dependencies = [
  "anyhow",
  "async-stream",
- "async-trait",
  "axum 0.7.5",
  "backoff",
  "base64 0.21.7",

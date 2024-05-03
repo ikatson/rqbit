@@ -19,7 +19,6 @@ use tracing::trace;
 
 use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner};
 
-#[async_trait::async_trait]
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn get_have_bytes(&self) -> u64;

@@ -824,7 +824,6 @@ struct PeerHandler {
     tx: PeerTx,
 }
 
-#[async_trait::async_trait]
 impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
