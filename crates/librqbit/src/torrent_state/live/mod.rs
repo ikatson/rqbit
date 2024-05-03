@@ -221,7 +221,8 @@ impl TorrentStateLive {
 
         // 8MB per torrent of disk buffering.
         let (disk_work_tx, mut disk_work_rx) = tokio::sync::mpsc::channel(if defer_writes {
-            8 * 1024 * 1024 / CHUNK_SIZE as usize
+            const APPROX_WORK_ITEM_SIZE: usize = CHUNK_SIZE as usize + 300;
+            8 * 1024 * 1024 / APPROX_WORK_ITEM_SIZE
         } else {
             1
         });
