@@ -141,6 +141,7 @@ struct Handler {
     locked: RwLock<Option<HandlerLocked>>,
 }
 
+#[async_trait::async_trait]
 impl PeerConnectionHandler for Handler {
     fn get_have_bytes(&self) -> u64 {
         0
@@ -157,7 +158,7 @@ impl PeerConnectionHandler for Handler {
         Ok(())
     }
 
-    fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
         trace!("{}: received message: {:?}", self.addr, msg);
 
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {

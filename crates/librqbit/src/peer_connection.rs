@@ -19,6 +19,7 @@ use tracing::trace;
 
 use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner};
 
+#[async_trait::async_trait]
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn get_have_bytes(&self) -> u64;
@@ -28,7 +29,7 @@ pub trait PeerConnectionHandler {
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()>;
-    fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
+    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
 }
@@ -360,6 +361,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 } else {
                     self.handler
                         .on_received_message(message)
+                        .await
                         .context("error in handler.on_received_message()")?;
                 }
             }
