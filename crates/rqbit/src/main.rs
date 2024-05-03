@@ -303,7 +303,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
                 #[cfg(feature = "debug_slow_disk")]
                 {
-                    use librqbit::middleware::{
+                    use librqbit::storage::middleware::{
                         slow::SlowStorageFactory, timing::TimingStorageFactory,
                     };
                     TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
