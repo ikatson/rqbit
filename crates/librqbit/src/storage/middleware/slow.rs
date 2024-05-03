@@ -31,19 +31,25 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
     fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         Ok(SlowStorage {
             underlying: self.underlying_factory.init_storage(info)?,
-            pwrite_all_bufread: Mutex::new(
+            pwrite_all_bufread: Mutex::new(Box::new(
                 BufReader::new(
                     File::open("/Users/igor/Downloads/rqbit-log-slow-disk.log-pwrite_all").unwrap(),
                 )
-                .lines(),
-            ),
-            pread_exact_bufread: Mutex::new(
+                .lines()
+                .map(|l| l.unwrap().parse().unwrap())
+                .collect::<Vec<_>>()
+                .into_iter(),
+            )),
+            pread_exact_bufread: Mutex::new(Box::new(
                 BufReader::new(
                     File::open("/Users/igor/Downloads/rqbit-log-slow-disk.log-pread_exact")
                         .unwrap(),
                 )
-                .lines(),
-            ),
+                .lines()
+                .map(|l| l.unwrap().parse().unwrap())
+                .collect::<Vec<_>>()
+                .into_iter(),
+            )),
         })
     }
 
@@ -58,13 +64,13 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
 
 pub struct SlowStorage<U> {
     underlying: U,
-    pwrite_all_bufread: Mutex<Lines<BufReader<File>>>,
-    pread_exact_bufread: Mutex<Lines<BufReader<File>>>,
+    pwrite_all_bufread: Mutex<Box<dyn Iterator<Item = u64> + Send + Sync>>,
+    pread_exact_bufread: Mutex<Box<dyn Iterator<Item = u64> + Send + Sync>>,
 }
 
-fn sleep_from_reader(r: &Mutex<Lines<BufReader<File>>>) {
+fn sleep_from_reader(r: &Mutex<Box<dyn Iterator<Item = u64> + Send + Sync>>) {
     let mut g = r.lock();
-    let micros: u64 = g.next().unwrap().unwrap().parse().unwrap();
+    let micros: u64 = g.next().unwrap();
     let sl = Duration::from_micros(micros);
     std::thread::sleep(sl)
 }

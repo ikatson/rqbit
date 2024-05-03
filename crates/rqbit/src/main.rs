@@ -101,7 +101,7 @@ struct Opts {
 
     /// How many blocking tokio threads to spawn to process disk reads/writes.
     /// Might want to increase if the disk is slow.
-    #[arg(long = "max-blocking-threads", default_value = "16")]
+    #[arg(long = "max-blocking-threads", default_value = "8")]
     max_blocking_threads: u16,
 
     /// If set, will write to disk in background and not inline with peer.
