@@ -80,6 +80,7 @@ use tracing::{debug, error, error_span, info, trace, warn};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
+    constants::MAX_LIVE_PEERS_PER_TORRENT,
     file_ops::FileOps,
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
@@ -228,7 +229,7 @@ impl TorrentStateLive {
                 ..Default::default()
             },
             lengths,
-            peer_semaphore: Arc::new(Semaphore::new(128)),
+            peer_semaphore: Arc::new(Semaphore::new(MAX_LIVE_PEERS_PER_TORRENT)),
             peer_queue_tx,
             finished_notify: Notify::new(),
             down_speed_estimator,
@@ -1409,6 +1410,9 @@ impl PeerHandler {
                 Some(t) => t,
                 None => return Ok(()),
             };
+
+            // TODO: this is a bit ugly but whatever.
+            state.files.flush_piece(chunk_info.piece_index)?;
 
             match state
                 .file_ops()

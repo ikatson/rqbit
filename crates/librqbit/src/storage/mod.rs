@@ -11,7 +11,10 @@ use std::{
     path::Path,
 };
 
-use crate::torrent_state::ManagedTorrentInfo;
+use anyhow::Context;
+use librqbit_core::lengths::ValidPieceIndex;
+
+use crate::{torrent_state::ManagedTorrentInfo, FileInfos};
 
 pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
@@ -83,9 +86,77 @@ pub trait TorrentStorage: Send + Sync {
     /// E.g. for filesystem backend ensure that the file has a certain length, and grow/shrink as needed.
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
 
+    fn flush_piece(&self, _piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Replace the current storage with a dummy, and return a new one that should be used instead.
     /// This is used to make the underlying object useless when e.g. pausing the torrent.
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
+
+    // fn pread_exact_absolute(
+    //     &self,
+    //     absolute_offset: u64,
+    //     mut buf: &mut [u8],
+    //     file_infos: &FileInfos,
+    // ) -> anyhow::Result<()> {
+    //     let mut it = file_infos
+    //         .iter()
+    //         .enumerate()
+    //         .skip_while(|(id, fi)| absolute_offset < fi.offset_in_torrent);
+    //     let (mut file_id, mut fi) = it.next().context("invalid offset")?;
+    //     let mut file_offset = fi.offset_in_torrent - absolute_offset;
+    //     while !buf.is_empty() {
+    //         let to_read = (buf.len() as u64)
+    //             .min(fi.len - file_offset)
+    //             .try_into()
+    //             .unwrap();
+    //         if to_read == 0 {
+    //             anyhow::bail!("bug, to_read = 0");
+    //         }
+    //         self.pread_exact(file_id, file_offset, &mut buf[..to_read])?;
+    //         buf = &mut buf[to_read..];
+    //         file_offset += to_read as u64;
+    //         if file_offset == fi.len {
+    //             (file_id, fi) = it.next().context("nowhere to read from")?;
+    //             file_offset = 0;
+    //         }
+    //     }
+
+    //     Ok(())
+    // }
+
+    fn pwrite_all_absolute(
+        &self,
+        absolute_offset: u64,
+        mut buf: &[u8],
+        file_infos: &FileInfos,
+    ) -> anyhow::Result<()> {
+        let mut it = file_infos
+            .iter()
+            .enumerate()
+            .skip_while(|(_, fi)| absolute_offset < fi.offset_in_torrent);
+        let (mut file_id, mut fi) = it.next().context("invalid offset")?;
+        let mut file_offset = fi.offset_in_torrent - absolute_offset;
+        while !buf.is_empty() {
+            let to_read = (buf.len() as u64)
+                .min(fi.len - file_offset)
+                .try_into()
+                .unwrap();
+            if to_read == 0 {
+                anyhow::bail!("bug, to_read = 0");
+            }
+            self.pwrite_all(file_id, file_offset, &buf[..to_read])?;
+            buf = &buf[to_read..];
+            file_offset += to_read as u64;
+            if file_offset == fi.len {
+                (file_id, fi) = it.next().context("nowhere to write")?;
+                file_offset = 0;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {

@@ -28,6 +28,7 @@
 pub mod api;
 mod api_error;
 mod chunk_tracker;
+mod constants;
 mod create_torrent_file;
 mod dht_utils;
 pub mod file_info;
