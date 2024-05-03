@@ -33,6 +33,7 @@ pub trait PeerConnectionHandler {
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()>;
     async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
+    fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
 }
@@ -265,7 +266,13 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let req = loop {
                     break tokio::select! {
                         r = have_broadcast.recv() => match r {
-                            Ok(id) => WriterRequest::Message(MessageOwned::Have(id.get())),
+                            Ok(id) => {
+                                if self.handler.should_transmit_have(id) {
+                                     WriterRequest::Message(MessageOwned::Have(id.get()))
+                                } else {
+                                    continue
+                                }
+                            },
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => anyhow::bail!("closing writer, broadcast channel closed"),
                             _ => continue
                         },

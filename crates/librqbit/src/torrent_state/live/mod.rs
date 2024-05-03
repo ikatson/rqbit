@@ -557,7 +557,7 @@ impl TorrentStateLive {
             .map(|c| *c.get_hns())
     }
 
-    fn maybe_transmit_haves(&self, index: ValidPieceIndex) {
+    fn transmit_haves(&self, index: ValidPieceIndex) {
         let _ = self.have_broadcast_tx.send(index);
     }
 
@@ -839,6 +839,17 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 
     fn get_have_bytes(&self) -> u64 {
         self.state.get_approx_have_bytes()
+    }
+
+    fn should_transmit_have(&self, id: ValidPieceIndex) -> bool {
+        let have = self
+            .state
+            .peers
+            .with_live(self.addr, |l| {
+                l.bitfield.get(id.get_usize()).map(|p| *p).unwrap_or(true)
+            })
+            .unwrap_or(true);
+        !have
     }
 }
 
@@ -1449,7 +1460,7 @@ impl PeerHandler {
 
                     state.on_piece_completed(chunk_info.piece_index)?;
 
-                    state.maybe_transmit_haves(chunk_info.piece_index);
+                    state.transmit_haves(chunk_info.piece_index);
                 }
                 false => {
                     warn!(

@@ -226,6 +226,10 @@ impl PeerConnectionHandler for Handler {
         }
         Ok(())
     }
+
+    fn should_transmit_have(&self, _id: librqbit_core::lengths::ValidPieceIndex) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
