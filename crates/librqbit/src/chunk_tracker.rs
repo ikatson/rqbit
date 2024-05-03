@@ -121,6 +121,7 @@ fn compute_queued_pieces(have_pieces: &BF, selected_pieces: &BF) -> anyhow::Resu
     ))
 }
 
+#[derive(Debug)]
 pub enum ChunkMarkingResult {
     PreviouslyCompleted,
     NotCompleted,
