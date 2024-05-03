@@ -347,23 +347,21 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         let reader = async move {
             loop {
-                read_buf
-                    .read_message(&mut read_half, rwtimeout, |message| {
-                        trace!("received: {:?}", &message);
-
-                        if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
-                            *extended_handshake_ref.write() = Some(h.clone_to_owned());
-                            self.handler.on_extended_handshake(h)?;
-                            trace!("remembered extended handshake for future serializing");
-                        } else {
-                            self.handler
-                                .on_received_message(message)
-                                .context("error in handler.on_received_message()")?;
-                        }
-                        Ok(())
-                    })
+                let message = read_buf
+                    .read_message(&mut read_half, rwtimeout)
                     .await
                     .context("error reading message")?;
+                trace!("received: {:?}", &message);
+
+                if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
+                    *extended_handshake_ref.write() = Some(h.clone_to_owned());
+                    self.handler.on_extended_handshake(h)?;
+                    trace!("remembered extended handshake for future serializing");
+                } else {
+                    self.handler
+                        .on_received_message(message)
+                        .context("error in handler.on_received_message()")?;
+                }
             }
 
             // For type inference.
