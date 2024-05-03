@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "5.6.4"
+version = "6.0.0-beta.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1840,6 +1840,7 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "librqbit-tracker-comms",
  "librqbit-upnp",
+ "memmap2",
  "parking_lot",
  "rand 0.8.5",
  "regex",
@@ -2085,6 +2086,15 @@ name = "memchr"
 version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
+
+[[package]]
+name = "memmap2"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe751422e4a8caa417e13c3ea66452215d7d63e19e604f4980461212f3ae1322"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "memoffset"
@@ -2964,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "5.6.4"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",

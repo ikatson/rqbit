@@ -1,6 +1,6 @@
 [package]
 name = "rqbit"
-version = "5.6.4"
+version = "6.0.0-beta.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "A bittorrent command line client and server."
@@ -22,7 +22,7 @@ rust-tls = ["librqbit/rust-tls"]
 debug_slow_disk = ["librqbit/storage_middleware"]
 
 [dependencies]
-librqbit = { path = "../librqbit", default-features = false, version = "5.6.4" }
+librqbit = { path = "../librqbit", default-features = false, version = "6.0.0-beta.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 console-subscriber = { version = "0.2", optional = true }
 anyhow = "1"
