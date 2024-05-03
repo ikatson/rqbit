@@ -68,18 +68,17 @@ impl ReadBuf {
         &mut self,
         mut conn: impl AsyncReadExt + Unpin,
         timeout: Duration,
-        on_message: impl for<'a> FnOnce(MessageBorrowed<'a>) -> anyhow::Result<()>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<MessageBorrowed<'_>> {
         loop {
             let need_additional_bytes =
                 match MessageBorrowed::deserialize(&self.buf[self.processed..self.filled]) {
                     Err(MessageDeserializeError::NotEnoughData(d, _)) => d,
                     Ok((msg, size)) => {
                         self.processed += size;
-                        // Rust's borrow checker can't do this early return. So we are using a callback instead.
-                        // return Ok(msg);
-                        on_message(msg)?;
-                        return Ok(());
+
+                        // Rust's borrow checker can't do this early return so resort to unsafe.
+                        let msg = unsafe { std::mem::transmute(msg) };
+                        return Ok(msg);
                     }
                     Err(e) => return Err(e.into()),
                 };
