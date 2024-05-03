@@ -19,6 +19,7 @@ webui = ["librqbit/webui"]
 timed_existence = ["librqbit/timed_existence"]
 default-tls = ["librqbit/default-tls"]
 rust-tls = ["librqbit/rust-tls"]
+debug_slow_disk = ["librqbit/storage_middleware"]
 
 [dependencies]
 librqbit = { path = "../librqbit", default-features = false, version = "5.6.4" }

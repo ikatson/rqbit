@@ -1,10 +1,14 @@
 /*
 A storage middleware that slows down the underlying storage.
+
+To be used for debugging. The input to it are 2 files with line-delimited numbers of microseconds
+it takes to read and write respectively.
+
 */
 
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Lines},
+    io::{BufRead, BufReader},
     time::Duration,
 };
 
@@ -33,7 +37,7 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
             underlying: self.underlying_factory.init_storage(info)?,
             pwrite_all_bufread: Mutex::new(Box::new(
                 BufReader::new(
-                    File::open("/Users/igor/Downloads/rqbit-log-slow-disk.log-pwrite_all").unwrap(),
+                    File::open(std::env::var("DBG_PWRITE_ALL_FILENAME").unwrap()).unwrap(),
                 )
                 .lines()
                 .map(|l| l.unwrap().parse().unwrap())
@@ -42,8 +46,7 @@ impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
             )),
             pread_exact_bufread: Mutex::new(Box::new(
                 BufReader::new(
-                    File::open("/Users/igor/Downloads/rqbit-log-slow-disk.log-pread_exact")
-                        .unwrap(),
+                    File::open(std::env::var("DBG_PWRITE_ALL_FILENAME").unwrap()).unwrap(),
                 )
                 .lines()
                 .map(|l| l.unwrap().parse().unwrap())

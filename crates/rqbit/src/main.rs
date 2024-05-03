@@ -9,7 +9,6 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-        middleware::{slow::SlowStorageFactory, timing::TimingStorageFactory},
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
@@ -99,17 +98,19 @@ struct Opts {
     #[command(subcommand)]
     subcommand: SubCommand,
 
-    /// How many blocking tokio threads to spawn to process disk reads/writes.
-    /// Might want to increase if the disk is slow.
+    /// How many maximum blocking tokio threads to spawn to process disk reads/writes.
+    /// This will indicate how many parallel reads/writes can happen at a moment in time.
+    /// The higher the number, the more the memory usage.
     #[arg(long = "max-blocking-threads", default_value = "8")]
     max_blocking_threads: u16,
 
     /// If set, will write to disk in background and not inline with peer.
-    /// Might be useful if the disk is slow.
+    /// Useful if the disk is slow or its latency is very unstable (e.g. HDD or old SSD).
     #[arg(long = "defer-writes", default_value = "false")]
     defer_writes: bool,
 
-    /// Use mmap (file-backed) for storage.
+    /// Use mmap (file-backed) for storage. Any advantages are questionable and unproven.
+    /// If you use it, you know what you are doing.
     #[arg(long)]
     experimental_mmap_storage: bool,
 }
@@ -300,8 +301,15 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         default_defer_writes: opts.defer_writes,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
-                // TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
-                TimingStorageFactory::new("hdd".to_owned(), s)
+                #[cfg(feature = "debug_slow_disk")]
+                {
+                    use librqbit::middleware::{
+                        slow::SlowStorageFactory, timing::TimingStorageFactory,
+                    };
+                    TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
+                }
+                #[cfg(not(feature = "debug_slow_disk"))]
+                s
             }
 
             if opts.experimental_mmap_storage {
