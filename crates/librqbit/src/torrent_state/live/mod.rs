@@ -262,11 +262,14 @@ impl TorrentStateLive {
         if defer_writes {
             state.spawn(
                 error_span!(parent: state.meta.span.clone(), "disk_writer"),
-                async move {
-                    while let Some(work_item) = disk_work_rx.recv().await {
-                        tokio::task::spawn_blocking(work_item.work);
+                {
+                    let spawner = state.meta.spawner;
+                    async move {
+                        while let Some(work_item) = disk_work_rx.recv().await {
+                            spawner.spawn_block_in_place(work_item.work);
+                        }
+                        Ok(())
                     }
-                    Ok(())
                 },
             );
         }
