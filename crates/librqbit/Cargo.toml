@@ -17,6 +17,8 @@ webui = []
 timed_existence = []
 default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
+storage_middleware = ["lru", "rand_distr"]
+storage_examples = []
 
 [dependencies]
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.2" }
