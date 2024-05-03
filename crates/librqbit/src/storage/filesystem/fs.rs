@@ -3,12 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(not(target_family = "unix"))]
-use std::io::{Read, Seek, SeekFrom, Write};
-
-#[cfg(target_family = "unix")]
-use std::os::unix::fs::FileExt;
-
 use anyhow::Context;
 
 use crate::{storage::StorageFactoryExt, torrent_state::ManagedTorrentInfo};
@@ -93,10 +87,12 @@ impl TorrentStorage for FilesystemStorage {
         let of = self.opened_files.get(file_id).context("no such file")?;
         #[cfg(target_family = "unix")]
         {
+            use std::os::unix::fs::FileExt;
             Ok(of.file.read().read_exact_at(buf, offset)?)
         }
         #[cfg(not(target_family = "unix"))]
         {
+            use std::io::{Read, Seek, SeekFrom};
             let mut g = of.file.write();
             g.seek(SeekFrom::Start(offset))?;
             Ok(g.read_exact(buf)?)
@@ -107,10 +103,21 @@ impl TorrentStorage for FilesystemStorage {
         let of = self.opened_files.get(file_id).context("no such file")?;
         #[cfg(target_family = "unix")]
         {
+            use std::os::unix::fs::FileExt;
             Ok(of.file.read().write_all_at(buf, offset)?)
         }
-        #[cfg(not(target_family = "unix"))]
+        #[cfg(target_family = "windows")]
         {
+            use std::os::windows::fs::FileExt;
+            let mut remaining = buf.len();
+            while remaining > 0 {
+                remaining -= of.file.read().seek_write(buf, offset)?;
+            }
+            Ok(())
+        }
+        #[cfg(not(any(target_family = "unix", target_family = "windows")))]
+        {
+            use std::io::{Read, Seek, SeekFrom, Write};
             let mut g = of.file.write();
             g.seek(SeekFrom::Start(offset))?;
             Ok(g.write_all(buf)?)
