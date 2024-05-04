@@ -9,11 +9,7 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-        middleware::{
-            full_piece_cache::FullPieceCacheStorageFactory,
-            shadow_compare::ShadowCompareStorageFactory, tracing::TracingStorageFactory,
-        },
-        StorageFactory, StorageFactoryExt,
+        StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
@@ -306,37 +302,10 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         enable_upnp_port_forwarding: !opts.disable_upnp,
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
-            fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
-                #[cfg(feature = "debug_slow_disk")]
-                {
-                    use librqbit::storage::middleware::{
-                        slow::SlowStorageFactory, timing::TracingStorageFactory,
-                    };
-                    TracingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
-                }
-                #[cfg(not(feature = "debug_slow_disk"))]
-                s
-            }
-
-            fn wrap2<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
-                use librqbit::storage::middleware::batching_writes_cache::BatchingWritesCacheStorageFactory;
-                let s = TracingStorageFactory::new("hdd".into(), s);
-                // let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
-                let s = FullPieceCacheStorageFactory::new(128 * 1024 * 1024, s);
-
-                let s = TracingStorageFactory::new("full".into(), s);
-                s
-                // let shadow = TimingStorageFactory::new(
-                //     "mirror".into(),
-                //     FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into()),
-                // );
-                // ShadowCompareStorageFactory::new(s, shadow)
-            }
-
             if opts.experimental_mmap_storage {
-                wrap2(wrap(MmapFilesystemStorageFactory::default())).boxed()
+                MmapFilesystemStorageFactory::default().boxed()
             } else {
-                wrap2(wrap(FilesystemStorageFactory::default())).boxed()
+                FilesystemStorageFactory::default().boxed()
             }
         }),
     };

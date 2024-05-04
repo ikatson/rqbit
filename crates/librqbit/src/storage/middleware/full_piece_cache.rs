@@ -1,8 +1,8 @@
 /*
-A storage middleware that caches pieces in memory, so that subsequent reads (for checksumming) are
-free.
+A storage middleware that caches pieces in memory, and only flushes them if they are successfully
+checksummed.
 
-An example, untested and unproven to be useful.
+Requires a lot of memory, unproven to be useful. The intention is to issue less random writes to disk.
 */
 
 use anyhow::Context;
@@ -98,9 +98,7 @@ impl<U: TorrentStorage> FullPieceCacheStorage<U> {
 }
 
 impl<U: TorrentStorage> TorrentStorage for FullPieceCacheStorage<U> {
-    fn pread_exact(&self, file_id: usize, offset: u64, mut buf: &mut [u8]) -> anyhow::Result<()> {
-        // try to read from cache first.
-        // TODO: not sure if it's any faster than reading from disk.
+    fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let cp = self
             .lengths
             .compute_current_piece(offset, self.file_infos[file_id].offset_in_torrent)
@@ -122,14 +120,6 @@ impl<U: TorrentStorage> TorrentStorage for FullPieceCacheStorage<U> {
             .lengths
             .compute_current_piece(offset, self.file_infos[file_id].offset_in_torrent)
             .context("pwrite_all: compute_current_piece returned None")?;
-
-        // If the cache is too big, passthrough and warn.
-        // This shouldn't happen.
-        //
-        // If the newly written chunk for the piece isn't adjacent, flush and replace.
-        //
-        // If the newly written chunk doesn't fit, flush and replace.
-        // - if doens't FULLY fit, warn
 
         use dashmap::mapref::entry::Entry;
         let clen = self.map.len();

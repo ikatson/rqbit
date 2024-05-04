@@ -1,8 +1,5 @@
 /*
-A storage middleware that caches pieces in memory, so that subsequent reads (for checksumming) are
-free.
-
-An example, untested and unproven to be useful.
+A storage middleware that tries to batch writes to disk. Too complicated to be of any use.
 */
 
 use anyhow::Context;
@@ -160,32 +157,6 @@ impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
         cache.len = 0;
         Ok(())
     }
-}
-
-fn intervals_ranges(
-    left: std::ops::Range<u64>,
-    right: std::ops::Range<u64>,
-) -> [(bool, std::ops::Range<u64>); 3] {
-    let mut res = [(true, 0..0), (true, 0..0), (true, 0..0)];
-
-    // beginning
-    let start = left.start.min(right.start);
-    let end = left.start.max(right.start);
-    if start != end {
-        let is_left = start == left.start;
-        res[0] = (is_left, start..end)
-    }
-
-    // intersection
-    let start = end;
-    let end = left.end.min(right.end);
-    if start != end {
-        let is_left = start == left.start;
-        res[0] = (is_left, start..end)
-    }
-    // end
-
-    res
 }
 
 impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
