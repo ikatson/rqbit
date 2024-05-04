@@ -162,28 +162,88 @@ impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
     }
 }
 
+fn intervals_ranges(
+    left: std::ops::Range<u64>,
+    right: std::ops::Range<u64>,
+) -> [(bool, std::ops::Range<u64>); 3] {
+    let mut res = [(true, 0..0), (true, 0..0), (true, 0..0)];
+
+    // beginning
+    let start = left.start.min(right.start);
+    let end = left.start.max(right.start);
+    if start != end {
+        let is_left = start == left.start;
+        res[0] = (is_left, start..end)
+    }
+
+    // intersection
+    let start = end;
+    let end = left.end.min(right.end);
+    if start != end {
+        let is_left = start == left.start;
+        res[0] = (is_left, start..end)
+    }
+    // end
+
+    res
+}
+
 impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
-    fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+    fn pread_exact(&self, file_id: usize, offset: u64, mut buf: &mut [u8]) -> anyhow::Result<()> {
         // try to read from cache first.
         // TODO: not sure if it's any faster than reading from disk.
         let cp = self
             .lengths
             .compute_current_piece(offset, self.file_infos[file_id].offset_in_torrent)
             .context("pread_exact: compute_current_piece returned None")?;
+
         if let Some(r) = self.map.get(&cp.id) {
-            // if the read is entirely within the cache, read from cache
             let pc = r.value();
-            if let Some(start) = cp.piece_offset.checked_sub(pc.start_offset) {
-                let start = start as usize;
-                let end = start + buf.len();
-                if let Some(b) = pc.filled().get(start..end) {
-                    trace!(cp=?cp, pc=?*pc, start, len=buf.len(), "reading from in-memory cache");
-                    buf.copy_from_slice(b);
-                    return Ok(());
+
+            if pc.len > 0 {
+                let pc_abs_offset = self.lengths.piece_offset(cp.id) + pc.start_offset as u64;
+                let pc_abs_end = pc_abs_offset + pc.len as u64;
+                let mut current_offset = offset;
+                while !buf.is_empty() {
+                    let mut to_read = 0;
+                    match current_offset.cmp(&pc_abs_offset) {
+                        std::cmp::Ordering::Less => {
+                            // Read from disk up to pc_abs_offset
+                            to_read =
+                                (buf.len() as u64).min(pc_abs_offset - current_offset) as usize;
+                            self.underlying.pread_exact(
+                                file_id,
+                                current_offset,
+                                &mut buf[..to_read],
+                            )?;
+                        }
+                        std::cmp::Ordering::Equal => {
+                            to_read = (pc.len as usize).min(buf.len());
+                            trace!(current_offset, to_read, skip=0, pc=?*pc, cp=?cp, "reading from cache");
+                            buf[..to_read].copy_from_slice(&pc.data[..to_read]);
+                        }
+                        std::cmp::Ordering::Greater => {
+                            // inside or outside of the cache
+                            if current_offset < pc_abs_end {
+                                to_read =
+                                    (pc_abs_end - current_offset).min(buf.len() as u64) as usize;
+                                let skip = (current_offset - pc_abs_offset) as usize;
+                                trace!(current_offset, to_read, skip, pc=?*pc, cp=?cp, "reading from cache");
+                                buf[..to_read].copy_from_slice(&pc.data[skip..skip + to_read]);
+                            } else {
+                                // read the remainder of the file from underlying storage
+                                return self.underlying.pread_exact(file_id, current_offset, buf);
+                            }
+                        }
+                    }
+
+                    buf = &mut buf[to_read..];
+                    current_offset += to_read as u64;
                 }
+
+                return Ok(());
             }
         }
-
         self.underlying.pread_exact(file_id, offset, buf)
     }
 
