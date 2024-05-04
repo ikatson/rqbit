@@ -118,7 +118,7 @@ impl PieceCache {
             return Err(AppendError::NotEnoughSpace);
         }
         self.data[self.len as usize..(self.len as usize + buf.len())].copy_from_slice(buf);
-        self.len += buf.len() as u32;
+        self.len += TryInto::<u32>::try_into(buf.len()).unwrap();
         Ok(())
     }
 }
@@ -247,12 +247,14 @@ impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
     fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         if let Some((_, mut v)) = self.map.remove(&piece_id) {
             self.flush(piece_id, &mut v)?;
+        } else {
+            trace!(?piece_id, "no piece in cache, can't flush");
         }
         Ok(())
     }
 
     fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
-        if let Some((_, mut v)) = self.map.remove(&piece_id) {
+        if let Some((_, _v)) = self.map.remove(&piece_id) {
             trace!(?piece_id, "discarded");
         }
         Ok(())

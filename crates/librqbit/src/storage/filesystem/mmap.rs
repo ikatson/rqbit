@@ -98,4 +98,18 @@ impl TorrentStorage for MmapFilesystemStorage {
             fs: self.fs.take_fs()?,
         }))
     }
+
+    fn flush_piece(
+        &self,
+        _piece_id: librqbit_core::lengths::ValidPieceIndex,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn discard_piece(
+        &self,
+        _piece_id: librqbit_core::lengths::ValidPieceIndex,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

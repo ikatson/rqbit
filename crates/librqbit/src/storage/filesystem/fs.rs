@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
+use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::{storage::StorageFactoryExt, torrent_state::ManagedTorrentInfo};
 
@@ -154,5 +155,13 @@ impl TorrentStorage for FilesystemStorage {
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
         }))
+    }
+
+    fn flush_piece(&self, _piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn discard_piece(&self, _piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        Ok(())
     }
 }

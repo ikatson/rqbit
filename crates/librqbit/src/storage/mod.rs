@@ -87,13 +87,9 @@ pub trait TorrentStorage: Send + Sync {
     /// E.g. for filesystem backend ensure that the file has a certain length, and grow/shrink as needed.
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
 
-    fn flush_piece(&self, _piece_id: ValidPieceIndex) -> anyhow::Result<()> {
-        Ok(())
-    }
+    fn flush_piece(&self, _piece_id: ValidPieceIndex) -> anyhow::Result<()>;
 
-    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
-        Ok(())
-    }
+    fn discard_piece(&self, _piece_id: ValidPieceIndex) -> anyhow::Result<()>;
 
     /// Replace the current storage with a dummy, and return a new one that should be used instead.
     /// This is used to make the underlying object useless when e.g. pausing the torrent.
@@ -185,5 +181,22 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         (**self).take()
+    }
+
+    fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        (**self).flush_piece(piece_id)
+    }
+
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        (**self).discard_piece(piece_id)
+    }
+
+    fn pwrite_all_absolute(
+        &self,
+        absolute_offset: u64,
+        buf: &[u8],
+        file_infos: &FileInfos,
+    ) -> anyhow::Result<()> {
+        (**self).pwrite_all_absolute(absolute_offset, buf, file_infos)
     }
 }

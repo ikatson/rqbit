@@ -48,6 +48,20 @@ impl TorrentStorage for CustomStorage {
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         anyhow::bail!("not implemented")
     }
+
+    fn flush_piece(
+        &self,
+        _piece_id: librqbit_core::lengths::ValidPieceIndex,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("not implemented")
+    }
+
+    fn discard_piece(
+        &self,
+        _piece_id: librqbit_core::lengths::ValidPieceIndex,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("not implemented")
+    }
 }
 
 #[tokio::main]

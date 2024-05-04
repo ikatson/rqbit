@@ -2,6 +2,8 @@
 A storage middleware that logs the time underlying storage operations took.
 */
 
+use librqbit_core::lengths::ValidPieceIndex;
+
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
 #[derive(Clone)]
@@ -95,5 +97,13 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
             underlying: self.underlying.take()?,
             name: self.name.clone(),
         }))
+    }
+
+    fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.underlying.flush_piece(piece_id)
+    }
+
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.underlying.discard_piece(piece_id)
     }
 }

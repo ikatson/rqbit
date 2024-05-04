@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use librqbit_core::lengths::ValidPieceIndex;
 use parking_lot::Mutex;
 
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
@@ -107,5 +108,23 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         anyhow::bail!("not implemented")
+    }
+
+    fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.underlying.flush_piece(piece_id)
+    }
+
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.underlying.discard_piece(piece_id)
+    }
+
+    fn pwrite_all_absolute(
+        &self,
+        absolute_offset: u64,
+        buf: &[u8],
+        file_infos: &crate::FileInfos,
+    ) -> anyhow::Result<()> {
+        self.underlying
+            .pwrite_all_absolute(absolute_offset, buf, file_infos)
     }
 }

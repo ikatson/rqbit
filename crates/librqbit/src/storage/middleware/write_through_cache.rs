@@ -116,4 +116,14 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
             file_infos: self.file_infos.clone(),
         }))
     }
+
+    fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.lru.write().pop(&piece_id);
+        Ok(())
+    }
+
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.lru.write().pop(&piece_id);
+        Ok(())
+    }
 }
