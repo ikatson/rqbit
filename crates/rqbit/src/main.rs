@@ -9,6 +9,7 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
+        middleware::timing::TimingStorageFactory,
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
@@ -302,7 +303,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         enable_upnp_port_forwarding: !opts.disable_upnp,
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
-            fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
+            fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
                 #[cfg(feature = "debug_slow_disk")]
                 {
                     use librqbit::storage::middleware::{
@@ -314,10 +315,16 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 s
             }
 
+            fn wrap2<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
+                use librqbit::storage::middleware::batching_writes_cache::BatchingWritesCacheStorageFactory;
+                let s = TimingStorageFactory::new("hdd".to_owned(), s);
+                BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s)
+            }
+
             if opts.experimental_mmap_storage {
-                wrap(MmapFilesystemStorageFactory::default()).boxed()
+                wrap2(wrap(MmapFilesystemStorageFactory::default())).boxed()
             } else {
-                wrap(FilesystemStorageFactory::default()).boxed()
+                wrap2(wrap(FilesystemStorageFactory::default())).boxed()
             }
         }),
     };

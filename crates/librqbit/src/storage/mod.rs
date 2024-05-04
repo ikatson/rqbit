@@ -137,7 +137,7 @@ pub trait TorrentStorage: Send + Sync {
             .enumerate()
             .skip_while(|(_, fi)| absolute_offset < fi.offset_in_torrent);
         let (mut file_id, mut fi) = it.next().context("invalid offset")?;
-        let mut file_offset = fi.offset_in_torrent - absolute_offset;
+        let mut file_offset = absolute_offset - fi.offset_in_torrent;
         while !buf.is_empty() {
             let to_read = (buf.len() as u64)
                 .min(fi.len - file_offset)

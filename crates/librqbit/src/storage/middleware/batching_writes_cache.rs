@@ -72,6 +72,15 @@ struct PieceCache {
     data: Box<[u8]>,
 }
 
+impl std::fmt::Debug for PieceCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PieceCache")
+            .field("len", &self.len)
+            .field("start_offset", &self.start_offset)
+            .finish()
+    }
+}
+
 enum AppendError {
     NonContiguous,
     NotEnoughSpace,
@@ -84,6 +93,12 @@ impl PieceCache {
 
     fn filled(&self) -> &[u8] {
         &self.data[..self.len as usize]
+    }
+
+    fn replace_with(&mut self, piece_offset: u32, buf: &[u8]) {
+        self.data[..buf.len()].copy_from_slice(buf);
+        self.start_offset = piece_offset;
+        self.len = buf.len().try_into().unwrap()
     }
 
     fn try_append(&mut self, piece_offset: u32, buf: &[u8]) -> Result<(), AppendError> {
@@ -123,6 +138,12 @@ impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
     }
 
     fn flush(&self, piece_id: ValidPieceIndex, cache: &mut PieceCache) -> anyhow::Result<()> {
+        trace!(
+            piece_id = ?piece_id,
+            piece_offset = cache.start_offset,
+            cache_len = cache.len,
+            "flushing"
+        );
         let piece_offset = self.lengths.piece_offset(piece_id);
         let abs_offset = piece_offset + cache.start_offset as u64;
         self.underlying
@@ -154,10 +175,10 @@ impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
         // - if doens't FULLY fit, warn
 
         use dashmap::mapref::entry::Entry;
+        let clen = self.map.len();
         let mut pc = match self.map.entry(cp.id) {
             Entry::Occupied(occ) => occ.into_ref(),
             Entry::Vacant(vac) => {
-                let clen = self.map.len();
                 if clen >= self.max_pieces {
                     warn!(
                         "map len = {}, expected it to be <= {} without triggering this warning",
@@ -171,22 +192,23 @@ impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
         if let Err(e) = pc.try_append(cp.piece_offset, buf) {
             match e {
                 AppendError::NonContiguous => {
-                    warn!(piece = ?cp.id, "non contiguous append, flushing")
+                    trace!(cp = ?cp, len=buf.len(), pc=?*pc, file_id, offset, "non contiguous append, flushing")
                 }
                 AppendError::NotEnoughSpace => {
-                    trace!(piece = ?cp.id, "not enough space, flushing")
+                    trace!(cp = ?cp, len=buf.len(), pc=?*pc, file_id, offset, "not enough space, flushing")
                 }
             }
 
             self.flush(cp.id, &mut pc)?;
 
             if pc.data.len() >= buf.len() {
-                pc.data[..buf.len()].copy_from_slice(buf);
+                pc.replace_with(cp.piece_offset, buf);
                 Ok(())
             } else {
                 self.underlying.pwrite_all(file_id, offset, buf)
             }
         } else {
+            trace!(cp = ?cp, len=buf.len(), pc=?*pc, file_id, offset, "appended!");
             Ok(())
         }
     }

@@ -279,17 +279,16 @@ impl Lengths {
 
         let piece_id = self.validate_piece_index(piece_id)?;
         let piece_len = self.piece_length(piece_id);
-        let piece_offset = (abs_pos / dpl as u64).try_into().ok()?;
+        let piece_offset = (abs_pos % dpl as u64).try_into().ok()?;
         Some(CurrentPiece {
             id: piece_id,
             piece_offset,
-            piece_remaining: (piece_len as u64 - (abs_pos % dpl as u64))
-                .try_into()
-                .ok()?,
+            piece_remaining: piece_len - piece_offset,
         })
     }
 }
 
+#[derive(Debug)]
 pub struct CurrentPiece {
     pub id: ValidPieceIndex,
     pub piece_remaining: u32,
