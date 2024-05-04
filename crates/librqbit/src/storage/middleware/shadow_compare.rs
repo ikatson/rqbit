@@ -1,5 +1,7 @@
 use std::hash::Hasher;
 
+use librqbit_core::lengths::{self, ValidPieceIndex};
+
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
 #[derive(Clone)]
@@ -45,16 +47,28 @@ pub struct ShadowCompareStorage<S1, S2> {
     mirror: S2,
 }
 
+fn hash_from_storage(
+    s: &impl TorrentStorage,
+    file_id: usize,
+    offset: u64,
+    len: usize,
+) -> anyhow::Result<u64> {
+    // whatever, this is for debugging anyway
+    let mut buf = vec![0u8; len];
+    s.pread_exact(file_id, offset, &mut buf)?;
+    Ok(hash_buf(&buf))
+}
+
 impl<S1, S2> TorrentStorage for ShadowCompareStorage<S1, S2>
 where
     S1: TorrentStorage,
     S2: TorrentStorage,
 {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.primary.pread_exact(file_id, offset, buf)?;
-        let h1 = hash_buf(buf);
         self.mirror.pread_exact(file_id, offset, buf)?;
         let h2 = hash_buf(buf);
+        self.primary.pread_exact(file_id, offset, buf)?;
+        let h1 = hash_buf(buf);
         if h1 != h2 {
             anyhow::bail!("corruption");
         }
@@ -62,10 +76,12 @@ where
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        self.primary.pwrite_all(file_id, offset, buf)?;
-        let h1 = hash_buf(buf);
         self.mirror.pwrite_all(file_id, offset, buf)?;
-        let h2 = hash_buf(buf);
+        let h2 = hash_from_storage(&self.mirror, file_id, offset, buf.len())?;
+
+        self.primary.pwrite_all(file_id, offset, buf)?;
+        let h1 = hash_from_storage(&self.primary, file_id, offset, buf.len())?;
+
         if h1 != h2 {
             anyhow::bail!("corruption");
         }
@@ -89,5 +105,17 @@ where
             primary: self.primary.take()?,
             mirror: self.mirror.take()?,
         }))
+    }
+
+    fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.primary.flush_piece(piece_id)?;
+        self.mirror.flush_piece(piece_id)?;
+        Ok(())
+    }
+
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        self.primary.discard_piece(piece_id)?;
+        self.mirror.discard_piece(piece_id)?;
+        Ok(())
     }
 }
