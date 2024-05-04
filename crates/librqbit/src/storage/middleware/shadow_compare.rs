@@ -65,9 +65,13 @@ where
     S2: TorrentStorage,
 {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.mirror.pread_exact(file_id, offset, buf)?;
+        self.mirror
+            .pread_exact(file_id, offset, buf)
+            .inspect_err(|e| tracing::debug!("mirror: error reading: {}", e))?;
         let h2 = hash_buf(buf);
-        self.primary.pread_exact(file_id, offset, buf)?;
+        self.primary
+            .pread_exact(file_id, offset, buf)
+            .inspect_err(|e| tracing::debug!("primary: error reading: {}", e))?;
         let h1 = hash_buf(buf);
         if h1 != h2 {
             anyhow::bail!("corruption");
@@ -76,10 +80,14 @@ where
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        self.mirror.pwrite_all(file_id, offset, buf)?;
+        self.mirror
+            .pwrite_all(file_id, offset, buf)
+            .inspect_err(|e| tracing::debug!("mirror: error writing: {}", e))?;
         let h2 = hash_from_storage(&self.mirror, file_id, offset, buf.len())?;
 
-        self.primary.pwrite_all(file_id, offset, buf)?;
+        self.primary
+            .pwrite_all(file_id, offset, buf)
+            .inspect_err(|e| tracing::debug!("primary: error writing: {}", e))?;
         let h1 = hash_from_storage(&self.primary, file_id, offset, buf.len())?;
 
         if h1 != h2 {

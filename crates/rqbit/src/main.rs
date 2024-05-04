@@ -9,7 +9,7 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-        middleware::timing::TimingStorageFactory,
+        middleware::{shadow_compare::ShadowCompareStorageFactory, timing::TimingStorageFactory},
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
@@ -320,10 +320,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 let s = TimingStorageFactory::new("hdd".to_owned(), s);
                 let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
 
-                TimingStorageFactory::new("batching".to_owned(), s)
-                // let shadow =
-                //     FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into());
-                // ShadowCompareStorageFactory::new(s, shadow)
+                let s = TimingStorageFactory::new("batching".to_owned(), s);
+                // s
+                let shadow =
+                    FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into());
+                ShadowCompareStorageFactory::new(s, shadow)
             }
 
             if opts.experimental_mmap_storage {
