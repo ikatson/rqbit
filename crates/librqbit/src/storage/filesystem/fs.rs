@@ -11,15 +11,28 @@ use crate::storage::{StorageFactory, TorrentStorage};
 
 use super::opened_file::OpenedFile;
 
-#[derive(Default, Clone, Copy)]
-pub struct FilesystemStorageFactory {}
+#[derive(Default, Clone)]
+pub struct FilesystemStorageFactory {
+    force_output_folder: Option<PathBuf>,
+}
+
+impl FilesystemStorageFactory {
+    pub fn new_forced_output_folder(dir: PathBuf) -> Self {
+        Self {
+            force_output_folder: Some(dir),
+        }
+    }
+}
 
 impl StorageFactory for FilesystemStorageFactory {
     type Storage = FilesystemStorage;
 
     fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<FilesystemStorage> {
         let mut files = Vec::<OpenedFile>::new();
-        let output_folder = &meta.options.output_folder;
+        let output_folder = self
+            .force_output_folder
+            .as_ref()
+            .unwrap_or(&meta.options.output_folder);
         for file_details in meta.info.iter_file_details(&meta.lengths)? {
             let mut full_path = output_folder.clone();
             let relative_path = file_details
@@ -60,7 +73,7 @@ impl StorageFactory for FilesystemStorageFactory {
     }
 
     fn clone_box(&self) -> crate::storage::BoxStorageFactory {
-        self.boxed()
+        self.clone().boxed()
     }
 }
 
