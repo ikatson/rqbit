@@ -7,12 +7,12 @@ use librqbit_core::lengths::ValidPieceIndex;
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
 #[derive(Clone)]
-pub struct TimingStorageFactory<U> {
+pub struct TracingStorageFactory<U> {
     name: String,
     underlying_factory: U,
 }
 
-impl<U> TimingStorageFactory<U> {
+impl<U> TracingStorageFactory<U> {
     pub fn new(name: String, underlying: U) -> Self {
         Self {
             name,
@@ -21,11 +21,11 @@ impl<U> TimingStorageFactory<U> {
     }
 }
 
-impl<U: StorageFactory + Clone> StorageFactory for TimingStorageFactory<U> {
-    type Storage = TimingStorage<U::Storage>;
+impl<U: StorageFactory + Clone> StorageFactory for TracingStorageFactory<U> {
+    type Storage = TracingStorage<U::Storage>;
 
     fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
-        Ok(TimingStorage {
+        Ok(TracingStorage {
             name: self.name.clone(),
             underlying: self.underlying_factory.init_storage(info)?,
         })
@@ -40,7 +40,7 @@ impl<U: StorageFactory + Clone> StorageFactory for TimingStorageFactory<U> {
     }
 }
 
-pub struct TimingStorage<U> {
+pub struct TracingStorage<U> {
     name: String,
     underlying: U,
 }
@@ -61,7 +61,7 @@ macro_rules! timeit {
     };
 }
 
-impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
+impl<U: TorrentStorage> TorrentStorage for TracingStorage<U> {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let storage = &self.name;
         let len = buf.len();
@@ -105,7 +105,7 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         timeit!(
             "take",
-            Ok(Box::new(TimingStorage {
+            Ok(Box::new(TracingStorage {
                 underlying: self.underlying.take()?,
                 name: self.name.clone(),
             }) as Box<dyn TorrentStorage>)

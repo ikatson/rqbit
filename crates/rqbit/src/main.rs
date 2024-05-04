@@ -9,7 +9,7 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-        middleware::{shadow_compare::ShadowCompareStorageFactory, timing::TimingStorageFactory},
+        middleware::{shadow_compare::ShadowCompareStorageFactory, tracing::TracingStorageFactory},
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
@@ -307,9 +307,9 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 #[cfg(feature = "debug_slow_disk")]
                 {
                     use librqbit::storage::middleware::{
-                        slow::SlowStorageFactory, timing::TimingStorageFactory,
+                        slow::SlowStorageFactory, timing::TracingStorageFactory,
                     };
-                    TimingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
+                    TracingStorageFactory::new("hdd".to_owned(), SlowStorageFactory::new(s))
                 }
                 #[cfg(not(feature = "debug_slow_disk"))]
                 s
@@ -317,16 +317,16 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
 
             fn wrap2<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
                 use librqbit::storage::middleware::batching_writes_cache::BatchingWritesCacheStorageFactory;
-                let s = TimingStorageFactory::new("hdd".into(), s);
+                let s = TracingStorageFactory::new("hdd".into(), s);
                 let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
 
-                let s = TimingStorageFactory::new("batching".into(), s);
-                // s
-                let shadow = TimingStorageFactory::new(
-                    "mirror".into(),
-                    FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into()),
-                );
-                ShadowCompareStorageFactory::new(s, shadow)
+                let s = TracingStorageFactory::new("batching".into(), s);
+                s
+                // let shadow = TimingStorageFactory::new(
+                //     "mirror".into(),
+                //     FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into()),
+                // );
+                // ShadowCompareStorageFactory::new(s, shadow)
             }
 
             if opts.experimental_mmap_storage {

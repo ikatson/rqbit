@@ -150,7 +150,12 @@ impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
         );
         let piece_offset = self.lengths.piece_offset(piece_id);
         let abs_offset = piece_offset + cache.start_offset as u64;
-        pwrite_all_absolute(self, abs_offset, cache.filled(), &self.file_infos)?;
+        pwrite_all_absolute(
+            &self.underlying,
+            abs_offset,
+            cache.filled(),
+            &self.file_infos,
+        )?;
         cache.start_offset = u32::MAX; // invalid value
         cache.len = 0;
         Ok(())
