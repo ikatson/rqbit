@@ -210,8 +210,6 @@ impl TorrentStateLive {
             pri
         };
 
-        let defer_writes = paused.info.options.disk_write_queue.is_some();
-
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
         let state = Arc::new(TorrentStateLive {
@@ -238,13 +236,9 @@ impl TorrentStateLive {
             cancellation_token,
             have_broadcast_tx,
             streams: paused.streams,
-            per_piece_locks: if defer_writes {
-                (0..lengths.total_pieces())
-                    .map(|_| RwLock::new(()))
-                    .collect()
-            } else {
-                vec![]
-            },
+            per_piece_locks: (0..lengths.total_pieces())
+                .map(|_| RwLock::new(()))
+                .collect(),
         });
 
         state.spawn(
@@ -1029,12 +1023,7 @@ impl PeerHandler {
             // heuristic for "too slow peer"
             if elapsed.as_secs_f64() > my_avg_time.as_secs_f64() * threshold {
                 // If the piece is locked and someone is actively writing to disk, don't steal it.
-                if let Some(_g) = self
-                    .state
-                    .per_piece_locks
-                    .get(idx.get_usize())
-                    .and_then(|l| l.try_write())
-                {
+                if let Some(_g) = self.state.per_piece_locks[idx.get_usize()].try_write() {
                     debug!(
                         "will steal piece {} from {}: elapsed time {:?}, my avg piece time: {:?}",
                         idx, piece_req.peer, elapsed, my_avg_time
@@ -1337,6 +1326,11 @@ impl PeerHandler {
         ) -> anyhow::Result<()> {
             let index = piece.index;
 
+            // If someone stole the piece by now, ignore it.
+            // However if they didn't, don't let them steal it while we are writing.
+            // So that by the time we are done writing AND if it was the last piece,
+            // we can actually checksum etc.
+            // Otherwise it might get into some weird state.
             let ppl_guard = {
                 let g = state.lock_read("check_steal");
 
