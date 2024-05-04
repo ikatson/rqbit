@@ -9,7 +9,10 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-        middleware::{shadow_compare::ShadowCompareStorageFactory, tracing::TracingStorageFactory},
+        middleware::{
+            full_piece_cache::FullPieceCacheStorageFactory,
+            shadow_compare::ShadowCompareStorageFactory, tracing::TracingStorageFactory,
+        },
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
@@ -318,9 +321,10 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             fn wrap2<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
                 use librqbit::storage::middleware::batching_writes_cache::BatchingWritesCacheStorageFactory;
                 let s = TracingStorageFactory::new("hdd".into(), s);
-                let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
+                // let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
+                let s = FullPieceCacheStorageFactory::new(128 * 1024 * 1024, s);
 
-                let s = TracingStorageFactory::new("batching".into(), s);
+                let s = TracingStorageFactory::new("full".into(), s);
                 s
                 // let shadow = TimingStorageFactory::new(
                 //     "mirror".into(),
