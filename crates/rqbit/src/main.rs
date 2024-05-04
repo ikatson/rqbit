@@ -9,6 +9,7 @@ use librqbit::{
     http_api_client, librqbit_spawn,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
+        middleware::full_piece_cache::FullPieceCacheStorageFactory,
         StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
@@ -305,7 +306,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             if opts.experimental_mmap_storage {
                 MmapFilesystemStorageFactory::default().boxed()
             } else {
-                FilesystemStorageFactory::default().boxed()
+                FullPieceCacheStorageFactory::new(
+                    256 * 1024 * 1024,
+                    FilesystemStorageFactory::default(),
+                )
+                .boxed()
             }
         }),
     };

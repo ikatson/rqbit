@@ -12,7 +12,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["default-tls", "webui"]
+default = ["default-tls", "webui", "librqbit/storage_middleware"]
 openssl-vendored = ["openssl/vendored"]
 tokio-console = ["console-subscriber", "tokio/tracing"]
 webui = ["librqbit/webui"]
