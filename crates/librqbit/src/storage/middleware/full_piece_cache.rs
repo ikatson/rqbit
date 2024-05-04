@@ -36,8 +36,13 @@ impl<U: StorageFactory + Clone> StorageFactory for FullPieceCacheStorageFactory<
     fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         let max_pieces = MAX_LIVE_PEERS_PER_TORRENT;
         let required_memory = info.lengths.default_piece_length() as u64 * max_pieces as u64;
-        if required_memory < self.max_cache_bytes {
-            anyhow::bail!("not enough memory to init FullPieceCacheStorageFactory")
+        if required_memory > self.max_cache_bytes {
+            const MB: u64 = 1024 * 1024;
+            anyhow::bail!(
+                "not enough memory to init FullPieceCacheStorageFactory. Required {} mb, allowed only {}",
+                required_memory.div_ceil(MB),
+                self.max_cache_bytes.div_ceil(MB)
+            )
         }
         Ok(FullPieceCacheStorage {
             max_pieces,
