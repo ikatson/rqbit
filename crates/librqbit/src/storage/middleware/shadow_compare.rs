@@ -1,6 +1,6 @@
 use std::hash::Hasher;
 
-use librqbit_core::lengths::{self, ValidPieceIndex};
+use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
