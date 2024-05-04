@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::Context;
 use librqbit_core::lengths::ValidPieceIndex;
+use tracing::trace;
 
 use crate::{torrent_state::ManagedTorrentInfo, FileInfos};
 
@@ -132,6 +133,7 @@ pub trait TorrentStorage: Send + Sync {
         mut buf: &[u8],
         file_infos: &FileInfos,
     ) -> anyhow::Result<()> {
+        trace!(absolute_offset, len = buf.len(), "pwrite_all_absolute");
         let mut it = file_infos
             .iter()
             .enumerate()
@@ -139,6 +141,11 @@ pub trait TorrentStorage: Send + Sync {
         let (mut file_id, mut fi) = it.next().context("invalid offset")?;
         let mut file_offset = absolute_offset - fi.offset_in_torrent;
         while !buf.is_empty() {
+            if file_offset == fi.len {
+                (file_id, fi) = it.next().context("nowhere to write")?;
+                file_offset = 0;
+            }
+
             let to_read = (buf.len() as u64)
                 .min(fi.len - file_offset)
                 .try_into()
@@ -149,10 +156,6 @@ pub trait TorrentStorage: Send + Sync {
             self.pwrite_all(file_id, file_offset, &buf[..to_read])?;
             buf = &buf[to_read..];
             file_offset += to_read as u64;
-            if file_offset == fi.len {
-                (file_id, fi) = it.next().context("nowhere to write")?;
-                file_offset = 0;
-            }
         }
 
         Ok(())

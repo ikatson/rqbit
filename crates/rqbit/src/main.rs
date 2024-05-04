@@ -318,7 +318,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             fn wrap2<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
                 use librqbit::storage::middleware::batching_writes_cache::BatchingWritesCacheStorageFactory;
                 let s = TimingStorageFactory::new("hdd".to_owned(), s);
-                BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s)
+                let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
+                TimingStorageFactory::new("batching".to_owned(), s)
             }
 
             if opts.experimental_mmap_storage {
