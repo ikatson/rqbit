@@ -91,6 +91,10 @@ pub trait TorrentStorage: Send + Sync {
         Ok(())
     }
 
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Replace the current storage with a dummy, and return a new one that should be used instead.
     /// This is used to make the underlying object useless when e.g. pausing the torrent.
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;

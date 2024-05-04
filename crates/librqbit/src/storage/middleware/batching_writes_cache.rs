@@ -91,6 +91,10 @@ impl PieceCache {
         self.data.len() - self.len as usize
     }
 
+    fn capacity(&self) -> usize {
+        self.data.len()
+    }
+
     fn filled(&self) -> &[u8] {
         &self.data[..self.len as usize]
     }
@@ -131,7 +135,7 @@ pub struct BatchingWritesCacheStorage<U> {
 impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
     fn new_piece_cache(&self) -> PieceCache {
         PieceCache {
-            start_offset: 0,
+            start_offset: u32::MAX, // invalid value,
             len: 0,
             data: vec![0u8; self.cache_bytes_per_piece].into_boxed_slice(),
         }
@@ -148,7 +152,7 @@ impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
         let abs_offset = piece_offset + cache.start_offset as u64;
         self.underlying
             .pwrite_all_absolute(abs_offset, cache.filled(), &self.file_infos)?;
-        cache.start_offset += cache.len;
+        cache.start_offset = u32::MAX; // invalid value
         cache.len = 0;
         Ok(())
     }
@@ -156,7 +160,26 @@ impl<U: TorrentStorage> BatchingWritesCacheStorage<U> {
 
 impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        // NOTE: this only works if you don't read until you flush the piece.
+        // try to read from cache first.
+        // TODO: not sure if it's any faster than reading from disk.
+        let cp = self
+            .lengths
+            .compute_current_piece(offset, self.file_infos[file_id].offset_in_torrent)
+            .context("pread_exact: compute_current_piece returned None")?;
+        if let Some(r) = self.map.get(&cp.id) {
+            // if the read is entirely within the cache, read from cache
+            let pc = r.value();
+            if let Some(start) = cp.piece_offset.checked_sub(pc.start_offset) {
+                let start = start as usize;
+                let end = start + buf.len();
+                if let Some(b) = pc.filled().get(start..end) {
+                    trace!(cp=?cp, pc=?*pc, start, len=buf.len(), "reading from in-memory cache");
+                    buf.copy_from_slice(b);
+                    return Ok(());
+                }
+            }
+        }
+
         self.underlying.pread_exact(file_id, offset, buf)
     }
 
@@ -201,7 +224,7 @@ impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
 
             self.flush(cp.id, &mut pc)?;
 
-            if pc.data.len() >= buf.len() {
+            if pc.capacity() >= buf.len() {
                 pc.replace_with(cp.piece_offset, buf);
                 Ok(())
             } else {
@@ -224,6 +247,13 @@ impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
     fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         if let Some((_, mut v)) = self.map.remove(&piece_id) {
             self.flush(piece_id, &mut v)?;
+        }
+        Ok(())
+    }
+
+    fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        if let Some((_, mut v)) = self.map.remove(&piece_id) {
+            trace!(?piece_id, "discarded");
         }
         Ok(())
     }

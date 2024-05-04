@@ -1411,15 +1411,15 @@ impl PeerHandler {
                 None => return Ok(()),
             };
 
-            // TODO: this is a bit ugly but whatever.
-            state.files.flush_piece(chunk_info.piece_index)?;
-
             match state
                 .file_ops()
                 .check_piece(addr, chunk_info.piece_index, chunk_info)
                 .with_context(|| format!("error checking piece={index}"))?
             {
                 true => {
+                    // TODO: this is a bit ugly but whatever.
+                    state.files.flush_piece(chunk_info.piece_index)?;
+
                     {
                         let mut g = state.lock_write("mark_piece_downloaded");
                         g.get_chunks_mut()?
@@ -1461,6 +1461,7 @@ impl PeerHandler {
                     state.transmit_haves(chunk_info.piece_index);
                 }
                 false => {
+                    state.files.discard_piece(chunk_info.piece_index)?;
                     warn!(
                         "checksum for piece={} did not validate. disconecting peer.",
                         index
