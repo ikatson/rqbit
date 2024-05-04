@@ -46,12 +46,16 @@ pub struct TimingStorage<U> {
 }
 
 macro_rules! timeit {
-    ($name:expr, $op:expr, $($rest:tt),*) => {
+    ($name:expr, $op:expr $(, $rest:tt)*) => {
         {
             let start = std::time::Instant::now();
             let r = $op;
             let elapsed = start.elapsed();
-            tracing::debug!(name = $name, $($rest),*, elapsed_micros=elapsed.as_micros());
+            if let Err(e) = &r {
+                tracing::debug!(name = $name, error=?e, elapsed_micros=elapsed.as_micros() $(, $rest)*);
+            } else {
+                tracing::debug!(name = $name, elapsed_micros=elapsed.as_micros() $(, $rest)*);
+            }
             r
         }
     };
@@ -85,7 +89,13 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
     }
 
     fn remove_file(&self, file_id: usize, filename: &std::path::Path) -> anyhow::Result<()> {
-        self.underlying.remove_file(file_id, filename)
+        let storage = &self.name;
+        timeit!(
+            "remove_file",
+            self.underlying.remove_file(file_id, filename),
+            file_id,
+            storage
+        )
     }
 
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
@@ -93,10 +103,13 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(TimingStorage {
-            underlying: self.underlying.take()?,
-            name: self.name.clone(),
-        }))
+        timeit!(
+            "take",
+            Ok(Box::new(TimingStorage {
+                underlying: self.underlying.take()?,
+                name: self.name.clone(),
+            }) as Box<dyn TorrentStorage>)
+        )
     }
 
     fn flush_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {

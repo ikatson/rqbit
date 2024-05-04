@@ -117,14 +117,4 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
     fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         self.underlying.discard_piece(piece_id)
     }
-
-    fn pwrite_all_absolute(
-        &self,
-        absolute_offset: u64,
-        buf: &[u8],
-        file_infos: &crate::FileInfos,
-    ) -> anyhow::Result<()> {
-        self.underlying
-            .pwrite_all_absolute(absolute_offset, buf, file_infos)
-    }
 }

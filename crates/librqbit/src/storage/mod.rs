@@ -126,40 +126,6 @@ pub trait TorrentStorage: Send + Sync {
 
     //     Ok(())
     // }
-
-    fn pwrite_all_absolute(
-        &self,
-        absolute_offset: u64,
-        mut buf: &[u8],
-        file_infos: &FileInfos,
-    ) -> anyhow::Result<()> {
-        trace!(absolute_offset, len = buf.len(), "pwrite_all_absolute");
-        let mut it = file_infos
-            .iter()
-            .enumerate()
-            .skip_while(|(_, fi)| absolute_offset < fi.offset_in_torrent);
-        let (mut file_id, mut fi) = it.next().context("invalid offset")?;
-        let mut file_offset = absolute_offset - fi.offset_in_torrent;
-        while !buf.is_empty() {
-            if file_offset == fi.len {
-                (file_id, fi) = it.next().context("nowhere to write")?;
-                file_offset = 0;
-            }
-
-            let to_read = (buf.len() as u64)
-                .min(fi.len - file_offset)
-                .try_into()
-                .unwrap();
-            if to_read == 0 {
-                anyhow::bail!("bug, to_read = 0");
-            }
-            self.pwrite_all(file_id, file_offset, &buf[..to_read])?;
-            buf = &buf[to_read..];
-            file_offset += to_read as u64;
-        }
-
-        Ok(())
-    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -190,13 +156,38 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
     fn discard_piece(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         (**self).discard_piece(piece_id)
     }
+}
 
-    fn pwrite_all_absolute(
-        &self,
-        absolute_offset: u64,
-        buf: &[u8],
-        file_infos: &FileInfos,
-    ) -> anyhow::Result<()> {
-        (**self).pwrite_all_absolute(absolute_offset, buf, file_infos)
+pub fn pwrite_all_absolute<S: TorrentStorage + ?Sized>(
+    storage: &S,
+    absolute_offset: u64,
+    mut buf: &[u8],
+    file_infos: &FileInfos,
+) -> anyhow::Result<()> {
+    trace!(absolute_offset, len = buf.len(), "pwrite_all_absolute");
+    let mut it = file_infos
+        .iter()
+        .enumerate()
+        .skip_while(|(_, fi)| absolute_offset < fi.offset_in_torrent);
+    let (mut file_id, mut fi) = it.next().context("invalid offset")?;
+    let mut file_offset = absolute_offset - fi.offset_in_torrent;
+    while !buf.is_empty() {
+        if file_offset == fi.len {
+            (file_id, fi) = it.next().context("nowhere to write")?;
+            file_offset = 0;
+        }
+
+        let to_read = (buf.len() as u64)
+            .min(fi.len - file_offset)
+            .try_into()
+            .unwrap();
+        if to_read == 0 {
+            anyhow::bail!("bug, to_read = 0");
+        }
+        storage.pwrite_all(file_id, file_offset, &buf[..to_read])?;
+        buf = &buf[to_read..];
+        file_offset += to_read as u64;
     }
+
+    Ok(())
 }

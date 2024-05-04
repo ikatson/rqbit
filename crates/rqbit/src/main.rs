@@ -317,13 +317,15 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
 
             fn wrap2<S: StorageFactory + Clone>(s: S) -> impl StorageFactory + Clone {
                 use librqbit::storage::middleware::batching_writes_cache::BatchingWritesCacheStorageFactory;
-                let s = TimingStorageFactory::new("hdd".to_owned(), s);
+                let s = TimingStorageFactory::new("hdd".into(), s);
                 let s = BatchingWritesCacheStorageFactory::new(128 * 1024 * 1024, s);
 
-                let s = TimingStorageFactory::new("batching".to_owned(), s);
+                let s = TimingStorageFactory::new("batching".into(), s);
                 // s
-                let shadow =
-                    FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into());
+                let shadow = TimingStorageFactory::new(
+                    "mirror".into(),
+                    FilesystemStorageFactory::new_forced_output_folder("/tmp/mirror".into()),
+                );
                 ShadowCompareStorageFactory::new(s, shadow)
             }
 
