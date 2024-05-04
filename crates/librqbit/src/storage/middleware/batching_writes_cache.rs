@@ -229,6 +229,17 @@ impl<U: TorrentStorage> TorrentStorage for BatchingWritesCacheStorage<U> {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        anyhow::bail!("not implemented")
+        for mut piece in self.map.iter_mut() {
+            self.flush(*piece.key(), piece.value_mut())?;
+        }
+        let new = BatchingWritesCacheStorage {
+            max_pieces: self.max_pieces,
+            cache_bytes_per_piece: self.cache_bytes_per_piece,
+            map: Default::default(),
+            lengths: self.lengths,
+            file_infos: self.file_infos.clone(),
+            underlying: self.underlying.take()?,
+        };
+        Ok(Box::new(new))
     }
 }
