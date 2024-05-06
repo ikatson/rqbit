@@ -25,9 +25,11 @@ impl StorageFactory for MmapFilesystemStorageFactory {
     fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         let fs_storage = FilesystemStorageFactory::default().init_storage(meta)?;
         let mut mmaps = Vec::new();
-        for file in fs_storage.opened_files.iter() {
-            let mmap = unsafe { MmapOptions::new().map_mut(&*file.file.read()) }
-                .context("error mapping file")?;
+        for (idx, file) in fs_storage.opened_files.iter().enumerate() {
+            let fg = file.file.write();
+            fg.set_len(meta.file_infos[idx].len)
+                .context("mmap storage: error setting length")?;
+            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }.context("error mapping file")?;
             mmaps.push(RwLock::new(mmap));
         }
 
