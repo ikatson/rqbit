@@ -4,7 +4,7 @@ use anyhow::Context;
 use buffers::ByteBufOwned;
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use tracing::debug;
+use tracing::{debug, error_span, Instrument};
 
 use crate::{
     peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,
@@ -46,6 +46,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
                 peer_connection_options,
                 BlockingSpawner::new(true),
             )
+            .instrument(error_span!("read_metainfo_from_peer", ?addr))
             .await
             .with_context(|| format!("error reading metainfo from {addr}"));
             drop(token);

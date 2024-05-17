@@ -19,7 +19,7 @@ use peer_binary_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tokio::time::timeout;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner};
 
@@ -262,10 +262,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("sent bitfield");
             }
 
+            let mut broadcast_closed = false;
+
             loop {
                 let req = loop {
                     break tokio::select! {
-                        r = have_broadcast.recv() => match r {
+                        r = have_broadcast.recv(), if !broadcast_closed => match r {
                             Ok(id) => {
                                 if self.handler.should_transmit_have(id) {
                                      WriterRequest::Message(MessageOwned::Have(id.get()))
@@ -273,7 +275,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                                     continue
                                 }
                             },
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => anyhow::bail!("closing writer, broadcast channel closed"),
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                broadcast_closed = true;
+                                debug!("broadcast channel closed, will not poll it anymore");
+                                continue
+                            },
                             _ => continue
                         },
                         r = timeout(keep_alive_interval, outgoing_chan.recv()) => match r {
@@ -389,11 +395,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         tokio::select! {
             r = reader => {
-                trace!("reader is done, exiting");
+                trace!(result=?r, "reader is done, exiting");
                 r
             }
             r = writer => {
-                trace!("writer is done, exiting");
+                trace!(result=?r, "writer is done, exiting");
                 r
             }
         }

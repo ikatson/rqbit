@@ -1239,7 +1239,7 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
         let mt = match mt {
             Some(mt) => mt,
             None => {
-                warn!(info_hash=?self.info_hash, "can't find torrent in the session");
+                trace!(info_hash=?self.info_hash, "can't find torrent in the session, using default stats");
                 return Default::default();
             }
         };
