@@ -516,6 +516,7 @@ impl Session {
             let peer_opts = opts.peer_opts.unwrap_or_default();
             let persistence_filename = match opts.persistence_filename {
                 Some(filename) => filename,
+                None if !opts.persistence => PathBuf::new(),
                 None => Self::default_persistence_filename()?,
             };
             let spawner = BlockingSpawner::default();
