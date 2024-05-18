@@ -20,6 +20,13 @@ const apiUrl = (() => {
   return "";
 })();
 
+const urlSearchParams: URLSearchParams = new URLSearchParams(
+  window.location.search,
+);
+
+const convertStreamsToRqbitScheme =
+  urlSearchParams.get("convertStreamsToRqbitScheme") == "1";
+
 const makeRequest = async (
   method: string,
   path: string,
@@ -158,6 +165,10 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {
       url += `/${filename}`;
+    }
+
+    if (convertStreamsToRqbitScheme) {
+      return `rqbit:///stream?url=${encodeURIComponent(window.origin + url)}`;
     }
     return url;
   },

@@ -12,6 +12,8 @@ use crate::{
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
+    events::SessionEventBus,
+    events::{TorrentEvent, TorrentEventKind},
     file_info::FileInfo,
     limits::{Limits, LimitsConfig},
     merge_streams::merge_streams,
@@ -108,29 +110,20 @@ pub struct Session {
     next_id: AtomicUsize,
     db: RwLock<SessionDatabase>,
     output_folder: PathBuf,
-
     tcp_listen_port: Option<u16>,
-
     cancellation_token: CancellationToken,
-
     disk_write_tx: Option<DiskWorkQueueSender>,
-
     default_storage_factory: Option<BoxStorageFactory>,
-
     reqwest_client: reqwest::Client,
     pub(crate) connector: Arc<StreamConnector>,
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
-
     root_span: Option<Span>,
-
     pub(crate) ratelimits: Limits,
-
     pub(crate) stats: SessionStats,
-
     #[cfg(feature = "disable-upload")]
     _disable_upload: bool,
-
-    // This is stored for all tasks to stop when session is dropped.
+    event_bus: SessionEventBus,
+    // This is stored for all tasks to stop when session is dropped.,
     _cancellation_token_drop_guard: DropGuard,
 }
 
@@ -621,6 +614,7 @@ impl Session {
             };
 
             let stream_connector = Arc::new(StreamConnector::from(proxy_config));
+            let event_bus = SessionEventBus::new();
 
             let session = Arc::new(Self {
                 persistence,
@@ -647,6 +641,7 @@ impl Session {
                 ratelimits: Limits::new(opts.ratelimits),
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
+                event_bus,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -833,6 +828,10 @@ impl Session {
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
         }
+    }
+
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<TorrentEvent> {
+        self.event_bus.subscribe()
     }
 
     /// Spawn a task in the context of the session.
@@ -1194,6 +1193,7 @@ impl Session {
                 },
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
+                event_bus: self.event_bus.new_torrent_bus(info_hash),
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(
@@ -1245,6 +1245,11 @@ impl Session {
         if let Some(name) = managed_torrent.shared().info.name.as_ref() {
             info!(?name, "added torrent");
         }
+
+        managed_torrent
+            .shared()
+            .event_bus
+            .emit(TorrentEventKind::Added);
 
         Ok(AddTorrentResponse::Added(id, managed_torrent))
     }
@@ -1336,6 +1341,9 @@ impl Session {
         };
 
         info!(id, "deleted torrent");
+
+        removed.event_bus().emit(TorrentEventKind::Deleted);
+
         Ok(())
     }
 

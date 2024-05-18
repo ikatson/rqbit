@@ -82,6 +82,7 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
+    events::TorrentEventKind,
     file_ops::FileOps,
     limits::Limits,
     peer_connection::{
@@ -701,6 +702,8 @@ impl TorrentStateLive {
             chunk_tracker.mark_piece_broken_if_not_have(piece_id);
         }
 
+        self.torrent.event_bus.emit(TorrentEventKind::Paused);
+
         // g.chunks;
         Ok(TorrentStatePaused {
             shared: self.torrent.clone(),
@@ -717,6 +720,7 @@ impl TorrentStateLive {
             .take()
             .context("fatal_errors_tx already taken")?;
         let res = anyhow::anyhow!("fatal error: {:?}", e);
+        self.torrent.event_bus.emit(TorrentEventKind::Errored);
         if tx.send(e).is_err() {
             warn!("there's nowhere to send fatal error, receiver is dead");
         }
@@ -793,6 +797,7 @@ impl TorrentStateLive {
                 info!("torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
+            self.torrent.event_bus.emit(TorrentEventKind::Completed);
 
             if !self.has_active_streams_unfinished_files(locked) {
                 // prevent deadlocks.

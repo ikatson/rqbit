@@ -6,6 +6,12 @@ import { APIContext } from "./context";
 import { API } from "./http-api";
 import "./globals.css";
 
+const urlSearchParams: URLSearchParams = new URLSearchParams(
+  window.location.search,
+);
+
+const rqbitWebTitle = urlSearchParams.get("rqbitWebTitle") || "rqbit web UI";
+
 const RootWithVersion = () => {
   let [version, setVersion] = useState<string>("");
   useEffect(() => {
@@ -26,7 +32,7 @@ const RootWithVersion = () => {
 
   return (
     <APIContext.Provider value={API}>
-      <RqbitWebUI title="rqbit" version={version} />
+      <RqbitWebUI title={rqbitWebTitle} version={version} />
     </APIContext.Provider>
   );
 };

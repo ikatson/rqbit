@@ -36,6 +36,8 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
+use crate::events::TorrentEventBus;
+use crate::events::TorrentEventKind;
 use crate::limits::LimitsConfig;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
@@ -142,6 +144,7 @@ pub struct ManagedTorrentShared {
     pub(crate) connector: Arc<StreamConnector>,
     pub(crate) storage_factory: BoxStorageFactory,
     pub(crate) session: Weak<Session>,
+    pub(crate) event_bus: TorrentEventBus,
 }
 
 pub struct ManagedTorrent {
@@ -157,6 +160,10 @@ impl ManagedTorrent {
 
     pub fn shared(&self) -> &ManagedTorrentShared {
         &self.shared
+    }
+
+    pub fn event_bus(&self) -> &TorrentEventBus {
+        &self.shared.event_bus
     }
 
     pub fn get_total_bytes(&self) -> u64 {
@@ -225,7 +232,6 @@ impl ManagedTorrent {
         };
 
         self.state_change_notify.notify_waiters();
-
         g.state = ManagedTorrentState::Error(error)
     }
 
@@ -312,7 +318,7 @@ impl ManagedTorrent {
             );
         }
 
-        match &g.state {
+        let r = match &g.state {
             ManagedTorrentState::Live(_) => {
                 bail!("torrent is already live");
             }
@@ -322,7 +328,6 @@ impl ManagedTorrent {
                 let t = self.clone();
                 let span = self.shared().span.clone();
                 let token = cancellation_token.clone();
-
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
@@ -346,6 +351,7 @@ impl ManagedTorrent {
                                 if start_paused {
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
+                                    t.event_bus().emit(TorrentEventKind::Paused);
                                     return Ok(());
                                 }
 
@@ -355,6 +361,7 @@ impl ManagedTorrent {
                                 drop(g);
 
                                 t.state_change_notify.notify_waiters();
+                                t.event_bus().emit(TorrentEventKind::Started);
 
                                 spawn_fatal_errors_receiver(&t, rx, token);
                                 spawn_peer_adder(&live, peer_rx);
@@ -365,6 +372,7 @@ impl ManagedTorrent {
                                 let result = anyhow::anyhow!("{:?}", err);
                                 t.locked.write().state = ManagedTorrentState::Error(err);
                                 t.state_change_notify.notify_waiters();
+                                t.event_bus().emit(TorrentEventKind::Errored);
                                 Err(result)
                             }
                         }
@@ -399,7 +407,11 @@ impl ManagedTorrent {
                 self.start(peer_rx, start_paused)
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+        };
+        if r.is_ok() {
+            self.shared.event_bus.emit(TorrentEventKind::Started);
         }
+        r
     }
 
     pub fn is_paused(&self) -> bool {

@@ -10,6 +10,7 @@ export default defineConfig({
     port: 3031,
   },
   build: {
+    target: "es2019",
     manifest: true,
   },
 });

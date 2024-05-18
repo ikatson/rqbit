@@ -24,6 +24,13 @@ export interface ContextType {
   refreshTorrents: () => void;
 }
 
+const urlSearchParams: URLSearchParams = new URLSearchParams(
+  window.location.search,
+);
+
+const skipExtraWebuiButtons =
+  urlSearchParams.get("skipExtraWebuiButtons") == "1";
+
 export const RqbitWebUI = (props: {
   title: string;
   version: string;
@@ -96,12 +103,16 @@ export const RqbitWebUI = (props: {
         <div className="absolute top-0 start-0 pl-2 z-10">
           {props.menuButtons &&
             props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
-          <IconButton onClick={() => setLogsOpened(true)}>
-            <BsBodyText />
-          </IconButton>
-          <IconButton onClick={DarkMode.toggle}>
-            <BsMoon />
-          </IconButton>
+          {!skipExtraWebuiButtons && (
+            <>
+              <IconButton onClick={() => setLogsOpened(true)}>
+                <BsBodyText />
+              </IconButton>
+              <IconButton onClick={DarkMode.toggle}>
+                <BsMoon />
+              </IconButton>
+            </>
+          )}
         </div>
       </div>
 

@@ -45,6 +45,7 @@ mod bitv_factory;
 mod chunk_tracker;
 mod create_torrent_file;
 mod dht_utils;
+pub mod events;
 pub mod file_info;
 mod file_ops;
 #[cfg(feature = "http-api")]
