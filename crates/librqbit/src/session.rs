@@ -1149,7 +1149,11 @@ impl Session {
                 ManagedTorrentState::Paused(p) => Some(p.files),
                 ManagedTorrentState::Live(l) => l
                     .pause()
-                    .inspect_err(|e| warn!("error pausing torrent: {e:?}"))
+                    // inspect_err not available in 1.75
+                    .map_err(|e| {
+                        warn!("error pausing torrent: {e:?}");
+                        e
+                    })
                     .ok()
                     .map(|p| p.files),
                 _ => None,
