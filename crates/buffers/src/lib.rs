@@ -46,13 +46,10 @@ fn debug_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>, debug_strings: bool) -
     }
     match std::str::from_utf8(b) {
         Ok(s) => {
-            // A test if all chars are "printable".
-            if s.chars().all(|c| c.escape_debug().len() == 1) {
-                if debug_strings {
-                    return write!(f, "{s:?}");
-                } else {
-                    return write!(f, "{s}");
-                }
+            if debug_strings {
+                return write!(f, "{s:?}");
+            } else {
+                return write!(f, "{s}");
             }
         }
         Err(_e) => {}
