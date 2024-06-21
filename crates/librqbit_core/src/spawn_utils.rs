@@ -1,6 +1,15 @@
 use anyhow::bail;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, trace, Instrument};
+use tracing::{debug, error, trace, Instrument};
+
+#[derive(Debug)]
+struct CancelledError {}
+impl std::error::Error for CancelledError {}
+impl std::fmt::Display for CancelledError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cancelled")
+    }
+}
 
 /// Spawns a future with tracing instrumentation.
 pub fn spawn(
@@ -23,7 +32,12 @@ pub fn spawn(
                             trace!("finished");
                         }
                         Err(e) => {
-                            error!("finished with error: {:#}", e)
+                            if e.is::<CancelledError>() {
+                                debug!("task cancelled")
+                            } else {
+                                error!("finished with error: {:#}", e)
+                            }
+
                         }
                     }
                     return;
@@ -43,7 +57,7 @@ pub fn spawn_with_cancel(
     spawn(span, async move {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
-                bail!("cancelled");
+                bail!(CancelledError{})
             },
             r = fut => r
         }
