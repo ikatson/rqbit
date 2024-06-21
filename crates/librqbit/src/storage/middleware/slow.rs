@@ -14,7 +14,10 @@ use std::{
 
 use parking_lot::Mutex;
 
-use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
+use crate::{
+    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
+    ManagedTorrentInfo,
+};
 
 #[derive(Clone)]
 pub struct SlowStorageFactory<U> {
@@ -32,9 +35,9 @@ impl<U: StorageFactory> SlowStorageFactory<U> {
 impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
     type Storage = SlowStorage<U::Storage>;
 
-    fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         Ok(SlowStorage {
-            underlying: self.underlying_factory.init_storage(info)?,
+            underlying: self.underlying_factory.create(info)?,
             pwrite_all_bufread: Mutex::new(Box::new(
                 BufReader::new(
                     File::open(
@@ -107,5 +110,13 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         anyhow::bail!("not implemented")
+    }
+
+    fn remove_directory_if_empty(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        self.underlying.remove_directory_if_empty(path)
+    }
+
+    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+        self.underlying.init(meta)
     }
 }

@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::{BufReader, BufWriter, Read},
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     time::Duration,
@@ -16,11 +16,14 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
-    storage::{filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt},
+    storage::{
+        filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
+    },
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
+    ManagedTorrentInfo,
 };
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
@@ -1136,31 +1139,48 @@ impl Session {
             .remove(&id)
             .with_context(|| format!("torrent with id {} did not exist", id))?;
 
-        let paused = removed
-            .with_state_mut(|s| {
-                let paused = match s.take() {
-                    ManagedTorrentState::Paused(p) => p,
-                    ManagedTorrentState::Live(l) => l.pause()?,
-                    _ => return Ok(None),
-                };
-                Ok::<_, anyhow::Error>(Some(paused))
-            })
-            .context("error pausing torrent");
+        if let Err(e) = removed.pause() {
+            debug!("error pausing torrent before deletion: {e:?}")
+        }
 
-        match (paused, delete_files) {
+        let storage = removed
+            .with_state_mut(|s| match s.take() {
+                ManagedTorrentState::Initializing(p) => p.files.take().ok(),
+                ManagedTorrentState::Paused(p) => Some(p.files),
+                ManagedTorrentState::Live(l) => l
+                    .pause()
+                    // inspect_err not available in 1.75
+                    .map_err(|e| {
+                        warn!("error pausing torrent: {e:?}");
+                        e
+                    })
+                    .ok()
+                    .map(|p| p.files),
+                _ => None,
+            })
+            .map(Ok)
+            .unwrap_or_else(|| removed.storage_factory.create(removed.info()));
+
+        match (storage, delete_files) {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
-            (Err(e), false) => {
-                warn!(error=?e, "error deleting torrent cleanly");
-            }
-            (Ok(Some(paused)), true) => {
-                for (id, fi) in removed.info().file_infos.iter().enumerate() {
-                    if let Err(e) = paused.files.remove_file(id, &fi.relative_filename) {
-                        warn!(?fi.relative_filename, error=?e, "could not delete file");
+            (Ok(storage), true) => {
+                debug!("will delete files");
+                remove_files_and_dirs(removed.info(), &storage);
+                if removed.info().options.output_folder != self.output_folder {
+                    if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
+                        warn!(
+                            "error removing {:?}: {e:?}",
+                            removed.info().options.output_folder
+                        )
                     }
                 }
             }
-            _ => {}
+            (_, false) => {
+                debug!("not deleting files")
+            }
         };
+
+        info!(id, "deleted torrent");
         Ok(())
     }
 
@@ -1217,6 +1237,37 @@ impl Session {
 
     pub fn tcp_listen_port(&self) -> Option<u16> {
         self.tcp_listen_port
+    }
+}
+
+fn remove_files_and_dirs(info: &ManagedTorrentInfo, files: &dyn TorrentStorage) {
+    let mut all_dirs = HashSet::new();
+    for (id, fi) in info.file_infos.iter().enumerate() {
+        let mut fname = &*fi.relative_filename;
+        if let Err(e) = files.remove_file(id, fname) {
+            warn!(?fi.relative_filename, error=?e, "could not delete file");
+        } else {
+            debug!(?fi.relative_filename, "deleted the file")
+        }
+        while let Some(parent) = fname.parent() {
+            if parent != Path::new("") {
+                all_dirs.insert(parent);
+            }
+            fname = parent;
+        }
+    }
+
+    let all_dirs = {
+        let mut v = all_dirs.into_iter().collect::<Vec<_>>();
+        v.sort_unstable_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+        v
+    };
+    for dir in all_dirs {
+        if let Err(e) = files.remove_directory_if_empty(dir) {
+            warn!("error removing {dir:?}: {e:?}");
+        } else {
+            debug!("removed {dir:?}")
+        }
     }
 }
 

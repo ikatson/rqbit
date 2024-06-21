@@ -8,25 +8,27 @@ use anyhow::Context;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
-use crate::{
-    chunk_tracker::ChunkTracker,
-    file_ops::FileOps,
-    storage::{BoxStorageFactory, StorageFactory},
-};
+use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps, type_aliases::FileStorage};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
 pub struct TorrentStateInitializing {
+    pub(crate) files: FileStorage,
     pub(crate) meta: Arc<ManagedTorrentInfo>,
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
 }
 
 impl TorrentStateInitializing {
-    pub fn new(meta: Arc<ManagedTorrentInfo>, only_files: Option<Vec<usize>>) -> Self {
+    pub fn new(
+        meta: Arc<ManagedTorrentInfo>,
+        only_files: Option<Vec<usize>>,
+        files: FileStorage,
+    ) -> Self {
         Self {
             meta,
             only_files,
+            files,
             checked_bytes: AtomicU64::new(0),
         }
     }
@@ -36,16 +38,12 @@ impl TorrentStateInitializing {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub async fn check(
-        &self,
-        storage_factory: &BoxStorageFactory,
-    ) -> anyhow::Result<TorrentStatePaused> {
-        let files = storage_factory.init_storage(&self.meta)?;
+    pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         info!("Doing initial checksum validation, this might take a while...");
         let initial_check_results = self.meta.spawner.spawn_block_in_place(|| {
             FileOps::new(
                 &self.meta.info,
-                &*files,
+                &self.files,
                 &self.meta.file_infos,
                 &self.meta.lengths,
             )
@@ -69,7 +67,7 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
-                    if let Err(err) = files.ensure_file_length(idx, fi.len) {
+                    if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
                             fi.relative_filename, fi.len, err
@@ -97,7 +95,7 @@ impl TorrentStateInitializing {
 
         let paused = TorrentStatePaused {
             info: self.meta.clone(),
-            files,
+            files: self.files.take()?,
             chunk_tracker,
             streams: Arc::new(Default::default()),
         };

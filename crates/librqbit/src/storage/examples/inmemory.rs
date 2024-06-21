@@ -25,7 +25,7 @@ pub struct InMemoryExampleStorageFactory {}
 impl StorageFactory for InMemoryExampleStorageFactory {
     type Storage = InMemoryExampleStorage;
 
-    fn init_storage(
+    fn create(
         &self,
         info: &crate::torrent_state::ManagedTorrentInfo,
     ) -> anyhow::Result<InMemoryExampleStorage> {
@@ -109,5 +109,13 @@ impl TorrentStorage for InMemoryExampleStorage {
             map: RwLock::new(map),
             file_infos: self.file_infos.clone(),
         }))
+    }
+
+    fn init(&mut self, _meta: &crate::ManagedTorrentInfo) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn remove_directory_if_empty(&self, _path: &Path) -> anyhow::Result<()> {
+        Ok(())
     }
 }

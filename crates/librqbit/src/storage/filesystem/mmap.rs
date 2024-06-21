@@ -22,19 +22,11 @@ fn dummy_mmap() -> anyhow::Result<MmapMut> {
 impl StorageFactory for MmapFilesystemStorageFactory {
     type Storage = MmapFilesystemStorage;
 
-    fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
-        let fs_storage = FilesystemStorageFactory::default().init_storage(meta)?;
-        let mut mmaps = Vec::new();
-        for (idx, file) in fs_storage.opened_files.iter().enumerate() {
-            let fg = file.file.write();
-            fg.set_len(meta.file_infos[idx].len)
-                .context("mmap storage: error setting length")?;
-            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }.context("error mapping file")?;
-            mmaps.push(RwLock::new(mmap));
-        }
+    fn create(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+        let fs_storage = FilesystemStorageFactory::default().create(meta)?;
 
         Ok(MmapFilesystemStorage {
-            opened_mmaps: mmaps,
+            opened_mmaps: Vec::new(),
             fs: fs_storage,
         })
     }
@@ -82,6 +74,10 @@ impl TorrentStorage for MmapFilesystemStorage {
         self.fs.remove_file(file_id, filename)
     }
 
+    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
+        self.fs.remove_directory_if_empty(path)
+    }
+
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
         self.fs.ensure_file_length(file_id, len)
     }
@@ -99,5 +95,20 @@ impl TorrentStorage for MmapFilesystemStorage {
                 .collect::<anyhow::Result<_>>()?,
             fs: self.fs.take_fs()?,
         }))
+    }
+
+    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+        self.fs.init(meta)?;
+        let mut mmaps = Vec::new();
+        for (idx, file) in self.fs.opened_files.iter().enumerate() {
+            let fg = file.file.write();
+            fg.set_len(meta.file_infos[idx].len)
+                .context("mmap storage: error setting length")?;
+            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }.context("error mapping file")?;
+            mmaps.push(RwLock::new(mmap));
+        }
+
+        self.opened_mmaps = mmaps;
+        Ok(())
     }
 }

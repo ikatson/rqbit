@@ -19,7 +19,7 @@ struct CustomStorage {
 impl StorageFactory for CustomStorageFactory {
     type Storage = CustomStorage;
 
-    fn init_storage(&self, _info: &librqbit::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, _info: &librqbit::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         Ok(CustomStorage::default())
     }
 
@@ -46,6 +46,14 @@ impl TorrentStorage for CustomStorage {
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
+        anyhow::bail!("not implemented")
+    }
+
+    fn remove_directory_if_empty(&self, _path: &std::path::Path) -> anyhow::Result<()> {
+        anyhow::bail!("not implemented")
+    }
+
+    fn init(&mut self, _meta: &librqbit::ManagedTorrentInfo) -> anyhow::Result<()> {
         anyhow::bail!("not implemented")
     }
 }
