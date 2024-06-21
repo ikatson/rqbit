@@ -17,7 +17,7 @@ webui-build: webui-deps
 
 @PHONY: devserver
 devserver:
-	echo -n '' > /tmp/rqbit-log && cargo run --release -- \
+	echo -n '' > /tmp/rqbit-log && cargo run -- \
 		--log-file /tmp/rqbit-log \
 		--log-file-rust-log=debug,librqbit=trace \
 		server start /tmp/scratch/

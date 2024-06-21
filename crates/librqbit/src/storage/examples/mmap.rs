@@ -18,7 +18,7 @@ pub struct MmapStorage {
 impl StorageFactory for MmapStorageFactory {
     type Storage = MmapStorage;
 
-    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         Ok(MmapStorage {
             mmap: RwLock::new(
                 MmapOptions::new()
@@ -61,5 +61,13 @@ impl TorrentStorage for MmapStorage {
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         anyhow::bail!("not implemented")
+    }
+
+    fn init(&mut self, _meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn remove_directory_if_empty(&self, _path: &std::path::Path) -> anyhow::Result<()> {
+        Ok(())
     }
 }

@@ -275,7 +275,7 @@ impl ManagedTorrent {
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
                     async move {
-                        match init.check(&t.storage_factory).await {
+                        match init.check().await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
@@ -325,6 +325,7 @@ impl ManagedTorrent {
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.info.clone(),
                     g.only_files.clone(),
+                    self.storage_factory.create_and_init(self.info())?,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
                 self.state_change_notify.notify_waiters();
@@ -616,6 +617,7 @@ impl ManagedTorrentBuilder {
         let initializing = Arc::new(TorrentStateInitializing::new(
             info.clone(),
             self.only_files.clone(),
+            self.storage_factory.create_and_init(&info)?,
         ));
         Ok(Arc::new(ManagedTorrent {
             locked: RwLock::new(ManagedTorrentLocked {

@@ -2,7 +2,10 @@
 A storage middleware that logs the time underlying storage operations took.
 */
 
-use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
+use crate::{
+    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
+    ManagedTorrentInfo,
+};
 
 #[derive(Clone)]
 pub struct TimingStorageFactory<U> {
@@ -22,10 +25,10 @@ impl<U> TimingStorageFactory<U> {
 impl<U: StorageFactory + Clone> StorageFactory for TimingStorageFactory<U> {
     type Storage = TimingStorage<U::Storage>;
 
-    fn init_storage(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
         Ok(TimingStorage {
             name: self.name.clone(),
-            underlying: self.underlying_factory.init_storage(info)?,
+            underlying: self.underlying_factory.create(info)?,
         })
     }
 
@@ -95,5 +98,13 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
             underlying: self.underlying.take()?,
             name: self.name.clone(),
         }))
+    }
+
+    fn remove_directory_if_empty(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        self.underlying.remove_directory_if_empty(path)
+    }
+
+    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+        self.underlying.init(meta)
     }
 }

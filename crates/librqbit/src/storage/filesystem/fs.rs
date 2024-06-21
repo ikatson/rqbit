@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
+use tracing::warn;
 
 use crate::{storage::StorageFactoryExt, torrent_state::ManagedTorrentInfo};
 
@@ -17,45 +18,10 @@ pub struct FilesystemStorageFactory {}
 impl StorageFactory for FilesystemStorageFactory {
     type Storage = FilesystemStorage;
 
-    fn init_storage(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<FilesystemStorage> {
-        let mut files = Vec::<OpenedFile>::new();
-        let output_folder = &meta.options.output_folder;
-        for file_details in meta.info.iter_file_details(&meta.lengths)? {
-            let mut full_path = output_folder.clone();
-            let relative_path = file_details
-                .filename
-                .to_pathbuf()
-                .context("error converting file to path")?;
-            full_path.push(relative_path);
-
-            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let file = if meta.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
-            } else {
-                // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| {
-                        format!(
-                            "error creating a new file (because allow_overwrite = false) {:?}",
-                            &full_path
-                        )
-                    })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
-            };
-            files.push(OpenedFile::new(file));
-        }
+    fn create(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<FilesystemStorage> {
         Ok(FilesystemStorage {
-            output_folder: output_folder.clone(),
-            opened_files: files,
+            output_folder: meta.options.output_folder.clone(),
+            opened_files: Default::default(),
         })
     }
 
@@ -141,5 +107,58 @@ impl TorrentStorage for FilesystemStorage {
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
         }))
+    }
+
+    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
+        let path = self.output_folder.join(path);
+        if !path.is_dir() {
+            anyhow::bail!("cannot remove dir: {path:?} is not a directory")
+        }
+        if std::fs::read_dir(&path)?.count() == 0 {
+            std::fs::remove_dir(&path).with_context(|| format!("error removing {path:?}"))
+        } else {
+            warn!("did not remove {path:?} as it was not empty");
+            Ok(())
+        }
+    }
+
+    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+        let mut files = Vec::<OpenedFile>::new();
+        for file_details in meta.info.iter_file_details(&meta.lengths)? {
+            let mut full_path = self.output_folder.clone();
+            let relative_path = file_details
+                .filename
+                .to_pathbuf()
+                .context("error converting file to path")?;
+            full_path.push(relative_path);
+
+            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+            let file = if meta.options.allow_overwrite {
+                OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+            } else {
+                // create_new does not seem to work with read(true), so calling this twice.
+                OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| {
+                        format!(
+                            "error creating a new file (because allow_overwrite = false) {:?}",
+                            &full_path
+                        )
+                    })?;
+                OpenOptions::new().read(true).write(true).open(&full_path)?
+            };
+            files.push(OpenedFile::new(file));
+        }
+
+        self.opened_files = files;
+        Ok(())
     }
 }

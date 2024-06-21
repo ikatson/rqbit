@@ -16,7 +16,13 @@ use crate::torrent_state::ManagedTorrentInfo;
 pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
 
-    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage>;
+    fn create(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage>;
+    fn create_and_init(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+        let mut storage = self.create(info)?;
+        storage.init(info)?;
+        Ok(storage)
+    }
+
     fn is_type_id(&self, type_id: TypeId) -> bool {
         Self::type_id(self) == type_id
     }
@@ -38,8 +44,8 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
         impl<SF: StorageFactory> StorageFactory for Wrapper<SF> {
             type Storage = Box<dyn TorrentStorage>;
 
-            fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
-                let s = self.sf.init_storage(info)?;
+            fn create(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+                let s = self.sf.create(info)?;
                 Ok(Box::new(s))
             }
 
@@ -59,8 +65,8 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
 impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
     type Storage = U::Storage;
 
-    fn init_storage(&self, info: &ManagedTorrentInfo) -> anyhow::Result<U::Storage> {
-        (**self).init_storage(info)
+    fn create(&self, info: &ManagedTorrentInfo) -> anyhow::Result<U::Storage> {
+        (**self).create(info)
     }
 
     fn clone_box(&self) -> BoxStorageFactory {
@@ -69,6 +75,9 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
 }
 
 pub trait TorrentStorage: Send + Sync {
+    // Create/open files etc.
+    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()>;
+
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// read buf.len() bytes into buf at offset.
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -79,6 +88,8 @@ pub trait TorrentStorage: Send + Sync {
 
     /// Remove a file from the storage. If not supported, or it doesn't matter, just return Ok(())
     fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()>;
+
+    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()>;
 
     /// E.g. for filesystem backend ensure that the file has a certain length, and grow/shrink as needed.
     fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
@@ -107,5 +118,13 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
         (**self).take()
+    }
+
+    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
+        (**self).remove_directory_if_empty(path)
+    }
+
+    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+        (**self).init(meta)
     }
 }
