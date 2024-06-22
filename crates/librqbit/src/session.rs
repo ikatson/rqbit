@@ -787,34 +787,37 @@ impl Session {
                 creation_date: None,
                 info_hash: Id20::from_str(&storrent.info_hash)?,
             };
-            futures.push({
-                let session = self.clone();
-                async move {
-                    session
-                        .add_torrent(
-                            AddTorrent::TorrentInfo(Box::new(info)),
-                            Some(AddTorrentOptions {
-                                paused: storrent.is_paused,
-                                output_folder: Some(
-                                    storrent
-                                        .output_folder
-                                        .to_str()
-                                        .context("broken path")?
-                                        .to_owned(),
-                                ),
-                                only_files: storrent.only_files,
-                                overwrite: true,
-                                preferred_id: Some(id),
-                                ..Default::default()
-                            }),
-                        )
-                        .await
-                        .map_err(|e| {
-                            error!("error adding torrent from stored session: {:?}", e);
-                            e
-                        })
+            futures.push(
+                {
+                    let session = self.clone();
+                    async move {
+                        session
+                            .add_torrent(
+                                AddTorrent::TorrentInfo(Box::new(info)),
+                                Some(AddTorrentOptions {
+                                    paused: storrent.is_paused,
+                                    output_folder: Some(
+                                        storrent
+                                            .output_folder
+                                            .to_str()
+                                            .context("broken path")?
+                                            .to_owned(),
+                                    ),
+                                    only_files: storrent.only_files,
+                                    overwrite: true,
+                                    preferred_id: Some(id),
+                                    ..Default::default()
+                                }),
+                            )
+                            .await
+                            .map_err(|e| {
+                                error!("error adding torrent from stored session: {:?}", e);
+                                e
+                            })
+                    }
                 }
-            });
+                .instrument(error_span!(parent: None, "torrent", id)),
+            );
         }
         futures::future::join_all(futures).await;
         Ok(())
