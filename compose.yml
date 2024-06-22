@@ -1,0 +1,15 @@
+services:
+  rqbit:
+    image: docker.io/marcosrossem/rqbit:latest
+    container_name: rqbit
+    command:
+      - --http-api-listen-addr
+      - 0.0.0.0:3030
+      - server
+      - start
+      - /home/appuser/downloads
+    volumes:
+      - ~/Downloads:/home/appuser/downloads
+    ports:
+      - 3030:3030
+    restart: unless-stopped
