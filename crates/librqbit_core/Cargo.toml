@@ -25,6 +25,8 @@ clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owne
 itertools = "0.12"
 directories = "5"
 tokio-util = "0.7.10"
+data-encoding = "2.6.0"
+
 
 [dev-dependencies]
 serde_json = "1"
