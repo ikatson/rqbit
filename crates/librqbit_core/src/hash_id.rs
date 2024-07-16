@@ -1,6 +1,6 @@
-use std::{cmp::Ordering, str::FromStr};
-
+use data_encoding::BASE32;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::{cmp::Ordering, str::FromStr};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Id<const N: usize>(pub [u8; N]);
@@ -69,11 +69,32 @@ impl<const N: usize> FromStr for Id<N> {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut out = [0u8; N];
-        if s.len() != N * 2 {
-            anyhow::bail!("expected a hex string of length {}", N * 2)
-        };
-        hex::decode_to_slice(s, &mut out)?;
-        Ok(Id(out))
+        let base32_encoded_size = (N as f64 / 5f64).ceil() as usize * 8;
+        if s.len() == N * 2 {
+            hex::decode_to_slice(s, &mut out)?;
+            Ok(Id(out))
+            // try decode as base32
+        } else if s.len() == base32_encoded_size {
+            match BASE32.decode(s.as_bytes()) {
+                Ok(decoded) => {
+                    out.copy_from_slice(&decoded);
+                    Ok(Id(out))
+                }
+                Err(err) => {
+                    anyhow::bail!(
+                        "fail to decode base32 string {}: {}",
+                        s,
+                        err
+                    )
+                }
+            }
+        } else {
+            anyhow::bail!(
+                "expected a hex string of length {} or {}",
+                N * 2,
+                base32_encoded_size
+            );
+        }
     }
 }
 
@@ -183,5 +204,14 @@ mod tests {
     fn test_id32_from_str() {
         let str = "06f04cc728bef957a658876ef807f0514e4d715392969998efef584d2c3e435e";
         let _ih = Id32::from_str(str).unwrap();
+    }
+
+    #[test]
+    fn test_id20_base32_encoded_from_str() {
+        let str = "Z7QRDHYSJCA4U4HXGBXTFYUSDFGIRQMV";
+        let ih1 = Id20::from_str(str).unwrap();
+        let s2 = "cfe1119f124881ca70f7306f32e292194c88c195";
+        let ih2 = Id20::from_str(s2).unwrap();
+        assert_eq!(ih1, ih2);
     }
 }
