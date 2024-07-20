@@ -1,7 +1,7 @@
 use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryStreamExt};
@@ -341,6 +341,7 @@ impl HttpApi {
                 );
 
             app = app.nest("/web/", webui_router);
+            app = app.route("/web", get(|| async { Redirect::permanent("/web/") }))
         }
 
         let cors_layer = {
