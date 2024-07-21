@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     io::SeekFrom,
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -9,12 +10,14 @@ use std::{
 };
 
 use anyhow::Context;
+use bytes::BytesMut;
 use dashmap::DashMap;
 
+use futures::Future;
 use librqbit_core::lengths::{CurrentPiece, Lengths, ValidPieceIndex};
 use tokio::{
     io::{AsyncRead, AsyncSeek},
-    task::block_in_place,
+    task::{block_in_place, spawn_blocking, JoinHandle},
 };
 use tracing::{debug, trace};
 
@@ -139,6 +142,10 @@ pub struct FileStream {
     // file params
     file_len: u64,
     file_torrent_abs_offset: u64,
+
+    // for AsyncRead
+    future: Option<JoinHandle<Result<BytesMut, anyhow::Error>>>,
+    buffer: Option<BytesMut>,
 }
 
 macro_rules! map_io_err {
@@ -185,45 +192,128 @@ impl AsyncRead for FileStream {
 
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
-        let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
-            let have = ct.get_have_pieces()[current.id.get() as usize];
-            if !have {
-                self.streams
-                    .register_waker(self.stream_id, cx.waker().clone());
-            }
-            have
-        }));
+        let have = poll_try_io!(self
+            .torrent
+            .with_chunk_tracker(|ct| ct.get_have_pieces()[current.id.get() as usize]));
         if !have {
+            self.streams
+                .register_waker(self.stream_id, cx.waker().clone());
             trace!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have");
             return Poll::Pending;
         }
 
-        // actually stream the piece
-        let buf = tbuf.initialize_unfilled();
-        let file_remaining = self.file_len - self.position;
-        let bytes_to_read: usize = poll_try_io!((buf.len() as u64)
-            .min(current.piece_remaining as u64)
-            .min(file_remaining)
-            .try_into());
+        loop {
+            // read any data  remaning in buffer
+            if let Some(mut buffer) = self.buffer.take() {
+                if buffer.len() > 0 {
+                    let to_copy = buffer.len().min(tbuf.remaining());
+                    let data_to_copy = buffer.split_to(to_copy);
+                    tbuf.put_slice(&data_to_copy);
+                    self.advance(to_copy);
+                    if buffer.len() > 0 {
+                        self.buffer = Some(buffer);
+                    }
+                }
+            }
 
-        let buf = &mut buf[..bytes_to_read];
-        trace!(
-            buflen = buf.len(),
-            stream_id = self.stream_id,
-            file_id = self.file_id,
-            "will write bytes"
-        );
+            // tbuf if full nothing else to do
+            if tbuf.remaining() == 0 {
+                break;
+            }
 
-        poll_try_io!(poll_try_io!(block_in_place(|| {
-            self.torrent
-                .with_storage_and_file(self.file_id, |files, _fi| {
-                    files.pread_exact(self.file_id, self.position, buf)?;
-                    Ok::<_, anyhow::Error>(())
-                })
-        })));
+            // check if future finished
+            if let Some(future) = self.future.as_mut() {
+                let pinned = Pin::new(future);
+                match pinned.poll(cx) {
+                    Poll::Ready(Ok(Ok(x))) => {
+                        self.buffer = self
+                            .buffer
+                            .take()
+                            .map(|mut b| {
+                                b.extend_from_slice(&x);
+                                b
+                            })
+                            .or_else(|| Some(x));
+                        self.future = None;
+                    }
 
-        self.as_mut().advance(bytes_to_read as u64);
-        tbuf.advance(bytes_to_read);
+                    Poll::Ready(Ok(Err(e))) => {
+                        return Poll::Ready(map_io_err!(Err(e)));
+                    }
+                    Poll::Ready(Err(e)) => {
+                        debug!("join error {:?}", e);
+                        return Poll::Ready(Err(e.into()));
+                    }
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
+                }
+            } else {
+                // no future, create one
+                if self.position >= self.file_len {
+                    break;
+                }
+                const BUF_CAPACITY: usize = 4 * 1024;
+                let mut buf = self
+                    .buffer
+                    .take()
+                    .map(|mut b| {
+                        let need = BUF_CAPACITY - b.capacity();
+                        b.reserve(need);
+                        b
+                    })
+                    .unwrap_or_else(|| BytesMut::with_capacity(BUF_CAPACITY));
+                let file_remaining = self.file_len - self.position;
+                let bytes_to_read: usize = poll_try_io!((current.piece_remaining as u64)
+                    .min(file_remaining)
+                    .min((buf.capacity() - buf.len()) as u64)
+                    .try_into());
+                assert!(bytes_to_read > 0, "no bytes to read");
+                let torrent_handle = self.torrent.clone();
+                let file_id = self.file_id;
+                let position = self.position;
+
+                let read_future = spawn_blocking(move || {
+                    torrent_handle
+                        .with_storage_and_file(file_id, move |files, _fi| {
+                            let mut start = buf.split();
+                            buf.resize(bytes_to_read, 0);
+                            files.pread_exact(file_id, position, &mut buf)?;
+                            start.unsplit(buf);
+                            Ok::<_, anyhow::Error>(start)
+                        })
+                        .and_then(|x| x)
+                });
+                self.future = Some(read_future);
+            }
+
+            // actually stream the piece
+            // let buf = tbuf.initialize_unfilled();
+            // let file_remaining = self.file_len - self.position;
+            // let bytes_to_read: usize = poll_try_io!((buf.len() as u64)
+            //     .min(current.piece_remaining as u64)
+            //     .min(file_remaining)
+            //     .try_into());
+
+            // let buf = &mut buf[..bytes_to_read];
+            // trace!(
+            //     buflen = buf.len(),
+            //     stream_id = self.stream_id,
+            //     file_id = self.file_id,
+            //     "will write bytes"
+            // );
+        }
+
+        // poll_try_io!(poll_try_io!(block_in_place(|| {
+        //     self.torrent
+        //         .with_storage_and_file(self.file_id, |files, _fi| {
+        //             files.pread_exact(self.file_id, self.position, buf)?;
+        //             Ok::<_, anyhow::Error>(())
+        //         })
+        // })));
+
+        //self.as_mut().advance(bytes_read as u64);
+        // tbuf.advance(bytes_to_read);
 
         Poll::Ready(Ok(()))
     }
@@ -327,6 +417,9 @@ impl ManagedTorrent {
             file_len: fd_len,
             file_torrent_abs_offset: fd_offset,
             torrent: self,
+
+            future: None,
+            buffer: None,
         };
         s.torrent.maybe_reconnect_needed_peers_for_file(file_id);
         streams.streams.insert(
@@ -351,8 +444,8 @@ impl FileStream {
         self.position
     }
 
-    fn advance(&mut self, diff: u64) {
-        self.set_position(self.position + diff)
+    fn advance(&mut self, diff: usize) {
+        self.set_position(self.position + diff as u64)
     }
 
     fn set_position(&mut self, new_pos: u64) {
