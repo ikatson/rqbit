@@ -19,7 +19,7 @@ use tokio::{
     io::{AsyncRead, AsyncSeek},
     task::{block_in_place, spawn_blocking, JoinHandle},
 };
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::{file_info::FileInfo, storage::TorrentStorage, ManagedTorrent};
 
@@ -173,7 +173,6 @@ impl AsyncRead for FileStream {
         cx: &mut std::task::Context<'_>,
         tbuf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        // if the file is over, return 0
         if self.position == self.file_len {
             trace!(
                 stream_id = self.stream_id,
@@ -189,7 +188,7 @@ impl AsyncRead for FileStream {
             .lengths
             .compute_current_piece(self.position, self.file_torrent_abs_offset)
             .context("invalid position"));
-
+        let initial_buf_size = tbuf.filled().len();
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
         let have = poll_try_io!(self
@@ -198,7 +197,7 @@ impl AsyncRead for FileStream {
         if !have {
             self.streams
                 .register_waker(self.stream_id, cx.waker().clone());
-            trace!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have");
+            trace!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have piece yet");
             return Poll::Pending;
         }
 
@@ -213,15 +212,26 @@ impl AsyncRead for FileStream {
                     if buffer.len() > 0 {
                         self.buffer = Some(buffer);
                     }
+                    // TODO: consider how to better reuse the buffer
                 }
             }
 
-            // tbuf if full nothing else to do
-            if tbuf.remaining() == 0 {
+            // tbuf if full or contains current piece - return it
+            if tbuf.remaining() == 0
+                || tbuf.filled().len() - initial_buf_size >= current.piece_remaining as usize
+            {
                 break;
+            } else {
+                trace!(
+                    stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id,
+                    "tbuf output buffer is not full, got {} bytes, should get at least {} of remaining capacity {}",
+                    tbuf.filled().len() - initial_buf_size,
+                    current.piece_remaining,
+                    tbuf.remaining()
+                );
             }
 
-            // check if future finished
+            // check if future is finished
             if let Some(future) = self.future.as_mut() {
                 let pinned = Pin::new(future);
                 match pinned.poll(cx) {
@@ -238,13 +248,18 @@ impl AsyncRead for FileStream {
                     }
 
                     Poll::Ready(Ok(Err(e))) => {
+                        error!("Read from store error {:?}", e);
                         return Poll::Ready(map_io_err!(Err(e)));
                     }
                     Poll::Ready(Err(e)) => {
-                        debug!("join error {:?}", e);
+                        error!("Join test error {:?}", e);
                         return Poll::Ready(Err(e.into()));
                     }
                     Poll::Pending => {
+                        // return immediatelly if we have something, rather then waiting for full buffer
+                        if tbuf.filled().len() - initial_buf_size > 0 {
+                            break;
+                        }
                         return Poll::Pending;
                     }
                 }
@@ -253,19 +268,19 @@ impl AsyncRead for FileStream {
                 if self.position >= self.file_len {
                     break;
                 }
-                const BUF_CAPACITY: usize = 4 * 1024;
+                // TODO: this will try to get all piece data into buffer - not sure if we want that as can consume more memory
+                let buf_capacity: usize = current.piece_remaining as usize;
                 let mut buf = self
                     .buffer
                     .take()
                     .map(|mut b| {
-                        let need = BUF_CAPACITY - b.capacity();
+                        let need = buf_capacity - b.capacity();
                         b.reserve(need);
                         b
                     })
-                    .unwrap_or_else(|| BytesMut::with_capacity(BUF_CAPACITY));
+                    .unwrap_or_else(|| BytesMut::with_capacity(buf_capacity));
                 let file_remaining = self.file_len - self.position;
-                let bytes_to_read: usize = poll_try_io!((current.piece_remaining as u64)
-                    .min(file_remaining)
+                let bytes_to_read: usize = poll_try_io!(file_remaining
                     .min((buf.capacity() - buf.len()) as u64)
                     .try_into());
                 assert!(bytes_to_read > 0, "no bytes to read");
@@ -280,41 +295,19 @@ impl AsyncRead for FileStream {
                             buf.resize(bytes_to_read, 0);
                             files.pread_exact(file_id, position, &mut buf)?;
                             start.unsplit(buf);
+                            trace!(
+                                file_id,
+                                "Read  {} bytes  from store at position {}",
+                                start.len(),
+                                position
+                            );
                             Ok::<_, anyhow::Error>(start)
                         })
                         .and_then(|x| x)
                 });
                 self.future = Some(read_future);
             }
-
-            // actually stream the piece
-            // let buf = tbuf.initialize_unfilled();
-            // let file_remaining = self.file_len - self.position;
-            // let bytes_to_read: usize = poll_try_io!((buf.len() as u64)
-            //     .min(current.piece_remaining as u64)
-            //     .min(file_remaining)
-            //     .try_into());
-
-            // let buf = &mut buf[..bytes_to_read];
-            // trace!(
-            //     buflen = buf.len(),
-            //     stream_id = self.stream_id,
-            //     file_id = self.file_id,
-            //     "will write bytes"
-            // );
         }
-
-        // poll_try_io!(poll_try_io!(block_in_place(|| {
-        //     self.torrent
-        //         .with_storage_and_file(self.file_id, |files, _fi| {
-        //             files.pread_exact(self.file_id, self.position, buf)?;
-        //             Ok::<_, anyhow::Error>(())
-        //         })
-        // })));
-
-        //self.as_mut().advance(bytes_read as u64);
-        // tbuf.advance(bytes_to_read);
-
         Poll::Ready(Ok(()))
     }
 }

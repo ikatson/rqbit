@@ -101,6 +101,8 @@ async fn e2e_stream() -> anyhow::Result<()> {
     let mut buf = Vec::<u8>::with_capacity(8192);
     stream.read_to_end(&mut buf).await?;
 
+    assert_eq!(buf.len(), orig_content.len(), "sizes differ");
+
     if buf != orig_content {
         panic!("contents differ")
     }
