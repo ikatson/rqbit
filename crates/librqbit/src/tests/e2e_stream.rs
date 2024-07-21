@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
+use tempfile::TempDir;
 use tokio::{io::AsyncReadExt, time::timeout};
 use tracing::info;
 
@@ -22,7 +23,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
     let orig_content = std::fs::read(files.path().join("0.data")).unwrap();
 
     let server_session = Session::new_with_opts(
-        "/does-not-matter".into(),
+        files.path().into(),
         crate::SessionOptions {
             disable_dht: true,
             persistence: false,
@@ -63,8 +64,10 @@ async fn e2e_stream() -> anyhow::Result<()> {
         server_session.tcp_listen_port().unwrap(),
     );
 
+    let client_dir = TempDir::with_prefix("test_e2e_stream_client")?;
+
     let client_session = Session::new_with_opts(
-        "/does-not-matter".into(),
+        client_dir.path().into(),
         crate::SessionOptions {
             disable_dht: true,
             persistence: false,
