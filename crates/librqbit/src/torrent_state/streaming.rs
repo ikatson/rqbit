@@ -17,7 +17,7 @@ use futures::Future;
 use librqbit_core::lengths::{CurrentPiece, Lengths, ValidPieceIndex};
 use tokio::{
     io::{AsyncRead, AsyncSeek},
-    task::{block_in_place, spawn_blocking, JoinHandle},
+    task::{spawn_blocking, JoinHandle},
 };
 use tracing::{debug, error, trace};
 
