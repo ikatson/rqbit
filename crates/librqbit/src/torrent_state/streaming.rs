@@ -191,12 +191,13 @@ impl AsyncRead for FileStream {
         let initial_buf_size = tbuf.filled().len();
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
-        let have = poll_try_io!(self
-            .torrent
-            .with_chunk_tracker(|ct| ct.get_have_pieces()[current.id.get() as usize]));
-        if !have {
+        let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
+            let have = ct.get_have_pieces()[current.id.get() as usize];
             self.streams
                 .register_waker(self.stream_id, cx.waker().clone());
+            have
+        }));
+        if !have {
             trace!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have piece yet");
             return Poll::Pending;
         }
