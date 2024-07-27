@@ -149,13 +149,18 @@ fn parse_compact_peers(b: &[u8]) -> Vec<SocketAddrV4> {
 
 #[derive(Deserialize, Debug)]
 pub struct TrackerResponse<'a> {
+    #[allow(dead_code)]
     #[serde(rename = "warning message", borrow)]
     pub warning_message: Option<ByteBuf<'a>>,
+    #[allow(dead_code)]
     pub complete: u64,
     pub interval: u64,
+    #[allow(dead_code)]
     #[serde(rename = "min interval")]
     pub min_interval: Option<u64>,
+    #[allow(dead_code)]
     pub tracker_id: Option<ByteBuf<'a>>,
+    #[allow(dead_code)]
     pub incomplete: u64,
     pub peers: Peers,
 }

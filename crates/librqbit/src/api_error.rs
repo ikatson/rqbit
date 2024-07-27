@@ -155,6 +155,7 @@ impl IntoResponse for ApiError {
 
 pub trait ApiErrorExt<T> {
     fn with_error_status_code(self, s: StatusCode) -> Result<T, ApiError>;
+    #[allow(dead_code)]
     fn with_plaintext_error(self, value: bool) -> Result<T, ApiError>;
 }
 

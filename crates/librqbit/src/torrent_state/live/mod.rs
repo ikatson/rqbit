@@ -150,7 +150,9 @@ impl TorrentStateLocked {
 
 #[derive(Default)]
 pub struct TorrentStateOptions {
+    #[allow(dead_code)]
     pub peer_connect_timeout: Option<Duration>,
+    #[allow(dead_code)]
     pub peer_read_write_timeout: Option<Duration>,
 }
 

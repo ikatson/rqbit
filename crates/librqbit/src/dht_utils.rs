@@ -19,6 +19,7 @@ pub enum ReadMetainfoResult<Rx> {
         seen: HashSet<SocketAddr>,
     },
     ChannelClosed {
+        #[allow(dead_code)]
         seen: HashSet<SocketAddr>,
     },
 }
