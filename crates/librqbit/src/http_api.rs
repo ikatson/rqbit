@@ -170,7 +170,7 @@ impl HttpApi {
             let range_header = headers.get(http::header::RANGE);
             trace!(torrent_id=idx, file_id=file_id, range=?range_header, "request for HTTP stream");
 
-            if let Some(range) = headers.get(http::header::RANGE) {
+            if let Some(range) = range_header {
                 let offset: Option<u64> = range
                     .to_str()
                     .ok()

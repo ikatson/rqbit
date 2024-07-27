@@ -15,7 +15,9 @@ use librqbit_core::lengths::{CurrentPiece, Lengths, ValidPieceIndex};
 use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{debug, trace};
 
-use crate::{file_info::FileInfo, storage::TorrentStorage, ManagedTorrent};
+use crate::{
+    file_info::FileInfo, spawn_utils::BlockingSpawner, storage::TorrentStorage, ManagedTorrent,
+};
 
 use super::ManagedTorrentHandle;
 
@@ -136,6 +138,8 @@ pub struct FileStream {
     // file params
     file_len: u64,
     file_torrent_abs_offset: u64,
+
+    spawner: BlockingSpawner,
 }
 
 macro_rules! map_io_err {
@@ -211,13 +215,13 @@ impl AsyncRead for FileStream {
             "will write bytes"
         );
 
-        poll_try_io!(poll_try_io!(self.torrent.with_storage_and_file(
-            self.file_id,
-            |files, _fi| {
-                files.pread_exact(self.file_id, self.position, buf)?;
-                Ok::<_, anyhow::Error>(())
-            }
-        )));
+        poll_try_io!(poll_try_io!(self.spawner.spawn_block_in_place(|| {
+            self.torrent
+                .with_storage_and_file(self.file_id, |files, _fi| {
+                    files.pread_exact(self.file_id, self.position, buf)?;
+                    Ok::<_, anyhow::Error>(())
+                })
+        })));
 
         self.as_mut().advance(bytes_to_read as u64);
         tbuf.advance(bytes_to_read);
@@ -324,6 +328,7 @@ impl ManagedTorrent {
             file_len: fd_len,
             file_torrent_abs_offset: fd_offset,
             torrent: self,
+            spawner: BlockingSpawner::default(),
         };
         s.torrent.maybe_reconnect_needed_peers_for_file(file_id);
         streams.streams.insert(
