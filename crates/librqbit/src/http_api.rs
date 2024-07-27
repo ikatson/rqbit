@@ -167,6 +167,13 @@ impl HttpApi {
             let mut output_headers = HeaderMap::new();
             output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
 
+            if let Ok(mime) = state.torrent_file_mime_type(idx, file_id) {
+                output_headers.insert(
+                    http::header::CONTENT_TYPE,
+                    HeaderValue::from_str(mime).context("bug - invalid MIME")?,
+                );
+            }
+
             let range_header = headers.get(http::header::RANGE);
             trace!(torrent_id=idx, file_id=file_id, range=?range_header, "request for HTTP stream");
 

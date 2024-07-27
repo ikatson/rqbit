@@ -74,6 +74,7 @@ rlimit = "0.10.1"
 async-stream = "0.3.5"
 memmap2 = { version = "0.9.4" }
 lru = { version = "0.12.3", optional = true }
+mime_guess = { version = "2.0.5", default-features = false}
 
 [dev-dependencies]
 futures = { version = "0.3" }

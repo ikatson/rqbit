@@ -78,6 +78,12 @@ impl Api {
         make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
     }
 
+    pub fn torrent_file_mime_type(&self, idx: TorrentId, file_idx: usize) -> Result<&'static str> {
+        let handle = self.mgr_handle(idx)?;
+        let info = &handle.info().info;
+        torrent_file_mime_type(info, file_idx)
+    }
+
     pub fn api_peer_stats(
         &self,
         idx: TorrentId,
@@ -318,5 +324,30 @@ fn make_torrent_details(
         info_hash: info_hash.as_string(),
         name: info.name.as_ref().map(|b| b.to_string()),
         files,
+    })
+}
+
+fn torrent_file_mime_type(
+    info: &TorrentMetaV1Info<ByteBufOwned>,
+    file_idx: usize,
+) -> Result<&'static str> {
+    let file_name = info
+        .iter_filenames_and_lengths()?
+        .enumerate()
+        .find_map(|(idx, (f, _))| {
+            if idx == file_idx {
+                f.iter_components()
+                    .last()
+                    .and_then(|r| r.ok())
+                    .and_then(|s| mime_guess::from_path(s).first_raw())
+            } else {
+                None
+            }
+        });
+    file_name.ok_or_else(|| {
+        ApiError::new_from_text(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot determine mime type for file",
+        )
     })
 }
