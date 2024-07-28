@@ -158,8 +158,7 @@ const FileTreeComponent: React.FC<{
   const fileLink = (file: TorrentFileForCheckbox) => {
     if (
       allowStream &&
-      torrentId != null &&
-      /\.(mp4|mkv|avi)$/.test(file.filename)
+      torrentId != null
     ) {
       return API.getTorrentStreamUrl(torrentId, file.id, file.filename);
     }
