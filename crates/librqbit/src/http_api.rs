@@ -206,12 +206,12 @@ impl HttpApi {
                         ))
                         .context("bug")?,
                     );
-                } else {
-                    output_headers.insert(
-                        http::header::CONTENT_LENGTH,
-                        HeaderValue::from_str(&format!("{}", stream.len())).context("bug")?,
-                    );
                 }
+            } else {
+                output_headers.insert(
+                    http::header::CONTENT_LENGTH,
+                    HeaderValue::from_str(&format!("{}", stream.len())).context("bug")?,
+                );
             }
 
             let s = tokio_util::io::ReaderStream::new(stream);
