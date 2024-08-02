@@ -39,6 +39,7 @@ export const FormCheckbox: React.FC<{
         {labelLink ? (
           <a
             href={labelLink}
+            target="_blank"
             className="text-blue-600 dark:text-blue-500 hover:underline"
           >
             {label}
