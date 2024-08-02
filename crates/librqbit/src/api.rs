@@ -331,23 +331,18 @@ fn torrent_file_mime_type(
     info: &TorrentMetaV1Info<ByteBufOwned>,
     file_idx: usize,
 ) -> Result<&'static str> {
-    let file_name = info
-        .iter_filenames_and_lengths()?
-        .enumerate()
-        .find_map(|(idx, (f, _))| {
-            if idx == file_idx {
-                f.iter_components()
-                    .last()
-                    .and_then(|r| r.ok())
-                    .and_then(|s| mime_guess::from_path(s).first_raw())
-            } else {
-                None
-            }
-        });
-    file_name.ok_or_else(|| {
-        ApiError::new_from_text(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "cannot determine mime type for file",
-        )
-    })
+    info.iter_filenames_and_lengths()?
+        .nth(file_idx)
+        .and_then(|(f, _)| {
+            f.iter_components()
+                .last()
+                .and_then(|r| r.ok())
+                .and_then(|s| mime_guess::from_path(s).first_raw())
+        })
+        .ok_or_else(|| {
+            ApiError::new_from_text(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "cannot determine mime type for file",
+            )
+        })
 }
