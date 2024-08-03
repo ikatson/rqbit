@@ -410,12 +410,16 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             let http_api_url = format!("http://{}", opts.http_api_listen_addr);
             let client = http_api_client::HttpApiClient::new(&http_api_url)?;
 
-            let torrent_opts = || AddTorrentOptions {
+            let torrent_opts = |with_output_folder: bool| AddTorrentOptions {
                 only_files_regex: download_opts.only_files_matching_regex.clone(),
                 overwrite: download_opts.overwrite,
                 list_only: download_opts.list,
                 force_tracker_interval: opts.force_tracker_interval,
-                output_folder: download_opts.output_folder.clone(),
+                output_folder: if with_output_folder {
+                    download_opts.output_folder.clone()
+                } else {
+                    None
+                },
                 sub_folder: download_opts.sub_folder.clone(),
                 initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
                 disable_trackers: download_opts.disable_trackers,
@@ -436,7 +440,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     match client
                         .add_torrent(
                             AddTorrent::from_cli_argument(torrent_url)?,
-                            Some(torrent_opts()),
+                            Some(torrent_opts(true)),
                         )
                         .await
                     {
@@ -495,7 +499,10 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
 
                 for path in &download_opts.torrent_path {
                     let handle = match session
-                        .add_torrent(AddTorrent::from_cli_argument(path)?, Some(torrent_opts()))
+                        .add_torrent(
+                            AddTorrent::from_cli_argument(path)?,
+                            Some(torrent_opts(false)),
+                        )
                         .await
                     {
                         Ok(v) => match v {
