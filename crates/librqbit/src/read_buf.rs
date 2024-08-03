@@ -77,6 +77,7 @@ impl ReadBuf {
                         self.processed += size;
 
                         // Rust's borrow checker can't do this early return so resort to unsafe.
+                        #[allow(clippy::missing_transmute_annotations)]
                         let msg = unsafe { std::mem::transmute(msg) };
                         return Ok(msg);
                     }
