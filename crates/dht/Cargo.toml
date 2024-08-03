@@ -19,7 +19,7 @@ tokio = { version = "1", features = [
 ] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
-leaky-bucket = "1"
+leaky-bucket = "1.1"
 serde_json = "1"
 hex = "0.4"
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.2" }
