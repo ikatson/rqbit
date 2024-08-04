@@ -1,6 +1,6 @@
 use anyhow::Context;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
 use futures::future::BoxFuture;
@@ -26,6 +26,7 @@ use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 type ApiState = Api;
 
 use crate::api::Result;
+use crate::ApiError;
 
 /// An HTTP server for the API.
 pub struct HttpApi {
@@ -126,6 +127,45 @@ impl HttpApi {
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
             state.api_torrent_details(idx).map(axum::Json)
+        }
+
+        async fn torrent_playlist(
+            State(state): State<ApiState>,
+            headers: HeaderMap,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            let host = headers
+                .get("host")
+                .ok_or_else(|| {
+                    ApiError::new_from_text(StatusCode::BAD_REQUEST, "Missing host header")
+                })?
+                .to_str()
+                .context("hostname is not string")?;
+
+            let playlist_items = state
+                .api_torrent_details(idx)?
+                .files
+                .into_iter()
+                .enumerate()
+                .filter_map(|(file_idx, f)| {
+                    let file_name = f.name;
+                    let is_playable = mime_guess::from_path(&file_name)
+                        .first()
+                        .map(|mime| {
+                            mime.type_() == mime_guess::mime::VIDEO
+                                || mime.type_() == mime_guess::mime::AUDIO
+                        })
+                        .unwrap_or(false);
+                    if is_playable {
+                        Some(format!(
+                            "http://{host}/torrents/{idx}/stream/{file_idx}/{file_name}"
+                        ))
+                    } else {
+                        None
+                    }
+                });
+
+            Ok(playlist_items.collect::<Vec<_>>().join("\r\n"))
         }
 
         async fn torrent_haves(
@@ -289,6 +329,7 @@ impl HttpApi {
             .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
             .route("/torrents/:id/peer_stats", get(peer_stats))
             .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
+            .route("/torrents/:id/playlist", get(torrent_playlist))
             .route(
                 "/torrents/:id/stream/:file_id/*filename",
                 get(torrent_stream_file),
