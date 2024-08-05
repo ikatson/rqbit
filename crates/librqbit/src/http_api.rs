@@ -1,6 +1,6 @@
 use anyhow::Context;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
 use futures::future::BoxFuture;
@@ -148,8 +148,7 @@ impl HttpApi {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(file_idx, f)| {
-                    let file_name = f.name;
-                    let is_playable = mime_guess::from_path(&file_name)
+                    let is_playable = mime_guess::from_path(&f.name)
                         .first()
                         .map(|mime| {
                             mime.type_() == mime_guess::mime::VIDEO
@@ -157,6 +156,7 @@ impl HttpApi {
                         })
                         .unwrap_or(false);
                     if is_playable {
+                        let file_name = urlencoding::encode(&f.name);
                         Some(format!(
                             "http://{host}/torrents/{idx}/stream/{file_idx}/{file_name}"
                         ))
