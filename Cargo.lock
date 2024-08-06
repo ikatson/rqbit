@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "2.2.2"
+version = "2.2.3"
 dependencies = [
  "anyhow",
  "librqbit-buffers",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-buffers"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "librqbit-clone-to-owned",
  "serde",
@@ -1368,7 +1368,7 @@ version = "2.2.1"
 
 [[package]]
 name = "librqbit-core"
-version = "3.8.0"
+version = "3.9.0"
 dependencies = [
  "anyhow",
  "data-encoding",
@@ -1390,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "5.0.3"
+version = "5.0.4"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.5.3"
+version = "3.6.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-tracker-comms"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "anyhow",
  "async-stream",

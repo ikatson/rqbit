@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-buffers"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2021"
 description = "Utils to work with &[u8] and Vec<u8> in librqbit source code."
 license = "Apache-2.0"
