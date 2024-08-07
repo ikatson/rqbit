@@ -382,6 +382,7 @@ impl TorrentStateLive {
             &handler,
             Some(options),
             self.meta.spawner,
+            self.meta.connector.clone(),
         );
         let requester = handler.task_peer_chunk_requester();
 
@@ -444,6 +445,7 @@ impl TorrentStateLive {
             &handler,
             Some(options),
             state.meta.spawner,
+            state.meta.connector.clone(),
         );
         let requester = handler.task_peer_chunk_requester();
 

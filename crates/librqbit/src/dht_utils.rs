@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::SocketAddr};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use buffers::ByteBufOwned;
@@ -8,6 +8,7 @@ use tracing::{debug, error_span, Instrument};
 
 use crate::{
     peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,
+    stream_connect::StreamConnector,
 };
 use librqbit_core::hash_id::Id20;
 
@@ -30,6 +31,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
     initial_addrs: Vec<SocketAddr>,
     addrs_stream: A,
     peer_connection_options: Option<PeerConnectionOptions>,
+    connector: Arc<StreamConnector>,
 ) -> ReadMetainfoResult<A> {
     let mut seen = HashSet::<SocketAddr>::new();
     let mut addrs = addrs_stream;
@@ -38,6 +40,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
 
     let read_info_guarded = |addr| {
         let semaphore = &semaphore;
+        let connector = connector.clone();
         async move {
             let token = semaphore.acquire().await?;
             let ret = peer_info_reader::read_metainfo_from_peer(
@@ -46,6 +49,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
                 info_hash,
                 peer_connection_options,
                 BlockingSpawner::new(true),
+                connector,
             )
             .instrument(error_span!("read_metainfo_from_peer", ?addr))
             .await
@@ -93,7 +97,10 @@ mod tests {
     use librqbit_core::peer_id::generate_peer_id;
 
     use super::*;
-    use std::{str::FromStr, sync::Once};
+    use std::{
+        str::FromStr,
+        sync::{Arc, Once},
+    };
 
     static LOG_INIT: Once = Once::new();
 
@@ -114,7 +121,15 @@ mod tests {
 
         let peer_rx = dht.get_peers(info_hash, None).unwrap();
         let peer_id = generate_peer_id();
-        match read_metainfo_from_peer_receiver(peer_id, info_hash, Vec::new(), peer_rx, None).await
+        match read_metainfo_from_peer_receiver(
+            peer_id,
+            info_hash,
+            Vec::new(),
+            peer_rx,
+            None,
+            Arc::new(Default::default()),
+        )
+        .await
         {
             ReadMetainfoResult::Found { info, .. } => dbg!(info),
             ReadMetainfoResult::ChannelClosed { .. } => todo!("should not have happened"),

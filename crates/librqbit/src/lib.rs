@@ -41,6 +41,7 @@ mod read_buf;
 mod session;
 mod spawn_utils;
 pub mod storage;
+mod stream_connect;
 mod torrent_state;
 pub mod tracing_subscriber_config_utils;
 mod type_aliases;

@@ -19,6 +19,7 @@ use crate::{
     storage::{
         filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
     },
+    stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
@@ -197,6 +198,7 @@ pub struct Session {
     default_storage_factory: Option<BoxStorageFactory>,
 
     reqwest_client: reqwest::Client,
+    connector: Arc<StreamConnector>,
 
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
@@ -413,11 +415,6 @@ impl<'a> AddTorrent<'a> {
     }
 }
 
-pub struct SocksProxyConfig {
-    // must start with socks5
-    pub url: String,
-}
-
 #[derive(Default)]
 pub struct SessionOptions {
     /// Turn on to disable DHT.
@@ -449,7 +446,8 @@ pub struct SessionOptions {
 
     pub default_storage_factory: Option<BoxStorageFactory>,
 
-    pub socks_proxy: Option<SocksProxyConfig>,
+    // socks5://[username:password@]host:port
+    pub socks_proxy_url: Option<String>,
 }
 
 async fn create_tcp_listener(
@@ -548,9 +546,27 @@ impl Session {
                 })
                 .unwrap_or_default();
 
-            let reqwest_client = reqwest::Client::builder()
-                .build()
-                .context("error building HTTP(S) client")?;
+            let proxy_config = match opts.socks_proxy_url.as_ref() {
+                Some(pu) => Some(
+                    SocksProxyConfig::parse(pu)
+                        .with_context(|| format!("error parsing proxy url {}", pu))?,
+                ),
+                None => None,
+            };
+
+            let reqwest_client = {
+                let builder = if let Some(proxy_url) = opts.socks_proxy_url.as_ref() {
+                    let proxy = reqwest::Proxy::all(proxy_url)
+                        .context("error creating socks5 proxy for HTTP")?;
+                    reqwest::Client::builder().proxy(proxy)
+                } else {
+                    reqwest::Client::builder()
+                };
+
+                builder.build().context("error building HTTP(S) client")?
+            };
+
+            let stream_connector = Arc::new(StreamConnector::from(proxy_config));
 
             let session = Arc::new(Self {
                 persistence_filename,
@@ -566,6 +582,7 @@ impl Session {
                 disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
                 reqwest_client,
+                connector: stream_connector,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -919,6 +936,7 @@ impl Session {
                         opts.initial_peers.clone().unwrap_or_default(),
                         peer_rx,
                         Some(self.merge_peer_opts(opts.peer_opts)),
+                        self.connector.clone(),
                     )
                     .await
                     {
@@ -1088,6 +1106,7 @@ impl Session {
             .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)
             .trackers(trackers)
+            .connector(self.connector.clone())
             .peer_id(self.peer_id);
 
         if let Some(d) = self.disk_write_tx.clone() {
