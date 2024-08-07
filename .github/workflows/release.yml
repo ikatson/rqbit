@@ -40,7 +40,7 @@ jobs:
             target/release-github/rqbit.exe
 
   cross-compile-on-macos:
-    runs-on: macos-11
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
