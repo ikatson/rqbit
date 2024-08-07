@@ -3,7 +3,7 @@ import { TorrentStats } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
-import { FaCog, FaPause, FaPlay, FaTrash } from "react-icons/fa";
+import { FaCog, FaPause, FaPlay, FaTrash, FaClipboardList } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
 
 export const TorrentActions: React.FC<{
@@ -93,6 +93,11 @@ export const TorrentActions: React.FC<{
       )}
       <IconButton onClick={startDeleting} disabled={disabled}>
         <FaTrash className="hover:text-red-500" />
+      </IconButton>
+      <IconButton onClick={() => {alert("Open this playlist link in external player like VLC")}}>
+      <a target="_blank" href={"/torrents/"+id+"/playlist"}>
+        <FaClipboardList className="hover:text-green-500"/>
+      </a>
       </IconButton>
       <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
     </div>
