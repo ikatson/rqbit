@@ -320,6 +320,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
+        socks_proxy: None,
     };
 
     let stats_printer = |session: Arc<Session>| async move {

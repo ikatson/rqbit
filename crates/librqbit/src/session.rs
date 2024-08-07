@@ -196,12 +196,19 @@ pub struct Session {
 
     default_storage_factory: Option<BoxStorageFactory>,
 
+    reqwest_client: reqwest::Client,
+
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
 }
 
-async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
-    let response = reqwest::get(url)
+async fn torrent_from_url(
+    reqwest_client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<TorrentMetaV1Owned> {
+    let response = reqwest_client
+        .get(url)
+        .send()
         .await
         .context("error downloading torrent metadata")?;
     if !response.status().is_success() {
@@ -406,6 +413,11 @@ impl<'a> AddTorrent<'a> {
     }
 }
 
+pub struct SocksProxyConfig {
+    // must start with socks5
+    pub url: String,
+}
+
 #[derive(Default)]
 pub struct SessionOptions {
     /// Turn on to disable DHT.
@@ -436,6 +448,8 @@ pub struct SessionOptions {
     pub defer_writes_up_to: Option<usize>,
 
     pub default_storage_factory: Option<BoxStorageFactory>,
+
+    pub socks_proxy: Option<SocksProxyConfig>,
 }
 
 async fn create_tcp_listener(
@@ -534,6 +548,10 @@ impl Session {
                 })
                 .unwrap_or_default();
 
+            let reqwest_client = reqwest::Client::builder()
+                .build()
+                .context("error building HTTP(S) client")?;
+
             let session = Arc::new(Self {
                 persistence_filename,
                 peer_id,
@@ -547,6 +565,7 @@ impl Session {
                 tcp_listen_port,
                 disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
+                reqwest_client,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -922,7 +941,7 @@ impl Session {
                         AddTorrent::Url(url)
                             if url.starts_with("http://") || url.starts_with("https://") =>
                         {
-                            torrent_from_url(&url).await?
+                            torrent_from_url(&self.reqwest_client, &url).await?
                         }
                         AddTorrent::Url(url) => {
                             bail!(
@@ -1210,6 +1229,7 @@ impl Session {
             Box::new(peer_rx_stats),
             force_tracker_interval,
             announce_port,
+            self.reqwest_client.clone(),
         );
 
         Ok(merge_two_optional_streams(dht_rx, peer_rx))

@@ -74,6 +74,7 @@ async fn test_e2e() {
                         enable_upnp_port_forwarding: false,
                         default_storage_factory: None,
                         defer_writes_up_to: None,
+                        ..Default::default()
                     },
                 )
                 .await
