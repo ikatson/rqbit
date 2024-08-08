@@ -55,7 +55,8 @@ jobs:
 
       - name: cargo tauri build
         working-directory: desktop
-        run: rustup target add aarch64-apple-darwin &&
+        run:
+          rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin &&
           cargo tauri build --target universal-apple-darwin --ci
       - uses: softprops/action-gh-release@v1
         with:
