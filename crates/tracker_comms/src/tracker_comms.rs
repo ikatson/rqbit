@@ -26,6 +26,7 @@ pub struct TrackerComms {
     force_tracker_interval: Option<Duration>,
     tx: Sender,
     tcp_listen_port: Option<u16>,
+    reqwest_client: reqwest::Client,
 }
 
 #[derive(Default)]
@@ -94,6 +95,7 @@ impl TrackerComms {
         stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
         tcp_listen_port: Option<u16>,
+        reqwest_client: reqwest::Client,
     ) -> Option<BoxStream<'static, SocketAddr>> {
         let trackers = trackers
             .into_iter()
@@ -130,6 +132,7 @@ impl TrackerComms {
                 force_tracker_interval: force_interval,
                 tx,
                 tcp_listen_port,
+                reqwest_client
             });
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {
@@ -230,7 +233,7 @@ impl TrackerComms {
 
     async fn tracker_one_request_http(&self, tracker_url: Url) -> anyhow::Result<u64> {
         debug!(url = ?tracker_url, "calling tracker over http");
-        let response: reqwest::Response = reqwest::get(tracker_url).await?;
+        let response: reqwest::Response = self.reqwest_client.get(tracker_url).send().await?;
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }

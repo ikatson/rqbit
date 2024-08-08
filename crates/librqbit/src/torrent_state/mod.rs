@@ -37,6 +37,7 @@ use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
+use crate::stream_connect::StreamConnector;
 use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::DiskWorkQueueSender;
 use crate::type_aliases::FileInfos;
@@ -106,6 +107,7 @@ pub struct ManagedTorrentInfo {
     pub file_infos: FileInfos,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
+    pub(crate) connector: Arc<StreamConnector>,
 }
 
 pub struct ManagedTorrent {
@@ -509,6 +511,7 @@ pub(crate) struct ManagedTorrentBuilder {
     allow_overwrite: bool,
     storage_factory: BoxStorageFactory,
     disk_writer: Option<DiskWorkQueueSender>,
+    connector: Arc<StreamConnector>,
 }
 
 impl ManagedTorrentBuilder {
@@ -532,6 +535,7 @@ impl ManagedTorrentBuilder {
             output_folder,
             storage_factory,
             disk_writer: None,
+            connector: Arc::new(Default::default()),
         }
     }
 
@@ -580,6 +584,11 @@ impl ManagedTorrentBuilder {
         self
     }
 
+    pub fn connector(&mut self, value: Arc<StreamConnector>) -> &mut Self {
+        self.connector = value;
+        self
+    }
+
     pub fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
         let lengths = Lengths::from_torrent(&self.info)?;
         let file_infos = self
@@ -612,6 +621,7 @@ impl ManagedTorrentBuilder {
                 output_folder: self.output_folder,
                 disk_write_queue: self.disk_writer,
             },
+            connector: self.connector,
         });
 
         let initializing = Arc::new(TorrentStateInitializing::new(

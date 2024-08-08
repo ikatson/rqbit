@@ -1,5 +1,6 @@
 use std::{
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -21,7 +22,7 @@ use serde_with::serde_as;
 use tokio::time::timeout;
 use tracing::{debug, trace};
 
-use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner};
+use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner, stream_connect::StreamConnector};
 
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
@@ -65,6 +66,7 @@ pub(crate) struct PeerConnection<H> {
     peer_id: Id20,
     options: PeerConnectionOptions,
     spawner: BlockingSpawner,
+    connector: Arc<StreamConnector>,
 }
 
 pub(crate) async fn with_timeout<T, E>(
@@ -88,6 +90,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         handler: H,
         options: Option<PeerConnectionOptions>,
         spawner: BlockingSpawner,
+        connector: Arc<StreamConnector>,
     ) -> Self {
         PeerConnection {
             handler,
@@ -96,6 +99,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             peer_id,
             spawner,
             options: options.unwrap_or_default(),
+            connector,
         }
     }
 
@@ -169,7 +173,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         let now = Instant::now();
-        let mut conn = with_timeout(connect_timeout, tokio::net::TcpStream::connect(self.addr))
+        let conn = self.connector.connect(self.addr);
+        let mut conn = with_timeout(connect_timeout, conn)
             .await
             .context("error connecting")?;
         self.handler.on_connected(now.elapsed());
@@ -218,7 +223,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         handshake_supports_extended: bool,
         mut read_buf: ReadBuf,
         mut write_buf: Vec<u8>,
-        mut conn: tokio::net::TcpStream,
+        mut conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         mut have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> anyhow::Result<()> {

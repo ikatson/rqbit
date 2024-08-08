@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use bencode::from_bytes;
 use buffers::{ByteBuf, ByteBufOwned};
@@ -22,6 +22,7 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     spawn_utils::BlockingSpawner,
+    stream_connect::StreamConnector,
 };
 
 pub(crate) async fn read_metainfo_from_peer(
@@ -30,6 +31,7 @@ pub(crate) async fn read_metainfo_from_peer(
     info_hash: Id20,
     peer_connection_options: Option<PeerConnectionOptions>,
     spawner: BlockingSpawner,
+    connector: Arc<StreamConnector>,
 ) -> anyhow::Result<TorrentMetaV1Info<ByteBufOwned>> {
     let (result_tx, result_rx) =
         tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteBufOwned>>>();
@@ -48,6 +50,7 @@ pub(crate) async fn read_metainfo_from_peer(
         handler,
         peer_connection_options,
         spawner,
+        connector,
     );
 
     let result_reader = async move { result_rx.await? };
@@ -234,6 +237,7 @@ impl PeerConnectionHandler for Handler {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::{net::SocketAddr, str::FromStr, sync::Once};
 
     use librqbit_core::hash_id::Id20;
@@ -260,10 +264,15 @@ mod tests {
         let addr = SocketAddr::from_str("127.0.0.1:27311").unwrap();
         let peer_id = generate_peer_id();
         let info_hash = Id20::from_str("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
-        dbg!(
-            read_metainfo_from_peer(addr, peer_id, info_hash, None, BlockingSpawner::new(true))
-                .await
-                .unwrap()
-        );
+        dbg!(read_metainfo_from_peer(
+            addr,
+            peer_id,
+            info_hash,
+            None,
+            BlockingSpawner::new(true),
+            Arc::new(Default::default())
+        )
+        .await
+        .unwrap());
     }
 }

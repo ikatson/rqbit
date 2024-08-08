@@ -115,6 +115,13 @@ struct Opts {
     /// If you use it, you know what you are doing.
     #[arg(long)]
     experimental_mmap_storage: bool,
+
+    /// Provide a socks5 URL.
+    /// The format is socks5://[username:password]@host:port
+    ///
+    /// Alternatively, set this as an environment variable RQBIT_SOCKS_PROXY_URL
+    #[arg(long)]
+    socks_url: Option<String>,
 }
 
 #[derive(Parser)]
@@ -281,6 +288,10 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
     };
 
+    let socks_url = opts
+        .socks_url
+        .or_else(|| std::env::var("RQBIT_SOCKS_PROXY_URL").ok());
+
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
@@ -320,6 +331,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
+        socks_proxy_url: socks_url,
     };
 
     let stats_printer = |session: Arc<Session>| async move {

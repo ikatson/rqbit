@@ -19,6 +19,7 @@ use crate::{
     storage::{
         filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
     },
+    stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
         ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
     },
@@ -196,12 +197,20 @@ pub struct Session {
 
     default_storage_factory: Option<BoxStorageFactory>,
 
+    reqwest_client: reqwest::Client,
+    connector: Arc<StreamConnector>,
+
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
 }
 
-async fn torrent_from_url(url: &str) -> anyhow::Result<TorrentMetaV1Owned> {
-    let response = reqwest::get(url)
+async fn torrent_from_url(
+    reqwest_client: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<TorrentMetaV1Owned> {
+    let response = reqwest_client
+        .get(url)
+        .send()
         .await
         .context("error downloading torrent metadata")?;
     if !response.status().is_success() {
@@ -436,6 +445,9 @@ pub struct SessionOptions {
     pub defer_writes_up_to: Option<usize>,
 
     pub default_storage_factory: Option<BoxStorageFactory>,
+
+    // socks5://[username:password@]host:port
+    pub socks_proxy_url: Option<String>,
 }
 
 async fn create_tcp_listener(
@@ -534,6 +546,28 @@ impl Session {
                 })
                 .unwrap_or_default();
 
+            let proxy_config = match opts.socks_proxy_url.as_ref() {
+                Some(pu) => Some(
+                    SocksProxyConfig::parse(pu)
+                        .with_context(|| format!("error parsing proxy url {}", pu))?,
+                ),
+                None => None,
+            };
+
+            let reqwest_client = {
+                let builder = if let Some(proxy_url) = opts.socks_proxy_url.as_ref() {
+                    let proxy = reqwest::Proxy::all(proxy_url)
+                        .context("error creating socks5 proxy for HTTP")?;
+                    reqwest::Client::builder().proxy(proxy)
+                } else {
+                    reqwest::Client::builder()
+                };
+
+                builder.build().context("error building HTTP(S) client")?
+            };
+
+            let stream_connector = Arc::new(StreamConnector::from(proxy_config));
+
             let session = Arc::new(Self {
                 persistence_filename,
                 peer_id,
@@ -547,6 +581,8 @@ impl Session {
                 tcp_listen_port,
                 disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
+                reqwest_client,
+                connector: stream_connector,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -900,6 +936,7 @@ impl Session {
                         opts.initial_peers.clone().unwrap_or_default(),
                         peer_rx,
                         Some(self.merge_peer_opts(opts.peer_opts)),
+                        self.connector.clone(),
                     )
                     .await
                     {
@@ -922,7 +959,7 @@ impl Session {
                         AddTorrent::Url(url)
                             if url.starts_with("http://") || url.starts_with("https://") =>
                         {
-                            torrent_from_url(&url).await?
+                            torrent_from_url(&self.reqwest_client, &url).await?
                         }
                         AddTorrent::Url(url) => {
                             bail!(
@@ -1069,6 +1106,7 @@ impl Session {
             .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)
             .trackers(trackers)
+            .connector(self.connector.clone())
             .peer_id(self.peer_id);
 
         if let Some(d) = self.disk_write_tx.clone() {
@@ -1210,6 +1248,7 @@ impl Session {
             Box::new(peer_rx_stats),
             force_tracker_interval,
             announce_port,
+            self.reqwest_client.clone(),
         );
 
         Ok(merge_two_optional_streams(dht_rx, peer_rx))
