@@ -151,4 +151,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     }
     return url;
   },
+  getPlaylistUrl: (index: number) => {
+    return apiUrl + `/torrents/${index}/playlist`;
+  },
 };

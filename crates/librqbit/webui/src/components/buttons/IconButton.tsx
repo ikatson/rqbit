@@ -6,8 +6,9 @@ export const IconButton: React.FC<{
   className?: string;
   color?: string;
   children: any;
+  href?: string;
 }> = (props) => {
-  const { onClick, disabled, color, children, className, ...otherProps } =
+  const { onClick, disabled, color, children, className, href, ...otherProps } =
     props;
   const onClickStopPropagation: MouseEventHandler<HTMLAnchorElement> = (e) => {
     e.stopPropagation();
@@ -22,7 +23,7 @@ export const IconButton: React.FC<{
     <a
       className={`p-1 text-blue-500 flex items-center justify-center ${colorClassName} ${className}`}
       onClick={onClickStopPropagation}
-      href="#"
+      href={href ?? "#"}
       {...otherProps}
     >
       {children}

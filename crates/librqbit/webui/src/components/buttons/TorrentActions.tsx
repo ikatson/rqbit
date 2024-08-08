@@ -3,7 +3,13 @@ import { TorrentStats } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
-import { FaCog, FaPause, FaPlay, FaTrash, FaClipboardList } from "react-icons/fa";
+import {
+  FaCog,
+  FaPause,
+  FaPlay,
+  FaTrash,
+  FaClipboardList,
+} from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
 
 export const TorrentActions: React.FC<{
@@ -39,7 +45,7 @@ export const TorrentActions: React.FC<{
             text: `Error starting torrent id=${id}`,
             details: e,
           });
-        },
+        }
       )
       .finally(() => setDisabled(false));
   };
@@ -56,7 +62,7 @@ export const TorrentActions: React.FC<{
             text: `Error pausing torrent id=${id}`,
             details: e,
           });
-        },
+        }
       )
       .finally(() => setDisabled(false));
   };
@@ -69,6 +75,32 @@ export const TorrentActions: React.FC<{
   const cancelDeleting = () => {
     setDisabled(false);
     setDeleting(false);
+  };
+
+  const playlistUrl = API.getPlaylistUrl(id);
+
+  const setAlert = useErrorStore((state) => state.setAlert);
+
+  const copyPlaylistUrlToClipboard = async () => {
+    if (!playlistUrl) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(playlistUrl);
+    } catch (e) {
+      setCloseableError({
+        text: "Error",
+        details: { text: `Error copying playlist URL to clipboard: ${e}` },
+      });
+      return;
+    }
+
+    setAlert({
+      text: "Copied",
+      details: {
+        text: `Playlist URL copied to clipboard. Paste into e.g. VLC to play.`,
+      },
+    });
   };
 
   return (
@@ -94,10 +126,11 @@ export const TorrentActions: React.FC<{
       <IconButton onClick={startDeleting} disabled={disabled}>
         <FaTrash className="hover:text-red-500" />
       </IconButton>
-      <IconButton onClick={() => {alert("Open this playlist link in external player like VLC")}}>
-      <a target="_blank" href={"/torrents/"+id+"/playlist"}>
-        <FaClipboardList className="hover:text-green-500"/>
-      </a>
+      <IconButton
+        href={playlistUrl ?? "#"}
+        onClick={copyPlaylistUrlToClipboard}
+      >
+        <FaClipboardList className="hover:text-green-500" />
       </IconButton>
       <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
     </div>

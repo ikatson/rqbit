@@ -162,6 +162,7 @@ export interface JSONLogLine {
 }
 
 export interface RqbitAPI {
+  getPlaylistUrl: (index: number) => string | null;
   getStreamLogsUrl: () => string | null;
   listTorrents: () => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
