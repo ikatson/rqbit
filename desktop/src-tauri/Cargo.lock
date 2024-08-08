@@ -1881,6 +1881,7 @@ dependencies = [
  "serde_with",
  "size_format",
  "tokio",
+ "tokio-socks",
  "tokio-stream",
  "tokio-util",
  "tower-http",
@@ -2991,6 +2992,7 @@ dependencies = [
  "system-configuration",
  "tokio",
  "tokio-native-tls",
+ "tokio-socks",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -4010,6 +4012,18 @@ checksum = "0c7bc40d0e5a97695bb96e27995cd3a08538541b0a846f65bba7a359f36700d4"
 dependencies = [
  "rustls",
  "rustls-pki-types",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-socks"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d4770b8024672c1101b3f6733eab95b18007dbe0847a8afe341fcf79e06043f"
+dependencies = [
+ "either",
+ "futures-util",
+ "thiserror",
  "tokio",
 ]
 

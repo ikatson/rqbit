@@ -7,6 +7,10 @@ export interface ErrorWithLabel {
 }
 
 export const useErrorStore = create<{
+  alert: ErrorWithLabel | null;
+  setAlert: (alert: ErrorWithLabel) => void;
+  removeAlert: () => void;
+
   closeableError: ErrorWithLabel | null;
   setCloseableError: (error: ErrorWithLabel | null) => void;
 
@@ -18,4 +22,8 @@ export const useErrorStore = create<{
 
   otherError: null,
   setOtherError: (otherError) => set(() => ({ otherError })),
+
+  alert: null,
+  setAlert: (alert) => set(() => ({alert})),
+  removeAlert: () => set(() => ({alert: null}))
 }));

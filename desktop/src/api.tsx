@@ -18,7 +18,7 @@ interface InvokeErrorResponse {
 }
 
 function errorToUIError(
-  path: string,
+  path: string
 ): (e: InvokeErrorResponse) => Promise<never> {
   return (e: InvokeErrorResponse) => {
     console.log(e);
@@ -35,11 +35,11 @@ function errorToUIError(
 
 export async function invokeAPI<Response>(
   name: string,
-  params?: InvokeArgs,
+  params?: InvokeArgs
 ): Promise<Response> {
   console.log("invoking", name, params);
   const result = await invoke<Response>(name, params).catch(
-    errorToUIError(name),
+    errorToUIError(name)
   );
   console.log(result);
   return result;
@@ -68,16 +68,26 @@ async function readFileAsBase64(file: File): Promise<string> {
 }
 
 export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
+  const getHttpBase = () => {
+    if (!configuration.http_api.listen_addr) {
+      return null;
+    }
+    let port = configuration.http_api.listen_addr.split(":")[1];
+    if (!port) {
+      return null;
+    }
+
+    return `http://127.0.0.1:${port}`;
+  };
+
+  let httpBase = getHttpBase();
+
   return {
     getStreamLogsUrl: () => {
-      if (!configuration.http_api.listen_addr) {
+      if (!httpBase) {
         return null;
       }
-      let port = configuration.http_api.listen_addr.split(":")[1];
-      if (!port) {
-        return null;
-      }
-      return `http://127.0.0.1:${port}/stream_logs`;
+      return `${httpBase}/stream_logs`;
     },
     listTorrents: async function (): Promise<ListTorrentsResponse> {
       return await invokeAPI<ListTorrentsResponse>("torrents_list");
@@ -96,7 +106,7 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
           {
             contents,
             opts: opts ?? {},
-          },
+          }
         );
       }
       return await invokeAPI<AddTorrentResponse>("torrent_create_from_url", {
@@ -124,6 +134,12 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     },
     getTorrentStreamUrl: () => {
       return "";
+    },
+    getPlaylistUrl: (index: number) => {
+      if (!httpBase) {
+        return null;
+      }
+      return `${httpBase}/torrents/${index}/playlist`;
     },
   };
 };

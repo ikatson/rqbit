@@ -10,6 +10,7 @@ import { Header } from "./components/Header";
 import { DarkMode } from "./helper/darkMode";
 import { useTorrentStore } from "./stores/torrentStore";
 import { useErrorStore } from "./stores/errorStore";
+import { AlertModal } from "./components/modal/AlertModal";
 
 export interface ErrorWithLabel {
   text: string;
@@ -33,16 +34,16 @@ export const RqbitWebUI = (props: {
 
   const setTorrents = useTorrentStore((state) => state.setTorrents);
   const setTorrentsLoading = useTorrentStore(
-    (state) => state.setTorrentsLoading,
+    (state) => state.setTorrentsLoading
   );
   const setRefreshTorrents = useTorrentStore(
-    (state) => state.setRefreshTorrents,
+    (state) => state.setRefreshTorrents
   );
 
   const refreshTorrents = async () => {
     setTorrentsLoading(true);
     let torrents = await API.listTorrents().finally(() =>
-      setTorrentsLoading(false),
+      setTorrentsLoading(false)
     );
     setTorrents(torrents.torrents);
   };
@@ -60,9 +61,9 @@ export const RqbitWebUI = (props: {
             setOtherError({ text: "Error refreshing torrents", details: e });
             console.error(e);
             return 5000;
-          },
+          }
         ),
-      0,
+      0
     );
   }, []);
 
@@ -86,6 +87,7 @@ export const RqbitWebUI = (props: {
       </div>
 
       <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
+      <AlertModal />
     </div>
   );
 };
