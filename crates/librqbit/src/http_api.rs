@@ -152,7 +152,7 @@ impl HttpApi {
                     }
                 })
                 .collect::<Vec<_>>();
-            playlist_items.sort();
+            playlist_items.sort_by(|left, right| left.1.cmp(&right.1));
             Ok(playlist_items)
         }
 
@@ -177,10 +177,15 @@ impl HttpApi {
                 })
                 .join("\r\n");
             (
-                [(
-                    "Content-Type",
-                    "application/vnd.apple.mpegurl; charset=utf-8",
-                )],
+                if cfg!(any(target_os = "macos", target_os = "ios")) {
+                    [(
+                        "Content-Type",
+                        "application/vnd.apple.mpegurl; charset=utf-8",
+                    )]
+                } else {
+                    // apple mime does not work with VLC on linux
+                    [("Content-Type", "text/plain; charset=utf-8")]
+                },
                 body,
             )
         }
