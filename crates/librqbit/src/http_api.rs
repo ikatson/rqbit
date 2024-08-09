@@ -142,7 +142,7 @@ impl HttpApi {
                 .to_str()
                 .context("hostname is not string")?;
 
-            let playlist_items = state
+            let mut playlist_items = state
                 .api_torrent_details(idx)?
                 .files
                 .into_iter()
@@ -157,15 +157,22 @@ impl HttpApi {
                         .unwrap_or(false);
                     if is_playable {
                         let file_name = urlencoding::encode(&f.name);
-                        Some(format!(
-                            "http://{host}/torrents/{idx}/stream/{file_idx}/{file_name}"
-                        ))
+                        Some((file_name.into_owned(), file_idx))
                     } else {
                         None
                     }
-                });
+                })
+                .collect::<Vec<_>>();
 
-            Ok(playlist_items.collect::<Vec<_>>().join("\r\n"))
+            playlist_items.sort();
+            let list = playlist_items
+                .into_iter()
+                .map(|(file_name, file_idx)| {
+                    format!("http://{host}/torrents/{idx}/stream/{file_idx}/{file_name}")
+                })
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            Ok(list)
         }
 
         async fn torrent_haves(
