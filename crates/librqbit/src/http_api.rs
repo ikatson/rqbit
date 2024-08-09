@@ -26,7 +26,7 @@ use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 type ApiState = Api;
 
 use crate::api::Result;
-use crate::ApiError;
+use crate::{ApiError, ManagedTorrent};
 
 /// An HTTP server for the API.
 pub struct HttpApi {
@@ -129,26 +129,15 @@ impl HttpApi {
             state.api_torrent_details(idx).map(axum::Json)
         }
 
-        async fn torrent_playlist(
-            State(state): State<ApiState>,
-            headers: HeaderMap,
-            Path(idx): Path<usize>,
-        ) -> Result<impl IntoResponse> {
-            let host = headers
-                .get("host")
-                .ok_or_else(|| {
-                    ApiError::new_from_text(StatusCode::BAD_REQUEST, "Missing host header")
-                })?
-                .to_str()
-                .context("hostname is not string")?;
-
-            let mut playlist_items = state
-                .api_torrent_details(idx)?
-                .files
-                .into_iter()
+        fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
+            let mut playlist_items = handle
+                .info()
+                .info
+                .iter_filenames_and_lengths()?
                 .enumerate()
-                .filter_map(|(file_idx, f)| {
-                    let is_playable = mime_guess::from_path(&f.name)
+                .filter_map(|(file_idx, (filename, _))| {
+                    let filename = filename.to_vec().ok()?.join("/");
+                    let is_playable = mime_guess::from_path(&filename)
                         .first()
                         .map(|mime| {
                             mime.type_() == mime_guess::mime::VIDEO
@@ -156,23 +145,81 @@ impl HttpApi {
                         })
                         .unwrap_or(false);
                     if is_playable {
-                        let file_name = urlencoding::encode(&f.name);
-                        Some((file_name.into_owned(), file_idx))
+                        let filename = urlencoding::encode(&filename);
+                        Some((file_idx, filename.into_owned()))
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<_>>();
-
             playlist_items.sort();
-            let list = playlist_items
+            Ok(playlist_items)
+        }
+
+        fn get_host(headers: &HeaderMap) -> Result<&str> {
+            Ok(headers
+                .get("host")
+                .ok_or_else(|| {
+                    ApiError::new_from_text(StatusCode::BAD_REQUEST, "Missing host header")
+                })?
+                .to_str()
+                .context("hostname is not string")?)
+        }
+
+        fn build_playlist_content(
+            host: &str,
+            it: impl IntoIterator<Item = (usize, usize, String)>,
+        ) -> impl IntoResponse {
+            let body = it
                 .into_iter()
-                .map(|(file_name, file_idx)| {
-                    format!("http://{host}/torrents/{idx}/stream/{file_idx}/{file_name}")
+                .map(|(torrent_idx, file_idx, filename)| {
+                    format!("http://{host}/torrents/{torrent_idx}/stream/{file_idx}/{filename}")
                 })
-                .collect::<Vec<_>>()
                 .join("\r\n");
-            Ok(list)
+            (
+                [(
+                    "Content-Type",
+                    "application/vnd.apple.mpegurl; charset=utf-8",
+                )],
+                body,
+            )
+        }
+
+        async fn torrent_playlist(
+            State(state): State<ApiState>,
+            headers: HeaderMap,
+            Path(idx): Path<usize>,
+        ) -> Result<impl IntoResponse> {
+            let host = get_host(&headers)?;
+            let playlist_items = torrent_playlist_items(&*state.mgr_handle(idx)?)?;
+            Ok(build_playlist_content(
+                host,
+                playlist_items
+                    .into_iter()
+                    .map(move |(file_idx, filename)| (idx, file_idx, filename)),
+            ))
+        }
+
+        async fn global_playlist(
+            State(state): State<ApiState>,
+            headers: HeaderMap,
+        ) -> Result<impl IntoResponse> {
+            let host = get_host(&headers)?;
+            let all_items = state.session().with_torrents(|torrents| {
+                torrents
+                    .filter_map(|(torrent_idx, handle)| {
+                        torrent_playlist_items(handle)
+                            .map(move |items| {
+                                items.into_iter().map(move |(file_idx, filename)| {
+                                    (torrent_idx, file_idx, filename)
+                                })
+                            })
+                            .ok()
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>()
+            });
+            Ok(build_playlist_content(host, all_items))
         }
 
         async fn torrent_haves(
@@ -337,6 +384,7 @@ impl HttpApi {
             .route("/torrents/:id/peer_stats", get(peer_stats))
             .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
             .route("/torrents/:id/playlist", get(torrent_playlist))
+            .route("/torrents/playlist", get(global_playlist))
             .route(
                 "/torrents/:id/stream/:file_id/*filename",
                 get(torrent_stream_file),
