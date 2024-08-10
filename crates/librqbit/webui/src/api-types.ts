@@ -94,7 +94,7 @@ export interface ErrorDetails {
   path?: string;
   status?: number;
   statusText?: string;
-  text: string;
+  text: string | React.ReactNode;
 }
 
 export type Duration = number;

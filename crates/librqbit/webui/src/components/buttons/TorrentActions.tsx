@@ -11,6 +11,7 @@ import {
   FaClipboardList,
 } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
+import { ErrorComponent } from "../ErrorComponent";
 
 export const TorrentActions: React.FC<{
   id: number;
@@ -45,7 +46,7 @@ export const TorrentActions: React.FC<{
             text: `Error starting torrent id=${id}`,
             details: e,
           });
-        }
+        },
       )
       .finally(() => setDisabled(false));
   };
@@ -62,7 +63,7 @@ export const TorrentActions: React.FC<{
             text: `Error pausing torrent id=${id}`,
             details: e,
           });
-        }
+        },
       )
       .finally(() => setDisabled(false));
   };
@@ -88,9 +89,21 @@ export const TorrentActions: React.FC<{
     try {
       await navigator.clipboard.writeText(playlistUrl);
     } catch (e) {
-      setCloseableError({
-        text: "Error",
-        details: { text: `Error copying playlist URL to clipboard: ${e}` },
+      setAlert({
+        text: "Copy playlist URL",
+        details: {
+          text: (
+            <>
+              <p>
+                Copy{" "}
+                <a href={playlistUrl} className="text-blue-500">
+                  playlist URL
+                </a>{" "}
+                to clipboard and paste into e.g. VLC to play.
+              </p>
+            </>
+          ),
+        },
       });
       return;
     }
@@ -98,7 +111,7 @@ export const TorrentActions: React.FC<{
     setAlert({
       text: "Copied",
       details: {
-        text: `Playlist URL copied to clipboard. Paste into e.g. VLC to play.`,
+        text: "Playlist URL copied to clipboard. Paste into e.g. VLC to play.",
       },
     });
   };
