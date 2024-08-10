@@ -177,15 +177,13 @@ impl HttpApi {
                 })
                 .join("\r\n");
             (
-                if cfg!(any(target_os = "macos", target_os = "ios")) {
-                    [(
-                        "Content-Type",
-                        "application/vnd.apple.mpegurl; charset=utf-8",
-                    )]
-                } else {
-                    // apple mime does not work with VLC on linux
-                    [("Content-Type", "text/plain; charset=utf-8")]
-                },
+                [
+                    ("Content-Type", "application/mpegurl; charset=utf-8"),
+                    (
+                        "Content-Disposition",
+                        "attachment; filename=\"rqbit-playlist.m3u8\"",
+                    ),
+                ],
                 body,
             )
         }
