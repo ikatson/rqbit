@@ -119,6 +119,7 @@ impl SessionDatabase {
                                 .map(|u| u.to_string())
                                 .collect(),
                             info_hash: torrent.info_hash().as_string(),
+                            torrent_bytes: torrent.info.torrent_bytes.clone(),
                             info: torrent.info().info.clone(),
                             only_files: torrent.only_files().clone(),
                             is_paused: torrent
@@ -140,6 +141,12 @@ struct SerializedTorrent {
         deserialize_with = "deserialize_torrent"
     )]
     info: TorrentMetaV1Info<ByteBufOwned>,
+    #[serde(
+        serialize_with = "serialize_torrent_bytes",
+        deserialize_with = "deserialize_torrent_bytes",
+        default = "empty_bytes"
+    )]
+    torrent_bytes: ByteBufOwned,
     trackers: HashSet<String>,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
@@ -173,6 +180,32 @@ where
         .map_err(D::Error::custom)?;
     TorrentMetaV1Info::<ByteBufOwned>::deserialize(&mut BencodeDeserializer::new_from_buf(&b))
         .map_err(D::Error::custom)
+}
+
+fn serialize_torrent_bytes<S>(t: &ByteBufOwned, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use base64::{engine::general_purpose, Engine as _};
+    let s = general_purpose::STANDARD_NO_PAD.encode(&t.0);
+    s.serialize(serializer)
+}
+
+fn deserialize_torrent_bytes<'de, D>(deserializer: D) -> Result<ByteBufOwned, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use base64::{engine::general_purpose, Engine as _};
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    let b = general_purpose::STANDARD_NO_PAD
+        .decode(s)
+        .map_err(D::Error::custom)?;
+    Ok(b.into())
+}
+
+fn empty_bytes() -> ByteBufOwned {
+    ByteBufOwned(Vec::new().into_boxed_slice())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1128,8 +1161,13 @@ impl Session {
             }));
         }
 
-        let mut builder =
-            ManagedTorrentBuilder::new(info, info_hash, output_folder, storage_factory);
+        let mut builder = ManagedTorrentBuilder::new(
+            info,
+            info_hash,
+            torrent_bytes,
+            output_folder,
+            storage_factory,
+        );
         builder
             .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)

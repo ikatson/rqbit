@@ -99,6 +99,7 @@ pub(crate) struct ManagedTorrentOptions {
 
 pub struct ManagedTorrentInfo {
     pub info: TorrentMetaV1Info<ByteBufOwned>,
+    pub torrent_bytes: ByteBufOwned,
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<String>,
@@ -501,6 +502,7 @@ pub(crate) struct ManagedTorrentBuilder {
     info: TorrentMetaV1Info<ByteBufOwned>,
     output_folder: PathBuf,
     info_hash: Id20,
+    torrent_bytes: ByteBufOwned,
     force_tracker_interval: Option<Duration>,
     peer_connect_timeout: Option<Duration>,
     peer_read_write_timeout: Option<Duration>,
@@ -518,12 +520,14 @@ impl ManagedTorrentBuilder {
     pub fn new(
         info: TorrentMetaV1Info<ByteBufOwned>,
         info_hash: Id20,
+        torrent_bytes: ByteBufOwned,
         output_folder: PathBuf,
         storage_factory: BoxStorageFactory,
     ) -> Self {
         Self {
             info,
             info_hash,
+            torrent_bytes,
             spawner: None,
             force_tracker_interval: None,
             peer_connect_timeout: None,
@@ -608,6 +612,7 @@ impl ManagedTorrentBuilder {
             span,
             file_infos,
             info: self.info,
+            torrent_bytes: self.torrent_bytes,
             info_hash: self.info_hash,
             trackers: self.trackers.into_iter().collect(),
             spawner: self.spawner.unwrap_or_default(),
