@@ -11,10 +11,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", webui_src_dir.to_str().unwrap());
 
         #[cfg(target_os = "windows")]
-        let (shell, shell_args) = (
-            r#"C:\Program Files\PowerShell\7\pwsh.EXE"#,
-            ["-command"].as_slice(),
-        );
+        let (shell, shell_args) = ("powershell", ["-command"].as_slice());
         #[cfg(not(target_os = "windows"))]
         let (shell, shell_args) = ("bash", ["-c"].as_slice());
 
