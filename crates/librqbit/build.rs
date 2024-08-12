@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::path::Path;
 use std::process::Command;
 
@@ -19,14 +20,15 @@ fn main() {
                 .args(args)
                 .current_dir(webui_dir)
                 .output()
-                .unwrap_or_else(|_| {
-                    panic!(
+                .with_context(|| {
+                    format!(
                         "Failed to execute {} {} in {:?}",
                         cmd,
                         args.join(" "),
                         webui_dir
                     )
-                });
+                })
+                .unwrap();
 
             if !output.status.success() {
                 panic!(
