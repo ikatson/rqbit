@@ -120,11 +120,11 @@ pub struct RqbitDesktopConfig {
 
 impl Default for RqbitDesktopConfig {
     fn default() -> Self {
-        let download_folder = directories::UserDirs::new()
-            .expect("directories::UserDirs::new()")
+        let userdirs = directories::UserDirs::new().expect("directories::UserDirs::new()");
+        let download_folder = userdirs
             .download_dir()
-            .expect("download_dir()")
-            .to_path_buf();
+            .map(|d| d.to_owned())
+            .unwrap_or_else(|| userdirs.home_dir().join("Downloads"));
 
         Self {
             default_download_location: download_folder,
