@@ -32,9 +32,10 @@ pub(crate) async fn read_metainfo_from_peer(
     peer_connection_options: Option<PeerConnectionOptions>,
     spawner: BlockingSpawner,
     connector: Arc<StreamConnector>,
-) -> anyhow::Result<TorrentMetaV1Info<ByteBufOwned>> {
-    let (result_tx, result_rx) =
-        tokio::sync::oneshot::channel::<anyhow::Result<TorrentMetaV1Info<ByteBufOwned>>>();
+) -> anyhow::Result<TorrentAndBytes> {
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
+        anyhow::Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned)>,
+    >();
     let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
     let handler = Handler {
         addr,
@@ -135,13 +136,13 @@ impl HandlerLocked {
     }
 }
 
+pub type TorrentAndBytes = (TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned);
+
 struct Handler {
     addr: SocketAddr,
     info_hash: Id20,
     writer_tx: UnboundedSender<WriterRequest>,
-    result_tx: Mutex<
-        Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentMetaV1Info<ByteBufOwned>>>>,
-    >,
+    result_tx: Mutex<Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentAndBytes>>>>,
     locked: RwLock<Option<HandlerLocked>>,
 }
 
@@ -179,6 +180,7 @@ impl PeerConnectionHandler for Handler {
             if piece_ready {
                 let buf = self.locked.write().take().unwrap().buffer;
                 let info = from_bytes::<TorrentMetaV1Info<ByteBufOwned>>(&buf);
+                let info = info.map(|i| (i, ByteBufOwned(buf.into_boxed_slice())));
                 self.result_tx
                     .lock()
                     .take()

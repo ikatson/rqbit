@@ -16,6 +16,7 @@ use librqbit_core::hash_id::Id20;
 pub enum ReadMetainfoResult<Rx> {
     Found {
         info: TorrentMetaV1Info<ByteBufOwned>,
+        bytes: ByteBufOwned,
         rx: Rx,
         seen: HashSet<SocketAddr>,
     },
@@ -80,7 +81,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
             },
             done = unordered.next(), if !unordered.is_empty() => {
                 match done {
-                    Some(Ok(info)) => return ReadMetainfoResult::Found { info, seen, rx: addrs },
+                    Some(Ok(info)) => return ReadMetainfoResult::Found { info: info.0, bytes: info.1, seen, rx: addrs },
                     Some(Err(e)) => {
                         debug!("{:#}", e);
                     },

@@ -191,6 +191,7 @@ impl Api {
                 only_files,
                 seen_peers,
                 output_folder,
+                ..
             }) => ApiAddTorrentResponse {
                 id: None,
                 output_folder: output_folder.to_string_lossy().into_owned(),
