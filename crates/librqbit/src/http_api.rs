@@ -26,7 +26,7 @@ use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 type ApiState = Api;
 
 use crate::api::Result;
-use crate::{ApiError, ManagedTorrent};
+use crate::{ApiError, ListOnlyResponse, ManagedTorrent};
 
 /// An HTTP server for the API.
 pub struct HttpApi {
@@ -186,6 +186,37 @@ impl HttpApi {
                 ],
                 body,
             )
+        }
+
+        async fn resolve_magnet(
+            State(state): State<ApiState>,
+            url: String,
+        ) -> Result<impl IntoResponse> {
+            let added = state
+                .session()
+                .add_torrent(
+                    AddTorrent::from_url(&url),
+                    Some(AddTorrentOptions {
+                        list_only: true,
+                        ..Default::default()
+                    }),
+                )
+                .await?;
+            let content = match added {
+                crate::AddTorrentResponse::AlreadyManaged(_, handle) => {
+                    handle.info().torrent_bytes.clone().0
+                }
+                crate::AddTorrentResponse::ListOnly(ListOnlyResponse { torrent_bytes, .. }) => {
+                    torrent_bytes.0
+                }
+                crate::AddTorrentResponse::Added(_, _) => {
+                    return Err(ApiError::new_from_text(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "bug: torrent was added to session, but shouldn't have been",
+                    ))
+                }
+            };
+            Ok(content)
         }
 
         async fn torrent_playlist(
@@ -388,6 +419,7 @@ impl HttpApi {
             .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
             .route("/torrents/:id/playlist", get(torrent_playlist))
             .route("/torrents/playlist", get(global_playlist))
+            .route("/torrents/resolve_magnet", post(resolve_magnet))
             .route(
                 "/torrents/:id/stream/:file_id/*filename",
                 get(torrent_stream_file),
