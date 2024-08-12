@@ -9,22 +9,36 @@ fn main() {
 
         println!("cargo:rerun-if-changed={}", webui_src_dir.to_str().unwrap());
 
-        // Run "npm run build" in the webui directory
-        let output = Command::new("npm")
-            .arg("run")
-            .arg("build")
-            .current_dir(webui_dir)
-            .output()
-            .expect("Failed to execute npm run build");
+        // Run "npm install && npm run build" in the webui directory
+        for (cmd, args) in [
+            ("npm", ["install"].as_slice()),
+            ("npm", ["run", "build"].as_slice()),
+        ] {
+            // Run "npm install" in the webui directory
+            let output = Command::new(cmd)
+                .args(args)
+                .current_dir(webui_dir)
+                .output()
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to execute {} {} in {:?}",
+                        cmd,
+                        args.join(" "),
+                        webui_dir
+                    )
+                });
 
-        if !output.status.success() {
-            panic!(
-                "npm run build failed with output: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            if !output.status.success() {
+                panic!(
+                    "{} {} failed with output: {}",
+                    cmd,
+                    args.join(" "),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            // Optionally print the stdout output if you want to see the build logs
+            println!("{}", String::from_utf8_lossy(&output.stdout));
         }
-
-        // Optionally print the stdout output if you want to see the build logs
-        println!("{}", String::from_utf8_lossy(&output.stdout));
     }
 }
