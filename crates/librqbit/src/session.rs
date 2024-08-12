@@ -296,6 +296,7 @@ fn merge_two_optional_streams<T>(
 #[derive(Default, Serialize, Deserialize)]
 pub struct AddTorrentOptions {
     /// Start in paused state.
+    #[serde(default)]
     pub paused: bool,
     /// A regex to only download files matching it.
     pub only_files_regex: Option<String>,
@@ -304,8 +305,10 @@ pub struct AddTorrentOptions {
     pub only_files: Option<Vec<usize>>,
     /// Allow writing on top of existing files, including when resuming a torrent.
     /// You probably want to set it, however for safety it's not default.
+    #[serde(default)]
     pub overwrite: bool,
     /// Only list the files in the torrent without starting it.
+    #[serde(default)]
     pub list_only: bool,
     /// The output folder for the torrent. If not set, the session's default one will be used.
     pub output_folder: Option<String>,
@@ -318,6 +321,7 @@ pub struct AddTorrentOptions {
     /// Force a refresh interval for polling trackers.
     pub force_tracker_interval: Option<Duration>,
 
+    #[serde(default)]
     pub disable_trackers: bool,
 
     /// Initial peers to start of with.
