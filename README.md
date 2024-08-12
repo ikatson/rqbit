@@ -63,6 +63,8 @@ Just a regular Rust binary build process.
 
     cargo build --release
 
+The "webui" feature requires npm and python3 installed.
+
 ## Useful options
 
 ### -v <log-level>
