@@ -30,10 +30,11 @@ fn main() {
 
             if !output.status.success() {
                 panic!(
-                    "{} {} failed with output: {}",
+                    "{} {} failed. stderr: {}. stdout: {}",
                     cmd,
                     args.join(" "),
-                    String::from_utf8_lossy(&output.stderr)
+                    String::from_utf8_lossy(&output.stderr),
+                    String::from_utf8_lossy(&output.stdout)
                 );
             }
 
