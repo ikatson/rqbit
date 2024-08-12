@@ -10,10 +10,16 @@ fn main() {
 
         println!("cargo:rerun-if-changed={}", webui_src_dir.to_str().unwrap());
 
+        #[cfg(not(target_os = "windows"))]
+        let npm = "npm";
+
+        #[cfg(target_os = "windows")]
+        let npm = "npm.exe";
+
         // Run "npm install && npm run build" in the webui directory
         for (cmd, args) in [
-            ("npm", ["install"].as_slice()),
-            ("npm", ["run", "build"].as_slice()),
+            (npm, ["install"].as_slice()),
+            (npm, ["run", "build"].as_slice()),
         ] {
             // Run "npm install" in the webui directory
             let output = Command::new(cmd)
