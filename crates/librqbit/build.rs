@@ -10,37 +10,29 @@ fn main() {
 
         println!("cargo:rerun-if-changed={}", webui_src_dir.to_str().unwrap());
 
-        #[cfg(not(target_os = "windows"))]
-        let npm = "npm";
-
         #[cfg(target_os = "windows")]
-        let npm = "npm.exe";
+        let (shell, shell_args) = (
+            r#"C:\Program Files\PowerShell\7\pwsh.EXE"#,
+            ["-command"].as_slice(),
+        );
+        #[cfg(not(target_os = "windows"))]
+        let (shell, shell_args) = ("bash", ["-c"].as_slice());
 
         // Run "npm install && npm run build" in the webui directory
-        for (cmd, args) in [
-            (npm, ["install"].as_slice()),
-            (npm, ["run", "build"].as_slice()),
-        ] {
+        for cmd in ["npm install", "npm run build"] {
             // Run "npm install" in the webui directory
-            let output = Command::new(cmd)
-                .args(args)
+            let output = Command::new(shell)
+                .args(shell_args)
+                .arg(cmd)
                 .current_dir(webui_dir)
                 .output()
-                .with_context(|| {
-                    format!(
-                        "Failed to execute {} {} in {:?}",
-                        cmd,
-                        args.join(" "),
-                        webui_dir
-                    )
-                })
+                .with_context(|| format!("Failed to execute {} in {:?}", cmd, webui_dir))
                 .unwrap();
 
             if !output.status.success() {
                 panic!(
-                    "{} {} failed. stderr: {}. stdout: {}",
+                    "{} failed. stderr: {}. stdout: {}",
                     cmd,
-                    args.join(" "),
                     String::from_utf8_lossy(&output.stderr),
                     String::from_utf8_lossy(&output.stdout)
                 );
