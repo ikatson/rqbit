@@ -475,6 +475,14 @@ pub(crate) struct CheckedIncomingConnection {
     pub handshake: Handshake<ByteBufOwned>,
 }
 
+struct InternalAddResult {
+    info_hash: Id20,
+    info: TorrentMetaV1Info<ByteBufOwned>,
+    trackers: Vec<String>,
+    peer_rx: Option<PeerStream>,
+    initial_peers: Vec<SocketAddr>,
+}
+
 impl Session {
     /// Create a new session with default options.
     /// The passed in folder will be used as a default unless overriden per torrent.
@@ -910,7 +918,7 @@ impl Session {
             // into a torrent file by connecting to peers that support extended handshakes.
             // So we must discover at least one peer and connect to it to be able to proceed further.
 
-            let (info_hash, info, trackers, peer_rx, initial_peers) = match add {
+            let add_res = match add {
                 AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                     let magnet = Magnet::parse(&magnet)
                         .context("provided path is not a valid magnet URL")?;
@@ -950,13 +958,13 @@ impl Session {
                         }
                     };
                     debug!(?info, "received result from DHT");
-                    (
+                    InternalAddResult {
                         info_hash,
                         info,
-                        magnet.trackers.into_iter().unique().collect(),
-                        Some(peer_rx),
-                        initial_peers,
-                    )
+                        trackers: magnet.trackers.into_iter().unique().collect(),
+                        peer_rx: Some(peer_rx),
+                        initial_peers: initial_peers.into_iter().collect(),
+                    }
                 }
                 other => {
                     let torrent = match other {
@@ -1004,29 +1012,22 @@ impl Session {
                         )?
                     };
 
-                    (
-                        torrent.info_hash,
-                        torrent.info,
+                    InternalAddResult {
+                        info_hash: torrent.info_hash,
+                        info: torrent.info,
                         trackers,
                         peer_rx,
-                        opts.initial_peers
+                        initial_peers: opts
+                            .initial_peers
                             .clone()
                             .unwrap_or_default()
                             .into_iter()
                             .collect(),
-                    )
+                    }
                 }
             };
 
-            self.main_torrent_info(
-                info_hash,
-                info,
-                trackers,
-                peer_rx,
-                initial_peers.into_iter().collect(),
-                opts,
-            )
-            .await
+            self.main_torrent_info(add_res, opts).await
         }
         .boxed()
     }
@@ -1060,13 +1061,17 @@ impl Session {
 
     async fn main_torrent_info(
         &self,
-        info_hash: Id20,
-        info: TorrentMetaV1Info<ByteBufOwned>,
-        trackers: Vec<String>,
-        peer_rx: Option<PeerStream>,
-        initial_peers: Vec<SocketAddr>,
+        add_res: InternalAddResult,
         mut opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
+        let InternalAddResult {
+            info,
+            info_hash,
+            trackers,
+            peer_rx,
+            initial_peers,
+        } = add_res;
+
         debug!("Torrent info: {:#?}", &info);
 
         let only_files = compute_only_files(
