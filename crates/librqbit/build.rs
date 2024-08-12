@@ -28,7 +28,7 @@ fn main() {
 
             if !output.status.success() {
                 panic!(
-                    "{} failed. stderr: {}. stdout: {}",
+                    "\"{}\" failed\n\nstderr: {}\n\nstdout: {}",
                     cmd,
                     String::from_utf8_lossy(&output.stderr),
                     String::from_utf8_lossy(&output.stdout)
