@@ -26,7 +26,7 @@ use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 type ApiState = Api;
 
 use crate::api::Result;
-use crate::{ApiError, ManagedTorrent};
+use crate::{ApiError, ListOnlyResponse, ManagedTorrent};
 
 /// An HTTP server for the API.
 pub struct HttpApi {
@@ -186,6 +186,55 @@ impl HttpApi {
                 ],
                 body,
             )
+        }
+
+        async fn resolve_magnet(
+            State(state): State<ApiState>,
+            url: String,
+        ) -> Result<impl IntoResponse> {
+            let added = state
+                .session()
+                .add_torrent(
+                    AddTorrent::from_url(&url),
+                    Some(AddTorrentOptions {
+                        list_only: true,
+                        ..Default::default()
+                    }),
+                )
+                .await?;
+            let (info, content) = match added {
+                crate::AddTorrentResponse::AlreadyManaged(_, handle) => (
+                    handle.info().info.clone(),
+                    handle.info().torrent_bytes.clone(),
+                ),
+                crate::AddTorrentResponse::ListOnly(ListOnlyResponse {
+                    info,
+                    torrent_bytes,
+                    ..
+                }) => (info, torrent_bytes),
+                crate::AddTorrentResponse::Added(_, _) => {
+                    return Err(ApiError::new_from_text(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "bug: torrent was added to session, but shouldn't have been",
+                    ))
+                }
+            };
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "Content-Type",
+                HeaderValue::from_static("application/x-bittorrent"),
+            );
+
+            if let Some(name) = info.name.as_ref() {
+                if let Ok(name) = std::str::from_utf8(name) {
+                    if let Ok(h) =
+                        HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
+                    {
+                        headers.insert("Content-Disposition", h);
+                    }
+                }
+            }
+            Ok((headers, content))
         }
 
         async fn torrent_playlist(
@@ -388,6 +437,7 @@ impl HttpApi {
             .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
             .route("/torrents/:id/playlist", get(torrent_playlist))
             .route("/torrents/playlist", get(global_playlist))
+            .route("/torrents/resolve_magnet", post(resolve_magnet))
             .route(
                 "/torrents/:id/stream/:file_id/*filename",
                 get(torrent_stream_file),

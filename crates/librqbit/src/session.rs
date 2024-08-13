@@ -29,6 +29,7 @@ use crate::{
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
 use futures::{
@@ -119,6 +120,7 @@ impl SessionDatabase {
                                 .map(|u| u.to_string())
                                 .collect(),
                             info_hash: torrent.info_hash().as_string(),
+                            torrent_bytes: torrent.info.torrent_bytes.clone(),
                             info: torrent.info().info.clone(),
                             only_files: torrent.only_files().clone(),
                             is_paused: torrent
@@ -140,6 +142,12 @@ struct SerializedTorrent {
         deserialize_with = "deserialize_torrent"
     )]
     info: TorrentMetaV1Info<ByteBufOwned>,
+    #[serde(
+        serialize_with = "serialize_torrent_bytes",
+        deserialize_with = "deserialize_torrent_bytes",
+        default
+    )]
+    torrent_bytes: Bytes,
     trackers: HashSet<String>,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
@@ -175,6 +183,28 @@ where
         .map_err(D::Error::custom)
 }
 
+fn serialize_torrent_bytes<S>(t: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    use base64::{engine::general_purpose, Engine as _};
+    let s = general_purpose::STANDARD_NO_PAD.encode(t);
+    s.serialize(serializer)
+}
+
+fn deserialize_torrent_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use base64::{engine::general_purpose, Engine as _};
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    let b = general_purpose::STANDARD_NO_PAD
+        .decode(s)
+        .map_err(D::Error::custom)?;
+    Ok(b.into())
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedSessionDatabase {
     torrents: HashMap<usize, SerializedTorrent>,
@@ -207,7 +237,7 @@ pub struct Session {
 async fn torrent_from_url(
     reqwest_client: &reqwest::Client,
     url: &str,
-) -> anyhow::Result<TorrentMetaV1Owned> {
+) -> anyhow::Result<(TorrentMetaV1Owned, ByteBufOwned)> {
     let response = reqwest_client
         .get(url)
         .send()
@@ -220,7 +250,10 @@ async fn torrent_from_url(
         .bytes()
         .await
         .with_context(|| format!("error reading response body from {url}"))?;
-    torrent_from_bytes(&b).context("error decoding torrent")
+    Ok((
+        torrent_from_bytes(&b).context("error decoding torrent")?,
+        b.to_vec().into(),
+    ))
 }
 
 fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
@@ -344,6 +377,7 @@ pub struct ListOnlyResponse {
     pub only_files: Option<Vec<usize>>,
     pub output_folder: PathBuf,
     pub seen_peers: Vec<SocketAddr>,
+    pub torrent_bytes: Bytes,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -468,11 +502,39 @@ async fn create_tcp_listener(
     bail!("no free TCP ports in range {port_range:?}");
 }
 
+fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[String]) -> anyhow::Result<Bytes> {
+    #[derive(Serialize)]
+    struct Tmp<'a> {
+        announce: &'a str,
+        #[serde(rename = "announce-list")]
+        announce_list: &'a [&'a [String]],
+        info: bencode::raw_value::RawValue<&'a [u8]>,
+    }
+
+    let mut w = Vec::new();
+    let v = Tmp {
+        info: bencode::raw_value::RawValue(info_bytes),
+        announce: trackers.first().map(|s| s.as_str()).unwrap_or(""),
+        announce_list: &[trackers],
+    };
+    bencode_serialize_to_writer(&v, &mut w)?;
+    Ok(w.into())
+}
+
 pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
     pub stream: tokio::net::TcpStream,
     pub read_buf: ReadBuf,
     pub handshake: Handshake<ByteBufOwned>,
+}
+
+struct InternalAddResult {
+    info_hash: Id20,
+    info: TorrentMetaV1Info<ByteBufOwned>,
+    torrent_bytes: Bytes,
+    trackers: Vec<String>,
+    peer_rx: Option<PeerStream>,
+    initial_peers: Vec<SocketAddr>,
 }
 
 impl Session {
@@ -897,9 +959,6 @@ impl Session {
     ) -> BoxFuture<'a, anyhow::Result<AddTorrentResponse>> {
         async move {
             // Magnet links are different in that we first need to discover the metadata.
-            let span = error_span!("add_torrent");
-            let _ = span.enter();
-
             let opts = opts.unwrap_or_default();
 
             let paused = opts.list_only || opts.paused;
@@ -910,7 +969,7 @@ impl Session {
             // into a torrent file by connecting to peers that support extended handshakes.
             // So we must discover at least one peer and connect to it to be able to proceed further.
 
-            let (info_hash, info, trackers, peer_rx, initial_peers) = match add {
+            let add_res = match add {
                 AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
                     let magnet = Magnet::parse(&magnet)
                         .context("provided path is not a valid magnet URL")?;
@@ -934,7 +993,7 @@ impl Session {
                     };
 
                     debug!(?info_hash, "querying DHT");
-                    let (info, peer_rx, initial_peers) = match read_metainfo_from_peer_receiver(
+                    match read_metainfo_from_peer_receiver(
                         self.peer_id,
                         info_hash,
                         opts.initial_peers.clone().unwrap_or_default(),
@@ -944,22 +1003,33 @@ impl Session {
                     )
                     .await
                     {
-                        ReadMetainfoResult::Found { info, rx, seen } => (info, rx, seen),
+                        ReadMetainfoResult::Found {
+                            info,
+                            info_bytes,
+                            rx,
+                            seen,
+                        } => {
+                            debug!(?info, "received result from DHT");
+                            let trackers = magnet.trackers.into_iter().unique().collect_vec();
+                            InternalAddResult {
+                                info_hash,
+                                torrent_bytes: torrent_file_from_info_bytes(
+                                    &info_bytes,
+                                    &trackers,
+                                )?,
+                                info,
+                                trackers,
+                                peer_rx: Some(rx),
+                                initial_peers: seen.into_iter().collect(),
+                            }
+                        }
                         ReadMetainfoResult::ChannelClosed { .. } => {
                             bail!("DHT died, no way to discover torrent metainfo")
                         }
-                    };
-                    debug!(?info, "received result from DHT");
-                    (
-                        info_hash,
-                        info,
-                        magnet.trackers.into_iter().unique().collect(),
-                        Some(peer_rx),
-                        initial_peers,
-                    )
+                    }
                 }
                 other => {
-                    let torrent = match other {
+                    let (torrent, bytes) = match other {
                         AddTorrent::Url(url)
                             if url.starts_with("http://") || url.starts_with("https://") =>
                         {
@@ -971,10 +1041,14 @@ impl Session {
                                 url
                             )
                         }
-                        AddTorrent::TorrentFileBytes(bytes) => {
-                            torrent_from_bytes(&bytes).context("error decoding torrent")?
+                        AddTorrent::TorrentFileBytes(bytes) => (
+                            torrent_from_bytes(&bytes).context("error decoding torrent")?,
+                            ByteBufOwned::from(bytes.into_owned()),
+                        ),
+                        AddTorrent::TorrentInfo(t) => {
+                            // TODO: this is lossy, as we don't store the bytes.
+                            (*t, ByteBufOwned(Vec::new().into_boxed_slice()))
                         }
-                        AddTorrent::TorrentInfo(t) => *t,
                     };
 
                     let trackers = torrent
@@ -1004,30 +1078,25 @@ impl Session {
                         )?
                     };
 
-                    (
-                        torrent.info_hash,
-                        torrent.info,
+                    InternalAddResult {
+                        info_hash: torrent.info_hash,
+                        info: torrent.info,
+                        torrent_bytes: Bytes::from(bytes.0),
                         trackers,
                         peer_rx,
-                        opts.initial_peers
+                        initial_peers: opts
+                            .initial_peers
                             .clone()
                             .unwrap_or_default()
                             .into_iter()
                             .collect(),
-                    )
+                    }
                 }
             };
 
-            self.main_torrent_info(
-                info_hash,
-                info,
-                trackers,
-                peer_rx,
-                initial_peers.into_iter().collect(),
-                opts,
-            )
-            .await
+            self.main_torrent_info(add_res, opts).await
         }
+        .instrument(error_span!("add_torrent"))
         .boxed()
     }
 
@@ -1060,13 +1129,18 @@ impl Session {
 
     async fn main_torrent_info(
         &self,
-        info_hash: Id20,
-        info: TorrentMetaV1Info<ByteBufOwned>,
-        trackers: Vec<String>,
-        peer_rx: Option<PeerStream>,
-        initial_peers: Vec<SocketAddr>,
+        add_res: InternalAddResult,
         mut opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
+        let InternalAddResult {
+            info,
+            info_hash,
+            trackers,
+            peer_rx,
+            initial_peers,
+            torrent_bytes,
+        } = add_res;
+
         debug!("Torrent info: {:#?}", &info);
 
         let only_files = compute_only_files(
@@ -1101,11 +1175,17 @@ impl Session {
                 only_files,
                 output_folder,
                 seen_peers: initial_peers,
+                torrent_bytes,
             }));
         }
 
-        let mut builder =
-            ManagedTorrentBuilder::new(info, info_hash, output_folder, storage_factory);
+        let mut builder = ManagedTorrentBuilder::new(
+            info,
+            info_hash,
+            torrent_bytes,
+            output_folder,
+            storage_factory,
+        );
         builder
             .allow_overwrite(opts.overwrite)
             .spawner(self.spawner)
@@ -1353,5 +1433,37 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
                 TS::Error => S::None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buffers::ByteBuf;
+    use itertools::Itertools;
+    use librqbit_core::torrent_metainfo::{torrent_from_bytes_ext, TorrentMetaV1};
+
+    use super::torrent_file_from_info_bytes;
+
+    #[test]
+    fn test_torrent_file_from_info_and_bytes() {
+        fn get_trackers(info: &TorrentMetaV1<ByteBuf>) -> Vec<String> {
+            info.iter_announce()
+                .filter_map(|t| std::str::from_utf8(t.as_ref()).ok().map(|t| t.to_owned()))
+                .collect_vec()
+        }
+
+        let orig_full_torrent =
+            include_bytes!("../resources/ubuntu-21.04-desktop-amd64.iso.torrent");
+        let parsed = torrent_from_bytes_ext::<ByteBuf>(&orig_full_torrent[..]).unwrap();
+        let parsed_trackers = get_trackers(&parsed.meta);
+
+        let generated_torrent =
+            torrent_file_from_info_bytes(parsed.info_bytes.as_ref(), &parsed_trackers).unwrap();
+        let generated_parsed =
+            torrent_from_bytes_ext::<ByteBuf>(generated_torrent.as_ref()).unwrap();
+        assert_eq!(parsed.meta.info_hash, generated_parsed.meta.info_hash);
+        assert_eq!(parsed.meta.info, generated_parsed.meta.info);
+        assert_eq!(parsed.info_bytes, generated_parsed.info_bytes);
+        assert_eq!(parsed_trackers, get_trackers(&generated_parsed.meta));
     }
 }

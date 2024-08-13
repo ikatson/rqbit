@@ -12,18 +12,37 @@ use crate::{hash_id::Id20, lengths::Lengths};
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteBufOwned>;
 
-/// Parse torrent metainfo from bytes.
-pub fn torrent_from_bytes<'de, BufType: Deserialize<'de>>(
+pub struct ParsedTorrent<BufType> {
+    /// The parsed torrent.
+    pub meta: TorrentMetaV1<BufType>,
+
+    /// The raw bytes of the torrent's "info" dict.
+    pub info_bytes: BufType,
+}
+
+/// Parse torrent metainfo from bytes (includes additional fields).
+pub fn torrent_from_bytes_ext<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
     buf: &'de [u8],
-) -> anyhow::Result<TorrentMetaV1<BufType>> {
+) -> anyhow::Result<ParsedTorrent<BufType>> {
     let mut de = BencodeDeserializer::new_from_buf(buf);
     de.is_torrent_info = true;
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
-    t.info_hash = Id20::new(
-        de.torrent_info_digest
-            .ok_or_else(|| anyhow::anyhow!("programming error"))?,
-    );
-    Ok(t)
+    let (digest, info_bytes) = match (de.torrent_info_digest, de.torrent_info_bytes) {
+        (Some(digest), Some(info_bytes)) => (digest, info_bytes),
+        _ => anyhow::bail!("programming error"),
+    };
+    t.info_hash = Id20::new(digest);
+    Ok(ParsedTorrent {
+        meta: t,
+        info_bytes: BufType::from(info_bytes),
+    })
+}
+
+/// Parse torrent metainfo from bytes.
+pub fn torrent_from_bytes<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
+    buf: &'de [u8],
+) -> anyhow::Result<TorrentMetaV1<BufType>> {
+    torrent_from_bytes_ext(buf).map(|r| r.meta)
 }
 
 /// A parsed .torrent file.
