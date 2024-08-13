@@ -3,12 +3,13 @@
 //
 // Not useful outside of librqbit.
 
+use bytes::Bytes;
 use serde::{Deserialize, Deserializer};
 
 use clone_to_owned::CloneToOwned;
 
 #[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-pub struct ByteBufOwned(pub Box<[u8]>);
+pub struct ByteBufOwned(pub bytes::Bytes);
 
 #[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 #[serde(transparent)]
@@ -90,15 +91,27 @@ impl std::fmt::Display for ByteBufOwned {
 impl<'a> CloneToOwned for ByteBuf<'a> {
     type Target = ByteBufOwned;
 
-    fn clone_to_owned(&self) -> Self::Target {
-        ByteBufOwned(self.as_slice().to_owned().into_boxed_slice())
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
+        // Try zero-copy from the provided buffer.
+        if let Some(within_buffer) = within_buffer {
+            let haystack = within_buffer.as_ptr() as usize;
+            let haystack_end = haystack + within_buffer.len();
+            let needle = self.0.as_ptr() as usize;
+            let needle_end = needle + self.0.len();
+
+            if needle >= haystack && needle_end <= haystack_end {
+                return ByteBufOwned(within_buffer.slice_ref(self.0.as_ref()));
+            }
+        }
+
+        ByteBufOwned(Bytes::copy_from_slice(self.0))
     }
 }
 
 impl CloneToOwned for ByteBufOwned {
     type Target = ByteBufOwned;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, _within_buffer: Option<&Bytes>) -> Self::Target {
         ByteBufOwned(self.0.clone())
     }
 }
@@ -139,13 +152,13 @@ impl<'a> From<&'a [u8]> for ByteBuf<'a> {
 
 impl<'a> From<&'a [u8]> for ByteBufOwned {
     fn from(b: &'a [u8]) -> Self {
-        Self(b.into())
+        Self(b.to_owned().into())
     }
 }
 
 impl From<Vec<u8>> for ByteBufOwned {
     fn from(b: Vec<u8>) -> Self {
-        Self(b.into_boxed_slice())
+        Self(b.into())
     }
 }
 

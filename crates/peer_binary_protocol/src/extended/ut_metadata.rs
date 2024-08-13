@@ -1,10 +1,10 @@
-use std::io::Write;
-
 use bencode::bencode_serialize_to_writer;
 use bencode::BencodeDeserializer;
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
 use serde::Serialize;
+use std::io::Write;
 
 use crate::MessageDeserializeError;
 
@@ -22,7 +22,7 @@ pub enum UtMetadata<ByteBuf> {
 impl<ByteBuf: CloneToOwned> CloneToOwned for UtMetadata<ByteBuf> {
     type Target = UtMetadata<<ByteBuf as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         match self {
             UtMetadata::Request(req) => UtMetadata::Request(*req),
             UtMetadata::Data {
@@ -32,7 +32,7 @@ impl<ByteBuf: CloneToOwned> CloneToOwned for UtMetadata<ByteBuf> {
             } => UtMetadata::Data {
                 piece: *piece,
                 total_size: *total_size,
-                data: data.clone_to_owned(),
+                data: data.clone_to_owned(within_buffer),
             },
             UtMetadata::Reject(piece) => UtMetadata::Reject(*piece),
         }

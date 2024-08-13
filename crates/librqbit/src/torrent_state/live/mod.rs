@@ -779,7 +779,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
                     .context("on_download_request")?;
             }
             Message::Bitfield(b) => self
-                .on_bitfield(b.clone_to_owned())
+                .on_bitfield(b.clone_to_owned(None))
                 .context("on_bitfield")?,
             Message::Choke => self.on_i_am_choked(),
             Message::Unchoke => self.on_i_am_unchoked(),
@@ -1127,7 +1127,7 @@ impl PeerHandler {
         }
         self.state
             .peers
-            .update_bitfield_from_vec(self.addr, bitfield.0);
+            .update_bitfield_from_vec(self.addr, bitfield.0.to_vec().into_boxed_slice());
         self.on_bitfield_notify.notify_waiters();
         Ok(())
     }
@@ -1480,7 +1480,7 @@ impl PeerHandler {
             let state = self.state.clone();
             let addr = self.addr;
             let counters = self.counters.clone();
-            let piece = piece.clone_to_owned();
+            let piece = piece.clone_to_owned(None);
             let tx = self.tx.clone();
 
             let span = tracing::error_span!("deferred_write");

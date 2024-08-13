@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use bencode::from_bytes;
 use buffers::{ByteBuf, ByteBufOwned};
+use bytes::Bytes;
 use librqbit_core::{
     constants::CHUNK_SIZE,
     hash_id::Id20,
@@ -178,9 +179,14 @@ impl PeerConnectionHandler for Handler {
                     .unwrap()
                     .record_piece(piece, &data, self.info_hash)?;
             if piece_ready {
-                let buf = self.locked.write().take().unwrap().buffer;
-                let info = from_bytes::<TorrentMetaV1Info<ByteBufOwned>>(&buf);
-                let info = info.map(|i| (i, ByteBufOwned(buf.into_boxed_slice())));
+                let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
+                let info = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf)
+                    .map(|i| {
+                        use clone_to_owned::CloneToOwned;
+                        i.clone_to_owned(Some(&buf))
+                    })
+                    .map(|i| (i, ByteBufOwned(buf)));
+
                 self.result_tx
                     .lock()
                     .take()

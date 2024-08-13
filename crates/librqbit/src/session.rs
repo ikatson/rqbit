@@ -752,7 +752,7 @@ impl Session {
                 }
             };
 
-            let handshake = h.clone_to_owned();
+            let handshake = h.clone_to_owned(None);
 
             return Ok((
                 live,
@@ -1047,7 +1047,7 @@ impl Session {
                         ),
                         AddTorrent::TorrentInfo(t) => {
                             // TODO: this is lossy, as we don't store the bytes.
-                            (*t, ByteBufOwned(Vec::new().into_boxed_slice()))
+                            (*t, ByteBufOwned(Default::default()))
                         }
                     };
 
@@ -1081,7 +1081,7 @@ impl Session {
                     InternalAddResult {
                         info_hash: torrent.info_hash,
                         info: torrent.info,
-                        torrent_bytes: Bytes::from(bytes.0),
+                        torrent_bytes: bytes.0,
                         trackers,
                         peer_rx,
                         initial_peers: opts

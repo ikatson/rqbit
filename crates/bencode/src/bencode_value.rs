@@ -1,6 +1,7 @@
 use std::{collections::HashMap, marker::PhantomData};
 
 use buffers::{ByteBuf, ByteBufOwned};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::Deserializer;
 
@@ -122,12 +123,12 @@ where
 {
     type Target = BencodeValue<<BufT as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         match self {
-            BencodeValue::Bytes(b) => BencodeValue::Bytes(b.clone_to_owned()),
+            BencodeValue::Bytes(b) => BencodeValue::Bytes(b.clone_to_owned(within_buffer)),
             BencodeValue::Integer(i) => BencodeValue::Integer(*i),
-            BencodeValue::List(l) => BencodeValue::List(l.clone_to_owned()),
-            BencodeValue::Dict(d) => BencodeValue::Dict(d.clone_to_owned()),
+            BencodeValue::List(l) => BencodeValue::List(l.clone_to_owned(within_buffer)),
+            BencodeValue::Dict(d) => BencodeValue::Dict(d.clone_to_owned(within_buffer)),
         }
     }
 }

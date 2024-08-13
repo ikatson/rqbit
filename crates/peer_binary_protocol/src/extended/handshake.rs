@@ -6,6 +6,7 @@ use std::{
 use buffers::ByteBuf;
 use byteorder::ByteOrder;
 use byteorder::BE;
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -75,14 +76,14 @@ where
 {
     type Target = ExtendedHandshake<<ByteBuf as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         ExtendedHandshake {
-            m: self.m.clone_to_owned(),
+            m: self.m.clone_to_owned(within_buffer),
             p: self.p,
-            v: self.v.clone_to_owned(),
+            v: self.v.clone_to_owned(within_buffer),
             yourip: self.yourip,
-            ipv6: self.ipv6.clone_to_owned(),
-            ipv4: self.ipv4.clone_to_owned(),
+            ipv6: self.ipv6.clone_to_owned(within_buffer),
+            ipv4: self.ipv4.clone_to_owned(within_buffer),
             reqq: self.reqq,
             metadata_size: self.metadata_size,
             complete_ago: self.complete_ago,

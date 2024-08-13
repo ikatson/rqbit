@@ -1,6 +1,7 @@
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use bencode::BencodeValue;
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
 
@@ -27,11 +28,15 @@ where
 {
     type Target = ExtendedMessage<<ByteBuf as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         match self {
-            ExtendedMessage::Handshake(h) => ExtendedMessage::Handshake(h.clone_to_owned()),
-            ExtendedMessage::Dyn(u, d) => ExtendedMessage::Dyn(*u, d.clone_to_owned()),
-            ExtendedMessage::UtMetadata(m) => ExtendedMessage::UtMetadata(m.clone_to_owned()),
+            ExtendedMessage::Handshake(h) => {
+                ExtendedMessage::Handshake(h.clone_to_owned(within_buffer))
+            }
+            ExtendedMessage::Dyn(u, d) => ExtendedMessage::Dyn(*u, d.clone_to_owned(within_buffer)),
+            ExtendedMessage::UtMetadata(m) => {
+                ExtendedMessage::UtMetadata(m.clone_to_owned(within_buffer))
+            }
         }
     }
 }

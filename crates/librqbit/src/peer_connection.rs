@@ -382,7 +382,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("received: {:?}", &message);
 
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
-                    *extended_handshake_ref.write() = Some(h.clone_to_owned());
+                    *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
                     self.handler.on_extended_handshake(h)?;
                     trace!("remembered extended handshake for future serializing");
                 } else {

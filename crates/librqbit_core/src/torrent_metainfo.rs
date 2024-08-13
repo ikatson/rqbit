@@ -1,11 +1,11 @@
-use std::{iter::once, path::PathBuf};
-
 use anyhow::Context;
 use bencode::BencodeDeserializer;
 use buffers::{ByteBuf, ByteBufOwned};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
+use std::{iter::once, path::PathBuf};
 
 use crate::{hash_id::Id20, lengths::Lengths};
 
@@ -274,10 +274,10 @@ where
 {
     type Target = TorrentMetaV1File<<BufType as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         TorrentMetaV1File {
             length: self.length,
-            path: self.path.clone_to_owned(),
+            path: self.path.clone_to_owned(within_buffer),
         }
     }
 }
@@ -288,14 +288,14 @@ where
 {
     type Target = TorrentMetaV1Info<<BufType as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         TorrentMetaV1Info {
-            name: self.name.clone_to_owned(),
-            pieces: self.pieces.clone_to_owned(),
+            name: self.name.clone_to_owned(within_buffer),
+            pieces: self.pieces.clone_to_owned(within_buffer),
             piece_length: self.piece_length,
             length: self.length,
-            md5sum: self.md5sum.clone_to_owned(),
-            files: self.files.clone_to_owned(),
+            md5sum: self.md5sum.clone_to_owned(within_buffer),
+            files: self.files.clone_to_owned(within_buffer),
         }
     }
 }
@@ -306,16 +306,16 @@ where
 {
     type Target = TorrentMetaV1<<BufType as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         TorrentMetaV1 {
-            announce: self.announce.clone_to_owned(),
-            announce_list: self.announce_list.clone_to_owned(),
-            info: self.info.clone_to_owned(),
-            comment: self.comment.clone_to_owned(),
-            created_by: self.created_by.clone_to_owned(),
-            encoding: self.encoding.clone_to_owned(),
-            publisher: self.publisher.clone_to_owned(),
-            publisher_url: self.publisher_url.clone_to_owned(),
+            announce: self.announce.clone_to_owned(within_buffer),
+            announce_list: self.announce_list.clone_to_owned(within_buffer),
+            info: self.info.clone_to_owned(within_buffer),
+            comment: self.comment.clone_to_owned(within_buffer),
+            created_by: self.created_by.clone_to_owned(within_buffer),
+            encoding: self.encoding.clone_to_owned(within_buffer),
+            publisher: self.publisher.clone_to_owned(within_buffer),
+            publisher_url: self.publisher_url.clone_to_owned(within_buffer),
             creation_date: self.creation_date,
             info_hash: self.info_hash,
         }
