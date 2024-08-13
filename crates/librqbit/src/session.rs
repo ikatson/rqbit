@@ -121,7 +121,11 @@ impl SessionDatabase {
                                 .map(|u| u.to_string())
                                 .collect(),
                             info_hash: torrent.info_hash().as_string(),
-                            torrent_bytes: torrent.info.torrent_bytes.clone(),
+                            // TODO: this could take up too much space / time / resources to write on interval.
+                            // Store this outside the JSON file
+                            //
+                            // torrent_bytes: torrent.info.torrent_bytes.clone(),
+                            torrent_bytes: Bytes::new(),
                             info: torrent.info().info.clone(),
                             only_files: torrent.only_files().clone(),
                             is_paused: torrent
