@@ -1461,15 +1461,6 @@ mod tests {
 
         let generated_torrent =
             torrent_file_from_info_bytes(parsed.info_bytes.as_ref(), &parsed_trackers).unwrap();
-        {
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open("/tmp/generated")
-                .unwrap();
-            f.write_all(&generated_torrent).unwrap();
-        }
         let generated_parsed =
             torrent_from_bytes_ext::<ByteBuf>(generated_torrent.as_ref()).unwrap();
         assert_eq!(parsed.meta.info_hash, generated_parsed.meta.info_hash);
