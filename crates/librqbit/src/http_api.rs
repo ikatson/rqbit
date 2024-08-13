@@ -205,13 +205,13 @@ impl HttpApi {
             let (info, content) = match added {
                 crate::AddTorrentResponse::AlreadyManaged(_, handle) => (
                     handle.info().info.clone(),
-                    handle.info().torrent_bytes.clone().0,
+                    handle.info().torrent_bytes.clone(),
                 ),
                 crate::AddTorrentResponse::ListOnly(ListOnlyResponse {
                     info,
                     torrent_bytes,
                     ..
-                }) => (info, torrent_bytes.0),
+                }) => (info, torrent_bytes),
                 crate::AddTorrentResponse::Added(_, _) => {
                     return Err(ApiError::new_from_text(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -226,7 +226,7 @@ impl HttpApi {
             );
 
             if let Some(name) = info.name.as_ref() {
-                if let Ok(name) = std::str::from_utf8(&name) {
+                if let Ok(name) = std::str::from_utf8(name) {
                     if let Ok(h) =
                         HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
                     {

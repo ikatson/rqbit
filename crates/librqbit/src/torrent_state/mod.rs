@@ -14,6 +14,7 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Context;
 use buffers::ByteBufOwned;
+use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use librqbit_core::hash_id::Id20;
@@ -99,7 +100,7 @@ pub(crate) struct ManagedTorrentOptions {
 
 pub struct ManagedTorrentInfo {
     pub info: TorrentMetaV1Info<ByteBufOwned>,
-    pub torrent_bytes: ByteBufOwned,
+    pub torrent_bytes: Bytes,
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<String>,
@@ -502,7 +503,7 @@ pub(crate) struct ManagedTorrentBuilder {
     info: TorrentMetaV1Info<ByteBufOwned>,
     output_folder: PathBuf,
     info_hash: Id20,
-    torrent_bytes: ByteBufOwned,
+    torrent_bytes: Bytes,
     force_tracker_interval: Option<Duration>,
     peer_connect_timeout: Option<Duration>,
     peer_read_write_timeout: Option<Duration>,
@@ -520,7 +521,7 @@ impl ManagedTorrentBuilder {
     pub fn new(
         info: TorrentMetaV1Info<ByteBufOwned>,
         info_hash: Id20,
-        torrent_bytes: ByteBufOwned,
+        torrent_bytes: Bytes,
         output_folder: PathBuf,
         storage_factory: BoxStorageFactory,
     ) -> Self {

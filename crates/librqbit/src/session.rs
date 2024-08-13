@@ -29,6 +29,7 @@ use crate::{
 use anyhow::{bail, Context};
 use bencode::{bencode_serialize_to_writer, BencodeDeserializer};
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
 use futures::{
@@ -144,9 +145,9 @@ struct SerializedTorrent {
     #[serde(
         serialize_with = "serialize_torrent_bytes",
         deserialize_with = "deserialize_torrent_bytes",
-        default = "empty_bytes"
+        default
     )]
-    torrent_bytes: ByteBufOwned,
+    torrent_bytes: Bytes,
     trackers: HashSet<String>,
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
@@ -182,16 +183,16 @@ where
         .map_err(D::Error::custom)
 }
 
-fn serialize_torrent_bytes<S>(t: &ByteBufOwned, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_torrent_bytes<S>(t: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     use base64::{engine::general_purpose, Engine as _};
-    let s = general_purpose::STANDARD_NO_PAD.encode(&t.0);
+    let s = general_purpose::STANDARD_NO_PAD.encode(t);
     s.serialize(serializer)
 }
 
-fn deserialize_torrent_bytes<'de, D>(deserializer: D) -> Result<ByteBufOwned, D::Error>
+fn deserialize_torrent_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -202,10 +203,6 @@ where
         .decode(s)
         .map_err(D::Error::custom)?;
     Ok(b.into())
-}
-
-fn empty_bytes() -> ByteBufOwned {
-    ByteBufOwned(Vec::new().into_boxed_slice())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -380,7 +377,7 @@ pub struct ListOnlyResponse {
     pub only_files: Option<Vec<usize>>,
     pub output_folder: PathBuf,
     pub seen_peers: Vec<SocketAddr>,
-    pub torrent_bytes: ByteBufOwned,
+    pub torrent_bytes: Bytes,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -515,7 +512,7 @@ pub(crate) struct CheckedIncomingConnection {
 struct InternalAddResult {
     info_hash: Id20,
     info: TorrentMetaV1Info<ByteBufOwned>,
-    torrent_bytes: ByteBufOwned,
+    torrent_bytes: Bytes,
     trackers: Vec<String>,
     peer_rx: Option<PeerStream>,
     initial_peers: Vec<SocketAddr>,
@@ -1000,7 +997,7 @@ impl Session {
                             InternalAddResult {
                                 info_hash,
                                 info,
-                                torrent_bytes: bytes,
+                                torrent_bytes: Bytes::from(bytes.0),
                                 trackers: magnet.trackers.into_iter().unique().collect(),
                                 peer_rx: Some(rx),
                                 initial_peers: seen.into_iter().collect(),
@@ -1064,7 +1061,7 @@ impl Session {
                     InternalAddResult {
                         info_hash: torrent.info_hash,
                         info: torrent.info,
-                        torrent_bytes: bytes,
+                        torrent_bytes: Bytes::from(bytes.0),
                         trackers,
                         peer_rx,
                         initial_peers: opts
