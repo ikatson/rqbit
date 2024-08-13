@@ -1438,8 +1438,6 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
     use buffers::ByteBuf;
     use itertools::Itertools;
     use librqbit_core::torrent_metainfo::{torrent_from_bytes_ext, TorrentMetaV1};
