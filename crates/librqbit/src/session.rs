@@ -502,6 +502,15 @@ async fn create_tcp_listener(
     bail!("no free TCP ports in range {port_range:?}");
 }
 
+fn torrent_file_from_info_and_bytes(
+    info: &TorrentMetaV1Info<ByteBufOwned>,
+    info_hash: &Id20,
+    info_bytes: &[u8],
+    trackers: &[String],
+) -> Bytes {
+    todo!()
+}
+
 pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
     pub stream: tokio::net::TcpStream,
@@ -986,16 +995,22 @@ impl Session {
                     {
                         ReadMetainfoResult::Found {
                             info,
-                            bytes,
+                            info_bytes,
                             rx,
                             seen,
                         } => {
                             debug!(?info, "received result from DHT");
+                            let trackers = magnet.trackers.into_iter().unique().collect_vec();
                             InternalAddResult {
                                 info_hash,
+                                torrent_bytes: torrent_file_from_info_and_bytes(
+                                    &info,
+                                    &info_hash,
+                                    &info_bytes,
+                                    &trackers,
+                                ),
                                 info,
-                                torrent_bytes: Bytes::from(bytes.0),
-                                trackers: magnet.trackers.into_iter().unique().collect(),
+                                trackers,
                                 peer_rx: Some(rx),
                                 initial_peers: seen.into_iter().collect(),
                             }

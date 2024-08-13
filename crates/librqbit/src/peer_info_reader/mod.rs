@@ -32,7 +32,7 @@ pub(crate) async fn read_metainfo_from_peer(
     peer_connection_options: Option<PeerConnectionOptions>,
     spawner: BlockingSpawner,
     connector: Arc<StreamConnector>,
-) -> anyhow::Result<TorrentAndBytes> {
+) -> anyhow::Result<TorrentAndInfoBytes> {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
         anyhow::Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned)>,
     >();
@@ -136,13 +136,13 @@ impl HandlerLocked {
     }
 }
 
-pub type TorrentAndBytes = (TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned);
+pub type TorrentAndInfoBytes = (TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned);
 
 struct Handler {
     addr: SocketAddr,
     info_hash: Id20,
     writer_tx: UnboundedSender<WriterRequest>,
-    result_tx: Mutex<Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentAndBytes>>>>,
+    result_tx: Mutex<Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentAndInfoBytes>>>>,
     locked: RwLock<Option<HandlerLocked>>,
 }
 
