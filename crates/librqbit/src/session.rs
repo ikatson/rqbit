@@ -45,7 +45,8 @@ use librqbit_core::{
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
     torrent_metainfo::{
-        torrent_from_bytes as bencode_torrent_from_bytes, TorrentMetaV1Info, TorrentMetaV1Owned,
+        torrent_from_bytes as bencode_torrent_from_bytes, TorrentMetaV1Borrowed, TorrentMetaV1Info,
+        TorrentMetaV1Owned,
     },
 };
 use parking_lot::RwLock;
@@ -61,7 +62,7 @@ pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 pub type TorrentId = usize;
 
-fn torrent_from_bytes(bytes: &[u8]) -> anyhow::Result<TorrentMetaV1Owned> {
+fn torrent_from_bytes(bytes: &[u8]) -> anyhow::Result<TorrentMetaV1Borrowed> {
     debug!(
         "all fields in torrent: {:#?}",
         bencode::dyn_from_bytes::<ByteBuf>(bytes)
@@ -251,8 +252,10 @@ async fn torrent_from_url(
         .await
         .with_context(|| format!("error reading response body from {url}"))?;
     Ok((
-        torrent_from_bytes(&b).context("error decoding torrent")?,
-        b.to_vec().into(),
+        torrent_from_bytes(&b)
+            .context("error decoding torrent")?
+            .clone_to_owned(Some(&b)),
+        b.into(),
     ))
 }
 
@@ -1041,10 +1044,18 @@ impl Session {
                                 url
                             )
                         }
-                        AddTorrent::TorrentFileBytes(bytes) => (
-                            torrent_from_bytes(&bytes).context("error decoding torrent")?,
-                            ByteBufOwned::from(bytes.into_owned()),
-                        ),
+                        AddTorrent::TorrentFileBytes(bytes) => {
+                            let bytes = match bytes {
+                                Cow::Borrowed(b) => ::bytes::Bytes::copy_from_slice(b),
+                                Cow::Owned(v) => ::bytes::Bytes::from(v),
+                            };
+                            (
+                                torrent_from_bytes(&bytes)
+                                    .map(|t| t.clone_to_owned(Some(&bytes)))
+                                    .context("error decoding torrent")?,
+                                ByteBufOwned(bytes),
+                            )
+                        }
                         AddTorrent::TorrentInfo(t) => {
                             // TODO: this is lossy, as we don't store the bytes.
                             (*t, ByteBufOwned(Default::default()))

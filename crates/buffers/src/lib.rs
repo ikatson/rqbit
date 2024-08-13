@@ -162,6 +162,12 @@ impl From<Vec<u8>> for ByteBufOwned {
     }
 }
 
+impl From<Bytes> for ByteBufOwned {
+    fn from(b: Bytes) -> Self {
+        Self(b)
+    }
+}
+
 impl<'a> serde::ser::Serialize for ByteBuf<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
