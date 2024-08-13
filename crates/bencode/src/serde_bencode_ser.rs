@@ -328,12 +328,18 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
 
     fn serialize_newtype_struct<T>(
         self,
-        _name: &'static str,
-        _value: &T,
+        name: &'static str,
+        value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: ?Sized + serde::Serialize,
     {
+        if name == crate::raw_value::TAG {
+            self.hack_no_bytestring_prefix = true;
+            value.serialize(&mut *self)?;
+            self.hack_no_bytestring_prefix = false;
+            return Ok(());
+        }
         Err(SerError::custom_with_ser(
             "bencode doesn't support newtype structs",
             self,

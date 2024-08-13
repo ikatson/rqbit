@@ -10,6 +10,7 @@ pub struct BencodeDeserializer<'de> {
     // This is a f**ing hack
     pub is_torrent_info: bool,
     pub torrent_info_digest: Option<[u8; 20]>,
+    pub torrent_info_bytes: Option<&'de [u8]>,
 }
 
 impl<'de> BencodeDeserializer<'de> {
@@ -20,6 +21,7 @@ impl<'de> BencodeDeserializer<'de> {
             parsing_key: false,
             is_torrent_info: false,
             torrent_info_digest: None,
+            torrent_info_bytes: None,
         }
     }
     pub fn into_remaining(self) -> &'de [u8] {
@@ -542,9 +544,11 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
         if self.de.is_torrent_info && self.de.field_context.as_slice() == [ByteBuf(b"info")] {
             let len = self.de.buf.as_ptr() as usize - buf_before.as_ptr() as usize;
             let mut hash = Sha1::new();
-            hash.update(&buf_before[..len]);
+            let torrent_info_bytes = &buf_before[..len];
+            hash.update(torrent_info_bytes);
             let digest = hash.finish();
-            self.de.torrent_info_digest = Some(digest)
+            self.de.torrent_info_digest = Some(digest);
+            self.de.torrent_info_bytes = Some(torrent_info_bytes);
         }
         self.de.field_context.pop();
         Ok(value)

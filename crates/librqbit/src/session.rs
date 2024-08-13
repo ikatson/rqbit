@@ -502,13 +502,23 @@ async fn create_tcp_listener(
     bail!("no free TCP ports in range {port_range:?}");
 }
 
-fn torrent_file_from_info_and_bytes(
-    info: &TorrentMetaV1Info<ByteBufOwned>,
-    info_hash: &Id20,
-    info_bytes: &[u8],
-    trackers: &[String],
-) -> Bytes {
-    todo!()
+fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[String]) -> anyhow::Result<Bytes> {
+    #[derive(Serialize)]
+    struct Tmp<'a> {
+        announce: &'a str,
+        #[serde(rename = "announce-list")]
+        announce_list: &'a [&'a [String]],
+        info: bencode::raw_value::RawValue<&'a [u8]>,
+    }
+
+    let mut w = Vec::new();
+    let v = Tmp {
+        info: bencode::raw_value::RawValue(info_bytes),
+        announce: trackers.first().map(|s| s.as_str()).unwrap_or(""),
+        announce_list: &[trackers],
+    };
+    bencode_serialize_to_writer(&v, &mut w)?;
+    Ok(w.into())
 }
 
 pub(crate) struct CheckedIncomingConnection {
@@ -1003,12 +1013,10 @@ impl Session {
                             let trackers = magnet.trackers.into_iter().unique().collect_vec();
                             InternalAddResult {
                                 info_hash,
-                                torrent_bytes: torrent_file_from_info_and_bytes(
-                                    &info,
-                                    &info_hash,
+                                torrent_bytes: torrent_file_from_info_bytes(
                                     &info_bytes,
                                     &trackers,
-                                ),
+                                )?,
                                 info,
                                 trackers,
                                 peer_rx: Some(rx),
@@ -1425,5 +1433,48 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
                 TS::Error => S::None,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use buffers::ByteBuf;
+    use itertools::Itertools;
+    use librqbit_core::torrent_metainfo::{torrent_from_bytes_ext, TorrentMetaV1};
+
+    use super::torrent_file_from_info_bytes;
+
+    #[test]
+    fn test_torrent_file_from_info_and_bytes() {
+        fn get_trackers(info: &TorrentMetaV1<ByteBuf>) -> Vec<String> {
+            info.iter_announce()
+                .filter_map(|t| std::str::from_utf8(t.as_ref()).ok().map(|t| t.to_owned()))
+                .collect_vec()
+        }
+
+        let orig_full_torrent =
+            include_bytes!("../resources/ubuntu-21.04-desktop-amd64.iso.torrent");
+        let parsed = torrent_from_bytes_ext::<ByteBuf>(&orig_full_torrent[..]).unwrap();
+        let parsed_trackers = get_trackers(&parsed.meta);
+
+        let generated_torrent =
+            torrent_file_from_info_bytes(parsed.info_bytes.as_ref(), &parsed_trackers).unwrap();
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open("/tmp/generated")
+                .unwrap();
+            f.write_all(&generated_torrent).unwrap();
+        }
+        let generated_parsed =
+            torrent_from_bytes_ext::<ByteBuf>(generated_torrent.as_ref()).unwrap();
+        assert_eq!(parsed.meta.info_hash, generated_parsed.meta.info_hash);
+        assert_eq!(parsed.meta.info, generated_parsed.meta.info);
+        assert_eq!(parsed.info_bytes, generated_parsed.info_bytes);
+        assert_eq!(parsed_trackers, get_trackers(&generated_parsed.meta));
     }
 }
