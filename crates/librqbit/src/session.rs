@@ -940,9 +940,6 @@ impl Session {
     ) -> BoxFuture<'a, anyhow::Result<AddTorrentResponse>> {
         async move {
             // Magnet links are different in that we first need to discover the metadata.
-            let span = error_span!("add_torrent");
-            let _ = span.enter();
-
             let opts = opts.unwrap_or_default();
 
             let paused = opts.list_only || opts.paused;
@@ -1076,6 +1073,7 @@ impl Session {
 
             self.main_torrent_info(add_res, opts).await
         }
+        .instrument(error_span!("add_torrent"))
         .boxed()
     }
 
