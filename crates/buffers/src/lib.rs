@@ -101,6 +101,9 @@ impl<'a> CloneToOwned for ByteBuf<'a> {
 
             if needle >= haystack && needle_end <= haystack_end {
                 return ByteBufOwned(within_buffer.slice_ref(self.0.as_ref()));
+            } else {
+                #[cfg(debug_assertions)]
+                panic!("bug: broken buffers! not inside within_buffer");
             }
         }
 

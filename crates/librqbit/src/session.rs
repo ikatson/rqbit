@@ -418,7 +418,7 @@ pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>
 pub enum AddTorrent<'a> {
     Url(Cow<'a, str>),
     TorrentFileBytes(Cow<'a, [u8]>),
-    TorrentInfo(Box<TorrentMetaV1Owned>),
+    TorrentInfo(Box<TorrentMetaV1Owned>, Bytes),
 }
 
 impl<'a> AddTorrent<'a> {
@@ -451,7 +451,7 @@ impl<'a> AddTorrent<'a> {
         match self {
             Self::Url(s) => s.into_owned().into_bytes(),
             Self::TorrentFileBytes(b) => b.into_owned(),
-            Self::TorrentInfo(_) => unimplemented!(),
+            Self::TorrentInfo(..) => unimplemented!(),
         }
     }
 }
@@ -880,24 +880,42 @@ impl Session {
                 .into_iter()
                 .map(|t| ByteBufOwned::from(t.into_bytes()))
                 .collect();
-            let info = TorrentMetaV1Owned {
-                announce: trackers.first().cloned(),
-                announce_list: vec![trackers],
-                info: storrent.info,
-                comment: None,
-                created_by: None,
-                encoding: None,
-                publisher: None,
-                publisher_url: None,
-                creation_date: None,
-                info_hash: Id20::from_str(&storrent.info_hash)?,
+
+            let torrent_bytes = storrent.torrent_bytes;
+
+            let info = if !torrent_bytes.is_empty() {
+                torrent_from_bytes(&torrent_bytes)
+                    .map(|t| t.clone_to_owned(Some(&torrent_bytes)))
+                    .ok()
+            } else {
+                None
             };
+            let info = match info {
+                Some(info) => info,
+                None => {
+                    let info_hash = Id20::from_str(&storrent.info_hash)?;
+                    debug!(?info_hash, "torrent added before 6.1.0, need to readd");
+                    TorrentMetaV1Owned {
+                        announce: trackers.first().cloned(),
+                        announce_list: vec![trackers],
+                        info: storrent.info,
+                        comment: None,
+                        created_by: None,
+                        encoding: None,
+                        publisher: None,
+                        publisher_url: None,
+                        creation_date: None,
+                        info_hash,
+                    }
+                }
+            };
+
             futures.push({
                 let session = self.clone();
                 async move {
                     session
                         .add_torrent(
-                            AddTorrent::TorrentInfo(Box::new(info)),
+                            AddTorrent::TorrentInfo(Box::new(info), torrent_bytes),
                             Some(AddTorrentOptions {
                                 paused: storrent.is_paused,
                                 output_folder: Some(
@@ -1056,10 +1074,7 @@ impl Session {
                                 ByteBufOwned(bytes),
                             )
                         }
-                        AddTorrent::TorrentInfo(t) => {
-                            // TODO: this is lossy, as we don't store the bytes.
-                            (*t, ByteBufOwned(Default::default()))
-                        }
+                        AddTorrent::TorrentInfo(t, bytes) => (*t, bytes.into()),
                     };
 
                     let trackers = torrent
