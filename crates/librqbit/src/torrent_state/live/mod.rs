@@ -58,6 +58,7 @@ use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
+    constants::CHUNK_SIZE,
     hash_id::Id20,
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     spawn_utils::spawn_with_cancel,
@@ -66,7 +67,8 @@ use librqbit_core::{
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
-    extended::handshake::ExtendedHandshake, Handshake, Message, MessageOwned, Piece, Request,
+    extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
+    Handshake, Message, MessageOwned, Piece, Request,
 };
 use tokio::{
     sync::{
@@ -798,6 +800,12 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             Message::Cancel(_) => {
                 trace!("received \"cancel\", but we don't process it yet")
             }
+            Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
+                metadata_piece_id,
+            ))) => {
+                self.send_metadata_piece(metadata_piece_id)
+                    .with_context(|| format!("error sending metadata piece {metadata_piece_id}"))?;
+            }
             message => {
                 warn!("received unsupported message {:?}, ignoring", message);
             }
@@ -1502,6 +1510,36 @@ impl PeerHandler {
                 .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         }
 
+        Ok(())
+    }
+
+    fn send_metadata_piece(&self, piece_id: u32) -> anyhow::Result<()> {
+        let data = &self.state.meta().torrent_bytes;
+        let metadata_size = data.len();
+        if metadata_size == 0 {
+            anyhow::bail!("peer requested for info metadata but we don't have it")
+        }
+        let total_pieces: usize = (metadata_size as u64)
+            .div_ceil(CHUNK_SIZE as u64)
+            .try_into()?;
+
+        if piece_id as usize > total_pieces {
+            bail!("piece out of bounds")
+        }
+
+        let offset = piece_id * CHUNK_SIZE;
+        let end = (offset + CHUNK_SIZE).min((data.len() - 1).try_into()?);
+        let data = data.slice(offset as usize..end as usize);
+
+        self.tx
+            .send(WriterRequest::Message(Message::Extended(
+                ExtendedMessage::UtMetadata(UtMetadata::Data {
+                    piece: piece_id,
+                    total_size: end - offset,
+                    data: data.into(),
+                }),
+            )))
+            .context("error sending UtMetadata: channel closed")?;
         Ok(())
     }
 }
