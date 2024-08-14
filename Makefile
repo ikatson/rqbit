@@ -44,6 +44,10 @@ install: build-release
 	$(MAKE) sign-release
 	install target/release/rqbit "$(HOME)/bin/"
 
+@PHONY: test
+test:
+	ulimit -n unlimited && cargo test
+
 @PHONY: release-macos-universal
 release-macos-universal:
 	cargo build --target aarch64-apple-darwin --profile release-github

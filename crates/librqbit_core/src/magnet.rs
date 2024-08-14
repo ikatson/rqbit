@@ -20,6 +20,14 @@ impl Magnet {
         self.id32
     }
 
+    pub fn from_id20(id20: Id20, trackers: Vec<String>) -> Self {
+        Self {
+            id20: Some(id20),
+            id32: None,
+            trackers,
+        }
+    }
+
     /// Parse a magnet link.
     pub fn parse(url: &str) -> anyhow::Result<Magnet> {
         let url = url::Url::parse(url).context("magnet link must be a valid URL")?;

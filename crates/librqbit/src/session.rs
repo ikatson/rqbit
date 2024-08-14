@@ -421,7 +421,7 @@ pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>
 
 pub enum AddTorrent<'a> {
     Url(Cow<'a, str>),
-    TorrentFileBytes(Cow<'a, [u8]>),
+    TorrentFileBytes(Bytes),
     TorrentInfo(Box<TorrentMetaV1Owned>, Bytes),
 }
 
@@ -439,7 +439,7 @@ impl<'a> AddTorrent<'a> {
         Self::Url(url.into())
     }
 
-    pub fn from_bytes(bytes: impl Into<Cow<'a, [u8]>>) -> Self {
+    pub fn from_bytes(bytes: impl Into<Bytes>) -> Self {
         Self::TorrentFileBytes(bytes.into())
     }
 
@@ -448,13 +448,13 @@ impl<'a> AddTorrent<'a> {
     pub fn from_local_filename(filename: &str) -> anyhow::Result<Self> {
         let file = read_local_file_including_stdin(filename)
             .with_context(|| format!("error reading local file {filename:?}"))?;
-        Ok(Self::TorrentFileBytes(Cow::Owned(file)))
+        Ok(Self::TorrentFileBytes(file.into()))
     }
 
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub fn into_bytes(self) -> Bytes {
         match self {
-            Self::Url(s) => s.into_owned().into_bytes(),
-            Self::TorrentFileBytes(b) => b.into_owned(),
+            Self::Url(s) => s.into_owned().into_bytes().into(),
+            Self::TorrentFileBytes(b) => b,
             Self::TorrentInfo(..) => unimplemented!(),
         }
     }
@@ -1012,16 +1012,22 @@ impl Session {
                         announce_port,
                         opts.force_tracker_interval,
                     )?;
+                    let initial_peers_stream = opts
+                        .initial_peers
+                        .clone()
+                        .and_then(|v| if v.is_empty() { None } else { Some(v) })
+                        .map(futures::stream::iter);
+                    let peer_rx = merge_two_optional_streams(peer_rx, initial_peers_stream);
                     let peer_rx = match peer_rx {
                         Some(peer_rx) => peer_rx,
-                        None => bail!("can't find peers: DHT disabled and no trackers in magnet"),
+                        None => bail!("can't find peers: DHT is disabled, no trackers in magnet, and no initial peers provided"),
                     };
 
                     debug!(?info_hash, "querying DHT");
                     match read_metainfo_from_peer_receiver(
                         self.peer_id,
                         info_hash,
-                        opts.initial_peers.clone().unwrap_or_default(),
+                        Default::default(),
                         peer_rx,
                         Some(self.merge_peer_opts(opts.peer_opts)),
                         self.connector.clone(),
@@ -1066,18 +1072,12 @@ impl Session {
                                 url
                             )
                         }
-                        AddTorrent::TorrentFileBytes(bytes) => {
-                            let bytes = match bytes {
-                                Cow::Borrowed(b) => ::bytes::Bytes::copy_from_slice(b),
-                                Cow::Owned(v) => ::bytes::Bytes::from(v),
-                            };
-                            (
-                                torrent_from_bytes(&bytes)
-                                    .map(|t| t.clone_to_owned(Some(&bytes)))
-                                    .context("error decoding torrent")?,
-                                ByteBufOwned(bytes),
-                            )
-                        }
+                        AddTorrent::TorrentFileBytes(bytes) => (
+                            torrent_from_bytes(&bytes)
+                                .map(|t| t.clone_to_owned(Some(&bytes)))
+                                .context("error decoding torrent")?,
+                            ByteBufOwned(bytes),
+                        ),
                         AddTorrent::TorrentInfo(t, bytes) => (*t, bytes.into()),
                     };
 
