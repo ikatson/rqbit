@@ -72,31 +72,32 @@ impl Magnet {
 
 impl std::fmt::Display for Magnet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let (Some(id20), Some(id32)) = (self.id20, self.id32) {
-            write!(
-                f,
-                "magnet:?xt=urn:btih:{}?xt=urn:btmh:1220{}&tr={}",
-                id20.as_string(),
-                id32.as_string(),
-                self.trackers.join("&tr=")
-            )
-        } else if let Some(id20) = self.id20 {
-            write!(
-                f,
-                "magnet:?xt=urn:btih:{}&tr={}",
-                id20.as_string(),
-                self.trackers.join("&tr=")
-            )
-        } else if let Some(id32) = self.id32 {
-            write!(
-                f,
-                "magnet:?xt=urn:btmh:1220{}&tr={}",
-                id32.as_string(),
-                self.trackers.join("&tr=")
-            )
-        } else {
-            panic!("no infohash")
+        write!(f, "magnet:")?;
+        let mut write_ampersand = {
+            let mut written_so_far = 0;
+            move |f: &mut std::fmt::Formatter<'_>| {
+                if written_so_far == 0 {
+                    write!(f, "?")?;
+                } else {
+                    write!(f, "&")?;
+                }
+                written_so_far += 1;
+                Ok(())
+            }
+        };
+        if let Some(id20) = self.id20 {
+            write_ampersand(f)?;
+            write!(f, "xt=urn:btih:{}", id20.as_string(),)?;
         }
+        if let Some(id32) = self.id32 {
+            write_ampersand(f)?;
+            write!(f, "xt=xt=urn:btmh:1220{}", id32.as_string(),)?;
+        }
+        for tracker in self.trackers.iter() {
+            write_ampersand(f)?;
+            write!(f, "tr={tracker}")?;
+        }
+        Ok(())
     }
 }
 
