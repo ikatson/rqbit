@@ -20,7 +20,7 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
-async fn test_e2e() {
+async fn test_e2e_download() {
     let _ = tracing_subscriber::fmt::try_init();
 
     // 1. Create a torrent
