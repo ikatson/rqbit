@@ -57,7 +57,7 @@ async fn test_e2e_download() {
             async move {
                 let peer_id = TestPeerMetadata {
                     server_id: i,
-                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..128),
+                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..16),
                 }
                 .as_peer_id();
                 let session = crate::Session::new_with_opts(
