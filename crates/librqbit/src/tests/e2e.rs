@@ -1,11 +1,11 @@
 use std::{
-    borrow::Cow,
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
 };
 
 use anyhow::bail;
 use futures::{stream::FuturesUnordered, StreamExt};
+use librqbit_core::magnet::Magnet;
 use rand::Rng;
 use tokio::{
     spawn,
@@ -84,7 +84,7 @@ async fn test_e2e_download() {
 
                 let handle = session
                     .add_torrent(
-                        crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes)),
+                        crate::AddTorrent::TorrentFileBytes(torrent_file_bytes),
                         Some(AddTorrentOptions {
                             overwrite: true,
                             output_folder: Some(tempdir.to_str().unwrap().to_owned()),
@@ -139,6 +139,8 @@ async fn test_e2e_download() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1usize);
 
+    let magnet = Magnet::from_id20(torrent_file.info_hash(), Vec::new()).to_string();
+
     // 3. Start a client with the initial peers, and download the file.
     for _ in 0..client_iters {
         let outdir = tempfile::TempDir::with_prefix("rqbit_e2e_client").unwrap();
@@ -163,7 +165,7 @@ async fn test_e2e_download() {
         let (id, handle) = {
             let r = session
                 .add_torrent(
-                    crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes.clone())),
+                    crate::AddTorrent::Url((&magnet).into()),
                     Some(AddTorrentOptions {
                         initial_peers: Some(peers.clone()),
                         // only_files: Some(vec![0]),
@@ -235,7 +237,7 @@ async fn test_e2e_download() {
         // 4. After downloading, recheck its integrity.
         let handle = session
             .add_torrent(
-                crate::AddTorrent::TorrentFileBytes(Cow::Owned(torrent_file_bytes.clone())),
+                crate::AddTorrent::TorrentFileBytes(torrent_file_bytes.clone()),
                 Some(AddTorrentOptions {
                     paused: true,
                     overwrite: true,

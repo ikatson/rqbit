@@ -67,18 +67,14 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
         unordered.push(read_info_guarded(a));
     }
 
+    let mut addrs_completed = false;
+
     loop {
+        if addrs_completed && unordered.is_empty() {
+            return ReadMetainfoResult::ChannelClosed { seen };
+        }
+
         tokio::select! {
-            next_addr = addrs.next() => {
-                match next_addr {
-                    Some(addr) => {
-                        if seen.insert(addr) {
-                            unordered.push(read_info_guarded(addr));
-                        }
-                    },
-                    None => return ReadMetainfoResult::ChannelClosed { seen },
-                }
-            },
             done = unordered.next(), if !unordered.is_empty() => {
                 match done {
                     Some(Ok((info, info_bytes))) => return ReadMetainfoResult::Found { info, info_bytes, seen, rx: addrs },
@@ -86,6 +82,20 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
                         debug!("{:#}", e);
                     },
                     None => unreachable!()
+                }
+            }
+
+            next_addr = addrs.next(), if !addrs_completed => {
+                match next_addr {
+                    Some(addr) => {
+                        if seen.insert(addr) {
+                            unordered.push(read_info_guarded(addr));
+                        }
+                        continue;
+                    },
+                    None => {
+                        addrs_completed = true;
+                    },
                 }
             }
         };

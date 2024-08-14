@@ -6,6 +6,7 @@ use std::path::Path;
 use anyhow::Context;
 use bencode::bencode_serialize_to_writer;
 use buffers::ByteBufOwned;
+use bytes::Bytes;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use librqbit_core::Id20;
 use sha1w::{ISha1, Sha1};
@@ -185,10 +186,10 @@ impl CreateTorrentResult {
         self.meta.info_hash
     }
 
-    pub fn as_bytes(&self) -> anyhow::Result<Vec<u8>> {
+    pub fn as_bytes(&self) -> anyhow::Result<Bytes> {
         let mut b = Vec::new();
         bencode_serialize_to_writer(&self.meta, &mut b).context("error serializing torrent")?;
-        Ok(b)
+        Ok(b.into())
     }
 }
 

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use librqbit::{
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
     SessionOptions,
@@ -79,9 +80,9 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     let handle = s
         .add_torrent(
-            librqbit::AddTorrent::TorrentFileBytes(
-                include_bytes!("../resources/ubuntu-21.04-live-server-amd64.iso.torrent").into(),
-            ),
+            librqbit::AddTorrent::TorrentFileBytes(Bytes::from_static(include_bytes!(
+                "../resources/ubuntu-21.04-live-server-amd64.iso.torrent"
+            ))),
             Some(librqbit::AddTorrentOptions {
                 storage_factory: Some(CustomStorageFactory::default().boxed()),
                 paused: false,

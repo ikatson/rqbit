@@ -1,7 +1,7 @@
 use std::{io::Write, path::Path};
 
 use librqbit_core::Id20;
-use rand::{RngCore, SeedableRng};
+use rand::{thread_rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
 
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
@@ -43,8 +43,16 @@ pub struct TestPeerMetadata {
 }
 
 impl TestPeerMetadata {
+    pub fn good() -> Self {
+        Self {
+            server_id: 0,
+            max_random_sleep_ms: 0,
+        }
+    }
+
     pub fn as_peer_id(&self) -> Id20 {
         let mut peer_id = Id20::default();
+        thread_rng().fill(&mut peer_id.0);
         peer_id.0[0] = self.server_id;
         peer_id.0[1] = self.max_random_sleep_ms;
         peer_id
