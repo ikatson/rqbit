@@ -58,14 +58,14 @@ impl TestPeerMetadata {
     }
 
     pub fn disconnect_probability(&self) -> f64 {
-        if self.server_id % 2 == 0 {
+        if self.server_id % 2 == 1 {
             return 0.05f64;
         }
         0f64
     }
 
     pub fn bad_data_probability(&self) -> f64 {
-        if self.server_id % 2 == 0 {
+        if self.server_id % 2 == 1 {
             return 0.05f64;
         }
         0f64

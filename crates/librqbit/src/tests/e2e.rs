@@ -20,7 +20,7 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
-async fn test_e2e() {
+async fn test_e2e_download() {
     let _ = tracing_subscriber::fmt::try_init();
 
     // 1. Create a torrent
@@ -57,7 +57,7 @@ async fn test_e2e() {
             async move {
                 let peer_id = TestPeerMetadata {
                     server_id: i,
-                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..128),
+                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..16),
                 }
                 .as_peer_id();
                 let session = crate::Session::new_with_opts(
