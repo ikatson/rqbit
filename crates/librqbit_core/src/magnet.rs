@@ -71,11 +71,11 @@ impl Magnet {
 }
 
 impl std::fmt::Display for Magnet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "magnet:")?;
         let mut write_ampersand = {
             let mut written_so_far = 0;
-            move |f: &mut std::fmt::Formatter<'_>| {
+            move |f: &mut std::fmt::Formatter<'_>| -> core::fmt::Result {
                 if written_so_far == 0 {
                     write!(f, "?")?;
                 } else {
