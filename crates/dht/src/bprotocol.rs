@@ -5,6 +5,7 @@ use std::{
 };
 
 use bencode::{ByteBuf, ByteBufOwned};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use librqbit_core::hash_id::Id20;
 use serde::{
@@ -73,10 +74,10 @@ where
 {
     type Target = ErrorDescription<<BufT as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         ErrorDescription {
             code: self.code,
-            description: self.description.clone_to_owned(),
+            description: self.description.clone_to_owned(within_buffer),
         }
     }
 }

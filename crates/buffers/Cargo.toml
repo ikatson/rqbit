@@ -12,3 +12,4 @@ readme = "README.md"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
+bytes = "1"

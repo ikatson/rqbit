@@ -20,3 +20,4 @@ clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owne
 librqbit-core = { path = "../librqbit_core", version = "3.9.0" }
 bitvec = "1"
 anyhow = "1"
+bytes = "1.7.1"

@@ -7,6 +7,7 @@ pub mod extended;
 use bincode::Options;
 use buffers::{ByteBuf, ByteBufOwned};
 use byteorder::{ByteOrder, BE};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
@@ -84,11 +85,11 @@ pub struct Piece<B> {
 impl<B: CloneToOwned> CloneToOwned for Piece<B> {
     type Target = Piece<B::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         Piece {
             index: self.index,
             begin: self.begin,
-            block: self.block.clone_to_owned(),
+            block: self.block.clone_to_owned(within_buffer),
         }
     }
 }
@@ -211,23 +212,23 @@ where
 {
     type Target = Message<<ByteBuf as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         match self {
             Message::Request(req) => Message::Request(*req),
             Message::Cancel(req) => Message::Cancel(*req),
-            Message::Bitfield(b) => Message::Bitfield(b.clone_to_owned()),
+            Message::Bitfield(b) => Message::Bitfield(b.clone_to_owned(within_buffer)),
             Message::Choke => Message::Choke,
             Message::Unchoke => Message::Unchoke,
             Message::Interested => Message::Interested,
             Message::Piece(piece) => Message::Piece(Piece {
                 index: piece.index,
                 begin: piece.begin,
-                block: piece.block.clone_to_owned(),
+                block: piece.block.clone_to_owned(within_buffer),
             }),
             Message::KeepAlive => Message::KeepAlive,
             Message::Have(v) => Message::Have(*v),
             Message::NotInterested => Message::NotInterested,
-            Message::Extended(e) => Message::Extended(e.clone_to_owned()),
+            Message::Extended(e) => Message::Extended(e.clone_to_owned(within_buffer)),
         }
     }
 }
@@ -585,9 +586,9 @@ where
 {
     type Target = Handshake<<B as CloneToOwned>::Target>;
 
-    fn clone_to_owned(&self) -> Self::Target {
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         Handshake {
-            pstr: self.pstr.clone_to_owned(),
+            pstr: self.pstr.clone_to_owned(within_buffer),
             reserved: self.reserved,
             info_hash: self.info_hash,
             peer_id: self.peer_id,

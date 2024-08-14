@@ -1363,6 +1363,7 @@ name = "librqbit-bencode"
 version = "2.2.3"
 dependencies = [
  "anyhow",
+ "bytes",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-sha1-wrapper",
@@ -1373,6 +1374,7 @@ dependencies = [
 name = "librqbit-buffers"
 version = "3.0.1"
 dependencies = [
+ "bytes",
  "librqbit-clone-to-owned",
  "serde",
 ]
@@ -1380,12 +1382,16 @@ dependencies = [
 [[package]]
 name = "librqbit-clone-to-owned"
 version = "2.2.1"
+dependencies = [
+ "bytes",
+]
 
 [[package]]
 name = "librqbit-core"
 version = "3.9.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "data-encoding",
  "directories",
  "hex 0.4.3",
@@ -1409,6 +1415,7 @@ version = "5.0.4"
 dependencies = [
  "anyhow",
  "backoff",
+ "bytes",
  "chrono",
  "dashmap",
  "futures",
@@ -1437,6 +1444,7 @@ dependencies = [
  "bincode",
  "bitvec",
  "byteorder",
+ "bytes",
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
