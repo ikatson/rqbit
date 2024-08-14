@@ -44,10 +44,7 @@ use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
-    torrent_metainfo::{
-        torrent_from_bytes as bencode_torrent_from_bytes, TorrentMetaV1Borrowed, TorrentMetaV1Info,
-        TorrentMetaV1Owned,
-    },
+    torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
@@ -62,12 +59,23 @@ pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 pub type TorrentId = usize;
 
-fn torrent_from_bytes(bytes: &[u8]) -> anyhow::Result<TorrentMetaV1Borrowed> {
+struct ParsedTorrentFile {
+    info: TorrentMetaV1Owned,
+    info_bytes: Bytes,
+    torrent_bytes: Bytes,
+}
+
+fn torrent_from_bytes(bytes: Bytes) -> anyhow::Result<ParsedTorrentFile> {
     debug!(
         "all fields in torrent: {:#?}",
-        bencode::dyn_from_bytes::<ByteBuf>(bytes)
+        bencode::dyn_from_bytes::<ByteBuf>(&bytes)
     );
-    bencode_torrent_from_bytes(bytes)
+    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes_ext::<ByteBuf>(&bytes)?;
+    Ok(ParsedTorrentFile {
+        info: parsed.meta.clone_to_owned(Some(&bytes)),
+        info_bytes: parsed.info_bytes.clone_to_owned(Some(&bytes)).0,
+        torrent_bytes: bytes,
+    })
 }
 
 #[derive(Default)]
@@ -242,7 +250,7 @@ pub struct Session {
 async fn torrent_from_url(
     reqwest_client: &reqwest::Client,
     url: &str,
-) -> anyhow::Result<(TorrentMetaV1Owned, ByteBufOwned)> {
+) -> anyhow::Result<ParsedTorrentFile> {
     let response = reqwest_client
         .get(url)
         .send()
@@ -255,12 +263,7 @@ async fn torrent_from_url(
         .bytes()
         .await
         .with_context(|| format!("error reading response body from {url}"))?;
-    Ok((
-        torrent_from_bytes(&b)
-            .context("error decoding torrent")?
-            .clone_to_owned(Some(&b)),
-        b.into(),
-    ))
+    torrent_from_bytes(b).context("error decoding torrent")
 }
 
 fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
@@ -422,7 +425,7 @@ pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>
 pub enum AddTorrent<'a> {
     Url(Cow<'a, str>),
     TorrentFileBytes(Bytes),
-    TorrentInfo(Box<TorrentMetaV1Owned>, Bytes),
+    TorrentInfo(Box<TorrentMetaV1Owned>),
 }
 
 impl<'a> AddTorrent<'a> {
@@ -539,6 +542,7 @@ struct InternalAddResult {
     info_hash: Id20,
     info: TorrentMetaV1Info<ByteBufOwned>,
     torrent_bytes: Bytes,
+    info_bytes: Bytes,
     trackers: Vec<String>,
     peer_rx: Option<PeerStream>,
     initial_peers: Vec<SocketAddr>,
@@ -887,31 +891,24 @@ impl Session {
 
             let torrent_bytes = storrent.torrent_bytes;
 
-            let info = if !torrent_bytes.is_empty() {
-                torrent_from_bytes(&torrent_bytes)
-                    .map(|t| t.clone_to_owned(Some(&torrent_bytes)))
-                    .ok()
+            let add_torrent = if !torrent_bytes.is_empty() {
+                AddTorrent::TorrentFileBytes(torrent_bytes)
             } else {
-                None
-            };
-            let info = match info {
-                Some(info) => info,
-                None => {
-                    let info_hash = Id20::from_str(&storrent.info_hash)?;
-                    debug!(?info_hash, "torrent added before 6.1.0, need to readd");
-                    TorrentMetaV1Owned {
-                        announce: trackers.first().cloned(),
-                        announce_list: vec![trackers],
-                        info: storrent.info,
-                        comment: None,
-                        created_by: None,
-                        encoding: None,
-                        publisher: None,
-                        publisher_url: None,
-                        creation_date: None,
-                        info_hash,
-                    }
-                }
+                let info_hash = Id20::from_str(&storrent.info_hash)?;
+                debug!(?info_hash, "torrent added before 6.1.0, need to readd");
+                let info = TorrentMetaV1Owned {
+                    announce: trackers.first().cloned(),
+                    announce_list: vec![trackers],
+                    info: storrent.info,
+                    comment: None,
+                    created_by: None,
+                    encoding: None,
+                    publisher: None,
+                    publisher_url: None,
+                    creation_date: None,
+                    info_hash,
+                };
+                AddTorrent::TorrentInfo(Box::new(info))
             };
 
             futures.push({
@@ -919,7 +916,7 @@ impl Session {
                 async move {
                     session
                         .add_torrent(
-                            AddTorrent::TorrentInfo(Box::new(info), torrent_bytes),
+                            add_torrent,
                             Some(AddTorrentOptions {
                                 paused: storrent.is_paused,
                                 output_folder: Some(
@@ -1048,6 +1045,7 @@ impl Session {
                                     &info_bytes,
                                     &trackers,
                                 )?,
+                                info_bytes: info_bytes.0,
                                 info,
                                 trackers,
                                 peer_rx: Some(rx),
@@ -1060,7 +1058,7 @@ impl Session {
                     }
                 }
                 other => {
-                    let (torrent, bytes) = match other {
+                    let torrent = match other {
                         AddTorrent::Url(url)
                             if url.starts_with("http://") || url.starts_with("https://") =>
                         {
@@ -1072,16 +1070,21 @@ impl Session {
                                 url
                             )
                         }
-                        AddTorrent::TorrentFileBytes(bytes) => (
-                            torrent_from_bytes(&bytes)
-                                .map(|t| t.clone_to_owned(Some(&bytes)))
-                                .context("error decoding torrent")?,
-                            ByteBufOwned(bytes),
-                        ),
-                        AddTorrent::TorrentInfo(t, bytes) => (*t, bytes.into()),
+                        AddTorrent::TorrentFileBytes(bytes) =>
+                            torrent_from_bytes(bytes)
+                                .context("error decoding torrent")?
+                        ,
+                        AddTorrent::TorrentInfo(t) => {
+                            // TODO: remove this branch entirely
+                            ParsedTorrentFile{
+                                info: *t,
+                                info_bytes: Default::default(),
+                                torrent_bytes: Default::default(),
+                            }
+                        },
                     };
 
-                    let trackers = torrent
+                    let trackers = torrent.info
                         .iter_announce()
                         .unique()
                         .filter_map(|tracker| match std::str::from_utf8(tracker.as_ref()) {
@@ -1097,7 +1100,7 @@ impl Session {
                         None
                     } else {
                         self.make_peer_rx(
-                            torrent.info_hash,
+                            torrent.info.info_hash,
                             if opts.disable_trackers {
                                 Default::default()
                             } else {
@@ -1109,9 +1112,10 @@ impl Session {
                     };
 
                     InternalAddResult {
-                        info_hash: torrent.info_hash,
-                        info: torrent.info,
-                        torrent_bytes: bytes.0,
+                        info_hash: torrent.info.info_hash,
+                        info: torrent.info.info,
+                        torrent_bytes: torrent.torrent_bytes,
+                        info_bytes: torrent.info_bytes,
                         trackers,
                         peer_rx,
                         initial_peers: opts
@@ -1169,6 +1173,7 @@ impl Session {
             peer_rx,
             initial_peers,
             torrent_bytes,
+            info_bytes,
         } = add_res;
 
         debug!("Torrent info: {:#?}", &info);
@@ -1213,6 +1218,7 @@ impl Session {
             info,
             info_hash,
             torrent_bytes,
+            info_bytes,
             output_folder,
             storage_factory,
         );

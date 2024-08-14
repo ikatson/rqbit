@@ -37,6 +37,12 @@ pub trait PeerConnectionHandler {
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
+    fn update_my_extended_handshake(
+        &self,
+        _handshake: &mut ExtendedHandshake<ByteBuf>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -239,8 +245,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let supports_extended = handshake_supports_extended;
 
         if supports_extended {
-            let my_extended =
-                Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
+            let mut my_extended = ExtendedHandshake::new();
+            self.handler
+                .update_my_extended_handshake(&mut my_extended)?;
+            let my_extended = Message::Extended(ExtendedMessage::Handshake(my_extended));
             trace!("sending extended handshake: {:?}", &my_extended);
             my_extended.serialize(&mut write_buf, &|| None).unwrap();
             with_timeout(rwtimeout, conn.write_all(&write_buf))

@@ -857,6 +857,19 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             .unwrap_or(true);
         !have
     }
+
+    fn update_my_extended_handshake(
+        &self,
+        handshake: &mut ExtendedHandshake<ByteBuf>,
+    ) -> anyhow::Result<()> {
+        let info_bytes = &self.state.meta().info_bytes;
+        if !info_bytes.is_empty() {
+            if let Ok(len) = info_bytes.len().try_into() {
+                handshake.metadata_size = Some(len);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PeerHandler {
