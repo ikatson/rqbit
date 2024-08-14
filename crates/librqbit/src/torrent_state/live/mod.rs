@@ -1527,7 +1527,7 @@ impl PeerHandler {
     }
 
     fn send_metadata_piece(&self, piece_id: u32) -> anyhow::Result<()> {
-        let data = &self.state.meta().torrent_bytes;
+        let data = &self.state.meta().info_bytes;
         let metadata_size = data.len();
         if metadata_size == 0 {
             anyhow::bail!("peer requested for info metadata but we don't have it")
@@ -1541,7 +1541,7 @@ impl PeerHandler {
         }
 
         let offset = piece_id * CHUNK_SIZE;
-        let end = (offset + CHUNK_SIZE).min((data.len() - 1).try_into()?);
+        let end = (offset + CHUNK_SIZE).min(data.len().try_into()?);
         let data = data.slice(offset as usize..end as usize);
 
         self.tx

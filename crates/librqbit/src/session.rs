@@ -1053,7 +1053,7 @@ impl Session {
                             }
                         }
                         ReadMetainfoResult::ChannelClosed { .. } => {
-                            bail!("DHT died, no way to discover torrent metainfo")
+                            bail!("input address stream exhausted, no way to discover torrent metainfo")
                         }
                     }
                 }
