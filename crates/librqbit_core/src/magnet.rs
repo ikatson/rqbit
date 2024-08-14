@@ -103,6 +103,12 @@ impl std::fmt::Display for Magnet {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use crate::Id20;
+
+    use super::Magnet;
+
     #[test]
     fn test_parse_magnet_as_url() {
         let magnet = "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&dn=rutor.info_%D0%92%D0%BE%D0%B9%D0%BD%D0%B0+%D0%B1%D1%83%D0%B4%D1%83%D1%89%D0%B5%D0%B3%D0%BE+%2F+The+Tomorrow+War+%282021%29+WEB-DLRip+%D0%BE%D1%82+MegaPeer+%7C+P+%7C+NewComers&tr=udp://opentor.org:2710&tr=udp://opentor.org:2710&tr=http://retracker.local/announce";
@@ -121,5 +127,19 @@ mod tests {
                 .unwrap();
         let m = Magnet::parse(magnet).unwrap();
         assert!(m.as_id32() == Some(info_hash));
+    }
+
+    #[test]
+    fn test_magnet_to_string() {
+        let id20 = Id20::from_str("a621779b5e3d486e127c3efbca9b6f8d135f52e5").unwrap();
+        assert_eq!(
+            &Magnet::from_id20(id20, Default::default()).to_string(),
+            "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5"
+        );
+
+        assert_eq!(
+            &Magnet::from_id20(id20, vec!["foo".to_string(), "bar".to_string()]).to_string(),
+            "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&tr=foo&tr=bar"
+        );
     }
 }
