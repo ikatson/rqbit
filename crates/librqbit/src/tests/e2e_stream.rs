@@ -5,7 +5,9 @@ use tempfile::TempDir;
 use tokio::{io::AsyncReadExt, time::timeout};
 use tracing::info;
 
-use crate::{create_torrent, AddTorrent, CreateTorrentOptions, Session};
+use crate::{
+    create_torrent, tests::test_util::TestPeerMetadata, AddTorrent, CreateTorrentOptions, Session,
+};
 
 use super::test_util::create_default_random_dir_with_torrents;
 
@@ -21,11 +23,11 @@ async fn e2e_stream() -> anyhow::Result<()> {
     .await?;
 
     let orig_content = std::fs::read(files.path().join("0.data")).unwrap();
-
     let server_session = Session::new_with_opts(
         files.path().into(),
         crate::SessionOptions {
             disable_dht: true,
+            peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             persistence: false,
             listen_port_range: Some(16001..16100),
             enable_upnp_port_forwarding: false,
@@ -71,6 +73,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
         crate::SessionOptions {
             disable_dht: true,
             persistence: false,
+            peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             listen_port_range: None,
             enable_upnp_port_forwarding: false,
             ..Default::default()
