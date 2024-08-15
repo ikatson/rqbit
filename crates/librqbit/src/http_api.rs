@@ -1,7 +1,7 @@
 use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::response::{IntoResponse, Redirect};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryStreamExt};
@@ -459,6 +459,8 @@ impl HttpApi {
 
         #[cfg(feature = "webui")]
         {
+            use axum::response::Redirect;
+
             let webui_router = Router::new()
                 .route(
                     "/",

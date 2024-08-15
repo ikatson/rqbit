@@ -12,7 +12,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["default-tls", "webui", "postgres"]
+default = ["default-tls", "postgres", "webui"]
 openssl-vendored = ["openssl/vendored"]
 tokio-console = ["console-subscriber", "tokio/tracing"]
 webui = ["librqbit/webui"]
@@ -23,7 +23,10 @@ debug_slow_disk = ["librqbit/storage_middleware"]
 postgres = ["librqbit/postgres"]
 
 [dependencies]
-librqbit = { path = "../librqbit", default-features = false, version = "7.0.0-beta.0" }
+librqbit = { path = "../librqbit", default-features = false, features = [
+    "http-api",
+    "tracing-subscriber-utils",
+], version = "7.0.0-beta.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 console-subscriber = { version = "0.2", optional = true }
 anyhow = "1"

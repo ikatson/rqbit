@@ -23,6 +23,18 @@ jobs:
       - run: rustup override set ${{ matrix.rust_version }}
       - name: cargo check
         run: cargo check
+  check-desktop:
+    runs-on: windows-latest
+    steps:
+      - name: rustup toolchain install 1.75
+        run: |
+          rustup toolchain install 1.75
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup override set 1.75
+      - name: cargo check desktop
+        working-directory: desktop/src-tauri
+        run: cargo check
   test:
     runs-on: windows-latest
     steps:

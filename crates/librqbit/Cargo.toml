@@ -13,12 +13,14 @@ readme = "README.md"
 
 [features]
 default = ["default-tls"]
+http-api = ["axum", "tower-http"]
 webui = []
 timed_existence = []
 default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
 storage_middleware = ["lru"]
 storage_examples = []
+tracing-subscriber-utils = ["tracing-subscriber"]
 postgres = ["sqlx"]
 
 [dependencies]
@@ -42,8 +44,8 @@ tokio = { version = "1", features = [
     "fs",
     "io-util",
 ] }
-axum = { version = "0.7.4" }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+axum = { version = "0.7.4", optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
 tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -64,15 +66,11 @@ parking_lot = "0.12"
 tracing = "0.1.40"
 size_format = "1"
 rand = "0.8"
-
-openssl = { version = "0.10", optional = true }
-crypto-hash = { version = "0.3", optional = true }
-sha1 = { version = "0.10", optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "json",
     "fmt",
     "env-filter",
-] }
+], optional = true }
 uuid = { version = "1.2", features = ["v4"] }
 futures = "0.3"
 url = "2"

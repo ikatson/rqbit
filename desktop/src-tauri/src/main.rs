@@ -15,8 +15,8 @@ use config::RqbitDesktopConfig;
 use http::StatusCode;
 use librqbit::{
     api::{
-        ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentListResponse,
-        TorrentStats,
+        ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentIdOrHash,
+        TorrentListResponse, TorrentStats,
     },
     dht::PersistentDhtConfig,
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions, InitLoggingResult},
@@ -261,7 +261,7 @@ async fn torrent_create_from_base64_file(
 #[tauri::command]
 async fn torrent_details(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
 ) -> Result<TorrentDetailsResponse, ApiError> {
     state.api()?.api_torrent_details(id)
 }
@@ -269,7 +269,7 @@ async fn torrent_details(
 #[tauri::command]
 async fn torrent_stats(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
 ) -> Result<TorrentStats, ApiError> {
     state.api()?.api_stats_v1(id)
 }
@@ -277,7 +277,7 @@ async fn torrent_stats(
 #[tauri::command]
 async fn torrent_action_delete(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
 ) -> Result<EmptyJsonResponse, ApiError> {
     state.api()?.api_torrent_action_delete(id).await
 }
@@ -285,7 +285,7 @@ async fn torrent_action_delete(
 #[tauri::command]
 async fn torrent_action_pause(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
 ) -> Result<EmptyJsonResponse, ApiError> {
     state.api()?.api_torrent_action_pause(id).await
 }
@@ -293,7 +293,7 @@ async fn torrent_action_pause(
 #[tauri::command]
 async fn torrent_action_forget(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
 ) -> Result<EmptyJsonResponse, ApiError> {
     state.api()?.api_torrent_action_forget(id).await
 }
@@ -301,7 +301,7 @@ async fn torrent_action_forget(
 #[tauri::command]
 async fn torrent_action_start(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
 ) -> Result<EmptyJsonResponse, ApiError> {
     state.api()?.api_torrent_action_start(id).await
 }
@@ -309,7 +309,7 @@ async fn torrent_action_start(
 #[tauri::command]
 async fn torrent_action_configure(
     state: tauri::State<'_, State>,
-    id: usize,
+    id: TorrentIdOrHash,
     only_files: Vec<usize>,
 ) -> Result<EmptyJsonResponse, ApiError> {
     state

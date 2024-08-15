@@ -2,6 +2,7 @@ use anyhow::{bail, Context};
 use std::path::Path;
 use std::process::Command;
 
+#[allow(dead_code)]
 fn run_cmd(cwd: &Path, cmd: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     let (shell, shell_args) = ("powershell", ["-command"].as_slice());

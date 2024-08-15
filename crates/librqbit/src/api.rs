@@ -3,12 +3,10 @@ use std::{collections::HashSet, marker::PhantomData, net::SocketAddr, str::FromS
 use anyhow::Context;
 use buffers::ByteBufOwned;
 use dht::{DhtStats, Id20};
-use futures::Stream;
 use http::StatusCode;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
-use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing::warn;
 
 use crate::{
@@ -20,8 +18,14 @@ use crate::{
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         FileStream, ManagedTorrentHandle,
     },
-    tracing_subscriber_config_utils::LineBroadcast,
 };
+
+#[cfg(feature = "tracing-subscriber-utils")]
+use crate::tracing_subscriber_config_utils::LineBroadcast;
+#[cfg(feature = "tracing-subscriber-utils")]
+use futures::Stream;
+#[cfg(feature = "tracing-subscriber-utils")]
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 
 pub use crate::torrent_state::stats::{LiveStats, TorrentStats};
 
@@ -33,6 +37,7 @@ pub type Result<T> = std::result::Result<T, ApiError>;
 pub struct Api {
     session: Arc<Session>,
     rust_log_reload_tx: Option<UnboundedSender<String>>,
+    #[cfg(feature = "tracing-subscriber-utils")]
     line_broadcast: Option<LineBroadcast>,
 }
 
@@ -127,11 +132,12 @@ impl Api {
     pub fn new(
         session: Arc<Session>,
         rust_log_reload_tx: Option<UnboundedSender<String>>,
-        line_broadcast: Option<LineBroadcast>,
+        #[cfg(feature = "tracing-subscriber-utils")] line_broadcast: Option<LineBroadcast>,
     ) -> Self {
         Self {
             session,
             rust_log_reload_tx,
+            #[cfg(feature = "tracing-subscriber-utils")]
             line_broadcast,
         }
     }
@@ -258,6 +264,7 @@ impl Api {
         Ok(Default::default())
     }
 
+    #[cfg(feature = "tracing-subscriber-utils")]
     pub fn api_log_lines_stream(
         &self,
     ) -> Result<
