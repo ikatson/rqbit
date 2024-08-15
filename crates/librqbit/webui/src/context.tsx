@@ -35,5 +35,8 @@ export const APIContext = createContext<RqbitAPI>({
   getStreamLogsUrl: function (): string | null {
     throw new Error("Function not implemented.");
   },
+  getPlaylistUrl: function (index: number): string | null {
+    throw new Error("Function not implemented.");
+  },
 });
 export const RefreshTorrentStatsContext = createContext({ refresh: () => {} });
