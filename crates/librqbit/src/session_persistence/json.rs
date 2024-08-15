@@ -11,7 +11,7 @@ use itertools::Itertools;
 use librqbit_core::Id20;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{info, trace, warn};
+use tracing::{trace, warn};
 
 use super::{SerializedTorrent, SessionPersistenceStore};
 
@@ -28,14 +28,13 @@ pub struct JsonSessionPersistenceStore {
 
 impl std::fmt::Debug for JsonSessionPersistenceStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "JSON database: {:?}", self.db_filename)
+        write!(f, "JSON database: {:?}", self.output_folder)
     }
 }
 
 impl JsonSessionPersistenceStore {
     pub async fn new(output_folder: PathBuf) -> anyhow::Result<Self> {
         let db_filename = output_folder.join("session.json");
-        info!("will use {:?} for session persistence", db_filename);
         tokio::fs::create_dir_all(&output_folder)
             .await
             .with_context(|| {
