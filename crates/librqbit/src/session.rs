@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::{
+    api::TorrentIdOrHash,
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
@@ -1091,11 +1092,36 @@ impl Session {
         Ok(AddTorrentResponse::Added(id, managed_torrent))
     }
 
-    pub fn get(&self, id: TorrentId) -> Option<ManagedTorrentHandle> {
-        self.db.read().torrents.get(&id).cloned()
+    pub fn get(&self, id: TorrentIdOrHash) -> Option<ManagedTorrentHandle> {
+        match id {
+            TorrentIdOrHash::Id(id) => self.db.read().torrents.get(&id).cloned(),
+            TorrentIdOrHash::Hash(id) => self.db.read().torrents.iter().find_map(|(_, v)| {
+                if v.info_hash() == id {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            }),
+        }
     }
 
-    pub async fn delete(&self, id: TorrentId, delete_files: bool) -> anyhow::Result<()> {
+    pub async fn delete(&self, id: TorrentIdOrHash, delete_files: bool) -> anyhow::Result<()> {
+        let id = match id {
+            TorrentIdOrHash::Id(id) => id,
+            TorrentIdOrHash::Hash(h) => self
+                .db
+                .read()
+                .torrents
+                .values()
+                .find_map(|v| {
+                    if v.info_hash() == h {
+                        Some(v.id())
+                    } else {
+                        None
+                    }
+                })
+                .context("no such torrent in db")?,
+        };
         let removed = self
             .db
             .write()

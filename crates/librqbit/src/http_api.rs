@@ -18,7 +18,7 @@ use tracing::{debug, info, trace};
 
 use axum::Router;
 
-use crate::api::Api;
+use crate::api::{Api, TorrentIdOrHash};
 use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
@@ -59,16 +59,16 @@ impl HttpApi {
                     "GET /": "list all available APIs",
                     "GET /dht/stats": "DHT stats",
                     "GET /dht/table": "DHT routing table",
-                    "GET /torrents": "List torrents (default torrent is 0)",
-                    "GET /torrents/{index}": "Torrent details",
-                    "GET /torrents/{index}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{index}/stats/v1": "Torrent stats",
-                    "GET /torrents/{index}/peer_stats": "Per peer stats",
-                    "POST /torrents/{index}/pause": "Pause torrent",
-                    "POST /torrents/{index}/start": "Resume torrent",
-                    "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
-                    "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
-                    "POST /torrents/{index}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+                    "GET /torrents": "List torrents",
+                    "GET /torrents/{id_or_infohash}": "Torrent details",
+                    "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+                    "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
+                    "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+                    "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
+                    "POST /torrents/{id_or_infohash}/start": "Resume torrent",
+                    "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
+                    "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
+                    "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
                     "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
                     "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
                     "GET /web/": "Web UI",
@@ -124,7 +124,7 @@ impl HttpApi {
 
         async fn torrent_details(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_torrent_details(idx).map(axum::Json)
         }
@@ -168,7 +168,7 @@ impl HttpApi {
 
         fn build_playlist_content(
             host: &str,
-            it: impl IntoIterator<Item = (usize, usize, String)>,
+            it: impl IntoIterator<Item = (TorrentIdOrHash, usize, String)>,
         ) -> impl IntoResponse {
             let body = it
                 .into_iter()
@@ -240,7 +240,7 @@ impl HttpApi {
         async fn torrent_playlist(
             State(state): State<ApiState>,
             headers: HeaderMap,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             let host = get_host(&headers)?;
             let playlist_items = torrent_playlist_items(&*state.mgr_handle(idx)?)?;
@@ -263,7 +263,7 @@ impl HttpApi {
                         torrent_playlist_items(handle)
                             .map(move |items| {
                                 items.into_iter().map(move |(file_idx, filename)| {
-                                    (torrent_idx, file_idx, filename)
+                                    (torrent_idx.into(), file_idx, filename)
                                 })
                             })
                             .ok()
@@ -276,28 +276,28 @@ impl HttpApi {
 
         async fn torrent_haves(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_dump_haves(idx)
         }
 
         async fn torrent_stats_v0(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_stats_v0(idx).map(axum::Json)
         }
 
         async fn torrent_stats_v1(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_stats_v1(idx).map(axum::Json)
         }
 
         async fn peer_stats(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
             Query(filter): Query<PeerStatsFilter>,
         ) -> Result<impl IntoResponse> {
             state.api_peer_stats(idx, filter).map(axum::Json)
@@ -305,7 +305,7 @@ impl HttpApi {
 
         async fn torrent_stream_file(
             State(state): State<ApiState>,
-            Path((idx, file_id)): Path<(usize, usize)>,
+            Path((idx, file_id)): Path<(TorrentIdOrHash, usize)>,
             headers: http::HeaderMap,
         ) -> Result<impl IntoResponse> {
             let mut stream = state.api_stream(idx, file_id)?;
@@ -321,7 +321,7 @@ impl HttpApi {
             }
 
             let range_header = headers.get(http::header::RANGE);
-            trace!(torrent_id=idx, file_id=file_id, range=?range_header, "request for HTTP stream");
+            trace!(torrent_id=%idx, file_id=file_id, range=?range_header, "request for HTTP stream");
 
             if let Some(range) = range_header {
                 let offset: Option<u64> = range
@@ -366,28 +366,28 @@ impl HttpApi {
 
         async fn torrent_action_pause(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_torrent_action_pause(idx).await.map(axum::Json)
         }
 
         async fn torrent_action_start(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_torrent_action_start(idx).await.map(axum::Json)
         }
 
         async fn torrent_action_forget(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_torrent_action_forget(idx).await.map(axum::Json)
         }
 
         async fn torrent_action_delete(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
         ) -> Result<impl IntoResponse> {
             state.api_torrent_action_delete(idx).await.map(axum::Json)
         }
@@ -399,7 +399,7 @@ impl HttpApi {
 
         async fn torrent_action_update_only_files(
             State(state): State<ApiState>,
-            Path(idx): Path<usize>,
+            Path(idx): Path<TorrentIdOrHash>,
             axum::Json(req): axum::Json<UpdateOnlyFilesRequest>,
         ) -> Result<impl IntoResponse> {
             state

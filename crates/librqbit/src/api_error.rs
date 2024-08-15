@@ -2,6 +2,8 @@ use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use serde::{Serialize, Serializer};
 
+use crate::api::TorrentIdOrHash;
+
 // Convenience error type.
 #[derive(Debug)]
 pub struct ApiError {
@@ -19,7 +21,7 @@ impl ApiError {
         }
     }
 
-    pub const fn torrent_not_found(torrent_id: usize) -> Self {
+    pub const fn torrent_not_found(torrent_id: TorrentIdOrHash) -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
             kind: ApiErrorKind::TorrentNotFound(torrent_id),
@@ -75,7 +77,7 @@ impl ApiError {
 
 #[derive(Debug)]
 enum ApiErrorKind {
-    TorrentNotFound(usize),
+    TorrentNotFound(TorrentIdOrHash),
     DhtDisabled,
     Text(&'static str),
     Other(anyhow::Error),
@@ -93,7 +95,7 @@ impl Serialize for ApiError {
             status: u16,
             status_text: String,
             #[serde(skip_serializing_if = "Option::is_none")]
-            id: Option<usize>,
+            id: Option<TorrentIdOrHash>,
         }
         let mut serr: SerializedError = SerializedError {
             error_kind: match self.kind {

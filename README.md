@@ -119,18 +119,18 @@ By default it listens on http://127.0.0.1:3030.
             "GET /dht/stats": "DHT stats",
             "GET /dht/table": "DHT routing table",
             "GET /torrents": "List torrents (default torrent is 0)",
-            "GET /torrents/{index}": "Torrent details",
-            "GET /torrents/{index}/haves": "The bitfield of have pieces",
-            "GET /torrents/{index}/peer_stats": "Per peer stats",
-            "GET /torrents/{index}/stats/v1": "Torrent stats",
+            "GET /torrents/{id_or_infohash}": "Torrent details",
+            "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+            "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+            "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
             "GET /web/": "Web UI",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
             "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-            "POST /torrents/{index}/delete": "Forget about the torrent, remove the files",
-            "POST /torrents/{index}/forget": "Forget about the torrent, keep the files",
-            "POST /torrents/{index}/pause": "Pause torrent",
-            "POST /torrents/{index}/start": "Resume torrent",
-            "POST /torrents/{index}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {"only_files": [0, 1, 2]}"
+            "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
+            "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
+            "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
+            "POST /torrents/{id_or_infohash}/start": "Resume torrent",
+            "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {"only_files": [0, 1, 2]}"
         },
         "server": "rqbit"
     }
