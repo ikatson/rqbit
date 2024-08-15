@@ -23,9 +23,6 @@ jobs:
       - run: rustup override set ${{ matrix.rust_version }}
       - name: cargo check
         run: cargo check
-      - name: cargo check desktop
-        working-directory: desktop/src-tauri
-        run: cargo check
   check-desktop:
     runs-on: windows-latest
     steps:
