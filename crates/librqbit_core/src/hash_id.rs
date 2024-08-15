@@ -81,11 +81,7 @@ impl<const N: usize> FromStr for Id<N> {
                     Ok(Id(out))
                 }
                 Err(err) => {
-                    anyhow::bail!(
-                        "fail to decode base32 string {}: {}",
-                        s,
-                        err
-                    )
+                    anyhow::bail!("fail to decode base32 string {}: {}", s, err)
                 }
             }
         } else {
