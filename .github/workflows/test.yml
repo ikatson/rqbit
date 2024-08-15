@@ -26,6 +26,19 @@ jobs:
       - name: cargo check desktop
         working-directory: desktop/src-tauri
         run: cargo check
+  check-desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: rustup toolchain install 1.75
+        run: |
+          rustup toolchain install 1.75
+      - uses: actions/checkout@v4
+      - run: rustup override set 1.75
+      - name: install Tauri
+        run: cargo install tauri-cli --profile dev
+      - name: cargo check desktop
+        working-directory: desktop/src-tauri
+        run: cargo check
   test:
     runs-on: windows-latest
     steps:
