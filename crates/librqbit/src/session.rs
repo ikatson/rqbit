@@ -4,7 +4,7 @@ use std::{
     io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
 
@@ -81,31 +81,12 @@ fn torrent_from_bytes(bytes: Bytes) -> anyhow::Result<ParsedTorrentFile> {
 
 #[derive(Default)]
 pub struct SessionDatabase {
-    next_id: TorrentId,
     torrents: HashMap<TorrentId, ManagedTorrentHandle>,
 }
 
 impl SessionDatabase {
-    fn add_torrent(
-        &mut self,
-        torrent: ManagedTorrentHandle,
-        preferred_id: Option<TorrentId>,
-    ) -> TorrentId {
-        match preferred_id {
-            Some(id) if self.torrents.contains_key(&id) => {
-                warn!("id {id} already present in DB, ignoring \"preferred_id\" parameter");
-            }
-            Some(id) => {
-                self.torrents.insert(id, torrent);
-                self.next_id = id.max(self.next_id).wrapping_add(1);
-                return id;
-            }
-            _ => {}
-        }
-        let idx = self.next_id;
-        self.torrents.insert(idx, torrent);
-        self.next_id = self.next_id.max(idx) + 1;
-        idx
+    fn add_torrent(&mut self, torrent: ManagedTorrentHandle, id: TorrentId) {
+        self.torrents.insert(id, torrent);
     }
 }
 
@@ -115,6 +96,7 @@ pub struct Session {
     persistence: Option<Box<dyn SessionPersistenceStore>>,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
+    next_id: AtomicUsize,
     db: RwLock<SessionDatabase>,
     output_folder: PathBuf,
 
@@ -562,6 +544,7 @@ impl Session {
                 peer_opts,
                 spawner,
                 output_folder: default_output_folder,
+                next_id: AtomicUsize::new(0),
                 db: RwLock::new(Default::default()),
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
                 cancellation_token: token,
@@ -1057,17 +1040,29 @@ impl Session {
             builder.peer_read_write_timeout(t);
         }
 
-        let (managed_torrent, id) = {
+        let id = if let Some(id) = opts.preferred_id {
+            id
+        } else if let Some(p) = self.persistence.as_ref() {
+            p.next_id().await?
+        } else {
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        };
+
+        let managed_torrent = {
             let mut g = self.db.write();
-            if let Some((id, handle)) = g.torrents.iter().find(|(_, t)| t.info_hash() == info_hash)
-            {
-                return Ok(AddTorrentResponse::AlreadyManaged(*id, handle.clone()));
+            if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
+                if t.info_hash() == info_hash || *eid == id {
+                    Some((*eid, t.clone()))
+                } else {
+                    None
+                }
+            }) {
+                return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
-            let next_id = g.next_id;
-            let managed_torrent =
-                builder.build(error_span!(parent: None, "torrent", id = next_id))?;
-            let id = g.add_torrent(managed_torrent.clone(), opts.preferred_id);
-            (managed_torrent, id)
+            let managed_torrent = builder.build(error_span!(parent: None, "torrent", id))?;
+            g.add_torrent(managed_torrent.clone(), id);
+            managed_torrent
         };
 
         if let Some(p) = self.persistence.as_ref() {
