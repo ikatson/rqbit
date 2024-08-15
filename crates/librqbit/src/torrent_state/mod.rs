@@ -208,6 +208,7 @@ impl ManagedTorrent {
         peer_rx: Option<PeerStream>,
         start_paused: bool,
         live_cancellation_token: CancellationToken,
+        init_semaphore: Arc<tokio::sync::Semaphore>,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
 
@@ -283,10 +284,16 @@ impl ManagedTorrent {
                 let t = self.clone();
                 let span = self.info().span.clone();
                 let token = live_cancellation_token.clone();
+
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
                     async move {
+                        let _permit = init_semaphore
+                            .acquire()
+                            .await
+                            .context("bug: concurrent init semaphore was closed")?;
+
                         match init.check().await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
@@ -344,7 +351,12 @@ impl ManagedTorrent {
                 drop(g);
 
                 // Recurse.
-                self.start(peer_rx, start_paused, live_cancellation_token)
+                self.start(
+                    peer_rx,
+                    start_paused,
+                    live_cancellation_token,
+                    init_semaphore,
+                )
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }
