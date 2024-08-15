@@ -32,7 +32,9 @@ mod create_torrent_file;
 mod dht_utils;
 pub mod file_info;
 mod file_ops;
+#[cfg(feature = "http-api")]
 pub mod http_api;
+#[cfg(feature = "http-api")]
 pub mod http_api_client;
 mod merge_streams;
 mod peer_connection;
@@ -44,6 +46,7 @@ mod spawn_utils;
 pub mod storage;
 mod stream_connect;
 mod torrent_state;
+#[cfg(feature = "tracing-subscriber-utils")]
 pub mod tracing_subscriber_config_utils;
 mod type_aliases;
 

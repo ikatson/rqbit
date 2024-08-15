@@ -1,3 +1,4 @@
+#[cfg(feature = "http-api")]
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use serde::{Serialize, Serializer};
@@ -147,6 +148,7 @@ impl std::fmt::Display for ApiError {
     }
 }
 
+#[cfg(feature = "http-api")]
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let mut response = axum::Json(&self).into_response();
