@@ -293,7 +293,6 @@ pub fn read_local_file_including_stdin(filename: &str) -> anyhow::Result<Vec<u8>
 pub enum AddTorrent<'a> {
     Url(Cow<'a, str>),
     TorrentFileBytes(Bytes),
-    TorrentInfo(Box<TorrentMetaV1Owned>),
 }
 
 impl<'a> AddTorrent<'a> {
@@ -326,7 +325,6 @@ impl<'a> AddTorrent<'a> {
         match self {
             Self::Url(s) => s.into_owned().into_bytes().into(),
             Self::TorrentFileBytes(b) => b,
-            Self::TorrentInfo(..) => unimplemented!(),
         }
     }
 }
@@ -863,15 +861,6 @@ impl Session {
                         AddTorrent::TorrentFileBytes(bytes) =>
                             torrent_from_bytes(bytes)
                                 .context("error decoding torrent")?
-                        ,
-                        AddTorrent::TorrentInfo(t) => {
-                            // TODO: remove this branch entirely
-                            ParsedTorrentFile{
-                                info: *t,
-                                info_bytes: Default::default(),
-                                torrent_bytes: Default::default(),
-                            }
-                        },
                     };
 
                     let trackers = torrent.info
