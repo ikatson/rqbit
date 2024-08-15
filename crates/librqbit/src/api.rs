@@ -96,19 +96,21 @@ impl Api {
             .per_peer_stats_snapshot(filter))
     }
 
-    pub fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
-        handle
-            .pause()
+        self.session()
+            .pause(&handle)
+            .await
             .context("error pausing torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())
     }
 
-    pub fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         self.session
             .unpause(&handle)
+            .await
             .context("error unpausing torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())
@@ -130,7 +132,7 @@ impl Api {
         Ok(Default::default())
     }
 
-    pub fn api_torrent_action_update_only_files(
+    pub async fn api_torrent_action_update_only_files(
         &self,
         idx: TorrentId,
         only_files: &HashSet<usize>,
@@ -138,6 +140,7 @@ impl Api {
         let handle = self.mgr_handle(idx)?;
         self.session
             .update_only_files(&handle, only_files)
+            .await
             .context("error updating only_files")?;
         Ok(Default::default())
     }

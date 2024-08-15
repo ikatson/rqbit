@@ -92,24 +92,13 @@ impl JsonSessionPersistenceStore {
     fn torrent_bytes_filename(&self, info_hash: &Id20) -> PathBuf {
         self.output_folder.join(format!("{:?}.torrent", info_hash))
     }
-}
 
-#[async_trait]
-impl SessionPersistenceStore for JsonSessionPersistenceStore {
-    async fn next_id(&self) -> anyhow::Result<TorrentId> {
-        Ok(self
-            .db_content
-            .read()
-            .await
-            .torrents
-            .keys()
-            .copied()
-            .max()
-            .map(|max| max + 1)
-            .unwrap_or(0))
-    }
-
-    async fn store(&self, id: TorrentId, torrent: &ManagedTorrentHandle) -> anyhow::Result<()> {
+    async fn update_db(
+        &self,
+        id: TorrentId,
+        torrent: &ManagedTorrentHandle,
+        write_torrent_file: bool,
+    ) -> anyhow::Result<()> {
         if !torrent
             .storage_factory
             .is_type_id(TypeId::of::<FilesystemStorageFactory>())
@@ -132,7 +121,7 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
             output_folder: torrent.info().options.output_folder.clone(),
         };
 
-        if !torrent.info().torrent_bytes.is_empty() {
+        if write_torrent_file && !torrent.info().torrent_bytes.is_empty() {
             let torrent_bytes_file = self.torrent_bytes_filename(&torrent.info_hash());
             match tokio::fs::OpenOptions::new()
                 .create(true)
@@ -156,6 +145,22 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
         self.flush().await?;
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl SessionPersistenceStore for JsonSessionPersistenceStore {
+    async fn next_id(&self) -> anyhow::Result<TorrentId> {
+        Ok(self
+            .db_content
+            .read()
+            .await
+            .torrents
+            .keys()
+            .copied()
+            .max()
+            .map(|max| max + 1)
+            .unwrap_or(0))
     }
 
     async fn delete(&self, id: TorrentId) -> anyhow::Result<()> {
@@ -210,5 +215,17 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
         Ok(futures::stream::iter(all_ids)
             .then(move |id| async move { self.get(id).await.map(move |st| (id, st)) })
             .boxed())
+    }
+
+    async fn store(&self, id: TorrentId, torrent: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        self.update_db(id, torrent, true).await
+    }
+
+    async fn update_metadata(
+        &self,
+        id: TorrentId,
+        torrent: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()> {
+        self.update_db(id, torrent, false).await
     }
 }

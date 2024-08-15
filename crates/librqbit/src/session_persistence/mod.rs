@@ -59,12 +59,18 @@ impl SerializedTorrent {
     }
 }
 
+// TODO: make this info_hash first, ID-second.
 #[async_trait]
 pub trait SessionPersistenceStore: core::fmt::Debug + Send + Sync {
     async fn next_id(&self) -> anyhow::Result<TorrentId>;
     async fn store(&self, id: TorrentId, torrent: &ManagedTorrentHandle) -> anyhow::Result<()>;
     async fn delete(&self, id: TorrentId) -> anyhow::Result<()>;
     async fn get(&self, id: TorrentId) -> anyhow::Result<SerializedTorrent>;
+    async fn update_metadata(
+        &self,
+        id: TorrentId,
+        torrent: &ManagedTorrentHandle,
+    ) -> anyhow::Result<()>;
     async fn stream_all(
         &self,
     ) -> anyhow::Result<BoxStream<'_, anyhow::Result<(TorrentId, SerializedTorrent)>>>;

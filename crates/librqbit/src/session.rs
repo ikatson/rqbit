@@ -993,7 +993,17 @@ impl Session {
             }));
         }
 
+        let id = if let Some(id) = opts.preferred_id {
+            id
+        } else if let Some(p) = self.persistence.as_ref() {
+            p.next_id().await?
+        } else {
+            self.next_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        };
+
         let mut builder = ManagedTorrentBuilder::new(
+            id,
             info,
             info_hash,
             torrent_bytes,
@@ -1028,15 +1038,6 @@ impl Session {
         if let Some(t) = peer_opts.read_write_timeout {
             builder.peer_read_write_timeout(t);
         }
-
-        let id = if let Some(id) = opts.preferred_id {
-            id
-        } else if let Some(p) = self.persistence.as_ref() {
-            p.next_id().await?
-        } else {
-            self.next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        };
 
         let managed_torrent = {
             let mut g = self.db.write();
@@ -1175,7 +1176,21 @@ impl Session {
         Ok(merge_two_optional_streams(dht_rx, peer_rx))
     }
 
-    pub fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+    async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
+        if let Some(p) = self.persistence.as_ref() {
+            if let Err(e) = p.update_metadata(handle.id(), handle).await {
+                warn!(storage=?p, error=?e, "error updating metadata")
+            }
+        }
+    }
+
+    pub async fn pause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        handle.pause()?;
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    pub async fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
         let peer_rx = self.make_peer_rx(
             handle.info_hash(),
             handle.info().trackers.clone().into_iter().collect(),
@@ -1183,15 +1198,17 @@ impl Session {
             handle.info().options.force_tracker_interval,
         )?;
         handle.start(peer_rx, false, self.cancellation_token.child_token())?;
+        self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
 
-    pub fn update_only_files(
+    pub async fn update_only_files(
         self: &Arc<Self>,
         handle: &ManagedTorrentHandle,
         only_files: &HashSet<usize>,
     ) -> anyhow::Result<()> {
         handle.update_only_files(only_files)?;
+        self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
 

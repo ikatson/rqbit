@@ -368,14 +368,14 @@ impl HttpApi {
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_torrent_action_pause(idx).map(axum::Json)
+            state.api_torrent_action_pause(idx).await.map(axum::Json)
         }
 
         async fn torrent_action_start(
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_torrent_action_start(idx).map(axum::Json)
+            state.api_torrent_action_start(idx).await.map(axum::Json)
         }
 
         async fn torrent_action_forget(
@@ -404,6 +404,7 @@ impl HttpApi {
         ) -> Result<impl IntoResponse> {
             state
                 .api_torrent_action_update_only_files(idx, &req.only_files.into_iter().collect())
+                .await
                 .map(axum::Json)
         }
 
