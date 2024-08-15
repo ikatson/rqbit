@@ -14,6 +14,15 @@ impl<const N: usize> Id<N> {
         hex::encode(self.0)
     }
 
+    pub fn from_bytes(b: &[u8]) -> anyhow::Result<Self> {
+        let mut v = [0u8; N];
+        if b.len() != N {
+            anyhow::bail!("buffer length must be {}, but it's {}", N, b.len());
+        }
+        v.copy_from_slice(b);
+        Ok(Id(v))
+    }
+
     pub fn distance(&self, other: &Id<N>) -> Id<N> {
         let mut xor = [0u8; N];
         for (idx, (s, o)) in self

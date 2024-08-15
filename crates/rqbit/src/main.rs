@@ -137,8 +137,8 @@ struct ServerStartOptions {
     disable_persistence: bool,
 
     /// The folder to store session data in. By default uses OS specific folder.
-    #[arg(long = "persistence-folder")]
-    persistence_folder: Option<String>,
+    #[arg(long = "persistence-config")]
+    persistence_config: Option<String>,
 }
 
 #[derive(Parser)]
@@ -393,9 +393,26 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
                 if !start_opts.disable_persistence {
-                    sopts.persistence = Some(SessionPersistenceConfig::Json {
-                        folder: start_opts.persistence_folder.clone().map(PathBuf::from),
-                    })
+                    if let Some(p) = start_opts.persistence_config.as_ref() {
+                        if p.starts_with("postgres://") {
+                            #[cfg(feature = "postgres")]
+                            {
+                                sopts.persistence = Some(SessionPersistenceConfig::Postgres {
+                                    connection_string: p.clone(),
+                                })
+                            }
+                            #[cfg(not(feature = "postgres"))]
+                            {
+                                anyhow::bail!("rqbit was compiled without postgres support")
+                            }
+                        } else {
+                            sopts.persistence = Some(SessionPersistenceConfig::Json {
+                                folder: Some(p.into()),
+                            })
+                        }
+                    } else {
+                        sopts.persistence = Some(SessionPersistenceConfig::Json { folder: None })
+                    }
                 }
 
                 let session =
