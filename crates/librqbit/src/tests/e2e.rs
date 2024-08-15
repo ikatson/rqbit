@@ -228,7 +228,7 @@ async fn test_e2e_download() {
         }
 
         info!("handle is completed");
-        session.delete(id, false).await.unwrap();
+        session.delete(id.into(), false).await.unwrap();
 
         info!("deleted handle");
 

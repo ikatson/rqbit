@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, marker::PhantomData, net::SocketAddr, str::FromStr, sync::Arc};
 
 use anyhow::Context;
 use buffers::ByteBufOwned;
@@ -36,6 +36,93 @@ pub struct Api {
     line_broadcast: Option<LineBroadcast>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum TorrentIdOrHash {
+    Id(TorrentId),
+    Hash(Id20),
+}
+
+impl Serialize for TorrentIdOrHash {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            TorrentIdOrHash::Id(id) => id.serialize(serializer),
+            TorrentIdOrHash::Hash(h) => h.as_string().serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TorrentIdOrHash {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Default)]
+        struct V<'de> {
+            p: PhantomData<&'de ()>,
+        }
+        impl<'de> serde::de::Visitor<'de> for V<'de> {
+            type Value = TorrentIdOrHash;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("integer or 40 byte info hash")
+            }
+
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                TorrentIdOrHash::parse(v)
+                    .map_err(|_| E::custom("expected integer or 40 byte info hash"))
+            }
+        }
+
+        deserializer.deserialize_str(V::default())
+    }
+}
+
+impl std::fmt::Display for TorrentIdOrHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TorrentIdOrHash::Id(id) => write!(f, "{}", id),
+            TorrentIdOrHash::Hash(h) => write!(f, "{:?}", h),
+        }
+    }
+}
+
+impl From<TorrentId> for TorrentIdOrHash {
+    fn from(value: TorrentId) -> Self {
+        TorrentIdOrHash::Id(value)
+    }
+}
+
+impl From<Id20> for TorrentIdOrHash {
+    fn from(value: Id20) -> Self {
+        TorrentIdOrHash::Hash(value)
+    }
+}
+
+impl<'a> TryFrom<&'a str> for TorrentIdOrHash {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'a str) -> std::result::Result<Self, Self::Error> {
+        Self::parse(value)
+    }
+}
+
+impl TorrentIdOrHash {
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        if s.len() == 40 {
+            let id = Id20::from_str(s)?;
+            return Ok(id.into());
+        }
+        let id: TorrentId = s.parse()?;
+        Ok(id.into())
+    }
+}
+
 impl Api {
     pub fn new(
         session: Arc<Session>,
@@ -53,7 +140,7 @@ impl Api {
         &self.session
     }
 
-    pub fn mgr_handle(&self, idx: TorrentId) -> Result<ManagedTorrentHandle> {
+    pub fn mgr_handle(&self, idx: TorrentIdOrHash) -> Result<ManagedTorrentHandle> {
         self.session
             .get(idx)
             .ok_or(ApiError::torrent_not_found(idx))
@@ -71,14 +158,18 @@ impl Api {
         TorrentListResponse { torrents: items }
     }
 
-    pub fn api_torrent_details(&self, idx: TorrentId) -> Result<TorrentDetailsResponse> {
+    pub fn api_torrent_details(&self, idx: TorrentIdOrHash) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.info().info_hash;
         let only_files = handle.only_files();
         make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
     }
 
-    pub fn torrent_file_mime_type(&self, idx: TorrentId, file_idx: usize) -> Result<&'static str> {
+    pub fn torrent_file_mime_type(
+        &self,
+        idx: TorrentIdOrHash,
+        file_idx: usize,
+    ) -> Result<&'static str> {
         let handle = self.mgr_handle(idx)?;
         let info = &handle.info().info;
         torrent_file_mime_type(info, file_idx)
@@ -86,7 +177,7 @@ impl Api {
 
     pub fn api_peer_stats(
         &self,
-        idx: TorrentId,
+        idx: TorrentIdOrHash,
         filter: PeerStatsFilter,
     ) -> Result<PeerStatsSnapshot> {
         let handle = self.mgr_handle(idx)?;
@@ -96,7 +187,10 @@ impl Api {
             .per_peer_stats_snapshot(filter))
     }
 
-    pub async fn api_torrent_action_pause(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_pause(
+        &self,
+        idx: TorrentIdOrHash,
+    ) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         self.session()
             .pause(&handle)
@@ -106,7 +200,10 @@ impl Api {
         Ok(Default::default())
     }
 
-    pub async fn api_torrent_action_start(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_start(
+        &self,
+        idx: TorrentIdOrHash,
+    ) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
         self.session
             .unpause(&handle)
@@ -116,7 +213,10 @@ impl Api {
         Ok(Default::default())
     }
 
-    pub async fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_forget(
+        &self,
+        idx: TorrentIdOrHash,
+    ) -> Result<EmptyJsonResponse> {
         self.session
             .delete(idx, false)
             .await
@@ -124,7 +224,10 @@ impl Api {
         Ok(Default::default())
     }
 
-    pub async fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_delete(
+        &self,
+        idx: TorrentIdOrHash,
+    ) -> Result<EmptyJsonResponse> {
         self.session
             .delete(idx, true)
             .await
@@ -134,7 +237,7 @@ impl Api {
 
     pub async fn api_torrent_action_update_only_files(
         &self,
-        idx: TorrentId,
+        idx: TorrentIdOrHash,
         only_files: &HashSet<usize>,
     ) -> Result<EmptyJsonResponse> {
         let handle = self.mgr_handle(idx)?;
@@ -240,23 +343,23 @@ impl Api {
         Ok(dht.with_routing_table(|r| r.clone()))
     }
 
-    pub fn api_stats_v0(&self, idx: TorrentId) -> Result<LiveStats> {
+    pub fn api_stats_v0(&self, idx: TorrentIdOrHash) -> Result<LiveStats> {
         let mgr = self.mgr_handle(idx)?;
         let live = mgr.live().context("torrent not live")?;
         Ok(LiveStats::from(&*live))
     }
 
-    pub fn api_stats_v1(&self, idx: TorrentId) -> Result<TorrentStats> {
+    pub fn api_stats_v1(&self, idx: TorrentIdOrHash) -> Result<TorrentStats> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.stats())
     }
 
-    pub fn api_dump_haves(&self, idx: usize) -> Result<String> {
+    pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<String> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
     }
 
-    pub fn api_stream(&self, idx: TorrentId, file_id: usize) -> Result<FileStream> {
+    pub fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.stream(file_id)?)
     }
