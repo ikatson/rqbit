@@ -1,4 +1,6 @@
 pub mod json;
+#[cfg(feature = "postgres")]
+pub mod postgres;
 
 use std::{collections::HashSet, path::PathBuf};
 

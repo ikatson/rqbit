@@ -332,6 +332,8 @@ impl<'a> AddTorrent<'a> {
 pub enum SessionPersistenceConfig {
     /// The filename for persistence. By default uses an OS-specific folder.
     Json { folder: Option<PathBuf> },
+    #[cfg(feature = "postgres")]
+    Postgres { connection_string: String },
 }
 
 impl SessionPersistenceConfig {
@@ -494,6 +496,12 @@ impl Session {
                                 .await
                                 .context("error initializing JsonSessionPersistenceStore")?,
                         )))
+                    },
+                    #[cfg(feature = "postgres")]
+                    Some(SessionPersistenceConfig::Postgres { connection_string }) => {
+                        use crate::session_persistence::postgres::PostgresSessionStorage;
+                        let p = PostgresSessionStorage::new(connection_string).await?;
+                        Ok(Some(Box::new(p)))
                     }
                     None => Ok(None),
                 }

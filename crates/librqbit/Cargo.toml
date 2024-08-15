@@ -19,8 +19,13 @@ default-tls = ["reqwest/default-tls"]
 rust-tls = ["reqwest/rustls-tls"]
 storage_middleware = ["lru"]
 storage_examples = []
+postgres = ["sqlx"]
 
 [dependencies]
+sqlx = { version = "0.7", features = [
+    "runtime-tokio",
+    "postgres",
+], optional = true }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.3" }
 tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "1.0.3" }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.1" }

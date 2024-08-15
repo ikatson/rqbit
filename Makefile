@@ -22,6 +22,13 @@ devserver:
 		--log-file-rust-log=debug,librqbit=trace \
 		server start /tmp/scratch/
 
+@PHONY: devserver
+devserver-postgres:
+	echo -n '' > /tmp/rqbit-log && cargo run -- \
+		--log-file /tmp/rqbit-log \
+		--log-file-rust-log=debug,librqbit=trace \
+		server start --persistence-config postgres:///rqbit /tmp/scratch/
+
 @PHONY: clean
 clean:
 	rm -rf target

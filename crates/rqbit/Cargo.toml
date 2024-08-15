@@ -12,7 +12,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["default-tls", "webui"]
+default = ["default-tls", "webui", "postgres"]
 openssl-vendored = ["openssl/vendored"]
 tokio-console = ["console-subscriber", "tokio/tracing"]
 webui = ["librqbit/webui"]
@@ -20,6 +20,7 @@ timed_existence = ["librqbit/timed_existence"]
 default-tls = ["librqbit/default-tls"]
 rust-tls = ["librqbit/rust-tls"]
 debug_slow_disk = ["librqbit/storage_middleware"]
+postgres = ["librqbit/postgres"]
 
 [dependencies]
 librqbit = { path = "../librqbit", default-features = false, version = "6.0.0" }

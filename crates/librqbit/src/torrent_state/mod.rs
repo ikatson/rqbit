@@ -350,6 +350,10 @@ impl ManagedTorrent {
         }
     }
 
+    pub fn is_paused(&self) -> bool {
+        self.with_state(|s| matches!(s, ManagedTorrentState::Paused(..)))
+    }
+
     /// Pause the torrent if it's live.
     pub(crate) fn pause(&self) -> anyhow::Result<()> {
         let mut g = self.locked.write();
