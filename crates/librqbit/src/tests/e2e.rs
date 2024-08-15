@@ -66,8 +66,7 @@ async fn test_e2e_download() {
                         disable_dht: true,
                         disable_dht_persistence: true,
                         dht_config: None,
-                        persistence: false,
-                        persistence_filename: None,
+                        persistence: None,
                         peer_id: Some(peer_id),
                         peer_opts: None,
                         listen_port_range: Some(15100..17000),
@@ -150,8 +149,7 @@ async fn test_e2e_download() {
                 disable_dht: true,
                 disable_dht_persistence: true,
                 dht_config: None,
-                persistence: false,
-                persistence_filename: None,
+                persistence: None,
                 listen_port_range: None,
                 enable_upnp_port_forwarding: false,
                 ..Default::default()
@@ -230,7 +228,7 @@ async fn test_e2e_download() {
         }
 
         info!("handle is completed");
-        session.delete(id, false).unwrap();
+        session.delete(id, false).await.unwrap();
 
         info!("deleted handle");
 

@@ -13,7 +13,7 @@ use librqbit::{
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
-    PeerConnectionOptions, Session, SessionOptions, TorrentStatsState,
+    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
 };
 use size_format::SizeFormatterBinary as SF;
 use tracing::{error, error_span, info, trace_span, warn};
@@ -132,9 +132,13 @@ struct ServerStartOptions {
         long = "disable-persistence",
         help = "Disable server persistence. It will not read or write its state to disk."
     )]
+
+    /// Disable session persistence.
     disable_persistence: bool,
-    #[arg(long = "persistence-filename")]
-    persistence_filename: Option<String>,
+
+    /// The folder to store session data in. By default uses OS specific folder.
+    #[arg(long = "persistence-folder")]
+    persistence_folder: Option<String>,
 }
 
 #[derive(Parser)]
@@ -297,8 +301,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
         // This will be overriden by "server start" below if needed.
-        persistence: false,
-        persistence_filename: None,
+        persistence: None,
         peer_id: None,
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: Some(opts.peer_connect_timeout),
@@ -389,9 +392,11 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
-                sopts.persistence = !start_opts.disable_persistence;
-                sopts.persistence_filename =
-                    start_opts.persistence_filename.clone().map(PathBuf::from);
+                if !start_opts.disable_persistence {
+                    sopts.persistence = Some(SessionPersistenceConfig::Json {
+                        folder: start_opts.persistence_folder.clone().map(PathBuf::from),
+                    })
+                }
 
                 let session =
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)

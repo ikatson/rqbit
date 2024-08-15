@@ -36,6 +36,7 @@ use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
+use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::stream_connect::StreamConnector;
@@ -114,6 +115,8 @@ pub struct ManagedTorrentInfo {
 }
 
 pub struct ManagedTorrent {
+    pub id: TorrentId,
+    // TODO: merge ManagedTorrent and ManagedTorrentInfo
     pub info: Arc<ManagedTorrentInfo>,
     pub(crate) storage_factory: BoxStorageFactory,
 
@@ -122,6 +125,10 @@ pub struct ManagedTorrent {
 }
 
 impl ManagedTorrent {
+    pub fn id(&self) -> TorrentId {
+        self.id
+    }
+
     pub fn info(&self) -> &ManagedTorrentInfo {
         &self.info
     }
@@ -344,7 +351,7 @@ impl ManagedTorrent {
     }
 
     /// Pause the torrent if it's live.
-    pub fn pause(&self) -> anyhow::Result<()> {
+    pub(crate) fn pause(&self) -> anyhow::Result<()> {
         let mut g = self.locked.write();
         match &g.state {
             ManagedTorrentState::Live(live) => {
@@ -501,6 +508,7 @@ impl ManagedTorrent {
 }
 
 pub(crate) struct ManagedTorrentBuilder {
+    id: TorrentId,
     info: TorrentMetaV1Info<ByteBufOwned>,
     output_folder: PathBuf,
     info_hash: Id20,
@@ -521,6 +529,7 @@ pub(crate) struct ManagedTorrentBuilder {
 
 impl ManagedTorrentBuilder {
     pub fn new(
+        id: usize,
         info: TorrentMetaV1Info<ByteBufOwned>,
         info_hash: Id20,
         torrent_bytes: Bytes,
@@ -529,6 +538,7 @@ impl ManagedTorrentBuilder {
         storage_factory: BoxStorageFactory,
     ) -> Self {
         Self {
+            id,
             info,
             info_hash,
             torrent_bytes,
@@ -641,6 +651,7 @@ impl ManagedTorrentBuilder {
             self.storage_factory.create_and_init(&info)?,
         ));
         Ok(Arc::new(ManagedTorrent {
+            id: self.id,
             locked: RwLock::new(ManagedTorrentLocked {
                 state: ManagedTorrentState::Initializing(initializing),
                 only_files: self.only_files,

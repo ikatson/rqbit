@@ -1,10 +1,10 @@
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
-use librqbit::{dht::PersistentDht, Session};
+use librqbit::dht::PersistentDht;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -49,14 +49,35 @@ impl Default for RqbitDesktopConfigTcpListen {
 #[serde(default)]
 pub struct RqbitDesktopConfigPersistence {
     pub disable: bool,
+
+    #[serde(default)]
+    pub folder: PathBuf,
+
+    /// Deprecated, but keeping for backwards compat for serialized / deserialized config.
+    #[serde(default)]
     pub filename: PathBuf,
+}
+
+impl RqbitDesktopConfigPersistence {
+    pub(crate) fn fix_backwards_compat(&mut self) {
+        if self.folder != Path::new("") {
+            return;
+        }
+        if self.filename != Path::new("") {
+            if let Some(parent) = self.filename.parent() {
+                self.folder = parent.to_owned();
+            }
+        }
+    }
 }
 
 impl Default for RqbitDesktopConfigPersistence {
     fn default() -> Self {
+        let folder = librqbit::SessionPersistenceConfig::default_json_persistence_folder().unwrap();
         Self {
             disable: false,
-            filename: Session::default_persistence_filename().unwrap(),
+            folder,
+            filename: PathBuf::new(),
         }
     }
 }

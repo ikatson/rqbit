@@ -130,7 +130,7 @@ export const ConfigModal: React.FC<{
   };
 
   const handleToggleChange: React.ChangeEventHandler<HTMLInputElement> = (
-    e,
+    e
   ) => {
     const name: string = e.target.name;
     const [mainField, subField] = name.split(".", 2);
@@ -166,7 +166,7 @@ export const ConfigModal: React.FC<{
           text: "Error saving configuration",
           details: e,
         });
-      },
+      }
     );
   };
 
@@ -292,10 +292,10 @@ export const ConfigModal: React.FC<{
             />
 
             <FormInput
-              label="Persistence filename"
-              name="persistence.filename"
+              label="Persistence folder"
+              name="persistence.folder"
               inputType="text"
-              value={config.persistence.filename}
+              value={config.persistence.folder}
               onChange={handleInputChange}
               disabled={config.persistence.disable}
             />
