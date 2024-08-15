@@ -21,6 +21,7 @@ use librqbit::{
     dht::PersistentDhtConfig,
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions, InitLoggingResult},
     AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
+    SessionPersistenceConfig,
 };
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -42,7 +43,9 @@ struct State {
 
 fn read_config(path: &str) -> anyhow::Result<RqbitDesktopConfig> {
     let rdr = BufReader::new(File::open(path)?);
-    Ok(serde_json::from_reader(rdr)?)
+    let mut config: RqbitDesktopConfig = serde_json::from_reader(rdr)?;
+    config.persistence.fix_backwards_compat();
+    Ok(config)
 }
 
 fn write_config(path: &str, config: &RqbitDesktopConfig) -> anyhow::Result<()> {
@@ -65,6 +68,17 @@ async fn api_from_config(
     init_logging: &InitLoggingResult,
     config: &RqbitDesktopConfig,
 ) -> anyhow::Result<Api> {
+    let persistence = if config.persistence.disable {
+        None
+    } else {
+        Some(SessionPersistenceConfig::Json {
+            folder: if config.persistence.folder == Path::new("") {
+                None
+            } else {
+                Some(config.persistence.folder.clone())
+            },
+        })
+    };
     let session = Session::new_with_opts(
         config.default_download_location.clone(),
         SessionOptions {
@@ -74,8 +88,7 @@ async fn api_from_config(
                 config_filename: Some(config.dht.persistence_filename.clone()),
                 ..Default::default()
             }),
-            persistence: !config.persistence.disable,
-            persistence_filename: Some(config.persistence.filename.clone()),
+            persistence,
             peer_opts: Some(PeerConnectionOptions {
                 connect_timeout: Some(config.peer_opts.connect_timeout),
                 read_write_timeout: Some(config.peer_opts.read_write_timeout),
@@ -266,7 +279,7 @@ async fn torrent_action_delete(
     state: tauri::State<'_, State>,
     id: usize,
 ) -> Result<EmptyJsonResponse, ApiError> {
-    state.api()?.api_torrent_action_delete(id)
+    state.api()?.api_torrent_action_delete(id).await
 }
 
 #[tauri::command]
@@ -274,7 +287,7 @@ async fn torrent_action_pause(
     state: tauri::State<'_, State>,
     id: usize,
 ) -> Result<EmptyJsonResponse, ApiError> {
-    state.api()?.api_torrent_action_pause(id)
+    state.api()?.api_torrent_action_pause(id).await
 }
 
 #[tauri::command]
@@ -282,7 +295,7 @@ async fn torrent_action_forget(
     state: tauri::State<'_, State>,
     id: usize,
 ) -> Result<EmptyJsonResponse, ApiError> {
-    state.api()?.api_torrent_action_forget(id)
+    state.api()?.api_torrent_action_forget(id).await
 }
 
 #[tauri::command]
@@ -290,7 +303,7 @@ async fn torrent_action_start(
     state: tauri::State<'_, State>,
     id: usize,
 ) -> Result<EmptyJsonResponse, ApiError> {
-    state.api()?.api_torrent_action_start(id)
+    state.api()?.api_torrent_action_start(id).await
 }
 
 #[tauri::command]
@@ -302,6 +315,7 @@ async fn torrent_action_configure(
     state
         .api()?
         .api_torrent_action_update_only_files(id, &only_files.into_iter().collect())
+        .await
 }
 
 #[tauri::command]

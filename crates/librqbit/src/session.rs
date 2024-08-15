@@ -334,6 +334,13 @@ pub enum SessionPersistenceConfig {
     Json { folder: Option<PathBuf> },
 }
 
+impl SessionPersistenceConfig {
+    pub fn default_json_persistence_folder() -> anyhow::Result<PathBuf> {
+        let dir = get_configuration_directory("session")?;
+        Ok(dir.data_dir().to_owned())
+    }
+}
+
 #[derive(Default)]
 pub struct SessionOptions {
     /// Turn on to disable DHT.
@@ -475,16 +482,11 @@ impl Session {
             async fn persistence_factory(
                 opts: &SessionOptions,
             ) -> anyhow::Result<Option<BoxSessionPersistenceStore>> {
-                pub fn default_persistence_folder() -> anyhow::Result<PathBuf> {
-                    let dir = get_configuration_directory("session")?;
-                    Ok(dir.data_dir().to_owned())
-                }
-
                 match &opts.persistence {
                     Some(SessionPersistenceConfig::Json { folder }) => {
                         let folder = match folder.as_ref() {
                             Some(f) => f.clone(),
-                            None => default_persistence_folder()?,
+                            None => SessionPersistenceConfig::default_json_persistence_folder()?,
                         };
 
                         Ok(Some(Box::new(
