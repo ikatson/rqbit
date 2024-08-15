@@ -30,6 +30,7 @@ jobs:
         run: |
           rustup toolchain install 1.75
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - run: rustup override set 1.75
       - name: cargo check desktop
         working-directory: desktop/src-tauri
