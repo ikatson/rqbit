@@ -122,6 +122,10 @@ struct Opts {
     /// Alternatively, set this as an environment variable RQBIT_SOCKS_PROXY_URL
     #[arg(long)]
     socks_url: Option<String>,
+
+    /// How many torrents can be initializing (rehashing) at the same time
+    #[arg(long, default_value = "5")]
+    concurrent_init_limit: usize,
 }
 
 #[derive(Parser)]
@@ -335,6 +339,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
             }
         }),
         socks_proxy_url: socks_url,
+        concurrent_init_limit: Some(opts.concurrent_init_limit),
     };
 
     let stats_printer = |session: Arc<Session>| async move {

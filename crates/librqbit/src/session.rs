@@ -112,6 +112,8 @@ pub struct Session {
     reqwest_client: reqwest::Client,
     connector: Arc<StreamConnector>,
 
+    concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
+
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
 }
@@ -375,6 +377,9 @@ pub struct SessionOptions {
 
     // socks5://[username:password@]host:port
     pub socks_proxy_url: Option<String>,
+
+    // how many concurrent torrent initializations can happen
+    pub concurrent_init_limit: Option<usize>,
 }
 
 async fn create_tcp_listener(
@@ -562,6 +567,7 @@ impl Session {
                 default_storage_factory: opts.default_storage_factory,
                 reqwest_client,
                 connector: stream_connector,
+                concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(opts.concurrent_init_limit.unwrap_or(3)))
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -1085,7 +1091,12 @@ impl Session {
             let _ = span.enter();
 
             managed_torrent
-                .start(peer_rx, opts.paused, self.cancellation_token.child_token())
+                .start(
+                    peer_rx,
+                    opts.paused,
+                    self.cancellation_token.child_token(),
+                    self.concurrent_initialize_semaphore.clone(),
+                )
                 .context("error starting torrent")?;
         }
 
@@ -1233,7 +1244,12 @@ impl Session {
             self.tcp_listen_port,
             handle.info().options.force_tracker_interval,
         )?;
-        handle.start(peer_rx, false, self.cancellation_token.child_token())?;
+        handle.start(
+            peer_rx,
+            false,
+            self.cancellation_token.child_token(),
+            self.concurrent_initialize_semaphore.clone(),
+        )?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
