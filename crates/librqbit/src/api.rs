@@ -114,16 +114,18 @@ impl Api {
         Ok(Default::default())
     }
 
-    pub fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_forget(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         self.session
             .delete(idx, false)
+            .await
             .context("error forgetting torrent")?;
         Ok(Default::default())
     }
 
-    pub fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
+    pub async fn api_torrent_action_delete(&self, idx: TorrentId) -> Result<EmptyJsonResponse> {
         self.session
             .delete(idx, true)
+            .await
             .context("error deleting torrent with files")?;
         Ok(Default::default())
     }

@@ -28,7 +28,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
         crate::SessionOptions {
             disable_dht: true,
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
-            persistence: false,
+            persistence: None,
             listen_port_range: Some(16001..16100),
             enable_upnp_port_forwarding: false,
             ..Default::default()
@@ -72,7 +72,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
         client_dir.path().into(),
         crate::SessionOptions {
             disable_dht: true,
-            persistence: false,
+            persistence: None,
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             listen_port_range: None,
             enable_upnp_port_forwarding: false,

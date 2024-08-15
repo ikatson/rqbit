@@ -382,14 +382,14 @@ impl HttpApi {
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_torrent_action_forget(idx).map(axum::Json)
+            state.api_torrent_action_forget(idx).await.map(axum::Json)
         }
 
         async fn torrent_action_delete(
             State(state): State<ApiState>,
             Path(idx): Path<usize>,
         ) -> Result<impl IntoResponse> {
-            state.api_torrent_action_delete(idx).map(axum::Json)
+            state.api_torrent_action_delete(idx).await.map(axum::Json)
         }
 
         #[derive(Deserialize)]

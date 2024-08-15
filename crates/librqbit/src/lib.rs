@@ -39,6 +39,7 @@ mod peer_connection;
 mod peer_info_reader;
 mod read_buf;
 mod session;
+mod session_persistence;
 mod spawn_utils;
 pub mod storage;
 mod stream_connect;
@@ -53,7 +54,7 @@ pub use dht;
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, SessionOptions,
-    SUPPORTED_SCHEMES,
+    SessionPersistenceConfig, SUPPORTED_SCHEMES,
 };
 pub use spawn_utils::spawn as librqbit_spawn;
 pub use torrent_state::{
