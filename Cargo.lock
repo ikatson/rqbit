@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "6.0.0"
+version = "7.0.0-beta.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1523,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "2.2.3"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1535,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-buffers"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "bytes",
  "librqbit-clone-to-owned",
@@ -1544,14 +1544,14 @@ dependencies = [
 
 [[package]]
 name = "librqbit-clone-to-owned"
-version = "2.2.1"
+version = "3.0.0"
 dependencies = [
  "bytes",
 ]
 
 [[package]]
 name = "librqbit-core"
-version = "3.9.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "5.0.4"
+version = "5.1.0"
 dependencies = [
  "anyhow",
  "backoff",
@@ -1601,7 +1601,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "3.6.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "6.0.0"
+version = "7.0.0-beta.0"
 dependencies = [
  "anyhow",
  "bytes",

@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "3.9.0"
+version = "4.0.0"
 edition = "2021"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
@@ -19,9 +19,9 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.1" }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.3" }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "4" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
+clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 itertools = "0.12"
 directories = "5"
 tokio-util = "0.7.10"

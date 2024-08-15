@@ -15,13 +15,13 @@ tokio = "1"
 anyhow = "1"
 futures = "0.3"
 async-stream = "0.3.5"
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.1" }
-librqbit-core = { path = "../librqbit_core", version = "3.9.0" }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "4" }
+librqbit-core = { path = "../librqbit_core", version = "4" }
 byteorder = "1.5"
 serde = { version = "1", features = ["derive"] }
 urlencoding = "2"
 rand = "0.8"
 tracing = "0.1.40"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.3" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
 url = "2"

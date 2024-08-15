@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-peer-protocol"
-version = "3.6.0"
+version = "4.0.0"
 edition = "2021"
 description = "Protocol for working with torrent peers. Used in rqbit torrent client."
 license = "Apache-2.0"
@@ -14,10 +14,10 @@ readme = "README.md"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 byteorder = "1"
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "3.0.1" }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "2.2.3" }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "2.2.1" }
-librqbit-core = { path = "../librqbit_core", version = "3.9.0" }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "4" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
+clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
+librqbit-core = { path = "../librqbit_core", version = "4" }
 bitvec = "1"
 anyhow = "1"
 bytes = "1.7.1"
