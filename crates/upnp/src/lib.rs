@@ -377,6 +377,7 @@ impl UpnpPortForwarder {
 
     async fn discovery(&self, tx: UnboundedSender<UpnpDiscoverResponse>) -> anyhow::Result<()> {
         let mut discover_interval = tokio::time::interval(self.opts.discover_interval);
+        discover_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             discover_interval.tick().await;
@@ -389,6 +390,8 @@ impl UpnpPortForwarder {
     async fn manage_port(&self, control_url: Url, local_ip: Ipv4Addr, port: u16) -> ! {
         let lease_duration = self.opts.lease_duration;
         let mut interval = tokio::time::interval(lease_duration / 2);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         loop {
             interval.tick().await;
             if let Err(e) = forward_port(control_url.clone(), local_ip, port, lease_duration).await
