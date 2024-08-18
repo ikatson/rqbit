@@ -3,8 +3,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::bail;
-use futures::{stream::FuturesUnordered, StreamExt};
+use anyhow::{bail, Context};
 use librqbit_core::magnet::Magnet;
 use rand::Rng;
 use tokio::{
@@ -45,15 +44,14 @@ async fn test_e2e_download() {
     let num_servers = 128;
 
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
-    let mut futs = FuturesUnordered::new();
+    let mut futs = Vec::new();
 
     // 2. Start N servers that are serving that torrent, and return their IP:port combos.
     //    Disable DHT on each.
     for i in 0u8..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
         let tempdir = tempdir.path().to_owned();
-        spawn(
+        let fut = spawn(
             async move {
                 let peer_id = TestPeerMetadata {
                     server_id: i,
@@ -81,7 +79,7 @@ async fn test_e2e_download() {
                     },
                 )
                 .await
-                .unwrap();
+                .context("error starting session")?;
 
                 info!("started session");
 
@@ -95,8 +93,8 @@ async fn test_e2e_download() {
                         }),
                     )
                     .await
-                    .unwrap();
-                let h = handle.into_handle().unwrap();
+                    .context("error adding torrent")?;
+                let h = handle.into_handle().context("into_handle()")?;
                 let mut interval = interval(Duration::from_millis(100));
 
                 info!("added torrent");
@@ -114,25 +112,38 @@ async fn test_e2e_download() {
                             crate::ManagedTorrentState::Error(e) => bail!("error: {e:?}"),
                             _ => bail!("broken state"),
                         })
-                        .unwrap();
+                        .context("error checking for torrent liveness")?;
                     if is_live {
                         break;
                     }
                 }
                 info!("torrent is live");
-                tx.send(SocketAddr::new(
+                Ok::<_, anyhow::Error>(SocketAddr::new(
                     std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    session.tcp_listen_port().unwrap(),
+                    session
+                        .tcp_listen_port()
+                        .context("expected session.tcp_listen_port() to be set")?,
                 ))
             }
             .instrument(error_span!("server", id = i)),
         );
-        futs.push(timeout(Duration::from_secs(30), rx));
+        futs.push(timeout(Duration::from_secs(30), fut));
     }
 
     let mut peers = Vec::new();
-    while let Some(addr) = futs.next().await {
-        peers.push(addr.unwrap().unwrap());
+    for (id, peer) in futures::future::join_all(futs)
+        .await
+        .into_iter()
+        .enumerate()
+    {
+        let peer = peer
+            .with_context(|| format!("join error, server={id}"))
+            .unwrap()
+            .with_context(|| format!("timeout, server={id}"))
+            .unwrap()
+            .with_context(|| format!("server couldn't start, server={id}"))
+            .unwrap();
+        peers.push(peer);
     }
 
     info!("started all servers, starting client");

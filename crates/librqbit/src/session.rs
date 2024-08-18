@@ -864,7 +864,14 @@ impl Session {
                                 info,
                                 trackers,
                                 peer_rx: Some(rx),
-                                initial_peers: seen.into_iter().collect(),
+                                initial_peers: {
+                                    let seen = seen.into_iter().collect_vec();
+                                    info!(count=seen.len(), "seen");
+                                    for peer in &seen {
+                                        debug!(?peer, "seen")
+                                    }
+                                    seen
+                                },
                             }
                         }
                         ReadMetainfoResult::ChannelClosed { .. } => {

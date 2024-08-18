@@ -257,15 +257,22 @@ impl ManagedTorrent {
                         loop {
                             match timeout(Duration::from_secs(5), peer_rx.next()).await {
                                 Ok(Some(peer)) => {
+                                    debug!(?peer, "received peer from peer_rx");
                                     let live = match live.upgrade() {
                                         Some(live) => live,
                                         None => return Ok(()),
                                     };
                                     live.add_peer_if_not_seen(peer).context("torrent closed")?;
                                 }
-                                Ok(None) => return Ok(()),
+                                Ok(None) => {
+                                    debug!("peer_rx closed, closing peer adder");
+                                    return Ok(());
+                                }
                                 // If timeout, check if the torrent is live.
-                                Err(_) if live.strong_count() == 0 => return Ok(()),
+                                Err(_) if live.strong_count() == 0 => {
+                                    debug!("timed out waiting for peers, torrent isn't live, closing peer adder");
+                                    return Ok(());
+                                }
                                 Err(_) => continue,
                             }
                         }
