@@ -73,6 +73,7 @@ async fn test_e2e_download() {
                         enable_upnp_port_forwarding: false,
                         default_storage_factory: None,
                         defer_writes_up_to: None,
+                        root_span: Some(error_span!(parent: None, "server", id = i)),
                         ..Default::default()
                     },
                 )
@@ -121,7 +122,7 @@ async fn test_e2e_download() {
                     session.tcp_listen_port().unwrap(),
                 ))
             }
-            .instrument(error_span!("server", server = i)),
+            .instrument(error_span!("server", id = i)),
         );
         futs.push(timeout(Duration::from_secs(30), rx));
     }
@@ -152,6 +153,7 @@ async fn test_e2e_download() {
                 persistence: None,
                 listen_port_range: None,
                 enable_upnp_port_forwarding: false,
+                root_span: Some(error_span!("client")),
                 ..Default::default()
             },
         )
