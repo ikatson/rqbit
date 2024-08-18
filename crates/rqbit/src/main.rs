@@ -340,6 +340,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         }),
         socks_proxy_url: socks_url,
         concurrent_init_limit: Some(opts.concurrent_init_limit),
+        root_span: None,
     };
 
     let stats_printer = |session: Arc<Session>| async move {

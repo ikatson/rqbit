@@ -52,7 +52,7 @@ where
     ByteBuf: Eq + std::hash::Hash + std::borrow::Borrow<[u8]>,
 {
     fn get_msgid(&self, msg_type: &'a [u8]) -> Option<u8> {
-        self.m.get(msg_type).map(|v| *v)
+        self.m.get(msg_type).copied()
     }
 
     pub fn ut_metadata(&self) -> Option<u8> {
