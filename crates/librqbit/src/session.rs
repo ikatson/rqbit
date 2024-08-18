@@ -199,10 +199,22 @@ fn merge_two_optional_streams<T>(
     s2: Option<impl Stream<Item = T> + Unpin + Send + 'static>,
 ) -> Option<BoxStream<'static, T>> {
     match (s1, s2) {
-        (Some(s1), None) => Some(Box::pin(s1)),
-        (None, Some(s2)) => Some(Box::pin(s2)),
-        (Some(s1), Some(s2)) => Some(Box::pin(merge_streams(s1, s2))),
-        (None, None) => None,
+        (Some(s1), None) => {
+            debug!("merge_two_optional_streams: using first");
+            Some(Box::pin(s1))
+        }
+        (None, Some(s2)) => {
+            debug!("merge_two_optional_streams: using second");
+            Some(Box::pin(s2))
+        }
+        (Some(s1), Some(s2)) => {
+            debug!("merge_two_optional_streams: using both");
+            Some(Box::pin(merge_streams(s1, s2)))
+        }
+        (None, None) => {
+            debug!("merge_two_optional_streams: using none");
+            None
+        }
     }
 }
 
@@ -1096,6 +1108,10 @@ impl Session {
         // Merge "initial_peers" and "peer_rx" into one stream.
         let peer_rx = merge_two_optional_streams(
             if !initial_peers.is_empty() {
+                debug!(
+                    count = initial_peers.len(),
+                    "merging initial peers into peer_rx"
+                );
                 Some(futures::stream::iter(initial_peers.into_iter()))
             } else {
                 None
