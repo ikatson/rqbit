@@ -131,6 +131,18 @@ impl std::convert::AsRef<[u8]> for ByteBufOwned {
     }
 }
 
+impl std::borrow::Borrow<[u8]> for ByteBufOwned {
+    fn borrow(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<'a> std::borrow::Borrow<[u8]> for ByteBuf<'a> {
+    fn borrow(&self) -> &[u8] {
+        self.0
+    }
+}
+
 impl<'a> std::ops::Deref for ByteBuf<'a> {
     type Target = [u8];
 

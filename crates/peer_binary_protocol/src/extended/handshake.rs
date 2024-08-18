@@ -10,7 +10,7 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::MY_EXTENDED_UT_METADATA;
+use crate::{EXTENDED_UT_METADATA_KEY, MY_EXTENDED_UT_METADATA};
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
@@ -39,7 +39,7 @@ pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
 impl ExtendedHandshake<ByteBuf<'static>> {
     pub fn new() -> Self {
         let mut features = HashMap::new();
-        features.insert(ByteBuf(b"ut_metadata"), MY_EXTENDED_UT_METADATA);
+        features.insert(ByteBuf(EXTENDED_UT_METADATA_KEY), MY_EXTENDED_UT_METADATA);
         Self {
             m: features,
             ..Default::default()
@@ -47,25 +47,16 @@ impl ExtendedHandshake<ByteBuf<'static>> {
     }
 }
 
-impl<ByteBuf: Eq + std::hash::Hash> ExtendedHandshake<ByteBuf> {
-    pub fn get_msgid(&self, msg_type: &[u8]) -> Option<u8>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
-        self.m.iter().find_map(|(k, v)| {
-            if k.as_ref() == msg_type {
-                Some(*v)
-            } else {
-                None
-            }
-        })
+impl<'a, ByteBuf> ExtendedHandshake<ByteBuf>
+where
+    ByteBuf: Eq + std::hash::Hash + std::borrow::Borrow<[u8]>,
+{
+    fn get_msgid(&self, msg_type: &'a [u8]) -> Option<u8> {
+        self.m.get(msg_type).map(|v| *v)
     }
 
-    pub fn ut_metadata(&self) -> Option<u8>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
-        self.get_msgid(b"ut_metadata")
+    pub fn ut_metadata(&self) -> Option<u8> {
+        self.get_msgid(EXTENDED_UT_METADATA_KEY)
     }
 }
 

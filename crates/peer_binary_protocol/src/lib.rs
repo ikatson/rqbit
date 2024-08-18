@@ -44,6 +44,7 @@ const MSGID_PIECE: u8 = 7;
 const MSGID_CANCEL: u8 = 8;
 const MSGID_EXTENDED: u8 = 20;
 
+pub const EXTENDED_UT_METADATA_KEY: &[u8] = b"ut_metadata";
 pub const MY_EXTENDED_UT_METADATA: u8 = 3;
 
 #[derive(Debug)]
