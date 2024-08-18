@@ -10,7 +10,7 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::MY_EXTENDED_UT_METADATA;
+use crate::{EXTENDED_UT_METADATA_KEY, MY_EXTENDED_UT_METADATA};
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
@@ -39,7 +39,7 @@ pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
 impl ExtendedHandshake<ByteBuf<'static>> {
     pub fn new() -> Self {
         let mut features = HashMap::new();
-        features.insert(ByteBuf(b"ut_metadata"), MY_EXTENDED_UT_METADATA);
+        features.insert(ByteBuf(EXTENDED_UT_METADATA_KEY), MY_EXTENDED_UT_METADATA);
         Self {
             m: features,
             ..Default::default()
@@ -56,7 +56,7 @@ where
     }
 
     pub fn ut_metadata(&self) -> Option<u8> {
-        self.get_msgid(b"ut_metadata")
+        self.get_msgid(EXTENDED_UT_METADATA_KEY)
     }
 }
 
