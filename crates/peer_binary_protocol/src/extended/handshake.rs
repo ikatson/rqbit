@@ -47,24 +47,15 @@ impl ExtendedHandshake<ByteBuf<'static>> {
     }
 }
 
-impl<ByteBuf: Eq + std::hash::Hash> ExtendedHandshake<ByteBuf> {
-    pub fn get_msgid(&self, msg_type: &[u8]) -> Option<u8>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
-        self.m.iter().find_map(|(k, v)| {
-            if k.as_ref() == msg_type {
-                Some(*v)
-            } else {
-                None
-            }
-        })
+impl<'a, ByteBuf> ExtendedHandshake<ByteBuf>
+where
+    ByteBuf: Eq + std::hash::Hash + std::borrow::Borrow<[u8]>,
+{
+    fn get_msgid(&self, msg_type: &'a [u8]) -> Option<u8> {
+        self.m.get(msg_type).map(|v| *v)
     }
 
-    pub fn ut_metadata(&self) -> Option<u8>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+    pub fn ut_metadata(&self) -> Option<u8> {
         self.get_msgid(b"ut_metadata")
     }
 }
