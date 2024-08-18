@@ -60,6 +60,9 @@ async fn test_e2e_download() {
                     max_random_sleep_ms: rand::thread_rng().gen_range(0u8..16),
                 }
                 .as_peer_id();
+                let listen_range_start = 15100u16 + i as u16;
+                let listen_range_end = listen_range_start + 1;
+                let listen_range = listen_range_start..listen_range_end;
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
@@ -69,7 +72,7 @@ async fn test_e2e_download() {
                         persistence: None,
                         peer_id: Some(peer_id),
                         peer_opts: None,
-                        listen_port_range: Some(15100..17000),
+                        listen_port_range: Some(listen_range),
                         enable_upnp_port_forwarding: false,
                         default_storage_factory: None,
                         defer_writes_up_to: None,
