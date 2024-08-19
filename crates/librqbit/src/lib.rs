@@ -25,6 +25,19 @@
 
 #![warn(clippy::cast_possible_truncation)]
 
+macro_rules! aframe {
+    ($e:expr) => {{
+        #[cfg(feature = "async-bt")]
+        {
+            async_backtrace::frame!($e)
+        }
+        #[cfg(not(feature = "async-bt"))]
+        {
+            $e
+        }
+    }};
+}
+
 pub mod api;
 mod api_error;
 mod chunk_tracker;

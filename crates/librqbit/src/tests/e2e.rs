@@ -14,13 +14,29 @@ use tracing::{error_span, info, Instrument};
 
 use crate::{
     create_torrent,
-    tests::test_util::{create_default_random_dir_with_torrents, TestPeerMetadata},
+    tests::test_util::{
+        create_default_random_dir_with_torrents, spawn_debug_server, TestPeerMetadata,
+    },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e_download() {
+    let timeout = std::env::var("E2E_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(180);
+
+    tokio::time::timeout(Duration::from_secs(timeout), _test_e2e_download())
+        .await
+        .context("test_e2e_download timed out")
+        .unwrap()
+}
+
+async fn _test_e2e_download() {
     let _ = tracing_subscriber::fmt::try_init();
+
+    spawn_debug_server();
 
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
@@ -41,14 +57,17 @@ async fn test_e2e_download() {
     .await
     .unwrap();
 
-    let num_servers = 128;
+    let num_servers = std::env::var("E2E_NUM_SERVERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(128u8);
 
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
     let mut futs = Vec::new();
 
     // 2. Start N servers that are serving that torrent, and return their IP:port combos.
     //    Disable DHT on each.
-    for i in 0u8..num_servers {
+    for i in 0..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let tempdir = tempdir.path().to_owned();
         let fut = spawn(

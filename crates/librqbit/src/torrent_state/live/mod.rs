@@ -70,15 +70,12 @@ use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
     Handshake, Message, MessageOwned, Piece, Request,
 };
-use tokio::{
-    sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Notify, OwnedSemaphorePermit, Semaphore,
-    },
-    time::timeout,
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    Notify, OwnedSemaphorePermit, Semaphore,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
@@ -177,6 +174,7 @@ pub struct TorrentStateLive {
     peer_queue_tx: UnboundedSender<SocketAddr>,
 
     finished_notify: Notify,
+    new_pieces_notify: Notify,
 
     down_speed_estimator: SpeedEstimator,
     up_speed_estimator: SpeedEstimator,
@@ -233,6 +231,7 @@ impl TorrentStateLive {
             },
             lengths,
             peer_semaphore: Arc::new(Semaphore::new(128)),
+            new_pieces_notify: Notify::new(),
             peer_queue_tx,
             finished_notify: Notify::new(),
             down_speed_estimator,
@@ -347,8 +346,9 @@ impl TorrentStateLive {
                 "manage_incoming_peer",
                 addr = %checked_peer.addr
             ),
-            self.clone()
-                .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit),
+            aframe!(self
+                .clone()
+                .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)),
         );
         Ok(())
     }
@@ -449,7 +449,12 @@ impl TorrentStateLive {
             state.meta.spawner,
             state.meta.connector.clone(),
         );
-        let requester = handler.task_peer_chunk_requester();
+        let requester = aframe!(handler
+            .task_peer_chunk_requester()
+            .instrument(error_span!("chunk_requester")));
+        let conn_manager = aframe!(peer_connection
+            .manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe())
+            .instrument(error_span!("peer_connection")));
 
         handler
             .counters
@@ -457,7 +462,7 @@ impl TorrentStateLive {
             .fetch_add(1, Ordering::Relaxed);
         let res = tokio::select! {
             r = requester => {r}
-            r = peer_connection.manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe()) => {r}
+            r = conn_manager => {r}
         };
 
         match res {
@@ -490,7 +495,7 @@ impl TorrentStateLive {
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
                 error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
-                state.clone().task_manage_outgoing_peer(addr, permit),
+                aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
         }
     }
@@ -897,7 +902,8 @@ impl PeerHandler {
                         req.chunk_index
                     );
                     g.get_chunks_mut()?
-                        .mark_chunk_request_cancelled(req.piece_index, req.chunk_index);
+                        .mark_piece_broken_if_not_have(req.piece_index);
+                    self.state.new_pieces_notify.notify_waiters();
                 }
             }
             PeerState::NotNeeded => {
@@ -926,7 +932,7 @@ impl PeerHandler {
         self.counters.errors.fetch_add(1, Ordering::Relaxed);
 
         if self.state.is_finished_and_dont_need_peers() {
-            trace!("torrent finished, not re-queueing");
+            debug!("torrent finished, not re-queueing");
             pe.value_mut().state.set(PeerState::NotNeeded, pstats);
             return Ok(());
         }
@@ -1208,7 +1214,7 @@ impl PeerHandler {
         }
 
         loop {
-            self.wait_for_unchoke().await;
+            aframe!(self.wait_for_unchoke()).await;
 
             if self.state.is_finished_and_dont_need_peers() {
                 debug!("nothing left to do, disconnecting peer");
@@ -1219,6 +1225,7 @@ impl PeerHandler {
             // to download early pieces.
             // Then try get the next one in queue.
             // Afterwards means we are close to completion, try stealing more aggressively.
+            let new_piece_notify = self.state.new_pieces_notify.notified();
             let next = match self
                 .try_steal_old_slow_piece(10.)
                 .map_or_else(|| self.reserve_next_needed_piece(), |v| Ok(Some(v)))?
@@ -1227,7 +1234,15 @@ impl PeerHandler {
                 Some(next) => next,
                 None => {
                     debug!("no pieces to request");
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    match aframe!(tokio::time::timeout(
+                        Duration::from_secs(10),
+                        new_piece_notify
+                    ))
+                    .await
+                    {
+                        Ok(()) => debug!("woken up, new pieces might be available"),
+                        Err(_) => debug!("woken up by sleep timer"),
+                    }
                     continue;
                 }
             };
@@ -1261,7 +1276,12 @@ impl PeerHandler {
                 };
 
                 loop {
-                    match timeout(Duration::from_secs(10), self.requests_sem.acquire()).await {
+                    match aframe!(tokio::time::timeout(
+                        Duration::from_secs(10),
+                        aframe!(self.requests_sem.acquire())
+                    ))
+                    .await
+                    {
                         Ok(acq) => break acq?.forget(),
                         Err(_) => continue,
                     };
@@ -1490,6 +1510,7 @@ impl PeerHandler {
                         .lock_write("mark_piece_broken")
                         .get_chunks_mut()?
                         .mark_piece_broken_if_not_have(chunk_info.piece_index);
+                    state.new_pieces_notify.notify_waiters();
                     anyhow::bail!("i am probably a bogus peer. dying.")
                 }
             };
