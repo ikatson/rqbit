@@ -18,8 +18,16 @@ use crate::{
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
+const TIMEOUT_SECS: u64 = 180;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e_download() {
+    tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), _test_e2e_download())
+        .await
+        .unwrap()
+}
+
+async fn _test_e2e_download() {
     let _ = tracing_subscriber::fmt::try_init();
 
     // 1. Create a torrent
