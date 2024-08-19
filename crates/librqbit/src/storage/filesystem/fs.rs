@@ -64,7 +64,6 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(target_family = "windows")]
         {
             use std::os::windows::fs::FileExt;
-            let mut remaining = buf.len();
             let g = of.file.read();
             let f = g.as_ref().context("file is None")?;
             f.seek_read(buf, offset)?;

@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-upnp"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "Library used by rqbit torrent client to lease port forwards on the router."
@@ -14,15 +14,15 @@ readme = "README.md"
 [dependencies]
 tracing = "0.1"
 anyhow = "1"
-reqwest = {version = "0.12"}
-serde = {version = "1", features = ["derive"]}
+reqwest = { version = "0.12" }
+serde = { version = "1", features = ["derive"] }
 serde-xml-rs = "0.6.0"
-tokio = {version = "1", features = ["macros"]}
+tokio = { version = "1", features = ["macros"] }
 futures = "0.3"
 url = "2"
 async-recursion = "1"
 network-interface = { git = 'https://github.com/ikatson/network-interface', branch = "compile-on-freebsd" }
 
 [dev-dependencies]
-tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = "0.3"
