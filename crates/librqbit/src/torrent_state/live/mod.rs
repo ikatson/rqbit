@@ -904,7 +904,7 @@ impl PeerHandler {
                         req.chunk_index
                     );
                     g.get_chunks_mut()?
-                        .mark_chunk_request_cancelled(req.piece_index, req.chunk_index);
+                        .mark_piece_broken_if_not_have(req.piece_index);
                 }
             }
             PeerState::NotNeeded => {

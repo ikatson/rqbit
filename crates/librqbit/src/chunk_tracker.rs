@@ -222,25 +222,6 @@ impl ChunkTracker {
         self.have[id.get() as usize]
     }
 
-    // None if wrong chunk
-    // true if did something
-    // false if didn't do anything
-    pub fn mark_chunk_request_cancelled(
-        &mut self,
-        index: ValidPieceIndex,
-        _chunk: u32,
-    ) -> Option<bool> {
-        if *self.have.get(index.get() as usize)? {
-            return Some(false);
-        }
-        // This will trigger the requesters to re-check each chunk in this piece.
-        let chunk_range = self.lengths.chunk_range(index);
-        if !self.chunk_status.get(chunk_range)?.all() {
-            self.queue_pieces.set(index.get() as usize, true);
-        }
-        Some(true)
-    }
-
     pub fn mark_piece_broken_if_not_have(&mut self, index: ValidPieceIndex) {
         if self
             .have
