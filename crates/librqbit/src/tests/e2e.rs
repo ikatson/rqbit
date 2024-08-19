@@ -20,12 +20,16 @@ use crate::{
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
-const TIMEOUT_SECS: u64 = 180;
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e_download() {
-    tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), _test_e2e_download())
+    let timeout = std::env::var("E2E_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(180);
+
+    tokio::time::timeout(Duration::from_secs(timeout), _test_e2e_download())
         .await
+        .context("test_e2e_download timed out")
         .unwrap()
 }
 
