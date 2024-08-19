@@ -1223,8 +1223,6 @@ impl PeerHandler {
         };
 
         loop {
-            aframe!(self.wait_for_unchoke()).await;
-
             // If we have full torrent, we don't need to request more pieces.
             // However we might still need to seed them to the peer.
             if self.state.is_finished_and_no_active_streams() {
@@ -1244,6 +1242,7 @@ impl PeerHandler {
             }
 
             update_interest(self, true)?;
+            aframe!(self.wait_for_unchoke()).await;
 
             // Try steal a pice from a very slow peer first. Otherwise we might wait too long
             // to download early pieces.
