@@ -199,7 +199,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .await
             .context("error reading handshake")?;
         let h_supports_extended = h.supports_extended();
-        trace!(
+        debug!(
             "connected: id={:?}",
             try_decode_peer_id(Id20::new(h.peer_id))
         );
