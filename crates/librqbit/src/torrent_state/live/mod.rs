@@ -78,7 +78,7 @@ use tokio::{
     time::timeout,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, info, trace, warn};
+use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
@@ -449,7 +449,12 @@ impl TorrentStateLive {
             state.meta.spawner,
             state.meta.connector.clone(),
         );
-        let requester = handler.task_peer_chunk_requester();
+        let requester = handler
+            .task_peer_chunk_requester()
+            .instrument(error_span!("chunk_requester"));
+        let conn_manager = peer_connection
+            .manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe())
+            .instrument(error_span!("peer_connection"));
 
         handler
             .counters
@@ -457,7 +462,7 @@ impl TorrentStateLive {
             .fetch_add(1, Ordering::Relaxed);
         let res = tokio::select! {
             r = requester => {r}
-            r = peer_connection.manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe()) => {r}
+            r = conn_manager => {r}
         };
 
         match res {
@@ -926,7 +931,7 @@ impl PeerHandler {
         self.counters.errors.fetch_add(1, Ordering::Relaxed);
 
         if self.state.is_finished_and_dont_need_peers() {
-            trace!("torrent finished, not re-queueing");
+            debug!("torrent finished, not re-queueing");
             pe.value_mut().state.set(PeerState::NotNeeded, pstats);
             return Ok(());
         }
