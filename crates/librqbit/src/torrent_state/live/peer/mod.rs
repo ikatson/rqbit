@@ -28,7 +28,7 @@ impl Peer {
         tx: PeerTx,
         counters: &AggregatePeerStatsAtomic,
     ) -> Self {
-        let state = PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx)));
+        let state = PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx, true)));
         counters.inc(&state.0);
         Self {
             state,
@@ -142,7 +142,10 @@ impl PeerStateNoMut {
         }
         match self.take(counters) {
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
-                self.set(PeerState::Live(LivePeerState::new(peer_id, tx)), counters);
+                self.set(
+                    PeerState::Live(LivePeerState::new(peer_id, tx, true)),
+                    counters,
+                );
             }
             PeerState::Connecting(..) | PeerState::Live(..) => unreachable!(),
         }
@@ -159,7 +162,10 @@ impl PeerStateNoMut {
                 PeerState::Connecting(tx) => tx,
                 _ => unreachable!(),
             };
-            self.set(PeerState::Live(LivePeerState::new(peer_id, tx)), counters);
+            self.set(
+                PeerState::Live(LivePeerState::new(peer_id, tx, false)),
+                counters,
+            );
             self.get_live_mut()
         } else {
             None
@@ -189,10 +195,10 @@ pub(crate) struct LivePeerState {
 }
 
 impl LivePeerState {
-    pub fn new(peer_id: Id20, tx: PeerTx) -> Self {
+    pub fn new(peer_id: Id20, tx: PeerTx, initial_interested: bool) -> Self {
         LivePeerState {
             peer_id,
-            peer_interested: false,
+            peer_interested: initial_interested,
             bitfield: BF::default(),
             inflight_requests: Default::default(),
             tx,

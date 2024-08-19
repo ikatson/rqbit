@@ -77,6 +77,11 @@ impl PeerStates {
         Some(p)
     }
 
+    pub fn is_peer_interested(&self, handle: PeerHandle) -> bool {
+        self.with_live(handle, |live| live.peer_interested)
+            .unwrap_or(false)
+    }
+
     pub fn mark_peer_interested(&self, handle: PeerHandle, is_interested: bool) -> Option<bool> {
         self.with_live_mut(handle, "mark_peer_interested", |live| {
             let prev = live.peer_interested;
@@ -84,6 +89,7 @@ impl PeerStates {
             prev
         })
     }
+
     pub fn update_bitfield_from_vec(&self, handle: PeerHandle, bitfield: Box<[u8]>) -> Option<()> {
         self.with_live_mut(handle, "update_bitfield_from_vec", |live| {
             live.bitfield = BF::from_boxed_slice(bitfield);
