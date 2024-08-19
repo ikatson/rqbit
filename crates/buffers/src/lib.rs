@@ -42,6 +42,9 @@ impl<'a> std::fmt::Display for HexBytes<'a> {
 }
 
 fn debug_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>, debug_strings: bool) -> std::fmt::Result {
+    if b.is_empty() {
+        return Ok(());
+    }
     if b.iter().all(|b| *b == 0) {
         return write!(f, "<{} bytes, all zeroes>", b.len());
     }

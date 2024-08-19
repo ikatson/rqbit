@@ -1,9 +1,9 @@
-use std::{collections::HashMap, marker::PhantomData};
+use std::{collections::HashMap, fmt::Display, marker::PhantomData};
 
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use serde::Deserializer;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::serde_bencode_de::from_bytes;
 
@@ -135,6 +135,44 @@ where
 
 pub type BencodeValueBorrowed<'a> = BencodeValue<ByteBuf<'a>>;
 pub type BencodeValueOwned = BencodeValue<ByteBufOwned>;
+
+// A wrapper to deserialize dyn values as strings.
+#[derive(PartialEq, Eq, Hash)]
+pub struct AsDisplay<T>(T);
+
+impl<'de, T> From<&'de [u8]> for AsDisplay<T>
+where
+    T: From<&'de [u8]>,
+{
+    fn from(value: &'de [u8]) -> Self {
+        Self(T::from(value))
+    }
+}
+
+impl<T> Serialize for AsDisplay<T>
+where
+    T: Display,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}", self.0))
+    }
+}
+
+impl<'de, T> Deserialize<'de> for AsDisplay<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = T::deserialize(deserializer)?;
+        Ok(AsDisplay(value))
+    }
+}
 
 #[cfg(test)]
 mod tests {
