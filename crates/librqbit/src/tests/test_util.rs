@@ -85,7 +85,17 @@ impl TestPeerMetadata {
 
 async fn debug_server() -> anyhow::Result<()> {
     async fn backtraces() -> impl IntoResponse {
-        async_backtrace::taskdump_tree(true)
+        #[cfg(feature = "async-bt")]
+        {
+            async_backtrace::taskdump_tree(true)
+        }
+        #[cfg(not(feature = "async-bt"))]
+        {
+            use crate::ApiError;
+            ApiError::from(anyhow::anyhow!(
+                "backtraces not enabled, enable async-bt feature"
+            ))
+        }
     }
 
     let app = Router::new().route("/backtrace", get(backtraces));

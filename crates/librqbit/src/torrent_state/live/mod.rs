@@ -70,12 +70,9 @@ use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
     Handshake, Message, MessageOwned, Piece, Request,
 };
-use tokio::{
-    sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Notify, OwnedSemaphorePermit, Semaphore,
-    },
-    time::timeout,
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    Notify, OwnedSemaphorePermit, Semaphore,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
@@ -349,13 +346,13 @@ impl TorrentStateLive {
                 "manage_incoming_peer",
                 addr = %checked_peer.addr
             ),
-            self.clone()
-                .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit),
+            aframe!(self
+                .clone()
+                .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)),
         );
         Ok(())
     }
 
-    #[async_backtrace::framed]
     async fn task_manage_incoming_peer(
         self: Arc<Self>,
         checked_peer: CheckedIncomingConnection,
@@ -416,7 +413,6 @@ impl TorrentStateLive {
         Ok(())
     }
 
-    #[async_backtrace::framed]
     async fn task_manage_outgoing_peer(
         self: Arc<Self>,
         addr: SocketAddr,
@@ -453,10 +449,10 @@ impl TorrentStateLive {
             state.meta.spawner,
             state.meta.connector.clone(),
         );
-        let requester = async_backtrace::frame!(handler
+        let requester = aframe!(handler
             .task_peer_chunk_requester()
             .instrument(error_span!("chunk_requester")));
-        let conn_manager = async_backtrace::frame!(peer_connection
+        let conn_manager = aframe!(peer_connection
             .manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe())
             .instrument(error_span!("peer_connection")));
 
@@ -499,7 +495,7 @@ impl TorrentStateLive {
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
                 error_span!(parent: state.meta.span.clone(), "manage_peer", peer = addr.to_string()),
-                state.clone().task_manage_outgoing_peer(addr, permit),
+                aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
         }
     }
@@ -1218,7 +1214,7 @@ impl PeerHandler {
         }
 
         loop {
-            async_backtrace::frame!(self.wait_for_unchoke()).await;
+            aframe!(self.wait_for_unchoke()).await;
 
             if self.state.is_finished_and_dont_need_peers() {
                 debug!("nothing left to do, disconnecting peer");
@@ -1238,12 +1234,15 @@ impl PeerHandler {
                 Some(next) => next,
                 None => {
                     debug!("no pieces to request");
-                    let _ = async_backtrace::frame!(tokio::time::timeout(
+                    match aframe!(tokio::time::timeout(
                         Duration::from_secs(10),
                         new_piece_notify
                     ))
-                    .await;
-                    debug!("woken up");
+                    .await
+                    {
+                        Ok(()) => debug!("woken up, new pieces might be available"),
+                        Err(_) => debug!("woken up by sleep timer"),
+                    }
                     continue;
                 }
             };
@@ -1277,9 +1276,9 @@ impl PeerHandler {
                 };
 
                 loop {
-                    match async_backtrace::frame!(timeout(
+                    match aframe!(tokio::time::timeout(
                         Duration::from_secs(10),
-                        async_backtrace::frame!(self.requests_sem.acquire())
+                        aframe!(self.requests_sem.acquire())
                     ))
                     .await
                     {
