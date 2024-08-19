@@ -47,7 +47,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -371,6 +371,7 @@ impl TorrentStateLive {
             state: self.clone(),
             tx,
             counters,
+            first_message_received: AtomicBool::new(false),
         };
         let options = PeerConnectionOptions {
             connect_timeout: self.meta.options.peer_connect_timeout,
@@ -434,6 +435,7 @@ impl TorrentStateLive {
             state: state.clone(),
             tx,
             counters,
+            first_message_received: AtomicBool::new(false),
         };
         let options = PeerConnectionOptions {
             connect_timeout: state.meta.options.peer_connect_timeout,
@@ -769,6 +771,8 @@ struct PeerHandler {
     addr: SocketAddr,
 
     tx: PeerTx,
+
+    first_message_received: AtomicBool,
 }
 
 impl<'a> PeerConnectionHandler for &'a PeerHandler {
@@ -783,6 +787,14 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     }
 
     async fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+        // The first message must be "bitfield", but if it's not sent,
+        // assume the bitfield is all zeroes and was sent.
+        if !matches!(&message, Message::Bitfield(..))
+            && !self.first_message_received.swap(true, Ordering::Relaxed)
+        {
+            self.on_bitfield_notify.notify_waiters();
+        }
+
         match message {
             Message::Request(request) => {
                 self.on_download_request(request)
