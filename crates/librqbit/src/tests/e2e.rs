@@ -17,7 +17,7 @@ use crate::{
     tests::test_util::{
         create_default_random_dir_with_torrents, spawn_debug_server, TestPeerMetadata,
     },
-    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
+    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
@@ -86,7 +86,6 @@ async fn _test_e2e_download() {
                         disable_dht: true,
                         disable_dht_persistence: true,
                         dht_config: None,
-                        persistence: None,
                         peer_id: Some(peer_id),
                         peer_opts: None,
                         listen_port_range: Some(listen_range),
@@ -176,14 +175,18 @@ async fn _test_e2e_download() {
 
     // 3. Start a client with the initial peers, and download the file.
     for _ in 0..client_iters {
-        let outdir = tempfile::TempDir::with_prefix("rqbit_e2e_client").unwrap();
+        let root = tempfile::TempDir::with_prefix("rqbit_e2e_client").unwrap();
+        let outdir = root.path().join("out");
+        let session_persistence = root.path().join("session");
         let session = Session::new_with_opts(
-            outdir.path().to_owned(),
+            outdir.to_owned(),
             SessionOptions {
                 disable_dht: true,
                 disable_dht_persistence: true,
                 dht_config: None,
-                persistence: None,
+                persistence: Some(SessionPersistenceConfig::Json {
+                    folder: Some(session_persistence),
+                }),
                 listen_port_range: None,
                 enable_upnp_port_forwarding: false,
                 root_span: Some(error_span!("client")),
@@ -263,7 +266,12 @@ async fn _test_e2e_download() {
         }
 
         info!("handle is completed");
-        session.delete(id.into(), false).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), session.delete(id.into(), false))
+            .await
+            .context("timeout deleting torrent")
+            .unwrap()
+            .context("error deleting")
+            .unwrap();
 
         info!("deleted handle");
 
@@ -305,6 +313,26 @@ async fn _test_e2e_download() {
         })
         .await
         .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            session.delete(handle.id().into(), true),
+        )
+        .await
+        .context("timeout")
+        .unwrap()
+        .context("error deleting")
+        .unwrap();
+
+        // Ensure the files were deleted from the filesystem.
+        let d = std::fs::read_dir(&outdir)
+            .context("read_dir outdir")
+            .unwrap();
+        assert_eq!(
+            d.into_iter().count(),
+            0,
+            "{outdir:?} was not empty after deletion"
+        );
 
         info!("all good");
     }
