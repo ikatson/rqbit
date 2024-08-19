@@ -1179,7 +1179,9 @@ impl Session {
 
         if let Some(p) = self.persistence.as_ref() {
             if let Err(e) = p.delete(id).await {
-                error!(error=?e, "error deleting torrent from database");
+                error!(error=?e, "error deleting torrent from persistence database");
+            } else {
+                debug!(?id, "deleted torrent from persistence database")
             }
         }
 

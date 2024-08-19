@@ -11,7 +11,7 @@ use itertools::Itertools;
 use librqbit_core::Id20;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 
 use super::{SerializedTorrent, SessionPersistenceStore};
 
@@ -74,13 +74,17 @@ impl JsonSessionPersistenceStore {
             .open(&tmp_filename)
             .await
             .with_context(|| format!("error opening {:?}", tmp_filename))?;
+        trace!(?tmp_filename, "opened temp file");
 
         let mut buf = Vec::new();
         serde_json::to_writer(&mut buf, &*self.db_content.read().await)
             .context("error serializing")?;
+
+        trace!(?tmp_filename, "serialized DB as JSON");
         tmp.write_all(&buf)
             .await
             .with_context(|| format!("error writing {tmp_filename:?}"))?;
+        trace!(?tmp_filename, "wrote to temp file");
 
         tokio::fs::rename(&tmp_filename, &self.db_filename)
             .await
@@ -164,12 +168,21 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
     }
 
     async fn delete(&self, id: TorrentId) -> anyhow::Result<()> {
-        if let Some(t) = self.db_content.write().await.torrents.remove(&id) {
+        debug!(?id, "attempting to delete");
+        // BIG NOTE: DO NOT inline this variable. Otherwise Rust doesn't drop the lock and it deadlocks
+        // when calling flush - because let bindings prolong the duration.
+        let removed = self.db_content.write().await.torrents.remove(&id);
+        if let Some(t) = removed {
+            debug!(?id, "deleted from in-memory db, flushing");
             self.flush().await?;
             let tf = self.torrent_bytes_filename(&t.info_hash);
             if let Err(e) = tokio::fs::remove_file(&tf).await {
                 warn!(error=?e, filename=?tf, "error removing torrent file");
+            } else {
+                debug!(filename=?tf, "removed");
             }
+        } else {
+            bail!("error deleting: didn't find torrent id={id}")
         }
 
         Ok(())
