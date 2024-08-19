@@ -3,6 +3,8 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use bencode::AsDisplay;
+use buffers::ByteBuf;
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryStreamExt};
 use http::{HeaderMap, HeaderValue, StatusCode};
@@ -190,6 +192,7 @@ impl HttpApi {
 
         async fn resolve_magnet(
             State(state): State<ApiState>,
+            inp_headers: HeaderMap,
             url: String,
         ) -> Result<impl IntoResponse> {
             let added = state
@@ -219,7 +222,21 @@ impl HttpApi {
                     ))
                 }
             };
+
             let mut headers = HeaderMap::new();
+
+            if inp_headers
+                .get("Accept")
+                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+                == Some("application/json")
+            {
+                let data = bencode::dyn_from_bytes::<AsDisplay<ByteBuf>>(&content)
+                    .context("error decoding .torrent file content")?;
+                let data = serde_json::to_string(&data).context("error serializing")?;
+                headers.insert("Content-Type", HeaderValue::from_static("application/json"));
+                return Ok((headers, data).into_response());
+            }
+
             headers.insert(
                 "Content-Type",
                 HeaderValue::from_static("application/x-bittorrent"),
@@ -234,7 +251,7 @@ impl HttpApi {
                     }
                 }
             }
-            Ok((headers, content))
+            Ok((headers, content).into_response())
         }
 
         async fn torrent_playlist(
