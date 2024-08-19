@@ -61,12 +61,22 @@ impl TorrentStorage for FilesystemStorage {
                 .context("file is None")?
                 .read_exact_at(buf, offset)?)
         }
-        #[cfg(not(target_family = "unix"))]
+        #[cfg(target_family = "windows")]
+        {
+            use std::os::windows::fs::FileExt;
+            let mut remaining = buf.len();
+            let g = of.file.read();
+            let f = g.as_ref().context("file is None")?;
+            f.seek_read(buf, offset)?;
+            Ok(())
+        }
+        #[cfg(not(any(target_family = "unix", target_family = "windows")))]
         {
             use std::io::{Read, Seek, SeekFrom};
             let mut g = of.file.write();
-            g.seek(SeekFrom::Start(offset))?;
-            Ok(g.read_exact(buf)?)
+            let mut f = g.as_ref().context("file is None")?;
+            f.seek(SeekFrom::Start(offset))?;
+            Ok(f.read_exact(buf)?)
         }
     }
 
