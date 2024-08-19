@@ -54,7 +54,12 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(target_family = "unix")]
         {
             use std::os::unix::fs::FileExt;
-            Ok(of.file.read().read_exact_at(buf, offset)?)
+            Ok(of
+                .file
+                .read()
+                .as_ref()
+                .context("file is None")?
+                .read_exact_at(buf, offset)?)
         }
         #[cfg(not(target_family = "unix"))]
         {
@@ -70,14 +75,21 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(target_family = "unix")]
         {
             use std::os::unix::fs::FileExt;
-            Ok(of.file.read().write_all_at(buf, offset)?)
+            Ok(of
+                .file
+                .read()
+                .as_ref()
+                .context("file is None")?
+                .write_all_at(buf, offset)?)
         }
         #[cfg(target_family = "windows")]
         {
             use std::os::windows::fs::FileExt;
             let mut remaining = buf.len();
+            let g = of.file.read();
+            let f = g.as_ref().context("file is None")?;
             while remaining > 0 {
-                remaining -= of.file.read().seek_write(buf, offset)?;
+                remaining -= f.seek_write(buf, offset)?;
             }
             Ok(())
         }
@@ -85,8 +97,9 @@ impl TorrentStorage for FilesystemStorage {
         {
             use std::io::{Read, Seek, SeekFrom, Write};
             let mut g = of.file.write();
-            g.seek(SeekFrom::Start(offset))?;
-            Ok(g.write_all(buf)?)
+            let mut f = g.as_ref().context("file is None")?;
+            f.seek(SeekFrom::Start(offset))?;
+            Ok(f.write_all(buf)?)
         }
     }
 
@@ -95,7 +108,12 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
-        Ok(self.opened_files[file_id].file.write().set_len(len)?)
+        Ok(self.opened_files[file_id]
+            .file
+            .write()
+            .as_ref()
+            .context("file is None")?
+            .set_len(len)?)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
