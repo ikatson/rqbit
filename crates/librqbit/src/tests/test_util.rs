@@ -1,8 +1,11 @@
 use std::{io::Write, path::Path};
 
+use anyhow::Context;
+use axum::{response::IntoResponse, routing::get, Router};
 use librqbit_core::Id20;
 use rand::{thread_rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
+use tracing::info;
 
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     let mut file = std::fs::OpenOptions::new()
@@ -78,4 +81,29 @@ impl TestPeerMetadata {
         }
         0f64
     }
+}
+
+async fn debug_server() -> anyhow::Result<()> {
+    async fn backtraces() -> impl IntoResponse {
+        async_backtrace::taskdump_tree(true)
+    }
+
+    let app = Router::new().route("/backtrace", get(backtraces));
+    let app = app.into_make_service();
+
+    let addr = "127.0.0.1:3032";
+
+    info!(%addr, "starting HTTP server");
+
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("error binding to {addr}"))?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+pub fn spawn_debug_server() {
+    tokio::spawn(debug_server());
 }

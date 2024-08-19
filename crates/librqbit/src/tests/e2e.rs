@@ -14,7 +14,9 @@ use tracing::{error_span, info, Instrument};
 
 use crate::{
     create_torrent,
-    tests::test_util::{create_default_random_dir_with_torrents, TestPeerMetadata},
+    tests::test_util::{
+        create_default_random_dir_with_torrents, spawn_debug_server, TestPeerMetadata,
+    },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions,
 };
 
@@ -29,6 +31,8 @@ async fn test_e2e_download() {
 
 async fn _test_e2e_download() {
     let _ = tracing_subscriber::fmt::try_init();
+
+    spawn_debug_server();
 
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.

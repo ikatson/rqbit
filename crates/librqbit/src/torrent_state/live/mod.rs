@@ -353,6 +353,7 @@ impl TorrentStateLive {
         Ok(())
     }
 
+    #[async_backtrace::framed]
     async fn task_manage_incoming_peer(
         self: Arc<Self>,
         checked_peer: CheckedIncomingConnection,
@@ -413,6 +414,7 @@ impl TorrentStateLive {
         Ok(())
     }
 
+    #[async_backtrace::framed]
     async fn task_manage_outgoing_peer(
         self: Arc<Self>,
         addr: SocketAddr,
@@ -449,12 +451,12 @@ impl TorrentStateLive {
             state.meta.spawner,
             state.meta.connector.clone(),
         );
-        let requester = handler
+        let requester = async_backtrace::frame!(handler
             .task_peer_chunk_requester()
-            .instrument(error_span!("chunk_requester"));
-        let conn_manager = peer_connection
+            .instrument(error_span!("chunk_requester")));
+        let conn_manager = async_backtrace::frame!(peer_connection
             .manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe())
-            .instrument(error_span!("peer_connection"));
+            .instrument(error_span!("peer_connection")));
 
         handler
             .counters
@@ -1213,7 +1215,7 @@ impl PeerHandler {
         }
 
         loop {
-            self.wait_for_unchoke().await;
+            async_backtrace::frame!(self.wait_for_unchoke()).await;
 
             if self.state.is_finished_and_dont_need_peers() {
                 debug!("nothing left to do, disconnecting peer");
@@ -1232,7 +1234,7 @@ impl PeerHandler {
                 Some(next) => next,
                 None => {
                     debug!("no pieces to request");
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    async_backtrace::frame!(tokio::time::sleep(Duration::from_secs(10))).await;
                     continue;
                 }
             };
@@ -1266,7 +1268,12 @@ impl PeerHandler {
                 };
 
                 loop {
-                    match timeout(Duration::from_secs(10), self.requests_sem.acquire()).await {
+                    match async_backtrace::frame!(timeout(
+                        Duration::from_secs(10),
+                        async_backtrace::frame!(self.requests_sem.acquire())
+                    ))
+                    .await
+                    {
                         Ok(acq) => break acq?.forget(),
                         Err(_) => continue,
                     };

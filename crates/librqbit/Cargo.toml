@@ -88,6 +88,7 @@ lru = { version = "0.12.3", optional = true }
 mime_guess = { version = "2.0.5", default-features = false }
 tokio-socks = "0.5.2"
 async-trait = "0.1.81"
+async-backtrace = "0.2"
 
 [build-dependencies]
 anyhow = "1"
