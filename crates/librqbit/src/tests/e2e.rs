@@ -41,14 +41,17 @@ async fn test_e2e_download() {
     .await
     .unwrap();
 
-    let num_servers = 128;
+    let num_servers = std::env::var("E2E_NUM_SERVERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(128u8);
 
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
     let mut futs = Vec::new();
 
     // 2. Start N servers that are serving that torrent, and return their IP:port combos.
     //    Disable DHT on each.
-    for i in 0u8..num_servers {
+    for i in 0..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let tempdir = tempdir.path().to_owned();
         let fut = spawn(
