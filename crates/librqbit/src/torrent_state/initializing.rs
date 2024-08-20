@@ -99,7 +99,10 @@ impl TorrentStateInitializing {
                     )
                     .initial_check(&self.checked_bytes)
                 })?;
-                bitv_factory.store_initial_check(id, have_pieces).await?
+                bitv_factory
+                    .store_initial_check(id, have_pieces)
+                    .await
+                    .context("error storing initial check bitfield")?
             }
         };
 
