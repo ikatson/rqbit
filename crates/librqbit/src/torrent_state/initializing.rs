@@ -70,10 +70,22 @@ impl TorrentStateInitializing {
         bitv_factory: Arc<dyn BitVFactory>,
     ) -> anyhow::Result<TorrentStatePaused> {
         let id: TorrentIdOrHash = self.meta.info_hash.into();
-        let have_pieces = bitv_factory
+        let mut have_pieces = bitv_factory
             .load(id)
             .await
             .context("error loading have_pieces")?;
+        if let Some(hp) = have_pieces.as_ref() {
+            let actual = hp.as_bytes().len();
+            let expected = self.meta.lengths.piece_bitfield_bytes();
+            if actual != expected {
+                warn!(
+                    actual,
+                    expected,
+                    "the bitfield loaded isn't of correct length, ignoring it, will do full check"
+                );
+                have_pieces = None;
+            }
+        }
         let have_pieces = match have_pieces {
             Some(h) => h,
             None => {
