@@ -41,6 +41,7 @@ macro_rules! aframe {
 pub mod api;
 mod api_error;
 mod bitv;
+mod bitv_factory;
 mod chunk_tracker;
 mod create_torrent_file;
 mod dht_utils;

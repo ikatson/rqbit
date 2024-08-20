@@ -1,11 +1,17 @@
 use std::{any::TypeId, collections::HashMap, path::PathBuf};
 
 use crate::{
-    session::TorrentId, storage::filesystem::FilesystemStorageFactory,
-    torrent_state::ManagedTorrentHandle, ManagedTorrentState,
+    api::TorrentIdOrHash,
+    bitv::{BitV, MmapBitV},
+    bitv_factory::BitVFactory,
+    session::TorrentId,
+    storage::filesystem::FilesystemStorageFactory,
+    torrent_state::ManagedTorrentHandle,
+    ManagedTorrentState,
 };
 use anyhow::{bail, Context};
 use async_trait::async_trait;
+use bitvec::{order::Lsb0, vec::BitVec};
 use futures::{stream::BoxStream, StreamExt};
 use itertools::Itertools;
 use librqbit_core::Id20;
@@ -65,6 +71,34 @@ impl JsonSessionPersistenceStore {
         })
     }
 
+    async fn to_id(&self, id: TorrentIdOrHash) -> anyhow::Result<TorrentId> {
+        match id {
+            TorrentIdOrHash::Id(id) => Ok(id),
+            TorrentIdOrHash::Hash(h) => self
+                .db_content
+                .read()
+                .await
+                .torrents
+                .iter()
+                .find_map(|(k, v)| if v.info_hash() == &h { Some(*k) } else { None })
+                .context("not found"),
+        }
+    }
+
+    async fn to_hash(&self, id: TorrentIdOrHash) -> anyhow::Result<Id20> {
+        match id {
+            TorrentIdOrHash::Id(id) => self
+                .db_content
+                .read()
+                .await
+                .torrents
+                .get(&id)
+                .map(|v| *v.info_hash())
+                .context("not found"),
+            TorrentIdOrHash::Hash(h) => Ok(h),
+        }
+    }
+
     async fn flush(&self) -> anyhow::Result<()> {
         let tmp_filename = format!("{}.tmp", self.db_filename.to_str().unwrap());
         let mut tmp = tokio::fs::OpenOptions::new()
@@ -95,6 +129,10 @@ impl JsonSessionPersistenceStore {
 
     fn torrent_bytes_filename(&self, info_hash: &Id20) -> PathBuf {
         self.output_folder.join(format!("{:?}.torrent", info_hash))
+    }
+
+    fn bitv_filename(&self, info_hash: &Id20) -> PathBuf {
+        self.output_folder.join(format!("{:?}.bitv", info_hash))
     }
 
     async fn update_db(
@@ -149,6 +187,49 @@ impl JsonSessionPersistenceStore {
         self.flush().await?;
 
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl BitVFactory for JsonSessionPersistenceStore {
+    async fn load(&self, id: TorrentIdOrHash) -> anyhow::Result<Option<Box<dyn BitV>>> {
+        let h = self.to_hash(id).await?;
+        let filename = self.bitv_filename(&h);
+        let f = match std::fs::OpenOptions::new().write(true).open(&filename) {
+            Ok(f) => f,
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => return Ok(None),
+                _ => return Err(e).with_context(|| format!("error opening {filename:?}")),
+            },
+        };
+        Ok(Some(MmapBitV::new(f)?.into_dyn()))
+    }
+
+    async fn store_initial_check(
+        &self,
+        id: TorrentIdOrHash,
+        b: BitVec<u8, Lsb0>,
+    ) -> anyhow::Result<Box<dyn BitV>> {
+        let h = self.to_hash(id).await?;
+        let filename = self.bitv_filename(&h);
+        let tmp_filename = format!("{}.tmp", filename.to_str().context("bug")?);
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&filename)
+            .await
+            .with_context(|| format!("error opening {filename:?}"))?;
+        let b = b.into_vec();
+        tokio::io::copy(&mut &b[..], &mut dst)
+            .await
+            .context("error writing bitslice to {filename:?}")?;
+        tokio::fs::rename(tmp_filename, &filename).await?;
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&filename)
+            .with_context(|| format!("error opening {filename:?}"))?;
+        Ok(MmapBitV::new(f)?.into_dyn())
     }
 }
 

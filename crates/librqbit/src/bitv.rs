@@ -3,11 +3,13 @@ use std::fs::File;
 use anyhow::Context;
 use bitvec::{order::Lsb0, slice::BitSlice, vec::BitVec, view::AsBits, view::AsMutBits};
 
+#[async_trait::async_trait]
 pub trait BitV: Send {
     fn as_slice(&self) -> &BitSlice<u8, Lsb0>;
     fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Lsb0>;
-    fn flush(&mut self) -> anyhow::Result<()>;
     fn into_dyn(self) -> Box<dyn BitV>;
+
+    async fn flush(&mut self) -> anyhow::Result<()>;
 }
 
 pub struct MmapBitV {
@@ -23,6 +25,7 @@ impl MmapBitV {
     }
 }
 
+#[async_trait::async_trait]
 impl BitV for BitVec<u8, Lsb0> {
     fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
         self.as_bitslice()
@@ -32,7 +35,7 @@ impl BitV for BitVec<u8, Lsb0> {
         self.as_mut_bitslice()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
+    async fn flush(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -41,6 +44,7 @@ impl BitV for BitVec<u8, Lsb0> {
     }
 }
 
+#[async_trait::async_trait]
 impl BitV for MmapBitV {
     fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
         self.mmap.as_bits()
@@ -50,7 +54,7 @@ impl BitV for MmapBitV {
         self.mmap.as_mut_bits()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
+    async fn flush(&mut self) -> anyhow::Result<()> {
         Ok(self.mmap.flush()?)
     }
 
@@ -59,6 +63,7 @@ impl BitV for MmapBitV {
     }
 }
 
+#[async_trait::async_trait]
 impl BitV for Box<dyn BitV> {
     fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
         (**self).as_slice()
@@ -68,8 +73,8 @@ impl BitV for Box<dyn BitV> {
         (**self).as_slice_mut()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
-        (**self).flush()
+    async fn flush(&mut self) -> anyhow::Result<()> {
+        (**self).flush().await
     }
 
     fn into_dyn(self) -> Box<dyn BitV> {

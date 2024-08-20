@@ -1,10 +1,15 @@
 use std::path::PathBuf;
 
-use crate::{session::TorrentId, torrent_state::ManagedTorrentHandle};
+use crate::{
+    api::TorrentIdOrHash, bitv::BitV, bitv_factory::BitVFactory, session::TorrentId,
+    torrent_state::ManagedTorrentHandle,
+};
 use anyhow::Context;
+use bitvec::{order::Lsb0, vec::BitVec};
 use futures::{stream::BoxStream, StreamExt};
 use librqbit_core::Id20;
 use sqlx::{Pool, Postgres};
+use tracing::debug;
 
 use super::{SerializedTorrent, SessionPersistenceStore};
 
@@ -165,5 +170,21 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .filter_map(TorrentsTableRecord::into_serialized_torrent)
             .map(Ok);
         Ok(futures::stream::iter(torrents).boxed())
+    }
+}
+
+#[async_trait::async_trait]
+impl BitVFactory for PostgresSessionStorage {
+    async fn load(&self, _: TorrentIdOrHash) -> anyhow::Result<Option<Box<dyn BitV>>> {
+        debug!("BitVFactory not implemented for PostgresSessionStorage: fastresume not available");
+        Ok(None)
+    }
+
+    async fn store_initial_check(
+        &self,
+        _: TorrentIdOrHash,
+        b: BitVec<u8, Lsb0>,
+    ) -> anyhow::Result<Box<dyn BitV>> {
+        Ok(b.into_dyn())
     }
 }
