@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-use bitvec::{order::Lsb0, slice::BitSlice};
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
