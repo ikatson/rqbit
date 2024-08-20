@@ -191,6 +191,7 @@ async fn _test_e2e_download() {
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
                 }),
+                fastresume: true,
                 listen_port_range: None,
                 enable_upnp_port_forwarding: false,
                 root_span: Some(error_span!("client")),

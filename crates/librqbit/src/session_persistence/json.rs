@@ -221,6 +221,7 @@ impl BitVFactory for JsonSessionPersistenceStore {
             .write(true)
             .open(&filename)
             .with_context(|| format!("error opening {filename:?}"))?;
+        trace!(?filename, "stored initial check bitfield");
         Ok(MmapBitV::new(f)
             .with_context(|| format!("error constructing MmapBitV from file {filename:?}"))?
             .into_dyn())
