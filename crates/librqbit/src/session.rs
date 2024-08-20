@@ -371,6 +371,9 @@ pub struct SessionOptions {
     /// librqbit instances at a time.
     pub dht_config: Option<PersistentDhtConfig>,
 
+    /// Enable fastresume, to restore state quickly after restart.
+    pub fastresume: bool,
+
     /// Turn on to dump session contents into a file periodically, so that on next start
     /// all remembered torrents will continue where they left off.
     pub persistence: Option<SessionPersistenceConfig>,
@@ -507,6 +510,17 @@ impl Session {
             async fn persistence_factory(
                 opts: &SessionOptions,
             ) -> anyhow::Result<(Option<Arc<dyn SessionPersistenceStore>>, Arc<dyn BitVFactory>)> {
+
+                macro_rules! make_result {
+                    ($store:expr) => {
+                        if opts.fastresume {
+                            Ok((Some($store.clone()), $store))
+                        } else {
+                            Ok((Some($store), Arc::new(NonPersistentBitVFactory {})))
+                        }
+                    };
+                }
+
                 match &opts.persistence {
                     Some(SessionPersistenceConfig::Json { folder }) => {
                         let folder = match folder.as_ref() {
@@ -520,13 +534,13 @@ impl Session {
                                 .context("error initializing JsonSessionPersistenceStore")?,
                         );
 
-                        Ok((Some(s.clone()), s))
+                        make_result!(s)
                     },
                     #[cfg(feature = "postgres")]
                     Some(SessionPersistenceConfig::Postgres { connection_string }) => {
                         use crate::session_persistence::postgres::PostgresSessionStorage;
                         let p = Arc::new(PostgresSessionStorage::new(connection_string).await?);
-                        Ok((Some(p.clone()), p))
+                        make_result!(p)
                     }
                     None => Ok((None, Arc::new(NonPersistentBitVFactory {}))),
                 }

@@ -17,6 +17,7 @@ impl BitVFactory for NonPersistentBitVFactory {
     async fn load(&self, _: TorrentIdOrHash) -> anyhow::Result<Option<Box<dyn BitV>>> {
         Ok(None)
     }
+
     async fn store_initial_check(
         &self,
         _id: TorrentIdOrHash,
