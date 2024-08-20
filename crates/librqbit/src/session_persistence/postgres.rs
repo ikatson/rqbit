@@ -2,10 +2,9 @@ use std::path::PathBuf;
 
 use crate::{
     api::TorrentIdOrHash, bitv::BitV, bitv_factory::BitVFactory, session::TorrentId,
-    torrent_state::ManagedTorrentHandle,
+    torrent_state::ManagedTorrentHandle, type_aliases::BF,
 };
 use anyhow::Context;
-use bitvec::{order::Lsb0, vec::BitVec};
 use futures::{stream::BoxStream, StreamExt};
 use librqbit_core::Id20;
 use sqlx::{Pool, Postgres};
@@ -183,7 +182,7 @@ impl BitVFactory for PostgresSessionStorage {
     async fn store_initial_check(
         &self,
         _: TorrentIdOrHash,
-        b: BitVec<u8, Lsb0>,
+        b: BF,
     ) -> anyhow::Result<Box<dyn BitV>> {
         Ok(b.into_dyn())
     }

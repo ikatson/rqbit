@@ -79,8 +79,6 @@ pub trait SessionPersistenceStore: core::fmt::Debug + Send + Sync + BitVFactory 
     ) -> anyhow::Result<BoxStream<'_, anyhow::Result<(TorrentId, SerializedTorrent)>>>;
 }
 
-pub type BoxSessionPersistenceStore = Box<dyn SessionPersistenceStore>;
-
 fn serialize_info_hash<S>(id: &Id20, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,

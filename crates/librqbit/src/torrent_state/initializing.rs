@@ -10,7 +10,9 @@ use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
 use crate::{
+    api::TorrentIdOrHash,
     bitv::BitV,
+    bitv_factory::BitVFactory,
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     type_aliases::{FileStorage, BF},
@@ -63,17 +65,31 @@ impl TorrentStateInitializing {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
-        info!("Doing initial checksum validation, this might take a while...");
-        let have_pieces = self.meta.spawner.spawn_block_in_place(|| {
-            FileOps::new(
-                &self.meta.info,
-                &self.files,
-                &self.meta.file_infos,
-                &self.meta.lengths,
-            )
-            .initial_check(&self.checked_bytes)
-        })?;
+    pub async fn check(
+        &self,
+        bitv_factory: Arc<dyn BitVFactory>,
+    ) -> anyhow::Result<TorrentStatePaused> {
+        let id: TorrentIdOrHash = self.meta.info_hash.into();
+        let have_pieces = bitv_factory
+            .load(id)
+            .await
+            .context("error loading have_pieces")?;
+        let have_pieces = match have_pieces {
+            Some(h) => h,
+            None => {
+                info!("Doing initial checksum validation, this might take a while...");
+                let have_pieces = self.meta.spawner.spawn_block_in_place(|| {
+                    FileOps::new(
+                        &self.meta.info,
+                        &self.files,
+                        &self.meta.file_infos,
+                        &self.meta.lengths,
+                    )
+                    .initial_check(&self.checked_bytes)
+                })?;
+                bitv_factory.store_initial_check(id, have_pieces).await?
+            }
+        };
 
         let selected_pieces = compute_selected_pieces(
             &self.meta.lengths,

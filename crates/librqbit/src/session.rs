@@ -10,13 +10,12 @@ use std::{
 
 use crate::{
     api::TorrentIdOrHash,
+    bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
-    session_persistence::{
-        json::JsonSessionPersistenceStore, BoxSessionPersistenceStore, SessionPersistenceStore,
-    },
+    session_persistence::{json::JsonSessionPersistenceStore, SessionPersistenceStore},
     spawn_utils::BlockingSpawner,
     storage::{
         filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
@@ -94,7 +93,8 @@ impl SessionDatabase {
 pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
-    persistence: Option<Box<dyn SessionPersistenceStore>>,
+    persistence: Option<Arc<dyn SessionPersistenceStore>>,
+    bitv_factory: Arc<dyn BitVFactory>,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
     next_id: AtomicUsize,
@@ -506,7 +506,7 @@ impl Session {
 
             async fn persistence_factory(
                 opts: &SessionOptions,
-            ) -> anyhow::Result<Option<BoxSessionPersistenceStore>> {
+            ) -> anyhow::Result<(Option<Arc<dyn SessionPersistenceStore>>, Arc<dyn BitVFactory>)> {
                 match &opts.persistence {
                     Some(SessionPersistenceConfig::Json { folder }) => {
                         let folder = match folder.as_ref() {
@@ -514,23 +514,25 @@ impl Session {
                             None => SessionPersistenceConfig::default_json_persistence_folder()?,
                         };
 
-                        Ok(Some(Box::new(
+                        let s = Arc::new(
                             JsonSessionPersistenceStore::new(folder)
                                 .await
                                 .context("error initializing JsonSessionPersistenceStore")?,
-                        )))
+                        );
+
+                        Ok((Some(s.clone()), s))
                     },
                     #[cfg(feature = "postgres")]
                     Some(SessionPersistenceConfig::Postgres { connection_string }) => {
                         use crate::session_persistence::postgres::PostgresSessionStorage;
-                        let p = PostgresSessionStorage::new(connection_string).await?;
-                        Ok(Some(Box::new(p)))
+                        let p = Arc::new(PostgresSessionStorage::new(connection_string).await?);
+                        Ok((Some(p.clone()), p))
                     }
-                    None => Ok(None),
+                    None => Ok((None, Arc::new(NonPersistentBitVFactory {}))),
                 }
             }
 
-            let persistence = persistence_factory(&opts)
+            let (persistence, bitv_factory) = persistence_factory(&opts)
                 .await
                 .context("error initializing session persistence store")?;
 
@@ -570,6 +572,7 @@ impl Session {
 
             let session = Arc::new(Self {
                 persistence,
+                bitv_factory,
                 peer_id,
                 dht,
                 peer_opts,
@@ -1129,6 +1132,7 @@ impl Session {
                     opts.paused,
                     self.cancellation_token.child_token(),
                     self.concurrent_initialize_semaphore.clone(),
+                    self.bitv_factory.clone(),
                 )
                 .context("error starting torrent")?;
         }
@@ -1284,6 +1288,7 @@ impl Session {
             false,
             self.cancellation_token.child_token(),
             self.concurrent_initialize_semaphore.clone(),
+            self.bitv_factory.clone(),
         )?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())

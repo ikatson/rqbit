@@ -7,11 +7,11 @@ use crate::{
     session::TorrentId,
     storage::filesystem::FilesystemStorageFactory,
     torrent_state::ManagedTorrentHandle,
+    type_aliases::BF,
     ManagedTorrentState,
 };
 use anyhow::{bail, Context};
 use async_trait::async_trait;
-use bitvec::{order::Lsb0, vec::BitVec};
 use futures::{stream::BoxStream, StreamExt};
 use itertools::Itertools;
 use librqbit_core::Id20;
@@ -69,20 +69,6 @@ impl JsonSessionPersistenceStore {
             output_folder,
             db_content: tokio::sync::RwLock::new(db),
         })
-    }
-
-    async fn to_id(&self, id: TorrentIdOrHash) -> anyhow::Result<TorrentId> {
-        match id {
-            TorrentIdOrHash::Id(id) => Ok(id),
-            TorrentIdOrHash::Hash(h) => self
-                .db_content
-                .read()
-                .await
-                .torrents
-                .iter()
-                .find_map(|(k, v)| if v.info_hash() == &h { Some(*k) } else { None })
-                .context("not found"),
-        }
     }
 
     async fn to_hash(&self, id: TorrentIdOrHash) -> anyhow::Result<Id20> {
@@ -208,7 +194,7 @@ impl BitVFactory for JsonSessionPersistenceStore {
     async fn store_initial_check(
         &self,
         id: TorrentIdOrHash,
-        b: BitVec<u8, Lsb0>,
+        b: BF,
     ) -> anyhow::Result<Box<dyn BitV>> {
         let h = self.to_hash(id).await?;
         let filename = self.bitv_filename(&h);
@@ -220,8 +206,7 @@ impl BitVFactory for JsonSessionPersistenceStore {
             .open(&filename)
             .await
             .with_context(|| format!("error opening {filename:?}"))?;
-        let b = b.into_vec();
-        tokio::io::copy(&mut &b[..], &mut dst)
+        tokio::io::copy(&mut b.as_raw_slice(), &mut dst)
             .await
             .context("error writing bitslice to {filename:?}")?;
         tokio::fs::rename(tmp_filename, &filename).await?;
