@@ -3,15 +3,15 @@ use std::fs::File;
 use anyhow::Context;
 use bitvec::{
     boxed::BitBox,
-    order::Lsb0,
+    order::Msb0,
     slice::BitSlice,
     vec::BitVec,
     view::{AsBits, AsMutBits},
 };
 
 pub trait BitV: Send + Sync {
-    fn as_slice(&self) -> &BitSlice<u8, Lsb0>;
-    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Lsb0>;
+    fn as_slice(&self) -> &BitSlice<u8, Msb0>;
+    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0>;
     fn into_dyn(self) -> Box<dyn BitV>;
     fn as_bytes(&self) -> &[u8];
     fn flush(&mut self) -> anyhow::Result<()>;
@@ -33,12 +33,12 @@ impl MmapBitV {
 }
 
 #[async_trait::async_trait]
-impl BitV for BitVec<u8, Lsb0> {
-    fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
+impl BitV for BitVec<u8, Msb0> {
+    fn as_slice(&self) -> &BitSlice<u8, Msb0> {
         self.as_bitslice()
     }
 
-    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Lsb0> {
+    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0> {
         self.as_mut_bitslice()
     }
 
@@ -56,12 +56,12 @@ impl BitV for BitVec<u8, Lsb0> {
 }
 
 #[async_trait::async_trait]
-impl BitV for BitBox<u8, Lsb0> {
-    fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
+impl BitV for BitBox<u8, Msb0> {
+    fn as_slice(&self) -> &BitSlice<u8, Msb0> {
         self.as_bitslice()
     }
 
-    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Lsb0> {
+    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0> {
         self.as_mut_bitslice()
     }
 
@@ -79,11 +79,11 @@ impl BitV for BitBox<u8, Lsb0> {
 }
 
 impl BitV for MmapBitV {
-    fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
+    fn as_slice(&self) -> &BitSlice<u8, Msb0> {
         self.mmap.as_bits()
     }
 
-    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Lsb0> {
+    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0> {
         self.mmap.as_mut_bits()
     }
 
@@ -101,11 +101,11 @@ impl BitV for MmapBitV {
 }
 
 impl BitV for Box<dyn BitV> {
-    fn as_slice(&self) -> &BitSlice<u8, Lsb0> {
+    fn as_slice(&self) -> &BitSlice<u8, Msb0> {
         (**self).as_slice()
     }
 
-    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Lsb0> {
+    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0> {
         (**self).as_slice_mut()
     }
 

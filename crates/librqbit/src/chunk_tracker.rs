@@ -425,10 +425,8 @@ impl ChunkTracker {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
-    use bitvec::{order::Lsb0, vec::BitVec};
     use librqbit_core::{constants::CHUNK_SIZE, lengths::Lengths};
+    use std::collections::HashSet;
 
     use crate::{bitv::BitV, chunk_tracker::HaveNeededSelected, type_aliases::BF};
 
@@ -548,7 +546,7 @@ mod tests {
         ];
 
         let bf_len = l.piece_bitfield_bytes();
-        let initial_have: BitVec<u8, Lsb0> = BitVec::from_vec(vec![0u8; bf_len]);
+        let initial_have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
         let initial_selected = BF::from_boxed_slice(vec![u8::MAX; bf_len].into_boxed_slice());
 
         // Initially, we need all files and all pieces.

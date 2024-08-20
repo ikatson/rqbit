@@ -199,8 +199,8 @@ pub enum Message<ByteBuf: std::hash::Hash + Eq> {
 pub type MessageBorrowed<'a> = Message<ByteBuf<'a>>;
 pub type MessageOwned = Message<ByteBufOwned>;
 
-pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<u8, bitvec::order::Lsb0>;
-pub type BitfieldOwned = bitvec::vec::BitVec<u8, bitvec::order::Lsb0>;
+pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<u8, bitvec::order::Msb0>;
+pub type BitfieldOwned = bitvec::vec::BitVec<u8, bitvec::order::Msb0>;
 
 pub struct Bitfield<'a> {
     pub data: BitfieldBorrowed<'a>,
