@@ -20,7 +20,7 @@ devserver:
 	echo -n '' > /tmp/rqbit-log && cargo run -- \
 		--log-file /tmp/rqbit-log \
 		--log-file-rust-log=debug,librqbit=trace \
-		server start /tmp/scratch/
+		server start --fastresume /tmp/scratch/
 
 @PHONY: devserver
 devserver-postgres:

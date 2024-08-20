@@ -152,7 +152,7 @@ impl TorrentStateLocked {
         if self.unflushed_bitv_bytes == 0 {
             return;
         }
-
+        trace!("trying to flush bitfield");
         if let Some(Err(e)) = self
             .chunks
             .as_mut()

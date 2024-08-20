@@ -143,6 +143,10 @@ struct ServerStartOptions {
     /// The folder to store session data in. By default uses OS specific folder.
     #[arg(long = "persistence-config")]
     persistence_config: Option<String>,
+
+    /// [Experimental] if set, will try to resume quickly after restart and skip checksumming.
+    #[arg(long = "fastresume")]
+    fastresume: bool,
 }
 
 #[derive(Parser)]
@@ -421,6 +425,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                         sopts.persistence = Some(SessionPersistenceConfig::Json { folder: None })
                     }
                 }
+
+                sopts.fastresume = start_opts.fastresume;
 
                 let session =
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
