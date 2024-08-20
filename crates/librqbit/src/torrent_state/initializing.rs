@@ -8,7 +8,9 @@ use anyhow::Context;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{debug, info, warn};
 
-use crate::{chunk_tracker::ChunkTracker, file_ops::FileOps, type_aliases::FileStorage};
+use crate::{
+    bitv::BitV, chunk_tracker::ChunkTracker, file_ops::FileOps, type_aliases::FileStorage,
+};
 
 use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
 
@@ -86,7 +88,7 @@ impl TorrentStateInitializing {
         })?;
 
         let chunk_tracker = ChunkTracker::new(
-            initial_check_results.have_pieces,
+            initial_check_results.have_pieces.into_dyn(),
             initial_check_results.selected_pieces,
             self.meta.lengths,
             &self.meta.file_infos,

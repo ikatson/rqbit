@@ -4,7 +4,8 @@ use futures::stream::BoxStream;
 
 use crate::{file_info::FileInfo, storage::TorrentStorage};
 
-pub type BF = bitvec::boxed::BitBox<u8, bitvec::order::Msb0>;
+pub type BS = bitvec::slice::BitSlice<u8, bitvec::order::Lsb0>;
+pub type BF = bitvec::boxed::BitBox<u8, bitvec::order::Lsb0>;
 
 pub type PeerHandle = SocketAddr;
 pub type PeerStream = BoxStream<'static, SocketAddr>;

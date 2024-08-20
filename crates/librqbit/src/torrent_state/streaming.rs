@@ -187,7 +187,7 @@ impl AsyncRead for FileStream {
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
         let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
-            let have = ct.get_have_pieces()[current.id.get() as usize];
+            let have = ct.get_have_pieces().as_slice()[current.id.get() as usize];
             if !have {
                 self.streams
                     .register_waker(self.stream_id, cx.waker().clone());
