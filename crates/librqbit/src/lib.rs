@@ -57,7 +57,7 @@ mod peer_info_reader;
 mod read_buf;
 mod session;
 mod session_persistence;
-mod session_stats;
+pub mod session_stats;
 mod spawn_utils;
 pub mod storage;
 mod stream_connect;

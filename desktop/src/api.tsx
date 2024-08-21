@@ -6,6 +6,7 @@ import {
   TorrentDetails,
   TorrentStats,
   ErrorDetails,
+  SessionStats,
 } from "rqbit-webui/src/api-types";
 
 import { InvokeArgs, invoke } from "@tauri-apps/api/tauri";
@@ -140,6 +141,9 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
         return null;
       }
       return `${httpBase}/torrents/${index}/playlist`;
+    },
+    stats: () => {
+      return invokeAPI<SessionStats>("stats");
     },
   };
 };
