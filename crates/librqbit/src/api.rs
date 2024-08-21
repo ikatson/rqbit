@@ -69,6 +69,14 @@ impl<'de> Deserialize<'de> for TorrentIdOrHash {
         struct V<'de> {
             p: PhantomData<&'de ()>,
         }
+
+        macro_rules! visit_int {
+            ($v:expr) => {{
+                let tid: TorrentId = $v.try_into().map_err(|e| E::custom(format!("{e:?}")))?;
+                Ok(TorrentIdOrHash::from(tid))
+            }};
+        }
+
         impl<'de> serde::de::Visitor<'de> for V<'de> {
             type Value = TorrentIdOrHash;
 
@@ -76,16 +84,47 @@ impl<'de> Deserialize<'de> for TorrentIdOrHash {
                 f.write_str("integer or 40 byte info hash")
             }
 
+            fn visit_i64<E>(self, v: i64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                visit_int!(v)
+            }
+
+            fn visit_i128<E>(self, v: i128) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                visit_int!(v)
+            }
+
+            fn visit_u128<E>(self, v: u128) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                visit_int!(v)
+            }
+
+            fn visit_u64<E>(self, v: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                visit_int!(v)
+            }
+
             fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                TorrentIdOrHash::parse(v)
-                    .map_err(|_| E::custom("expected integer or 40 byte info hash"))
+                TorrentIdOrHash::parse(v).map_err(|e| {
+                    E::custom(format!(
+                        "expected integer or 40 byte info hash, couldn't parse string: {e:?}"
+                    ))
+                })
             }
         }
 
-        deserializer.deserialize_str(V::default())
+        deserializer.deserialize_any(V::default())
     }
 }
 
