@@ -149,12 +149,19 @@ impl DropChecks {
             name: name.into(),
         })
     }
-}
 
-impl Drop for DropCheck {
-    fn drop(&mut self) {
-        if self.obj.upgrade().is_some() {
-            panic!("memory leak: {}", self.name);
+    pub fn check(&self) -> anyhow::Result<()> {
+        let mut still_running = Vec::new();
+        for dc in self.0.read().iter() {
+            if dc.obj.upgrade().is_some() {
+                still_running.push(dc.name.clone())
+            }
         }
+        if !still_running.is_empty() {
+            anyhow::bail!(
+                "still existing objects that were supposed to be dropped: {still_running:#?}"
+            )
+        }
+        Ok(())
     }
 }

@@ -38,7 +38,12 @@ async fn test_e2e_download() {
     .unwrap();
 
     // Wait to ensure everything is dropped.
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let metrics = tokio::runtime::Handle::current().metrics();
+    assert_eq!(metrics.num_alive_tasks(), 1);
+
+    drop_checks.check().unwrap();
 }
 
 async fn _test_e2e_download(drop_checks: &DropChecks) {
