@@ -1,0 +1,12 @@
+[package]
+name = "upnp-serve"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+axum = "0.7.5"
+socket2 = "0.5.7"
+tokio = { version = "1.39.3", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
