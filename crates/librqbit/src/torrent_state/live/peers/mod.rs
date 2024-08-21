@@ -48,7 +48,7 @@ impl PeerStates {
                 atomic_inc(&self.session_stats.peers.queued);
 
                 atomic_inc(&self.stats.seen);
-                atomic_inc(&self.session_stats.peers.queued);
+                atomic_inc(&self.session_stats.peers.seen);
                 Some(addr)
             }
         }
