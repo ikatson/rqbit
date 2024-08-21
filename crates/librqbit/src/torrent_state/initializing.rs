@@ -37,7 +37,7 @@ fn compute_selected_pieces(
     for (_, fi) in file_infos
         .iter()
         .enumerate()
-        .filter(|(id, _)| only_files.map(|of| of.contains(id)).unwrap_or(false))
+        .filter(|(id, _)| only_files.map(|of| of.contains(id)).unwrap_or(true))
     {
         if let Some(r) = bf.get_mut(fi.piece_range_usize()) {
             r.fill(true);
