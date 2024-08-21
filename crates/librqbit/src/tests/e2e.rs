@@ -16,7 +16,7 @@ use crate::{
     create_torrent,
     tests::test_util::{
         create_default_random_dir_with_torrents, setup_test_logging, spawn_debug_server,
-        DropChecks, TestPeerMetadata,
+        wait_until_i_am_the_last_task, DropChecks, TestPeerMetadata,
     },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
@@ -38,10 +38,7 @@ async fn test_e2e_download() {
     .unwrap();
 
     // Wait to ensure everything is dropped.
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let metrics = tokio::runtime::Handle::current().metrics();
-    assert_eq!(metrics.num_alive_tasks(), 1);
+    wait_until_i_am_the_last_task().await;
 
     drop_checks.check().unwrap();
 }
@@ -133,6 +130,9 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     .await
                     .context("error adding torrent")?;
                 let h = handle.into_handle().context("into_handle()")?;
+
+                drop_checks.add(&h.shared, format!("server {i} torrent shared handle"));
+
                 let mut interval = interval(Duration::from_millis(100));
 
                 info!("added torrent");
@@ -145,7 +145,6 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                                 if !l.is_finished() {
                                     bail!("torrent went live, but expected it to be finished");
                                 }
-                                drop_checks.add(l, format!("server {i} live"));
                                 Ok(true)
                             }
                             crate::ManagedTorrentState::Error(e) => bail!("error: {e:?}"),

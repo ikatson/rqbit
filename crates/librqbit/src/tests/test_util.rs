@@ -2,9 +2,10 @@ use std::{
     io::Write,
     path::Path,
     sync::{Arc, Weak},
+    time::Duration,
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use axum::{response::IntoResponse, routing::get, Router};
 use librqbit_core::Id20;
 use parking_lot::RwLock;
@@ -164,4 +165,42 @@ impl DropChecks {
         }
         Ok(())
     }
+}
+
+pub async fn wait_until(
+    mut cond: impl FnMut() -> anyhow::Result<()>,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let mut interval = tokio::time::interval(Duration::from_millis(10));
+    let mut last_err: Option<anyhow::Error> = None;
+    let res = tokio::time::timeout(timeout, async {
+        loop {
+            interval.tick().await;
+            match cond() {
+                Ok(()) => return Ok::<_, anyhow::Error>(()),
+                Err(e) => last_err = Some(e),
+            }
+        }
+    })
+    .await;
+    if res.is_err() {
+        bail!("wait_until timeout: last result = {last_err:?}")
+    }
+    Ok(())
+}
+
+pub async fn wait_until_i_am_the_last_task() {
+    let metrics = tokio::runtime::Handle::current().metrics();
+    wait_until(
+        || {
+            let num_alive = metrics.num_alive_tasks();
+            if num_alive != 1 {
+                bail!("metrics.num_alive_tasks() = {num_alive}, expected 1")
+            }
+            Ok(())
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
 }
