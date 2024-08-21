@@ -119,11 +119,11 @@ pub struct ManagedTorrentShared {
     pub(crate) options: ManagedTorrentOptions,
     pub(crate) connector: Arc<StreamConnector>,
     pub(crate) storage_factory: BoxStorageFactory,
+    pub(crate) session: Weak<Session>,
 }
 
 pub struct ManagedTorrent {
     pub shared: Arc<ManagedTorrentShared>,
-    pub(crate) session: Weak<Session>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
 }
@@ -213,6 +213,7 @@ impl ManagedTorrent {
         start_paused: bool,
     ) -> anyhow::Result<()> {
         let session = self
+            .shared
             .session
             .upgrade()
             .context("session is dead, cannot start torrent")?;

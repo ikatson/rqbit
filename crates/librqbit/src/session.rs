@@ -1138,6 +1138,7 @@ impl Session {
                     disk_write_queue: self.disk_write_tx.clone(),
                 },
                 connector: self.connector.clone(),
+                session: Arc::downgrade(self),
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(
@@ -1152,7 +1153,6 @@ impl Session {
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
-                session: Arc::downgrade(self),
             });
 
             g.add_torrent(handle.clone(), id);
