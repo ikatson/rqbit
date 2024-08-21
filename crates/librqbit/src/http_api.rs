@@ -142,7 +142,7 @@ impl HttpApi {
 
         fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
             let mut playlist_items = handle
-                .info()
+                .shared()
                 .info
                 .iter_filenames_and_lengths()?
                 .enumerate()
@@ -216,8 +216,8 @@ impl HttpApi {
                 .await?;
             let (info, content) = match added {
                 crate::AddTorrentResponse::AlreadyManaged(_, handle) => (
-                    handle.info().info.clone(),
-                    handle.info().torrent_bytes.clone(),
+                    handle.shared().info.clone(),
+                    handle.shared().torrent_bytes.clone(),
                 ),
                 crate::AddTorrentResponse::ListOnly(ListOnlyResponse {
                     info,

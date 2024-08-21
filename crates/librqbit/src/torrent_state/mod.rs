@@ -99,7 +99,12 @@ pub(crate) struct ManagedTorrentOptions {
     pub disk_write_queue: Option<DiskWorkQueueSender>,
 }
 
-pub struct ManagedTorrentInfo {
+/// Common information about torrent shared among all possible states.
+///
+// The reason it's not inlined into ManagedTorrent is to break the Arc cycle:
+// ManagedTorrent contains the current torrent state, which in turn needs access to a bunch
+// of stuff, but it shouldn't access the state.
+pub struct ManagedTorrentShared {
     pub id: TorrentId,
     pub info: TorrentMetaV1Info<ByteBufOwned>,
     pub torrent_bytes: Bytes,
@@ -117,7 +122,7 @@ pub struct ManagedTorrentInfo {
 }
 
 pub struct ManagedTorrent {
-    pub info: Arc<ManagedTorrentInfo>,
+    pub shared: Arc<ManagedTorrentShared>,
     pub(crate) session: Weak<Session>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
@@ -125,19 +130,19 @@ pub struct ManagedTorrent {
 
 impl ManagedTorrent {
     pub fn id(&self) -> TorrentId {
-        self.info.id
+        self.shared.id
     }
 
-    pub fn info(&self) -> &ManagedTorrentInfo {
-        &self.info
+    pub fn shared(&self) -> &ManagedTorrentShared {
+        &self.shared
     }
 
     pub fn get_total_bytes(&self) -> u64 {
-        self.info.lengths.total_length()
+        self.shared.lengths.total_length()
     }
 
     pub fn info_hash(&self) -> Id20 {
-        self.info.info_hash
+        self.shared.info_hash
     }
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
@@ -217,7 +222,7 @@ impl ManagedTorrent {
             |state: &Arc<Self>,
              rx: tokio::sync::oneshot::Receiver<anyhow::Error>,
              token: CancellationToken| {
-                let span = state.info.span.clone();
+                let span = state.shared.span.clone();
                 let state = Arc::downgrade(state);
                 spawn_with_cancel(
                     error_span!(parent: span, "fatal_errors_receiver"),
@@ -239,7 +244,7 @@ impl ManagedTorrent {
 
         fn spawn_peer_adder(live: &Arc<TorrentStateLive>, peer_rx: Option<PeerStream>) {
             live.spawn(
-                error_span!(parent: live.meta().span.clone(), "external_peer_adder"),
+                error_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
                 {
                     let live = live.clone();
                     async move {
@@ -290,7 +295,7 @@ impl ManagedTorrent {
                 let init = init.clone();
                 drop(g);
                 let t = self.clone();
-                let span = self.info().span.clone();
+                let span = self.shared().span.clone();
                 let token = session.cancellation_token().child_token().clone();
 
                 spawn_with_cancel(
@@ -365,9 +370,9 @@ impl ManagedTorrent {
             }
             ManagedTorrentState::Error(_) => {
                 let initializing = Arc::new(TorrentStateInitializing::new(
-                    self.info.clone(),
+                    self.shared.clone(),
                     g.only_files.clone(),
-                    self.info.storage_factory.create_and_init(self.info())?,
+                    self.shared.storage_factory.create_and_init(self.shared())?,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
                 drop(g);
@@ -412,7 +417,7 @@ impl ManagedTorrent {
     pub fn stats(&self) -> TorrentStats {
         use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
-            total_bytes: self.info().lengths.total_length(),
+            total_bytes: self.shared().lengths.total_length(),
             file_progress: Vec::new(),
             state: S::Error,
             error: None,
@@ -513,7 +518,7 @@ impl ManagedTorrent {
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let file_count = self.info().info.iter_file_lengths()?.count();
+        let file_count = self.shared().info.iter_file_lengths()?.count();
         for f in only_files.iter().copied() {
             if f >= file_count {
                 anyhow::bail!("only_files contains invalid value {f}")

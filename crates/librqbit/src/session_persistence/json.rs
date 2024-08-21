@@ -128,7 +128,7 @@ impl JsonSessionPersistenceStore {
         write_torrent_file: bool,
     ) -> anyhow::Result<()> {
         if !torrent
-            .info
+            .shared
             .storage_factory
             .is_type_id(TypeId::of::<FilesystemStorageFactory>())
         {
@@ -137,7 +137,7 @@ impl JsonSessionPersistenceStore {
 
         let st = SerializedTorrent {
             trackers: torrent
-                .info()
+                .shared()
                 .trackers
                 .iter()
                 .map(|u| u.to_string())
@@ -147,10 +147,10 @@ impl JsonSessionPersistenceStore {
             torrent_bytes: Default::default(),
             only_files: torrent.only_files().clone(),
             is_paused: torrent.with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
-            output_folder: torrent.info().options.output_folder.clone(),
+            output_folder: torrent.shared().options.output_folder.clone(),
         };
 
-        if write_torrent_file && !torrent.info().torrent_bytes.is_empty() {
+        if write_torrent_file && !torrent.shared().torrent_bytes.is_empty() {
             let torrent_bytes_file = self.torrent_bytes_filename(&torrent.info_hash());
             match tokio::fs::OpenOptions::new()
                 .create(true)
@@ -160,7 +160,7 @@ impl JsonSessionPersistenceStore {
                 .await
             {
                 Ok(mut f) => {
-                    if let Err(e) = f.write_all(&torrent.info().torrent_bytes).await {
+                    if let Err(e) = f.write_all(&torrent.shared().torrent_bytes).await {
                         warn!(error=?e, file=?torrent_bytes_file, "error writing torrent bytes")
                     }
                 }

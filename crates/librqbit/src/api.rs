@@ -197,7 +197,7 @@ impl Api {
             torrents
                 .map(|(id, mgr)| TorrentListResponseItem {
                     id,
-                    info_hash: mgr.info().info_hash.as_string(),
+                    info_hash: mgr.shared().info_hash.as_string(),
                 })
                 .collect()
         });
@@ -206,9 +206,9 @@ impl Api {
 
     pub fn api_torrent_details(&self, idx: TorrentIdOrHash) -> Result<TorrentDetailsResponse> {
         let handle = self.mgr_handle(idx)?;
-        let info_hash = handle.info().info_hash;
+        let info_hash = handle.shared().info_hash;
         let only_files = handle.only_files();
-        make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
+        make_torrent_details(&info_hash, &handle.shared().info, only_files.as_deref())
     }
 
     pub fn api_session_stats(&self) -> SessionStatsSnapshot {
@@ -221,7 +221,7 @@ impl Api {
         file_idx: usize,
     ) -> Result<&'static str> {
         let handle = self.mgr_handle(idx)?;
-        let info = &handle.info().info;
+        let info = &handle.shared().info;
         torrent_file_mime_type(info, file_idx)
     }
 
@@ -361,7 +361,7 @@ impl Api {
             AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
                     &handle.info_hash(),
-                    &handle.info().info,
+                    &handle.shared().info,
                     handle.only_files().as_deref(),
                 )
                 .context("error making torrent details")?;
@@ -370,7 +370,7 @@ impl Api {
                     details,
                     seen_peers: None,
                     output_folder: handle
-                        .info()
+                        .shared()
                         .options
                         .output_folder
                         .to_string_lossy()

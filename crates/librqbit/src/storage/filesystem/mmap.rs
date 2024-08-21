@@ -4,7 +4,7 @@ use anyhow::Context;
 use memmap2::{MmapMut, MmapOptions};
 use parking_lot::RwLock;
 
-use crate::torrent_state::ManagedTorrentInfo;
+use crate::torrent_state::ManagedTorrentShared;
 
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
@@ -22,7 +22,7 @@ fn dummy_mmap() -> anyhow::Result<MmapMut> {
 impl StorageFactory for MmapFilesystemStorageFactory {
     type Storage = MmapFilesystemStorage;
 
-    fn create(&self, meta: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, meta: &ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
         let fs_storage = FilesystemStorageFactory::default().create(meta)?;
 
         Ok(MmapFilesystemStorage {
@@ -97,7 +97,7 @@ impl TorrentStorage for MmapFilesystemStorage {
         }))
     }
 
-    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         self.fs.init(meta)?;
         let mut mmaps = Vec::new();
         for (idx, file) in self.fs.opened_files.iter().enumerate() {

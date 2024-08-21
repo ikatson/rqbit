@@ -28,7 +28,7 @@ use crate::{
         ManagedTorrentOptions, ManagedTorrentState, TorrentStateLive,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
-    ManagedTorrent, ManagedTorrentInfo,
+    ManagedTorrent, ManagedTorrentShared,
 };
 use anyhow::{bail, Context};
 use bencode::bencode_serialize_to_writer;
@@ -1116,7 +1116,7 @@ impl Session {
 
             let span = error_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);
-            let minfo = Arc::new(ManagedTorrentInfo {
+            let minfo = Arc::new(ManagedTorrentShared {
                 id,
                 span,
                 file_infos,
@@ -1151,7 +1151,7 @@ impl Session {
                     only_files,
                 }),
                 state_change_notify: Notify::new(),
-                info: minfo,
+                shared: minfo,
                 session: Arc::downgrade(self),
             });
 
@@ -1181,7 +1181,7 @@ impl Session {
         );
 
         {
-            let span = managed_torrent.info.span.clone();
+            let span = managed_torrent.shared.span.clone();
             let _ = span.enter();
 
             managed_torrent
@@ -1257,18 +1257,18 @@ impl Session {
                 _ => None,
             })
             .map(Ok)
-            .unwrap_or_else(|| removed.info.storage_factory.create(removed.info()));
+            .unwrap_or_else(|| removed.shared.storage_factory.create(removed.shared()));
 
         match (storage, delete_files) {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
             (Ok(storage), true) => {
                 debug!("will delete files");
-                remove_files_and_dirs(removed.info(), &storage);
-                if removed.info().options.output_folder != self.output_folder {
+                remove_files_and_dirs(removed.shared(), &storage);
+                if removed.shared().options.output_folder != self.output_folder {
                     if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
                         warn!(
                             "error removing {:?}: {e:?}",
-                            removed.info().options.output_folder
+                            removed.shared().options.output_folder
                         )
                     }
                 }
@@ -1331,9 +1331,9 @@ impl Session {
     pub async fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
         let peer_rx = self.make_peer_rx(
             handle.info_hash(),
-            handle.info().trackers.clone().into_iter().collect(),
+            handle.shared().trackers.clone().into_iter().collect(),
             self.tcp_listen_port,
-            handle.info().options.force_tracker_interval,
+            handle.shared().options.force_tracker_interval,
         )?;
         handle.start(peer_rx, false)?;
         self.try_update_persistence_metadata(handle).await;
@@ -1355,7 +1355,7 @@ impl Session {
     }
 }
 
-fn remove_files_and_dirs(info: &ManagedTorrentInfo, files: &dyn TorrentStorage) {
+fn remove_files_and_dirs(info: &ManagedTorrentShared, files: &dyn TorrentStorage) {
     let mut all_dirs = HashSet::new();
     for (id, fi) in info.file_infos.iter().enumerate() {
         let mut fname = &*fi.relative_filename;

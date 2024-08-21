@@ -179,7 +179,7 @@ impl AsyncRead for FileStream {
 
         let current = poll_try_io!(self
             .torrent
-            .info()
+            .shared()
             .lengths
             .compute_current_piece(self.position, self.file_torrent_abs_offset)
             .context("invalid position"));
@@ -280,7 +280,7 @@ impl ManagedTorrent {
                 s => anyhow::bail!("with_storage_and_file: invalid state: {}", s.name()),
             };
             let fi = self
-                .info()
+                .shared()
                 .file_infos
                 .get(file_id)
                 .context("invalid file")?;
@@ -311,7 +311,7 @@ impl ManagedTorrent {
 
     fn is_file_finished(&self, file_id: usize) -> bool {
         // TODO: would be nice to remove locking
-        self.with_chunk_tracker(|ct| ct.is_file_finished(&self.info.file_infos[file_id]))
+        self.with_chunk_tracker(|ct| ct.is_file_finished(&self.shared.file_infos[file_id]))
             .unwrap_or(false)
     }
 
