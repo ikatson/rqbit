@@ -6,12 +6,15 @@ use tokio::{io::AsyncReadExt, time::timeout};
 use tracing::info;
 
 use crate::{
-    create_torrent, tests::test_util::TestPeerMetadata, AddTorrent, CreateTorrentOptions, Session,
+    create_torrent,
+    tests::test_util::{setup_test_logging, TestPeerMetadata},
+    AddTorrent, CreateTorrentOptions, Session,
 };
 
 use super::test_util::create_default_random_dir_with_torrents;
 
 async fn e2e_stream() -> anyhow::Result<()> {
+    setup_test_logging();
     let files = create_default_random_dir_with_torrents(1, 8192, Some("test_e2e_stream"));
     let torrent = create_torrent(
         files.path(),
@@ -113,6 +116,5 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_stream() -> anyhow::Result<()> {
-    let _ = tracing_subscriber::fmt::try_init();
     timeout(Duration::from_secs(10), e2e_stream()).await?
 }

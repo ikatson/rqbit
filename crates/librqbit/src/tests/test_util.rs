@@ -7,6 +7,13 @@ use rand::{thread_rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tracing::{debug, info};
 
+pub fn setup_test_logging() {
+    if let Err(_) = std::env::var("RUST_LOG") {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+    let _ = tracing_subscriber::fmt::try_init();
+}
+
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)

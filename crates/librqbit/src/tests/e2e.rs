@@ -15,7 +15,8 @@ use tracing::{error, error_span, info, Instrument};
 use crate::{
     create_torrent,
     tests::test_util::{
-        create_default_random_dir_with_torrents, spawn_debug_server, TestPeerMetadata,
+        create_default_random_dir_with_torrents, setup_test_logging, spawn_debug_server,
+        TestPeerMetadata,
     },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
@@ -34,7 +35,7 @@ async fn test_e2e_download() {
 }
 
 async fn _test_e2e_download() {
-    let _ = tracing_subscriber::fmt::try_init();
+    setup_test_logging();
     match crate::try_increase_nofile_limit() {
         Ok(limit) => info!(limit, "increased ulimit"),
         Err(e) => error!(error=?e, "error increasing ulimit"),
