@@ -9,10 +9,16 @@ import {
 } from "./api-types";
 
 // Define API URL and base path
-const apiUrl =
-  window.origin === "null" || window.origin === "http://localhost:3031"
-    ? "http://localhost:3030"
-    : "";
+const apiUrl = (() => {
+  if (window.origin === "null" || window.origin === "http://localhost:3031") {
+    return "http://localhost:3030"
+  }
+  let port = /http.*:\/\/.*:(\d+)/.exec(window.origin)?.[1];
+  if (port == "3031") {
+    return window.origin.replace("3031", "3030");
+  }
+  return "";
+})();
 
 const makeRequest = async (
   method: string,

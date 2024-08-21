@@ -17,14 +17,17 @@ webui-build: webui-deps
 
 @PHONY: devserver
 devserver:
-	echo -n '' > /tmp/rqbit-log && cargo run -- \
+	echo -n '' > /tmp/rqbit-log && CORS_ALLOW_REGEXP=".*" \
+	   cargo run -- \
 		--log-file /tmp/rqbit-log \
 		--log-file-rust-log=debug,librqbit=trace \
+		--http-api-listen-addr 0.0.0.0:3030 \
 		server start /tmp/scratch/
 
 @PHONY: devserver
 devserver-postgres:
-	echo -n '' > /tmp/rqbit-log && cargo run -- \
+	echo -n '' > /tmp/rqbit-log && CORS_ALLOW_REGEXP=".*" \
+	   cargo run -- \
 		--log-file /tmp/rqbit-log \
 		--log-file-rust-log=debug,librqbit=trace \
 		server start --fastresume --persistence-config postgres:///rqbit /tmp/scratch/

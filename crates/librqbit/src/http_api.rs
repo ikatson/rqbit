@@ -543,9 +543,17 @@ impl HttpApi {
                 b"tauri://localhost",
             ];
 
+            let allow_regex = std::env::var("CORS_ALLOW_REGEXP")
+                .ok()
+                .and_then(|value| regex::bytes::Regex::new(&value).ok());
+
             tower_http::cors::CorsLayer::default()
-                .allow_origin(AllowOrigin::predicate(|v, _| {
+                .allow_origin(AllowOrigin::predicate(move |v, _| {
                     ALLOWED_ORIGINS.contains(&v.as_bytes())
+                        || allow_regex
+                            .as_ref()
+                            .map(move |r| r.is_match(v.as_bytes()))
+                            .unwrap_or(false)
                 }))
                 .allow_headers(AllowHeaders::any())
         };
