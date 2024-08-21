@@ -38,7 +38,7 @@ async fn test_e2e_download() {
     .unwrap();
 
     // Wait to ensure everything is dropped.
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let metrics = tokio::runtime::Handle::current().metrics();
     assert_eq!(metrics.num_alive_tasks(), 1);
@@ -157,12 +157,13 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     }
                 }
                 info!("torrent is live");
-                Ok::<_, anyhow::Error>(SocketAddr::new(
+                let addr = SocketAddr::new(
                     std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     session
                         .tcp_listen_port()
                         .context("expected session.tcp_listen_port() to be set")?,
-                ))
+                );
+                Ok::<_, anyhow::Error>((session, addr))
             }
             .instrument(error_span!("server", id = i)),
         );
@@ -170,12 +171,15 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
     }
 
     let mut peers = Vec::new();
+
+    // This is around just not to drop.
+    let mut _servers = Vec::new();
     for (id, peer) in futures::future::join_all(futs)
         .await
         .into_iter()
         .enumerate()
     {
-        let peer = peer
+        let (server, peer) = peer
             .with_context(|| format!("join error, server={id}"))
             .unwrap()
             .with_context(|| format!("timeout, server={id}"))
@@ -183,6 +187,7 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
             .with_context(|| format!("server couldn't start, server={id}"))
             .unwrap();
         peers.push(peer);
+        _servers.push(server);
     }
 
     info!("started all servers, starting client");

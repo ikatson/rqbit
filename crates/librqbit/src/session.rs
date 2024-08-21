@@ -642,7 +642,7 @@ impl Session {
                 if opts.enable_upnp_port_forwarding {
                     session.spawn(
                         error_span!(parent: session.rs(), "upnp_forward", port = listen_port),
-                        session.clone().task_upnp_port_forwarder(listen_port),
+                        Self::task_upnp_port_forwarder(listen_port),
                     );
                 }
             }
@@ -691,7 +691,7 @@ impl Session {
     }
 
     async fn check_incoming_connection(
-        &self,
+        self: Arc<Self>,
         addr: SocketAddr,
         mut stream: TcpStream,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
@@ -744,6 +744,8 @@ impl Session {
 
     async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
+        let session = Arc::downgrade(&self);
+        drop(self);
 
         loop {
             tokio::select! {
@@ -751,13 +753,15 @@ impl Session {
                     match r {
                         Ok((stream, addr)) => {
                             trace!("accepted connection from {addr}");
+                            let session = session.upgrade().context("session is dead")?;
+                            let span = error_span!(parent: session.rs(), "incoming", addr=%addr);
                             futs.push(
-                                self.check_incoming_connection(addr, stream)
+                                session.check_incoming_connection(addr, stream)
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
                                     })
-                                    .instrument(error_span!(parent: self.rs(), "incoming", addr=%addr))
+                                    .instrument(span)
                             );
                         }
                         Err(e) => {
@@ -775,7 +779,7 @@ impl Session {
         }
     }
 
-    async fn task_upnp_port_forwarder(self: Arc<Self>, port: u16) -> anyhow::Result<()> {
+    async fn task_upnp_port_forwarder(port: u16) -> anyhow::Result<()> {
         let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None)?;
         pf.run_forever().await
     }
