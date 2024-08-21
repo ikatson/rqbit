@@ -8,7 +8,7 @@ use tempfile::TempDir;
 use tracing::{debug, info};
 
 pub fn setup_test_logging() {
-    if let Err(_) = std::env::var("RUST_LOG") {
+    if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "debug");
     }
     let _ = tracing_subscriber::fmt::try_init();
