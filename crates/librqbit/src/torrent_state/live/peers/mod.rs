@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use backoff::backoff::Backoff;
@@ -8,6 +8,7 @@ use peer_binary_protocol::{Message, Request};
 
 use crate::{
     peer_connection::WriterRequest,
+    session_stats::atomic::AtomicSessionStats,
     torrent_state::utils::{atomic_inc, TimedExistence},
     type_aliases::{PeerHandle, BF},
 };
@@ -18,10 +19,18 @@ use super::peer::{LivePeerState, Peer, PeerRx, PeerState, PeerTx};
 
 pub mod stats;
 
-#[derive(Default)]
 pub(crate) struct PeerStates {
+    pub session_stats: Arc<AtomicSessionStats>,
     pub stats: AggregatePeerStatsAtomic,
     pub states: DashMap<PeerHandle, Peer>,
+}
+
+impl Drop for PeerStates {
+    fn drop(&mut self) {
+        for (_, p) in std::mem::take(&mut self.states).into_iter() {
+            p.state.destroy(&[&self.session_stats.peers]);
+        }
+    }
 }
 
 impl PeerStates {
@@ -36,7 +45,10 @@ impl PeerStates {
             Entry::Vacant(vac) => {
                 vac.insert(Default::default());
                 atomic_inc(&self.stats.queued);
+                atomic_inc(&self.session_stats.peers.queued);
+
                 atomic_inc(&self.stats.seen);
+                atomic_inc(&self.session_stats.peers.seen);
                 Some(addr)
             }
         }
@@ -73,7 +85,10 @@ impl PeerStates {
 
     pub fn drop_peer(&self, handle: PeerHandle) -> Option<Peer> {
         let p = self.states.remove(&handle).map(|r| r.1)?;
-        self.stats.dec(p.state.get());
+        let s = p.state.get();
+        self.stats.dec(s);
+        self.session_stats.peers.dec(s);
+
         Some(p)
     }
 
@@ -99,7 +114,7 @@ impl PeerStates {
         let rx = self
             .with_peer_mut(h, "mark_peer_connecting", |peer| {
                 peer.state
-                    .idle_to_connecting(&self.stats)
+                    .idle_to_connecting(&[&self.stats, &self.session_stats.peers])
                     .context("invalid peer state")
             })
             .context("peer not found in states")??;
@@ -114,7 +129,8 @@ impl PeerStates {
 
     pub fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
         let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
-            peer.state.set_not_needed(&self.stats)
+            peer.state
+                .set_not_needed(&[&self.stats, &self.session_stats.peers])
         })?;
         Some(prev)
     }
@@ -132,6 +148,7 @@ impl PeerStates {
             atomic_inc(&p.stats.counters.times_stolen_from_me);
         });
         self.stats.inc_steals();
+        self.session_stats.peers.inc_steals();
 
         self.with_live_mut(from_peer, "send_cancellations", |live| {
             let to_remove = live

@@ -11,6 +11,8 @@ import { DarkMode } from "./helper/darkMode";
 import { useTorrentStore } from "./stores/torrentStore";
 import { useErrorStore } from "./stores/errorStore";
 import { AlertModal } from "./components/modal/AlertModal";
+import { useStatsStore } from "./stores/statsStore";
+import { Footer } from "./components/Footer";
 
 export interface ErrorWithLabel {
   text: string;
@@ -49,6 +51,8 @@ export const RqbitWebUI = (props: {
   };
   setRefreshTorrents(refreshTorrents);
 
+  const setStats = useStatsStore((state) => state.setStats);
+
   useEffect(() => {
     return customSetInterval(
       async () =>
@@ -67,8 +71,25 @@ export const RqbitWebUI = (props: {
     );
   }, []);
 
+  useEffect(() => {
+    return customSetInterval(
+      async () =>
+        API.stats().then(
+          (stats) => {
+            setStats(stats);
+            return 1000;
+          },
+          (e) => {
+            console.error(e);
+            return 5000;
+          }
+        ),
+      0
+    );
+  }, []);
+
   return (
-    <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen">
+    <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen flex flex-col">
       <Header title={props.title} version={props.version} />
       <div className="relative">
         {/* Menu buttons */}
@@ -82,9 +103,13 @@ export const RqbitWebUI = (props: {
             <BsMoon />
           </IconButton>
         </div>
+      </div>
 
+      <div className="grow">
         <RootContent />
       </div>
+
+      <Footer />
 
       <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
       <AlertModal />

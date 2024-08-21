@@ -34,6 +34,21 @@ export interface Speed {
   human_readable: string;
 }
 
+export interface AggregatePeerStats {
+  queued: number;
+  connecting: number;
+  live: number;
+  seen: number;
+  dead: number;
+  not_needed: number;
+}
+
+export interface SessionStats {
+  download_speed: Speed;
+  upload_speed: Speed;
+  peers: AggregatePeerStats;
+}
+
 // Interface for the Torrent Stats API response
 export interface LiveTorrentStats {
   snapshot: {
@@ -46,14 +61,7 @@ export interface LiveTorrentStats {
     remaining_bytes: number;
     total_bytes: number;
     total_piece_download_ms: number;
-    peer_stats: {
-      queued: number;
-      connecting: number;
-      live: number;
-      seen: number;
-      dead: number;
-      not_needed: number;
-    };
+    peer_stats: AggregatePeerStats;
   };
   average_piece_download_time: {
     secs: number;
@@ -182,4 +190,5 @@ export interface RqbitAPI {
   start: (index: number) => Promise<void>;
   forget: (index: number) => Promise<void>;
   delete: (index: number) => Promise<void>;
+  stats: () => Promise<SessionStats>;
 }

@@ -70,6 +70,7 @@ use peer_binary_protocol::{
     extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
     Handshake, Message, MessageOwned, Piece, Request,
 };
+use peers::stats::atomic::AggregatePeerStatsAtomic;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Notify, OwnedSemaphorePermit, Semaphore,
@@ -84,6 +85,7 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     session::CheckedIncomingConnection,
+    session_stats::atomic::AtomicSessionStats,
     torrent_state::{peer::Peer, utils::atomic_inc},
     type_aliases::{DiskWorkQueueSender, FilePriorities, FileStorage, PeerHandle, BF},
 };
@@ -201,6 +203,8 @@ pub struct TorrentStateLive {
     up_speed_estimator: SpeedEstimator,
     cancellation_token: CancellationToken,
 
+    session_stats: Arc<AtomicSessionStats>,
+
     pub(crate) streams: Arc<TorrentStreams>,
     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
 }
@@ -210,6 +214,7 @@ impl TorrentStateLive {
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
+        session_stats: Arc<AtomicSessionStats>,
     ) -> anyhow::Result<Arc<Self>> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
 
@@ -237,7 +242,11 @@ impl TorrentStateLive {
 
         let state = Arc::new(TorrentStateLive {
             meta: paused.info.clone(),
-            peers: Default::default(),
+            peers: PeerStates {
+                session_stats: session_stats.clone(),
+                stats: Default::default(),
+                states: Default::default(),
+            },
             locked: RwLock::new(TorrentStateLocked {
                 chunks: Some(paused.chunk_tracker),
                 // TODO: move under per_piece_locks?
@@ -260,6 +269,7 @@ impl TorrentStateLive {
             up_speed_estimator,
             cancellation_token,
             have_broadcast_tx,
+            session_stats,
             streams: paused.streams,
             per_piece_locks: (0..lengths.total_pieces())
                 .map(|_| RwLock::new(()))
@@ -307,6 +317,10 @@ impl TorrentStateLive {
         spawn_with_cancel(span, self.cancellation_token.clone(), fut);
     }
 
+    fn peer_stats(&self) -> [&AggregatePeerStatsAtomic; 2] {
+        [&self.peers.stats, &self.peers.session_stats.peers]
+    }
+
     pub fn down_speed_estimator(&self) -> &SpeedEstimator {
         &self.down_speed_estimator
     }
@@ -343,7 +357,7 @@ impl TorrentStateLive {
                     .incoming_connection(
                         Id20::new(checked_peer.handshake.peer_id),
                         tx.clone(),
-                        &self.peers.stats,
+                        &self.peer_stats(),
                     )
                     .context("peer already existed")?;
                 peer.stats.counters.clone()
@@ -353,7 +367,7 @@ impl TorrentStateLive {
                 let peer = Peer::new_live_for_incoming_connection(
                     Id20::new(checked_peer.handshake.peer_id),
                     tx.clone(),
-                    &self.peers.stats,
+                    &self.peer_stats(),
                 );
                 let counters = peer.stats.counters.clone();
                 vac.insert(peer);
@@ -562,7 +576,7 @@ impl TorrentStateLive {
     fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
             p.state
-                .connecting_to_live(Id20::new(h.peer_id), &self.peers.stats);
+                .connecting_to_live(Id20::new(h.peer_id), &self.peer_stats());
         });
     }
 
@@ -750,7 +764,7 @@ impl TorrentStateLive {
         for mut pe in self.peers.states.iter_mut() {
             if let PeerState::Live(l) = pe.value().state.get() {
                 if l.has_full_torrent(self.lengths.total_pieces() as usize) {
-                    let prev = pe.value_mut().state.set_not_needed(&self.peers.stats);
+                    let prev = pe.value_mut().state.set_not_needed(&self.peer_stats());
                     let _ = prev
                         .take_live_no_counters()
                         .unwrap()
@@ -763,7 +777,7 @@ impl TorrentStateLive {
 
     pub(crate) fn reconnect_all_not_needed_peers(&self) {
         for mut pe in self.peers.states.iter_mut() {
-            if pe.state.not_needed_to_queued(&self.peers.stats)
+            if pe.state.not_needed_to_queued(&self.peer_stats())
                 && self.peer_queue_tx.send(*pe.key()).is_err()
             {
                 return;
@@ -883,6 +897,10 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
             .stats
             .uploaded_bytes
             .fetch_add(bytes as u64, Ordering::Relaxed);
+        self.state
+            .session_stats
+            .uploaded_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()> {
@@ -925,7 +943,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 impl PeerHandler {
     fn on_peer_died(self, error: Option<anyhow::Error>) -> anyhow::Result<()> {
         let peers = &self.state.peers;
-        let pstats = &peers.stats;
+        let pstats = self.state.peer_stats();
         let handle = self.addr;
         let mut pe = match peers.states.get_mut(&handle) {
             Some(peer) => TimedExistence::new(peer, "on_peer_died"),
@@ -934,7 +952,7 @@ impl PeerHandler {
                 return Ok(());
             }
         };
-        let prev = pe.value_mut().state.take(pstats);
+        let prev = pe.value_mut().state.take(&pstats);
 
         match prev {
             PeerState::Connecting(_) => {}
@@ -953,7 +971,7 @@ impl PeerHandler {
             }
             PeerState::NotNeeded => {
                 // Restore it as std::mem::take() replaced it above.
-                pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+                pe.value_mut().state.set(PeerState::NotNeeded, &pstats);
                 return Ok(());
             }
             s @ PeerState::Queued | s @ PeerState::Dead => {
@@ -969,7 +987,7 @@ impl PeerHandler {
             Some(e) => e,
             None => {
                 trace!("peer died without errors, not re-queueing");
-                pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+                pe.value_mut().state.set(PeerState::NotNeeded, &pstats);
                 return Ok(());
             }
         };
@@ -978,11 +996,11 @@ impl PeerHandler {
 
         if self.state.is_finished_and_no_active_streams() {
             debug!("torrent finished, not re-queueing");
-            pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+            pe.value_mut().state.set(PeerState::NotNeeded, &pstats);
             return Ok(());
         }
 
-        pe.value_mut().state.set(PeerState::Dead, pstats);
+        pe.value_mut().state.set(PeerState::Dead, &pstats);
 
         let backoff = pe.value_mut().stats.backoff.next_backoff();
 
@@ -1006,7 +1024,7 @@ impl PeerHandler {
                         .with_peer_mut(handle, "dead_to_queued", |peer| {
                             match peer.state.get() {
                                 PeerState::Dead => {
-                                    peer.state.set(PeerState::Queued, &self.state.peers.stats)
+                                    peer.state.set(PeerState::Queued, &self.state.peer_stats())
                                 }
                                 other => bail!(
                                     "peer is in unexpected state: {}. Expected dead",
@@ -1415,6 +1433,10 @@ impl PeerHandler {
             .stats
             .fetched_bytes
             .fetch_add(piece.block.as_ref().len() as u64, Ordering::Relaxed);
+        self.state
+            .session_stats
+            .fetched_bytes
+            .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
 
         fn write_to_disk(
             state: &TorrentStateLive,

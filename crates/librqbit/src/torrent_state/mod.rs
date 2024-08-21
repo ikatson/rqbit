@@ -38,6 +38,7 @@ use crate::bitv_factory::BitVFactory;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::session::TorrentId;
+use crate::session_stats::atomic::AtomicSessionStats;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::stream_connect::StreamConnector;
@@ -211,6 +212,7 @@ impl ManagedTorrent {
         live_cancellation_token: CancellationToken,
         init_semaphore: Arc<tokio::sync::Semaphore>,
         bitv_factory: Arc<dyn BitVFactory>,
+        session_stats: Arc<AtomicSessionStats>,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
 
@@ -319,8 +321,12 @@ impl ManagedTorrent {
                                 }
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
-                                let live =
-                                    TorrentStateLive::new(paused, tx, live_cancellation_token)?;
+                                let live = TorrentStateLive::new(
+                                    paused,
+                                    tx,
+                                    live_cancellation_token,
+                                    session_stats,
+                                )?;
                                 g.state = ManagedTorrentState::Live(live.clone());
                                 drop(g);
 
@@ -345,7 +351,12 @@ impl ManagedTorrent {
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(paused, tx, live_cancellation_token.clone())?;
+                let live = TorrentStateLive::new(
+                    paused,
+                    tx,
+                    live_cancellation_token.clone(),
+                    session_stats,
+                )?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 drop(g);
 
@@ -371,6 +382,7 @@ impl ManagedTorrent {
                     live_cancellation_token,
                     init_semaphore,
                     bitv_factory,
+                    session_stats,
                 )
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),

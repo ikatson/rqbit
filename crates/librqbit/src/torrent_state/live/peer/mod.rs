@@ -26,10 +26,12 @@ impl Peer {
     pub fn new_live_for_incoming_connection(
         peer_id: Id20,
         tx: PeerTx,
-        counters: &AggregatePeerStatsAtomic,
+        counters: &[&AggregatePeerStatsAtomic],
     ) -> Self {
         let state = PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx, true)));
-        counters.inc(&state.0);
+        for counter in counters {
+            counter.inc(&state.0);
+        }
         Self {
             state,
             stats: Default::default(),
@@ -85,12 +87,20 @@ impl PeerStateNoMut {
         &self.0
     }
 
-    pub fn take(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
+    pub fn take(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
         self.set(Default::default(), counters)
     }
 
-    pub fn set(&mut self, new: PeerState, counters: &AggregatePeerStatsAtomic) -> PeerState {
-        counters.incdec(&self.0, &new);
+    pub fn destroy(self, counters: &[&AggregatePeerStatsAtomic]) {
+        for counter in counters {
+            counter.dec(&self.0);
+        }
+    }
+
+    pub fn set(&mut self, new: PeerState, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
+        for counter in counters {
+            counter.incdec(&self.0, &new);
+        }
         std::mem::replace(&mut self.0, new)
     }
 
@@ -110,7 +120,7 @@ impl PeerStateNoMut {
 
     pub fn idle_to_connecting(
         &mut self,
-        counters: &AggregatePeerStatsAtomic,
+        counters: &[&AggregatePeerStatsAtomic],
     ) -> Option<(PeerRx, PeerTx)> {
         match &self.0 {
             PeerState::Queued | PeerState::NotNeeded => {
@@ -123,7 +133,7 @@ impl PeerStateNoMut {
         }
     }
 
-    pub fn not_needed_to_queued(&mut self, counters: &AggregatePeerStatsAtomic) -> bool {
+    pub fn not_needed_to_queued(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> bool {
         if let PeerState::NotNeeded = &self.0 {
             self.set(PeerState::Queued, counters);
             return true;
@@ -135,7 +145,7 @@ impl PeerStateNoMut {
         &mut self,
         peer_id: Id20,
         tx: PeerTx,
-        counters: &AggregatePeerStatsAtomic,
+        counters: &[&AggregatePeerStatsAtomic],
     ) -> anyhow::Result<()> {
         if matches!(&self.0, PeerState::Connecting(..) | PeerState::Live(..)) {
             anyhow::bail!("peer already active");
@@ -155,7 +165,7 @@ impl PeerStateNoMut {
     pub fn connecting_to_live(
         &mut self,
         peer_id: Id20,
-        counters: &AggregatePeerStatsAtomic,
+        counters: &[&AggregatePeerStatsAtomic],
     ) -> Option<&mut LivePeerState> {
         if let PeerState::Connecting(_) = &self.0 {
             let tx = match self.take(counters) {
@@ -172,7 +182,7 @@ impl PeerStateNoMut {
         }
     }
 
-    pub fn set_not_needed(&mut self, counters: &AggregatePeerStatsAtomic) -> PeerState {
+    pub fn set_not_needed(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
         self.set(PeerState::NotNeeded, counters)
     }
 }

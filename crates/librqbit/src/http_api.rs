@@ -62,10 +62,15 @@ impl HttpApi {
                     "GET /dht/stats": "DHT stats",
                     "GET /dht/table": "DHT routing table",
                     "GET /torrents": "List torrents",
+                    "GET /torrents/playlist": "Generate M3U8 playlist for all files in all torrents",
+                    "GET /stats": "Global session stats",
+                    "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
                     "GET /torrents/{id_or_infohash}": "Torrent details",
                     "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+                    "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
                     "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
                     "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+                    "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
                     "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
                     "POST /torrents/{id_or_infohash}/start": "Resume torrent",
                     "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
@@ -86,6 +91,10 @@ impl HttpApi {
 
         async fn dht_table(State(state): State<ApiState>) -> Result<impl IntoResponse> {
             state.api_dht_table().map(axum::Json)
+        }
+
+        async fn session_stats(State(state): State<ApiState>) -> impl IntoResponse {
+            axum::Json(state.api_session_stats())
         }
 
         async fn torrents_list(State(state): State<ApiState>) -> impl IntoResponse {
@@ -446,6 +455,7 @@ impl HttpApi {
             .route("/rust_log", post(set_rust_log))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
+            .route("/stats", get(session_stats))
             .route("/torrents", get(torrents_list))
             .route("/torrents/:id", get(torrent_details))
             .route("/torrents/:id/haves", get(torrent_haves))

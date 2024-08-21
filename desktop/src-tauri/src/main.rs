@@ -19,6 +19,7 @@ use librqbit::{
         TorrentListResponse, TorrentStats,
     },
     dht::PersistentDhtConfig,
+    session_stats::snapshot::SessionStatsSnapshot,
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions, InitLoggingResult},
     AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
     SessionPersistenceConfig,
@@ -319,6 +320,11 @@ async fn torrent_action_configure(
 }
 
 #[tauri::command]
+async fn stats(state: tauri::State<'_, State>) -> Result<SessionStatsSnapshot, ApiError> {
+    Ok(state.api()?.api_session_stats())
+}
+
+#[tauri::command]
 fn get_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
@@ -352,6 +358,7 @@ async fn start() {
             torrent_action_start,
             torrent_action_configure,
             torrent_create_from_base64_file,
+            stats,
             get_version,
             config_default,
             config_current,

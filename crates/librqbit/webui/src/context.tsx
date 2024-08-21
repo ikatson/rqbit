@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import { RqbitAPI } from "./api-types";
+import { RqbitAPI, SessionStats } from "./api-types";
 
 export const APIContext = createContext<RqbitAPI>({
   listTorrents: () => {
@@ -36,6 +36,9 @@ export const APIContext = createContext<RqbitAPI>({
     throw new Error("Function not implemented.");
   },
   getPlaylistUrl: function (index: number): string | null {
+    throw new Error("Function not implemented.");
+  },
+  stats: function (): Promise<SessionStats> {
     throw new Error("Function not implemented.");
   },
 });
