@@ -17,6 +17,7 @@ pub struct SessionStats {
     pub atomic: Arc<AtomicSessionStats>,
     pub down_speed_estimator: SpeedEstimator,
     pub up_speed_estimator: SpeedEstimator,
+    pub startup_time: Instant,
 }
 
 impl SessionStats {
@@ -25,6 +26,7 @@ impl SessionStats {
             atomic: Default::default(),
             down_speed_estimator: SpeedEstimator::new(5),
             up_speed_estimator: SpeedEstimator::new(5),
+            startup_time: Instant::now(),
         }
     }
 }

@@ -46,7 +46,10 @@ export interface AggregatePeerStats {
 export interface SessionStats {
   download_speed: Speed;
   upload_speed: Speed;
+  fetched_bytes: number;
+  uploaded_bytes: number;
   peers: AggregatePeerStats;
+  uptime_seconds: number;
 }
 
 // Interface for the Torrent Stats API response

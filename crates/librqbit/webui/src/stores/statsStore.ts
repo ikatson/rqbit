@@ -19,6 +19,9 @@ export const useStatsStore = create<StatsStore>((set) => ({
       queued: 0,
       seen: 0,
     },
+    fetched_bytes: 0,
+    uploaded_bytes: 0,
+    uptime_seconds: 0,
   },
   setStats: (stats) => {
     set({ stats });
