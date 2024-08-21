@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+    <specVersion>
+        <major>1</major>
+        <minor>0</minor>
+    </specVersion>
+    <device>
+        <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
+        <friendlyName>{friendly_name}</friendlyName>
+        <manufacturer>{manufacturer}</manufacturer>
+        <modelName>{model_name}</modelName>
+        <UDN>{unique_id}</UDN>
+
+        <serviceList>
+            <service>
+                <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+                <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
+                <SCPDURL>{http_prefix}/scpd/ContentDirectory.xml</SCPDURL>
+                <controlURL>{http_prefix}/control/ContentDirectory</controlURL>
+                <eventSubURL>{http_prefix}/subscribe</eventSubURL>
+            </service>
+            <service>
+                <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+                <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
+                <SCPDURL>{http_prefix}/scpd/ConnectionManager.xml</SCPDURL>
+                <controlURL>{http_prefix}/control/ConnectionManager</controlURL>
+            </service>
+        </serviceList>
+        <presentationURL>/</presentationURL>
+    </device>
+</root>

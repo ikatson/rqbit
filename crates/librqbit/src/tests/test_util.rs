@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::{bail, Context};
-use axum::{response::IntoResponse, routing::get, Router};
 use librqbit_core::Id20;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng, RngCore, SeedableRng};
@@ -96,7 +95,9 @@ impl TestPeerMetadata {
     }
 }
 
+#[cfg(feature = "http-api")]
 async fn debug_server() -> anyhow::Result<()> {
+    use axum::{response::IntoResponse, routing::get, Router};
     async fn backtraces() -> impl IntoResponse {
         #[cfg(feature = "async-bt")]
         {
@@ -124,6 +125,11 @@ async fn debug_server() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("error binding to {addr}"))?;
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "http-api"))]
+async fn debug_server() -> anyhow::Result<()> {
     Ok(())
 }
 

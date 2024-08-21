@@ -1,6 +1,6 @@
 use anyhow::Context;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use bencode::AsDisplay;
@@ -16,7 +16,8 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
-use tracing::{debug, info, trace};
+use tokio::net::TcpListener;
+use tracing::{debug, error_span, trace};
 
 use axum::Router;
 
@@ -52,7 +53,11 @@ impl HttpApi {
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
-    pub fn make_http_api_and_run(self, addr: SocketAddr) -> BoxFuture<'static, anyhow::Result<()>> {
+    pub fn make_http_api_and_run(
+        self,
+        listener: TcpListener,
+        upnp_router: Option<Router>,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {
@@ -558,22 +563,33 @@ impl HttpApi {
                 .allow_headers(AllowHeaders::any())
         };
 
+        let mut app = app.with_state(state);
+
+        if let Some(upnp_router) = upnp_router {
+            app = app.nest("/upnp", upnp_router);
+        }
+
         let app = app
             .layer(cors_layer)
-            .layer(tower_http::trace::TraceLayer::new_for_http())
-            .with_state(state)
-            .into_make_service();
-
-        info!(%addr, "starting HTTP server");
-
-        use tokio::net::TcpListener;
+            .layer(
+                tower_http::trace::TraceLayer::new_for_http().make_span_with(|req: &Request| {
+                    let method = req.method();
+                    let uri = req.uri();
+                    if let Some(ConnectInfo(addr)) =
+                        req.extensions().get::<ConnectInfo<SocketAddr>>()
+                    {
+                        error_span!("request", %method, %uri, %addr)
+                    } else {
+                        error_span!("request", %method, %uri)
+                    }
+                }),
+            )
+            .into_make_service_with_connect_info::<SocketAddr>();
 
         async move {
-            let listener = TcpListener::bind(&addr)
+            axum::serve(listener, app)
                 .await
-                .with_context(|| format!("error binding to {addr}"))?;
-            axum::serve(listener, app).await?;
-            Ok(())
+                .context("error running HTTP API")
         }
         .boxed()
     }

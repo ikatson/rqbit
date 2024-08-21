@@ -115,13 +115,20 @@ async fn api_from_config(
     );
 
     if !config.http_api.disable {
-        let http_api_task = librqbit::http_api::HttpApi::new(
-            api.clone(),
-            Some(librqbit::http_api::HttpApiOptions {
-                read_only: config.http_api.read_only,
-            }),
-        )
-        .make_http_api_and_run(config.http_api.listen_addr);
+        let listen_addr = config.http_api.listen_addr;
+        let api = api.clone();
+        let read_only = config.http_api.read_only;
+        let http_api_task = async move {
+            let listener = tokio::net::TcpListener::bind(listen_addr)
+                .await
+                .with_context(|| format!("error listening on {}", listen_addr))?;
+            librqbit::http_api::HttpApi::new(
+                api.clone(),
+                Some(librqbit::http_api::HttpApiOptions { read_only }),
+            )
+            .make_http_api_and_run(listener, None)
+            .await
+        };
 
         session.spawn(error_span!("http_api"), http_api_task);
     }

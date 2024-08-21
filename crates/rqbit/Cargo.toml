@@ -26,6 +26,7 @@ postgres = ["librqbit/postgres"]
 librqbit = { path = "../librqbit", default-features = false, features = [
     "http-api",
     "tracing-subscriber-utils",
+    "upnp-serve-adapter",
 ], version = "7.0.0-beta.2" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 console-subscriber = { version = "0.2", optional = true }
@@ -43,6 +44,7 @@ serde_json = "1"
 size_format = "1"
 bytes = "1.5.0"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
+upnp-serve = { path = "../upnp-serve" }
 
 [dev-dependencies]
 futures = { version = "0.3" }
