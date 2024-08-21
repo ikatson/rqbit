@@ -14,6 +14,7 @@ use crate::{
     session::{
         AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
     },
+    session_stats::snapshot::SessionStatsSnapshot,
     torrent_state::{
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
         FileStream, ManagedTorrentHandle,
@@ -169,6 +170,10 @@ impl Api {
         let info_hash = handle.info().info_hash;
         let only_files = handle.only_files();
         make_torrent_details(&info_hash, &handle.info().info, only_files.as_deref())
+    }
+
+    pub fn api_session_stats(&self) -> SessionStatsSnapshot {
+        self.session().stats_snapshot()
     }
 
     pub fn torrent_file_mime_type(

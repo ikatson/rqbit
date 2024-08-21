@@ -6,5 +6,5 @@ use crate::torrent_state::live::peers::stats::atomic::AggregatePeerStatsAtomic;
 pub struct AtomicSessionStats {
     pub fetched_bytes: AtomicU64,
     pub uploaded_bytes: AtomicU64,
-    pub peers: AggregatePeerStatsAtomic,
+    pub(crate) peers: AggregatePeerStatsAtomic,
 }

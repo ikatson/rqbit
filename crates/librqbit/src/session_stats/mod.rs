@@ -5,11 +5,13 @@ use std::{
 
 use atomic::AtomicSessionStats;
 use librqbit_core::speed_estimator::SpeedEstimator;
+use snapshot::SessionStatsSnapshot;
 use tracing::error_span;
 
 use crate::Session;
 
 pub mod atomic;
+pub mod snapshot;
 
 pub struct SessionStats {
     pub atomic: Arc<AtomicSessionStats>,
@@ -24,6 +26,12 @@ impl SessionStats {
             down_speed_estimator: SpeedEstimator::new(5),
             up_speed_estimator: SpeedEstimator::new(5),
         }
+    }
+}
+
+impl Default for SessionStats {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -46,5 +54,9 @@ impl Session {
                 }
             }
         })
+    }
+
+    pub fn stats_snapshot(&self) -> SessionStatsSnapshot {
+        SessionStatsSnapshot::from(&self.stats)
     }
 }
