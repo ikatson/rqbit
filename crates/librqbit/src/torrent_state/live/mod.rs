@@ -214,12 +214,16 @@ impl TorrentStateLive {
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
-        session_stats: Arc<AtomicSessionStats>,
     ) -> anyhow::Result<Arc<Self>> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
-
-        let down_speed_estimator = SpeedEstimator::new(5);
-        let up_speed_estimator = SpeedEstimator::new(5);
+        let session = paused
+            .info
+            .session
+            .upgrade()
+            .context("session is dead, cannot start torrent")?;
+        let session_stats = session.stats.atomic.clone();
+        let down_speed_estimator = SpeedEstimator::default();
+        let up_speed_estimator = SpeedEstimator::default();
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();

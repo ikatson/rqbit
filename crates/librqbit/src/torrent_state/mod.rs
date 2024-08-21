@@ -218,6 +218,7 @@ impl ManagedTorrent {
             .upgrade()
             .context("session is dead, cannot start torrent")?;
         let mut g = self.locked.write();
+        let cancellation_token = session.cancellation_token().child_token();
 
         let spawn_fatal_errors_receiver =
             |state: &Arc<Self>,
@@ -297,7 +298,7 @@ impl ManagedTorrent {
                 drop(g);
                 let t = self.clone();
                 let span = self.shared().span.clone();
-                let token = session.cancellation_token().child_token().clone();
+                let token = cancellation_token.clone();
 
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
@@ -326,12 +327,7 @@ impl ManagedTorrent {
                                 }
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
-                                let live = TorrentStateLive::new(
-                                    paused,
-                                    tx,
-                                    session.cancellation_token().child_token(),
-                                    session.stats.atomic.clone(),
-                                )?;
+                                let live = TorrentStateLive::new(paused, tx, cancellation_token)?;
                                 g.state = ManagedTorrentState::Live(live.clone());
                                 drop(g);
 
@@ -356,16 +352,11 @@ impl ManagedTorrent {
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(
-                    paused,
-                    tx,
-                    session.cancellation_token().child_token().clone(),
-                    session.stats.atomic.clone(),
-                )?;
+                let live = TorrentStateLive::new(paused, tx, cancellation_token.clone())?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 drop(g);
 
-                spawn_fatal_errors_receiver(self, rx, session.cancellation_token().child_token());
+                spawn_fatal_errors_receiver(self, rx, cancellation_token);
                 spawn_peer_adder(&live, peer_rx);
                 Ok(())
             }
