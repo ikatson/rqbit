@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 
 use crate::{
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
-    ManagedTorrentInfo,
+    ManagedTorrentShared,
 };
 
 #[derive(Clone)]
@@ -35,7 +35,7 @@ impl<U: StorageFactory> SlowStorageFactory<U> {
 impl<U: StorageFactory + Clone> StorageFactory for SlowStorageFactory<U> {
     type Storage = SlowStorage<U::Storage>;
 
-    fn create(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, info: &crate::ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
         Ok(SlowStorage {
             underlying: self.underlying_factory.create(info)?,
             pwrite_all_bufread: Mutex::new(Box::new(
@@ -116,7 +116,7 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
         self.underlying.remove_directory_if_empty(path)
     }
 
-    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         self.underlying.init(meta)
     }
 }

@@ -12,6 +12,7 @@ use crate::{
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
+    file_info::FileInfo,
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
@@ -23,10 +24,11 @@ use crate::{
     },
     stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
-        ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
+        initializing::TorrentStateInitializing, ManagedTorrentHandle, ManagedTorrentLocked,
+        ManagedTorrentOptions, ManagedTorrentState, TorrentStateLive,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
-    ManagedTorrentInfo,
+    ManagedTorrent, ManagedTorrentShared,
 };
 use anyhow::{bail, Context};
 use bencode::bencode_serialize_to_writer;
@@ -43,6 +45,7 @@ use itertools::Itertools;
 use librqbit_core::{
     constants::CHUNK_SIZE,
     directories::get_configuration_directory,
+    lengths::Lengths,
     magnet::Magnet,
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
@@ -51,7 +54,10 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::Notify,
+};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument, Span};
@@ -95,7 +101,7 @@ pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
-    bitv_factory: Arc<dyn BitVFactory>,
+    pub(crate) bitv_factory: Arc<dyn BitVFactory>,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
     next_id: AtomicUsize,
@@ -111,9 +117,8 @@ pub struct Session {
     default_storage_factory: Option<BoxStorageFactory>,
 
     reqwest_client: reqwest::Client,
-    connector: Arc<StreamConnector>,
-
-    concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
+    pub(crate) connector: Arc<StreamConnector>,
+    pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
 
     root_span: Option<Span>,
 
@@ -637,7 +642,7 @@ impl Session {
                 if opts.enable_upnp_port_forwarding {
                     session.spawn(
                         error_span!(parent: session.rs(), "upnp_forward", port = listen_port),
-                        session.clone().task_upnp_port_forwarder(listen_port),
+                        Self::task_upnp_port_forwarder(listen_port),
                     );
                 }
             }
@@ -686,7 +691,7 @@ impl Session {
     }
 
     async fn check_incoming_connection(
-        &self,
+        self: Arc<Self>,
         addr: SocketAddr,
         mut stream: TcpStream,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
@@ -739,6 +744,8 @@ impl Session {
 
     async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
+        let session = Arc::downgrade(&self);
+        drop(self);
 
         loop {
             tokio::select! {
@@ -746,13 +753,15 @@ impl Session {
                     match r {
                         Ok((stream, addr)) => {
                             trace!("accepted connection from {addr}");
+                            let session = session.upgrade().context("session is dead")?;
+                            let span = error_span!(parent: session.rs(), "incoming", addr=%addr);
                             futs.push(
-                                self.check_incoming_connection(addr, stream)
+                                session.check_incoming_connection(addr, stream)
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
                                     })
-                                    .instrument(error_span!(parent: self.rs(), "incoming", addr=%addr))
+                                    .instrument(span)
                             );
                         }
                         Err(e) => {
@@ -770,7 +779,7 @@ impl Session {
         }
     }
 
-    async fn task_upnp_port_forwarder(self: Arc<Self>, port: u16) -> anyhow::Result<()> {
+    async fn task_upnp_port_forwarder(port: u16) -> anyhow::Result<()> {
         let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None)?;
         pf.run_forever().await
     }
@@ -914,7 +923,6 @@ impl Session {
                                 peer_rx: Some(rx),
                                 initial_peers: {
                                     let seen = seen.into_iter().collect_vec();
-                                    info!(count=seen.len(), "seen");
                                     for peer in &seen {
                                         debug!(?peer, "seen")
                                     }
@@ -1023,7 +1031,7 @@ impl Session {
     }
 
     async fn main_torrent_info(
-        &self,
+        self: &Arc<Self>,
         add_res: InternalAddResult,
         mut opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
@@ -1084,43 +1092,6 @@ impl Session {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         };
 
-        let mut builder = ManagedTorrentBuilder::new(
-            id,
-            info,
-            info_hash,
-            torrent_bytes,
-            info_bytes,
-            output_folder,
-            storage_factory,
-        );
-        builder
-            .allow_overwrite(opts.overwrite)
-            .spawner(self.spawner)
-            .trackers(trackers)
-            .connector(self.connector.clone())
-            .peer_id(self.peer_id);
-
-        if let Some(d) = self.disk_write_tx.clone() {
-            builder.disk_writer(d);
-        }
-
-        if let Some(only_files) = only_files {
-            builder.only_files(only_files);
-        }
-        if let Some(interval) = opts.force_tracker_interval {
-            builder.force_tracker_interval(interval);
-        }
-
-        let peer_opts = self.merge_peer_opts(opts.peer_opts);
-
-        if let Some(t) = peer_opts.connect_timeout {
-            builder.peer_connect_timeout(t);
-        }
-
-        if let Some(t) = peer_opts.read_write_timeout {
-            builder.peer_read_write_timeout(t);
-        }
-
         let managed_torrent = {
             let mut g = self.db.write();
             if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
@@ -1132,13 +1103,70 @@ impl Session {
             }) {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
-            let managed_torrent = builder.build(error_span!(parent: self.rs(), "torrent", id))?;
-            g.add_torrent(managed_torrent.clone(), id);
-            managed_torrent
+
+            let lengths = Lengths::from_torrent(&info)?;
+            let file_infos = info
+                .iter_file_details(&lengths)?
+                .map(|fd| {
+                    Ok::<_, anyhow::Error>(FileInfo {
+                        relative_filename: fd.filename.to_pathbuf()?,
+                        offset_in_torrent: fd.offset,
+                        piece_range: fd.pieces,
+                        len: fd.len,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<FileInfo>>>()?;
+
+            let span = error_span!(parent: self.rs(), "torrent", id);
+            let peer_opts = self.merge_peer_opts(opts.peer_opts);
+            let minfo = Arc::new(ManagedTorrentShared {
+                id,
+                span,
+                file_infos,
+                info,
+                torrent_bytes,
+                info_bytes,
+                info_hash,
+                trackers: trackers.into_iter().collect(),
+                spawner: self.spawner,
+                peer_id: self.peer_id,
+                lengths,
+                storage_factory,
+                options: ManagedTorrentOptions {
+                    force_tracker_interval: opts.force_tracker_interval,
+                    peer_connect_timeout: peer_opts.connect_timeout,
+                    peer_read_write_timeout: peer_opts.read_write_timeout,
+                    allow_overwrite: opts.overwrite,
+                    output_folder,
+                    disk_write_queue: self.disk_write_tx.clone(),
+                },
+                connector: self.connector.clone(),
+                session: Arc::downgrade(self),
+            });
+
+            let initializing = Arc::new(TorrentStateInitializing::new(
+                minfo.clone(),
+                only_files.clone(),
+                minfo.storage_factory.create_and_init(&minfo)?,
+            ));
+            let handle = Arc::new(ManagedTorrent {
+                locked: RwLock::new(ManagedTorrentLocked {
+                    state: ManagedTorrentState::Initializing(initializing),
+                    only_files,
+                }),
+                state_change_notify: Notify::new(),
+                shared: minfo,
+            });
+
+            g.add_torrent(handle.clone(), id);
+            handle
         };
 
         if let Some(p) = self.persistence.as_ref() {
-            p.store(id, &managed_torrent).await?;
+            if let Err(e) = p.store(id, &managed_torrent).await {
+                self.db.write().torrents.remove(&id);
+                return Err(e);
+            }
         }
 
         // Merge "initial_peers" and "peer_rx" into one stream.
@@ -1156,18 +1184,11 @@ impl Session {
         );
 
         {
-            let span = managed_torrent.info.span.clone();
+            let span = managed_torrent.shared.span.clone();
             let _ = span.enter();
 
             managed_torrent
-                .start(
-                    peer_rx,
-                    opts.paused,
-                    self.cancellation_token.child_token(),
-                    self.concurrent_initialize_semaphore.clone(),
-                    self.bitv_factory.clone(),
-                    self.stats.atomic.clone(),
-                )
+                .start(peer_rx, opts.paused)
                 .context("error starting torrent")?;
         }
 
@@ -1239,18 +1260,18 @@ impl Session {
                 _ => None,
             })
             .map(Ok)
-            .unwrap_or_else(|| removed.storage_factory.create(removed.info()));
+            .unwrap_or_else(|| removed.shared.storage_factory.create(removed.shared()));
 
         match (storage, delete_files) {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
             (Ok(storage), true) => {
                 debug!("will delete files");
-                remove_files_and_dirs(removed.info(), &storage);
-                if removed.info().options.output_folder != self.output_folder {
+                remove_files_and_dirs(removed.shared(), &storage);
+                if removed.shared().options.output_folder != self.output_folder {
                     if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
                         warn!(
                             "error removing {:?}: {e:?}",
-                            removed.info().options.output_folder
+                            removed.shared().options.output_folder
                         )
                     }
                 }
@@ -1313,18 +1334,11 @@ impl Session {
     pub async fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
         let peer_rx = self.make_peer_rx(
             handle.info_hash(),
-            handle.info().trackers.clone().into_iter().collect(),
+            handle.shared().trackers.clone().into_iter().collect(),
             self.tcp_listen_port,
-            handle.info().options.force_tracker_interval,
+            handle.shared().options.force_tracker_interval,
         )?;
-        handle.start(
-            peer_rx,
-            false,
-            self.cancellation_token.child_token(),
-            self.concurrent_initialize_semaphore.clone(),
-            self.bitv_factory.clone(),
-            self.stats.atomic.clone(),
-        )?;
+        handle.start(peer_rx, false)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
@@ -1344,7 +1358,7 @@ impl Session {
     }
 }
 
-fn remove_files_and_dirs(info: &ManagedTorrentInfo, files: &dyn TorrentStorage) {
+fn remove_files_and_dirs(info: &ManagedTorrentShared, files: &dyn TorrentStorage) {
     let mut all_dirs = HashSet::new();
     for (id, fi) in info.file_infos.iter().enumerate() {
         let mut fname = &*fi.relative_filename;

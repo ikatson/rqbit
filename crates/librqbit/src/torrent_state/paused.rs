@@ -5,10 +5,10 @@ use crate::{
     type_aliases::FileStorage,
 };
 
-use super::{streaming::TorrentStreams, ManagedTorrentInfo};
+use super::{streaming::TorrentStreams, ManagedTorrentShared};
 
 pub struct TorrentStatePaused {
-    pub(crate) info: Arc<ManagedTorrentInfo>,
+    pub(crate) info: Arc<ManagedTorrentShared>,
     pub(crate) files: FileStorage,
     pub(crate) chunk_tracker: ChunkTracker,
     pub(crate) streams: Arc<TorrentStreams>,

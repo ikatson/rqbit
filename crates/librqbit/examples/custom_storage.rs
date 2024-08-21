@@ -20,7 +20,7 @@ struct CustomStorage {
 impl StorageFactory for CustomStorageFactory {
     type Storage = CustomStorage;
 
-    fn create(&self, _info: &librqbit::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, _info: &librqbit::ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
         Ok(CustomStorage::default())
     }
 
@@ -54,7 +54,7 @@ impl TorrentStorage for CustomStorage {
         anyhow::bail!("not implemented")
     }
 
-    fn init(&mut self, _meta: &librqbit::ManagedTorrentInfo) -> anyhow::Result<()> {
+    fn init(&mut self, _meta: &librqbit::ManagedTorrentShared) -> anyhow::Result<()> {
         anyhow::bail!("not implemented")
     }
 }

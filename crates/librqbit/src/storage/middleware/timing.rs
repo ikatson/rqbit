@@ -4,7 +4,7 @@ A storage middleware that logs the time underlying storage operations took.
 
 use crate::{
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
-    ManagedTorrentInfo,
+    ManagedTorrentShared,
 };
 
 #[derive(Clone)]
@@ -25,7 +25,7 @@ impl<U> TimingStorageFactory<U> {
 impl<U: StorageFactory + Clone> StorageFactory for TimingStorageFactory<U> {
     type Storage = TimingStorage<U::Storage>;
 
-    fn create(&self, info: &crate::ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, info: &crate::ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
         Ok(TimingStorage {
             name: self.name.clone(),
             underlying: self.underlying_factory.create(info)?,
@@ -104,7 +104,7 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
         self.underlying.remove_directory_if_empty(path)
     }
 
-    fn init(&mut self, meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         self.underlying.init(meta)
     }
 }

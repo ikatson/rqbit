@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
 use atomic::AtomicSessionStats;
 use librqbit_core::speed_estimator::SpeedEstimator;
 use snapshot::SessionStatsSnapshot;
@@ -40,12 +41,13 @@ impl Default for SessionStats {
 impl Session {
     pub(crate) fn start_speed_estimator_updater(self: &Arc<Self>) {
         self.spawn(error_span!(parent: self.rs(), "speed_estimator"), {
-            let s = self.clone();
+            let s = Arc::downgrade(self);
 
             async move {
                 let mut i = tokio::time::interval(Duration::from_secs(1));
                 loop {
                     i.tick().await;
+                    let s = s.upgrade().context("session is dead")?;
                     let now = Instant::now();
                     let fetched = s.stats.atomic.fetched_bytes.load(Ordering::Relaxed);
                     let uploaded = s.stats.atomic.uploaded_bytes.load(Ordering::Relaxed);

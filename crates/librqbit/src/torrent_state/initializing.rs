@@ -19,11 +19,11 @@ use crate::{
     FileInfos,
 };
 
-use super::{paused::TorrentStatePaused, ManagedTorrentInfo};
+use super::{paused::TorrentStatePaused, ManagedTorrentShared};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
-    pub(crate) meta: Arc<ManagedTorrentInfo>,
+    pub(crate) meta: Arc<ManagedTorrentShared>,
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
 }
@@ -37,7 +37,7 @@ fn compute_selected_pieces(
     for (_, fi) in file_infos
         .iter()
         .enumerate()
-        .filter(|(id, _)| only_files.map(|of| of.contains(id)).unwrap_or(false))
+        .filter(|(id, _)| only_files.map(|of| of.contains(id)).unwrap_or(true))
     {
         if let Some(r) = bf.get_mut(fi.piece_range_usize()) {
             r.fill(true);
@@ -48,7 +48,7 @@ fn compute_selected_pieces(
 
 impl TorrentStateInitializing {
     pub fn new(
-        meta: Arc<ManagedTorrentInfo>,
+        meta: Arc<ManagedTorrentShared>,
         only_files: Option<Vec<usize>>,
         files: FileStorage,
     ) -> Self {

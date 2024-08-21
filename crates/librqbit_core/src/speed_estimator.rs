@@ -19,6 +19,12 @@ pub struct SpeedEstimator {
     time_remaining_millis: AtomicU64,
 }
 
+impl Default for SpeedEstimator {
+    fn default() -> Self {
+        Self::new(5)
+    }
+}
+
 impl SpeedEstimator {
     pub fn new(window_seconds: usize) -> Self {
         assert!(window_seconds > 1);

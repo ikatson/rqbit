@@ -16,7 +16,7 @@ use crate::{
     create_torrent,
     tests::test_util::{
         create_default_random_dir_with_torrents, setup_test_logging, spawn_debug_server,
-        TestPeerMetadata,
+        wait_until_i_am_the_last_task, DropChecks, TestPeerMetadata,
     },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
@@ -28,13 +28,22 @@ async fn test_e2e_download() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(180);
 
-    tokio::time::timeout(Duration::from_secs(timeout), _test_e2e_download())
-        .await
-        .context("test_e2e_download timed out")
-        .unwrap()
+    let drop_checks = DropChecks::default();
+    tokio::time::timeout(
+        Duration::from_secs(timeout),
+        _test_e2e_download(&drop_checks),
+    )
+    .await
+    .context("test_e2e_download timed out")
+    .unwrap();
+
+    // Wait to ensure everything is dropped.
+    wait_until_i_am_the_last_task().await;
+
+    drop_checks.check().unwrap();
 }
 
-async fn _test_e2e_download() {
+async fn _test_e2e_download(drop_checks: &DropChecks) {
     setup_test_logging();
     match crate::try_increase_nofile_limit() {
         Ok(limit) => info!(limit, "increased ulimit"),
@@ -75,6 +84,7 @@ async fn _test_e2e_download() {
     for i in 0..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let tempdir = tempdir.path().to_owned();
+        let drop_checks = drop_checks.clone();
         let fut = spawn(
             async move {
                 let peer_id = TestPeerMetadata {
@@ -104,6 +114,8 @@ async fn _test_e2e_download() {
                 .await
                 .context("error starting session")?;
 
+                drop_checks.add(&session, format!("server session {i}"));
+
                 info!("started session");
 
                 let handle = session
@@ -118,6 +130,9 @@ async fn _test_e2e_download() {
                     .await
                     .context("error adding torrent")?;
                 let h = handle.into_handle().context("into_handle()")?;
+
+                drop_checks.add(&h.shared, format!("server {i} torrent shared handle"));
+
                 let mut interval = interval(Duration::from_millis(100));
 
                 info!("added torrent");
@@ -141,12 +156,13 @@ async fn _test_e2e_download() {
                     }
                 }
                 info!("torrent is live");
-                Ok::<_, anyhow::Error>(SocketAddr::new(
+                let addr = SocketAddr::new(
                     std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     session
                         .tcp_listen_port()
                         .context("expected session.tcp_listen_port() to be set")?,
-                ))
+                );
+                Ok::<_, anyhow::Error>((session, addr))
             }
             .instrument(error_span!("server", id = i)),
         );
@@ -154,12 +170,15 @@ async fn _test_e2e_download() {
     }
 
     let mut peers = Vec::new();
+
+    // This is around just not to drop.
+    let mut _servers = Vec::new();
     for (id, peer) in futures::future::join_all(futs)
         .await
         .into_iter()
         .enumerate()
     {
-        let peer = peer
+        let (server, peer) = peer
             .with_context(|| format!("join error, server={id}"))
             .unwrap()
             .with_context(|| format!("timeout, server={id}"))
@@ -167,6 +186,7 @@ async fn _test_e2e_download() {
             .with_context(|| format!("server couldn't start, server={id}"))
             .unwrap();
         peers.push(peer);
+        _servers.push(server);
     }
 
     info!("started all servers, starting client");
@@ -201,6 +221,7 @@ async fn _test_e2e_download() {
         )
         .await
         .unwrap();
+        drop_checks.add(&session, "client session");
 
         info!("started client session");
 

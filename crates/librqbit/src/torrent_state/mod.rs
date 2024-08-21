@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::Weak;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -19,7 +20,6 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
-use librqbit_core::peer_id::generate_peer_id;
 
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
@@ -34,11 +34,8 @@ use tracing::debug;
 use tracing::error_span;
 use tracing::warn;
 
-use crate::bitv_factory::BitVFactory;
 use crate::chunk_tracker::ChunkTracker;
-use crate::file_info::FileInfo;
 use crate::session::TorrentId;
-use crate::session_stats::atomic::AtomicSessionStats;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::stream_connect::StreamConnector;
@@ -46,6 +43,7 @@ use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::DiskWorkQueueSender;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
+use crate::Session;
 
 use initializing::TorrentStateInitializing;
 
@@ -87,7 +85,7 @@ impl ManagedTorrentState {
 }
 
 pub(crate) struct ManagedTorrentLocked {
-    pub state: ManagedTorrentState,
+    pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
 }
 
@@ -101,7 +99,13 @@ pub(crate) struct ManagedTorrentOptions {
     pub disk_write_queue: Option<DiskWorkQueueSender>,
 }
 
-pub struct ManagedTorrentInfo {
+/// Common information about torrent shared among all possible states.
+///
+// The reason it's not inlined into ManagedTorrent is to break the Arc cycle:
+// ManagedTorrent contains the current torrent state, which in turn needs access to a bunch
+// of stuff, but it shouldn't access the state.
+pub struct ManagedTorrentShared {
+    pub id: TorrentId,
     pub info: TorrentMetaV1Info<ByteBufOwned>,
     pub torrent_bytes: Bytes,
     pub info_bytes: Bytes,
@@ -114,33 +118,31 @@ pub struct ManagedTorrentInfo {
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
     pub(crate) connector: Arc<StreamConnector>,
+    pub(crate) storage_factory: BoxStorageFactory,
+    pub(crate) session: Weak<Session>,
 }
 
 pub struct ManagedTorrent {
-    pub id: TorrentId,
-    // TODO: merge ManagedTorrent and ManagedTorrentInfo
-    pub info: Arc<ManagedTorrentInfo>,
-    pub(crate) storage_factory: BoxStorageFactory,
-
-    state_change_notify: Notify,
-    locked: RwLock<ManagedTorrentLocked>,
+    pub shared: Arc<ManagedTorrentShared>,
+    pub(crate) state_change_notify: Notify,
+    pub(crate) locked: RwLock<ManagedTorrentLocked>,
 }
 
 impl ManagedTorrent {
     pub fn id(&self) -> TorrentId {
-        self.id
+        self.shared.id
     }
 
-    pub fn info(&self) -> &ManagedTorrentInfo {
-        &self.info
+    pub fn shared(&self) -> &ManagedTorrentShared {
+        &self.shared
     }
 
     pub fn get_total_bytes(&self) -> u64 {
-        self.info.lengths.total_length()
+        self.shared.lengths.total_length()
     }
 
     pub fn info_hash(&self) -> Id20 {
-        self.info.info_hash
+        self.shared.info_hash
     }
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
@@ -209,18 +211,20 @@ impl ManagedTorrent {
         self: &Arc<Self>,
         peer_rx: Option<PeerStream>,
         start_paused: bool,
-        live_cancellation_token: CancellationToken,
-        init_semaphore: Arc<tokio::sync::Semaphore>,
-        bitv_factory: Arc<dyn BitVFactory>,
-        session_stats: Arc<AtomicSessionStats>,
     ) -> anyhow::Result<()> {
+        let session = self
+            .shared
+            .session
+            .upgrade()
+            .context("session is dead, cannot start torrent")?;
         let mut g = self.locked.write();
+        let cancellation_token = session.cancellation_token().child_token();
 
         let spawn_fatal_errors_receiver =
             |state: &Arc<Self>,
              rx: tokio::sync::oneshot::Receiver<anyhow::Error>,
              token: CancellationToken| {
-                let span = state.info.span.clone();
+                let span = state.shared.span.clone();
                 let state = Arc::downgrade(state);
                 spawn_with_cancel(
                     error_span!(parent: span, "fatal_errors_receiver"),
@@ -242,7 +246,7 @@ impl ManagedTorrent {
 
         fn spawn_peer_adder(live: &Arc<TorrentStateLive>, peer_rx: Option<PeerStream>) {
             live.spawn(
-                error_span!(parent: live.meta().span.clone(), "external_peer_adder"),
+                error_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
                 {
                     let live = live.clone();
                     async move {
@@ -293,19 +297,21 @@ impl ManagedTorrent {
                 let init = init.clone();
                 drop(g);
                 let t = self.clone();
-                let span = self.info().span.clone();
-                let token = live_cancellation_token.clone();
+                let span = self.shared().span.clone();
+                let token = cancellation_token.clone();
 
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
                     async move {
-                        let _permit = init_semaphore
+                        let concurrent_init_semaphore =
+                            session.concurrent_initialize_semaphore.clone();
+                        let _permit = concurrent_init_semaphore
                             .acquire()
                             .await
                             .context("bug: concurrent init semaphore was closed")?;
 
-                        match init.check(bitv_factory).await {
+                        match init.check(session.bitv_factory.clone()).await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
@@ -321,12 +327,7 @@ impl ManagedTorrent {
                                 }
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
-                                let live = TorrentStateLive::new(
-                                    paused,
-                                    tx,
-                                    live_cancellation_token,
-                                    session_stats,
-                                )?;
+                                let live = TorrentStateLive::new(paused, tx, cancellation_token)?;
                                 g.state = ManagedTorrentState::Live(live.clone());
                                 drop(g);
 
@@ -351,24 +352,19 @@ impl ManagedTorrent {
             ManagedTorrentState::Paused(_) => {
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(
-                    paused,
-                    tx,
-                    live_cancellation_token.clone(),
-                    session_stats,
-                )?;
+                let live = TorrentStateLive::new(paused, tx, cancellation_token.clone())?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 drop(g);
 
-                spawn_fatal_errors_receiver(self, rx, live_cancellation_token);
+                spawn_fatal_errors_receiver(self, rx, cancellation_token);
                 spawn_peer_adder(&live, peer_rx);
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
                 let initializing = Arc::new(TorrentStateInitializing::new(
-                    self.info.clone(),
+                    self.shared.clone(),
                     g.only_files.clone(),
-                    self.storage_factory.create_and_init(self.info())?,
+                    self.shared.storage_factory.create_and_init(self.shared())?,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
                 drop(g);
@@ -376,14 +372,7 @@ impl ManagedTorrent {
                 self.state_change_notify.notify_waiters();
 
                 // Recurse.
-                self.start(
-                    peer_rx,
-                    start_paused,
-                    live_cancellation_token,
-                    init_semaphore,
-                    bitv_factory,
-                    session_stats,
-                )
+                self.start(peer_rx, start_paused)
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }
@@ -420,7 +409,7 @@ impl ManagedTorrent {
     pub fn stats(&self) -> TorrentStats {
         use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
-            total_bytes: self.info().lengths.total_length(),
+            total_bytes: self.shared().lengths.total_length(),
             file_progress: Vec::new(),
             state: S::Error,
             error: None,
@@ -521,7 +510,7 @@ impl ManagedTorrent {
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let file_count = self.info().info.iter_file_lengths()?.count();
+        let file_count = self.shared().info.iter_file_lengths()?.count();
         for f in only_files.iter().copied() {
             if f >= file_count {
                 anyhow::bail!("only_files contains invalid value {f}")
@@ -547,162 +536,6 @@ impl ManagedTorrent {
 
         g.only_files = Some(only_files.iter().copied().collect());
         Ok(())
-    }
-}
-
-pub(crate) struct ManagedTorrentBuilder {
-    id: TorrentId,
-    info: TorrentMetaV1Info<ByteBufOwned>,
-    output_folder: PathBuf,
-    info_hash: Id20,
-    torrent_bytes: Bytes,
-    info_bytes: Bytes,
-    force_tracker_interval: Option<Duration>,
-    peer_connect_timeout: Option<Duration>,
-    peer_read_write_timeout: Option<Duration>,
-    only_files: Option<Vec<usize>>,
-    trackers: Vec<String>,
-    peer_id: Option<Id20>,
-    spawner: Option<BlockingSpawner>,
-    allow_overwrite: bool,
-    storage_factory: BoxStorageFactory,
-    disk_writer: Option<DiskWorkQueueSender>,
-    connector: Arc<StreamConnector>,
-}
-
-impl ManagedTorrentBuilder {
-    pub fn new(
-        id: usize,
-        info: TorrentMetaV1Info<ByteBufOwned>,
-        info_hash: Id20,
-        torrent_bytes: Bytes,
-        info_bytes: Bytes,
-        output_folder: PathBuf,
-        storage_factory: BoxStorageFactory,
-    ) -> Self {
-        Self {
-            id,
-            info,
-            info_hash,
-            torrent_bytes,
-            info_bytes,
-            spawner: None,
-            force_tracker_interval: None,
-            peer_connect_timeout: None,
-            peer_read_write_timeout: None,
-            only_files: None,
-            trackers: Default::default(),
-            peer_id: None,
-            allow_overwrite: false,
-            output_folder,
-            storage_factory,
-            disk_writer: None,
-            connector: Arc::new(Default::default()),
-        }
-    }
-
-    pub fn only_files(&mut self, only_files: Vec<usize>) -> &mut Self {
-        self.only_files = Some(only_files);
-        self
-    }
-
-    pub fn trackers(&mut self, trackers: Vec<String>) -> &mut Self {
-        self.trackers = trackers;
-        self
-    }
-
-    pub fn force_tracker_interval(&mut self, force_tracker_interval: Duration) -> &mut Self {
-        self.force_tracker_interval = Some(force_tracker_interval);
-        self
-    }
-
-    pub fn spawner(&mut self, spawner: BlockingSpawner) -> &mut Self {
-        self.spawner = Some(spawner);
-        self
-    }
-
-    pub fn peer_id(&mut self, peer_id: Id20) -> &mut Self {
-        self.peer_id = Some(peer_id);
-        self
-    }
-
-    pub fn allow_overwrite(&mut self, value: bool) -> &mut Self {
-        self.allow_overwrite = value;
-        self
-    }
-
-    pub fn peer_connect_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.peer_connect_timeout = Some(timeout);
-        self
-    }
-
-    pub fn peer_read_write_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.peer_read_write_timeout = Some(timeout);
-        self
-    }
-
-    pub fn disk_writer(&mut self, value: DiskWorkQueueSender) -> &mut Self {
-        self.disk_writer = Some(value);
-        self
-    }
-
-    pub fn connector(&mut self, value: Arc<StreamConnector>) -> &mut Self {
-        self.connector = value;
-        self
-    }
-
-    pub fn build(self, span: tracing::Span) -> anyhow::Result<ManagedTorrentHandle> {
-        let lengths = Lengths::from_torrent(&self.info)?;
-        let file_infos = self
-            .info
-            .iter_file_details(&lengths)?
-            .map(|fd| {
-                Ok::<_, anyhow::Error>(FileInfo {
-                    relative_filename: fd.filename.to_pathbuf()?,
-                    offset_in_torrent: fd.offset,
-                    piece_range: fd.pieces,
-                    len: fd.len,
-                })
-            })
-            .collect::<anyhow::Result<Vec<FileInfo>>>()?;
-
-        let info = Arc::new(ManagedTorrentInfo {
-            span,
-            file_infos,
-            info: self.info,
-            torrent_bytes: self.torrent_bytes,
-            info_bytes: self.info_bytes,
-            info_hash: self.info_hash,
-            trackers: self.trackers.into_iter().collect(),
-            spawner: self.spawner.unwrap_or_default(),
-            peer_id: self.peer_id.unwrap_or_else(generate_peer_id),
-            lengths,
-            options: ManagedTorrentOptions {
-                force_tracker_interval: self.force_tracker_interval,
-                peer_connect_timeout: self.peer_connect_timeout,
-                peer_read_write_timeout: self.peer_read_write_timeout,
-                allow_overwrite: self.allow_overwrite,
-                output_folder: self.output_folder,
-                disk_write_queue: self.disk_writer,
-            },
-            connector: self.connector,
-        });
-
-        let initializing = Arc::new(TorrentStateInitializing::new(
-            info.clone(),
-            self.only_files.clone(),
-            self.storage_factory.create_and_init(&info)?,
-        ));
-        Ok(Arc::new(ManagedTorrent {
-            id: self.id,
-            locked: RwLock::new(ManagedTorrentLocked {
-                state: ManagedTorrentState::Initializing(initializing),
-                only_files: self.only_files,
-            }),
-            state_change_notify: Notify::new(),
-            storage_factory: self.storage_factory,
-            info,
-        }))
     }
 }
 
