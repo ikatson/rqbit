@@ -196,6 +196,14 @@ impl BitVFactory for JsonSessionPersistenceStore {
         Ok(Some(MmapBitV::new(f)?.into_dyn()))
     }
 
+    async fn clear(&self, id: TorrentIdOrHash) -> anyhow::Result<()> {
+        let h = self.to_hash(id).await?;
+        let filename = self.bitv_filename(&h);
+        tokio::fs::remove_file(&filename)
+            .await
+            .with_context(|| format!("error removing {filename:?}"))
+    }
+
     async fn store_initial_check(
         &self,
         id: TorrentIdOrHash,

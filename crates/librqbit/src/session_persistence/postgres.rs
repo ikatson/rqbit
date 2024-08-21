@@ -313,4 +313,31 @@ impl BitVFactory for PostgresSessionStorage {
         bf.flush()?;
         Ok(bf.into_dyn())
     }
+
+    async fn clear(&self, id: TorrentIdOrHash) -> anyhow::Result<()> {
+        macro_rules! exec {
+            ($q:expr, $v:expr) => {
+                sqlx::query($q)
+                    .bind($v)
+                    .execute(&self.pool)
+                    .await
+                    .context($q)
+                    .context("error executing query")?
+            };
+        }
+
+        match id {
+            TorrentIdOrHash::Id(id) => {
+                let id: i32 = id.try_into()?;
+                exec!("UPDATE torrents SET have_bitfield = NULL WHERE id = $1", id);
+            }
+            TorrentIdOrHash::Hash(h) => {
+                exec!(
+                    "UPDATE torrents SET have_bitfield = NULL WHERE info_hash = $1",
+                    &h.0[..]
+                );
+            }
+        }
+        Ok(())
+    }
 }

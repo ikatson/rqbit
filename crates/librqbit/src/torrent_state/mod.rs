@@ -311,7 +311,7 @@ impl ManagedTorrent {
                             .await
                             .context("bug: concurrent init semaphore was closed")?;
 
-                        match init.check(session.bitv_factory.clone()).await {
+                        match init.check().await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
@@ -365,6 +365,7 @@ impl ManagedTorrent {
                     self.shared.clone(),
                     g.only_files.clone(),
                     self.shared.storage_factory.create_and_init(self.shared())?,
+                    true,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
                 drop(g);

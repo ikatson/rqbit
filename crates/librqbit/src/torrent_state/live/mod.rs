@@ -217,7 +217,7 @@ impl TorrentStateLive {
     ) -> anyhow::Result<Arc<Self>> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
         let session = paused
-            .info
+            .shared
             .session
             .upgrade()
             .context("session is dead, cannot start torrent")?;
@@ -230,11 +230,11 @@ impl TorrentStateLive {
 
         // TODO: make it configurable
         let file_priorities = {
-            let mut pri = (0..paused.info.file_infos.len()).collect::<Vec<usize>>();
+            let mut pri = (0..paused.shared.file_infos.len()).collect::<Vec<usize>>();
             // sort by filename, cause many torrents have random sort order.
             pri.sort_unstable_by_key(|id| {
                 paused
-                    .info
+                    .shared
                     .file_infos
                     .get(*id)
                     .map(|fi| fi.relative_filename.as_path())
@@ -245,7 +245,7 @@ impl TorrentStateLive {
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
         let state = Arc::new(TorrentStateLive {
-            torrent: paused.info.clone(),
+            torrent: paused.shared.clone(),
             peers: PeerStates {
                 session_stats: session_stats.clone(),
                 stats: Default::default(),
@@ -668,7 +668,7 @@ impl TorrentStateLive {
 
         // g.chunks;
         Ok(TorrentStatePaused {
-            info: self.torrent.clone(),
+            shared: self.torrent.clone(),
             files: self.files.take()?,
             chunk_tracker,
             streams: self.streams.clone(),

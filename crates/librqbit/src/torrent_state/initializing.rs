@@ -12,7 +12,6 @@ use tracing::{debug, info, warn};
 use crate::{
     api::TorrentIdOrHash,
     bitv::BitV,
-    bitv_factory::BitVFactory,
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     type_aliases::{FileStorage, BF},
@@ -23,9 +22,10 @@ use super::{paused::TorrentStatePaused, ManagedTorrentShared};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
-    pub(crate) meta: Arc<ManagedTorrentShared>,
+    pub(crate) shared: Arc<ManagedTorrentShared>,
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
+    previously_errored: bool,
 }
 
 fn compute_selected_pieces(
@@ -51,12 +51,14 @@ impl TorrentStateInitializing {
         meta: Arc<ManagedTorrentShared>,
         only_files: Option<Vec<usize>>,
         files: FileStorage,
+        previously_errored: bool,
     ) -> Self {
         Self {
-            meta,
+            shared: meta,
             only_files,
             files,
             checked_bytes: AtomicU64::new(0),
+            previously_errored,
         }
     }
 
@@ -65,18 +67,30 @@ impl TorrentStateInitializing {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub async fn check(
-        &self,
-        bitv_factory: Arc<dyn BitVFactory>,
-    ) -> anyhow::Result<TorrentStatePaused> {
-        let id: TorrentIdOrHash = self.meta.info_hash.into();
-        let mut have_pieces = bitv_factory
-            .load(id)
-            .await
-            .context("error loading have_pieces")?;
+    pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
+        let id: TorrentIdOrHash = self.shared.info_hash.into();
+        let bitv_factory = self
+            .shared
+            .session
+            .upgrade()
+            .context("session is dead")?
+            .bitv_factory
+            .clone();
+        let mut have_pieces = if self.previously_errored {
+            if let Err(e) = bitv_factory.clear(id).await {
+                warn!(error=?e, "error clearing bitfield");
+            }
+            None
+        } else {
+            bitv_factory
+                .load(id)
+                .await
+                .context("error loading have_pieces")?
+        };
+
         if let Some(hp) = have_pieces.as_ref() {
             let actual = hp.as_bytes().len();
-            let expected = self.meta.lengths.piece_bitfield_bytes();
+            let expected = self.shared.lengths.piece_bitfield_bytes();
             if actual != expected {
                 warn!(
                     actual,
@@ -90,12 +104,12 @@ impl TorrentStateInitializing {
             Some(h) => h,
             None => {
                 info!("Doing initial checksum validation, this might take a while...");
-                let have_pieces = self.meta.spawner.spawn_block_in_place(|| {
+                let have_pieces = self.shared.spawner.spawn_block_in_place(|| {
                     FileOps::new(
-                        &self.meta.info,
+                        &self.shared.info,
                         &self.files,
-                        &self.meta.file_infos,
-                        &self.meta.lengths,
+                        &self.shared.file_infos,
+                        &self.shared.lengths,
                     )
                     .initial_check(&self.checked_bytes)
                 })?;
@@ -107,16 +121,16 @@ impl TorrentStateInitializing {
         };
 
         let selected_pieces = compute_selected_pieces(
-            &self.meta.lengths,
+            &self.shared.lengths,
             self.only_files.as_deref(),
-            &self.meta.file_infos,
+            &self.shared.file_infos,
         );
 
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
             selected_pieces,
-            self.meta.lengths,
-            &self.meta.file_infos,
+            self.shared.lengths,
+            &self.shared.file_infos,
         )
         .context("error creating chunk tracker")?;
 
@@ -130,8 +144,8 @@ impl TorrentStateInitializing {
         );
 
         // Ensure file lenghts are correct, and reopen read-only.
-        self.meta.spawner.spawn_block_in_place(|| {
-            for (idx, fi) in self.meta.file_infos.iter().enumerate() {
+        self.shared.spawner.spawn_block_in_place(|| {
+            for (idx, fi) in self.shared.file_infos.iter().enumerate() {
                 if self
                     .only_files
                     .as_ref()
@@ -158,7 +172,7 @@ impl TorrentStateInitializing {
         })?;
 
         let paused = TorrentStatePaused {
-            info: self.meta.clone(),
+            shared: self.shared.clone(),
             files: self.files.take()?,
             chunk_tracker,
             streams: Arc::new(Default::default()),

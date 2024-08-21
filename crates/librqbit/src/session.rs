@@ -1148,6 +1148,7 @@ impl Session {
                 minfo.clone(),
                 only_files.clone(),
                 minfo.storage_factory.create_and_init(&minfo)?,
+                false,
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
