@@ -17,6 +17,7 @@ interface RqbitDesktopConfigTcpListen {
 interface RqbitDesktopConfigPersistence {
   disable: boolean;
   folder: PathLike;
+  fastresume: boolean;
 }
 
 interface RqbitDesktopConfigPeerOpts {

@@ -53,6 +53,9 @@ pub struct RqbitDesktopConfigPersistence {
     #[serde(default)]
     pub folder: PathBuf,
 
+    #[serde(default)]
+    pub fastresume: bool,
+
     /// Deprecated, but keeping for backwards compat for serialized / deserialized config.
     #[serde(default)]
     pub filename: PathBuf,
@@ -77,6 +80,7 @@ impl Default for RqbitDesktopConfigPersistence {
         Self {
             disable: false,
             folder,
+            fastresume: false,
             filename: PathBuf::new(),
         }
     }

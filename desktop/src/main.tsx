@@ -19,6 +19,7 @@ async function get_current_config(): Promise<CurrentDesktopState> {
 
 Promise.all([get_version(), get_default_config(), get_current_config()]).then(
   ([version, defaultConfig, currentState]) => {
+    console.log(version, defaultConfig, currentState);
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <StrictMode>
         <RqbitDesktop

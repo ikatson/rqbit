@@ -101,6 +101,7 @@ async fn api_from_config(
                 None
             },
             enable_upnp_port_forwarding: !config.upnp.disable,
+            fastresume: config.persistence.fastresume,
             ..Default::default()
         },
     )
@@ -138,7 +139,13 @@ impl State {
             .to_owned();
 
         if let Ok(config) = read_config(&config_filename) {
-            let api = api_from_config(&init_logging, &config).await.ok();
+            let api = api_from_config(&init_logging, &config)
+                .await
+                .map_err(|e| {
+                    warn!(error=?e, "error reading configuration");
+                    e
+                })
+                .ok();
             let shared = Arc::new(RwLock::new(Some(StateShared { config, api })));
 
             return Self {

@@ -299,6 +299,14 @@ export const ConfigModal: React.FC<{
               onChange={handleInputChange}
               disabled={config.persistence.disable}
             />
+
+            <FormCheck
+              label="Enable fast resume (experimental)"
+              name="persistence.fastresume"
+              checked={config.persistence.fastresume}
+              onChange={handleToggleChange}
+              help="If enabled, restarting will not rehash torrents, and thus will be faster. You should not modify the downloaded files in any way if you use that."
+            />
           </Fieldset>
         </Tab>
 
