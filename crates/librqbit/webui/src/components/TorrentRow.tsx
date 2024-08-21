@@ -61,8 +61,8 @@ export const TorrentRow: React.FC<{
         detailsResponse?.files
           .map((f, id) => ({ f, id }))
           .filter(({ f }) => f.included)
-          .map(({ id }) => id) ?? [],
-      ),
+          .map(({ id }) => id) ?? []
+      )
     );
   }, [detailsResponse]);
 
@@ -87,7 +87,7 @@ export const TorrentRow: React.FC<{
             text: "Error configuring torrent",
             details: e as ErrorDetails,
           });
-        },
+        }
       )
       .finally(() => setSavingSelectedFiles(false));
   };
@@ -104,7 +104,7 @@ export const TorrentRow: React.FC<{
           {detailsResponse && (
             <div className="flex items-center gap-2">
               <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-              <div className="text-left text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
+              <div className="text-left text-sm lg:text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
                 {torrentDisplayName(detailsResponse)}
               </div>
             </div>

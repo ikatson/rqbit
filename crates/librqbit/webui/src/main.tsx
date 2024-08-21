@@ -13,7 +13,7 @@ const RootWithVersion = () => {
       API.getVersion().then(
         (version) => {
           setVersion(version);
-          const title = `rqbit web UI - v${version}`;
+          const title = `rqbit web - v${version}`;
           document.title = title;
           return 10000;
         },
@@ -26,7 +26,7 @@ const RootWithVersion = () => {
 
   return (
     <APIContext.Provider value={API}>
-      <RqbitWebUI title="rqbit web UI" version={version} />
+      <RqbitWebUI title="rqbit" version={version} />
     </APIContext.Provider>
   );
 };
