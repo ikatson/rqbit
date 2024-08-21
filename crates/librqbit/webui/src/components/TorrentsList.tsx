@@ -19,7 +19,9 @@ export const TorrentsList = (props: {
         <p className="text-center">No existing torrents found.</p>
       ) : (
         props.torrents.map((t: TorrentId) => (
-          <Torrent id={t.id} key={t.id} torrent={t} />
+          <>
+            <Torrent id={t.id} key={t.id} torrent={t} />
+          </>
         ))
       )}
     </div>

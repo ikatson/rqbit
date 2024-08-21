@@ -3,6 +3,7 @@ import {
   ErrorDetails,
   ListTorrentsResponse,
   RqbitAPI,
+  SessionStats,
   TorrentDetails,
   TorrentStats,
 } from "./api-types";
@@ -82,6 +83,9 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStats: (index: number): Promise<TorrentStats> => {
     return makeRequest("GET", `/torrents/${index}/stats/v1`);
   },
+  stats: (): Promise<SessionStats> => {
+    return makeRequest("GET", "/stats");
+  },
 
   uploadTorrent: (data, opts): Promise<AddTorrentResponse> => {
     let url = "/torrents?&overwrite=true";
@@ -152,6 +156,6 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     return url;
   },
   getPlaylistUrl: (index: number) => {
-    return (apiUrl || window.origin)  + `/torrents/${index}/playlist`;
+    return (apiUrl || window.origin) + `/torrents/${index}/playlist`;
   },
 };
