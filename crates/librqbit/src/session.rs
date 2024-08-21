@@ -12,6 +12,7 @@ use crate::{
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
+    file_info::FileInfo,
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
@@ -23,10 +24,11 @@ use crate::{
     },
     stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
-        ManagedTorrentBuilder, ManagedTorrentHandle, ManagedTorrentState, TorrentStateLive,
+        initializing::TorrentStateInitializing, ManagedTorrentHandle, ManagedTorrentLocked,
+        ManagedTorrentOptions, ManagedTorrentState, TorrentStateLive,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
-    ManagedTorrentInfo,
+    ManagedTorrent, ManagedTorrentInfo,
 };
 use anyhow::{bail, Context};
 use bencode::bencode_serialize_to_writer;
@@ -43,6 +45,7 @@ use itertools::Itertools;
 use librqbit_core::{
     constants::CHUNK_SIZE,
     directories::get_configuration_directory,
+    lengths::Lengths,
     magnet::Magnet,
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
@@ -51,7 +54,10 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::Notify,
+};
 use tokio_stream::StreamExt;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument, Span};
@@ -1023,7 +1029,7 @@ impl Session {
     }
 
     async fn main_torrent_info(
-        &self,
+        self: &Arc<Self>,
         add_res: InternalAddResult,
         mut opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
@@ -1084,43 +1090,6 @@ impl Session {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         };
 
-        let mut builder = ManagedTorrentBuilder::new(
-            id,
-            info,
-            info_hash,
-            torrent_bytes,
-            info_bytes,
-            output_folder,
-            storage_factory,
-        );
-        builder
-            .allow_overwrite(opts.overwrite)
-            .spawner(self.spawner)
-            .trackers(trackers)
-            .connector(self.connector.clone())
-            .peer_id(self.peer_id);
-
-        if let Some(d) = self.disk_write_tx.clone() {
-            builder.disk_writer(d);
-        }
-
-        if let Some(only_files) = only_files {
-            builder.only_files(only_files);
-        }
-        if let Some(interval) = opts.force_tracker_interval {
-            builder.force_tracker_interval(interval);
-        }
-
-        let peer_opts = self.merge_peer_opts(opts.peer_opts);
-
-        if let Some(t) = peer_opts.connect_timeout {
-            builder.peer_connect_timeout(t);
-        }
-
-        if let Some(t) = peer_opts.read_write_timeout {
-            builder.peer_read_write_timeout(t);
-        }
-
         let managed_torrent = {
             let mut g = self.db.write();
             if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
@@ -1132,13 +1101,70 @@ impl Session {
             }) {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
-            let managed_torrent = builder.build(error_span!(parent: self.rs(), "torrent", id))?;
-            g.add_torrent(managed_torrent.clone(), id);
-            managed_torrent
+
+            let lengths = Lengths::from_torrent(&info)?;
+            let file_infos = info
+                .iter_file_details(&lengths)?
+                .map(|fd| {
+                    Ok::<_, anyhow::Error>(FileInfo {
+                        relative_filename: fd.filename.to_pathbuf()?,
+                        offset_in_torrent: fd.offset,
+                        piece_range: fd.pieces,
+                        len: fd.len,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<FileInfo>>>()?;
+
+            let span = error_span!(parent: self.rs(), "torrent", id);
+            let peer_opts = self.merge_peer_opts(opts.peer_opts);
+            let minfo = Arc::new(ManagedTorrentInfo {
+                span,
+                file_infos,
+                info,
+                torrent_bytes,
+                info_bytes,
+                info_hash,
+                trackers: trackers.into_iter().collect(),
+                spawner: self.spawner,
+                peer_id: self.peer_id,
+                lengths,
+                options: ManagedTorrentOptions {
+                    force_tracker_interval: opts.force_tracker_interval,
+                    peer_connect_timeout: peer_opts.connect_timeout,
+                    peer_read_write_timeout: peer_opts.read_write_timeout,
+                    allow_overwrite: opts.overwrite,
+                    output_folder,
+                    disk_write_queue: self.disk_write_tx.clone(),
+                },
+                connector: self.connector.clone(),
+            });
+
+            let initializing = Arc::new(TorrentStateInitializing::new(
+                minfo.clone(),
+                only_files.clone(),
+                storage_factory.create_and_init(&minfo)?,
+            ));
+            let handle = Arc::new(ManagedTorrent {
+                id,
+                locked: RwLock::new(ManagedTorrentLocked {
+                    state: ManagedTorrentState::Initializing(initializing),
+                    only_files,
+                }),
+                state_change_notify: Notify::new(),
+                storage_factory,
+                info: minfo,
+                session: Arc::downgrade(self),
+            });
+
+            g.add_torrent(handle.clone(), id);
+            handle
         };
 
         if let Some(p) = self.persistence.as_ref() {
-            p.store(id, &managed_torrent).await?;
+            if let Err(e) = p.store(id, &managed_torrent).await {
+                self.db.write().torrents.remove(&id);
+                return Err(e);
+            }
         }
 
         // Merge "initial_peers" and "peer_rx" into one stream.
