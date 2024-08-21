@@ -1117,6 +1117,7 @@ impl Session {
             let span = error_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);
             let minfo = Arc::new(ManagedTorrentInfo {
+                id,
                 span,
                 file_infos,
                 info,
@@ -1127,6 +1128,7 @@ impl Session {
                 spawner: self.spawner,
                 peer_id: self.peer_id,
                 lengths,
+                storage_factory,
                 options: ManagedTorrentOptions {
                     force_tracker_interval: opts.force_tracker_interval,
                     peer_connect_timeout: peer_opts.connect_timeout,
@@ -1141,16 +1143,14 @@ impl Session {
             let initializing = Arc::new(TorrentStateInitializing::new(
                 minfo.clone(),
                 only_files.clone(),
-                storage_factory.create_and_init(&minfo)?,
+                minfo.storage_factory.create_and_init(&minfo)?,
             ));
             let handle = Arc::new(ManagedTorrent {
-                id,
                 locked: RwLock::new(ManagedTorrentLocked {
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
                 }),
                 state_change_notify: Notify::new(),
-                storage_factory,
                 info: minfo,
                 session: Arc::downgrade(self),
             });
@@ -1257,7 +1257,7 @@ impl Session {
                 _ => None,
             })
             .map(Ok)
-            .unwrap_or_else(|| removed.storage_factory.create(removed.info()));
+            .unwrap_or_else(|| removed.info.storage_factory.create(removed.info()));
 
         match (storage, delete_files) {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),

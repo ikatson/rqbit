@@ -128,6 +128,7 @@ impl JsonSessionPersistenceStore {
         write_torrent_file: bool,
     ) -> anyhow::Result<()> {
         if !torrent
+            .info
             .storage_factory
             .is_type_id(TypeId::of::<FilesystemStorageFactory>())
         {

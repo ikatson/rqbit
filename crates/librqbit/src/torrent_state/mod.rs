@@ -100,6 +100,7 @@ pub(crate) struct ManagedTorrentOptions {
 }
 
 pub struct ManagedTorrentInfo {
+    pub id: TorrentId,
     pub info: TorrentMetaV1Info<ByteBufOwned>,
     pub torrent_bytes: Bytes,
     pub info_bytes: Bytes,
@@ -112,14 +113,11 @@ pub struct ManagedTorrentInfo {
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
     pub(crate) connector: Arc<StreamConnector>,
+    pub(crate) storage_factory: BoxStorageFactory,
 }
 
 pub struct ManagedTorrent {
-    pub id: TorrentId,
-    // TODO: merge ManagedTorrent and ManagedTorrentInfo
     pub info: Arc<ManagedTorrentInfo>,
-    pub(crate) storage_factory: BoxStorageFactory,
-
     pub(crate) session: Weak<Session>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
@@ -127,7 +125,7 @@ pub struct ManagedTorrent {
 
 impl ManagedTorrent {
     pub fn id(&self) -> TorrentId {
-        self.id
+        self.info.id
     }
 
     pub fn info(&self) -> &ManagedTorrentInfo {
@@ -369,7 +367,7 @@ impl ManagedTorrent {
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.info.clone(),
                     g.only_files.clone(),
-                    self.storage_factory.create_and_init(self.info())?,
+                    self.info.storage_factory.create_and_init(self.info())?,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
                 drop(g);
