@@ -25,6 +25,14 @@ pub(crate) struct PeerStates {
     pub states: DashMap<PeerHandle, Peer>,
 }
 
+impl Drop for PeerStates {
+    fn drop(&mut self) {
+        for (_, p) in std::mem::take(&mut self.states).into_iter() {
+            p.state.destroy(&[&self.session_stats.peers]);
+        }
+    }
+}
+
 impl PeerStates {
     pub fn stats(&self) -> AggregatePeerStats {
         AggregatePeerStats::from(&self.stats)

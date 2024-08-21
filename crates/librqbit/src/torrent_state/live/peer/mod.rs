@@ -91,6 +91,12 @@ impl PeerStateNoMut {
         self.set(Default::default(), counters)
     }
 
+    pub fn destroy(self, counters: &[&AggregatePeerStatsAtomic]) {
+        for counter in counters {
+            counter.dec(&self.0);
+        }
+    }
+
     pub fn set(&mut self, new: PeerState, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
         for counter in counters {
             counter.incdec(&self.0, &new);
