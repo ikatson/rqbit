@@ -34,10 +34,8 @@ use tracing::debug;
 use tracing::error_span;
 use tracing::warn;
 
-use crate::bitv_factory::BitVFactory;
 use crate::chunk_tracker::ChunkTracker;
 use crate::session::TorrentId;
-use crate::session_stats::atomic::AtomicSessionStats;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::stream_connect::StreamConnector;
@@ -210,11 +208,11 @@ impl ManagedTorrent {
         self: &Arc<Self>,
         peer_rx: Option<PeerStream>,
         start_paused: bool,
-        live_cancellation_token: CancellationToken,
-        init_semaphore: Arc<tokio::sync::Semaphore>,
-        bitv_factory: Arc<dyn BitVFactory>,
-        session_stats: Arc<AtomicSessionStats>,
     ) -> anyhow::Result<()> {
+        let session = self
+            .session
+            .upgrade()
+            .context("session is dead, cannot start torrent")?;
         let mut g = self.locked.write();
 
         let spawn_fatal_errors_receiver =
@@ -295,18 +293,20 @@ impl ManagedTorrent {
                 drop(g);
                 let t = self.clone();
                 let span = self.info().span.clone();
-                let token = live_cancellation_token.clone();
+                let token = session.cancellation_token().child_token().clone();
 
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
                     async move {
-                        let _permit = init_semaphore
+                        let concurrent_init_semaphore =
+                            session.concurrent_initialize_semaphore.clone();
+                        let _permit = concurrent_init_semaphore
                             .acquire()
                             .await
                             .context("bug: concurrent init semaphore was closed")?;
 
-                        match init.check(bitv_factory).await {
+                        match init.check(session.bitv_factory.clone()).await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
@@ -325,8 +325,8 @@ impl ManagedTorrent {
                                 let live = TorrentStateLive::new(
                                     paused,
                                     tx,
-                                    live_cancellation_token,
-                                    session_stats,
+                                    session.cancellation_token().child_token(),
+                                    session.stats.atomic.clone(),
                                 )?;
                                 g.state = ManagedTorrentState::Live(live.clone());
                                 drop(g);
@@ -355,13 +355,13 @@ impl ManagedTorrent {
                 let live = TorrentStateLive::new(
                     paused,
                     tx,
-                    live_cancellation_token.clone(),
-                    session_stats,
+                    session.cancellation_token().child_token().clone(),
+                    session.stats.atomic.clone(),
                 )?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 drop(g);
 
-                spawn_fatal_errors_receiver(self, rx, live_cancellation_token);
+                spawn_fatal_errors_receiver(self, rx, session.cancellation_token().child_token());
                 spawn_peer_adder(&live, peer_rx);
                 Ok(())
             }
@@ -377,14 +377,7 @@ impl ManagedTorrent {
                 self.state_change_notify.notify_waiters();
 
                 // Recurse.
-                self.start(
-                    peer_rx,
-                    start_paused,
-                    live_cancellation_token,
-                    init_semaphore,
-                    bitv_factory,
-                    session_stats,
-                )
+                self.start(peer_rx, start_paused)
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }

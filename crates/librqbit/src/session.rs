@@ -101,7 +101,7 @@ pub struct Session {
     peer_id: Id20,
     dht: Option<Dht>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
-    bitv_factory: Arc<dyn BitVFactory>,
+    pub(crate) bitv_factory: Arc<dyn BitVFactory>,
     peer_opts: PeerConnectionOptions,
     spawner: BlockingSpawner,
     next_id: AtomicUsize,
@@ -117,9 +117,8 @@ pub struct Session {
     default_storage_factory: Option<BoxStorageFactory>,
 
     reqwest_client: reqwest::Client,
-    connector: Arc<StreamConnector>,
-
-    concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
+    pub(crate) connector: Arc<StreamConnector>,
+    pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
 
     root_span: Option<Span>,
 
@@ -1186,14 +1185,7 @@ impl Session {
             let _ = span.enter();
 
             managed_torrent
-                .start(
-                    peer_rx,
-                    opts.paused,
-                    self.cancellation_token.child_token(),
-                    self.concurrent_initialize_semaphore.clone(),
-                    self.bitv_factory.clone(),
-                    self.stats.atomic.clone(),
-                )
+                .start(peer_rx, opts.paused)
                 .context("error starting torrent")?;
         }
 
@@ -1343,14 +1335,7 @@ impl Session {
             self.tcp_listen_port,
             handle.info().options.force_tracker_interval,
         )?;
-        handle.start(
-            peer_rx,
-            false,
-            self.cancellation_token.child_token(),
-            self.concurrent_initialize_semaphore.clone(),
-            self.bitv_factory.clone(),
-            self.stats.atomic.clone(),
-        )?;
+        handle.start(peer_rx, false)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
