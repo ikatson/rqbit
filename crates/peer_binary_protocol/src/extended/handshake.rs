@@ -96,7 +96,10 @@ impl Serialize for YourIP {
                 let buf = ipv4.octets();
                 serializer.serialize_bytes(&buf)
             }
-            IpAddr::V6(_) => todo!(),
+            IpAddr::V6(ipv6) => {
+                let buf = ipv6.octets();
+                serializer.serialize_bytes(&buf)
+            },
         }
     }
 }
