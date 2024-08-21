@@ -923,7 +923,6 @@ impl Session {
                                 peer_rx: Some(rx),
                                 initial_peers: {
                                     let seen = seen.into_iter().collect_vec();
-                                    info!(count=seen.len(), "seen");
                                     for peer in &seen {
                                         debug!(?peer, "seen")
                                     }
