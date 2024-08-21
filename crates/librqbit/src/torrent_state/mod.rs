@@ -34,6 +34,7 @@ use tracing::debug;
 use tracing::error_span;
 use tracing::warn;
 
+use crate::bitv_factory::BitVFactory;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::session::TorrentId;
@@ -209,6 +210,7 @@ impl ManagedTorrent {
         start_paused: bool,
         live_cancellation_token: CancellationToken,
         init_semaphore: Arc<tokio::sync::Semaphore>,
+        bitv_factory: Arc<dyn BitVFactory>,
     ) -> anyhow::Result<()> {
         let mut g = self.locked.write();
 
@@ -301,7 +303,7 @@ impl ManagedTorrent {
                             .await
                             .context("bug: concurrent init semaphore was closed")?;
 
-                        match init.check().await {
+                        match init.check(bitv_factory).await {
                             Ok(paused) => {
                                 let mut g = t.locked.write();
                                 if let ManagedTorrentState::Initializing(_) = &g.state {
@@ -368,6 +370,7 @@ impl ManagedTorrent {
                     start_paused,
                     live_cancellation_token,
                     init_semaphore,
+                    bitv_factory,
                 )
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),

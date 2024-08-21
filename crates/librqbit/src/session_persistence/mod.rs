@@ -13,7 +13,8 @@ use librqbit_core::Id20;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    session::TorrentId, torrent_state::ManagedTorrentHandle, AddTorrent, AddTorrentOptions,
+    bitv_factory::BitVFactory, session::TorrentId, torrent_state::ManagedTorrentHandle, AddTorrent,
+    AddTorrentOptions,
 };
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -63,7 +64,7 @@ impl SerializedTorrent {
 
 // TODO: make this info_hash first, ID-second.
 #[async_trait]
-pub trait SessionPersistenceStore: core::fmt::Debug + Send + Sync {
+pub trait SessionPersistenceStore: core::fmt::Debug + Send + Sync + BitVFactory {
     async fn next_id(&self) -> anyhow::Result<TorrentId>;
     async fn store(&self, id: TorrentId, torrent: &ManagedTorrentHandle) -> anyhow::Result<()>;
     async fn delete(&self, id: TorrentId) -> anyhow::Result<()>;
@@ -77,8 +78,6 @@ pub trait SessionPersistenceStore: core::fmt::Debug + Send + Sync {
         &self,
     ) -> anyhow::Result<BoxStream<'_, anyhow::Result<(TorrentId, SerializedTorrent)>>>;
 }
-
-pub type BoxSessionPersistenceStore = Box<dyn SessionPersistenceStore>;
 
 fn serialize_info_hash<S>(id: &Id20, serializer: S) -> Result<S::Ok, S::Error>
 where

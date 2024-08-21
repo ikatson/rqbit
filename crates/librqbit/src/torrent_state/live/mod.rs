@@ -131,6 +131,8 @@ pub(crate) struct TorrentStateLocked {
 
     // If this is None, then it was already used
     fatal_errors_tx: Option<tokio::sync::oneshot::Sender<anyhow::Error>>,
+
+    unflushed_bitv_bytes: u64,
 }
 
 impl TorrentStateLocked {
@@ -145,6 +147,23 @@ impl TorrentStateLocked {
             .as_mut()
             .context("chunk tracker empty, torrent was paused")
     }
+
+    fn try_flush_bitv(&mut self) {
+        if self.unflushed_bitv_bytes == 0 {
+            return;
+        }
+        trace!("trying to flush bitfield");
+        if let Some(Err(e)) = self
+            .chunks
+            .as_mut()
+            .map(|ct| ct.get_have_pieces_mut().flush())
+        {
+            warn!(error=?e, "error flushing bitfield");
+        } else {
+            trace!("flushed bitfield");
+            self.unflushed_bitv_bytes = 0;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -154,6 +173,8 @@ pub struct TorrentStateOptions {
     #[allow(dead_code)]
     pub peer_read_write_timeout: Option<Duration>,
 }
+
+const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub struct TorrentStateLive {
     peers: PeerStates,
@@ -223,6 +244,7 @@ impl TorrentStateLive {
                 inflight_pieces: Default::default(),
                 file_priorities,
                 fatal_errors_tx: Some(fatal_errors_tx),
+                unflushed_bitv_bytes: 0,
             }),
             files: paused.files,
             stats: AtomicStats {
@@ -684,6 +706,7 @@ impl TorrentStateLive {
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
         let mut g = self.lock_write("on_piece_completed");
+        let g = &mut **g;
         let chunks = g.get_chunks_mut()?;
 
         // if we have all the pieces of the file, reopen it read only
@@ -701,13 +724,20 @@ impl TorrentStateLive {
         self.streams
             .wake_streams_on_piece_completed(id, &self.meta.lengths);
 
+        g.unflushed_bitv_bytes += self.meta.lengths.piece_length(id) as u64;
+        if g.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
+            g.try_flush_bitv()
+        }
+
+        let chunks = g.get_chunks()?;
         if chunks.is_finished() {
             if chunks.get_selected_pieces()[id.get_usize()] {
+                g.try_flush_bitv();
                 info!("torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
 
-            if !self.has_active_streams_unfinished_files(&g) {
+            if !self.has_active_streams_unfinished_files(g) {
                 // There is not poing being connected to peers that have all the torrent, when
                 // we don't need anything from them, and they don't need anything from us.
                 self.disconnect_all_peers_that_have_full_torrent();
@@ -835,7 +865,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
-        let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_raw_slice()));
+        let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_bytes()));
         let len = msg.serialize(buf, &|| None)?;
         trace!("sending: {:?}, length={}", &msg, len);
         Ok(len)

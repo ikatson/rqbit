@@ -19,29 +19,6 @@ use crate::{
     type_aliases::{FileInfos, PeerHandle, BF},
 };
 
-pub(crate) struct InitialCheckResults {
-    // A piece as flags based on these dimensions:
-    // - if the asked for it or not (only_files)
-    // - if we have it downloaded and verified
-    // - if we need to queue it for downloading
-    //   this one depends if we queued it already or not.
-
-    // The pieces we have downloaded.
-    pub have_pieces: BF,
-    // The pieces that the user selected to download.
-    pub selected_pieces: BF,
-
-    // How many bytes we have. This can be MORE than "total_selected_bytes",
-    // if we downloaded some pieces, and later the "only_files" was changed.
-    pub have_bytes: u64,
-    // How many bytes we need to download.
-    pub needed_bytes: u64,
-
-    // How many bytes are in selected pieces.
-    // If all selected, this must be equal to total torrent length.
-    pub selected_bytes: u64,
-}
-
 pub fn update_hash_from_file<Sha1: ISha1>(
     file_id: usize,
     mut pos: u64,
@@ -88,26 +65,16 @@ impl<'a> FileOps<'a> {
         }
     }
 
-    pub fn initial_check(
-        &self,
-        only_files: Option<&[usize]>,
-        progress: &AtomicU64,
-    ) -> anyhow::Result<InitialCheckResults> {
-        let mut needed_pieces =
+    // Returns the bitvector with pieces we have.
+    pub fn initial_check(&self, progress: &AtomicU64) -> anyhow::Result<BF> {
+        let mut have_pieces =
             BF::from_boxed_slice(vec![0u8; self.lengths.piece_bitfield_bytes()].into());
-        let mut have_pieces = needed_pieces.clone();
-        let mut selected_pieces = needed_pieces.clone();
-
-        let mut have_bytes = 0u64;
-        let mut needed_bytes = 0u64;
-        let mut total_selected_bytes = 0u64;
         let mut piece_files = Vec::<usize>::new();
 
         #[derive(Debug)]
         struct CurrentFile<'a> {
             index: usize,
             fi: &'a FileInfo,
-            full_file_required: bool,
             processed_bytes: u64,
             is_broken: bool,
         }
@@ -119,20 +86,16 @@ impl<'a> FileOps<'a> {
                 self.processed_bytes += bytes
             }
         }
-        let mut file_iterator = self.file_infos.iter().enumerate().map(|(idx, fi)| {
-            let full_file_required = if let Some(only_files) = only_files {
-                only_files.contains(&idx)
-            } else {
-                true
-            };
-            CurrentFile {
+        let mut file_iterator = self
+            .file_infos
+            .iter()
+            .enumerate()
+            .map(|(idx, fi)| CurrentFile {
                 index: idx,
                 fi,
-                full_file_required,
                 processed_bytes: 0,
                 is_broken: false,
-            }
-        });
+            });
 
         let mut current_file = file_iterator
             .next()
@@ -145,7 +108,6 @@ impl<'a> FileOps<'a> {
             let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
             let mut some_files_broken = false;
-            let mut piece_selected = current_file.full_file_required;
             progress.fetch_add(piece_info.len as u64, Ordering::Relaxed);
 
             while piece_remaining > 0 {
@@ -157,8 +119,6 @@ impl<'a> FileOps<'a> {
                     current_file = file_iterator
                         .next()
                         .ok_or_else(|| anyhow::anyhow!("broken torrent metadata"))?;
-
-                    piece_selected |= current_file.full_file_required;
 
                     to_read_in_file =
                         std::cmp::min(current_file.remaining(), piece_remaining as u64)
@@ -193,18 +153,11 @@ impl<'a> FileOps<'a> {
                 }
             }
 
-            if piece_selected {
-                total_selected_bytes += piece_info.len as u64;
-                selected_pieces.set(piece_info.piece_index.get() as usize, true);
-            }
-
-            if piece_selected && some_files_broken {
+            if some_files_broken {
                 trace!(
                     "piece {} had errors, marking as needed",
                     piece_info.piece_index
                 );
-
-                needed_bytes += piece_info.len as u64;
                 continue;
             }
 
@@ -213,34 +166,11 @@ impl<'a> FileOps<'a> {
                 .compare_hash(piece_info.piece_index.get(), computed_hash.finish())
                 .context("bug: either torrent info broken or we have a bug - piece index invalid")?
             {
-                trace!(
-                    "piece {} is fine, not marking as needed",
-                    piece_info.piece_index
-                );
-                have_bytes += piece_info.len as u64;
                 have_pieces.set(piece_info.piece_index.get() as usize, true);
-            } else if piece_selected {
-                trace!(
-                    "piece {} hash does not match, marking as needed",
-                    piece_info.piece_index
-                );
-                needed_bytes += piece_info.len as u64;
-                needed_pieces.set(piece_info.piece_index.get() as usize, true);
-            } else {
-                trace!(
-                "piece {} hash does not match, but it is not required by any of the requested files, ignoring",
-                piece_info.piece_index
-            );
             }
         }
 
-        Ok(InitialCheckResults {
-            have_pieces,
-            selected_pieces,
-            have_bytes,
-            needed_bytes,
-            selected_bytes: total_selected_bytes,
-        })
+        Ok(have_pieces)
     }
 
     pub fn check_piece(

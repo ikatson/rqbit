@@ -10,7 +10,7 @@ use tokio::{
     spawn,
     time::{interval, timeout},
 };
-use tracing::{error_span, info, Instrument};
+use tracing::{error, error_span, info, Instrument};
 
 use crate::{
     create_torrent,
@@ -35,6 +35,10 @@ async fn test_e2e_download() {
 
 async fn _test_e2e_download() {
     let _ = tracing_subscriber::fmt::try_init();
+    match crate::try_increase_nofile_limit() {
+        Ok(limit) => info!(limit, "increased ulimit"),
+        Err(e) => error!(error=?e, "error increasing ulimit"),
+    };
 
     spawn_debug_server();
 
@@ -187,6 +191,7 @@ async fn _test_e2e_download() {
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
                 }),
+                fastresume: true,
                 listen_port_range: None,
                 enable_upnp_port_forwarding: false,
                 root_span: Some(error_span!("client")),

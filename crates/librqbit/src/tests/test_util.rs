@@ -5,7 +5,7 @@ use axum::{response::IntoResponse, routing::get, Router};
 use librqbit_core::Id20;
 use rand::{thread_rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
-use tracing::info;
+use tracing::{debug, info};
 
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     let mut file = std::fs::OpenOptions::new()
@@ -14,7 +14,7 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
         .open(path)
         .unwrap();
 
-    eprintln!("creating temp file {:?}", path);
+    debug!(?path, "creating temp file");
 
     const BUF_SIZE: usize = 8192 * 16;
     let mut rng = rand::rngs::SmallRng::from_entropy();
@@ -32,7 +32,7 @@ pub fn create_default_random_dir_with_torrents(
     tempdir_prefix: Option<&str>,
 ) -> TempDir {
     let dir = TempDir::with_prefix(tempdir_prefix.unwrap_or("rqbit_test")).unwrap();
-    dbg!(dir.path());
+    info!(path=?dir.path(), "created tempdir");
     for f in 0..num_files {
         create_new_file_with_random_content(&dir.path().join(&format!("{f}.data")), file_size);
     }

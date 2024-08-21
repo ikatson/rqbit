@@ -1,8 +1,14 @@
 use std::{any::TypeId, collections::HashMap, path::PathBuf};
 
 use crate::{
-    session::TorrentId, storage::filesystem::FilesystemStorageFactory,
-    torrent_state::ManagedTorrentHandle, ManagedTorrentState,
+    api::TorrentIdOrHash,
+    bitv::{BitV, MmapBitV},
+    bitv_factory::BitVFactory,
+    session::TorrentId,
+    storage::filesystem::FilesystemStorageFactory,
+    torrent_state::ManagedTorrentHandle,
+    type_aliases::BF,
+    ManagedTorrentState,
 };
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -65,6 +71,20 @@ impl JsonSessionPersistenceStore {
         })
     }
 
+    async fn to_hash(&self, id: TorrentIdOrHash) -> anyhow::Result<Id20> {
+        match id {
+            TorrentIdOrHash::Id(id) => self
+                .db_content
+                .read()
+                .await
+                .torrents
+                .get(&id)
+                .map(|v| *v.info_hash())
+                .context("not found"),
+            TorrentIdOrHash::Hash(h) => Ok(h),
+        }
+    }
+
     async fn flush(&self) -> anyhow::Result<()> {
         let tmp_filename = format!("{}.tmp", self.db_filename.to_str().unwrap());
         let mut tmp = tokio::fs::OpenOptions::new()
@@ -95,6 +115,10 @@ impl JsonSessionPersistenceStore {
 
     fn torrent_bytes_filename(&self, info_hash: &Id20) -> PathBuf {
         self.output_folder.join(format!("{:?}.torrent", info_hash))
+    }
+
+    fn bitv_filename(&self, info_hash: &Id20) -> PathBuf {
+        self.output_folder.join(format!("{:?}.bitv", info_hash))
     }
 
     async fn update_db(
@@ -152,6 +176,58 @@ impl JsonSessionPersistenceStore {
     }
 }
 
+#[async_trait::async_trait]
+impl BitVFactory for JsonSessionPersistenceStore {
+    async fn load(&self, id: TorrentIdOrHash) -> anyhow::Result<Option<Box<dyn BitV>>> {
+        let h = self.to_hash(id).await?;
+        let filename = self.bitv_filename(&h);
+        let f = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&filename)
+        {
+            Ok(f) => f,
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => return Ok(None),
+                _ => return Err(e).with_context(|| format!("error opening {filename:?}")),
+            },
+        };
+        Ok(Some(MmapBitV::new(f)?.into_dyn()))
+    }
+
+    async fn store_initial_check(
+        &self,
+        id: TorrentIdOrHash,
+        b: BF,
+    ) -> anyhow::Result<Box<dyn BitV>> {
+        let h = self.to_hash(id).await?;
+        let filename = self.bitv_filename(&h);
+        let tmp_filename = format!("{}.tmp", filename.to_str().context("bug")?);
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_filename)
+            .await
+            .with_context(|| format!("error opening {filename:?}"))?;
+        tokio::io::copy(&mut b.as_raw_slice(), &mut dst)
+            .await
+            .context("error writing bitslice to {filename:?}")?;
+        tokio::fs::rename(&tmp_filename, &filename)
+            .await
+            .with_context(|| format!("error renaming {tmp_filename:?} to {filename:?}"))?;
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&filename)
+            .with_context(|| format!("error opening {filename:?}"))?;
+        trace!(?filename, "stored initial check bitfield");
+        Ok(MmapBitV::new(f)
+            .with_context(|| format!("error constructing MmapBitV from file {filename:?}"))?
+            .into_dyn())
+    }
+}
+
 #[async_trait]
 impl SessionPersistenceStore for JsonSessionPersistenceStore {
     async fn next_id(&self) -> anyhow::Result<TorrentId> {
@@ -175,11 +251,15 @@ impl SessionPersistenceStore for JsonSessionPersistenceStore {
         if let Some(t) = removed {
             debug!(?id, "deleted from in-memory db, flushing");
             self.flush().await?;
-            let tf = self.torrent_bytes_filename(&t.info_hash);
-            if let Err(e) = tokio::fs::remove_file(&tf).await {
-                warn!(error=?e, filename=?tf, "error removing torrent file");
-            } else {
-                debug!(filename=?tf, "removed");
+            for tf in [
+                self.torrent_bytes_filename(&t.info_hash),
+                self.bitv_filename(&t.info_hash),
+            ] {
+                if let Err(e) = tokio::fs::remove_file(&tf).await {
+                    warn!(error=?e, filename=?tf, "error removing");
+                } else {
+                    debug!(filename=?tf, "removed");
+                }
             }
         } else {
             bail!("error deleting: didn't find torrent id={id}")

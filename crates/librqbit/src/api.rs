@@ -363,7 +363,7 @@ impl Api {
 
     pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<String> {
         let mgr = self.mgr_handle(idx)?;
-        Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces()))?)
+        Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces().as_slice()))?)
     }
 
     pub fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {
