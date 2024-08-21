@@ -16,7 +16,7 @@ use crate::{
     create_torrent,
     tests::test_util::{
         create_default_random_dir_with_torrents, setup_test_logging, spawn_debug_server,
-        TestPeerMetadata,
+        DropChecks, TestPeerMetadata,
     },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
@@ -28,13 +28,20 @@ async fn test_e2e_download() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(180);
 
-    tokio::time::timeout(Duration::from_secs(timeout), _test_e2e_download())
-        .await
-        .context("test_e2e_download timed out")
-        .unwrap()
+    let drop_checks = DropChecks::default();
+    tokio::time::timeout(
+        Duration::from_secs(timeout),
+        _test_e2e_download(&drop_checks),
+    )
+    .await
+    .context("test_e2e_download timed out")
+    .unwrap();
+
+    // Wait to ensure everything is dropped.
+    tokio::time::sleep(Duration::from_secs(1)).await;
 }
 
-async fn _test_e2e_download() {
+async fn _test_e2e_download(drop_checks: &DropChecks) {
     setup_test_logging();
     match crate::try_increase_nofile_limit() {
         Ok(limit) => info!(limit, "increased ulimit"),
@@ -75,6 +82,7 @@ async fn _test_e2e_download() {
     for i in 0..num_servers {
         let torrent_file_bytes = torrent_file_bytes.clone();
         let tempdir = tempdir.path().to_owned();
+        let drop_checks = drop_checks.clone();
         let fut = spawn(
             async move {
                 let peer_id = TestPeerMetadata {
@@ -104,6 +112,8 @@ async fn _test_e2e_download() {
                 .await
                 .context("error starting session")?;
 
+                drop_checks.add(&session, format!("server session {i}"));
+
                 info!("started session");
 
                 let handle = session
@@ -130,6 +140,7 @@ async fn _test_e2e_download() {
                                 if !l.is_finished() {
                                     bail!("torrent went live, but expected it to be finished");
                                 }
+                                drop_checks.add(l, format!("server {i} live"));
                                 Ok(true)
                             }
                             crate::ManagedTorrentState::Error(e) => bail!("error: {e:?}"),
@@ -201,6 +212,7 @@ async fn _test_e2e_download() {
         )
         .await
         .unwrap();
+        drop_checks.add(&session, "client session");
 
         info!("started client session");
 
