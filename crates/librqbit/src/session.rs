@@ -16,6 +16,7 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     session_persistence::{json::JsonSessionPersistenceStore, SessionPersistenceStore},
+    session_stats::atomic::AtomicSessionStats,
     spawn_utils::BlockingSpawner,
     storage::{
         filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
@@ -115,6 +116,8 @@ pub struct Session {
     concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
 
     root_span: Option<Span>,
+
+    stats: Arc<AtomicSessionStats>,
 
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
@@ -602,6 +605,7 @@ impl Session {
                 reqwest_client,
                 connector: stream_connector,
                 root_span: opts.root_span,
+                stats: Default::default(),
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(opts.concurrent_init_limit.unwrap_or(3)))
             });
 
@@ -1147,6 +1151,7 @@ impl Session {
                     self.cancellation_token.child_token(),
                     self.concurrent_initialize_semaphore.clone(),
                     self.bitv_factory.clone(),
+                    self.stats.clone(),
                 )
                 .context("error starting torrent")?;
         }
@@ -1303,6 +1308,7 @@ impl Session {
             self.cancellation_token.child_token(),
             self.concurrent_initialize_semaphore.clone(),
             self.bitv_factory.clone(),
+            self.stats.clone(),
         )?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
