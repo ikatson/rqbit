@@ -16,7 +16,7 @@ use crate::{
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     session_persistence::{json::JsonSessionPersistenceStore, SessionPersistenceStore},
-    session_stats::atomic::AtomicSessionStats,
+    session_stats::SessionStats,
     spawn_utils::BlockingSpawner,
     storage::{
         filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
@@ -117,7 +117,7 @@ pub struct Session {
 
     root_span: Option<Span>,
 
-    stats: Arc<AtomicSessionStats>,
+    pub(crate) stats: SessionStats,
 
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
@@ -605,8 +605,8 @@ impl Session {
                 reqwest_client,
                 connector: stream_connector,
                 root_span: opts.root_span,
-                stats: Default::default(),
-                concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(opts.concurrent_init_limit.unwrap_or(3)))
+                stats: SessionStats::new(),
+                concurrent_initialize_semaphore: Arc::new( tokio::sync::Semaphore::new(opts.concurrent_init_limit.unwrap_or(3)))
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -638,7 +638,7 @@ impl Session {
             if let Some(persistence) = session.persistence.as_ref() {
                 info!("will use {persistence:?} for session persistence");
 
-                let mut ps = persistence.stream_all().await?;
+                    let mut ps = persistence.stream_all().await?;
                 let mut added_all = false;
                 let mut futs = FuturesUnordered::new();
 
@@ -664,6 +664,8 @@ impl Session {
                     }
                 }
             }
+
+            session.start_speed_estimator_updater();
 
             Ok(session)
         }
@@ -789,7 +791,7 @@ impl Session {
         spawn_with_cancel(span, self.cancellation_token.clone(), fut);
     }
 
-    fn rs(&self) -> Option<tracing::Id> {
+    pub(crate) fn rs(&self) -> Option<tracing::Id> {
         self.root_span.as_ref().and_then(|s| s.id())
     }
 
@@ -1151,7 +1153,7 @@ impl Session {
                     self.cancellation_token.child_token(),
                     self.concurrent_initialize_semaphore.clone(),
                     self.bitv_factory.clone(),
-                    self.stats.clone(),
+                    self.stats.atomic.clone(),
                 )
                 .context("error starting torrent")?;
         }
@@ -1308,7 +1310,7 @@ impl Session {
             self.cancellation_token.child_token(),
             self.concurrent_initialize_semaphore.clone(),
             self.bitv_factory.clone(),
-            self.stats.clone(),
+            self.stats.atomic.clone(),
         )?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
