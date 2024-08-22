@@ -20,11 +20,29 @@ use tracing::error;
 use tracing::{info, warn};
 
 #[derive(Debug)]
+enum SsdpMessage<'a> {
+    Notify(SsdpNotify),
+    MSearch(SsdpMSearchRequest<'a>),
+    Response(SsdpResponse<'a>),
+}
+
+#[derive(Debug)]
+struct SsdpNotify {}
+
+#[derive(Debug)]
+
+struct SsdpResponse<'a> {
+    raw: &'a BStr,
+}
+
+#[derive(Debug)]
 struct SsdpMSearchRequest<'a> {
     host: &'a BStr,
     man: &'a BStr,
     st: &'a BStr,
 }
+
+const SSDP_SERVER_STRING: &str = "Linux/3.4 DLNADOC/1.50 UPnP/1.0 rqbit/1";
 
 impl<'a> SsdpMSearchRequest<'a> {
     fn matches_media_server(&self) -> bool {
@@ -34,51 +52,57 @@ impl<'a> SsdpMSearchRequest<'a> {
         if self.man != "\"ssdp:discover\"" {
             return false;
         }
-        if self.st == "upnp:rootdevice" || self.st == "urn:schemas-upnp-org:device:MediaServer:1" {
+        if self.st == UPNP_KIND_ROOT_DEVICE || self.st == UPNP_KIND_MEDIASERVER {
             return true;
         }
         false
     }
 }
 
-fn try_parse_ssdp(buf: &[u8]) -> anyhow::Result<SsdpMSearchRequest<'_>> {
+fn try_parse_ssdp(buf: &[u8]) -> anyhow::Result<SsdpMessage<'_>> {
     let mut host = None;
     let mut man = None;
     let mut st = None;
 
     let mut it = buf.split_str(b"\r\n").take_while(|l| !l.is_empty());
     match it.next() {
-        Some(b"M-SEARCH * HTTP/1.1") => {}
-        _ => {
-            bail!("not an SSDP message, should start with M-SEARCH")
-        }
-    };
+        Some(b"M-SEARCH * HTTP/1.1") => {
+            for line in it {
+                let line = BStr::new(line);
+                let (k, v) = line
+                    .split_once_str(": ")
+                    .with_context(|| format!("invalid line, expected header. Line: {line:?}"))?;
+                match k {
+                    b"HOST" | b"Host" | b"host" => host = Some(v),
+                    b"MAN" | b"Man" | b"man" => man = Some(v),
+                    b"ST" | b"St" | b"st" => st = Some(v),
+                    _ => debug!(header=?BStr::new(k), "ignoring SSDP header"),
+                }
+            }
 
-    for line in it {
-        let line = BStr::new(line);
-        let (k, v) = line
-            .split_once_str(": ")
-            .with_context(|| format!("invalid line, expected header. Line: {line:?}"))?;
-        match k {
-            b"HOST" | b"Host" | b"host" => host = Some(v),
-            b"MAN" | b"Man" | b"man" => man = Some(v),
-            b"ST" | b"St" | b"st" => st = Some(v),
-            _ => debug!(header=?BStr::new(k), "ignoring SSDP header"),
+            let msearch = match (host, man, st) {
+                (Some(host), Some(man), Some(st)) => SsdpMSearchRequest {
+                    host: BStr::new(host),
+                    man: BStr::new(man),
+                    st: BStr::new(st),
+                },
+                _ => bail!("not all of host, man and st are set"),
+            };
+
+            debug!(?msearch, "parsed");
+
+            Ok(SsdpMessage::MSearch(msearch))
+        }
+        Some(b"NOTIFY * HTTP/1.1") => return Ok(SsdpMessage::Notify(SsdpNotify {})),
+        Some(b"HTTP/1.1 200 OK") => {
+            return Ok(SsdpMessage::Response(SsdpResponse {
+                raw: BStr::new(buf),
+            }))
+        }
+        _ => {
+            bail!("not a known SSDP message, only M-SEARCH or NOTIFY supported")
         }
     }
-
-    let msearch = match (host, man, st) {
-        (Some(host), Some(man), Some(st)) => SsdpMSearchRequest {
-            host: BStr::new(host),
-            man: BStr::new(man),
-            st: BStr::new(st),
-        },
-        _ => bail!("not all of host, man and st are set"),
-    };
-
-    debug!(?msearch, "parsed");
-
-    Ok(msearch)
 }
 
 struct MediaServerDescriptionSpec<'a> {
@@ -91,7 +115,7 @@ struct MediaServerDescriptionSpec<'a> {
 
 const HTTP_PORT: u16 = 9005;
 
-const USN: &str = "uuid:6158e35c-9571-4754-8a37-00b6bf1a719d";
+const USN: &str = "uuid:9058e35c-9571-4754-8a37-00b6bf1a719d";
 
 async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
     let friendly_name = spec.friendly_name;
@@ -159,37 +183,63 @@ struct SsdpDiscoverResponse<'a> {
     usn: &'a str,
 }
 
-fn generate_ssdp_discover_response(response: &SsdpDiscoverResponse<'_>) -> String {
+fn generate_ssdp_discover_response(response: &SsdpDiscoverResponse<'_>, st: &BStr) -> String {
     let cache_control_max_age = response.cache_control_max_age;
     // TODO: add DATE header
     let server = response.server;
     let usn = response.usn;
     let date = fmt_http_date(response.date);
     let location = response.location;
+
+    let test = r#"HTTP/1.1 200 OK
+Cache-Control: max-age=75
+Ext:
+Location: http://192.168.0.165:1338/rootDesc.xml
+Server: Linux/3.4 DLNADOC/1.50 UPnP/1.0 dms/1
+St: urn:schemas-upnp-org:device:MediaServer:1
+Usn: uuid:c1aa84b5-0713-7606-a452-21c4f0483082::urn:schemas-upnp-org:device:MediaServer:1
+Content-Length: 0
+
+"#;
+
     format!(
         "HTTP/1.1 200 OK\r
-CACHE-CONTROL: max-age={cache_control_max_age}\r
-DATE:{date}\r
-EXT:\r
-LOCATION: {location}\r
-SERVER: {server}\r
-ST: urn:schemas-upnp-org:device:MediaServer:1
-USN: {usn}\r\n\r\n"
+Cache-Control: max-age={cache_control_max_age}\r
+Ext:\r
+Location: {location}\r
+Server: {server}\r
+St: {st}\r
+Usn: {usn}::{st}\r
+Content-Length: 0\r
+\r
+"
     )
 }
 
-fn generate_ssdp_notify_message() -> String {
-    let usn = USN;
-    // let kind = "upnp:rootdevice";
-    let kind = "urn:schemas-upnp-org:device:MediaServer:1";
+const UPNP_KIND_ROOT_DEVICE: &str = "upnp:rootdevice";
+const UPNP_KIND_MEDIASERVER: &str = "urn:schemas-upnp-org:device:MediaServer:1";
+
+pub fn generate_ssdp_notify_message(usn: &str, kind: &str) -> String {
+    let test = r#"NOTIFY * HTTP/1.1
+HOST: 239.255.255.250:1900
+NT: urn:schemas-upnp-org:device:MediaServer:1
+NTS: ssdp:alive
+SERVER: Linux/3.4 DLNADOC/1.50 UPnP/1.0 dms/1
+USN: uuid:c1aa84b5-0713-7606-a452-21c4f0483082::urn:schemas-upnp-org:device:MediaServer:1
+CACHE-CONTROL: max-age=75
+LOCATION: http://192.168.0.165:1338/rootDesc.xml
+"#;
+
+    let server_string = SSDP_SERVER_STRING;
+
     format!(
         "NOTIFY * HTTP/1.1\r
 Host: 239.255.255.250:1900\r
-Cache-Control: max-age=1\r
+Cache-Control: max-age=75\r
 Location: http://192.168.0.112:9005/description.xml\r
 NT: {kind}\r
 NTS: ssdp:alive\r
-Server: Rust UPNP/1.0 UPnP/1.1\r
+Server: {server_string}\r
 USN: {usn}::{kind}\r
 \r
 "
@@ -206,7 +256,7 @@ async fn generate_connection_manager_scpd(
             ("Content-Type", r#"text/xml; charset="utf-8""#),
             ("Server", MEDIA_SERVER_DESCRIPTION.server_string),
         ],
-        include_str!("resources/scpd_connection_manager.xml"),
+        include_str!("../resources/scpd_connection_manager.xml"),
     )
 }
 async fn generate_content_directory_scpd(
@@ -219,7 +269,7 @@ async fn generate_content_directory_scpd(
             ("Content-Type", r#"text/xml; charset="utf-8""#),
             ("Server", MEDIA_SERVER_DESCRIPTION.server_string),
         ],
-        include_str!("resources/ContentDirectorySCPD_dms.xml"),
+        include_str!("../resources/ContentDirectorySCPD_dms.xml"),
     )
 }
 
@@ -314,18 +364,35 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let sock = tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1900))
+    const UPNP_PORT: u16 = 1900;
+    const UPNP_BROADCAST_IP: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
+    const UPNP_BROADCAST_ADDR: SocketAddrV4 = SocketAddrV4::new(UPNP_BROADCAST_IP, UPNP_PORT);
+
+    let sock = tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT))
         .await
         .context("error binding")?;
 
-    let MADDR = SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), 1900);
-
-    sock.join_multicast_v4(Ipv4Addr::new(239, 255, 255, 250), Ipv4Addr::UNSPECIFIED)
+    sock.join_multicast_v4(UPNP_BROADCAST_IP, Ipv4Addr::UNSPECIFIED)
         .context("error joining multicast group")?;
 
-    sock.send_to(generate_ssdp_notify_message().as_bytes(), MADDR)
+    for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
+        let msg = generate_ssdp_notify_message(USN, kind);
+        debug!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
+        sock.send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR)
+            .await
+            .context("error sending notify")?;
+    }
+
+    let msearch_msg = format!(
+        "M-SEARCH * HTTP/1.1\r
+HOST: 239.255.255.250:1900\r
+ST: urn:schemas-upnp-org:device:MediaServer:1\r
+MAN: \"ssdp:discover\"\r
+MX: 2\r\n\r\n"
+    );
+    sock.send_to(msearch_msg.as_bytes(), UPNP_BROADCAST_ADDR)
         .await
-        .context("error sending notify")?;
+        .context("error sending msearch")?;
 
     let mut buf = vec![0u8; 16184];
     loop {
@@ -335,9 +402,13 @@ async fn main() -> anyhow::Result<()> {
         debug!(content = ?BStr::new(msg), ?addr, "received message");
         let parsed = try_parse_ssdp(msg);
         let msg = match parsed {
-            Ok(msg) => {
+            Ok(SsdpMessage::MSearch(msg)) => {
                 info!(?msg, "parsed");
                 msg
+            }
+            Ok(m) => {
+                debug!("ignoring {m:?}");
+                continue;
             }
             Err(e) => {
                 error!(error=?e, "error parsing SSDP message");
@@ -348,13 +419,17 @@ async fn main() -> anyhow::Result<()> {
             continue;
         }
 
-        let response = generate_ssdp_discover_response(&SsdpDiscoverResponse {
-            cache_control_max_age: 1,
-            date: SystemTime::now(),
-            location: "http://192.168.0.112:9005/description.xml",
-            server: MEDIA_SERVER_DESCRIPTION.friendly_name,
-            usn: MEDIA_SERVER_DESCRIPTION.unique_id,
-        });
+        let response = generate_ssdp_discover_response(
+            &SsdpDiscoverResponse {
+                cache_control_max_age: 75,
+                date: SystemTime::now(),
+                location: "http://192.168.0.112:9005/description.xml",
+                server: SSDP_SERVER_STRING,
+                usn: USN,
+            },
+            msg.st,
+        );
+        debug!(content = response, ?addr, "sending SSDP discover response");
         sock.send_to(response.as_bytes(), addr)
             .await
             .context("error sending")?;
@@ -367,7 +442,7 @@ mod tests {
 
     use crate::{
         generate_ssdp_discover_response, try_parse_ssdp, SsdpDiscoverResponse,
-        MEDIA_SERVER_DESCRIPTION,
+        MEDIA_SERVER_DESCRIPTION, UPNP_KIND_MEDIASERVER,
     };
 
     #[test]
@@ -380,13 +455,16 @@ mod tests {
 
     #[test]
     fn test_generate() {
-        let resp = generate_ssdp_discover_response(&SsdpDiscoverResponse {
-            cache_control_max_age: 1,
-            date: SystemTime::now(),
-            location: "http://192.168.0.112:9005/description.xml",
-            server: MEDIA_SERVER_DESCRIPTION.friendly_name,
-            usn: MEDIA_SERVER_DESCRIPTION.unique_id,
-        });
+        let resp = generate_ssdp_discover_response(
+            &SsdpDiscoverResponse {
+                cache_control_max_age: 1,
+                date: SystemTime::now(),
+                location: "http://192.168.0.112:9005/description.xml",
+                server: MEDIA_SERVER_DESCRIPTION.friendly_name,
+                usn: MEDIA_SERVER_DESCRIPTION.unique_id,
+            },
+            UPNP_KIND_MEDIASERVER.into(),
+        );
         dbg!(&resp);
     }
 }
