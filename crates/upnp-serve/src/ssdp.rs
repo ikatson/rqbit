@@ -69,7 +69,7 @@ pub fn try_parse_ssdp<'a, 'h>(
                     "HOST" | "Host" | "host" => host = Some(header.value),
                     "MAN" | "Man" | "man" => man = Some(header.value),
                     "ST" | "St" | "st" => st = Some(header.value),
-                    other => debug!(header=?BStr::new(other), "ignoring SSDP header"),
+                    other => trace!(header=?BStr::new(other), "ignoring SSDP header"),
                 }
             }
 
@@ -156,7 +156,7 @@ Content-Length: 0\r\n\r\n"
     async fn try_send_notifies(&self) {
         for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
             let msg = self.generate_notify_message(kind);
-            debug!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
+            trace!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
             if let Err(e) = self
                 .socket
                 .send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR)
@@ -168,7 +168,6 @@ Content-Length: 0\r\n\r\n"
     }
 
     async fn task_send_notifies_periodically(&self) -> anyhow::Result<()> {
-        debug!("starting NOTIFY task");
         let mut interval = tokio::time::interval(self.opts.notify_interval);
         loop {
             interval.tick().await;
@@ -229,7 +228,7 @@ ST: urn:schemas-upnp-org:device:MediaServer:1\r
 MAN: \"ssdp:discover\"\r
 MX: 2\r\n\r\n";
 
-        debug!(content = msearch_msg, "multicasting M-SEARCH");
+        trace!(content = msearch_msg, "multicasting M-SEARCH");
 
         self.socket
             .send_to(msearch_msg.as_bytes(), UPNP_BROADCAST_ADDR)
@@ -239,12 +238,8 @@ MX: 2\r\n\r\n";
     }
 
     pub async fn run_forever(&self) -> anyhow::Result<()> {
-        trace!("1");
-
         // This isn't necessary, but would show that it works.
         self.send_msearch().await?;
-
-        trace!("2");
 
         let t1 = self.task_respond_on_msearches();
         let t2 = self.task_send_notifies_periodically();
