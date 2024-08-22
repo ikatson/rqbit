@@ -121,8 +121,8 @@ async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
     let model_name = spec.model_name;
     let unique_id = spec.unique_id;
 
-    let d = include_str!("../resources/root_desc_example.xml").to_owned();
-    let d = d.replace("uuid:c1aa84b5-0713-7606-a452-21c4f0483082", unique_id);
+    let d = include_str!("../resources/root_desc.tmpl.xml").to_owned();
+    let d = d.replace("{UDN}", unique_id);
     return d;
 
     format!(
@@ -319,6 +319,7 @@ async fn generate_content_directory_scpd(
 
 async fn generate_content_directory_control_response(
     headers: HeaderMap,
+    State(state): State<MyState>,
     body: Bytes,
 ) -> impl IntoResponse {
     let body = BStr::new(&body);
@@ -341,7 +342,7 @@ async fn generate_content_directory_control_response(
         </DIDL-Lite>
         "#;
 
-    let result = quick_xml::escape::escape(&result);
+    let result = quick_xml::escape::escape(result);
     let body = format!(
         r#"
         <?xml version="1.0" encoding="utf-8" standalone="yes"?>
@@ -360,7 +361,18 @@ async fn generate_content_directory_control_response(
     "#
     );
 
-    ([("Content-Type", "text/xml; charset=\"utf-8\"")], body)
+    (
+        [
+            ("Content-Type", "text/xml; charset=\"utf-8\"".to_owned()),
+            (
+                "Server",
+                make_media_server_description(&state.usn)
+                    .server_string
+                    .to_owned(),
+            ),
+        ],
+        body,
+    )
 }
 
 async fn connection_manager_stub(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
