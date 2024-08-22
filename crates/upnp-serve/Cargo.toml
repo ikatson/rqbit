@@ -15,3 +15,6 @@ bstr = "1.10.0"
 tower-http = { version = "0.5", features = ["trace"] }
 httpdate = "1.0.3"
 quick-xml = "0.36.1"
+http = "1.1.0"
+httparse = "1.9.4"
+uuid = { version = "1.10.0", features = ["v4"] }

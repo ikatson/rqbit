@@ -3643,6 +3643,8 @@ dependencies = [
  "anyhow",
  "axum 0.7.5",
  "bstr",
+ "http 1.1.0",
+ "httparse",
  "httpdate",
  "librqbit-buffers",
  "quick-xml",
@@ -3651,6 +3653,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
