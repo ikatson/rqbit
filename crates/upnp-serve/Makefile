@@ -6,7 +6,7 @@ release-linux-current-target:
 	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
 	AR_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-ar \
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
-	cargo build --target=$(TARGET) --features=openssl/vendored
+	cargo build --target=$(TARGET)
 
 @PHONY: release-linux-armv7-musl
 release-linux-armv7-musl:

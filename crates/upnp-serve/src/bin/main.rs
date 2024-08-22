@@ -121,6 +121,10 @@ async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
     let model_name = spec.model_name;
     let unique_id = spec.unique_id;
 
+    let d = include_str!("../resources/root_desc_example.xml").to_owned();
+    let d = d.replace("uuid:c1aa84b5-0713-7606-a452-21c4f0483082", unique_id);
+    return d;
+
     format!(
         r#"
             <?xml version="1.0"?>
@@ -142,7 +146,7 @@ async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
                         <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
                         <SCPDURL>/scpd/ContentDirectory.xml</SCPDURL>
                         <controlURL>/control/ContentDirectory</controlURL>
-                        <eventSubURL>/evt/ContentDirectory</eventSubURL>
+                        <eventSubURL></eventSubURL>
                       </service>
                       <service>
                         <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
@@ -180,8 +184,20 @@ async fn description_xml(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<MyState>,
 ) -> impl IntoResponse {
-    info!(?addr, "request for rootDesc.xml");
-    generate_description(&make_media_server_description(&state.usn)).await
+    info!(?addr, "request for description.xml");
+    let headers = [
+        ("Content-Type", r#"text/xml; charset="utf-8""#.to_owned()),
+        (
+            "Server",
+            make_media_server_description(&state.usn)
+                .server_string
+                .to_owned(),
+        ),
+    ];
+    (
+        headers,
+        generate_description(&make_media_server_description(&state.usn)).await,
+    )
 }
 
 struct SsdpDiscoverResponse<'a> {
@@ -250,7 +266,7 @@ pub fn generate_ssdp_notify_message(
         "NOTIFY * HTTP/1.1\r
 Host: 239.255.255.250:1900\r
 Cache-Control: max-age=75\r
-Location: http://{local_ip}:{port}/rootDesc.xml\r
+Location: http://{local_ip}:{port}/description.xml\r
 NT: {kind}\r
 NTS: ssdp:alive\r
 Server: {server_string}\r
@@ -355,7 +371,7 @@ async fn connection_manager_stub(headers: HeaderMap, body: Bytes) -> impl IntoRe
 
 async fn run_server(usn: String, port: u16) -> anyhow::Result<()> {
     let app = axum::Router::new()
-        .route("/rootDesc.xml", get(description_xml))
+        .route("/description.xml", get(description_xml))
         .route(
             "/scpd/ContentDirectory.xml",
             get(generate_content_directory_scpd),
@@ -457,7 +473,7 @@ MX: 2\r\n\r\n";
         }
 
         let local_ip = local_ip(addr.ip())?;
-        let location = format!("http://{local_ip}:{}/rootDesc.xml", HTTP_PORT);
+        let location = format!("http://{local_ip}:{}/description.xml", HTTP_PORT);
 
         let response = generate_ssdp_discover_response(
             &SsdpDiscoverResponse {
@@ -500,7 +516,7 @@ mod tests {
             &SsdpDiscoverResponse {
                 cache_control_max_age: 1,
                 date: SystemTime::now(),
-                location: "http://192.168.0.112:9005/rootDesc.xml",
+                location: "http://192.168.0.112:9005/description.xml",
                 server: make_media_server_description(usn).friendly_name,
                 usn,
             },

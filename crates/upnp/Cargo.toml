@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 tracing = "0.1"
 anyhow = "1"
-reqwest = { version = "0.12" }
+reqwest = { version = "0.12", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde-xml-rs = "0.6.0"
 tokio = { version = "1", features = ["macros"] }
