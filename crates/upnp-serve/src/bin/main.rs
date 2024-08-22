@@ -12,7 +12,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use bstr::BStr;
 use bstr::ByteSlice;
-use http::{HeaderName, HeaderValue};
+use http::{HeaderName, HeaderValue, StatusCode};
 use httpdate::fmt_http_date;
 use librqbit_buffers::ByteBuf;
 use librqbit_upnp::get_local_ip_relative_to;
@@ -319,11 +319,33 @@ async fn generate_content_directory_scpd(
 
 async fn generate_content_directory_control_response(
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<MyState>,
     body: Bytes,
 ) -> impl IntoResponse {
     let body = BStr::new(&body);
+    let action = headers.get("soapaction").map(|v| v.as_bytes());
+    if action != Some(b"\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"") {
+        return (StatusCode::NOT_IMPLEMENTED, "".to_owned()).into_response();
+    }
+
+    info!(?addr, soapaction=?headers.get("soapaction"));
     debug!(?headers, ?body, "scpd request headers");
+
+    return (
+        StatusCode::OK,
+        [
+            ("Content-Type", "text/xml; charset=\"utf-8\"".to_owned()),
+            (
+                "Server",
+                make_media_server_description(&state.usn)
+                    .server_string
+                    .to_owned(),
+            ),
+        ],
+        include_str!("../resources/ContentDirectoryControlExampleResponse.xml").to_owned(),
+    )
+        .into_response();
 
     let result = r#"
         <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
@@ -362,6 +384,7 @@ async fn generate_content_directory_control_response(
     );
 
     (
+        StatusCode::OK,
         [
             ("Content-Type", "text/xml; charset=\"utf-8\"".to_owned()),
             (
@@ -373,6 +396,7 @@ async fn generate_content_directory_control_response(
         ],
         body,
     )
+        .into_response()
 }
 
 async fn connection_manager_stub(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
