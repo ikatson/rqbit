@@ -35,7 +35,7 @@ async fn generate_content_directory_control_response(
     }
 
     (
-        [("Content-Type", "application/xml")],
+        [("Content-Type", "text/xml; charset=\"utf-8\"")],
         render_content_directory_browse(state.provider.browse()),
     )
         .into_response()
