@@ -5,7 +5,6 @@ use gethostname::gethostname;
 use http_handlers::make_router;
 use librqbit_sha1_wrapper::ISha1;
 use ssdp::SsdpRunner;
-use state::UnpnServerState;
 
 pub use state::{ContentDirectoryBrowseItem, ContentDirectoryBrowseProvider};
 
@@ -73,8 +72,6 @@ impl UpnpServer {
             opts.friendly_name,
             opts.http_prefix,
             usn,
-            "librqbit-upnp-server 1.0".to_owned(),
-            opts.http_listen_port,
             opts.browse_provider,
         )?;
 

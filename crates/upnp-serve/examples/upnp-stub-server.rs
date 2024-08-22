@@ -2,7 +2,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::Context;
 use axum::routing::get;
-use tracing::error;
+use tracing::{error, info};
 use upnp_serve::{ContentDirectoryBrowseItem, UpnpServer, UpnpServerOptions};
 
 #[tokio::main]
@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
     const HTTP_PORT: u16 = 9005;
     const HTTP_PREFIX: &str = "/upnp";
 
+    info!("Creating UpnpServer");
     let mut server = UpnpServer::new(UpnpServerOptions {
         friendly_name: "demo upnp server".to_owned(),
         http_hostname: std::env::var("UPNP_HOSTNAME")
@@ -41,6 +42,8 @@ async fn main() -> anyhow::Result<()> {
     use tokio::net::TcpListener;
 
     let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, HTTP_PORT);
+
+    info!(?addr, "Binding TcpListener");
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("error binding to {addr}"))?;
@@ -51,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    info!(?addr, "Running SSDP");
     server
         .run_ssdp_forever()
         .await

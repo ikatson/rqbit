@@ -39,8 +39,6 @@ pub fn make_router(
     friendly_name: String,
     http_prefix: String,
     upnp_usn: String,
-    server_header_string: String,
-    port: u16,
     browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
 ) -> anyhow::Result<axum::Router> {
     let root_desc = render_root_description_xml(&RootDescriptionInputs {
@@ -52,10 +50,6 @@ pub fn make_router(
     });
 
     let state = Arc::new(UnpnServerStateInner {
-        usn: upnp_usn,
-        friendly_name,
-        server_header_string,
-        port,
         rendered_root_description: root_desc.into(),
         provider: browse_provider,
     });
