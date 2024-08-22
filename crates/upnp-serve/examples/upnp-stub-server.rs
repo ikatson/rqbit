@@ -8,10 +8,10 @@ use upnp_serve::{ContentDirectoryBrowseItem, UpnpServer, UpnpServerOptions};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "debug");
+        std::env::set_var("RUST_LOG", "trace");
     }
 
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt::init();
 
     let items: Vec<ContentDirectoryBrowseItem> = vec![ContentDirectoryBrowseItem {
         title: "Example".to_owned(),
@@ -49,16 +49,16 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("error binding to {addr}"))?;
 
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            error!(error=?e, "error running HTTP server");
-        }
+        let res = axum::serve(listener, app).await;
+        error!(error=?res, "error running HTTP server");
     });
 
-    info!(?addr, "Running SSDP");
+    info!("Running SSDP");
     server
         .run_ssdp_forever()
         .await
         .context("error running SSDP")?;
 
+    error!("Unreachable");
     Ok(())
 }

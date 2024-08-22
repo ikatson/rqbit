@@ -102,11 +102,14 @@ pub struct SsdpRunner {
 
 impl SsdpRunner {
     pub async fn new(opts: SsdpRunnerOptions) -> anyhow::Result<Self> {
+        let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT);
+        trace!(addr=?bind_addr, "binding UDP");
         let socket =
             tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT))
                 .await
                 .context("error binding")?;
 
+        trace!(multiaddr=?UPNP_BROADCAST_IP, interface=?Ipv4Addr::UNSPECIFIED, "joining multicast v4 group");
         socket
             .join_multicast_v4(UPNP_BROADCAST_IP, Ipv4Addr::UNSPECIFIED)
             .context("error joining multicast group")?;
@@ -165,6 +168,7 @@ Content-Length: 0\r\n\r\n"
     }
 
     async fn task_send_notifies_periodically(&self) -> anyhow::Result<()> {
+        debug!("starting NOTIFY task");
         let mut interval = tokio::time::interval(self.opts.notify_interval);
         loop {
             interval.tick().await;
@@ -220,10 +224,12 @@ Content-Length: 0\r\n\r\n"
 
     async fn send_msearch(&self) -> anyhow::Result<()> {
         let msearch_msg = "M-SEARCH * HTTP/1.1\r
-    HOST: 239.255.255.250:1900\r
-    ST: urn:schemas-upnp-org:device:MediaServer:1\r
-    MAN: \"ssdp:discover\"\r
-    MX: 2\r\n\r\n";
+HOST: 239.255.255.250:1900\r
+ST: urn:schemas-upnp-org:device:MediaServer:1\r
+MAN: \"ssdp:discover\"\r
+MX: 2\r\n\r\n";
+
+        debug!(content = msearch_msg, "multicasting M-SEARCH");
 
         self.socket
             .send_to(msearch_msg.as_bytes(), UPNP_BROADCAST_ADDR)
@@ -232,9 +238,13 @@ Content-Length: 0\r\n\r\n"
         Ok(())
     }
 
-    pub async fn run_forever(self) -> anyhow::Result<()> {
+    pub async fn run_forever(&self) -> anyhow::Result<()> {
+        trace!("1");
+
         // This isn't necessary, but would show that it works.
         self.send_msearch().await?;
+
+        trace!("2");
 
         let t1 = self.task_respond_on_msearches();
         let t2 = self.task_send_notifies_periodically();

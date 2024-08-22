@@ -13,7 +13,9 @@ use tracing::trace;
 use crate::{
     constants::SOAP_ACTION_CONTENT_DIRECTORY_BROWSE,
     state::{ContentDirectoryBrowseProvider, UnpnServerState, UnpnServerStateInner},
-    templates::{render_root_description_xml, RootDescriptionInputs},
+    templates::{
+        render_content_directory_browse, render_root_description_xml, RootDescriptionInputs,
+    },
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
@@ -32,7 +34,11 @@ async fn generate_content_directory_control_response(
         return (StatusCode::NOT_IMPLEMENTED, "").into_response();
     }
 
-    crate::templates::render_content_directory_browse(state.provider.browse()).into_response()
+    (
+        [("Content-Type", "application/xml")],
+        render_content_directory_browse(state.provider.browse()),
+    )
+        .into_response()
 }
 
 pub fn make_router(

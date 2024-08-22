@@ -7,6 +7,7 @@ use librqbit_sha1_wrapper::ISha1;
 use ssdp::SsdpRunner;
 
 pub use state::{ContentDirectoryBrowseItem, ContentDirectoryBrowseProvider};
+use tracing::debug;
 
 mod constants;
 mod http_handlers;
@@ -56,7 +57,7 @@ impl UpnpServer {
             let hostname = &opts.http_hostname;
             let port = opts.http_listen_port;
             let http_prefix = &opts.http_prefix;
-            format!("http://{hostname}:{port}/{http_prefix}description.xml")
+            format!("http://{hostname}:{port}{http_prefix}/description.xml")
         };
 
         let ssdp_runner = crate::ssdp::SsdpRunner::new(ssdp::SsdpRunnerOptions {
@@ -87,7 +88,8 @@ impl UpnpServer {
             .context("programming error: router already taken")
     }
 
-    pub async fn run_ssdp_forever(self) -> anyhow::Result<()> {
+    pub async fn run_ssdp_forever(&self) -> anyhow::Result<()> {
+        debug!("starting SSDP");
         self.ssdp_runner
             .run_forever()
             .await
