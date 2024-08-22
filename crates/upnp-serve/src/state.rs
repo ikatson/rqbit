@@ -8,6 +8,17 @@ pub struct UnpnServerStateInner {
     pub server_header_string: String,
     pub port: u16,
     pub rendered_root_description: Bytes,
+    pub provider: Box<dyn ContentDirectoryBrowseProvider>,
 }
 
 pub type UnpnServerState = Arc<UnpnServerStateInner>;
+
+pub struct ContentDirectoryBrowseItem {
+    pub title: String,
+    pub mime_type: Option<String>,
+    pub url: String,
+}
+
+pub trait ContentDirectoryBrowseProvider: Send + Sync {
+    fn browse(&self) -> Vec<ContentDirectoryBrowseItem>;
+}

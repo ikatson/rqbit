@@ -1,3 +1,5 @@
+use crate::state::ContentDirectoryBrowseItem;
+
 pub struct RootDescriptionInputs<'a> {
     pub friendly_name: &'a str,
     pub manufacturer: &'a str,
@@ -17,14 +19,8 @@ pub fn render_root_description_xml(input: &RootDescriptionInputs<'_>) -> String 
         .replace("{http_prefix}", input.http_prefix)
 }
 
-pub trait ContentDirectoryBrowseItem {
-    fn mime_type(&self) -> Option<String>;
-    fn url(&self) -> String;
-    fn title(&self) -> String;
-}
-
-pub fn render_content_directory_browse<'a>(
-    items: impl IntoIterator<Item = impl ContentDirectoryBrowseItem>,
+pub fn render_content_directory_browse(
+    items: impl IntoIterator<Item = ContentDirectoryBrowseItem>,
 ) -> String {
     struct Item<'a> {
         id: usize,
@@ -70,9 +66,9 @@ pub fn render_content_directory_browse<'a>(
         .filter_map(|(id, item)| {
             Some(render_content_directory_browse_item(&Item {
                 id,
-                mime_type: &item.mime_type()?,
-                url: &item.url(),
-                title: &item.title(),
+                mime_type: item.mime_type.as_ref()?,
+                url: &item.url,
+                title: &item.title,
             }))
         })
         .collect::<Vec<_>>();

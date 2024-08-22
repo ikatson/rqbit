@@ -1,26 +1,19 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::Arc,
-};
+use std::sync::Arc;
 
-use anyhow::Context;
 use axum::{
     body::Bytes,
-    extract::{ConnectInfo, State},
+    extract::State,
     response::IntoResponse,
     routing::{get, post},
-    ServiceExt,
 };
 use bstr::BStr;
 use http::{HeaderMap, StatusCode};
-use tower_http::trace::TraceLayer;
-use tracing::{debug, info};
+use tracing::trace;
 
 use crate::{
     constants::SOAP_ACTION_CONTENT_DIRECTORY_BROWSE,
-    state::{UnpnServerState, UnpnServerStateInner},
+    state::{ContentDirectoryBrowseProvider, UnpnServerState, UnpnServerStateInner},
     templates::{render_root_description_xml, RootDescriptionInputs},
-    UpnpServer,
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
@@ -33,16 +26,13 @@ async fn generate_content_directory_control_response(
     body: Bytes,
 ) -> impl IntoResponse {
     let body = BStr::new(&body);
+    trace!(?body, "received control request");
     let action = headers.get("soapaction").map(|v| v.as_bytes());
     if action != Some(SOAP_ACTION_CONTENT_DIRECTORY_BROWSE) {
         return (StatusCode::NOT_IMPLEMENTED, "").into_response();
     }
 
-    return (StatusCode::NOT_IMPLEMENTED, "").into_response();
-}
-
-async fn connection_manager_stub(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
-    return (StatusCode::NOT_IMPLEMENTED, "").into_response();
+    crate::templates::render_content_directory_browse(state.provider.browse()).into_response()
 }
 
 pub fn make_router(
@@ -51,6 +41,7 @@ pub fn make_router(
     upnp_usn: String,
     server_header_string: String,
     port: u16,
+    browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
 ) -> anyhow::Result<axum::Router<UnpnServerState>> {
     let root_desc = render_root_description_xml(&RootDescriptionInputs {
         friendly_name: &friendly_name,
@@ -66,6 +57,7 @@ pub fn make_router(
         server_header_string,
         port,
         rendered_root_description: root_desc.into(),
+        provider: browse_provider,
     });
 
     let app = axum::Router::new()

@@ -232,7 +232,7 @@ Content-Length: 0\r\n\r\n"
         Ok(())
     }
 
-    pub async fn run_forever(&self) -> anyhow::Result<()> {
+    pub async fn run_forever(self) -> anyhow::Result<()> {
         // This isn't necessary, but would show that it works.
         self.send_msearch().await?;
 
