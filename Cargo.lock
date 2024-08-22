@@ -1038,6 +1038,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gethostname"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3655aa6818d65bc620d6911f05aa7b6aeb596291e1e9f79e52df85583d1e30"
+dependencies = [
+ "rustix",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3584,12 +3594,15 @@ dependencies = [
  "anyhow",
  "axum 0.7.5",
  "bstr",
+ "gethostname",
  "http 1.1.0",
  "httparse",
  "httpdate",
  "librqbit-buffers",
+ "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "quick-xml",
+ "rand",
  "socket2",
  "tokio",
  "tower-http",
