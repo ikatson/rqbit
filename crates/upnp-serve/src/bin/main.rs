@@ -248,6 +248,9 @@ async fn generate_content_directory_control_response(
         "#;
 
     let result = quick_xml::escape::escape(&result);
+    let result = include_str!(
+        "resources/ContentDirectoryControlExampleResponse_ResultExtracted.xml_unencoded"
+    );
 
     let body = format!(
         r#"
