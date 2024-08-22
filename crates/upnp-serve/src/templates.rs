@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::state::ContentDirectoryBrowseItem;
 
 pub struct RootDescriptionInputs<'a> {
@@ -9,7 +11,7 @@ pub struct RootDescriptionInputs<'a> {
 }
 
 pub fn render_root_description_xml(input: &RootDescriptionInputs<'_>) -> String {
-    let tmpl = include_str!("resources/templates/root_desc.tmpl.xml");
+    let tmpl = include_str!("resources/templates/root_desc.tmpl.xml").trim();
 
     // This isn't great perf-wise but whatever.
     tmpl.replace("{friendly_name}", input.friendly_name)
@@ -31,7 +33,8 @@ pub fn render_content_directory_browse(
 
     fn render_content_directory_browse_item(item: &Item<'_>) -> String {
         let tmpl =
-            include_str!("resources/templates/content_directory_control_browse_item.tmpl.xml");
+            include_str!("resources/templates/content_directory_control_browse_item.tmpl.xml")
+                .trim();
         tmpl.replace("{id}", &format!("{}", item.id))
             .replace("{mime_type}", item.mime_type)
             .replace("{url}", item.url)
@@ -42,12 +45,13 @@ pub fn render_content_directory_browse(
         result: &'a str,
         number_returned: usize,
         total_matches: usize,
-        update_id: usize,
+        update_id: u64,
     }
 
     fn render_content_directory_envelope(envelope: &Envelope<'_>) -> String {
         let tmpl =
-            include_str!("resources/templates/content_directory_control_browse_envelope.tmpl.xml");
+            include_str!("resources/templates/content_directory_control_browse_envelope.tmpl.xml")
+                .trim();
         tmpl.replace("{result}", envelope.result)
             .replace("{number_returned}", &envelope.number_returned.to_string())
             .replace("{total_matches}", &envelope.total_matches.to_string())
@@ -56,7 +60,8 @@ pub fn render_content_directory_browse(
 
     fn render_content_directory_browse_result(items: &str) -> String {
         let tmpl =
-            include_str!("resources/templates/content_directory_control_browse_result.tmpl.xml");
+            include_str!("resources/templates/content_directory_control_browse_result.tmpl.xml")
+                .trim();
         tmpl.replace("{items}", items)
     }
 
@@ -65,7 +70,7 @@ pub fn render_content_directory_browse(
         .enumerate()
         .filter_map(|(id, item)| {
             Some(render_content_directory_browse_item(&Item {
-                id,
+                id: id + 1,
                 mime_type: item.mime_type.as_ref()?,
                 url: &item.url,
                 title: &item.title,
@@ -73,15 +78,21 @@ pub fn render_content_directory_browse(
         })
         .collect::<Vec<_>>();
     let total = all_items.len();
-    let all_items = all_items.join("\n");
+    let all_items = all_items.join("");
 
     let result = render_content_directory_browse_result(&all_items);
+
+    println!("{}", &result);
     let result = quick_xml::escape::escape(&result);
+
+    // TODO: use smth better
+    static UPDATE_ID: AtomicU64 = AtomicU64::new(1);
+    let update_id = UPDATE_ID.fetch_add(1, Ordering::Relaxed);
 
     render_content_directory_envelope(&Envelope {
         result: &result,
         number_returned: total,
         total_matches: total,
-        update_id: 0,
+        update_id,
     })
 }

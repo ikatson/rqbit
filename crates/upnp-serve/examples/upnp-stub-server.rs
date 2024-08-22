@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
     let items: Vec<ContentDirectoryBrowseItem> = vec![ContentDirectoryBrowseItem {
         title: "Example".to_owned(),
         mime_type: Some("video/x-matroska".to_owned()),
-        url: "http://192.168.0.165:3030/torrents/4/stream/0".to_owned(),
+        url: "http://192.168.0.165:3030/torrents/4/stream/0/file.mkv".to_owned(),
     }];
 
     const HTTP_PORT: u16 = 9005;
