@@ -7,11 +7,11 @@ use axum::{
     routing::{get, post},
 };
 use bstr::BStr;
-use http::{HeaderMap, StatusCode};
+use http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
 use tracing::trace;
 
 use crate::{
-    constants::SOAP_ACTION_CONTENT_DIRECTORY_BROWSE,
+    constants::{CONTENT_TYPE_XML_UTF8, SOAP_ACTION_CONTENT_DIRECTORY_BROWSE},
     state::{ContentDirectoryBrowseProvider, UnpnServerState, UnpnServerStateInner},
     templates::{
         render_content_directory_browse, render_root_description_xml, RootDescriptionInputs,
@@ -35,7 +35,7 @@ async fn generate_content_directory_control_response(
     }
 
     (
-        [("Content-Type", "text/xml; charset=\"utf-8\"")],
+        [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
         render_content_directory_browse(state.provider.browse()),
     )
         .into_response()
