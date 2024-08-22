@@ -6,15 +6,15 @@ use http_handlers::make_router;
 use librqbit_sha1_wrapper::ISha1;
 use ssdp::SsdpRunner;
 
-pub use state::{ContentDirectoryBrowseItem, ContentDirectoryBrowseProvider};
 use tracing::debug;
+use upnp_types::content_directory::ContentDirectoryBrowseProvider;
 
 mod constants;
 mod http_handlers;
 mod ssdp;
-mod state;
+pub mod state;
 mod templates;
-mod upnp;
+pub mod upnp_types;
 
 pub struct UpnpServerOptions {
     pub friendly_name: String,

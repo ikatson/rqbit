@@ -11,11 +11,12 @@ pub struct UpnpServerSessionAdapter {
 
 use anyhow::Context;
 use upnp_serve::{
-    ContentDirectoryBrowseItem, ContentDirectoryBrowseProvider, UpnpServer, UpnpServerOptions,
+    upnp_types::content_directory::{response::ItemOrContainer, ContentDirectoryBrowseProvider},
+    UpnpServer, UpnpServerOptions,
 };
 
 impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
-    fn browse_direct_children(&self, parent_id: usize) -> Vec<ContentDirectoryBrowseItem> {
+    fn browse_direct_children(&self, parent_id: usize) -> Vec<ItemOrContainer> {
         todo!()
     }
 

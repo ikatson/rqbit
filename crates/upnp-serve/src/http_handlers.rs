@@ -8,15 +8,17 @@ use axum::{
 };
 use bstr::BStr;
 use http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::{
     constants::{CONTENT_TYPE_XML_UTF8, SOAP_ACTION_CONTENT_DIRECTORY_BROWSE},
-    state::{ContentDirectoryBrowseProvider, UnpnServerState, UnpnServerStateInner},
+    state::{UnpnServerState, UnpnServerStateInner},
     templates::{
         render_content_directory_browse, render_root_description_xml, RootDescriptionInputs,
     },
-    upnp::ContentDirectoryControlRequest,
+    upnp_types::content_directory::{
+        request::ContentDirectoryControlRequest, ContentDirectoryBrowseProvider,
+    },
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
@@ -35,12 +37,12 @@ async fn generate_content_directory_control_response(
         return (StatusCode::NOT_IMPLEMENTED, "").into_response();
     }
 
-    let body = match std::str::from_utf8(&body) {
+    let body = match std::str::from_utf8(body) {
         Ok(body) => body,
         Err(_) => return (StatusCode::BAD_REQUEST, "cannot parse request").into_response(),
     };
 
-    let request = match ContentDirectoryControlRequest::parse(&body) {
+    let request = match ContentDirectoryControlRequest::parse(body) {
         Ok(req) => req,
         Err(e) => {
             debug!(error=?e, "error parsing XML");

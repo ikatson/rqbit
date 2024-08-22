@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::state::{Container, ContentDirectoryBrowseItem, Item};
+use crate::upnp_types::content_directory::response::{Container, Item, ItemOrContainer};
 
 pub struct RootDescriptionInputs<'a> {
     pub friendly_name: &'a str,
@@ -21,10 +21,8 @@ pub fn render_root_description_xml(input: &RootDescriptionInputs<'_>) -> String 
         .replace("{http_prefix}", input.http_prefix)
 }
 
-pub fn render_content_directory_browse(
-    items: impl IntoIterator<Item = ContentDirectoryBrowseItem>,
-) -> String {
-    fn item_or_container(item_or_container: &ContentDirectoryBrowseItem) -> Option<String> {
+pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrContainer>) -> String {
+    fn item_or_container(item_or_container: &ItemOrContainer) -> Option<String> {
         fn item(item: &Item) -> Option<String> {
             let tmpl =
                 include_str!("resources/templates/content_directory_control_browse_item.tmpl.xml")
@@ -59,8 +57,8 @@ pub fn render_content_directory_browse(
         }
 
         match item_or_container {
-            ContentDirectoryBrowseItem::Container(c) => Some(container(c)),
-            ContentDirectoryBrowseItem::Item(i) => item(i),
+            ItemOrContainer::Container(c) => Some(container(c)),
+            ItemOrContainer::Item(i) => item(i),
         }
     }
 
@@ -90,8 +88,7 @@ pub fn render_content_directory_browse(
 
     let all_items = items
         .into_iter()
-        .enumerate()
-        .filter_map(|(id, item)| item_or_container(&item))
+        .filter_map(|item| item_or_container(&item))
         .collect::<Vec<_>>();
     let total = all_items.len();
     let all_items = all_items.join("");

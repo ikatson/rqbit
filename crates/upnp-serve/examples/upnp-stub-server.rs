@@ -1,9 +1,16 @@
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    str::FromStr,
+};
 
 use anyhow::Context;
 use axum::routing::get;
+use mime_guess::Mime;
 use tracing::{error, info};
-use upnp_serve::{ContentDirectoryBrowseItem, UpnpServer, UpnpServerOptions};
+use upnp_serve::{
+    upnp_types::content_directory::response::{Item, ItemOrContainer},
+    UpnpServer, UpnpServerOptions,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,11 +20,13 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt::init();
 
-    let items: Vec<ContentDirectoryBrowseItem> = vec![ContentDirectoryBrowseItem {
+    let items: Vec<ItemOrContainer> = vec![ItemOrContainer::Item(Item {
         title: "Example".to_owned(),
-        mime_type: Some("video/x-matroska".to_owned()),
+        mime_type: Some(Mime::from_str("video/x-matroska")?),
         url: "http://192.168.0.165:3030/torrents/4/stream/0/file.mkv".to_owned(),
-    }];
+        id: 1,
+        parent_id: Some(0),
+    })];
 
     const HTTP_PORT: u16 = 9005;
     const HTTP_PREFIX: &str = "/upnp";
