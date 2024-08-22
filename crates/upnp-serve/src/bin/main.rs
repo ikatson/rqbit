@@ -332,23 +332,23 @@ async fn generate_content_directory_control_response(
     info!(?addr, soapaction=?headers.get("soapaction"));
     debug!(?headers, ?body, "scpd request headers");
 
-    return (
-        StatusCode::OK,
-        [
-            ("Content-Type", "text/xml; charset=\"utf-8\"".to_owned()),
-            (
-                "Server",
-                make_media_server_description(&state.usn)
-                    .server_string
-                    .to_owned(),
-            ),
-        ],
-        include_str!("../resources/ContentDirectoryControlExampleResponse.xml").to_owned(),
-    )
-        .into_response();
+    // return (
+    //     StatusCode::OK,
+    //     [
+    //         ("Content-Type", "text/xml; charset=\"utf-8\"".to_owned()),
+    //         (
+    //             "Server",
+    //             make_media_server_description(&state.usn)
+    //                 .server_string
+    //                 .to_owned(),
+    //         ),
+    //     ],
+    //     include_str!("../resources/ContentDirectoryControlExampleResponse.xml").to_owned(),
+    // )
+    //     .into_response();
 
-    let result = r#"
-        <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
+    // This works on LG, but can't seek.
+    let result = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
             xmlns:dc="http://purl.org/dc/elements/1.1/"
             xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
           <item id="1" parentID="0" restricted="true">
@@ -361,26 +361,50 @@ async fn generate_content_directory_control_response(
             <upnp:class>object.item.videoItem</upnp:class>
             <res protocolInfo="http-get:*:video/x-matroska:*">http://192.168.0.165:3030/torrents/5/stream/0/Twisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</res>
           </item>
-        </DIDL-Lite>
-        "#;
+        </DIDL-Lite>"#;
+
+    // let result = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
+    //         xmlns:dc="http://purl.org/dc/elements/1.1/"
+    //         xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+    //         <item id="%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv" parentID="0" restricted="1" searchable="0">
+    //             <dc:title>Despicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</dc:title>
+    //             <upnp:class>object.item.videoItem</upnp:class>
+    //             <dc:date>0001-01-01</dc:date>
+    //             <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="7299299793" bitrate="10313633" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</res>
+    //             <res protocolInfo="http-get:*:video/mpeg:DLNA.ORG_PN=MPEG_PS_PAL;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=t</res>
+    //             <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=vp8</res>
+    //             <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=chromecast</res>
+    //             <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=web</res>
+    //             <res protocolInfo="http-get:*:text/plain">http://192.168.0.165:1338/subtitle?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</res>
+    //             <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_TN">http://192.168.0.165:1338/icon?c=jpeg&amp;path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</res>
+    //         </item>
+    //         <item id="%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv" parentID="0" restricted="1" searchable="0">
+    //             <dc:title>Furiosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</dc:title>
+    //             <upnp:class>object.item.videoItem</upnp:class>
+    //             <dc:date>0001-01-01</dc:date>
+    //             <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="33333413371" bitrate="29990260" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</res>
+    //             <res protocolInfo="http-get:*:video/mpeg:DLNA.ORG_PN=MPEG_PS_PAL;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=t</res>
+    //             <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=vp8</res>
+    //             <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=chromecast</res>
+    //             <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=web</res>
+    //             <res protocolInfo="http-get:*:text/plain">http://192.168.0.165:1338/subtitle?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</res>
+    //             <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_TN">http://192.168.0.165:1338/icon?c=jpeg&amp;path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</res>
+    //         </item>
+    //     </DIDL-Lite>"#;
 
     let result = quick_xml::escape::escape(result);
     let body = format!(
-        r#"
-        <?xml version="1.0" encoding="utf-8" standalone="yes"?>
-        <s:Envelope
-                xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
-                s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+        r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
             <s:Body>
                 <u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
                     <Result>{result}</Result>
                     <NumberReturned>2</NumberReturned>
                     <TotalMatches>2</TotalMatches>
-                    <UpdateID>11184</UpdateID>
+                    <UpdateID>12186</UpdateID>
                 </u:BrowseResponse>
             </s:Body>
-        </s:Envelope>
-    "#
+        </s:Envelope>"#
     );
 
     (
