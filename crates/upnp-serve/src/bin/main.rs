@@ -91,7 +91,7 @@ struct MediaServerDescriptionSpec<'a> {
 
 const HTTP_PORT: u16 = 9005;
 
-const USN: &str = "uuid:4158e35c-9571-4754-8a37-00b6bf1a719d";
+const USN: &str = "uuid:6158e35c-9571-4754-8a37-00b6bf1a719d";
 
 async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
     let friendly_name = spec.friendly_name;
@@ -115,15 +115,22 @@ async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
                     <UDN>{unique_id}</UDN>
 
                     <serviceList>
-                        <!-- ContentDirectory Service -->
-                        <service>
-                            <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
-                            <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
-                            <SCPDURL>/ContentDirectory.xml</SCPDURL>
-                            <controlURL>/control/ContentDirectory</controlURL>
-                            <eventSubURL>/evt/ContentDirectory</eventSubURL>
-                        </service>
+                      <service>
+                        <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+                        <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
+                        <SCPDURL>/scpd/ContentDirectory.xml</SCPDURL>
+                        <controlURL>/control/ContentDirectory</controlURL>
+                        <eventSubURL></eventSubURL>
+                      </service>
+                      <service>
+                        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+                        <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
+                        <SCPDURL>/scpd/ConnectionManager.xml</SCPDURL>
+                        <controlURL>/control/ConnectionManager</controlURL>
+                        <eventSubURL></eventSubURL>
+                      </service>
                     </serviceList>
+                    <presentationURL>/</presentationURL>
                 </device>
             </root>
 
@@ -189,6 +196,19 @@ USN: {usn}::{kind}\r
     )
 }
 
+async fn generate_connection_manager_scpd(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    info!(?addr, ?headers, "request to content directory SCPD");
+    (
+        [
+            ("Content-Type", r#"text/xml; charset="utf-8""#),
+            ("Server", MEDIA_SERVER_DESCRIPTION.server_string),
+        ],
+        include_str!("resources/scpd_connection_manager.xml"),
+    )
+}
 async fn generate_content_directory_scpd(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -250,17 +270,28 @@ async fn generate_content_directory_control_response(
     ([("Content-Type", "text/xml; charset=\"utf-8\"")], body)
 }
 
+async fn connection_manager_stub(headers: HeaderMap, body: Bytes) -> impl IntoResponse {
+    info!(body=?BStr::new(&body), ?headers, "connection manager request");
+
+    ""
+}
+
 async fn run_server(port: u16) -> anyhow::Result<()> {
     let app = axum::Router::new()
         .route("/description.xml", get(description_xml))
         .route(
-            "/ContentDirectory.xml",
+            "/scpd/ContentDirectory.xml",
             get(generate_content_directory_scpd),
+        )
+        .route(
+            "/scpd/ConnectionManager.xml",
+            get(generate_connection_manager_scpd),
         )
         .route(
             "/control/ContentDirectory",
             post(generate_content_directory_control_response),
-        );
+        )
+        .route("/control/ConnectionManager", post(connection_manager_stub));
 
     let app = app
         .layer(TraceLayer::new_for_http())
