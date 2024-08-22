@@ -23,7 +23,7 @@ const SSDP_SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r\n\
                                    ST: upnp:rootdevice\r\n\
                                    \r\n";
 
-fn get_local_ip_relative_to(local_dest: Ipv4Addr) -> anyhow::Result<Ipv4Addr> {
+pub fn get_local_ip_relative_to(local_dest: Ipv4Addr) -> anyhow::Result<Ipv4Addr> {
     // Ipv4Addr.to_bits() is only there in nightly rust, so copying here for now.
     fn ip_bits(addr: Ipv4Addr) -> u32 {
         u32::from_be_bytes(addr.octets())

@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -15,6 +15,7 @@ use bstr::ByteSlice;
 use http::{HeaderName, HeaderValue};
 use httpdate::fmt_http_date;
 use librqbit_buffers::ByteBuf;
+use librqbit_upnp::get_local_ip_relative_to;
 use tokio::spawn;
 use tower_http::trace::TraceLayer;
 use tracing::debug;
@@ -73,6 +74,7 @@ fn try_parse_ssdp<'a, 'h>(
 
     let mut req = httparse::Request::new(headers);
     req.parse(buf).context("error parsing request")?;
+
     match req.method {
         Some("M-SEARCH") => {
             let mut host = None;
@@ -97,7 +99,7 @@ fn try_parse_ssdp<'a, 'h>(
                     }))
                 }
                 _ => bail!("not all of host, man and st are set"),
-            };
+            }
         }
         _ => return Ok(SsdpMessage::OtherRequest(req)),
     }
@@ -140,7 +142,7 @@ async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
                         <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
                         <SCPDURL>/scpd/ContentDirectory.xml</SCPDURL>
                         <controlURL>/control/ContentDirectory</controlURL>
-                        <eventSubURL></eventSubURL>
+                        <eventSubURL>/evt/ContentDirectory</eventSubURL>
                       </service>
                       <service>
                         <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
@@ -158,7 +160,7 @@ async fn generate_description(spec: &MediaServerDescriptionSpec<'_>) -> String {
     )
 }
 
-const fn make_media_server_description(usn: &'a str) -> MediaServerDescriptionSpec<'a> {
+const fn make_media_server_description(usn: &str) -> MediaServerDescriptionSpec<'_> {
     MediaServerDescriptionSpec {
         friendly_name: "Rust Friendly",
         manufacturer: "Igor K",
@@ -178,7 +180,7 @@ async fn description_xml(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<MyState>,
 ) -> impl IntoResponse {
-    info!(?addr, "request for description.xml");
+    info!(?addr, "request for rootDesc.xml");
     generate_description(&make_media_server_description(&state.usn)).await
 }
 
@@ -198,20 +200,10 @@ fn generate_ssdp_discover_response(response: &SsdpDiscoverResponse<'_>, st: &BSt
     let date = fmt_http_date(response.date);
     let location = response.location;
 
-    let test = r#"HTTP/1.1 200 OK
-Cache-Control: max-age=75
-Ext:
-Location: http://192.168.0.165:1338/rootDesc.xml
-Server: Linux/3.4 DLNADOC/1.50 UPnP/1.0 dms/1
-St: urn:schemas-upnp-org:device:MediaServer:1
-Usn: uuid:c1aa84b5-0713-7606-a452-21c4f0483082::urn:schemas-upnp-org:device:MediaServer:1
-Content-Length: 0
-
-"#;
     //     format!(
     //         "HTTP/1.1 200 OK\r
     // Cache-Control: max-age={cache_control_max_age}\r
-    // Ext:\r
+    // Ext: \r
     // Location: {location}\r
     // Server: {server}\r
     // St: {st}\r
@@ -219,37 +211,53 @@ Content-Length: 0
     // Content-Length: 0\r
     // \r\n"
     //     )
-    return format!("HTTP/1.1 200 OK\r\nCache-Control: max-age=75\r\nExt: \r\nLocation: {location}\r\nServer: Linux/3.4 DLNADOC/1.50 UPnP/1.0 dms/1\r\nSt: urn:schemas-upnp-org:device:MediaServer:1\r\nUsn: {usn}::urn:schemas-upnp-org:device:MediaServer:1\r\nContent-Length: 0\r\n\r\n");
+    //
+    format!(
+        "HTTP/1.1 200 OK\r
+Cache-Control: max-age=75\r
+Ext: \r
+Location: {location}\r
+Server: Linux/3.4 DLNADOC/1.50 UPnP/1.0 dms/1\r
+St: urn:schemas-upnp-org:device:MediaServer:1\r
+Usn: {usn}::urn:schemas-upnp-org:device:MediaServer:1\r
+Content-Length: 0\r\n\r\n"
+    )
 }
 
 const UPNP_KIND_ROOT_DEVICE: &str = "upnp:rootdevice";
 const UPNP_KIND_MEDIASERVER: &str = "urn:schemas-upnp-org:device:MediaServer:1";
 
-pub fn generate_ssdp_notify_message(usn: &str, kind: &str) -> String {
-    let test = r#"NOTIFY * HTTP/1.1
-HOST: 239.255.255.250:1900
-NT: urn:schemas-upnp-org:device:MediaServer:1
-NTS: ssdp:alive
-SERVER: Linux/3.4 DLNADOC/1.50 UPnP/1.0 dms/1
-USN: uuid:c1aa84b5-0713-7606-a452-21c4f0483082::urn:schemas-upnp-org:device:MediaServer:1
-CACHE-CONTROL: max-age=75
-LOCATION: http://192.168.0.165:1338/rootDesc.xml
-"#;
+fn local_ip(addr: IpAddr) -> anyhow::Result<Ipv4Addr> {
+    match addr {
+        IpAddr::V4(ip) => {
+            let local_ip = get_local_ip_relative_to(ip)?;
+            Ok(local_ip)
+        }
+        IpAddr::V6(_) => bail!("not implemented"),
+    }
+}
 
+pub fn generate_ssdp_notify_message(
+    usn: &str,
+    kind: &str,
+    port: u16,
+    target: IpAddr,
+) -> anyhow::Result<String> {
+    let local_ip = local_ip(target)?;
     let server_string = SSDP_SERVER_STRING;
 
-    format!(
+    Ok(format!(
         "NOTIFY * HTTP/1.1\r
 Host: 239.255.255.250:1900\r
 Cache-Control: max-age=75\r
-Location: http://192.168.0.112:9005/description.xml\r
+Location: http://{local_ip}:{port}/rootDesc.xml\r
 NT: {kind}\r
 NTS: ssdp:alive\r
 Server: {server_string}\r
 USN: {usn}::{kind}\r
 \r
 "
-    )
+    ))
 }
 
 async fn generate_connection_manager_scpd(
@@ -258,15 +266,21 @@ async fn generate_connection_manager_scpd(
     headers: HeaderMap,
 ) -> impl IntoResponse {
     info!(?addr, ?headers, "request to content directory SCPD");
-    let descr =
+
     (
         [
-            ("Content-Type", r#"text/xml; charset="utf-8""#),
-            ("Server", make_media_server_description(&state.usn).server_string),
+            ("Content-Type", r#"text/xml; charset="utf-8""#.to_owned()),
+            (
+                "Server",
+                make_media_server_description(&state.usn)
+                    .server_string
+                    .to_owned(),
+            ),
         ],
         include_str!("../resources/scpd_connection_manager.xml"),
     )
 }
+
 async fn generate_content_directory_scpd(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<MyState>,
@@ -275,8 +289,13 @@ async fn generate_content_directory_scpd(
     info!(?addr, ?headers, "request to content directory SCPD");
     (
         [
-            ("Content-Type", r#"text/xml; charset="utf-8""#),
-            ("Server", make_media_server_description(&state.usn).server_string),
+            ("Content-Type", r#"text/xml; charset="utf-8""#.to_owned()),
+            (
+                "Server",
+                make_media_server_description(&state.usn)
+                    .server_string
+                    .to_owned(),
+            ),
         ],
         include_str!("../resources/ContentDirectorySCPD_dms.xml"),
     )
@@ -336,7 +355,7 @@ async fn connection_manager_stub(headers: HeaderMap, body: Bytes) -> impl IntoRe
 
 async fn run_server(usn: String, port: u16) -> anyhow::Result<()> {
     let app = axum::Router::new()
-        .route("/description.xml", get(description_xml))
+        .route("/rootDesc.xml", get(description_xml))
         .route(
             "/scpd/ContentDirectory.xml",
             get(generate_content_directory_scpd),
@@ -351,7 +370,7 @@ async fn run_server(usn: String, port: u16) -> anyhow::Result<()> {
         )
         .route("/control/ConnectionManager", post(connection_manager_stub));
 
-    let state = Arc::new(MyStateInner{usn});
+    let state = Arc::new(MyStateInner { usn });
     let app = app
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -369,7 +388,7 @@ async fn run_server(usn: String, port: u16) -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let usn = format!("uuid:{}", uuid::Uuid::new_v4().to_string());
+    let usn = format!("uuid:{}", uuid::Uuid::new_v4());
 
     spawn({
         let usn = usn.clone();
@@ -392,20 +411,20 @@ async fn main() -> anyhow::Result<()> {
         .context("error joining multicast group")?;
 
     for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
-        let msg = generate_ssdp_notify_message(&usn, kind);
+        let msg =
+            generate_ssdp_notify_message(&usn, kind, HTTP_PORT, "192.168.0.1".parse().unwrap())?;
         debug!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
         sock.send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR)
             .await
             .context("error sending notify")?;
     }
 
-    let msearch_msg = format!(
-        "M-SEARCH * HTTP/1.1\r
+    let msearch_msg = "M-SEARCH * HTTP/1.1\r
 HOST: 239.255.255.250:1900\r
 ST: urn:schemas-upnp-org:device:MediaServer:1\r
 MAN: \"ssdp:discover\"\r
-MX: 2\r\n\r\n"
-    );
+MX: 2\r\n\r\n";
+
     sock.send_to(msearch_msg.as_bytes(), UPNP_BROADCAST_ADDR)
         .await
         .context("error sending msearch")?;
@@ -437,11 +456,14 @@ MX: 2\r\n\r\n"
             continue;
         }
 
+        let local_ip = local_ip(addr.ip())?;
+        let location = format!("http://{local_ip}:{}/rootDesc.xml", HTTP_PORT);
+
         let response = generate_ssdp_discover_response(
             &SsdpDiscoverResponse {
                 cache_control_max_age: 75,
                 date: SystemTime::now(),
-                location: "http://192.168.0.112:9005/description.xml",
+                location: &location,
                 server: SSDP_SERVER_STRING,
                 usn: &usn,
             },
@@ -459,7 +481,8 @@ mod tests {
     use std::time::SystemTime;
 
     use crate::{
-        generate_ssdp_discover_response, make_media_server_description, try_parse_ssdp, SsdpDiscoverResponse, UPNP_KIND_MEDIASERVER
+        generate_ssdp_discover_response, make_media_server_description, try_parse_ssdp,
+        SsdpDiscoverResponse, UPNP_KIND_MEDIASERVER,
     };
 
     #[test]
@@ -477,7 +500,7 @@ mod tests {
             &SsdpDiscoverResponse {
                 cache_control_max_age: 1,
                 date: SystemTime::now(),
-                location: "http://192.168.0.112:9005/description.xml",
+                location: "http://192.168.0.112:9005/rootDesc.xml",
                 server: make_media_server_description(usn).friendly_name,
                 usn,
             },

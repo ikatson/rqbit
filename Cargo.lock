@@ -3647,6 +3647,8 @@ dependencies = [
  "httparse",
  "httpdate",
  "librqbit-buffers",
+ "librqbit-upnp",
+ "openssl",
  "quick-xml",
  "socket2",
  "tokio",
