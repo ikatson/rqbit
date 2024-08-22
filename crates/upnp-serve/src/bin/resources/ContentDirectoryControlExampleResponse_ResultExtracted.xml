@@ -1,0 +1,58 @@
+<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">
+    <item id="%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv" parentID="0" restricted="1" searchable="0">
+        <dc:title>Despicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</dc:title>
+        <upnp:class>object.item.videoItem</upnp:class>
+        <upnp:icon>http://192.168.0.165:1338/icon?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</upnp:icon>
+        <dc:date>0001-01-01</dc:date>
+        <upnp:albumArtURI>http://192.168.0.165:1338/icon?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</upnp:albumArtURI>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="7299299793" bitrate="10313633" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</res>
+        <res protocolInfo="http-get:*:video/mpeg:DLNA.ORG_PN=MPEG_PS_PAL;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=t</res>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=vp8</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=chromecast</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="1:34:21.865">http://192.168.0.165:1338/res?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv&amp;transcode=web</res>
+        <res protocolInfo="http-get:*:text/plain">http://192.168.0.165:1338/subtitle?path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</res>
+        <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_TN">http://192.168.0.165:1338/icon?c=jpeg&amp;path=%2FDespicable.Me.4.2024.1080p.WEB-DL.H264.SPh.mkv</res>
+    </item>
+    <item id="%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv" parentID="0" restricted="1" searchable="0">
+        <dc:title>Furiosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</dc:title>
+        <upnp:class>object.item.videoItem</upnp:class>
+        <upnp:icon>http://192.168.0.165:1338/icon?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</upnp:icon>
+        <dc:date>0001-01-01</dc:date>
+        <upnp:albumArtURI>http://192.168.0.165:1338/icon?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</upnp:albumArtURI>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="33333413371" bitrate="29990260" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</res>
+        <res protocolInfo="http-get:*:video/mpeg:DLNA.ORG_PN=MPEG_PS_PAL;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=t</res>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=vp8</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=chromecast</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:28:11.797">http://192.168.0.165:1338/res?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv&amp;transcode=web</res>
+        <res protocolInfo="http-get:*:text/plain">http://192.168.0.165:1338/subtitle?path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</res>
+        <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_TN">http://192.168.0.165:1338/icon?c=jpeg&amp;path=%2FFuriosa.A.Mad.Max.Saga.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR-DVT.mkv</res>
+    </item>
+    <item id="%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv" parentID="0" restricted="1" searchable="0">
+        <dc:title>Mad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv</dc:title>
+        <upnp:class>object.item.videoItem</upnp:class>
+        <upnp:icon>http://192.168.0.165:1338/icon?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv</upnp:icon>
+        <dc:date>0001-01-01</dc:date>
+        <upnp:albumArtURI>http://192.168.0.165:1338/icon?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv</upnp:albumArtURI>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="83495305663" bitrate="92500430" duration="2:00:21.182">http://192.168.0.165:1338/res?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv</res>
+        <res protocolInfo="http-get:*:video/mpeg:DLNA.ORG_PN=MPEG_PS_PAL;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:00:21.182">http://192.168.0.165:1338/res?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv&amp;transcode=t</res>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:00:21.182">http://192.168.0.165:1338/res?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv&amp;transcode=vp8</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:00:21.182">http://192.168.0.165:1338/res?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv&amp;transcode=chromecast</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:00:21.182">http://192.168.0.165:1338/res?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv&amp;transcode=web</res>
+        <res protocolInfo="http-get:*:text/plain">http://192.168.0.165:1338/subtitle?path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv</res>
+        <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_TN">http://192.168.0.165:1338/icon?c=jpeg&amp;path=%2FMad.Max.Fury.Road.2015.2160p.UHD.BDRemux.TrueHD.Atmos.DoVi.P8.Hybrid.by.DVT.mkv</res>
+    </item>
+    <item id="%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv" parentID="0" restricted="1" searchable="0">
+        <dc:title>Twisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</dc:title>
+        <upnp:class>object.item.videoItem</upnp:class>
+        <upnp:icon>http://192.168.0.165:1338/icon?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</upnp:icon>
+        <dc:date>0001-01-01</dc:date>
+        <upnp:albumArtURI>http://192.168.0.165:1338/icon?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</upnp:albumArtURI>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" size="24109699706" bitrate="26270958" duration="2:02:21.856">http://192.168.0.165:1338/res?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</res>
+        <res protocolInfo="http-get:*:video/mpeg:DLNA.ORG_PN=MPEG_PS_PAL;DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:02:21.856">http://192.168.0.165:1338/res?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv&amp;transcode=t</res>
+        <res protocolInfo="http-get:*:video/webm:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:02:21.856">http://192.168.0.165:1338/res?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv&amp;transcode=vp8</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:02:21.856">http://192.168.0.165:1338/res?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv&amp;transcode=chromecast</res>
+        <res protocolInfo="http-get:*:video/mp4:DLNA.ORG_OP=10;DLNA.ORG_CI=1;DLNA.ORG_FLAGS=01700000000000000000000000000000" duration="2:02:21.856">http://192.168.0.165:1338/res?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv&amp;transcode=web</res>
+        <res protocolInfo="http-get:*:text/plain">http://192.168.0.165:1338/subtitle?path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</res>
+        <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_TN">http://192.168.0.165:1338/icon?c=jpeg&amp;path=%2FTwisters.2024.WEB-DL.2160p.HDR.DV.seleZen.mkv</res>
+    </item>
+</DIDL-Lite>

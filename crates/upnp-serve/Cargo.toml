@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+librqbit-buffers = { path = "../buffers" }
 anyhow = "1.0.86"
 axum = "0.7.5"
 socket2 = "0.5.7"
 tokio = { version = "1.39.3", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
+bstr = "1.10.0"
+tower-http = { version = "0.5", features = ["trace"] }
+httpdate = "1.0.3"
+quick-xml = "0.36.1"
