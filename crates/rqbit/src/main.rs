@@ -1,6 +1,6 @@
 use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
@@ -16,6 +16,7 @@ use librqbit::{
     PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
 };
 use size_format::SizeFormatterBinary as SF;
+use tokio::net::TcpListener;
 use tracing::{error, error_span, info, trace_span, warn};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -94,6 +95,15 @@ struct Opts {
     /// If set, will try to publish the chosen port through upnp on your router.
     #[arg(long = "disable-upnp")]
     disable_upnp: bool,
+
+    /// If set, will run a UPNP Media server and stream all the torrents through it.
+    /// Should be set to your hostname/IP as seen by your LAN neighbors.
+    #[arg(long = "upnp-server-hostname")]
+    upnp_server_hostname: Option<String>,
+
+    /// UPNP server name that would be displayed on devices in your network.
+    #[arg(long = "upnp-server-friendly-name")]
+    upnp_server_friendly_name: Option<String>,
 
     #[command(subcommand)]
     subcommand: SubCommand,
@@ -437,6 +447,27 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     trace_span!("stats_printer"),
                     stats_printer(session.clone()),
                 );
+
+                let mut upnp_server = {
+                    match opts.upnp_server_hostname {
+                        Some(hn) => {
+                            if opts.http_api_listen_addr.ip().is_loopback() {
+                                bail!("cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0");
+                            }
+                            let server = session
+                                .make_upnp_adapter(
+                                    format!("rqbit at {hn}"),
+                                    hn,
+                                    opts.http_api_listen_addr.port(),
+                                )
+                                .await
+                                .context("error starting UPNP server")?;
+                            Some(server)
+                        }
+                        None => None,
+                    }
+                };
+
                 let api = Api::new(
                     session,
                     Some(log_config.rust_log_reload_tx),
@@ -444,10 +475,31 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 );
                 let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: false }));
                 let http_api_listen_addr = opts.http_api_listen_addr;
-                http_api
-                    .make_http_api_and_run(http_api_listen_addr)
+
+                info!("starting HTTP API at http://{http_api_listen_addr}");
+                let tcp_listener = TcpListener::bind(http_api_listen_addr)
                     .await
-                    .context("error running HTTP API")
+                    .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
+
+                let upnp_router = upnp_server.as_mut().and_then(|s| s.take_router().ok());
+                let http_api_fut = http_api.make_http_api_and_run(tcp_listener, upnp_router);
+
+                let res = match upnp_server {
+                    Some(srv) => {
+                        let upnp_fut = srv.run_ssdp_forever();
+
+                        tokio::pin!(http_api_fut);
+                        tokio::pin!(upnp_fut);
+
+                        tokio::select! {
+                            r = &mut http_api_fut => r,
+                            r = &mut upnp_fut => r
+                        }
+                    }
+                    None => http_api_fut.await,
+                };
+
+                res.context("error running rqbit server")
             }
         },
         SubCommand::Download(download_opts) => {
@@ -534,10 +586,16 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 );
                 let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: true }));
                 let http_api_listen_addr = opts.http_api_listen_addr;
+
+                info!("starting HTTP API at http://{http_api_listen_addr}");
+                let listener = tokio::net::TcpListener::bind(opts.http_api_listen_addr)
+                    .await
+                    .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
+
                 librqbit_spawn(
                     "http_api",
                     error_span!("http_api"),
-                    http_api.make_http_api_and_run(http_api_listen_addr),
+                    http_api.make_http_api_and_run(listener, None),
                 );
 
                 let mut added = false;

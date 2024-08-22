@@ -65,6 +65,7 @@ mod torrent_state;
 #[cfg(feature = "tracing-subscriber-utils")]
 pub mod tracing_subscriber_config_utils;
 mod type_aliases;
+pub mod upnp_server_adapter;
 
 pub use api::Api;
 pub use api_error::ApiError;

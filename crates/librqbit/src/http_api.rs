@@ -16,7 +16,8 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
-use tracing::{debug, info, trace};
+use tokio::net::TcpListener;
+use tracing::{debug, trace};
 
 use axum::Router;
 
@@ -52,7 +53,11 @@ impl HttpApi {
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
-    pub fn make_http_api_and_run(self, addr: SocketAddr) -> BoxFuture<'static, anyhow::Result<()>> {
+    pub fn make_http_api_and_run(
+        self,
+        listener: TcpListener,
+        upnp_router: Option<Router>,
+    ) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = self.inner;
 
         async fn api_root() -> impl IntoResponse {
@@ -558,22 +563,21 @@ impl HttpApi {
                 .allow_headers(AllowHeaders::any())
         };
 
-        let app = app
+        let mut app = app
             .layer(cors_layer)
             .layer(tower_http::trace::TraceLayer::new_for_http())
-            .with_state(state)
-            .into_make_service();
+            .with_state(state);
 
-        info!(%addr, "starting HTTP server");
+        if let Some(upnp_router) = upnp_router {
+            app = app.nest("/upnp", upnp_router);
+        }
 
-        use tokio::net::TcpListener;
+        let app = app.into_make_service();
 
         async move {
-            let listener = TcpListener::bind(&addr)
+            axum::serve(listener, app)
                 .await
-                .with_context(|| format!("error binding to {addr}"))?;
-            axum::serve(listener, app).await?;
-            Ok(())
+                .context("error running HTTP API")
         }
         .boxed()
     }

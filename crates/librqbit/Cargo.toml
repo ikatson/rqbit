@@ -38,6 +38,7 @@ peer_binary_protocol = { path = "../peer_binary_protocol", package = "librqbit-p
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "3.0.0" }
 dht = { path = "../dht", package = "librqbit-dht", version = "5.1.0" }
 librqbit-upnp = { path = "../upnp", version = "0.1.1" }
+upnp-serve = { path = "../upnp-serve" }
 
 tokio = { version = "1", features = [
     "macros",

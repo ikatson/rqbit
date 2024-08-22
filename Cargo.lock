@@ -1562,6 +1562,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "upnp-serve",
  "url",
  "urlencoding",
  "uuid",
@@ -2536,6 +2537,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "upnp-serve",
 ]
 
 [[package]]
