@@ -81,8 +81,6 @@ pub fn render_content_directory_browse(
     let all_items = all_items.join("");
 
     let result = render_content_directory_browse_result(&all_items);
-
-    println!("{}", &result);
     let result = quick_xml::escape::escape(&result);
 
     // TODO: use smth better
