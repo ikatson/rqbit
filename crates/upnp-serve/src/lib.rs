@@ -5,7 +5,9 @@ use gethostname::gethostname;
 use http_handlers::make_router;
 use librqbit_sha1_wrapper::ISha1;
 use ssdp::SsdpRunner;
-use state::{ContentDirectoryBrowseProvider, UnpnServerState};
+use state::UnpnServerState;
+
+pub use state::{ContentDirectoryBrowseItem, ContentDirectoryBrowseProvider};
 
 mod constants;
 mod http_handlers;
@@ -23,7 +25,7 @@ pub struct UpnpServerOptions {
 }
 
 pub struct UpnpServer {
-    axum_router: Option<axum::Router<UnpnServerState>>,
+    axum_router: Option<axum::Router>,
     ssdp_runner: SsdpRunner,
 }
 
@@ -41,13 +43,15 @@ fn create_usn(opts: &UpnpServerOptions) -> anyhow::Result<String> {
     sha1.update(&buf);
 
     let hash = sha1.finish();
-    let uuid = uuid::Builder::from_slice(&hash)?.into_uuid();
+    let uuid = uuid::Builder::from_slice(&hash[..16])
+        .context("error generating UUID")?
+        .into_uuid();
     Ok(format!("uuid:{}", uuid))
 }
 
 impl UpnpServer {
     pub async fn new(opts: UpnpServerOptions) -> anyhow::Result<Self> {
-        let usn = create_usn(&opts)?;
+        let usn = create_usn(&opts).context("error generating USN")?;
 
         let description_http_location = {
             let hostname = &opts.http_hostname;
@@ -80,7 +84,7 @@ impl UpnpServer {
         })
     }
 
-    pub fn take_router(&mut self) -> anyhow::Result<axum::Router<UnpnServerState>> {
+    pub fn take_router(&mut self) -> anyhow::Result<axum::Router> {
         self.axum_router
             .take()
             .context("programming error: router already taken")

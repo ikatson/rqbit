@@ -42,7 +42,7 @@ pub fn make_router(
     server_header_string: String,
     port: u16,
     browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
-) -> anyhow::Result<axum::Router<UnpnServerState>> {
+) -> anyhow::Result<axum::Router> {
     let root_desc = render_root_description_xml(&RootDescriptionInputs {
         friendly_name: &friendly_name,
         manufacturer: "rqbit developers",
