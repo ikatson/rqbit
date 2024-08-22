@@ -16,6 +16,7 @@ use crate::{
     templates::{
         render_content_directory_browse, render_root_description_xml, RootDescriptionInputs,
     },
+    upnp::ContentDirectoryControlRequest,
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
@@ -34,9 +35,22 @@ async fn generate_content_directory_control_response(
         return (StatusCode::NOT_IMPLEMENTED, "").into_response();
     }
 
+    let body = match std::str::from_utf8(&body) {
+        Ok(body) => body,
+        Err(_) => return (StatusCode::BAD_REQUEST, "cannot parse request").into_response(),
+    };
+
+    let request = match ContentDirectoryControlRequest::parse(&body) {
+        Ok(req) => req,
+        Err(e) => {
+            debug!(error=?e, "error parsing XML");
+            return (StatusCode::BAD_REQUEST, "cannot parse request").into_response();
+        }
+    };
+
     (
         [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
-        render_content_directory_browse(state.provider.browse()),
+        render_content_directory_browse(state.provider.browse_direct_children(request.object_id)),
     )
         .into_response()
 }

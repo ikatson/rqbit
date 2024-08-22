@@ -3601,6 +3601,7 @@ dependencies = [
  "httparse",
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
+ "mime_guess",
  "quick-xml",
  "tokio",
  "tower-http",

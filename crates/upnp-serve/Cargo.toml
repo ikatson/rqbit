@@ -16,6 +16,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 librqbit-upnp = { path = "../upnp" }
 gethostname = "0.5.0"
 librqbit-sha1-wrapper = { path = "../sha1w" }
+mime_guess = "2.0.5"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"

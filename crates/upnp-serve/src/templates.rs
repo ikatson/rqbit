@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::state::ContentDirectoryBrowseItem;
+use crate::state::{Container, ContentDirectoryBrowseItem, Item};
 
 pub struct RootDescriptionInputs<'a> {
     pub friendly_name: &'a str,
@@ -24,21 +24,44 @@ pub fn render_root_description_xml(input: &RootDescriptionInputs<'_>) -> String 
 pub fn render_content_directory_browse(
     items: impl IntoIterator<Item = ContentDirectoryBrowseItem>,
 ) -> String {
-    struct Item<'a> {
-        id: usize,
-        mime_type: &'a str,
-        url: &'a str,
-        title: &'a str,
-    }
+    fn item_or_container(item_or_container: &ContentDirectoryBrowseItem) -> Option<String> {
+        fn item(item: &Item) -> Option<String> {
+            let tmpl =
+                include_str!("resources/templates/content_directory_control_browse_item.tmpl.xml")
+                    .trim();
 
-    fn render_content_directory_browse_item(item: &Item<'_>) -> String {
-        let tmpl =
-            include_str!("resources/templates/content_directory_control_browse_item.tmpl.xml")
-                .trim();
-        tmpl.replace("{id}", &format!("{}", item.id))
-            .replace("{mime_type}", item.mime_type)
-            .replace("{url}", item.url)
-            .replace("{title}", item.title)
+            let mime = item.mime_type.as_ref()?;
+            let upnp_class = match mime.type_().as_str() {
+                "video" => "object.item.videoItem",
+                _ => return None,
+            };
+            let mime = mime.to_string();
+
+            Some(
+                tmpl.replace("{id}", &format!("{}", item.id))
+                    .replace("{parent_id}", &format!("{}", item.parent_id.unwrap_or(0)))
+                    .replace("{mime_type}", &mime)
+                    .replace("{url}", &item.url)
+                    .replace("{upnp_class}", upnp_class)
+                    .replace("{title}", &item.title),
+            )
+        }
+
+        fn container(item: &Container) -> String {
+            let tmpl = include_str!(
+                "resources/templates/content_directory_control_browse_container.tmpl.xml"
+            )
+            .trim();
+            tmpl.replace("{id}", &format!("{}", item.id))
+                .replace("{parent_id}", &format!("{}", item.parent_id.unwrap_or(0)))
+                .replace("{title}", &item.title)
+                .replace("{child_count}", &format!("{}", item.children_count))
+        }
+
+        match item_or_container {
+            ContentDirectoryBrowseItem::Container(c) => Some(container(c)),
+            ContentDirectoryBrowseItem::Item(i) => item(i),
+        }
     }
 
     struct Envelope<'a> {
@@ -68,14 +91,7 @@ pub fn render_content_directory_browse(
     let all_items = items
         .into_iter()
         .enumerate()
-        .filter_map(|(id, item)| {
-            Some(render_content_directory_browse_item(&Item {
-                id: id + 1,
-                mime_type: item.mime_type.as_ref()?,
-                url: &item.url,
-                title: &item.title,
-            }))
-        })
+        .filter_map(|(id, item)| item_or_container(&item))
         .collect::<Vec<_>>();
     let total = all_items.len();
     let all_items = all_items.join("");

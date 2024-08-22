@@ -15,34 +15,38 @@ use upnp_serve::{
 };
 
 impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
-    fn browse(&self) -> Vec<upnp_serve::ContentDirectoryBrowseItem> {
-        let hostname = &self.hostname;
-        let port = self.port;
-        self.session.with_torrents(|torrents| {
-            torrents
-                .flat_map(|(id, t)| {
-                    t.shared()
-                        .file_infos
-                        .iter()
-                        .enumerate()
-                        .map(move |(fid, fi)| {
-                            let mime_type = mime_guess::from_path(&fi.relative_filename)
-                                .first()
-                                .map(|m| m.to_string());
-                            let title = fi.relative_filename.to_string_lossy();
-                            let url = format!(
-                                "http://{hostname}:{port}/torrents/{id}/stream/{fid}/{title}"
-                            );
-                            ContentDirectoryBrowseItem {
-                                title: title.into_owned(),
-                                mime_type,
-                                url,
-                            }
-                        })
-                })
-                .collect()
-        })
+    fn browse_direct_children(&self, parent_id: usize) -> Vec<ContentDirectoryBrowseItem> {
+        todo!()
     }
+
+    // fn browse(&self) -> Vec<upnp_serve::ContentDirectoryBrowseItem> {
+    //     let hostname = &self.hostname;
+    //     let port = self.port;
+    //     self.session.with_torrents(|torrents| {
+    //         torrents
+    //             .flat_map(|(id, t)| {
+    //                 t.shared()
+    //                     .file_infos
+    //                     .iter()
+    //                     .enumerate()
+    //                     .map(move |(fid, fi)| {
+    //                         let mime_type = mime_guess::from_path(&fi.relative_filename)
+    //                             .first()
+    //                             .map(|m| m.to_string());
+    //                         let title = fi.relative_filename.to_string_lossy();
+    //                         let url = format!(
+    //                             "http://{hostname}:{port}/torrents/{id}/stream/{fid}/{title}"
+    //                         );
+    //                         ContentDirectoryBrowseItem {
+    //                             title: title.into_owned(),
+    //                             mime_type,
+    //                             url,
+    //                         }
+    //                     })
+    //             })
+    //             .collect()
+    //     })
+    // }
 }
 
 impl Session {

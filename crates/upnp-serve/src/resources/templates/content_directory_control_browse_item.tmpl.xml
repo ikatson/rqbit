@@ -1,5 +1,5 @@
-<item id="{id}" parentID="0" restricted="true">
+<item id="{id}" parentID="{parent_id}" restricted="true">
     <dc:title>{title}</dc:title>
-    <upnp:class>object.item.videoItem</upnp:class>
+    <upnp:class>{upnp_class}</upnp:class>
     <res protocolInfo="http-get:*:{mime_type}:DLNA.ORG_OP=01">{url}</res>
 </item>
