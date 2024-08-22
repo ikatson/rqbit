@@ -248,25 +248,21 @@ async fn generate_content_directory_control_response(
         "#;
 
     let result = quick_xml::escape::escape(&result);
-    let result = include_str!(
-        "resources/ContentDirectoryControlExampleResponse_ResultExtracted.xml_unencoded"
-    );
-
     let body = format!(
         r#"
-    <?xml version="1.0"?>
-    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:upnp="urn:schemas-upnp-org:service:ContentDirectory:1">
-      <soap:Body>
-        <upnp:BrowseResponse>
-          <Result>
-          {result}
-          </Result>
-          <NumberReturned>2</NumberReturned>
-          <TotalMatches>2</TotalMatches>
-          <UpdateID>0</UpdateID>
-        </upnp:BrowseResponse>
-      </soap:Body>
-    </soap:Envelope>
+        <?xml version="1.0" encoding="utf-8" standalone="yes"?>
+        <s:Envelope
+                xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+                s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+            <s:Body>
+                <u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+                    <Result>{result}</Result>
+                    <NumberReturned>2</NumberReturned>
+                    <TotalMatches>2</TotalMatches>
+                    <UpdateID>11184</UpdateID>
+                </u:BrowseResponse>
+            </s:Body>
+        </s:Envelope>
     "#
     );
 
