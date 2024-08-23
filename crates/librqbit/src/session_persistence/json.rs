@@ -8,7 +8,6 @@ use crate::{
     storage::filesystem::FilesystemStorageFactory,
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
-    ManagedTorrentState,
 };
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -86,6 +85,8 @@ impl JsonSessionPersistenceStore {
     }
 
     async fn flush(&self) -> anyhow::Result<()> {
+        // we don't need the write lock technically, but we need to stop concurrent modifications
+        let db_content = self.db_content.write().await;
         let tmp_filename = format!("{}.tmp", self.db_filename.to_str().unwrap());
         let mut tmp = tokio::fs::OpenOptions::new()
             .create(true)
@@ -97,8 +98,7 @@ impl JsonSessionPersistenceStore {
         trace!(?tmp_filename, "opened temp file");
 
         let mut buf = Vec::new();
-        serde_json::to_writer(&mut buf, &*self.db_content.read().await)
-            .context("error serializing")?;
+        serde_json::to_writer(&mut buf, &*db_content).context("error serializing")?;
 
         trace!(?tmp_filename, "serialized DB as JSON");
         tmp.write_all(&buf)
@@ -146,7 +146,7 @@ impl JsonSessionPersistenceStore {
             // we don't serialize this here, but to a file instead.
             torrent_bytes: Default::default(),
             only_files: torrent.only_files().clone(),
-            is_paused: torrent.with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
+            is_paused: torrent.is_paused(),
             output_folder: torrent.shared().options.output_folder.clone(),
         };
 
