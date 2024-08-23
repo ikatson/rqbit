@@ -7,7 +7,10 @@ use axum::{
     routing::{get, post},
 };
 use bstr::BStr;
-use http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
+use http::{
+    header::{CACHE_CONTROL, CONTENT_TYPE},
+    HeaderMap, StatusCode,
+};
 use tracing::{debug, trace};
 
 use crate::{
@@ -51,7 +54,10 @@ async fn generate_content_directory_control_response(
     };
 
     (
-        [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+        [
+            (CONTENT_TYPE, CONTENT_TYPE_XML_UTF8),
+            (CACHE_CONTROL, "max-age=1"),
+        ],
         render_content_directory_browse(state.provider.browse_direct_children(request.object_id)),
     )
         .into_response()
