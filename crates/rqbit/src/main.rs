@@ -456,7 +456,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                             }
                             let server = session
                                 .make_upnp_adapter(
-                                    format!("rqbit at {hn}"),
+                                    opts.upnp_server_friendly_name
+                                        .unwrap_or_else(|| format!("rqbit at {hn}")),
                                     hn,
                                     opts.http_api_listen_addr.port(),
                                 )
