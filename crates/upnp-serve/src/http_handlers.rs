@@ -47,6 +47,7 @@ async fn generate_content_directory_control_response(
             return (StatusCode::BAD_REQUEST, "").into_response();
         }
     };
+    trace!(?action);
     match action.as_ref() {
         SOAP_ACTION_CONTENT_DIRECTORY_BROWSE => {
             let body = match std::str::from_utf8(body) {
