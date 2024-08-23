@@ -6,6 +6,7 @@ use http_handlers::make_router;
 use librqbit_sha1_wrapper::ISha1;
 use ssdp::SsdpRunner;
 
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use upnp_types::content_directory::ContentDirectoryBrowseProvider;
 
@@ -23,6 +24,7 @@ pub struct UpnpServerOptions {
     pub http_listen_port: u16,
     pub http_prefix: String,
     pub browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
+    pub cancellation_token: CancellationToken,
 }
 
 pub struct UpnpServer {
@@ -75,6 +77,7 @@ impl UpnpServer {
             opts.http_prefix,
             usn,
             opts.browse_provider,
+            opts.cancellation_token,
         )?;
 
         Ok(Self {

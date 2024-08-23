@@ -318,6 +318,7 @@ impl Session {
                 hostname: http_hostname,
                 port: http_listen_port,
             }),
+            cancellation_token: self.cancellation_token().child_token(),
         })
         .await
         .context("error creating upnp adapter")

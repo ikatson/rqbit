@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         http_listen_port: HTTP_PORT,
         http_prefix: HTTP_PREFIX.to_owned(),
         browse_provider: Box::new(items),
+        cancellation_token: Default::default(),
     })
     .await?;
 

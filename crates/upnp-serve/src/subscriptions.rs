@@ -119,11 +119,10 @@ impl UpnpServerStateInner {
         // Spawn a task that will wait for timeout or subscription refreshes.
         // When it times out, kill all of them.
 
-        let state = self.clone();
         let pspan = self.span.clone();
         let subscription_manager = {
-            let mut brx = state.system_update_bcast_tx.subscribe();
-            let state = Arc::downgrade(&state);
+            let mut brx = self.system_update_bcast_tx.subscribe();
+            let state = Arc::downgrade(self);
             let sid = sid.clone();
             let url = url.clone();
 

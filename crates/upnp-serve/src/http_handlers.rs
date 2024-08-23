@@ -13,6 +13,7 @@ use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE},
     HeaderMap, HeaderName, StatusCode,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -147,6 +148,7 @@ pub fn make_router(
     http_prefix: String,
     upnp_usn: String,
     browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
+    cancellation_token: CancellationToken,
 ) -> anyhow::Result<axum::Router> {
     let root_desc = render_root_description_xml(&RootDescriptionInputs {
         friendly_name: &friendly_name,
@@ -156,7 +158,7 @@ pub fn make_router(
         http_prefix: &http_prefix,
     });
 
-    let state = UpnpServerStateInner::new(root_desc.into(), browse_provider)
+    let state = UpnpServerStateInner::new(root_desc.into(), browse_provider, cancellation_token)
         .context("error creating UPNP server")?;
 
     let sub_handler = {

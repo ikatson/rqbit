@@ -9,6 +9,7 @@ use std::{
 use anyhow::Context;
 use axum::body::Bytes;
 use librqbit_core::spawn_utils::spawn_with_cancel;
+use tokio_util::sync::CancellationToken;
 use tracing::{error_span, Span};
 
 use crate::{
@@ -35,8 +36,9 @@ impl UpnpServerStateInner {
     pub fn new(
         rendered_root_description: Bytes,
         provider: Box<dyn ContentDirectoryBrowseProvider>,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<Arc<Self>> {
-        let cancel_token = tokio_util::sync::CancellationToken::new();
+        let cancel_token = cancellation_token.child_token();
         let drop_guard = cancel_token.clone().drop_guard();
         let (btx, _) = tokio::sync::broadcast::channel(32);
         let span = error_span!(parent: None, "upnp-server");
