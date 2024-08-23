@@ -59,7 +59,8 @@ type TAB =
   | "Session"
   | "Peer options"
   | "HTTP API"
-  | "TCP Listen";
+  | "TCP Listen"
+  | "UPnP Server";
 
 const TABS: readonly TAB[] = [
   "Home",
@@ -68,6 +69,7 @@ const TABS: readonly TAB[] = [
   "TCP Listen",
   "Peer options",
   "HTTP API",
+  "UPnP Server",
 ] as const;
 
 const Tab: React.FC<{
@@ -252,11 +254,11 @@ export const ConfigModal: React.FC<{
             />
 
             <FormCheck
-              label="Advertise over UPnP"
+              label="Advertise TCP port over UPnP"
               name="tcp_listen.disable"
               checked={!config.tcp_listen.disable}
               onChange={handleToggleChange}
-              help="Advertise your port over UPnP. This is required for peers to be able to connect to you from the internet. Will only work if your router has a static IP."
+              help="Advertise your port over UPnP to your router(s). This is required for peers to be able to connect to you from the internet. Will only work if your router has a static IP."
             />
 
             <FormInput
@@ -277,6 +279,38 @@ export const ConfigModal: React.FC<{
               disabled={config.tcp_listen.disable}
               onChange={handleInputChange}
               help="The max port to try to listen on."
+            />
+          </Fieldset>
+        </Tab>
+
+        <Tab name="UPnP Server" currentTab={tab}>
+          <Fieldset>
+            <FormCheck
+              label="Enable UPnP media server"
+              name="upnp.enable_server"
+              checked={config.upnp.enable_server}
+              onChange={handleToggleChange}
+              help="If enabled, rqbit will advertise the media to supported LAN devices, e.g. TVs."
+            />
+
+            <FormInput
+              inputType="text"
+              label="[Required] Hostname"
+              name="upnp.server_hostname"
+              value={config.upnp.server_hostname}
+              disabled={!config.upnp.enable_server}
+              onChange={handleInputChange}
+              help="Set this to your LAN IP or hostname resolvable from LAN."
+            />
+
+            <FormInput
+              inputType="text"
+              label="Friendly name"
+              name="upnp.server_friendly_name"
+              value={config.upnp.server_friendly_name}
+              disabled={!config.upnp.enable_server}
+              onChange={handleInputChange}
+              help="The name displayed on supported devices. If not set will be generated, will look smth like <rqbit at HOSTNAME>."
             />
           </Fieldset>
         </Tab>

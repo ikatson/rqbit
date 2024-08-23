@@ -125,10 +125,21 @@ impl Default for RqbitDesktopConfigHttpApi {
     }
 }
 
-#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(default)]
 pub struct RqbitDesktopConfigUpnp {
-    pub disable: bool,
+    // rename for backwards compat
+    #[serde(rename = "disable")]
+    pub disable_tcp_port_forward: bool,
+
+    #[serde(default)]
+    pub enable_server: bool,
+
+    #[serde(default)]
+    pub server_hostname: Option<String>,
+
+    #[serde(default)]
+    pub server_friendly_name: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -160,5 +171,25 @@ impl Default for RqbitDesktopConfig {
             peer_opts: Default::default(),
             http_api: Default::default(),
         }
+    }
+}
+
+impl RqbitDesktopConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.upnp.enable_server {
+            if self.http_api.disable {
+                anyhow::bail!("if UPnP server is enabled, you need to enable the HTTP API also.")
+            }
+            if self.http_api.listen_addr.ip().is_loopback() {
+                anyhow::bail!("if UPnP server is enabled, you need to set HTTP API IP to 0.0.0.0 or at least non-localhost address.")
+            }
+            match self.upnp.server_hostname.as_ref().map(|s| s.trim()) {
+                Some("") | None => {
+                    anyhow::bail!("UPnP hostname must be set to non-empty string")
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
     }
 }
