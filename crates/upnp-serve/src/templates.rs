@@ -100,7 +100,6 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
     let all_items = all_items.join("");
 
     let result = render_content_directory_browse_result(&all_items);
-    let result = quick_xml::escape::escape(&result);
 
     // TODO: use smth better
     static UPDATE_ID: AtomicU64 = AtomicU64::new(1);

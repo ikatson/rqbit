@@ -23,6 +23,7 @@ devserver:
 		--log-file-rust-log=debug,librqbit=trace \
 		--http-api-listen-addr 0.0.0.0:3030 \
 		--upnp-server-hostname 192.168.0.112 \
+		--upnp-server-friendly-name rqbit-dev \
 		server start /tmp/scratch/
 
 @PHONY: devserver

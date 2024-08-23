@@ -2,7 +2,7 @@
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
     <s:Body>
         <u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
-            <Result>{result}</Result>
+            <Result><![CDATA[{result}]]></Result>
             <NumberReturned>{number_returned}</NumberReturned>
             <TotalMatches>{total_matches}</TotalMatches>
             <UpdateID>{update_id}</UpdateID>

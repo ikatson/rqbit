@@ -326,7 +326,6 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
     use bencode::bencode_serialize_to_writer;
     use bytes::Bytes;
     use dht::Id20;
