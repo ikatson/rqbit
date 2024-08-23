@@ -38,8 +38,8 @@ async fn generate_content_directory_control_response(
     body: Bytes,
 ) -> impl IntoResponse {
     let body = BStr::new(&body);
-    trace!(?body, "received control request");
     let action = headers.get("soapaction").map(|v| BStr::new(v.as_bytes()));
+    trace!(?body, ?action, "received control request");
     let action = match action {
         Some(action) => action,
         None => {
@@ -47,7 +47,6 @@ async fn generate_content_directory_control_response(
             return (StatusCode::BAD_REQUEST, "").into_response();
         }
     };
-    trace!(?action);
     match action.as_ref() {
         SOAP_ACTION_CONTENT_DIRECTORY_BROWSE => {
             let body = match std::str::from_utf8(body) {
@@ -95,7 +94,6 @@ async fn subscription(
     }
 
     let (parts, _body) = request.into_parts();
-    dbg!(&parts.headers);
     trace!(?parts.headers, "subscription request");
     let is_event = parts
         .headers
