@@ -69,6 +69,9 @@ async fn api_from_config(
     init_logging: &InitLoggingResult,
     config: &RqbitDesktopConfig,
 ) -> anyhow::Result<Api> {
+    config
+        .validate()
+        .context("error validating configuration")?;
     let persistence = if config.persistence.disable {
         None
     } else {
@@ -100,7 +103,7 @@ async fn api_from_config(
             } else {
                 None
             },
-            enable_upnp_port_forwarding: !config.upnp.disable,
+            enable_upnp_port_forwarding: !config.upnp.disable_tcp_port_forward,
             fastresume: config.persistence.fastresume,
             ..Default::default()
         },
@@ -118,6 +121,35 @@ async fn api_from_config(
         let listen_addr = config.http_api.listen_addr;
         let api = api.clone();
         let read_only = config.http_api.read_only;
+        let upnp_router = if config.upnp.enable_server {
+            let hostname = config
+                .upnp
+                .server_hostname
+                .as_ref()
+                .map(|h| h.trim())
+                .context("empty UPNP hostname")?
+                .to_owned();
+            let friendly_name = config
+                .upnp
+                .server_friendly_name
+                .as_ref()
+                .map(|f| f.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_owned())
+                .unwrap_or_else(|| format!("rqbit@{hostname}"));
+
+            let mut upnp_adapter = session
+                .make_upnp_adapter(friendly_name, hostname, config.http_api.listen_addr.port())
+                .await
+                .context("error starting UPnP server")?;
+            let router = upnp_adapter.take_router()?;
+            session.spawn(error_span!("ssdp"), async move {
+                upnp_adapter.run_ssdp_forever().await
+            });
+            Some(router)
+        } else {
+            None
+        };
         let http_api_task = async move {
             let listener = tokio::net::TcpListener::bind(listen_addr)
                 .await
@@ -126,7 +158,7 @@ async fn api_from_config(
                 api.clone(),
                 Some(librqbit::http_api::HttpApiOptions { read_only }),
             )
-            .make_http_api_and_run(listener, None)
+            .make_http_api_and_run(listener, upnp_router)
             .await
         };
 

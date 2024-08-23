@@ -20,6 +20,7 @@ librqbit = { path = "../../crates/librqbit", features = [
     "tracing-subscriber-utils",
     "http-api",
     "webui",
+    "upnp-serve-adapter",
 ] }
 tokio = { version = "1.34.0", features = ["rt-multi-thread"] }
 anyhow = "1.0.75"

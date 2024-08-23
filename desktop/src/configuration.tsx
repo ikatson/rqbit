@@ -34,6 +34,10 @@ interface RqbitDesktopConfigHttpApi {
 
 interface RqbitDesktopConfigUpnp {
   disable: boolean;
+
+  enable_server: boolean;
+  server_hostname: string;
+  server_friendly_name: string;
 }
 
 export interface RqbitDesktopConfig {
