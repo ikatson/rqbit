@@ -17,7 +17,7 @@ use tracing::{debug, trace, warn};
 
 use crate::{
     constants::{CONTENT_TYPE_XML_UTF8, SOAP_ACTION_CONTENT_DIRECTORY_BROWSE},
-    state::{UnpnServerState, UnpnServerStateInner},
+    state::{UnpnServerState, UpnpServerStateInner},
     templates::{
         render_content_directory_browse, render_root_description_xml, RootDescriptionInputs,
     },
@@ -156,7 +156,7 @@ pub fn make_router(
         http_prefix: &http_prefix,
     });
 
-    let state = UnpnServerStateInner::new(root_desc.into(), browse_provider)
+    let state = UpnpServerStateInner::new(root_desc.into(), browse_provider)
         .context("error creating UPNP server")?;
 
     let sub_handler = {

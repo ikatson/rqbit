@@ -17,7 +17,7 @@
                 <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
                 <SCPDURL>{http_prefix}/scpd/ContentDirectory.xml</SCPDURL>
                 <controlURL>{http_prefix}/control/ContentDirectory</controlURL>
-                <eventSubURL></eventSubURL>
+                <eventSubURL>{http_prefix/subscribe</eventSubURL>
             </service>
             <service>
                 <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
