@@ -53,7 +53,13 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
             tmpl.replace("{id}", &format!("{}", item.id))
                 .replace("{parent_id}", &format!("{}", item.parent_id.unwrap_or(0)))
                 .replace("{title}", &item.title)
-                .replace("{child_count}", &format!("{}", item.children_count))
+                .replace(
+                    "{childCountTag}",
+                    &match item.children_count {
+                        Some(cc) => format!("childCount=\"{}\"", cc),
+                        None => String::new(),
+                    },
+                )
         }
 
         match item_or_container {

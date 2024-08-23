@@ -37,7 +37,7 @@ pub mod content_directory {
         pub struct Container {
             pub id: usize,
             pub parent_id: Option<usize>,
-            pub children_count: usize,
+            pub children_count: Option<usize>,
             pub title: String,
         }
 
