@@ -34,8 +34,8 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
             let mime = mime.to_string();
 
             Some(
-                tmpl.replace("{id}", &format!("{}", item.id))
-                    .replace("{parent_id}", &format!("{}", item.parent_id.unwrap_or(0)))
+                tmpl.replace("{id}", &item.id.to_string())
+                    .replace("{parent_id}", &item.parent_id.unwrap_or(0).to_string())
                     .replace("{mime_type}", &mime)
                     .replace("{url}", &item.url)
                     .replace("{upnp_class}", upnp_class)
@@ -49,7 +49,7 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
             )
             .trim();
             tmpl.replace("{id}", &format!("{}", item.id))
-                .replace("{parent_id}", &format!("{}", item.parent_id.unwrap_or(0)))
+                .replace("{parent_id}", &item.parent_id.unwrap_or(0).to_string())
                 .replace("{title}", &item.title)
                 .replace(
                     "{childCountTag}",
@@ -111,4 +111,9 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
         total_matches: total,
         update_id,
     })
+}
+
+pub fn render_notify_subscription_system_update_id(update_id: u64) -> String {
+    include_str!("resources/templates/notify_subscription.tmpl.xml")
+        .replace("{system_update_id}", &update_id.to_string())
 }

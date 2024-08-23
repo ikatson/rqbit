@@ -16,9 +16,12 @@ uuid = { version = "1.10.0", features = ["v4"] }
 librqbit-upnp = { path = "../upnp" }
 gethostname = "0.5.0"
 librqbit-sha1-wrapper = { path = "../sha1w" }
+librqbit-core = { path = "../librqbit_core" }
 mime_guess = "2.0.5"
 url = "2.5.2"
 parking_lot = "0.12.3"
+tokio-util = "0.7.11"
+reqwest = "0.12.7"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"

@@ -1,11 +1,15 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{atomic::AtomicU64, Arc},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
+use anyhow::Context;
 use axum::{
     body::Bytes,
     extract::State,
     handler::HandlerWithoutStateExt,
     response::IntoResponse,
-    routing::{get, post, MethodFilter, MethodRouter},
+    routing::{get, post},
 };
 use bstr::BStr;
 use http::{
@@ -121,10 +125,8 @@ pub fn make_router(
         http_prefix: &http_prefix,
     });
 
-    let state = Arc::new(UnpnServerStateInner {
-        rendered_root_description: root_desc.into(),
-        provider: browse_provider,
-    });
+    let state = UnpnServerStateInner::new(root_desc.into(), browse_provider)
+        .context("error creating UPNP server")?;
 
     let app = axum::Router::new()
         .route("/description.xml", get(description_xml))
