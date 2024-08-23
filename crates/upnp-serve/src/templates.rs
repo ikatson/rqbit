@@ -117,3 +117,8 @@ pub fn render_notify_subscription_system_update_id(update_id: u64) -> String {
     include_str!("resources/templates/notify_subscription.tmpl.xml")
         .replace("{system_update_id}", &update_id.to_string())
 }
+
+pub fn render_content_directory_control_get_system_update_id(update_id: u64) -> String {
+    include_str!("resources/templates/content_directory_control_get_system_update_id.tmpl.xml")
+        .replace("{id}", &update_id.to_string())
+}

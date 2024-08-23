@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::atomic::Ordering, time::Duration};
 
 use anyhow::Context;
 use axum::{
@@ -9,18 +9,19 @@ use axum::{
     routing::{get, post},
 };
 use bstr::BStr;
-use http::{
-    header::{CACHE_CONTROL, CONTENT_TYPE},
-    HeaderMap, HeaderName, StatusCode,
-};
+use http::{header::CONTENT_TYPE, HeaderMap, HeaderName, StatusCode};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use crate::{
-    constants::{CONTENT_TYPE_XML_UTF8, SOAP_ACTION_CONTENT_DIRECTORY_BROWSE},
+    constants::{
+        CONTENT_TYPE_XML_UTF8, SOAP_ACTION_CONTENT_DIRECTORY_BROWSE,
+        SOAP_ACTION_GET_SYSTEM_UPDATE_ID,
+    },
     state::{UnpnServerState, UpnpServerStateInner},
     templates::{
-        render_content_directory_browse, render_root_description_xml, RootDescriptionInputs,
+        render_content_directory_browse, render_content_directory_control_get_system_update_id,
+        render_root_description_xml, RootDescriptionInputs,
     },
     upnp_types::content_directory::{
         request::ContentDirectoryControlRequest, ContentDirectoryBrowseProvider,
@@ -38,32 +39,50 @@ async fn generate_content_directory_control_response(
 ) -> impl IntoResponse {
     let body = BStr::new(&body);
     trace!(?body, "received control request");
-    let action = headers.get("soapaction").map(|v| v.as_bytes());
-    if action != Some(SOAP_ACTION_CONTENT_DIRECTORY_BROWSE) {
-        return (StatusCode::NOT_IMPLEMENTED, "").into_response();
-    }
-
-    let body = match std::str::from_utf8(body) {
-        Ok(body) => body,
-        Err(_) => return (StatusCode::BAD_REQUEST, "cannot parse request").into_response(),
-    };
-
-    let request = match ContentDirectoryControlRequest::parse(body) {
-        Ok(req) => req,
-        Err(e) => {
-            debug!(error=?e, "error parsing XML");
-            return (StatusCode::BAD_REQUEST, "cannot parse request").into_response();
+    let action = headers.get("soapaction").map(|v| BStr::new(v.as_bytes()));
+    let action = match action {
+        Some(action) => action,
+        None => {
+            debug!("missing SOAPACTION header");
+            return (StatusCode::BAD_REQUEST, "").into_response();
         }
     };
+    match action.as_ref() {
+        SOAP_ACTION_CONTENT_DIRECTORY_BROWSE => {
+            let body = match std::str::from_utf8(body) {
+                Ok(body) => body,
+                Err(_) => return (StatusCode::BAD_REQUEST, "cannot parse request").into_response(),
+            };
 
-    (
-        [
-            (CONTENT_TYPE, CONTENT_TYPE_XML_UTF8),
-            (CACHE_CONTROL, "max-age=1"),
-        ],
-        render_content_directory_browse(state.provider.browse_direct_children(request.object_id)),
-    )
-        .into_response()
+            let request = match ContentDirectoryControlRequest::parse(body) {
+                Ok(req) => req,
+                Err(e) => {
+                    debug!(error=?e, "error parsing XML");
+                    return (StatusCode::BAD_REQUEST, "cannot parse request").into_response();
+                }
+            };
+
+            (
+                [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+                render_content_directory_browse(
+                    state.provider.browse_direct_children(request.object_id),
+                ),
+            )
+                .into_response()
+        }
+        SOAP_ACTION_GET_SYSTEM_UPDATE_ID => {
+            let update_id = state.system_update_id.load(Ordering::Relaxed);
+            (
+                [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+                render_content_directory_control_get_system_update_id(update_id),
+            )
+                .into_response()
+        }
+        _ => {
+            debug!(?action, "unsupported ContentDirectory action");
+            (StatusCode::NOT_IMPLEMENTED, "").into_response()
+        }
+    }
 }
 
 async fn subscription(
