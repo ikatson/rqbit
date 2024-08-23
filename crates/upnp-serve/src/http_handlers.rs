@@ -75,6 +75,8 @@ async fn subscription(
     }
 
     let (parts, _body) = request.into_parts();
+    dbg!(&parts.headers);
+    trace!(?parts.headers, "subscription request");
     let is_event = parts
         .headers
         .get(HeaderName::from_static("nt"))
@@ -88,6 +90,7 @@ async fn subscription(
         .headers
         .get(HeaderName::from_static("callback"))
         .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim_matches(|c| c == '>' || c == '<'))
         .and_then(|u| url::Url::parse(u).ok());
     let callback = match callback {
         Some(c) => c,

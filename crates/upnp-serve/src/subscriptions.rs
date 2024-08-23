@@ -190,7 +190,7 @@ impl UpnpServerStateInner {
         };
 
         spawn_with_cancel(
-            error_span!(parent: pspan, "subscription-manager", ?url),
+            error_span!(parent: pspan, "subscription-manager", %url),
             token,
             subscription_manager,
         );

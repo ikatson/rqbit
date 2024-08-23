@@ -1,6 +1,6 @@
 use anyhow::Context;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, Path, Query, Request, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use bencode::AsDisplay;
@@ -17,7 +17,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpListener;
-use tracing::{debug, trace};
+use tracing::{debug, error_span, trace};
 
 use axum::Router;
 
@@ -563,16 +563,28 @@ impl HttpApi {
                 .allow_headers(AllowHeaders::any())
         };
 
-        let mut app = app
-            .layer(cors_layer)
-            .layer(tower_http::trace::TraceLayer::new_for_http())
-            .with_state(state);
+        let mut app = app.with_state(state);
 
         if let Some(upnp_router) = upnp_router {
             app = app.nest("/upnp", upnp_router);
         }
 
-        let app = app.into_make_service();
+        let app = app
+            .layer(cors_layer)
+            .layer(
+                tower_http::trace::TraceLayer::new_for_http().make_span_with(|req: &Request| {
+                    let method = req.method();
+                    let uri = req.uri();
+                    if let Some(ConnectInfo(addr)) =
+                        req.extensions().get::<ConnectInfo<SocketAddr>>()
+                    {
+                        error_span!("request", %method, %uri, %addr)
+                    } else {
+                        error_span!("request", %method, %uri)
+                    }
+                }),
+            )
+            .into_make_service_with_connect_info::<SocketAddr>();
 
         async move {
             axum::serve(listener, app)

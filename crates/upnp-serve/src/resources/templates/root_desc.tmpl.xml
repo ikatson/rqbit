@@ -17,14 +17,13 @@
                 <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>
                 <SCPDURL>{http_prefix}/scpd/ContentDirectory.xml</SCPDURL>
                 <controlURL>{http_prefix}/control/ContentDirectory</controlURL>
-                <eventSubURL>{http_prefix/subscribe</eventSubURL>
+                <eventSubURL>{http_prefix}/subscribe</eventSubURL>
             </service>
             <service>
                 <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
                 <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
                 <SCPDURL>{http_prefix}/scpd/ConnectionManager.xml</SCPDURL>
                 <controlURL>{http_prefix}/control/ConnectionManager</controlURL>
-                <eventSubURL></eventSubURL>
             </service>
         </serviceList>
         <presentationURL>/</presentationURL>
