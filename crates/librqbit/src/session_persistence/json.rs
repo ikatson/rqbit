@@ -8,7 +8,6 @@ use crate::{
     storage::filesystem::FilesystemStorageFactory,
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
-    ManagedTorrentState,
 };
 use anyhow::{bail, Context};
 use async_trait::async_trait;
@@ -146,7 +145,7 @@ impl JsonSessionPersistenceStore {
             // we don't serialize this here, but to a file instead.
             torrent_bytes: Default::default(),
             only_files: torrent.only_files().clone(),
-            is_paused: torrent.with_state(|s| matches!(s, ManagedTorrentState::Paused(_))),
+            is_paused: torrent.is_paused(),
             output_folder: torrent.shared().options.output_folder.clone(),
         };
 

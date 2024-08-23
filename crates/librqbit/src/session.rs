@@ -1152,6 +1152,7 @@ impl Session {
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
+                    paused: opts.paused,
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
                 }),
@@ -1327,6 +1328,7 @@ impl Session {
     }
 
     pub async fn pause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        handle.locked.write().paused = true;
         handle.pause()?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())

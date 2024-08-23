@@ -85,6 +85,11 @@ impl ManagedTorrentState {
 }
 
 pub(crate) struct ManagedTorrentLocked {
+    // The torrent might not be in "paused" state technically,
+    // but the intention might be for it to stay paused.
+    //
+    // This should change only on "unpause".
+    pub(crate) paused: bool,
     pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
 }
@@ -218,6 +223,7 @@ impl ManagedTorrent {
             .upgrade()
             .context("session is dead, cannot start torrent")?;
         let mut g = self.locked.write();
+        g.paused = start_paused;
         let cancellation_token = session.cancellation_token().child_token();
 
         let spawn_fatal_errors_receiver =
@@ -380,7 +386,7 @@ impl ManagedTorrent {
     }
 
     pub fn is_paused(&self) -> bool {
-        self.with_state(|s| matches!(s, ManagedTorrentState::Paused(..)))
+        self.locked.read().paused
     }
 
     /// Pause the torrent if it's live.
