@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use crate::upnp_types::content_directory::response::{Container, Item, ItemOrContainer};
 
 pub struct RootDescriptionInputs<'a> {
@@ -101,9 +99,11 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
 
     let result = render_content_directory_browse_result(&all_items);
 
-    // TODO: use smth better
-    static UPDATE_ID: AtomicU64 = AtomicU64::new(1);
-    let update_id = UPDATE_ID.fetch_add(1, Ordering::Relaxed);
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let update_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
     render_content_directory_envelope(&Envelope {
         result: &result,
