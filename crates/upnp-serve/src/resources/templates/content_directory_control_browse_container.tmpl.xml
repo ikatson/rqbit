@@ -1,0 +1,4 @@
+<container id="{id}" parentID="{parent_id}" restricted="true" {childCountTag}>
+  <dc:title>{title}</dc:title>
+  <upnp:class>object.container.storageFolder</upnp:class>
+</container>

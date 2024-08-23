@@ -7,7 +7,7 @@ use anyhow::Context;
 
 use librqbit_core::lengths::Lengths;
 use size_format::SizeFormatterBinary as SF;
-use tracing::{debug, info, warn};
+use tracing::{info, trace, warn};
 
 use crate::{
     api::TorrentIdOrHash,
@@ -159,7 +159,7 @@ impl TorrentStateInitializing {
                             fi.relative_filename, fi.len, err
                         );
                     } else {
-                        debug!(
+                        trace!(
                             "Set length for file {:?} to {} in {:?}",
                             fi.relative_filename,
                             SF::new(fi.len),

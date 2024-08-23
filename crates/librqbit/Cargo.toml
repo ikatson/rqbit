@@ -14,6 +14,7 @@ readme = "README.md"
 [features]
 default = ["default-tls"]
 http-api = ["axum", "tower-http"]
+upnp-serve-adapter = ["upnp-serve"]
 webui = []
 timed_existence = []
 default-tls = ["reqwest/default-tls"]
@@ -38,6 +39,7 @@ peer_binary_protocol = { path = "../peer_binary_protocol", package = "librqbit-p
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "3.0.0" }
 dht = { path = "../dht", package = "librqbit-dht", version = "5.1.0" }
 librqbit-upnp = { path = "../upnp", version = "0.1.1" }
+upnp-serve = { path = "../upnp-serve", version = "0.1.0", optional = true }
 
 tokio = { version = "1", features = [
     "macros",
@@ -80,7 +82,7 @@ backoff = "0.4.0"
 dashmap = "5.5.3"
 base64 = "0.21.5"
 serde_with = "3.4.0"
-tokio-util = "0.7.10"
+tokio-util = { version = "0.7.10", features = ["io"] }
 bytes = "1.5.0"
 rlimit = "0.10.1"
 async-stream = "0.3.5"
