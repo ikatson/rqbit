@@ -33,7 +33,7 @@ pub mod content_directory {
     }
 
     pub mod response {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Container {
             pub id: usize,
             pub parent_id: Option<usize>,
@@ -41,7 +41,7 @@ pub mod content_directory {
             pub title: String,
         }
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Item {
             pub id: usize,
             pub parent_id: Option<usize>,
@@ -50,7 +50,7 @@ pub mod content_directory {
             pub url: String,
         }
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         pub enum ItemOrContainer {
             Container(Container),
             Item(Item),
