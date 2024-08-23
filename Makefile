@@ -20,7 +20,7 @@ devserver:
 	echo -n '' > /tmp/rqbit-log && CORS_ALLOW_REGEXP=".*" \
 	   cargo run -- \
 		--log-file /tmp/rqbit-log \
-		--log-file-rust-log=debug,librqbit=trace \
+		--log-file-rust-log=debug,librqbit=trace,upnp_serve=trace \
 		--http-api-listen-addr 0.0.0.0:3030 \
 		--upnp-server-hostname 192.168.0.112 \
 		--upnp-server-friendly-name rqbit-dev \
