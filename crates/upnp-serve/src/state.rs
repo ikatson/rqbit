@@ -65,7 +65,7 @@ impl UnpnServerStateInner {
                         let new_value = new_system_update_id()?;
                         let state = state.upgrade().context("upnp server is dead")?;
                         state.system_update_id.store(new_value, Ordering::Relaxed);
-                        state.system_update_bcast_tx.send(new_value);
+                        let _ = state.system_update_bcast_tx.send(new_value);
                     }
                 }
             },

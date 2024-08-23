@@ -1,7 +1,6 @@
 use anyhow::Context;
 use http::Method;
 use parking_lot::RwLock;
-use reqwest::RequestBuilder;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::Notify;
 

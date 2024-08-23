@@ -1,7 +1,4 @@
-use std::{
-    sync::{atomic::AtomicU64, Arc},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::Duration;
 
 use anyhow::Context;
 use axum::{
@@ -16,7 +13,7 @@ use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE},
     HeaderMap, HeaderName, StatusCode,
 };
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{
     constants::{CONTENT_TYPE_XML_UTF8, SOAP_ACTION_CONTENT_DIRECTORY_BROWSE},
@@ -68,13 +65,17 @@ async fn generate_content_directory_control_response(
         .into_response()
 }
 
-async fn subscription(request: axum::extract::Request) -> impl IntoResponse {
+async fn subscription(
+    State(state): State<UnpnServerState>,
+    request: axum::extract::Request,
+) -> impl IntoResponse {
     if request.method().as_str() != "SUBSCRIBE" {
         return (StatusCode::METHOD_NOT_ALLOWED, "").into_response();
     }
 
-    let is_event = request
-        .headers()
+    let (parts, _body) = request.into_parts();
+    let is_event = parts
+        .headers
         .get(HeaderName::from_static("nt"))
         .map(|v| v.as_bytes() == b"upnp:event")
         .unwrap_or_default();
@@ -82,8 +83,8 @@ async fn subscription(request: axum::extract::Request) -> impl IntoResponse {
         return (StatusCode::BAD_REQUEST, "expected NT: upnp:event header").into_response();
     }
 
-    let callback = request
-        .headers()
+    let callback = parts
+        .headers
         .get(HeaderName::from_static("callback"))
         .and_then(|v| v.to_str().ok())
         .and_then(|u| url::Url::parse(u).ok());
@@ -91,24 +92,54 @@ async fn subscription(request: axum::extract::Request) -> impl IntoResponse {
         Some(c) => c,
         None => return (StatusCode::BAD_REQUEST, "callback not provided").into_response(),
     };
-    let subscription_id = request
-        .headers()
+    let subscription_id = parts
+        .headers
         .get(HeaderName::from_static("sid"))
         .and_then(|v| v.to_str().ok());
-    let timeout = request
-        .headers()
+
+    let timeout = parts
+        .headers
         .get(HeaderName::from_static("timeout"))
         .and_then(|v| v.to_str().ok())
         .and_then(|t| t.strip_prefix("Second-"))
         .and_then(|t| t.parse::<u16>().ok())
         .map(|t| Duration::from_secs(t as u64));
 
-    let callback = match request.headers().get(HeaderName::from_static("callback")) {
-        Some(v) => v.as_bytes(),
-        None => todo!(),
-    };
+    const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1800);
 
-    todo!()
+    let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT);
+
+    if let Some(sid) = subscription_id {
+        match state.renew_subscription(sid, timeout) {
+            Ok(()) => (
+                StatusCode::OK,
+                [
+                    ("SID", sid.to_owned()),
+                    ("TIMEOUT", format!("Seconds-{}", timeout.as_secs())),
+                ],
+            )
+                .into_response(),
+            Err(e) => {
+                warn!(sid, error=?e, "error renewing subscription");
+                StatusCode::NOT_FOUND.into_response()
+            }
+        }
+    } else {
+        match state.new_subscription(callback, timeout) {
+            Ok(sid) => (
+                StatusCode::OK,
+                [
+                    ("SID", sid),
+                    ("TIMEOUT", format!("Seconds-{}", timeout.as_secs())),
+                ],
+            )
+                .into_response(),
+            Err(e) => {
+                warn!(error=?e, "error creating subscription");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+        }
+    }
 }
 
 pub fn make_router(
@@ -128,6 +159,13 @@ pub fn make_router(
     let state = UnpnServerStateInner::new(root_desc.into(), browse_provider)
         .context("error creating UPNP server")?;
 
+    let sub_handler = {
+        let state = state.clone();
+        move |request: axum::extract::Request| async move {
+            subscription(State(state.clone()), request).await
+        }
+    };
+
     let app = axum::Router::new()
         .route("/description.xml", get(description_xml))
         .route(
@@ -146,7 +184,7 @@ pub fn make_router(
             "/control/ConnectionManager",
             post(|| async { (StatusCode::NOT_IMPLEMENTED, "") }),
         )
-        .route_service("/subscribe", subscription.into_service())
+        .route_service("/subscribe", sub_handler.into_service())
         .with_state(state);
 
     Ok(app)
