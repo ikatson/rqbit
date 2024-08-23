@@ -1,15 +1,16 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     body::Bytes,
     extract::State,
+    handler::HandlerWithoutStateExt,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, post, MethodFilter, MethodRouter},
 };
 use bstr::BStr;
 use http::{
     header::{CACHE_CONTROL, CONTENT_TYPE},
-    HeaderMap, StatusCode,
+    HeaderMap, HeaderName, StatusCode,
 };
 use tracing::{debug, trace};
 
@@ -63,6 +64,49 @@ async fn generate_content_directory_control_response(
         .into_response()
 }
 
+async fn subscription(request: axum::extract::Request) -> impl IntoResponse {
+    if request.method().as_str() != "SUBSCRIBE" {
+        return (StatusCode::METHOD_NOT_ALLOWED, "").into_response();
+    }
+
+    let is_event = request
+        .headers()
+        .get(HeaderName::from_static("nt"))
+        .map(|v| v.as_bytes() == b"upnp:event")
+        .unwrap_or_default();
+    if !is_event {
+        return (StatusCode::BAD_REQUEST, "expected NT: upnp:event header").into_response();
+    }
+
+    let callback = request
+        .headers()
+        .get(HeaderName::from_static("callback"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|u| url::Url::parse(u).ok());
+    let callback = match callback {
+        Some(c) => c,
+        None => return (StatusCode::BAD_REQUEST, "callback not provided").into_response(),
+    };
+    let subscription_id = request
+        .headers()
+        .get(HeaderName::from_static("sid"))
+        .and_then(|v| v.to_str().ok());
+    let timeout = request
+        .headers()
+        .get(HeaderName::from_static("timeout"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|t| t.strip_prefix("Second-"))
+        .and_then(|t| t.parse::<u16>().ok())
+        .map(|t| Duration::from_secs(t as u64));
+
+    let callback = match request.headers().get(HeaderName::from_static("callback")) {
+        Some(v) => v.as_bytes(),
+        None => todo!(),
+    };
+
+    todo!()
+}
+
 pub fn make_router(
     friendly_name: String,
     http_prefix: String,
@@ -100,6 +144,7 @@ pub fn make_router(
             "/control/ConnectionManager",
             post(|| async { (StatusCode::NOT_IMPLEMENTED, "") }),
         )
+        .route_service("/subscribe", subscription.into_service())
         .with_state(state);
 
     Ok(app)

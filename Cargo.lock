@@ -3602,11 +3602,13 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
+ "parking_lot",
  "quick-xml",
  "tokio",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

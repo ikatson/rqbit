@@ -13,6 +13,7 @@ mod constants;
 mod http_handlers;
 mod ssdp;
 pub mod state;
+mod subscriptions;
 mod templates;
 pub mod upnp_types;
 
