@@ -62,15 +62,21 @@ impl TorrentFileTreeNode {
         match self.real_torrent_file_id {
             Some(fid) => {
                 let filename = &torrent.shared().file_infos[fid].relative_filename;
-                let last_url_bit = filename.to_str().unwrap_or(&self.title);
-                return ItemOrContainer::Item(Item {
+                // Torrent path joined with "/"
+                let last_url_bit = torrent
+                    .shared()
+                    .info
+                    .iter_filenames_and_lengths()
+                    .ok()
+                    .and_then(|mut it| it.nth(fid))
+                    .and_then(|(fi, _)| fi.to_vec().ok())
+                    .map(|components| components.join("/"))
+                    .unwrap_or_else(|| self.title.clone());
+                ItemOrContainer::Item(Item {
                     id: encoded_id,
                     parent_id: encoded_parent_id,
                     title: self.title.clone(),
-                    mime_type: mime_guess::from_path(
-                        &torrent.shared().file_infos[fid].relative_filename,
-                    )
-                    .first(),
+                    mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
                         "http://{}:{}/torrents/{}/stream/{}/{}",
                         adapter.hostname,
@@ -79,7 +85,7 @@ impl TorrentFileTreeNode {
                         fid,
                         last_url_bit
                     ),
-                });
+                })
             }
             None => ItemOrContainer::Container(Container {
                 id: encoded_id,

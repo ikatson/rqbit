@@ -208,19 +208,19 @@ fn merge_two_optional_streams<T>(
 ) -> Option<BoxStream<'static, T>> {
     match (s1, s2) {
         (Some(s1), None) => {
-            debug!("merge_two_optional_streams: using first");
+            trace!("merge_two_optional_streams: using first");
             Some(Box::pin(s1))
         }
         (None, Some(s2)) => {
-            debug!("merge_two_optional_streams: using second");
+            trace!("merge_two_optional_streams: using second");
             Some(Box::pin(s2))
         }
         (Some(s1), Some(s2)) => {
-            debug!("merge_two_optional_streams: using both");
+            trace!("merge_two_optional_streams: using both");
             Some(Box::pin(merge_streams(s1, s2)))
         }
         (None, None) => {
-            debug!("merge_two_optional_streams: using none");
+            trace!("merge_two_optional_streams: using none");
             None
         }
     }
@@ -909,7 +909,7 @@ impl Session {
                             rx,
                             seen,
                         } => {
-                            debug!(?info, "received result from DHT");
+                            trace!(?info, "received result from DHT");
                             let trackers = magnet.trackers.into_iter().unique().collect_vec();
                             InternalAddResult {
                                 info_hash,
@@ -924,7 +924,7 @@ impl Session {
                                 initial_peers: {
                                     let seen = seen.into_iter().collect_vec();
                                     for peer in &seen {
-                                        debug!(?peer, "seen")
+                                        trace!(?peer, "seen")
                                     }
                                     seen
                                 },
@@ -1045,7 +1045,7 @@ impl Session {
             info_bytes,
         } = add_res;
 
-        debug!("Torrent info: {:#?}", &info);
+        trace!("Torrent info: {:#?}", &info);
 
         let only_files = compute_only_files(
             &info,
