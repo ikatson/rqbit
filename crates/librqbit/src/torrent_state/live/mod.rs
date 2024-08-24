@@ -67,7 +67,7 @@ use librqbit_core::{
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
-    extended::{handshake::ExtendedHandshake, ut_metadata::UtMetadata, ExtendedMessage},
+    extended::{handshake::{ExtendedHandshake, YourIP}, ut_metadata::UtMetadata, ExtendedMessage},
     Handshake, Message, MessageOwned, Piece, Request,
 };
 use peers::stats::atomic::AggregatePeerStatsAtomic;
@@ -875,6 +875,9 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
                 self.send_metadata_piece(metadata_piece_id)
                     .with_context(|| format!("error sending metadata piece {metadata_piece_id}"))?;
             }
+            Message::Extended(ExtendedMessage::UtPex(pex)) => {
+                trace!("received ut_pex: {:?} added peers v4: {:?}", pex, pex.added_peers().unwrap().collect::<Vec<_>>());
+            }
             message => {
                 warn!("received unsupported message {:?}, ignoring", message);
             }
@@ -885,7 +888,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_bytes()));
-        let len = msg.serialize(buf, &|| None)?;
+        let len = msg.serialize(buf, &|| Default::default())?;
         trace!("sending: {:?}, length={}", &msg, len);
         Ok(len)
     }
@@ -912,7 +915,10 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         self.state.file_ops().read_chunk(self.addr, chunk, buf)
     }
 
-    fn on_extended_handshake(&self, _: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
+    fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
+        if let Some(peer_pex_msg_id) = hs.ut_pex() {
+            trace!("peer supports pex at {peer_pex_msg_id}");
+        }
         Ok(())
     }
 
@@ -935,6 +941,8 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         &self,
         handshake: &mut ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
+        let your_ip = self.addr.ip();
+        handshake.yourip = Some(YourIP(your_ip));
         let info_bytes = &self.state.torrent().info_bytes;
         if !info_bytes.is_empty() {
             if let Ok(len) = info_bytes.len().try_into() {
