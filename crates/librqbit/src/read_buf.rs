@@ -57,7 +57,7 @@ impl ReadBuf {
             anyhow::bail!("peer disconnected while reading handshake");
         }
         let (h, size) = Handshake::deserialize(&self.buf[..self.filled])
-            .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?} hadshake data {:?}", e, &self.buf[..self.filled.min(19)]))?;
         self.processed = size;
         Ok(h)
     }
