@@ -5,6 +5,16 @@
 		<minor>0</minor>
 	</specVersion>
 	<actionList>
+	   <action>
+			<name>GetSystemUpdateID</name>
+			<argumentList>
+				<argument>
+					<name>Id</name>
+					<direction>out</direction>
+					<relatedStateVariable>SystemUpdateID</relatedStateVariable>
+				</argument>
+			</argumentList>
+		</action>
 		<action>
 			<name>Browse</name>
 			<argumentList>

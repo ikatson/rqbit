@@ -29,7 +29,10 @@ use crate::{
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
-    state.rendered_root_description.clone()
+    (
+        [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+        state.rendered_root_description.clone(),
+    )
 }
 
 async fn generate_content_directory_control_response(
@@ -94,7 +97,6 @@ async fn subscription(
     }
 
     let (parts, _body) = request.into_parts();
-    trace!(?parts.headers, "subscription request");
     let is_event = parts
         .headers
         .get(HeaderName::from_static("nt"))

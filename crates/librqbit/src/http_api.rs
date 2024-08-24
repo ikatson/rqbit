@@ -17,7 +17,8 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpListener;
-use tracing::{debug, error_span, trace};
+use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
+use tracing::{debug, error_span, trace, Span};
 
 use axum::Router;
 
@@ -572,17 +573,33 @@ impl HttpApi {
         let app = app
             .layer(cors_layer)
             .layer(
-                tower_http::trace::TraceLayer::new_for_http().make_span_with(|req: &Request| {
-                    let method = req.method();
-                    let uri = req.uri();
-                    if let Some(ConnectInfo(addr)) =
-                        req.extensions().get::<ConnectInfo<SocketAddr>>()
-                    {
-                        error_span!("request", %method, %uri, %addr)
-                    } else {
-                        error_span!("request", %method, %uri)
-                    }
-                }),
+                tower_http::trace::TraceLayer::new_for_http()
+                    .make_span_with(|req: &Request| {
+                        let method = req.method();
+                        let uri = req.uri();
+                        if let Some(ConnectInfo(addr)) =
+                            req.extensions().get::<ConnectInfo<SocketAddr>>()
+                        {
+                            error_span!("request", %method, %uri, %addr)
+                        } else {
+                            error_span!("request", %method, %uri)
+                        }
+                    })
+                    .on_request(|req: &Request, _: &Span| {
+                        if req.uri().path().starts_with("/upnp") {
+                            debug!(headers=?req.headers())
+                        }
+                    })
+                    .on_response(DefaultOnResponse::new().include_headers(true))
+                    .on_failure({
+                        let mut default = DefaultOnFailure::new();
+                        move |failure_class, latency, span: &Span| match failure_class {
+                            tower_http::classify::ServerErrorsFailureClass::StatusCode(
+                                StatusCode::NOT_IMPLEMENTED,
+                            ) => {}
+                            _ => default.on_failure(failure_class, latency, span),
+                        }
+                    }),
             )
             .into_make_service_with_connect_info::<SocketAddr>();
 
