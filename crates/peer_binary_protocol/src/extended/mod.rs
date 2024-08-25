@@ -1,9 +1,10 @@
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use bencode::BencodeValue;
+use buffers::ByteBufT;
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use ut_pex::UtPex;
 
 use crate::MY_EXTENDED_UT_PEX;
@@ -25,7 +26,7 @@ pub struct PeerExtendedMessageIds {
 }
 
 #[derive(Debug)]
-pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq + AsRef<[u8]>> {
+pub enum ExtendedMessage<ByteBuf: ByteBufT> {
     Handshake(ExtendedHandshake<ByteBuf>),
     UtMetadata(UtMetadata<ByteBuf>),
     UtPex(UtPex<ByteBuf>),
@@ -34,8 +35,8 @@ pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq + AsRef<[u8]>> {
 
 impl<ByteBuf> CloneToOwned for ExtendedMessage<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq + AsRef<[u8]>,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq + AsRef<[u8]>,
+    ByteBuf: ByteBufT,
+    <ByteBuf as CloneToOwned>::Target: ByteBufT,
 {
     type Target = ExtendedMessage<<ByteBuf as CloneToOwned>::Target>;
 
@@ -53,7 +54,7 @@ where
     }
 }
 
-impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize + AsRef<[u8]>> ExtendedMessage<ByteBuf> {
+impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
@@ -93,9 +94,9 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize + AsRef<[u8]>> ExtendedM
         Ok(())
     }
 
-    pub fn deserialize(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
+    pub fn deserialize<'a>(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
     where
-        ByteBuf: Deserialize<'a> + From<&'a [u8]> + AsRef<[u8]>,
+        ByteBuf: Deserialize<'a> + From<&'a [u8]>,
     {
         let emsg_id = buf.first().copied().ok_or_else(|| {
             MessageDeserializeError::Other(anyhow::anyhow!(

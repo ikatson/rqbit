@@ -3,8 +3,10 @@
 //
 // Not useful outside of librqbit.
 
+use std::borrow::Borrow;
+
 use bytes::Bytes;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use clone_to_owned::CloneToOwned;
 
@@ -15,7 +17,9 @@ pub struct ByteBufOwned(pub bytes::Bytes);
 #[serde(transparent)]
 pub struct ByteBuf<'a>(pub &'a [u8]);
 
-pub trait ByteBufT {
+pub trait ByteBufT:
+    AsRef<[u8]> + std::hash::Hash + Serialize + Eq + core::fmt::Debug + CloneToOwned + Borrow<[u8]>
+{
     fn as_slice(&self) -> &[u8];
 }
 

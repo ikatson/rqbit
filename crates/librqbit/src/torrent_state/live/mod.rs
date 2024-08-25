@@ -1682,7 +1682,10 @@ impl PeerHandler {
         msg.added_peers().for_each(|peer| {
             self.state
                 .add_peer_if_not_seen(peer.addr)
-                .inspect_err(|error| warn!(?peer, ?error, "failed to add peer"))
+                .map_err(|error| {
+                    warn!(?peer, ?error, "failed to add peer");
+                    error
+                })
                 .ok();
         });
     }

@@ -5,7 +5,7 @@
 pub mod extended;
 
 use bincode::Options;
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use byteorder::{ByteOrder, BE};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
@@ -186,7 +186,7 @@ impl From<anyhow::Error> for MessageDeserializeError {
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf: std::hash::Hash + Eq + AsRef<[u8]>> {
+pub enum Message<ByteBuf: ByteBufT> {
     Request(Request),
     Cancel(Request),
     Bitfield(ByteBuf),
@@ -212,8 +212,8 @@ pub struct Bitfield<'a> {
 
 impl<ByteBuf> CloneToOwned for Message<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq + AsRef<[u8]>,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq + AsRef<[u8]>,
+    ByteBuf: ByteBufT,
+    <ByteBuf as CloneToOwned>::Target: ByteBufT,
 {
     type Target = Message<<ByteBuf as CloneToOwned>::Target>;
 
@@ -257,7 +257,7 @@ impl<'a> std::fmt::Debug for Bitfield<'a> {
 
 impl<ByteBuf> Message<ByteBuf>
 where
-    ByteBuf: AsRef<[u8]> + std::hash::Hash + Eq + Serialize,
+    ByteBuf: ByteBufT,
 {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
