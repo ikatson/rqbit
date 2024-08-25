@@ -1,9 +1,9 @@
 FROM scratch
 
-USER 501
+USER 501:502
 
 ## Assumes you run from one of the folders with the binary already built.
-COPY --chown=501:501 rqbit /bin/rqbit
+COPY --chown=501:502 rqbit /bin/rqbit
 
 WORKDIR /home/rqbit
 

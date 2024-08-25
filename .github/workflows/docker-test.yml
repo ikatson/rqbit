@@ -22,11 +22,8 @@ jobs:
       - name: try to build and push
         run: mkdir -p target/x86_64-unknown-linux-musl/release-github/ && touch target/x86_64-unknown-linux-musl/release-github/rqbit
 
-      - name: hack Dockerfile user id
-        run: cd docker && sed -i.bcp -e "s/501/$(id -u)/g" Dockerfile
-
-      - name: debug
-        run: id -u && id -g && cat docker/Dockerfile
+      - name: hack Dockerfile uid:gid
+        run: cd docker && sed -i.bcp -e "s/501:502/$(id -u):$(id -g)/g" Dockerfile
 
       - name: build Docker image
         run: make buildah-x86_64
