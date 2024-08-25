@@ -896,7 +896,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_bytes()));
-        let len = msg.serialize(buf, &|| Default::default())?;
+        let len = msg.serialize(buf, &Default::default)?;
         trace!("sending: {:?}, length={}", &msg, len);
         Ok(len)
     }
@@ -1679,15 +1679,11 @@ impl PeerHandler {
         B: AsRef<[u8]> + std::fmt::Debug,
     {
         // TODO: this is just first attempt at pex - will need more sophistication on adding peers - BEP 40,  check number of live, seen peers ...
-        if let Ok(peers) = msg.added_peers() {
-            peers.for_each(|peer| {
-                self.state
-                    .add_peer_if_not_seen(peer.addr)
-                    .inspect_err(|e| warn!("failed to add peer: {peer:?} due to: {e}"))
-                    .ok();
-            });
-        } else {
-            warn!("received invalid pex message: {:?}", msg);
-        }
+        msg.added_peers().for_each(|peer| {
+            self.state
+                .add_peer_if_not_seen(peer.addr)
+                .inspect_err(|error| warn!(?peer, ?error, "failed to add peer"))
+                .ok();
+        });
     }
 }

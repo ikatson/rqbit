@@ -640,7 +640,7 @@ mod tests {
     fn test_extended_serialize() {
         let msg = Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
         let mut out = Vec::new();
-        msg.serialize(&mut out, &|| Default::default()).unwrap();
+        msg.serialize(&mut out, &Default::default).unwrap();
         dbg!(out);
     }
 
@@ -656,7 +656,7 @@ mod tests {
         let (msg, size) = MessageBorrowed::deserialize(&buf).unwrap();
         assert_eq!(size, buf.len());
         let mut write_buf = Vec::new();
-        msg.serialize(&mut write_buf, &|| Default::default()).unwrap();
+        msg.serialize(&mut write_buf, &Default::default).unwrap();
         if buf != write_buf {
             {
                 use std::io::Write;
