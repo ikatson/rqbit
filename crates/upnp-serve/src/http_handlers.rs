@@ -195,11 +195,11 @@ pub fn make_router(
         .route("/description.xml", get(description_xml))
         .route(
             "/scpd/ContentDirectory.xml",
-            get(|| async { include_str!("resources/scpd_content_directory.xml") }),
+            get(|| async { include_str!("resources/templates/content_directory/scpd.xml") }),
         )
         .route(
             "/scpd/ConnectionManager.xml",
-            get(|| async { include_str!("resources/scpd_connection_manager.xml") }),
+            get(|| async { include_str!("resources/templates/connection_manager/scpd.xml") }),
         )
         .route(
             "/control/ContentDirectory",

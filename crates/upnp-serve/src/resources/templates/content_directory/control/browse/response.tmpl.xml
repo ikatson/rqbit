@@ -2,7 +2,11 @@
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
     <s:Body>
         <u:BrowseResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
-            <Result><![CDATA[{result}]]></Result>
+            <Result><![CDATA[<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
+            xmlns:dc="http://purl.org/dc/elements/1.1/"
+            xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+  {items}
+</DIDL-Lite>]]></Result>
             <NumberReturned>{number_returned}</NumberReturned>
             <TotalMatches>{total_matches}</TotalMatches>
             <UpdateID>{update_id}</UpdateID>
