@@ -97,11 +97,16 @@ release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6 re
 
 @PHONY: release-linux-x86_64
 release-linux-x86_64:
-	TARGET=x86_64-unknown-linux-gnu \
-	TARGET_SNAKE_CASE=x86_64_unknown_linux_gnu \
-	TARGET_SNAKE_UPPER_CASE=X86_64_UNKNOWN_LINUX_GNU \
-	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-gnu \
+	TARGET=x86_64-unknown-linux-musl \
+	TARGET_SNAKE_CASE=x86_64_unknown_linux_musl \
+	TARGET_SNAKE_UPPER_CASE=X86_64_UNKNOWN_LINUX_MUSL \
+	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
+
+@PHONY: docker-x86_64
+docker-x86_64:
+	cd target/x86_64-unknown-linux-musl/release-github/ && \
+	docker build -t ikatson/rqbit:$(shell git describe --tags) --platform linux/amd64 -f ../../../docker/Dockerfile .
 
 @PHONY: release-linux-aarch64
 release-linux-aarch64:
@@ -136,13 +141,3 @@ release-linux-armv7-musl:
 	TARGET_SNAKE_UPPER_CASE=ARMV7_UNKNOWN_LINUX_MUSLEABIHF \
 	CROSS_COMPILE_PREFIX=armv7-linux-musleabihf \
 	$(MAKE) release-linux-current-target
-
-
-@PHONY: release-all
-release-all: release-windows release-linux release-macos-universal
-	rm -rf /tmp/rqbit-release
-	mkdir -p /tmp/rqbit-release
-	cp ./target/x86_64-pc-windows-gnu/release-github/rqbit.exe /tmp/rqbit-release
-	cp ./target/x86_64-apple-darwin/release-github/rqbit-osx-universal /tmp/rqbit-release
-	cp ./target/x86_64-unknown-linux-gnu/release-github/rqbit /tmp/rqbit-release/rqbit-linux-x86_64
-	echo "The release was built in /tmp/rqbit-release"
