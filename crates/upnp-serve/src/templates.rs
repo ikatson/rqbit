@@ -9,23 +9,19 @@ pub struct RootDescriptionInputs<'a> {
 }
 
 pub fn render_root_description_xml(input: &RootDescriptionInputs<'_>) -> String {
-    let tmpl = include_str!("resources/templates/root_desc.tmpl.xml").trim();
-
-    // This isn't great perf-wise but whatever.
-    tmpl.replace("{friendly_name}", input.friendly_name)
-        .replace("{manufacturer}", input.manufacturer)
-        .replace("{model_name}", input.model_name)
-        .replace("{unique_id}", input.unique_id)
-        .replace("{http_prefix}", input.http_prefix)
+    format!(
+        include_str!("resources/templates/root_desc.tmpl.xml"),
+        friendly_name = input.friendly_name,
+        manufacturer = input.manufacturer,
+        model_name = input.model_name,
+        unique_id = input.unique_id,
+        http_prefix = input.http_prefix
+    )
 }
 
 pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrContainer>) -> String {
     fn item_or_container(item_or_container: &ItemOrContainer) -> Option<String> {
         fn item(item: &Item) -> Option<String> {
-            let tmpl =
-                include_str!("resources/templates/content_directory_control_browse_item.tmpl.xml")
-                    .trim();
-
             let mime = item.mime_type.as_ref()?;
             let upnp_class = match mime.type_().as_str() {
                 "video" => "object.item.videoItem",
@@ -33,31 +29,31 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
             };
             let mime = mime.to_string();
 
-            Some(
-                tmpl.replace("{id}", &item.id.to_string())
-                    .replace("{parent_id}", &item.parent_id.unwrap_or(0).to_string())
-                    .replace("{mime_type}", &mime)
-                    .replace("{url}", &item.url)
-                    .replace("{upnp_class}", upnp_class)
-                    .replace("{title}", &item.title),
-            )
+            Some(format!(
+                include_str!("resources/templates/content_directory/control/browse/item.tmpl.xml"),
+                id = item.id,
+                parent_id = item.parent_id.unwrap_or(0),
+                mime_type = mime,
+                url = item.url,
+                upnp_class = upnp_class,
+                title = item.title
+            ))
         }
 
         fn container(item: &Container) -> String {
-            let tmpl = include_str!(
-                "resources/templates/content_directory_control_browse_container.tmpl.xml"
+            let child_count_tag = match item.children_count {
+                Some(cc) => format!("childCount=\"{}\"", cc),
+                None => String::new(),
+            };
+            format!(
+                include_str!(
+                    "resources/templates/content_directory/control/browse/container.tmpl.xml"
+                ),
+                id = item.id,
+                parent_id = item.parent_id.unwrap_or(0),
+                title = item.title,
+                childCountTag = child_count_tag
             )
-            .trim();
-            tmpl.replace("{id}", &format!("{}", item.id))
-                .replace("{parent_id}", &item.parent_id.unwrap_or(0).to_string())
-                .replace("{title}", &item.title)
-                .replace(
-                    "{childCountTag}",
-                    &match item.children_count {
-                        Some(cc) => format!("childCount=\"{}\"", cc),
-                        None => String::new(),
-                    },
-                )
         }
 
         match item_or_container {
@@ -67,27 +63,20 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
     }
 
     struct Envelope<'a> {
-        result: &'a str,
+        items: &'a str,
         number_returned: usize,
         total_matches: usize,
         update_id: u64,
     }
 
-    fn render_content_directory_envelope(envelope: &Envelope<'_>) -> String {
-        let tmpl =
-            include_str!("resources/templates/content_directory_control_browse_envelope.tmpl.xml")
-                .trim();
-        tmpl.replace("{result}", envelope.result)
-            .replace("{number_returned}", &envelope.number_returned.to_string())
-            .replace("{total_matches}", &envelope.total_matches.to_string())
-            .replace("{update_id}", &envelope.update_id.to_string())
-    }
-
-    fn render_content_directory_browse_result(items: &str) -> String {
-        let tmpl =
-            include_str!("resources/templates/content_directory_control_browse_result.tmpl.xml")
-                .trim();
-        tmpl.replace("{items}", items)
+    fn render_response(envelope: &Envelope<'_>) -> String {
+        format!(
+            include_str!("resources/templates/content_directory/control/browse/response.tmpl.xml"),
+            items = envelope.items,
+            number_returned = envelope.number_returned,
+            total_matches = envelope.total_matches,
+            update_id = envelope.update_id
+        )
     }
 
     let all_items = items
@@ -97,16 +86,14 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
     let total = all_items.len();
     let all_items = all_items.join("");
 
-    let result = render_content_directory_browse_result(&all_items);
-
     use std::time::{SystemTime, UNIX_EPOCH};
     let update_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    render_content_directory_envelope(&Envelope {
-        result: &result,
+    render_response(&Envelope {
+        items: &all_items,
         number_returned: total,
         total_matches: total,
         update_id,
@@ -114,11 +101,19 @@ pub fn render_content_directory_browse(items: impl IntoIterator<Item = ItemOrCon
 }
 
 pub fn render_notify_subscription_system_update_id(update_id: u64) -> String {
-    include_str!("resources/templates/notify_subscription.tmpl.xml")
-        .replace("{system_update_id}", &update_id.to_string())
+    format!(
+        include_str!(
+            "resources/templates/content_directory/subscriptions/system_update_id.tmpl.xml"
+        ),
+        system_update_id = update_id
+    )
 }
 
 pub fn render_content_directory_control_get_system_update_id(update_id: u64) -> String {
-    include_str!("resources/templates/content_directory_control_get_system_update_id.tmpl.xml")
-        .replace("{id}", &update_id.to_string())
+    format!(
+        include_str!(
+            "resources/templates/content_directory/control/get_system_update_id/response.tmpl.xml"
+        ),
+        id = update_id
+    )
 }

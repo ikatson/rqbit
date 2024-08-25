@@ -22,6 +22,8 @@ futures = "0.3"
 url = "2"
 async-recursion = "1"
 network-interface = { git = 'https://github.com/ikatson/network-interface', branch = "compile-on-freebsd" }
+httparse = "1.9.4"
+bstr = "1.10.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

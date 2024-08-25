@@ -29,7 +29,10 @@ use crate::{
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
-    state.rendered_root_description.clone()
+    (
+        [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+        state.rendered_root_description.clone(),
+    )
 }
 
 async fn generate_content_directory_control_response(
@@ -94,7 +97,6 @@ async fn subscription(
     }
 
     let (parts, _body) = request.into_parts();
-    trace!(?parts.headers, "subscription request");
     let is_event = parts
         .headers
         .get(HeaderName::from_static("nt"))
@@ -193,11 +195,11 @@ pub fn make_router(
         .route("/description.xml", get(description_xml))
         .route(
             "/scpd/ContentDirectory.xml",
-            get(|| async { include_str!("resources/scpd_content_directory.xml") }),
+            get(|| async { include_str!("resources/templates/content_directory/scpd.xml") }),
         )
         .route(
             "/scpd/ConnectionManager.xml",
-            get(|| async { include_str!("resources/scpd_connection_manager.xml") }),
+            get(|| async { include_str!("resources/templates/connection_manager/scpd.xml") }),
         )
         .route(
             "/control/ContentDirectory",

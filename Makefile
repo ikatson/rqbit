@@ -22,9 +22,17 @@ devserver:
 		--log-file /tmp/rqbit-log \
 		--log-file-rust-log=debug,librqbit=trace,upnp_serve=trace \
 		--http-api-listen-addr 0.0.0.0:3030 \
-		--upnp-server-hostname 192.168.0.112 \
+		--upnp-server-hostname "$(shell hostname)" \
 		--upnp-server-friendly-name rqbit-dev \
 		server start /tmp/scratch/
+
+@PHONY: devserver-release
+devserver-profile:
+	cargo run --release -- \
+	   --http-api-listen-addr 0.0.0.0:3030 \
+        --upnp-server-hostname "$(shell hostname)" \
+        --upnp-server-friendly-name rqbit-dev \
+        server start /tmp/scratch/
 
 @PHONY: devserver
 devserver-postgres:

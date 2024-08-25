@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{broadcast::error::RecvError, Notify};
-use tracing::{error_span, warn, Instrument};
+use tracing::{debug, error_span, warn, Instrument};
 
 pub struct Subscription {
     pub url: url::Url,
@@ -142,7 +142,7 @@ impl UpnpServerStateInner {
                                 )
                                 .await
                                 {
-                                    warn!(error=?e, "error updating UPNP subscription");
+                                    debug!(error=?e, "error updating UPNP subscription");
                                 }
                             }
                             Err(RecvError::Lagged(by)) => {
@@ -158,7 +158,7 @@ impl UpnpServerStateInner {
                                 )
                                 .await
                                 {
-                                    warn!(error=?e, "error updating UPNP subscription");
+                                    debug!(error=?e, "error updating UPNP subscription");
                                 }
                             }
                             Err(RecvError::Closed) => return Ok(()),

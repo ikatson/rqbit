@@ -1,11 +1,12 @@
 use anyhow::{bail, Context};
+use bstr::BStr;
 use futures::{stream::FuturesUnordered, StreamExt, TryFutureExt};
 use network_interface::NetworkInterfaceConfig;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_xml_rs::from_str;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
@@ -20,7 +21,7 @@ const SSDP_SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r\n\
                                    Host: 239.255.255.250:1900\r\n\
                                    Man: \"ssdp:discover\"\r\n\
                                    MX: 3\r\n\
-                                   ST: upnp:rootdevice\r\n\
+                                   ST: urn:schemas-upnp-org:service:WANIPConnection:1\r\n\
                                    \r\n";
 
 fn get_local_ip_relative_to(local_dest: Ipv4Addr) -> anyhow::Result<Ipv4Addr> {
@@ -265,16 +266,30 @@ async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
 }
 
 fn parse_upnp_discover_response(
-    response: &str,
+    buf: &[u8],
     received_from: SocketAddr,
 ) -> anyhow::Result<UpnpDiscoverResponse> {
-    let mut headers = HashMap::new();
-    for line in response.lines() {
-        if let Some((key, value)) = line.split_once(": ") {
-            headers.insert(key.to_lowercase(), value.trim_end().to_string());
+    let mut headers = [httparse::EMPTY_HEADER; 16];
+    let mut resp = httparse::Response::new(&mut headers);
+    resp.parse(buf).context("error parsing response")?;
+
+    trace!(?resp, "parsed SSDP response");
+    match resp.code {
+        Some(200) => {}
+        other => anyhow::bail!("bad response code {other:?}, expected 200"),
+    }
+    let mut location = None;
+    for header in resp.headers {
+        match header.name {
+            "location" | "LOCATION" | "Location" => {
+                location = Some(
+                    std::str::from_utf8(header.value).context("bad utf-8 in location header")?,
+                )
+            }
+            _ => continue,
         }
     }
-    let location = headers.get("location").context("missing location header")?;
+    let location = location.context("missing location header")?;
     let location =
         Url::parse(location).with_context(|| format!("failed parsing location {location}"))?;
     Ok(UpnpDiscoverResponse {
@@ -352,20 +367,13 @@ impl UpnpPortForwarder {
                     timed_out = true;
                 }
                 Ok((len, addr)) = socket.recv_from(&mut buffer), if !timed_out => {
-                    let response = match std::str::from_utf8(&buffer[..len]) {
-                        Ok(response) => response,
-                        Err(_) => {
-                            warn!(%addr, "received invalid utf-8");
-                            continue;
-                        },
-                    };
-                    trace!(%addr, response, "response");
+                    let response = &buffer[..len];
                     match parse_upnp_discover_response(response, addr) {
                         Ok(r) => {
                             tx.send(r)?;
                             discovered += 1;
                         },
-                        Err(e) => warn!("failed to parse response: {e:#}"),
+                        Err(e) => warn!(error=?e, response=?BStr::new(response), "failed to parse SSDP response"),
                     };
                 },
             }

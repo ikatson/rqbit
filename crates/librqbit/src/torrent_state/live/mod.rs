@@ -730,8 +730,8 @@ impl TorrentStateLive {
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
         let mut g = self.lock_write("on_piece_completed");
-        let g = &mut **g;
-        let chunks = g.get_chunks_mut()?;
+        let locked = &mut **g;
+        let chunks = locked.get_chunks_mut()?;
 
         // if we have all the pieces of the file, reopen it read only
         for (idx, file_info) in self
@@ -748,20 +748,22 @@ impl TorrentStateLive {
         self.streams
             .wake_streams_on_piece_completed(id, &self.torrent.lengths);
 
-        g.unflushed_bitv_bytes += self.torrent.lengths.piece_length(id) as u64;
-        if g.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
-            g.try_flush_bitv()
+        locked.unflushed_bitv_bytes += self.torrent.lengths.piece_length(id) as u64;
+        if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
+            locked.try_flush_bitv()
         }
 
-        let chunks = g.get_chunks()?;
+        let chunks = locked.get_chunks()?;
         if chunks.is_finished() {
             if chunks.get_selected_pieces()[id.get_usize()] {
-                g.try_flush_bitv();
+                locked.try_flush_bitv();
                 info!("torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
 
-            if !self.has_active_streams_unfinished_files(g) {
+            if !self.has_active_streams_unfinished_files(locked) {
+                // prevent deadlocks.
+                drop(g);
                 // There is not poing being connected to peers that have all the torrent, when
                 // we don't need anything from them, and they don't need anything from us.
                 self.disconnect_all_peers_that_have_full_torrent();
