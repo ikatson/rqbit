@@ -67,7 +67,12 @@ use librqbit_core::{
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
-    extended::{handshake::{ExtendedHandshake, YourIP}, ut_metadata::UtMetadata, ExtendedMessage},
+    extended::{
+        handshake::{ExtendedHandshake, YourIP},
+        ut_metadata::UtMetadata,
+        ut_pex::UtPex,
+        ExtendedMessage,
+    },
     Handshake, Message, MessageOwned, Piece, Request,
 };
 use peers::stats::atomic::AggregatePeerStatsAtomic;
@@ -876,7 +881,8 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
                     .with_context(|| format!("error sending metadata piece {metadata_piece_id}"))?;
             }
             Message::Extended(ExtendedMessage::UtPex(pex)) => {
-                trace!("received ut_pex: {:?} added peers v4: {:?}", pex, pex.added_peers().unwrap().collect::<Vec<_>>());
+                trace!("received ut_pex: {:?}", pex);
+                self.on_pex_message(pex);
             }
             message => {
                 warn!("received unsupported message {:?}, ignoring", message);
@@ -1664,5 +1670,22 @@ impl PeerHandler {
             )))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())
+    }
+
+    fn on_pex_message<B>(&self, msg: UtPex<B>)
+    where
+        B: AsRef<[u8]> + std::fmt::Debug,
+    {
+        // TODO: this is just first attempt at pex - will need more sophistication on adding peers - BEP 40,  check number of live, seen peers ...
+        if let Ok(peers) = msg.added_peers() {
+            peers.for_each(|peer| {
+                self.state
+                    .add_peer_if_not_seen(peer.addr)
+                    .inspect_err(|e| warn!("failed to add peer: {peer:?} due to: {e}"))
+                    .ok();
+            });
+        } else {
+            warn!("received invalid pex message: {:?}", msg);
+        }
     }
 }

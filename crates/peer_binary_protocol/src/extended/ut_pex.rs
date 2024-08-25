@@ -74,17 +74,19 @@ pub struct PeerAddrIterator<'a> {
     addrs: &'a [u8],
     flags: &'a [u8],
     offset: usize,
+    addr_size: usize,
 }
+
+
 
 impl<'a> Iterator for PeerAddrIterator<'a> {
     type Item = PexPeerInfo;
     fn next(&mut self) -> Option<Self::Item> {
-        const ADDR_SIZE: usize = 6;
-        if self.offset*ADDR_SIZE >= self.addrs.len() {
+        if self.offset*self.addr_size >= self.addrs.len() {
             return None;
         }
 
-        let addr = &self.addrs[self.offset*ADDR_SIZE..(self.offset+1)*ADDR_SIZE];
+        let addr = &self.addrs[self.offset*self.addr_size..(self.offset+1)*self.addr_size];
         let flags = self.flags.get(self.offset);
         self.offset += 1;
         Some(PexPeerInfo::from_bytes(addr, flags.cloned()).unwrap()) // safe to unwrap as we assure slice length
@@ -106,6 +108,55 @@ where
                 addrs: added.as_ref(),
                 flags: self.added_f.as_ref().map(|f| f.as_ref()).unwrap_or(&[]),
                 offset: 0,
+                addr_size: 6,
+            }));
+        } else {
+            return Ok(Box::new(std::iter::empty()));
+        };
+    }
+
+    pub fn added_peers_v6<'a>(&'a self) -> anyhow::Result<Box<dyn Iterator<Item = PexPeerInfo> + 'a>> {
+        if let Some(added) = &self.added6 {
+            if added.as_ref().len() % 18 != 0 {
+                anyhow::bail!("invalid pex added6 peers");
+            }
+            return Ok(Box::new(PeerAddrIterator {
+                addrs: added.as_ref(),
+                flags: self.added6_f.as_ref().map(|f| f.as_ref()).unwrap_or(&[]),
+                offset: 0,
+                addr_size: 18,
+            }));
+        } else {
+            return Ok(Box::new(std::iter::empty()));
+        };
+    }
+
+    pub fn dropped_peers<'a>(&'a self) -> anyhow::Result<Box<dyn Iterator<Item = PexPeerInfo> + 'a>> {
+        if let Some(dropped) = &self.dropped {
+            if dropped.as_ref().len() % 6 != 0 {
+                anyhow::bail!("invalid pex dropped peers");
+            }
+            return Ok(Box::new(PeerAddrIterator {
+                addrs: dropped.as_ref(),
+                flags: &[],
+                offset: 0,
+                addr_size: 6,
+            }));
+        } else {
+            return Ok(Box::new(std::iter::empty()));
+        };
+    }
+
+    pub fn dropped_peers_v6<'a>(&'a self) -> anyhow::Result<Box<dyn Iterator<Item = PexPeerInfo> + 'a>> {
+        if let Some(dropped) = &self.dropped6 {
+            if dropped.as_ref().len() % 18 != 0 {
+                anyhow::bail!("invalid pex dropped6 peers");
+            }
+            return Ok(Box::new(PeerAddrIterator {
+                addrs: dropped.as_ref(),
+                flags: &[],
+                offset: 0,
+                addr_size: 18,
             }));
         } else {
             return Ok(Box::new(std::iter::empty()));
