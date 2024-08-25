@@ -23,7 +23,7 @@ jobs:
         run: mkdir -p target/x86_64-unknown-linux-musl/release-github/ && touch target/x86_64-unknown-linux-musl/release-github/rqbit
 
       - name: hack Dockerfile user id
-        run: cd docker && sed -i s/501/$(id -u)/g Dockerfile
+        run: cd docker && sed -i.bcp -e "s/501/$(id -u)/g" Dockerfile
 
       - name: build Docker image
         run: make buildah-x86_64
