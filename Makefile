@@ -110,11 +110,11 @@ docker-x86_64:
 
 buildah-x86_64:
 	cd target/x86_64-unknown-linux-musl/release-github/ && \
-	buildah build -t ikatson/rqbit:$(shell git describe --tags) --platform linux/amd64 -f ../../../docker/Dockerfile .
+	buildah build -t ikatson/rqbit:$(shell git describe --tags --always) --platform linux/amd64 -f ../../../docker/Dockerfile .
 
 buildah-x86_64-push:
 	cd target/x86_64-unknown-linux-musl/release-github/ && \
-	buildah push ikatson/rqbit:$(shell git describe --tags)
+	buildah push ikatson/rqbit:$(shell git describe --tags --always)
 
 @PHONY: release-linux-aarch64
 release-linux-aarch64:
