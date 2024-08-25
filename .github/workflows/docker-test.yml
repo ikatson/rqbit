@@ -13,32 +13,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: install buildah
+        run: brew install buildah
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+        run: buildah login --username '${{ secrets.DOCKERHUB_USERNAME }}' --password '${{ secrets.DOCKERHUB_PASSWORD }}' docker.io
 
-      - name: Make a directory for output artifacts
-        run: mkdir -p target/artifacts
+      - name: try to build and push
+        run: mkdir -p target/x86_64-unknown-linux-musl/release-github/ && touch target/x86_64-unknown-linux-musl/release-github/rqbit
 
-      - name: install linux cross compiler
-        run: brew tap messense/macos-cross-toolchains &&
-          brew install x86_64-unknown-linux-musl
+      - name: hack Dockerfile user id
+        run: cd docker && sed -i s/501/$(id -u)/g Dockerfile
 
-      - name: Build release linux x86_64 binary
-        run: rustup target install x86_64-unknown-linux-musl &&
-          make release-linux-x86_64 &&
-          mv target/x86_64-unknown-linux-musl/release-github/rqbit target/artifacts/rqbit-linux-static-x86_64
+      - name: build Docker image
+        run: make buildah-x86_64
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: target/x86_64-unknown-linux-musl/release-github/
-          file: docker/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ikatson/rqbit:test
+      - name: push Docker image
+        run: buildah-x86_64-push

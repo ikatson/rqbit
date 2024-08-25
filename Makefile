@@ -108,6 +108,14 @@ docker-x86_64:
 	cd target/x86_64-unknown-linux-musl/release-github/ && \
 	docker build -t ikatson/rqbit:$(shell git describe --tags) --platform linux/amd64 -f ../../../docker/Dockerfile .
 
+buildah-x86_64:
+	cd target/x86_64-unknown-linux-musl/release-github/ && \
+	buildah build -t ikatson/rqbit:$(shell git describe --tags) --platform linux/amd64 -f ../../../docker/Dockerfile .
+
+buildah-x86_64-push:
+	cd target/x86_64-unknown-linux-musl/release-github/ && \
+	buildah push ikatson/rqbit:$(shell git describe --tags)
+
 @PHONY: release-linux-aarch64
 release-linux-aarch64:
 	TARGET=aarch64-unknown-linux-gnu \
