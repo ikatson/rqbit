@@ -25,7 +25,7 @@ pub struct PeerExtendedMessageIds {
 }
 
 #[derive(Debug)]
-pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq> {
+pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq + AsRef<[u8]>> {
     Handshake(ExtendedHandshake<ByteBuf>),
     UtMetadata(UtMetadata<ByteBuf>),
     UtPex(UtPex<ByteBuf>),
@@ -34,8 +34,8 @@ pub enum ExtendedMessage<ByteBuf: std::hash::Hash + Eq> {
 
 impl<ByteBuf> CloneToOwned for ExtendedMessage<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq,
+    ByteBuf: CloneToOwned + std::hash::Hash + Eq + AsRef<[u8]>,
+    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq + AsRef<[u8]>,
 {
     type Target = ExtendedMessage<<ByteBuf as CloneToOwned>::Target>;
 
@@ -53,7 +53,7 @@ where
     }
 }
 
-impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf> {
+impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize + AsRef<[u8]>> ExtendedMessage<ByteBuf> {
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
@@ -72,27 +72,30 @@ impl<'a, ByteBuf: 'a + std::hash::Hash + Eq + Serialize> ExtendedMessage<ByteBuf
                 bencode_serialize_to_writer(h, out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
-                let emsg_id = extended_handshake_ut_metadata().ut_metadata.ok_or_else(|| {
-                    anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
-                })?;
+                let emsg_id = extended_handshake_ut_metadata()
+                    .ut_metadata
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
+                    })?;
                 out.push(emsg_id);
                 u.serialize(out);
-            },
+            }
             ExtendedMessage::UtPex(m) => {
                 let emsg_id = extended_handshake_ut_metadata().ut_pex.ok_or_else(|| {
-                    anyhow::anyhow!("need peer's handshake to serialize ut_pex, or peer does't support ut_pex")
+                    anyhow::anyhow!(
+                        "need peer's handshake to serialize ut_pex, or peer does't support ut_pex"
+                    )
                 })?;
                 out.push(emsg_id);
                 bencode_serialize_to_writer(m, out)?;
-            },
-            
+            }
         }
         Ok(())
     }
 
     pub fn deserialize(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
     where
-        ByteBuf: Deserialize<'a> + From<&'a [u8]>,
+        ByteBuf: Deserialize<'a> + From<&'a [u8]> + AsRef<[u8]>,
     {
         let emsg_id = buf.first().copied().ok_or_else(|| {
             MessageDeserializeError::Other(anyhow::anyhow!(

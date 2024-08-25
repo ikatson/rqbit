@@ -186,7 +186,7 @@ impl From<anyhow::Error> for MessageDeserializeError {
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf: std::hash::Hash + Eq> {
+pub enum Message<ByteBuf: std::hash::Hash + Eq + AsRef<[u8]>> {
     Request(Request),
     Cancel(Request),
     Bitfield(ByteBuf),
@@ -212,8 +212,8 @@ pub struct Bitfield<'a> {
 
 impl<ByteBuf> CloneToOwned for Message<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq,
+    ByteBuf: CloneToOwned + std::hash::Hash + Eq + AsRef<[u8]>,
+    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq + AsRef<[u8]>,
 {
     type Target = Message<<ByteBuf as CloneToOwned>::Target>;
 

@@ -12,7 +12,7 @@ pub struct PexPeerInfo {
     pub addr: SocketAddr,
 }
 
-#[derive(Debug, Serialize, Default, Deserialize)]
+#[derive(Serialize, Default, Deserialize)]
 pub struct UtPex<B> {
     added: B,
     #[serde(rename = "added.f")]
@@ -24,6 +24,27 @@ pub struct UtPex<B> {
     added6_f: Option<B>,
     dropped: B,
     dropped6: B,
+}
+
+impl<B> core::fmt::Debug for UtPex<B>
+where
+    B: AsRef<[u8]>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        struct IterDebug<I>(I);
+        impl<I> core::fmt::Debug for IterDebug<I>
+        where
+            I: Iterator<Item = PexPeerInfo> + Clone,
+        {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_list().entries(self.0.clone()).finish()
+            }
+        }
+        f.debug_struct("UtPex")
+            .field("added", &IterDebug(self.added_peers()))
+            .field("dropped", &IterDebug(self.dropped_peers()))
+            .finish()
+    }
 }
 
 impl<B> CloneToOwned for UtPex<B>
@@ -52,7 +73,7 @@ where
         buf: &'a B,
         flags: &'a Option<B>,
         ip_len: usize,
-    ) -> impl Iterator<Item = PexPeerInfo> + 'a {
+    ) -> impl Iterator<Item = PexPeerInfo> + Clone + 'a {
         let addrs = buf.as_ref().chunks_exact(ip_len + 2).map(move |c| {
             let ip = match ip_len {
                 4 => IpAddr::from(TryInto::<[u8; 4]>::try_into(&c[..4]).unwrap()),
@@ -74,12 +95,12 @@ where
         })
     }
 
-    pub fn added_peers(&self) -> impl Iterator<Item = PexPeerInfo> + '_ {
+    pub fn added_peers(&self) -> impl Iterator<Item = PexPeerInfo> + Clone + '_ {
         self.added_peers_inner(&self.added, &self.added_f, 4)
             .chain(self.added_peers_inner(&self.added6, &self.added6_f, 16))
     }
 
-    pub fn dropped_peers(&self) -> impl Iterator<Item = PexPeerInfo> + '_ {
+    pub fn dropped_peers(&self) -> impl Iterator<Item = PexPeerInfo> + Clone + '_ {
         self.added_peers_inner(&self.dropped, &None, 4)
             .chain(self.added_peers_inner(&self.dropped6, &None, 16))
     }
