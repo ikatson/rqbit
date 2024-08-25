@@ -1683,7 +1683,7 @@ impl PeerHandler {
             peers.for_each(|peer| {
                 self.state
                     .add_peer_if_not_seen(peer.addr)
-                    .inspect_err(|e| warn!("failed to add peer: {peer:?} due to: {e}"))
+                    .or_else(|e| {warn!("failed to add peer: {peer:?} due to: {e}"); Ok::<_, ()>(false)}) // TODO: in future replace with inspect_err
                     .ok();
             });
         } else {
