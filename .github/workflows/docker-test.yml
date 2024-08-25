@@ -25,6 +25,9 @@ jobs:
       - name: hack Dockerfile user id
         run: cd docker && sed -i.bcp -e "s/501/$(id -u)/g" Dockerfile
 
+      - name: debug
+        run: id -u && id -g && cat docker/Dockerfile
+
       - name: build Docker image
         run: make buildah-x86_64
 
