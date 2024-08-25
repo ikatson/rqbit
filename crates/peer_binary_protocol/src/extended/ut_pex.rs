@@ -6,10 +6,19 @@ use clone_to_owned::CloneToOwned;
 use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
 pub struct PexPeerInfo {
     pub flags: u8,
     pub addr: SocketAddr,
+}
+
+impl core::fmt::Debug for PexPeerInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.addr)?;
+        if self.flags != 0 {
+            write!(f, ";flags={}", self.flags)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Default, Deserialize)]
