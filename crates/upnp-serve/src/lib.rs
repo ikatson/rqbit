@@ -72,6 +72,7 @@ impl UpnpServer {
             description_http_location,
             server_string: "Linux/3.4 UPnP/1.0 rqbit/1".to_owned(),
             notify_interval: Duration::from_secs(60),
+            shutdown: opts.cancellation_token.clone(),
         })
         .await
         .context("error initializing SsdpRunner")?;
