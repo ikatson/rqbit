@@ -103,6 +103,14 @@ release-linux-x86_64:
 	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
+@PHONY: docker-x86_64
+docker-x86_64:
+	docker build \
+        -f docker/Dockerfile \
+        -t ikatson/rqbit:$(shell git describe --tags) \
+		--platform linux/amd64 \
+		target/x86_64-unknown-linux-musl/release-github/
+
 @PHONY: release-linux-aarch64
 release-linux-aarch64:
 	TARGET=aarch64-unknown-linux-gnu \
