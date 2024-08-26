@@ -17,8 +17,8 @@ http-api = ["axum", "tower-http"]
 upnp-serve-adapter = ["upnp-serve"]
 webui = []
 timed_existence = []
-default-tls = ["reqwest/default-tls"]
-rust-tls = ["reqwest/rustls-tls"]
+default-tls = ["reqwest/default-tls", "sha1w/sha1-crypto-hash"]
+rust-tls = ["reqwest/rustls-tls", "sha1w/sha1-ring"]
 storage_middleware = ["lru"]
 storage_examples = []
 tracing-subscriber-utils = ["tracing-subscriber"]
@@ -35,7 +35,7 @@ tracker_comms = { path = "../tracker_comms", default-features = false, package =
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.1" }
 librqbit-core = { path = "../librqbit_core", version = "4" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-peer_binary_protocol = { path = "../peer_binary_protocol", package = "librqbit-peer-protocol", version = "4.1" }
+peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.1" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "3.0.0" }
 dht = { path = "../dht", package = "librqbit-dht", version = "5.1.0" }
 librqbit-upnp = { path = "../upnp", version = "0.1.1" }

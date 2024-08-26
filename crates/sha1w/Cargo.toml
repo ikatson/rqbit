@@ -8,7 +8,13 @@ documentation = "https://docs.rs/librqbit-sha1-wrapper"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html#
+
+[features]
+default = ["sha1-crypto-hash"]
+sha1-crypto-hash = ["crypto-hash"]
+sha1-ring = ["ring"]
 
 [dependencies]
-crypto-hash = "0.3"
+crypto-hash = { version = "0.3", optional = true }
+ring = { version = "0.17", optional = true }
