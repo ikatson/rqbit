@@ -14,7 +14,7 @@ WORKDIR /src/
 ENV PROFILE=release-github
 
 RUN xx-cargo build --no-default-features --profile "${PROFILE}" --features rust-tls,webui && \
-    xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit"" && \
+    xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" && \
     mv "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" /bin/rqbit
 
 FROM scratch
