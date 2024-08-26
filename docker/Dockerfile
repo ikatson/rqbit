@@ -1,7 +1,9 @@
 FROM scratch
 
+ARG TARGETPLATFORM
+
 ## Assumes you are running this from respective context folder.
-COPY --chmod=755 rqbit /bin/rqbit
+COPY --chmod=755 ${TARGETPLATFORM}/rqbit /bin/rqbit
 
 WORKDIR /home/rqbit
 
@@ -18,4 +20,5 @@ VOLUME /home/rqbit/output
 
 EXPOSE 3000
 EXPOSE 4240
+CMD ["server", "start", "/home/rqbit/output"]
 ENTRYPOINT ["/bin/rqbit"]

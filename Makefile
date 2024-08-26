@@ -103,22 +103,31 @@ release-linux-x86_64:
 	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
-@PHONY: docker-x86_64
-docker-x86_64:
+@PHONY: create-target-docker
+create-target-docker:
+	mkdir -p target/docker/linux/amd64 target/docker/linux/arm64 target/docker/linux/arm/v7 && \
+	cp -l target/x86_64-unknown-linux-musl/release-github/rqbit target/docker/linux/amd64/rqbit && \
+	cp -l target/aarch64-unknown-linux-musl/release-github/rqbit target/docker/linux/arm64/rqbit && \
+	cp -l target/armv7-unknown-linux-musleabihf/release-github/rqbit target/docker/linux/arm/v7/rqbit && \
+	cp docker/Dockerfile target/Docker
+
+@PHONY: docker-build
+docker-build: create-target-docker
 	docker build \
-        -f docker/Dockerfile \
-        -t ikatson/rqbit:$(shell git describe --tags) \
-		--platform linux/amd64 \
-		target/x86_64-unknown-linux-musl/release-github/
+		-f target/docker/Dockerfile \
+		-t ikatson/rqbit:$(shell git describe --tags) \
+		--platform linux/amd64,linux/arm64,linux/arm/v7 \
+		target/docker/
 
 @PHONY: release-linux-aarch64
 release-linux-aarch64:
-	TARGET=aarch64-unknown-linux-gnu \
-	TARGET_SNAKE_CASE=aarch64_unknown_linux_gnu \
-	TARGET_SNAKE_UPPER_CASE=AARCH64_UNKNOWN_LINUX_GNU \
-	CROSS_COMPILE_PREFIX=aarch64-unknown-linux-gnu \
+	TARGET=aarch64-unknown-linux-musl \
+	TARGET_SNAKE_CASE=aarch64_unknown_linux_musl \
+	TARGET_SNAKE_UPPER_CASE=AARCH64_UNKNOWN_LINUX_MUSL \
+	CROSS_COMPILE_PREFIX=aarch64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
+# TODO: couldn't figure out how to compile this one with musl
 @PHONY: release-linux-armv6
 release-linux-armv6:
 	TARGET=arm-unknown-linux-gnueabihf \
@@ -128,17 +137,8 @@ release-linux-armv6:
 	LDFLAGS=-latomic \
 	$(MAKE) release-linux-current-target
 
-# armv7-unknown-linux-gnueabihf
 @PHONY: release-linux-armv7
 release-linux-armv7:
-	TARGET=armv7-unknown-linux-gnueabihf \
-	TARGET_SNAKE_CASE=armv7_unknown_linux_gnueabihf \
-	TARGET_SNAKE_UPPER_CASE=ARMV7_UNKNOWN_LINUX_GNUEABIHF \
-	CROSS_COMPILE_PREFIX=armv7-linux-gnueabihf \
-	$(MAKE) release-linux-current-target
-
-@PHONY: release-linux-armv7-musl
-release-linux-armv7-musl:
 	TARGET=armv7-unknown-linux-musleabihf \
 	TARGET_SNAKE_CASE=armv7_unknown_linux_musleabihf \
 	TARGET_SNAKE_UPPER_CASE=ARMV7_UNKNOWN_LINUX_MUSLEABIHF \
