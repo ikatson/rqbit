@@ -28,6 +28,32 @@ enum LogLevel {
     Error,
 }
 
+#[cfg(not(target_os = "windows"))]
+fn parse_umask(value: &str) -> anyhow::Result<libc::mode_t> {
+    fn parse_oct_digit(d: u8) -> Option<libc::mode_t> {
+        Some(match d {
+            b'0' => 0,
+            b'1' => 1,
+            b'2' => 2,
+            b'3' => 3,
+            b'4' => 4,
+            b'5' => 5,
+            b'6' => 6,
+            b'7' => 7,
+            _ => return None,
+        })
+    }
+    if value.len() != 3 {
+        bail!("expected 3 digits")
+    }
+    let mut output = 0;
+    for digit in value.as_bytes() {
+        let digit = parse_oct_digit(*digit).context("expected 3 digits")?;
+        output = output * 8 + digit;
+    }
+    Ok(output)
+}
+
 #[derive(Parser)]
 #[command(version, author, about)]
 struct Opts {
@@ -162,6 +188,16 @@ struct Opts {
     /// How many torrents can be initializing (rehashing) at the same time
     #[arg(long, default_value = "5", env = "RQBIT_CONCURRENT_INIT_LIMIT")]
     concurrent_init_limit: usize,
+
+    /// Set the process umask to this value.
+    ///
+    /// Default is inherited from your environment (usually 022).
+    /// This will affect the file mode of created files.
+    ///
+    /// Read more at https://man7.org/linux/man-pages/man2/umask.2.html
+    #[cfg(not(target_os = "windows"))]
+    #[arg(long, env = "RQBIT_UMASK", value_parser=parse_umask)]
+    umask: Option<libc::mode_t>,
 }
 
 #[derive(Parser)]
@@ -293,6 +329,11 @@ fn _start_deadlock_detector_thread() {
 
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
+
+    #[cfg(not(target_os = "windows"))]
+    if let Some(umask) = opts.umask {
+        unsafe { libc::umask(umask) };
+    }
 
     let mut rt_builder = match opts.single_thread_runtime {
         true => tokio::runtime::Builder::new_current_thread(),
@@ -711,6 +752,27 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 &mut io::stdout(),
             );
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_parse_umask() {
+        use crate::parse_umask;
+        let range = b'0'..=b'7';
+        for d0 in range.clone() {
+            for d1 in range.clone() {
+                for d2 in range.clone() {
+                    let inp = [d0, d1, d2];
+                    let inp_str = std::str::from_utf8(&inp).unwrap();
+                    let parsed = parse_umask(inp_str).expect(inp_str);
+                    let expected = format!("{parsed:03o}");
+                    assert_eq!(inp_str, expected);
+                }
+            }
         }
     }
 }
