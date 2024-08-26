@@ -3609,6 +3609,7 @@ dependencies = [
  "parking_lot",
  "quick-xml",
  "reqwest",
+ "socket2",
  "tokio",
  "tokio-util",
  "tower-http",
