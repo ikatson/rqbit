@@ -113,7 +113,6 @@ impl SsdpRunner {
         #[cfg(not(target_os = "windows"))]
         sock.set_reuse_port(true)
             .context("error setting SO_REUSEPORT")?;
-        #[cfg(target_os = "windows")]
         sock.set_reuse_address(true)
             .context("error setting SO_REUSEADDR")?;
 
