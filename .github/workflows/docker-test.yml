@@ -12,16 +12,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: cross-compile all binaries
+        run: mkdir -p target/cross &&
+          docker build -f docker/Dockerfile.xx --output type=local,dest=target/cross .
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      - name: Archive target/cross/
+        uses: actions/upload-artifact@v4
         with:
-          push: true
-          tags: ikatson/rqbit:test-${{ github.ref_name }}
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
-          file: docker/Dockerfile.xx
+          name: cross-compiled-binaries
+          path: target/docker/
+
+      # - name: Login to Docker Hub
+      #   uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ vars.DOCKERHUB_USERNAME }}
+      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # - name: Build and push
+      #   uses: docker/build-push-action@v6
+      #   with:
+      #     push: true
+      #     tags: ikatson/rqbit:test-${{ github.ref_name }}
+      #     platforms: linux/amd64,linux/arm64,linux/arm/v7
+      #     file: docker/Dockerfile.xx
