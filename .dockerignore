@@ -1,0 +1,7 @@
+/.cargo
+**/target/
+**/node_modules/
+/docker
+/*.md
+/Makefile
+/LICENSE

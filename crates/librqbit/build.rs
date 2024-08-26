@@ -7,7 +7,7 @@ fn run_cmd(cwd: &Path, cmd: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     let (shell, shell_args) = ("powershell", ["-command"].as_slice());
     #[cfg(not(target_os = "windows"))]
-    let (shell, shell_args) = ("bash", ["-c"].as_slice());
+    let (shell, shell_args) = ("sh", ["-c"].as_slice());
 
     // Run "npm install" in the webui directory
     let output = Command::new(shell)
@@ -15,7 +15,14 @@ fn run_cmd(cwd: &Path, cmd: &str) -> anyhow::Result<()> {
         .arg(cmd)
         .current_dir(cwd)
         .output()
-        .with_context(|| format!("Failed to execute {} in {:?}", cmd, cwd))?;
+        .with_context(|| {
+            format!(
+                "Failed to execute {} in {:?}. PATH: {:?}",
+                cmd,
+                cwd,
+                std::env::var("PATH").unwrap_or_default()
+            )
+        })?;
 
     if !output.status.success() {
         bail!(

@@ -1,0 +1,42 @@
+# Dockerfile for cross compiling rqbit binaries from scratch inside docker.
+FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
+
+FROM --platform=$BUILDPLATFORM rust:alpine AS builder
+COPY --from=xx / /
+
+RUN apk update && apk add clang lld npm python3 perl make
+
+ARG TARGETPLATFORM
+RUN xx-apk add gcc musl-dev
+
+COPY / /src/
+WORKDIR /src/
+
+ENV PROFILE_NAME=release-github
+ENV PROFILE_FOLDER=release-github
+
+RUN --mount=type=cache,target=/usr/local/cargo/git/db \
+    --mount=type=cache,target=/usr/local/cargo/registry/cache \
+    --mount=type=cache,target=/usr/local/cargo/registry/index \
+    --mount=type=cache,target=/src/target <<EOF
+set -e
+export TT="$(xx-cargo --print-target-triple)"
+export BIN="./target/${TT}/${TT}/${PROFILE_FOLDER}/rqbit"
+
+find /src/target \
+        /usr/local/cargo/git/db \
+        /usr/local/cargo/registry/cache \
+        /usr/local/cargo/registry/index \
+        -maxdepth 2 -type d
+xx-cargo build \
+    --target-dir "target/${TT}" \
+    --profile "${PROFILE_NAME}" \
+    --no-default-features --features rust-tls,webui
+find /src/target -maxdepth 4 -type d
+xx-verify --static "${BIN}"
+mv "${BIN}" /bin/rqbit
+EOF
+
+FROM scratch
+
+COPY --from=builder /bin/rqbit /rqbit
