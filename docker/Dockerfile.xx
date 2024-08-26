@@ -11,9 +11,11 @@ COPY / /src/
 
 WORKDIR /src/
 
-RUN xx-cargo build --no-default-features --features rust-tls,webui && \
-    xx-verify --static ./target/$(xx-cargo --print-target-triple)/debug/rqbit && \
-    mv ./target/$(xx-cargo --print-target-triple)/debug/rqbit /bin/rqbit
+ENV PROFILE=release-github
+
+RUN xx-cargo build --no-default-features --profile "${PROFILE}" --features rust-tls,webui && \
+    xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit"" && \
+    mv "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" /bin/rqbit
 
 FROM scratch
 
