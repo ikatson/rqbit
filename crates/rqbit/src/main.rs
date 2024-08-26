@@ -32,77 +32,99 @@ enum LogLevel {
 #[command(version, author, about)]
 struct Opts {
     /// The console loglevel
-    #[arg(value_enum, short = 'v')]
+    #[arg(value_enum, short = 'v', env = "RQBIT_LOG_LEVEL_CONSOLE")]
     log_level: Option<LogLevel>,
 
     /// The log filename to also write to in addition to the console.
-    #[arg(long = "log-file")]
+    #[arg(long = "log-file", env = "RQBIT_LOG_FILE")]
     log_file: Option<String>,
 
     /// The value for RUST_LOG in the log file
-    #[arg(long = "log-file-rust-log", default_value = "librqbit=debug,info")]
+    #[arg(
+        long = "log-file-rust-log",
+        default_value = "librqbit=debug,info",
+        env = "RQBIT_LOG_FILE_RUST_LOG"
+    )]
     log_file_rust_log: String,
 
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
     /// pretty big, e.g. 30 minutes. This can force a certain value.
-    #[arg(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse)]
+    #[arg(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse, env="RQBIT_TRACKER_REFRESH_INTERVAL")]
     force_tracker_interval: Option<Duration>,
 
     /// The listen address for HTTP API
-    #[arg(long = "http-api-listen-addr", default_value = "127.0.0.1:3030")]
+    #[arg(
+        long = "http-api-listen-addr",
+        default_value = "127.0.0.1:3030",
+        env = "RQBIT_HTTP_API_LISTEN_ADDR"
+    )]
     http_api_listen_addr: SocketAddr,
 
     /// Set this flag if you want to use tokio's single threaded runtime.
     /// It MAY perform better, but the main purpose is easier debugging, as time
     /// profilers work better with this one.
-    #[arg(short, long)]
+    #[arg(short, long, env = "RQBIT_SINGLE_THREAD_RUNTIME")]
     single_thread_runtime: bool,
 
-    #[arg(long = "disable-dht")]
+    #[arg(long = "disable-dht", env = "RQBIT_DHT_DISABLE")]
     disable_dht: bool,
 
     /// Set this to disable DHT reading and storing it's state.
     /// For now this is a useful workaround if you want to launch multiple rqbit instances,
     /// otherwise DHT port will conflict.
-    #[arg(long = "disable-dht-persistence")]
+    #[arg(
+        long = "disable-dht-persistence",
+        env = "RQBIT_DHT_PERSISTENCE_DISABLE"
+    )]
     disable_dht_persistence: bool,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse, default_value="2s")]
+    #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse, default_value="2s", env="RQBIT_PEER_CONNECT_TIMEOUT")]
     peer_connect_timeout: Duration,
 
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
-    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse, default_value="10s")]
+    #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse, default_value="10s", env="RQBIT_PEER_READ_WRITE_TIMEOUT")]
     peer_read_write_timeout: Duration,
 
     /// How many threads to spawn for the executor.
-    #[arg(short = 't', long)]
+    #[arg(short = 't', long, env = "RQBIT_RUNTIME_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
     // Enable to listen on 0.0.0.0 on TCP for torrent requests.
-    #[arg(long = "disable-tcp-listen")]
+    #[arg(long = "disable-tcp-listen", env = "RQBIT_TCP_LISTEN_DISABLE")]
     disable_tcp_listen: bool,
 
     /// The minimal port to listen for incoming connections.
-    #[arg(long = "tcp-min-port", default_value = "4240")]
+    #[arg(
+        long = "tcp-min-port",
+        default_value = "4240",
+        env = "RQBIT_TCP_LISTEN_MIN_PORT"
+    )]
     tcp_listen_min_port: u16,
 
     /// The maximal port to listen for incoming connections.
-    #[arg(long = "tcp-max-port", default_value = "4260")]
+    #[arg(
+        long = "tcp-max-port",
+        default_value = "4260",
+        env = "RQBIT_TCP_LISTEN_MAX_PORT"
+    )]
     tcp_listen_max_port: u16,
 
     /// If set, will try to publish the chosen port through upnp on your router.
-    #[arg(long = "disable-upnp")]
+    #[arg(long = "disable-upnp", env = "RQBIT_UPNP_DISABLE_PORT_FORWARD")]
     disable_upnp: bool,
 
     /// If set, will run a UPNP Media server and stream all the torrents through it.
     /// Should be set to your hostname/IP as seen by your LAN neighbors.
-    #[arg(long = "upnp-server-hostname")]
+    #[arg(long = "upnp-server-hostname", env = "RQBIT_UPNP_SERVER_HOSTNAME")]
     upnp_server_hostname: Option<String>,
 
     /// UPNP server name that would be displayed on devices in your network.
-    #[arg(long = "upnp-server-friendly-name")]
+    #[arg(
+        long = "upnp-server-friendly-name",
+        env = "RQBIT_UPNP_SERVER_FRIENDLY_NAME"
+    )]
     upnp_server_friendly_name: Option<String>,
 
     #[command(subcommand)]
@@ -111,14 +133,18 @@ struct Opts {
     /// How many maximum blocking tokio threads to spawn to process disk reads/writes.
     /// This will indicate how many parallel reads/writes can happen at a moment in time.
     /// The higher the number, the more the memory usage.
-    #[arg(long = "max-blocking-threads", default_value = "8")]
+    #[arg(
+        long = "max-blocking-threads",
+        default_value = "8",
+        env = "RQBIT_RUNTIME_MAX_BLOCKING_THREADS"
+    )]
     max_blocking_threads: u16,
 
     // If you set this to something, all writes to disk will happen in background and be
     // buffered in memory up to approximately the given number of megabytes.
     //
     // Might be useful for slow disks.
-    #[arg(long = "defer-writes-up-to")]
+    #[arg(long = "defer-writes-up-to", env = "RQBIT_DEFER_WRITES_UP_TO")]
     defer_writes_up_to: Option<usize>,
 
     /// Use mmap (file-backed) for storage. Any advantages are questionable and unproven.
@@ -130,11 +156,11 @@ struct Opts {
     /// The format is socks5://[username:password]@host:port
     ///
     /// Alternatively, set this as an environment variable RQBIT_SOCKS_PROXY_URL
-    #[arg(long)]
+    #[arg(long, env = "RQBIT_SOCKS_PROXY_URL")]
     socks_url: Option<String>,
 
     /// How many torrents can be initializing (rehashing) at the same time
-    #[arg(long, default_value = "5")]
+    #[arg(long, default_value = "5", env = "RQBIT_CONCURRENT_INIT_LIMIT")]
     concurrent_init_limit: usize,
 }
 
@@ -142,20 +168,21 @@ struct Opts {
 struct ServerStartOptions {
     /// The output folder to write to. If not exists, it will be created.
     output_folder: String,
+
     #[arg(
         long = "disable-persistence",
-        help = "Disable server persistence. It will not read or write its state to disk."
+        help = "Disable server persistence. It will not read or write its state to disk.",
+        env = "RQBIT_SESSION_PERSISTENCE_DISABLE"
     )]
-
     /// Disable session persistence.
     disable_persistence: bool,
 
     /// The folder to store session data in. By default uses OS specific folder.
-    #[arg(long = "persistence-config")]
+    #[arg(long = "persistence-config", env = "RQBIT_SESSION_PERSISTENCE_FOLDER")]
     persistence_config: Option<String>,
 
     /// [Experimental] if set, will try to resume quickly after restart and skip checksumming.
-    #[arg(long = "fastresume")]
+    #[arg(long = "fastresume", env = "RQBIT_FASTRESUME")]
     fastresume: bool,
 }
 
@@ -310,10 +337,6 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
     };
 
-    let socks_url = opts
-        .socks_url
-        .or_else(|| std::env::var("RQBIT_SOCKS_PROXY_URL").ok());
-
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
@@ -352,7 +375,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                 wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
-        socks_proxy_url: socks_url,
+        socks_proxy_url: opts.socks_url,
         concurrent_init_limit: Some(opts.concurrent_init_limit),
         root_span: None,
         fastresume: false,
