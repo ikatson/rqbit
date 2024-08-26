@@ -6,7 +6,6 @@ COPY --from=xx / /
 RUN apk update && apk add clang lld npm python3
 
 ARG TARGETPLATFORM
-RUN xx-cargo --setup-target-triple
 
 COPY / /src/
 
@@ -18,16 +17,12 @@ RUN xx-cargo build --no-default-features --features rust-tls,webui && \
 
 FROM scratch
 
-ADD https://curl.se/ca/cacert.pem /etc/ssl/cacerts.pem
-
 COPY --from=builder /bin/rqbit /bin/rqbit
 
 WORKDIR /home/rqbit
 
 ENV XDG_DATA_HOME=/home/rqbit/db
 ENV XDG_CACHE_HOME=/home/rqbit/cache
-ENV SSL_CERT_FILE=/etc/ssl/cacerts.pem
-
 ENV RQBIT_HTTP_API_LISTEN_ADDR=0.0.0.0:3030
 ENV RQBIT_TCP_LISTEN_MIN_PORT=4240
 ENV RQBIT_TCP_LISTEN_MAX_PORT=4260
