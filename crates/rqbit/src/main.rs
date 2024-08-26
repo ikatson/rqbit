@@ -18,7 +18,7 @@ use librqbit::{
 use size_format::SizeFormatterBinary as SF;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, info, trace_span, warn};
+use tracing::{error, error_span, info, trace_span, warn};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -365,20 +365,24 @@ fn main() -> anyhow::Result<()> {
         let mut signals = Signals::new([SIGINT, SIGTERM])?;
         thread::spawn(move || {
             if let Some(sig) = signals.forever().next() {
-                warn!("Received signal {:?}", sig);
+                warn!("received signal {:?}, shutting down", sig);
                 token.cancel();
+                std::thread::sleep(Duration::from_secs(5));
+                warn!("could not shutdown in time, killing myself");
+                std::process::exit(1)
             }
         });
     }
 
-    rt.block_on(async move {
-        let res = async_main(opts, token.clone()).await;
-        if let Err(e) = res {
-            error!("error running rqbit: {e:?}");
-            std::process::exit(1);
-        }
-        std::process::exit(0);
-    })
+    let result = rt.block_on(async_main(opts, token.clone()));
+    if let Err(e) = result.as_ref() {
+        error!("error running rqbit: {e:?}");
+    }
+    rt.shutdown_timeout(Duration::from_secs(1));
+    match result {
+        Ok(_) => std::process::exit(0),
+        Err(_) => std::process::exit(1),
+    }
 }
 
 async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()> {
@@ -586,7 +590,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     },
                 };
 
-                res.context("error running rqbit server")
+                res.context("error running server")
             }
         },
         SubCommand::Download(download_opts) => {
