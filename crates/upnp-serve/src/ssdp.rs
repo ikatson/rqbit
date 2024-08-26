@@ -6,6 +6,7 @@ use std::{
 use anyhow::{bail, Context};
 use bstr::BStr;
 use tokio::net::UdpSocket;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use crate::constants::{UPNP_KIND_MEDIASERVER, UPNP_KIND_ROOT_DEVICE};
@@ -13,6 +14,9 @@ use crate::constants::{UPNP_KIND_MEDIASERVER, UPNP_KIND_ROOT_DEVICE};
 const UPNP_PORT: u16 = 1900;
 const UPNP_BROADCAST_IP: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 const UPNP_BROADCAST_ADDR: SocketAddrV4 = SocketAddrV4::new(UPNP_BROADCAST_IP, UPNP_PORT);
+
+const NTS_ALIVE: &str = "ssdp:alive";
+const NTS_BYEBYE: &str = "ssdp:byebye";
 
 #[derive(Debug)]
 pub enum SsdpMessage<'a, 'h> {
@@ -93,6 +97,7 @@ pub struct SsdpRunnerOptions {
     pub description_http_location: String,
     pub server_string: String,
     pub notify_interval: Duration,
+    pub shutdown: CancellationToken,
 }
 
 pub struct SsdpRunner {
@@ -104,10 +109,10 @@ impl SsdpRunner {
     pub async fn new(opts: SsdpRunnerOptions) -> anyhow::Result<Self> {
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT);
         trace!(addr=?bind_addr, "binding UDP");
-        let socket =
-            tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT))
-                .await
-                .context("error binding")?;
+        let socket = tokio::net::UdpSocket::bind(bind_addr)
+            .await
+            .context(bind_addr)
+            .context("error binding")?;
 
         trace!(multiaddr=?UPNP_BROADCAST_IP, interface=?Ipv4Addr::UNSPECIFIED, "joining multicast v4 group");
         socket
@@ -117,7 +122,7 @@ impl SsdpRunner {
         Ok(Self { opts, socket })
     }
 
-    fn generate_notify_message(&self, kind: &str) -> String {
+    fn generate_notify_message(&self, kind: &str, nts: &str) -> String {
         let usn: &str = &self.opts.usn;
         let description_http_location = &self.opts.description_http_location;
         let server: &str = &self.opts.server_string;
@@ -128,7 +133,7 @@ Host: {bcast_addr}\r
 Cache-Control: max-age=75\r
 Location: {description_http_location}\r
 NT: {kind}\r
-NTS: ssdp:alive\r
+NTS: {nts}\r
 Server: {server}\r
 USN: {usn}::{kind}\r
 \r
@@ -153,9 +158,9 @@ Content-Length: 0\r\n\r\n"
         )
     }
 
-    async fn try_send_notifies(&self) {
+    async fn try_send_notifies(&self, nts: &str) {
         for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
-            let msg = self.generate_notify_message(kind);
+            let msg = self.generate_notify_message(kind, nts);
             trace!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
             if let Err(e) = self
                 .socket
@@ -163,15 +168,17 @@ Content-Length: 0\r\n\r\n"
                 .await
             {
                 warn!(error=?e, "error sending SSDP NOTIFY")
+            } else {
+                debug!(kind, nts, "sent SSDP NOTIFY")
             }
         }
     }
 
-    async fn task_send_notifies_periodically(&self) -> anyhow::Result<()> {
+    async fn task_send_alive_notifies_periodically(&self) -> anyhow::Result<()> {
         let mut interval = tokio::time::interval(self.opts.notify_interval);
         loop {
             interval.tick().await;
-            self.try_send_notifies().await;
+            self.try_send_notifies(NTS_ALIVE).await;
         }
     }
 
@@ -242,7 +249,7 @@ MX: 2\r\n\r\n";
         self.send_msearch().await?;
 
         let t1 = self.task_respond_on_msearches();
-        let t2 = self.task_send_notifies_periodically();
+        let t2 = self.task_send_alive_notifies_periodically();
 
         tokio::pin!(t1);
         tokio::pin!(t2);
@@ -250,6 +257,10 @@ MX: 2\r\n\r\n";
         tokio::select! {
             r = &mut t1 => r,
             r = &mut t2 => r,
+            _ = self.opts.shutdown.cancelled() => {
+                self.try_send_notifies(NTS_BYEBYE).await;
+                bail!("canceled");
+            }
         }
     }
 }

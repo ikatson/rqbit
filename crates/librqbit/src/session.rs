@@ -403,6 +403,8 @@ pub struct SessionOptions {
     // socks5://[username:password@]host:port
     pub socks_proxy_url: Option<String>,
 
+    pub cancellation_token: Option<CancellationToken>,
+
     // how many concurrent torrent initializations can happen
     pub concurrent_init_limit: Option<usize>,
 
@@ -481,7 +483,7 @@ impl Session {
     ) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
             let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
-            let token = CancellationToken::new();
+            let token = opts.cancellation_token.take().unwrap_or_default();
 
             let (tcp_listener, tcp_listen_port) =
                 if let Some(port_range) = opts.listen_port_range.clone() {

@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, thread, time::Duration};
 
 use anyhow::{bail, Context};
 use clap::{CommandFactory, Parser, ValueEnum};
@@ -17,7 +17,8 @@ use librqbit::{
 };
 use size_format::SizeFormatterBinary as SF;
 use tokio::net::TcpListener;
-use tracing::{error, error_span, info, trace_span, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, error_span, info, trace_span, warn};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -357,10 +358,30 @@ fn main() -> anyhow::Result<()> {
         .max_blocking_threads(opts.max_blocking_threads as usize)
         .build()?;
 
-    rt.block_on(async_main(opts))
+    let token = tokio_util::sync::CancellationToken::new();
+    {
+        let token = token.clone();
+        use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
+        let mut signals = Signals::new([SIGINT, SIGTERM])?;
+        thread::spawn(move || {
+            if let Some(sig) = signals.forever().next() {
+                warn!("Received signal {:?}", sig);
+                token.cancel();
+            }
+        });
+    }
+
+    rt.block_on(async move {
+        let res = async_main(opts, token.clone()).await;
+        if let Err(e) = res {
+            error!("error running rqbit: {e:?}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    })
 }
 
-async fn async_main(opts: Opts) -> anyhow::Result<()> {
+async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()> {
     let log_config = init_logging(InitLoggingOptions {
         default_rust_log_value: Some(match opts.log_level.unwrap_or(LogLevel::Info) {
             LogLevel::Trace => "trace",
@@ -420,6 +441,7 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
         concurrent_init_limit: Some(opts.concurrent_init_limit),
         root_span: None,
         fastresume: false,
+        cancellation_token: Some(cancel.clone()),
     };
 
     let stats_printer = |session: Arc<Session>| async move {
@@ -553,15 +575,15 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     Some(srv) => {
                         let upnp_fut = srv.run_ssdp_forever();
 
-                        tokio::pin!(http_api_fut);
-                        tokio::pin!(upnp_fut);
-
                         tokio::select! {
-                            r = &mut http_api_fut => r,
-                            r = &mut upnp_fut => r
+                            r = http_api_fut => r,
+                            r = upnp_fut => r
                         }
                     }
-                    None => http_api_fut.await,
+                    None => tokio::select! {
+                        _ = cancel.cancelled() => bail!("cancelled"),
+                        r = http_api_fut => r,
+                    },
                 };
 
                 res.context("error running rqbit server")
@@ -726,8 +748,13 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                     if download_opts.exit_on_finish {
                         let results = futures::future::join_all(
                             handles.iter().map(|h| h.wait_until_completed()),
-                        )
-                        .await;
+                        );
+                        let results = tokio::select! {
+                            _ = cancel.cancelled() => {
+                                bail!("cancelled");
+                            },
+                            r = results => r
+                        };
                         if results.iter().any(|r| r.is_err()) {
                             anyhow::bail!("some downloads failed")
                         }
@@ -735,9 +762,8 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
                         Ok(())
                     } else {
                         // Sleep forever.
-                        loop {
-                            tokio::time::sleep(Duration::from_secs(60)).await;
-                        }
+                        cancel.cancelled().await;
+                        bail!("cancelled");
                     }
                 } else {
                     anyhow::bail!("no torrents were added")

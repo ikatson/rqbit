@@ -46,6 +46,8 @@ bytes = "1.5.0"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 upnp-serve = { path = "../upnp-serve" }
 libc = "0.2.158"
+signal-hook = "0.3.17"
+tokio-util = "0.7.11"
 
 [dev-dependencies]
 futures = { version = "0.3" }
