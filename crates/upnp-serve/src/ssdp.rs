@@ -110,8 +110,12 @@ impl SsdpRunner {
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT);
         let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)
             .context("error creating socket")?;
+        #[cfg(not(target_os = "windows"))]
         sock.set_reuse_port(true)
             .context("error setting SO_REUSEPORT")?;
+        #[cfg(target_os = "windows")]
+        sock.set_reuse_address(true)
+            .context("error setting SO_REUSEADDR")?;
 
         trace!(addr=?bind_addr, "binding UDP");
         sock.bind(&bind_addr.into())
