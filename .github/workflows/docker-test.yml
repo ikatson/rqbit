@@ -13,7 +13,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: cross-compile all binaries
-        run: mkdir -p target/cross &&
+        run: mkdir -p target/cross && docker buildx ls &&
           docker build --platform linux/amd64,linux/arm64,linux/arm/v7
           -f docker/Dockerfile.xx
           --output type=local,dest=target/cross .
