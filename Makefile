@@ -97,10 +97,10 @@ release-linux: release-linux-x86_64 release-linux-aarch64 release-linux-armv6 re
 
 @PHONY: release-linux-x86_64
 release-linux-x86_64:
-	TARGET=x86_64-unknown-linux-gnu \
-	TARGET_SNAKE_CASE=x86_64_unknown_linux_gnu \
-	TARGET_SNAKE_UPPER_CASE=X86_64_UNKNOWN_LINUX_GNU \
-	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-gnu \
+	TARGET=x86_64-unknown-linux-musl \
+	TARGET_SNAKE_CASE=x86_64_unknown_linux_musl \
+	TARGET_SNAKE_UPPER_CASE=X86_64_UNKNOWN_LINUX_MUSL \
+	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
 @PHONY: release-linux-aarch64
