@@ -36,6 +36,23 @@ Download it in [Releases](https://github.com/ikatson/rqbit/releases) for OSX and
 
 <img width="1136" alt="Rqbit desktop" src="https://github.com/ikatson/rqbit/assets/221386/51f56542-667f-4f5e-a1e0-942b1df4cd5a">
 
+## Streaming support
+
+rqbit can stream torrent files and smartly block the stream until the pieces are available. The pieces getting streamed are prioritized. All of this allows you to seek and live stream videos for example.
+
+You can also stream to e.g. VLC or other players with HTTP URLs. Supports seeking too (through various range headers).
+The streaming URLs look like http://IP:3030/torrents/<torrent_id>/stream/<file_id>
+
+## Integrated UPnP Media Server
+
+rqbit can advertise managed torrents to LAN, e.g. your TVs and stream torrents there (without transcoding). Seeking to arbitrary points in the videos is supported too.
+
+Usage from CLI
+
+```
+rqbit --upnp-server-hostname <YOUR_IP_VISIBLE_FROM_LAN> server start ...
+```
+
 ## Performance
 
 Anecdotally from a few reports, rqbit is faster than other clients they've tried, at least with their default settings.
@@ -56,6 +73,10 @@ If you have rust toolchain installed, this should work:
 ```
 cargo install rqbit
 ```
+
+## Docker
+
+Docker images are published at [ikatson/rqbit](https://hub.docker.com/r/ikatson/rqbit)
 
 ## Build
 
@@ -99,13 +120,10 @@ Use a regex here to select files by their names.
 - Pausing / unpausing / deleting (with files or not) APIs
 - Stateful server
 - Web UI
-
-### Bugs, missing features and other caveats
-
-PRs are very welcome.
-
-- Only supports BitTorrent V1 over TCP
-- As this was created for personal needs, and for educational purposes, documentation, commit message quality etc. leave a lot to be desired.
+- Streaming, with seeking
+- UPNP port forwarding to your router
+- UPNP Media Server
+- Fastresume (no rehashing)
 
 ## HTTP API
 
@@ -165,6 +183,8 @@ Supported query parameters, all optional:
 - crates/sha1w - wrappers around sha1 libraries
 - crates/peer_binary_protocol - the protocol to talk to peers
 - crates/dht - Distributed Hash Table implementation
+- crates/upnp - upnp port forwarding
+- crates/upnp_serve - upnp MediaServer
 - desktop - desktop app built with [Tauri](https://tauri.app/)
 
 ## Motivation
