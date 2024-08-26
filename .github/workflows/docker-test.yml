@@ -11,10 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        id: builder1
 
       - name: cross-compile all binaries
         run: mkdir -p target/cross && docker buildx ls &&
-          buildx build --platform linux/amd64,linux/arm64,linux/arm/v7
+          docker build --builder ${{ steps.builder1.outputs.name }} --platform linux/amd64,linux/arm64,linux/arm/v7
           -f docker/Dockerfile.xx
           --output type=local,dest=target/cross .
 
