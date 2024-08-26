@@ -28,6 +28,7 @@ enum LogLevel {
     Error,
 }
 
+#[cfg(not(target_os = "windows"))]
 fn parse_umask(value: &str) -> anyhow::Result<libc::mode_t> {
     fn parse_oct_digit(d: u8) -> Option<libc::mode_t> {
         Some(match d {
@@ -194,6 +195,7 @@ struct Opts {
     /// This will affect the file mode of created files.
     ///
     /// Read more at https://man7.org/linux/man-pages/man2/umask.2.html
+    #[cfg(not(target_os = "windows"))]
     #[arg(long, env = "RQBIT_UMASK", value_parser=parse_umask)]
     umask: Option<libc::mode_t>,
 }
@@ -328,6 +330,7 @@ fn _start_deadlock_detector_thread() {
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
+    #[cfg(not(target_os = "windows"))]
     if let Some(umask) = opts.umask {
         unsafe { libc::umask(umask) };
     }
@@ -755,10 +758,10 @@ async fn async_main(opts: Opts) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse_umask;
-
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_parse_umask() {
+        use crate::parse_umask;
         let range = b'0'..=b'7';
         for d0 in range.clone() {
             for d1 in range.clone() {
