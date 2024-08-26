@@ -1,3 +1,4 @@
+# Dockerfile for cross compiling rqbit binaries from scratch inside docker.
 FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
 
 FROM --platform=$BUILDPLATFORM rust:alpine AS builder
@@ -26,20 +27,3 @@ RUN --mount=type=cache,target=/root/.cargo/git/db \
 FROM scratch
 
 COPY --from=builder /bin/rqbit /bin/rqbit
-
-WORKDIR /home/rqbit
-
-ENV XDG_DATA_HOME=/home/rqbit/db
-ENV XDG_CACHE_HOME=/home/rqbit/cache
-ENV RQBIT_HTTP_API_LISTEN_ADDR=0.0.0.0:3030
-ENV RQBIT_TCP_LISTEN_MIN_PORT=4240
-ENV RQBIT_TCP_LISTEN_MAX_PORT=4260
-
-VOLUME /home/rqbit/db
-VOLUME /home/rqbit/cache
-VOLUME /home/rqbit/downloads
-
-EXPOSE 3030
-EXPOSE 4240
-CMD ["server", "start", "/home/rqbit/downloads"]
-ENTRYPOINT ["/bin/rqbit"]

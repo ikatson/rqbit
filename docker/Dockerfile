@@ -1,3 +1,4 @@
+# Depends on either outputs of Dockerfile.xx or the binaries compiled elsewhere.
 FROM scratch
 
 ARG TARGETPLATFORM

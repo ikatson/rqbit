@@ -19,22 +19,30 @@ jobs:
           -f docker/Dockerfile.xx
           --output type=local,dest=target/cross .
 
-      - name: Archive target/cross/
-        uses: actions/upload-artifact@v4
+      # linux_amd64/bin/rqbit -> linux/amd64/rqbit
+      # linux_arm64/bin/rqbit -> linux/arm64/rqbit
+      # linux_arm_v7/bin/rqbit -> linux/arm/v7/rqbit
+      - name: Reorganize binaries in target/cross
+        run:
+          mkdir -p target/cross/linux/amd64/ target/cross/linux/arm64/ target/cross/linux/arm/v7 &&
+          cd target/cross/ &&
+          mv linux_amd64/bin/rqbit linux/amd64/ && chmod +x linux/amd64/rqbit &&
+          mv linux_arm64/bin/rqbit linux/arm64/ && chmod +x linux/arm64/rqbit &&
+          mv linux_arm_v7/bin/rqbit linux/arm/v7/ && chmod +x linux/arm/v7/rqbit
+
+      # TODO: publish these as artifacts
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          name: cross-compiled-binaries
-          path: target/cross/
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # - name: Login to Docker Hub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ vars.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # - name: Build and push
-      #   uses: docker/build-push-action@v6
-      #   with:
-      #     push: true
-      #     tags: ikatson/rqbit:test-${{ github.ref_name }}
-      #     platforms: linux/amd64,linux/arm64,linux/arm/v7
-      #     file: docker/Dockerfile.xx
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ikatson/rqbit:${{ github.ref_name }}
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          context: target/cross/
+          file: docker/Dockerfile.xx
