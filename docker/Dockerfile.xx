@@ -6,6 +6,7 @@ COPY --from=xx / /
 RUN apk update && apk add clang lld npm python3
 
 COPY / /src/
+WORKDIR /src/
 
 RUN --mount=type=cache,target=/root/.cargo/git/db \
     --mount=type=cache,target=/root/.cargo/registry/cache \
@@ -13,7 +14,6 @@ RUN --mount=type=cache,target=/root/.cargo/git/db \
     cargo fetch
 
 ARG TARGETPLATFORM
-WORKDIR /src/
 ENV PROFILE=release-github
 
 RUN --mount=type=cache,target=/root/.cargo/git/db \
