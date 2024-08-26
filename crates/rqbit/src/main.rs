@@ -359,6 +359,7 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     let token = tokio_util::sync::CancellationToken::new();
+    #[cfg(not(target_os = "windows"))]
     {
         let token = token.clone();
         use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
