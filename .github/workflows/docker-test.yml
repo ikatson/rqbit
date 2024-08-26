@@ -14,8 +14,8 @@ jobs:
 
       - name: cross-compile all binaries
         run: mkdir -p target/cross &&
-          docker build --platform linux/amd64,linux/arm64,linux/arm/v7 \
-          -f docker/Dockerfile.xx \
+          docker build --platform linux/amd64,linux/arm64,linux/arm/v7
+          -f docker/Dockerfile.xx
           --output type=local,dest=target/cross .
 
       - name: Archive target/cross/
