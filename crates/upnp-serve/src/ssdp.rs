@@ -108,11 +108,19 @@ pub struct SsdpRunner {
 impl SsdpRunner {
     pub async fn new(opts: SsdpRunnerOptions) -> anyhow::Result<Self> {
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, UPNP_PORT);
+        let sock = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None)
+            .context("error creating socket")?;
+        sock.set_reuse_port(true)
+            .context("error setting SO_REUSEPORT")?;
+
         trace!(addr=?bind_addr, "binding UDP");
-        let socket = tokio::net::UdpSocket::bind(bind_addr)
-            .await
+        sock.bind(&bind_addr.into())
             .context(bind_addr)
             .context("error binding")?;
+
+        sock.set_nonblocking(true)?;
+        let socket = tokio::net::UdpSocket::from_std(sock.into())
+            .context("error converting socket2 socket to tokio")?;
 
         trace!(multiaddr=?UPNP_BROADCAST_IP, interface=?Ipv4Addr::UNSPECIFIED, "joining multicast v4 group");
         socket
