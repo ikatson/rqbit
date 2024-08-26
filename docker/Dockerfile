@@ -7,18 +7,18 @@ COPY --chmod=755 ${TARGETPLATFORM}/rqbit /bin/rqbit
 
 WORKDIR /home/rqbit
 
-ENV XDG_DATA_HOME=/home/rqbit/config
+ENV XDG_DATA_HOME=/home/rqbit/db
 ENV XDG_CACHE_HOME=/home/rqbit/cache
 
-ENV RQBIT_HTTP_API_LISTEN_ADDR=0.0.0.0:3000
+ENV RQBIT_HTTP_API_LISTEN_ADDR=0.0.0.0:3030
 ENV RQBIT_TCP_LISTEN_MIN_PORT=4240
-ENV RQBIT_TCP_LISTEN_MAX_PORT=4241
+ENV RQBIT_TCP_LISTEN_MAX_PORT=4260
 
-VOLUME /home/rqbit/config
+VOLUME /home/rqbit/db
 VOLUME /home/rqbit/cache
-VOLUME /home/rqbit/output
+VOLUME /home/rqbit/downloads
 
-EXPOSE 3000
+EXPOSE 3030
 EXPOSE 4240
-CMD ["server", "start", "/home/rqbit/output"]
+CMD ["server", "start", "/home/rqbit/downloads"]
 ENTRYPOINT ["/bin/rqbit"]

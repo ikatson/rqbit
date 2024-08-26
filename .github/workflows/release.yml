@@ -94,7 +94,7 @@ jobs:
 
       - name: Build release linux armv7 binary
         run: rustup target install armv7-unknown-linux-musleabihf &&
-          make release-linux-armv7-musl &&
+          make release-linux-armv7 &&
           cp -l target/armv7-unknown-linux-musleabihf/release-github/rqbit target/artifacts/rqbit-linux-static-armv7-musl
       - uses: softprops/action-gh-release@v1
         with:

@@ -1,0 +1,27 @@
+services:
+  rqbit:
+    image: ikatson/rqbit:v7.0.0-beta.3
+    # Host network required for several things to work:
+    # - upnp discovery for port forwarding to your router
+    # - upnp UDP multicast announce MediaServer
+    # - upnp server UDP multicast
+    network_mode: host
+    ports:
+      - 3030:3030 # HTTP API port
+      - 4240:4240 # TCP BitTorrent port
+    environment:
+      # Replace this with your LAN hostname or IP, resolvable from other devices in your LAN
+      RQBIT_UPNP_SERVER_HOSTNAME: 192.168.0.112
+      RQBIT_UPNP_SERVER_FRIENDLY_NAME: rqbit-docker
+
+      # Replace this if you want to change the HTTP/Web UI port
+      # RQBIT_HTTP_API_LISTEN_ADDR: 0.0.0.0:3030
+    volumes:
+      - db:/home/rqbit/db
+      - cache:/home/rqbit/cache
+      # Replace /tmp/scratch with your downloads folder
+      - /tmp/scratch:/home/rqbit/downloads
+
+volumes:
+  db: {}
+  cache: {}

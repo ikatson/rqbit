@@ -106,9 +106,9 @@ release-linux-x86_64:
 @PHONY: create-target-docker
 create-target-docker:
 	mkdir -p target/docker/linux/amd64 target/docker/linux/arm64 target/docker/linux/arm/v7 && \
-	cp -l target/x86_64-unknown-linux-musl/release-github/rqbit target/docker/linux/amd64/rqbit && \
-	cp -l target/aarch64-unknown-linux-musl/release-github/rqbit target/docker/linux/arm64/rqbit && \
-	cp -l target/armv7-unknown-linux-musleabihf/release-github/rqbit target/docker/linux/arm/v7/rqbit && \
+	cp -lf target/x86_64-unknown-linux-musl/release-github/rqbit target/docker/linux/amd64/rqbit && \
+	cp -lf target/aarch64-unknown-linux-musl/release-github/rqbit target/docker/linux/arm64/rqbit && \
+	cp -lf target/armv7-unknown-linux-musleabihf/release-github/rqbit target/docker/linux/arm/v7/rqbit && \
 	cp docker/Dockerfile target/Docker
 
 @PHONY: docker-build

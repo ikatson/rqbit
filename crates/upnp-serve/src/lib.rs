@@ -7,7 +7,7 @@ use librqbit_sha1_wrapper::ISha1;
 use ssdp::SsdpRunner;
 
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, info};
 use upnp_types::content_directory::ContentDirectoryBrowseProvider;
 
 mod constants;
@@ -63,6 +63,10 @@ impl UpnpServer {
             format!("http://{hostname}:{port}{http_prefix}/description.xml")
         };
 
+        info!(
+            location = description_http_location,
+            "starting UPnP/SSDP announcer for MediaServer"
+        );
         let ssdp_runner = crate::ssdp::SsdpRunner::new(ssdp::SsdpRunnerOptions {
             usn: usn.clone(),
             description_http_location,
