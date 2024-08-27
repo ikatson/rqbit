@@ -26,7 +26,7 @@ jobs:
             usr-local-cargo-registry-cache
             usr-local-cargo-registry-index
             src-target
-          key: docker-xx-v1-${{ matrix.platform }}
+          key: docker-xx-v1-${{ matrix.platform }}-release
           save-always: true
 
       - name: inject cache into docker
