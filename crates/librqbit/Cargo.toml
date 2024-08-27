@@ -26,7 +26,8 @@ postgres = ["sqlx"]
 async-bt = ["async-backtrace"]
 
 [dependencies]
-sqlx = { version = "0.8", features = [
+# TODO: 0.8.1 doesn't compile, upgrade once released.
+sqlx = { version = "=0.8.0", features = [
     "runtime-tokio",
     "postgres",
 ], optional = true }

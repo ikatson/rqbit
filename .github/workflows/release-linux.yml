@@ -66,7 +66,7 @@ jobs:
       - name: copy binary for release
         run: |
           cd target/cross
-          cp -l ${{ matrix.platform }}/arm/v7/rqbit rqbit-${{ steps.gen_artifact_key.outputs.key }}
+          cp -l ${{ matrix.platform }}/rqbit rqbit-${{ steps.gen_artifact_key.outputs.key }}
 
       - uses: softprops/action-gh-release@v1
         with:
