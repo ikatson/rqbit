@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{broadcast::error::RecvError, Notify};
-use tracing::{debug, error_span, warn, Instrument};
+use tracing::{debug, error_span, trace, warn, Instrument};
 
 pub struct Subscription {
     pub url: url::Url,
@@ -134,6 +134,7 @@ impl UpnpServerStateInner {
                         let seq = state.subscriptions.next_seq(&sid)?;
                         match res {
                             Ok(system_update_id) => {
+                                trace!(system_update_id, "notifying SystemUpdateId update");
                                 if let Err(e) = notify_subscription_system_update(
                                     &url,
                                     &sid,
@@ -190,7 +191,7 @@ impl UpnpServerStateInner {
         };
 
         spawn_with_cancel(
-            error_span!(parent: pspan, "subscription-manager", %url),
+            error_span!(parent: pspan, "subscription-manager", sid, %url),
             token,
             subscription_manager,
         );
