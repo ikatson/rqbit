@@ -32,7 +32,7 @@ rand = "0.8"
 indexmap = "2"
 dashmap = { version = "5.5.3", features = ["serde"] }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-librqbit-core = { path = "../librqbit_core", version = "4" }
+librqbit-core = { path = "../librqbit_core", default-features = false, version = "4" }
 chrono = { version = "0.4.31", features = ["serde"] }
 tokio-util = "0.7.10"
 bytes = "1.7.1"

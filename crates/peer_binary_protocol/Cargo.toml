@@ -16,7 +16,7 @@ byteorder = "1"
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.1" }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-librqbit-core = { path = "../librqbit_core", version = "4" }
+librqbit-core = { path = "../librqbit_core", default-features = false, version = "4" }
 bitvec = "1"
 anyhow = "1"
 bytes = "1.7.1"

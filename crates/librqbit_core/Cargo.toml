@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "4.0.0"
+version = "4.0.1"
 edition = "2021"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
@@ -9,6 +9,10 @@ repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["sha1-crypto-hash"]
+sha1-crypto-hash = ["bencode/sha1-crypto-hash"]
+sha1-ring = ["bencode/sha1-ring"]
 
 [dependencies]
 tracing = "0.1.40"
@@ -20,7 +24,7 @@ uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4" }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.0.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 itertools = "0.12"
 directories = "5"

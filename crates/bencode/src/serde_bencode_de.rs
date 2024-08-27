@@ -1,6 +1,5 @@
 use buffers::ByteBuf;
 use serde::de::Error as DeError;
-use sha1w::{ISha1, Sha1};
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
@@ -539,16 +538,21 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
     where
         V: serde::de::DeserializeSeed<'de>,
     {
+        #[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
         let buf_before = self.de.buf;
         let value = seed.deserialize(&mut *self.de)?;
-        if self.de.is_torrent_info && self.de.field_context.as_slice() == [ByteBuf(b"info")] {
-            let len = self.de.buf.as_ptr() as usize - buf_before.as_ptr() as usize;
-            let mut hash = Sha1::new();
-            let torrent_info_bytes = &buf_before[..len];
-            hash.update(torrent_info_bytes);
-            let digest = hash.finish();
-            self.de.torrent_info_digest = Some(digest);
-            self.de.torrent_info_bytes = Some(torrent_info_bytes);
+        #[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
+        {
+            use sha1w::{ISha1, Sha1};
+            if self.de.is_torrent_info && self.de.field_context.as_slice() == [ByteBuf(b"info")] {
+                let len = self.de.buf.as_ptr() as usize - buf_before.as_ptr() as usize;
+                let mut hash = Sha1::new();
+                let torrent_info_bytes = &buf_before[..len];
+                hash.update(torrent_info_bytes);
+                let digest = hash.finish();
+                self.de.torrent_info_digest = Some(digest);
+                self.de.torrent_info_bytes = Some(torrent_info_bytes);
+            }
         }
         self.de.field_context.pop();
         Ok(value)
