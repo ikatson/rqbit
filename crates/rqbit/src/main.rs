@@ -215,8 +215,12 @@ struct ServerStartOptions {
     disable_persistence: bool,
 
     /// The folder to store session data in. By default uses OS specific folder.
-    #[arg(long = "persistence-config", env = "RQBIT_SESSION_PERSISTENCE_FOLDER")]
-    persistence_config: Option<String>,
+    /// If starts with postgres://, will use postgres as the backend instead of JSON file.
+    #[arg(
+        long = "persistence-location",
+        env = "RQBIT_SESSION_PERSISTENCE_LOCATION"
+    )]
+    persistence_location: Option<String>,
 
     /// [Experimental] if set, will try to resume quickly after restart and skip checksumming.
     #[arg(long = "fastresume", env = "RQBIT_FASTRESUME")]
@@ -505,7 +509,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
                 if !start_opts.disable_persistence {
-                    if let Some(p) = start_opts.persistence_config.as_ref() {
+                    if let Some(p) = start_opts.persistence_location.as_ref() {
                         if p.starts_with("postgres://") {
                             #[cfg(feature = "postgres")]
                             {

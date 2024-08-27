@@ -15,32 +15,33 @@ webui-build: webui-deps
 	cd crates/librqbit/webui && \
 	npm run build
 
-@PHONY: devserver
-devserver:
-	echo -n '' > /tmp/rqbit-log && CORS_ALLOW_REGEXP=".*" \
-	   cargo run -- \
-		--log-file /tmp/rqbit-log \
-		--log-file-rust-log=debug,librqbit=trace,upnp_serve=trace \
-		--http-api-listen-addr 0.0.0.0:3030 \
-		--upnp-server-hostname "$(shell hostname)" \
-		--upnp-server-friendly-name rqbit-dev \
-		server start /tmp/scratch/
+# NOTE: on LG TV using hostname is unstable for some reason, use IP address.
+export RQBIT_UPNP_SERVER_HOSTNAME ?= $(shell hostname)
+export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
+export RQBIT_HTTP_API_LISTEN_ADDR ?= 0.0.0.0:3030
+RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
+RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit
 
 @PHONY: devserver-release
 devserver-profile:
-	cargo run --release -- \
-	   --http-api-listen-addr 0.0.0.0:3030 \
-        --upnp-server-hostname "$(shell hostname)" \
-        --upnp-server-friendly-name rqbit-dev \
-        server start /tmp/scratch/
+	cargo run --release -- server start $(RQBIT_OUTPUT_FOLDER)
+
+# DEV variables (that's why defined after devserver-profile)
+export RQBIT_LOG_FILE ?= /tmp/rqbit-log
+export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace
+export CORS_ALLOW_REGEXP ?= '.*'
+
+@PHONY: devserver
+devserver:
+	echo -n '' > /tmp/rqbit-log && \
+	   cargo run -- \
+	   server start $(RQBIT_OUTPUT_FOLDER)
 
 @PHONY: devserver
 devserver-postgres:
-	echo -n '' > /tmp/rqbit-log && CORS_ALLOW_REGEXP=".*" \
-	   cargo run -- \
-		--log-file /tmp/rqbit-log \
-		--log-file-rust-log=debug,librqbit=trace \
-		server start --fastresume --persistence-config postgres:///rqbit /tmp/scratch/
+	echo -n '' > /tmp/rqbit-log && \
+	cargo run -- \
+	server start --fastresume --persistence-location $(RQBIT_POSTGRES_CONNECTION_STRING) $(RQBIT_OUTPUT_FOLDER)
 
 @PHONY: clean
 clean:
@@ -64,10 +65,6 @@ install: build-release
 	$(MAKE) sign-release
 	install target/release/rqbit "$(HOME)/bin/"
 
-@PHONY: test
-test:
-	ulimit -n unlimited && cargo test
-
 @PHONY: release-macos-universal
 release-macos-universal:
 	cargo build --target aarch64-apple-darwin --profile release-github
@@ -77,12 +74,6 @@ release-macos-universal:
 		./target/x86_64-apple-darwin/release-github/rqbit \
 		-create \
 		-output ./target/x86_64-apple-darwin/release-github/rqbit-osx-universal
-
-@PHONY: release-windows
-release-windows:
-	# prereqs:
-	# brew install mingw-w64
-	cargo build --target x86_64-pc-windows-gnu --profile release-github
 
 @PHONY: release-linux-current-target
 release-linux-current-target:
@@ -103,6 +94,9 @@ release-linux-x86_64:
 	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
+@PHONY: docker-build-prereqs
+docker-build-prereqs: release-linux-aarch64 release-linux-x86_64 release-linux-armv7
+
 @PHONY: create-target-docker
 create-target-docker:
 	mkdir -p target/docker/linux/amd64 target/docker/linux/arm64 target/docker/linux/arm/v7 && \
@@ -110,9 +104,6 @@ create-target-docker:
 	cp -lf target/aarch64-unknown-linux-musl/release-github/rqbit target/docker/linux/arm64/rqbit && \
 	cp -lf target/armv7-unknown-linux-musleabihf/release-github/rqbit target/docker/linux/arm/v7/rqbit && \
 	cp docker/Dockerfile target/Docker
-
-@PHONE: docker-build-prereqs
-docker-build-prereqs: release-linux-aarch64 release-linux-x86_64 release-linux-armv7
 
 @PHONY: docker-build
 docker-build: create-target-docker
