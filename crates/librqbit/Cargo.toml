@@ -34,7 +34,7 @@ sqlx = { version = "=0.8.0", features = [
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
 tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2" }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.1" }
-librqbit-core = { path = "../librqbit_core", version = "4" }
+librqbit-core = { path = "../librqbit_core", default-features = false, version = "4" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.1" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4" }
