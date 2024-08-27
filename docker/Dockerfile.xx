@@ -4,18 +4,13 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
 FROM --platform=$BUILDPLATFORM rust:alpine AS builder
 COPY --from=xx / /
 
-RUN apk update && apk add clang lld npm python3
+RUN apk update && apk add clang lld npm python3 perl make
 
 ARG TARGETPLATFORM
 RUN xx-apk add musl-dev
 
 COPY / /src/
 WORKDIR /src/
-
-RUN --mount=type=cache,target=/root/.cargo/git/db \
-    --mount=type=cache,target=/root/.cargo/registry/cache \
-    --mount=type=cache,target=/root/.cargo/registry/index \
-    cargo fetch
 
 ENV PROFILE=release-github
 
