@@ -56,10 +56,15 @@ jobs:
       - name: list files
         run: find target/cross/
 
+      - name: generate-archive-key
+        id: gen_artifact_key
+        run: |
+          echo "key=$(echo ${{ matrix.platform }} | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Archive target/cross/
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}
+          name: ${{ steps.gen_artifact_key.outputs.key }}
           path: target/cross/${{ matrix.platform }}/rqbit
 
   build-push-docker-multiarch:
@@ -70,17 +75,17 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: linux/arm/v7
+          name: linux-arm-v7
           path: target/cross/linux/arm/v7/rqbit
 
       - uses: actions/download-artifact@v4
         with:
-          name: linux/arm64
+          name: linux-arm64
           path: target/cross/linux/arm64/rqbit
 
       - uses: actions/download-artifact@v4
         with:
-          name: linux/amd64
+          name: linux-amd64
           path: target/cross/linux/amd64/rqbit
 
       - name: Set up Docker Buildx
