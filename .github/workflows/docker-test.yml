@@ -58,4 +58,4 @@ jobs:
           tags: ikatson/rqbit:${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           context: target/cross/
-          file: docker/Dockerfile.xx
+          file: docker/Dockerfile
