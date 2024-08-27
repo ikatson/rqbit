@@ -89,17 +89,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: linux-arm-v7
-          path: target/cross/linux/arm/v7/rqbit
+          path: target/cross/linux/arm/v7/
 
       - uses: actions/download-artifact@v4
         with:
           name: linux-arm64
-          path: target/cross/linux/arm64/rqbit
+          path: target/cross/linux/arm64/
 
       - uses: actions/download-artifact@v4
         with:
           name: linux-amd64
-          path: target/cross/linux/amd64/rqbit
+          path: target/cross/linux/amd64/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
