@@ -23,7 +23,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
          /usr/local/cargo/registry/cache \
          /usr/local/cargo/registry/index \
          -maxdepth 2 -type d && \
-    xx-cargo build --profile "${PROFILE}" --no-default-features --features rust-tls,webui && \
+    xx-cargo build \
+        --target-dir "target/$(xx-cargo --print-target-triple)" \
+        --profile "${PROFILE}" \
+        --no-default-features --features rust-tls,webui && \
     xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" && \
     mv "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" /bin/rqbit
 
