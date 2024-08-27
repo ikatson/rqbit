@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
     find /usr/local/cargo/git/db && \
     find /usr/local/cargo/registry/cache && \
-    /usr/local/cargo/registry/index && \
+    find /usr/local/cargo/registry/index && \
     cargo fetch
 
 ENV PROFILE=release-github
