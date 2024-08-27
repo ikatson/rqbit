@@ -18,21 +18,25 @@ ENV PROFILE_FOLDER=debug
 RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/cache \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
-    --mount=type=cache,target=/src/target \
-    find /src/target \
-         /usr/local/cargo/git/db \
-         /usr/local/cargo/registry/cache \
-         /usr/local/cargo/registry/index \
-         -maxdepth 2 -type d && \
-    xx-cargo build \
-        --target-dir "target/$(xx-cargo --print-target-triple)" \
-        --profile "${PROFILE_NAME}" \
-        --no-default-features --features rust-tls,webui && \
-    find /src/target -maxdepth 4 -type d && \
-    export BIN="./target/$(xx-cargo --print-target-triple)/$(xx-cargo --print-target-triple)/${PROFILE_FOLDER}/rqbit" && \
-    xx-verify --static "${BIN}" && \
-    find /src/target -maxdepth 4 -type d && \
-    mv "${BIN}" /bin/rqbit
+    --mount=type=cache,target=/src/target <<EOF
+set -e
+export TT="$(xx-cargo --print-target-triple)"
+export BIN="./target/${TT}/${TT}/${PROFILE_FOLDER}/rqbit"
+
+find /src/target \
+        /usr/local/cargo/git/db \
+        /usr/local/cargo/registry/cache \
+        /usr/local/cargo/registry/index \
+        -maxdepth 2 -type d
+xx-cargo build \
+    --target-dir "target/${TT}" \
+    --profile "${PROFILE_NAME}" \
+    --no-default-features --features rust-tls,webui
+find /src/target -maxdepth 4 -type d
+xx-verify --static "${BIN}"
+find /src/target -maxdepth 4 -type d
+mv "${BIN}" /bin/rqbit
+EOF
 
 FROM scratch
 
