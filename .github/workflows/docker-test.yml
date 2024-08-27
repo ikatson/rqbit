@@ -51,7 +51,6 @@ jobs:
               -f docker/Dockerfile.xx \
               --output type=local,dest=target/cross/$platform \
               .
-          ;
           done
 
       - name: list files
