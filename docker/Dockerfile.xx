@@ -15,6 +15,9 @@ WORKDIR /src/
 RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/cache \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
+    find /usr/local/cargo/git/db && \
+    find /usr/local/cargo/registry/cache && \
+    /usr/local/cargo/registry/index && \
     cargo fetch
 
 ENV PROFILE=release-github
@@ -23,6 +26,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/cache \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
     --mount=type=cache,target=/src/target \
+    find /src/target && \
     xx-cargo build --profile "${PROFILE}" --no-default-features --features rust-tls,webui && \
     xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" && \
     mv "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" /bin/rqbit
