@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     export BIN="./target/$(xx-cargo --print-target-triple)/$(xx-cargo --print-target-triple)/${PROFILE_FOLDER}/rqbit" && \
     xx-verify --static "${BIN}" && \
     find /src/target -maxdepth 4 -type d && \
-    mv "${BIN} /bin/rqbit
+    mv "${BIN}" /bin/rqbit
 
 FROM scratch
 
