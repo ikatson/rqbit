@@ -15,12 +15,15 @@ WORKDIR /src/
 RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/cache \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
+    find /usr/local/cargo/git/db && \
+    find /usr/local/cargo/registry && \
     cargo fetch -vv
 
 RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/cache \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
     --mount=type=cache,target=/src/target \
+    find /src/target && \
     xx-cargo build && \
     mv target/$(xx-cargo --print-target-triple)/debug/libtestssl.rlib /bin/testssl
 
