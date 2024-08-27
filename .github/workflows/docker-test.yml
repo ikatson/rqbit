@@ -22,7 +22,7 @@ jobs:
             usr-local-cargo-registry-cache
             usr-local-cargo-registry-index
             src-target
-          key: cache-${{ hashFiles('openssl-cross-docker-build/Dockerfile') }}
+          key: cache-${{ hashFiles('docker/Dockerfile.xx') }}
 
       - name: inject cache into docker
         uses: reproducible-containers/buildkit-cache-dance@v3.1.0
