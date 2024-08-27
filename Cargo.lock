@@ -1661,6 +1661,7 @@ name = "librqbit-sha1-wrapper"
 version = "3.0.0"
 dependencies = [
  "crypto-hash",
+ "ring",
 ]
 
 [[package]]
