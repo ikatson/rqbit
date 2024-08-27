@@ -20,6 +20,7 @@ ENV PROFILE=release-github
 RUN --mount=type=cache,target=/root/.cargo/git/db \
     --mount=type=cache,target=/root/.cargo/registry/cache \
     --mount=type=cache,target=/root/.cargo/registry/index \
+    --mount=type=cache,target=/src/target \
     xx-cargo build --no-default-features --profile "${PROFILE}" --features rust-tls,webui && \
     xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" && \
     mv "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" /bin/rqbit
