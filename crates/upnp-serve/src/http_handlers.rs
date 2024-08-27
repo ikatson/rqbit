@@ -184,7 +184,7 @@ pub fn make_router(
     let state = UpnpServerStateInner::new(root_desc.into(), browse_provider, cancellation_token)
         .context("error creating UPNP server")?;
 
-    let sub_handler = {
+    let content_dir_sub_handler = {
         let state = state.clone();
         move |request: axum::extract::Request| async move {
             subscription(State(state.clone()), request).await
@@ -209,7 +209,14 @@ pub fn make_router(
             "/control/ConnectionManager",
             post(|| async { (StatusCode::NOT_IMPLEMENTED, "") }),
         )
-        .route_service("/subscribe", sub_handler.into_service())
+        .route_service(
+            "/subscribe/ContentDirectory",
+            content_dir_sub_handler.into_service(),
+        )
+        .route(
+            "/subscribe/ConnectionManager",
+            post(|| async { (StatusCode::NOT_IMPLEMENTED, "") }),
+        )
         .with_state(state);
 
     Ok(app)
