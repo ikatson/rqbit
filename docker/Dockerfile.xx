@@ -12,7 +12,7 @@ RUN xx-apk add gcc musl-dev
 COPY / /src/
 WORKDIR /src/
 
-ENV PROFILE=debug
+ENV PROFILE=dev
 
 RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/cache \
