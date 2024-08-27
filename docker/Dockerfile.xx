@@ -6,6 +6,9 @@ COPY --from=xx / /
 
 RUN apk update && apk add clang lld npm python3
 
+ARG TARGETPLATFORM
+RUN xx-apk add musl-dev
+
 COPY / /src/
 WORKDIR /src/
 
@@ -14,14 +17,13 @@ RUN --mount=type=cache,target=/root/.cargo/git/db \
     --mount=type=cache,target=/root/.cargo/registry/index \
     cargo fetch
 
-ARG TARGETPLATFORM
 ENV PROFILE=release-github
 
 RUN --mount=type=cache,target=/root/.cargo/git/db \
     --mount=type=cache,target=/root/.cargo/registry/cache \
     --mount=type=cache,target=/root/.cargo/registry/index \
     --mount=type=cache,target=/src/target \
-    xx-cargo build --no-default-features --profile "${PROFILE}" --features rust-tls,webui && \
+    xx-cargo build --profile "${PROFILE}" --features openssl-vendored && \
     xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" && \
     mv "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" /bin/rqbit
 

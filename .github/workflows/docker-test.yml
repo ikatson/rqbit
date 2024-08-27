@@ -17,8 +17,8 @@ jobs:
         run: mkdir -p target/cross && docker buildx ls &&
           docker build --builder ${{ steps.builder1.outputs.name }} --platform linux/amd64,linux/arm64,linux/arm/v7
           -f docker/Dockerfile.xx
-          --cache-from=gha
-          --cache-to=gha
+          --cache-from=type=gha
+          --cache-to=type=gha
           --output type=local,dest=target/cross .
 
       # linux_amd64/bin/rqbit -> linux/amd64/rqbit
