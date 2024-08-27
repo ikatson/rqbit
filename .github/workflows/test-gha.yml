@@ -17,6 +17,7 @@ jobs:
       - run: cd openssl-cross-docker-build &&
           mkdir -p output &&
           docker build --progress=plain
+          --builder ${{ steps.builder1.outputs.name }}
           --cache-from=type=gha,scope=$platform
           --cache-to=type=gha,scope=$platform
           --platform linux/arm/v7
