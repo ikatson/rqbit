@@ -13,11 +13,16 @@ jobs:
         uses: docker/setup-buildx-action@v3
         id: builder1
 
+      # For GHA cache to work
+      - uses: crazy-max/ghaction-github-runtime@v3
+
       - name: cross-compile all binaries
+        # Building in a loop shows errors quicker and may be a bit faster as it's choking building 3
+        # rust targets in parallel
         run: mkdir -p target/cross && docker buildx ls &&
           for platform in linux/arm/v7 linux/amd64 linux/arm64; do
           docker build --builder ${{ steps.builder1.outputs.name }}
-          --platform linux/arm/v7
+          --platform $platform
           -f docker/Dockerfile.xx
           --cache-from=type=gha
           --cache-to=type=gha
