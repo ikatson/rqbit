@@ -1,9 +1,9 @@
 # Depends on either outputs of Dockerfile.xx or the binaries compiled elsewhere.
 FROM scratch
 
-ARG TARGETPLATFORM
-
 ADD https://curl.se/ca/cacert.pem /etc/ssl/cacerts.pem
+
+ARG TARGETPLATFORM
 
 ## Assumes you are running this from respective context folder.
 COPY --chmod=755 ${TARGETPLATFORM}/rqbit /bin/rqbit
