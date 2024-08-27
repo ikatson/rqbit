@@ -28,6 +28,7 @@ jobs:
           --cache-from=type=gha,scope=$platform
           --cache-to=type=gha,scope=$platform
           --output type=local,dest=target/cross/$platform
+          .
           ;
           done
 
