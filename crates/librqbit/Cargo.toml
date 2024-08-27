@@ -40,7 +40,7 @@ peer_binary_protocol = { path = "../peer_binary_protocol", default-features = fa
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4" }
 dht = { path = "../dht", package = "librqbit-dht", version = "5.1.0" }
 librqbit-upnp = { path = "../upnp", version = "0.1.1" }
-upnp-serve = { path = "../upnp-serve", version = "0.1.0", optional = true }
+upnp-serve = { path = "../upnp-serve", default-features = false, version = "0.1.0", optional = true }
 
 tokio = { version = "1", features = [
     "macros",
