@@ -22,7 +22,7 @@ jobs:
             usr-local-cargo-registry-cache
             usr-local-cargo-registry-index
             src-target
-          key: docker-xx-v0
+          key: docker-xx-v1
 
       - name: inject cache into docker
         uses: reproducible-containers/buildkit-cache-dance@v3.1.0
@@ -44,7 +44,8 @@ jobs:
           mkdir -p target/cross
           docker buildx ls
 
-          for platform in linux/arm/v7 linux/amd64 linux/arm64; do
+          # for platform in linux/arm/v7 linux/amd64 linux/arm64; do
+          for platform in linux/arm/v7; do
             mkdir -p target/cross/$platform
             docker build --builder ${{ steps.builder1.outputs.name }} \
               --platform $platform \
