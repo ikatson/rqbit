@@ -12,11 +12,16 @@ RUN xx-apk add gcc musl-dev
 COPY / /src/
 WORKDIR /src/
 
+RUN --mount=type=cache,target=/usr/local/cargo/git/db \
+    --mount=type=cache,target=/usr/local/cargo/registry/cache \
+    --mount=type=cache,target=/usr/local/cargo/registry/index \
+    cargo fetch
+
 ENV PROFILE=release-github
 
-RUN --mount=type=cache,target=/root/.cargo/git/db \
-    --mount=type=cache,target=/root/.cargo/registry/cache \
-    --mount=type=cache,target=/root/.cargo/registry/index \
+RUN --mount=type=cache,target=/usr/local/cargo/git/db \
+    --mount=type=cache,target=/usr/local/cargo/registry/cache \
+    --mount=type=cache,target=/usr/local/cargo/registry/index \
     --mount=type=cache,id=${TARGETPLATFORM}-target,target=/src/target \
     xx-cargo build --profile "${PROFILE}" --no-default-features --features default-tls,openssl-vendored,webui && \
     xx-verify --static "./target/$(xx-cargo --print-target-triple)/${PROFILE}/rqbit" && \
