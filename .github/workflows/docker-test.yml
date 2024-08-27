@@ -49,9 +49,9 @@ jobs:
 
           mkdir -p target/cross/${{ matrix.platform }}
           docker build --builder ${{ steps.builder1.outputs.name }} \
-            --platform $platform \
+            --platform ${{ matrix.platform }} \
             -f docker/Dockerfile.xx \
-            --output type=local,dest=target/cross/${{ matrix.platform }} .
+            --output type=local,dest=target/cross/${{ matrix.platform }} ./
 
       - name: list files
         run: find target/cross/
