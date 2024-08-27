@@ -113,7 +113,6 @@ impl SsdpRunner {
         #[cfg(not(target_os = "windows"))]
         sock.set_reuse_port(true)
             .context("error setting SO_REUSEPORT")?;
-        #[cfg(target_os = "windows")]
         sock.set_reuse_address(true)
             .context("error setting SO_REUSEADDR")?;
 
@@ -153,10 +152,9 @@ USN: {usn}::{kind}\r
         )
     }
 
-    fn generate_ssdp_discover_response(&self) -> String {
+    fn generate_ssdp_discover_response(&self, st: &str) -> String {
         let location = &self.opts.description_http_location;
         let usn = &self.opts.usn;
-        let media_server = UPNP_KIND_MEDIASERVER;
         let server = &self.opts.server_string;
         format!(
             "HTTP/1.1 200 OK\r
@@ -164,8 +162,8 @@ Cache-Control: max-age=75\r
 Ext: \r
 Location: {location}\r
 Server: {server}\r
-St: {media_server}\r
-Usn: {usn}::{media_server}\r
+St: {st}\r
+Usn: {usn}::{st}\r
 Content-Length: 0\r\n\r\n"
         )
     }
@@ -214,12 +212,14 @@ Content-Length: 0\r\n\r\n"
             return Ok(());
         }
 
-        let response = self.generate_ssdp_discover_response();
-        trace!(content = response, ?addr, "sending SSDP discover response");
-        self.socket
-            .send_to(response.as_bytes(), addr)
-            .await
-            .context("error sending")?;
+        if let Ok(st) = std::str::from_utf8(msg.st) {
+            let response = self.generate_ssdp_discover_response(st);
+            trace!(content = response, ?addr, "sending SSDP discover response");
+            self.socket
+                .send_to(response.as_bytes(), addr)
+                .await
+                .context("error sending")?;
+        }
 
         Ok(())
     }

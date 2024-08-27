@@ -111,6 +111,9 @@ create-target-docker:
 	cp -lf target/armv7-unknown-linux-musleabihf/release-github/rqbit target/docker/linux/arm/v7/rqbit && \
 	cp docker/Dockerfile target/Docker
 
+@PHONE: docker-build-prereqs
+docker-build-prereqs: release-linux-aarch64 release-linux-x86_64 release-linux-armv7
+
 @PHONY: docker-build
 docker-build: create-target-docker
 	docker build \
