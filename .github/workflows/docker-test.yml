@@ -24,8 +24,8 @@ jobs:
           docker build --builder ${{ steps.builder1.outputs.name }}
           --platform $platform
           -f docker/Dockerfile.xx
-          --cache-from=type=gha
-          --cache-to=type=gha
+          --cache-from=type=gha,scope=$platform
+          --cache-to=type=gha,scope=$platform
           --output type=local,dest=target/cross .
           ;
           done
