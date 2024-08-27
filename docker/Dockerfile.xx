@@ -7,7 +7,7 @@ COPY --from=xx / /
 RUN apk update && apk add clang lld npm python3 perl make
 
 ARG TARGETPLATFORM
-RUN xx-apk add musl-dev
+RUN xx-apk add gcc musl-dev
 
 COPY / /src/
 WORKDIR /src/

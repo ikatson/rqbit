@@ -15,7 +15,8 @@ jobs:
 
       - name: cross-compile all binaries
         run: mkdir -p target/cross && docker buildx ls &&
-          docker build --builder ${{ steps.builder1.outputs.name }} --platform linux/amd64,linux/arm64,linux/arm/v7
+          docker build --builder ${{ steps.builder1.outputs.name }}
+          --platform linux/arm/v7
           -f docker/Dockerfile.xx
           --cache-from=type=gha
           --cache-to=type=gha
