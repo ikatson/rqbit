@@ -3,7 +3,7 @@ name: test-gha
 on:
   push:
     branches:
-      - test-gha
+      - test-docker-gha
 
 jobs:
   test-gha:
