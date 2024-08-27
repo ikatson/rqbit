@@ -65,13 +65,18 @@ async fn generate_content_directory_control_response(
                 }
             };
 
-            (
-                [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
-                render_content_directory_browse(
-                    state.provider.browse_direct_children(request.object_id),
-                ),
-            )
-                .into_response()
+            use crate::upnp_types::content_directory::request::BrowseFlag;
+
+            match request.browse_flag {
+                BrowseFlag::BrowseDirectChildren => (
+                    [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+                    render_content_directory_browse(
+                        state.provider.browse_direct_children(request.object_id),
+                    ),
+                )
+                    .into_response(),
+                BrowseFlag::BrowseMetadata => StatusCode::NOT_IMPLEMENTED.into_response(),
+            }
         }
         SOAP_ACTION_GET_SYSTEM_UPDATE_ID => {
             let update_id = state.system_update_id.load(Ordering::Relaxed);
