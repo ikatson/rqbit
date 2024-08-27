@@ -15,12 +15,15 @@ jobs:
 
       - name: cross-compile all binaries
         run: mkdir -p target/cross && docker buildx ls &&
+          for platform in linux/arm/v7 linux/amd64 linux/arm64; do
           docker build --builder ${{ steps.builder1.outputs.name }}
           --platform linux/arm/v7
           -f docker/Dockerfile.xx
           --cache-from=type=gha
           --cache-to=type=gha
           --output type=local,dest=target/cross .
+          ;
+          done
 
       # linux_amd64/bin/rqbit -> linux/amd64/rqbit
       # linux_arm64/bin/rqbit -> linux/arm64/rqbit
