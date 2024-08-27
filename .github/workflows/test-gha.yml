@@ -1,0 +1,23 @@
+name: test-gha
+
+on:
+  push:
+    branches:
+      - test-gha
+
+jobs:
+  test-gha:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        id: builder1
+      - run: cd openssl-cross-docker-build &&
+          mkdir -p output &&
+          docker build --progress=plain
+          --cache-from=type=gha,scope=$platform
+          --cache-to=type=gha,scope=$platform
+          --platform linux/arm/v7
+          --output=type=local,dest=output/
+          -t testf .
