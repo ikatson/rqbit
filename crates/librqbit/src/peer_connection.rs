@@ -14,7 +14,10 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    extended::{handshake::{ExtendedHandshake, YourIP}, ExtendedMessage},
+    extended::{
+        handshake::{ExtendedHandshake, YourIP},
+        ExtendedMessage,
+    },
     serialize_piece_preamble, Handshake, Message, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
 };
 use serde::{Deserialize, Serialize};

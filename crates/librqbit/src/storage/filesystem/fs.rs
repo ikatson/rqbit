@@ -188,4 +188,9 @@ impl TorrentStorage for FilesystemStorage {
         self.opened_files = files;
         Ok(())
     }
+
+    fn on_piece_completed(&self, _file_id: usize, _offset: u64) -> anyhow::Result<()> {
+        // No job has to be done for this storage
+        Ok(())
+    }
 }

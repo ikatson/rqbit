@@ -97,6 +97,9 @@ pub trait TorrentStorage: Send + Sync {
     /// Replace the current storage with a dummy, and return a new one that should be used instead.
     /// This is used to make the underlying object useless when e.g. pausing the torrent.
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
+
+    /// Callback called every time a piece has completed and has been validated.
+    fn on_piece_completed(&self, file_id: usize, offset: u64) -> anyhow::Result<()>;
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -126,5 +129,9 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         (**self).init(meta)
+    }
+
+    fn on_piece_completed(&self, file_id: usize, offset: u64) -> anyhow::Result<()> {
+        (**self).on_piece_completed(file_id, offset)
     }
 }

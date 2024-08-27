@@ -4,7 +4,7 @@ use parking_lot::RwLock;
 
 use crate::{
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
-    FileInfos, ManagedTorrentInfo,
+    FileInfos, ManagedTorrentShared,
 };
 
 #[derive(Default, Clone)]
@@ -18,7 +18,7 @@ pub struct MmapStorage {
 impl StorageFactory for MmapStorageFactory {
     type Storage = MmapStorage;
 
-    fn create(&self, info: &ManagedTorrentInfo) -> anyhow::Result<Self::Storage> {
+    fn create(&self, info: &ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
         Ok(MmapStorage {
             mmap: RwLock::new(
                 MmapOptions::new()
@@ -63,11 +63,15 @@ impl TorrentStorage for MmapStorage {
         anyhow::bail!("not implemented")
     }
 
-    fn init(&mut self, _meta: &ManagedTorrentInfo) -> anyhow::Result<()> {
+    fn init(&mut self, _meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         Ok(())
     }
 
     fn remove_directory_if_empty(&self, _path: &std::path::Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn on_piece_completed(&self, _file_id: usize, _offset: u64) -> anyhow::Result<()> {
         Ok(())
     }
 }
