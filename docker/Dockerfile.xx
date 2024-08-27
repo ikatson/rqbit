@@ -34,7 +34,6 @@ xx-cargo build \
     --no-default-features --features rust-tls,webui
 find /src/target -maxdepth 4 -type d
 xx-verify --static "${BIN}"
-find /src/target -maxdepth 4 -type d
 mv "${BIN}" /bin/rqbit
 EOF
 
