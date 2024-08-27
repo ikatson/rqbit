@@ -51,7 +51,7 @@ jobs:
           docker build --builder ${{ steps.builder1.outputs.name }} \
             --platform $platform \
             -f docker/Dockerfile.xx \
-            --output type=local,dest=target/cross/${{ matrix.platform }} ./
+            --output type=local,dest=target/cross/${{ matrix.platform }} .
 
       - name: list files
         run: find target/cross/
