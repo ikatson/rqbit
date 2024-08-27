@@ -21,7 +21,7 @@ jobs:
         # rust targets in parallel
         run: mkdir -p target/cross && docker buildx ls &&
           for platform in linux/arm/v7 linux/amd64 linux/arm64; do
-          mkdir -p target/cross/$platform && \
+          mkdir -p target/cross/$platform &&
           docker build --builder ${{ steps.builder1.outputs.name }}
           --platform $platform
           -f docker/Dockerfile.xx
