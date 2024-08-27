@@ -5,12 +5,12 @@ use std::{
 
 use anyhow::Context;
 use axum::routing::get;
-use mime_guess::Mime;
-use tracing::{error, info};
-use upnp_serve::{
+use librqbit_upnp_serve::{
     upnp_types::content_directory::response::{Item, ItemOrContainer},
     UpnpServer, UpnpServerOptions,
 };
+use mime_guess::Mime;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

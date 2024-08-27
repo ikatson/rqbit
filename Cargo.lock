@@ -1522,6 +1522,7 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "librqbit-tracker-comms",
  "librqbit-upnp",
+ "librqbit-upnp-serve",
  "lru",
  "memmap2",
  "mime_guess",
@@ -1545,7 +1546,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "upnp-serve",
  "url",
  "urlencoding",
  "uuid",
@@ -1689,6 +1689,34 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "librqbit-upnp-serve"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.5",
+ "bstr",
+ "gethostname",
+ "http 1.1.0",
+ "httparse",
+ "librqbit-core",
+ "librqbit-sha1-wrapper",
+ "librqbit-upnp",
+ "mime_guess",
+ "parking_lot",
+ "quick-xml",
+ "reqwest",
+ "serde",
+ "socket2",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2515,6 +2543,7 @@ dependencies = [
  "futures",
  "libc",
  "librqbit",
+ "librqbit-upnp-serve",
  "openssl",
  "parking_lot",
  "parse_duration",
@@ -2527,7 +2556,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "upnp-serve",
 ]
 
 [[package]]
@@ -3582,34 +3610,6 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
-
-[[package]]
-name = "upnp-serve"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.7.5",
- "bstr",
- "gethostname",
- "http 1.1.0",
- "httparse",
- "librqbit-core",
- "librqbit-sha1-wrapper",
- "librqbit-upnp",
- "mime_guess",
- "parking_lot",
- "quick-xml",
- "reqwest",
- "serde",
- "socket2",
- "tokio",
- "tokio-util",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
 
 [[package]]
 name = "url"

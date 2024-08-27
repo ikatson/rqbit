@@ -44,7 +44,7 @@ serde_json = "1"
 size_format = "1"
 bytes = "1.5.0"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
-upnp-serve = { path = "../upnp-serve" }
+upnp-serve = { path = "../upnp-serve", version = "0.1.0", package = "librqbit-upnp-serve" }
 libc = "0.2.158"
 signal-hook = "0.3.17"
 tokio-util = "0.7.11"
