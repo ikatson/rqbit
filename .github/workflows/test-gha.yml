@@ -42,8 +42,6 @@ jobs:
           mkdir -p output/ &&
           docker build --progress=plain
           --builder ${{ steps.builder1.outputs.name }}
-          --cache-from=type=gha,scope=$platform
-          --cache-to=type=gha,scope=$platform,mode=max
           --platform linux/arm/v7
           --output=type=local,dest=output/
           -t testf .
