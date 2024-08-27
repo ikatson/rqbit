@@ -13,8 +13,28 @@ jobs:
         uses: docker/setup-buildx-action@v3
         id: builder1
 
-      # For GHA cache to work
-      - uses: crazy-max/ghaction-github-runtime@v3
+      - name: Cache
+        uses: actions/cache@v3
+        id: cache
+        with:
+          path: |
+            usr-local-cargo-git-db
+            usr-local-cargo-registry-cache
+            usr-local-cargo-registry-index
+            src-target
+          key: cache-${{ hashFiles('openssl-cross-docker-build/Dockerfile') }}
+
+      - name: inject cache into docker
+        uses: reproducible-containers/buildkit-cache-dance@v3.1.0
+        with:
+          cache-map: |
+            {
+              "usr-local-cargo-git-db": "/usr/local/cargo/git/db",
+              "usr-local-cargo-registry-cache": "/usr/local/cargo/registry/cache",
+              "usr-local-cargo-registry-index": "/usr/local/cargo/registry/index",
+              "src-target": "/src/target"
+            }
+          skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
       - name: cross-compile all binaries
         # Building in a loop shows errors quicker and may be a bit faster as it's choking building 3
@@ -25,12 +45,13 @@ jobs:
           docker build --builder ${{ steps.builder1.outputs.name }}
           --platform $platform
           -f docker/Dockerfile.xx
-          --cache-from=type=gha,scope=$platform
-          --cache-to=type=gha,scope=$platform
           --output type=local,dest=target/cross/$platform
           .
           ;
           done
+
+      - name: list files
+        run: find target/cross/
 
       # # linux_amd64/bin/rqbit -> linux/amd64/rqbit
       # # linux_arm64/bin/rqbit -> linux/arm64/rqbit
