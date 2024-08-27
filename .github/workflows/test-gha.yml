@@ -15,7 +15,7 @@ jobs:
         id: builder1
       - uses: crazy-max/ghaction-github-runtime@v3
       - run: cd openssl-cross-docker-build &&
-          mkdir -p output &&
+          mkdir -p output/ &&
           docker build --progress=plain
           --builder ${{ steps.builder1.outputs.name }}
           --cache-from=type=gha,scope=$platform
