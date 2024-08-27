@@ -29,4 +29,4 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
 
 FROM scratch
 
-COPY --from=builder /bin/rqbit /bin/rqbit
+COPY --from=builder /bin/rqbit /rqbit
