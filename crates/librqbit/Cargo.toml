@@ -13,6 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["default-tls"]
+tokio-console = ["console-subscriber", "tokio/tracing"]
 http-api = ["axum", "tower-http"]
 upnp-serve-adapter = ["upnp-serve"]
 webui = []
@@ -59,6 +60,7 @@ tokio = { version = "1", features = [
     "fs",
     "io-util",
 ] }
+console-subscriber = { version = "0.4", optional = true }
 axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
 tokio-stream = "0.1"

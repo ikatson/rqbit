@@ -14,7 +14,7 @@ readme = "README.md"
 [features]
 default = ["default-tls", "postgres", "webui"]
 openssl-vendored = ["openssl/vendored"]
-tokio-console = ["console-subscriber", "tokio/tracing"]
+tokio-console = ["librqbit/tokio-console"]
 webui = ["librqbit/webui"]
 timed_existence = ["librqbit/timed_existence"]
 default-tls = ["librqbit/default-tls"]
@@ -27,7 +27,7 @@ librqbit = { version = "7.0.0", path = "../librqbit", default-features = false, 
     "http-api",
     "tracing-subscriber-utils",
     "upnp-serve-adapter",
-]}
+] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 console-subscriber = { version = "0.4", optional = true }
 anyhow = "1"

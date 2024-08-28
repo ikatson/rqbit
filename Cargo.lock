@@ -1456,6 +1456,7 @@ dependencies = [
  "bitvec",
  "byteorder",
  "bytes",
+ "console-subscriber",
  "dashmap 6.0.1",
  "futures",
  "hex 0.4.3",

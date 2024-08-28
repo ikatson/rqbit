@@ -14,12 +14,13 @@ webui-dev: webui-deps
 export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= 0.0.0.0:3030
+CARGO_RUN_FLAGS ?= ""
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
 RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit
 
 @PHONY: devserver-release
 devserver-profile:
-	cargo run --release -- server start $(RQBIT_OUTPUT_FOLDER)
+	cargo run --release $(CARGO_RUN_FLAGS) -- server start $(RQBIT_OUTPUT_FOLDER)
 
 # DEV variables (that's why defined after devserver-profile)
 export RQBIT_LOG_FILE ?= /tmp/rqbit-log
@@ -29,13 +30,13 @@ export CORS_ALLOW_REGEXP ?= '.*'
 @PHONY: devserver
 devserver:
 	echo -n '' > $(RQBIT_LOG_FILE) && \
-	cargo run -- \
+	cargo run $(CARGO_RUN_FLAGS) -- \
 	server start $(RQBIT_OUTPUT_FOLDER)
 
 @PHONY: devserver
 devserver-postgres:
 	echo -n '' > $(RQBIT_LOG_FILE) && \
-	cargo run -- \
+	cargo run $(CARGO_RUN_FLAGS) -- \
 	server start --fastresume --persistence-location $(RQBIT_POSTGRES_CONNECTION_STRING) $(RQBIT_OUTPUT_FOLDER)
 
 @PHONY: docker-build-xx-one-platform

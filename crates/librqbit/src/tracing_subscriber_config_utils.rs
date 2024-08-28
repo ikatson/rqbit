@@ -91,6 +91,13 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 .with_writer(line_sub)
                 .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
         );
+
+    #[cfg(feature = "tokio-console")]
+    let console_layer = console_subscriber::spawn();
+
+    #[cfg(feature = "tokio-console")]
+    let layered = layered.with(console_layer);
+
     if let Some(log_file) = &opts.log_file {
         let log_file = log_file.to_string();
         let log_file = std::sync::Mutex::new(LineWriter::new(
