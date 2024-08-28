@@ -112,9 +112,4 @@ impl TorrentStorage for MmapFilesystemStorage {
         self.opened_mmaps = mmaps;
         Ok(())
     }
-
-    fn on_piece_completed(&self, _file_id: usize, _offset: u64) -> anyhow::Result<()> {
-        // No job has to be done for this storage
-        Ok(())
-    }
 }

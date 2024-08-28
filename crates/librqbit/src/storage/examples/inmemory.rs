@@ -8,37 +8,19 @@ use crate::type_aliases::FileInfos;
 
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
-pub struct InMemoryPiece {
-    pub content: Box<[u8]>,
-    pub has_been_validated: bool,
+struct InMemoryPiece {
+    bytes: Box<[u8]>,
 }
 
 impl InMemoryPiece {
-    pub fn new(l: &Lengths) -> Self {
+    fn new(l: &Lengths) -> Self {
         let v = vec![0; l.default_piece_length() as usize].into_boxed_slice();
-        Self {
-            content: v,
-            has_been_validated: false,
-        }
-    }
-
-    pub fn can_be_discard(&self, upper_bound_offset: usize) -> bool {
-        self.has_been_validated && upper_bound_offset >= self.content.len()
+        Self { bytes: v }
     }
 }
 
 #[derive(Default, Clone)]
-pub struct InMemoryExampleStorageFactory {
-    max_ram_size_per_torrent: usize,
-}
-
-impl InMemoryExampleStorageFactory {
-    pub fn new(max_ram_size_per_torrent: usize) -> Self {
-        Self {
-            max_ram_size_per_torrent,
-        }
-    }
-}
+pub struct InMemoryExampleStorageFactory {}
 
 impl StorageFactory for InMemoryExampleStorageFactory {
     type Storage = InMemoryExampleStorage;
@@ -47,11 +29,7 @@ impl StorageFactory for InMemoryExampleStorageFactory {
         &self,
         info: &crate::torrent_state::ManagedTorrentShared,
     ) -> anyhow::Result<InMemoryExampleStorage> {
-        InMemoryExampleStorage::new(
-            info.lengths,
-            info.file_infos.clone(),
-            self.max_ram_size_per_torrent,
-        )
+        InMemoryExampleStorage::new(info.lengths, info.file_infos.clone())
     }
 
     fn clone_box(&self) -> crate::storage::BoxStorageFactory {
@@ -63,15 +41,10 @@ pub struct InMemoryExampleStorage {
     lengths: Lengths,
     file_infos: FileInfos,
     map: RwLock<HashMap<ValidPieceIndex, InMemoryPiece>>,
-    max_ram_size_per_torrent: usize,
 }
 
 impl InMemoryExampleStorage {
-    fn new(
-        lengths: Lengths,
-        file_infos: FileInfos,
-        max_ram_size_per_torrent: usize,
-    ) -> anyhow::Result<Self> {
+    fn new(lengths: Lengths, file_infos: FileInfos) -> anyhow::Result<Self> {
         // Max memory 128MiB. Make it tunable
         let max_pieces = 128 * 1024 * 1024 / lengths.default_piece_length();
         if max_pieces == 0 {
@@ -82,7 +55,6 @@ impl InMemoryExampleStorage {
             lengths,
             file_infos,
             map: RwLock::new(HashMap::new()),
-            max_ram_size_per_torrent,
         })
     }
 }
@@ -96,16 +68,9 @@ impl TorrentStorage for InMemoryExampleStorage {
             (abs_offset % self.lengths.default_piece_length() as u64).try_into()?;
         let piece_id = self.lengths.validate_piece_index(piece_id).context("bug")?;
 
-        let mut g = self.map.write();
-        // Get and remove this data from buffer to free space
+        let g = self.map.read();
         let inmp = g.get(&piece_id).context("piece expired")?;
-        let upper_bound_offset = piece_offset + buf.len();
-        buf.copy_from_slice(&inmp.content[piece_offset..upper_bound_offset]);
-
-        if inmp.can_be_discard(upper_bound_offset) {
-            let _ = g.remove(&piece_id);
-        }
-
+        buf.copy_from_slice(&inmp.bytes[piece_offset..(piece_offset + buf.len())]);
         Ok(())
     }
 
@@ -116,12 +81,11 @@ impl TorrentStorage for InMemoryExampleStorage {
         let piece_offset: usize =
             (abs_offset % self.lengths.default_piece_length() as u64).try_into()?;
         let piece_id = self.lengths.validate_piece_index(piece_id).context("bug")?;
-
         let mut g = self.map.write();
         let inmp = g
             .entry(piece_id)
             .or_insert_with(|| InMemoryPiece::new(&self.lengths));
-        inmp.content[piece_offset..(piece_offset + buf.len())].copy_from_slice(buf);
+        inmp.bytes[piece_offset..(piece_offset + buf.len())].copy_from_slice(buf);
         Ok(())
     }
 
@@ -144,7 +108,6 @@ impl TorrentStorage for InMemoryExampleStorage {
             lengths: self.lengths,
             map: RwLock::new(map),
             file_infos: self.file_infos.clone(),
-            max_ram_size_per_torrent: self.max_ram_size_per_torrent,
         }))
     }
 
@@ -153,20 +116,6 @@ impl TorrentStorage for InMemoryExampleStorage {
     }
 
     fn remove_directory_if_empty(&self, _path: &Path) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn on_piece_completed(&self, file_id: usize, offset: u64) -> anyhow::Result<()> {
-        let fi = &self.file_infos[file_id];
-        let abs_offset = fi.offset_in_torrent + offset;
-        let piece_id: u32 = (abs_offset / self.lengths.default_piece_length() as u64).try_into()?;
-        let piece_id = self.lengths.validate_piece_index(piece_id).context("bug")?;
-
-        let mut g = self.map.write();
-        let inmp = g.get_mut(&piece_id).context("piece does not exist")?;
-
-        inmp.has_been_validated = true;
-
         Ok(())
     }
 }

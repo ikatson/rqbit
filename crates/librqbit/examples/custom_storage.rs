@@ -57,10 +57,6 @@ impl TorrentStorage for CustomStorage {
     fn init(&mut self, _meta: &librqbit::ManagedTorrentShared) -> anyhow::Result<()> {
         anyhow::bail!("not implemented")
     }
-
-    fn on_piece_completed(&self, _file_id: usize, _offset: u64) -> anyhow::Result<()> {
-        anyhow::bail!("not implemented")
-    }
 }
 
 #[tokio::main]

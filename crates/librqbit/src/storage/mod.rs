@@ -11,6 +11,8 @@ use std::{
     path::Path,
 };
 
+use librqbit_core::lengths::ValidPieceIndex;
+
 use crate::torrent_state::ManagedTorrentShared;
 
 pub trait StorageFactory: Send + Sync + Any {
@@ -99,7 +101,10 @@ pub trait TorrentStorage: Send + Sync {
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
 
     /// Callback called every time a piece has completed and has been validated.
-    fn on_piece_completed(&self, file_id: usize, offset: u64) -> anyhow::Result<()>;
+    /// Default implementation does nothing, but can be override in trait implementations.
+    fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -131,7 +136,7 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         (**self).init(meta)
     }
 
-    fn on_piece_completed(&self, file_id: usize, offset: u64) -> anyhow::Result<()> {
-        (**self).on_piece_completed(file_id, offset)
+    fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        (**self).on_piece_completed(piece_id)
     }
 }
