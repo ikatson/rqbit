@@ -29,7 +29,11 @@ pub fn torrent_from_bytes_ext<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
     let mut t = TorrentMetaV1::deserialize(&mut de)?;
     let (digest, info_bytes) = match (de.torrent_info_digest, de.torrent_info_bytes) {
         (Some(digest), Some(info_bytes)) => (digest, info_bytes),
-        _ => anyhow::bail!("programming error"),
+        (o1, o2) => anyhow::bail!(
+            "programming error: digest.is_some()={}, info_bytes.is_some()={}. Probably one of bencode/sha1* features isn't enabled.",
+            o1.is_some(),
+            o2.is_some()
+        ),
     };
     t.info_hash = Id20::new(digest);
     Ok(ParsedTorrent {
