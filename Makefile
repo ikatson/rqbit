@@ -108,10 +108,25 @@ create-target-docker:
 @PHONY: docker-build
 docker-build: create-target-docker
 	docker build \
-		-f target/docker/Dockerfile \
-		-t ikatson/rqbit:$(shell git describe --tags) \
+		-f docker/Dockerfile \
+		-t ikatson/rqbit:$(shell git describe --tags)-dev \
 		--platform linux/amd64,linux/arm64,linux/arm/v7 \
 		target/docker/
+
+@PHONY: docker-build-xx-one-platform
+docker-build-xx-one-platform:
+	docker build -f docker/Dockerfile.xx \
+		--platform $(PLATFORM) \
+		--output type=local,dest=target/cross/$(PLATFORM) . && \
+	docker build \
+		-t ikatson/rqbit:$(shell git describe --tags)-dev-$(shell echo $(PLATFORM) | tr '/' '-') \
+		--platform $(PLATFORM) \
+		-f docker/Dockerfile \
+		target/cross/
+
+@PHONY: docker-build-xx-amd64
+docker-build-xx-amd64:
+	PLATFORM=linux/amd64 $(MAKE) docker-build-xx-one-platform
 
 @PHONY: release-linux-aarch64
 release-linux-aarch64:
