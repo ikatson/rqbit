@@ -23,13 +23,13 @@ debug_slow_disk = ["librqbit/storage_middleware"]
 postgres = ["librqbit/postgres"]
 
 [dependencies]
-librqbit = { path = "../librqbit", default-features = false, features = [
+librqbit = { version = "7.0.0", path = "../librqbit", default-features = false, features = [
     "http-api",
     "tracing-subscriber-utils",
     "upnp-serve-adapter",
-], version = "7.0.0" }
+]}
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-console-subscriber = { version = "0.2", optional = true }
+console-subscriber = { version = "0.4", optional = true }
 anyhow = "1"
 clap = { version = "4.5", features = ["derive", "deprecated", "env"] }
 clap_complete = "4.5"
