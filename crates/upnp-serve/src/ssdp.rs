@@ -209,7 +209,7 @@ Content-Length: 0\r\n\r\n"
                     let msg = self.generate_notify_message(kind, nts, &format!("{location}"));
                     trace!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
                     if let Err(e) = sock.send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR).await {
-                        warn!(sock_addr=%addr, error=%e, "error sending SSDP NOTIFY")
+                        debug!(sock_addr=%addr, error=%e, kind, nts, "error sending SSDP NOTIFY")
                     } else {
                         debug!(kind, nts, %location, "sent SSDP NOTIFY")
                     }
