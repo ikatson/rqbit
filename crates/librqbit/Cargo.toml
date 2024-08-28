@@ -48,7 +48,7 @@ tokio = { version = "1", features = [
     "fs",
     "io-util",
 ] }
-axum = { version = "0.7.4", optional = true }
+axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
 tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -81,7 +81,7 @@ url = "2"
 hex = "0.4"
 backoff = "0.4.0"
 dashmap = "5.5.3"
-base64 = "0.21.5"
+base64 = "0.22"
 serde_with = "3.4.0"
 tokio-util = { version = "0.7.10", features = ["io"] }
 bytes = "1.5.0"
