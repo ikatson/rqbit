@@ -1,7 +1,7 @@
 use crate::state::UpnpServerStateInner;
-use crate::templates::render_notify_subscription_system_update_id;
 use anyhow::Context;
-use http::Method;
+use axum::response::IntoResponse;
+use http::{HeaderName, StatusCode};
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use parking_lot::RwLock;
 use std::{
@@ -13,6 +13,7 @@ use tokio::sync::{broadcast::error::RecvError, Notify};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 pub struct Subscription {
+    #[allow(dead_code)]
     pub url: url::Url,
     pub seq: u64,
     pub timeout: Duration,
@@ -69,50 +70,24 @@ impl Subscriptions {
     }
 }
 
-pub async fn notify_subscription_system_update(
-    url: &url::Url,
-    sid: &str,
-    seq: u64,
-    system_update_id: u64,
-) -> anyhow::Result<()> {
-    // NOTIFY /callback_path HTTP/1.1
-    // CONTENT-TYPE: text/xml; charset="utf-8"
-    // NT: upnp:event
-    // NTS: upnp:propchange
-    // SID: uuid:<Subscription ID>
-    // SEQ: <sequence number>
-    //
-    let body = render_notify_subscription_system_update_id(system_update_id);
-
-    let resp = reqwest::Client::builder()
-        .build()?
-        .request(Method::from_bytes(b"NOTIFY")?, url.clone())
-        .header("Content-Type", r#"text/xml; charset="utf-8""#)
-        .header("NT", "upnp:event")
-        .header("NTS", "upnp:propchange")
-        .header("SID", sid)
-        .header("SEQ", seq.to_string())
-        .body(body)
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        anyhow::bail!("{:?}", resp.status())
-    }
-    Ok(())
-}
-
 impl UpnpServerStateInner {
-    pub fn renew_subscription(&self, sid: &str, new_timeout: Duration) -> anyhow::Result<()> {
-        self.subscriptions.update_timeout(sid, new_timeout)
+    pub fn renew_content_directory_subscription(
+        &self,
+        sid: &str,
+        new_timeout: Duration,
+    ) -> anyhow::Result<()> {
+        self.content_directory_subscriptions
+            .update_timeout(sid, new_timeout)
     }
 
-    pub fn new_subscription(
+    pub fn new_content_directory_subscription(
         self: &Arc<Self>,
         url: url::Url,
         timeout: Duration,
     ) -> anyhow::Result<String> {
-        let (sid, refresh_notify) = self.subscriptions.add(url.clone(), timeout);
+        let (sid, refresh_notify) = self
+            .content_directory_subscriptions
+            .add(url.clone(), timeout);
         let token = self.cancel_token.child_token();
 
         // Spawn a task that will notify it of system id changes.
@@ -127,37 +102,28 @@ impl UpnpServerStateInner {
             let url = url.clone();
 
             async move {
+                use crate::services::content_directory::subscription::notify_system_id_update;
                 let system_update_id_notifier = async {
                     loop {
                         let res = brx.recv().await;
                         let state = state.upgrade().context("upnp server dead")?;
-                        let seq = state.subscriptions.next_seq(&sid)?;
+                        let seq = state.content_directory_subscriptions.next_seq(&sid)?;
                         match res {
                             Ok(system_update_id) => {
                                 trace!(system_update_id, "notifying SystemUpdateId update");
-                                if let Err(e) = notify_subscription_system_update(
-                                    &url,
-                                    &sid,
-                                    seq,
-                                    system_update_id,
-                                )
-                                .await
+                                if let Err(e) =
+                                    notify_system_id_update(&url, &sid, seq, system_update_id).await
                                 {
                                     debug!(error=?e, "error updating UPNP subscription");
                                 }
                             }
                             Err(RecvError::Lagged(by)) => {
                                 warn!(by, "UPNP subscription lagged");
-                                let seq = state.subscriptions.next_seq(&sid)?;
+                                let seq = state.content_directory_subscriptions.next_seq(&sid)?;
                                 let system_update_id =
                                     state.system_update_id.load(Ordering::Relaxed);
-                                if let Err(e) = notify_subscription_system_update(
-                                    &url,
-                                    &sid,
-                                    seq,
-                                    system_update_id,
-                                )
-                                .await
+                                if let Err(e) =
+                                    notify_system_id_update(&url, &sid, seq, system_update_id).await
                                 {
                                     debug!(error=?e, "error updating UPNP subscription");
                                 }
@@ -173,10 +139,10 @@ impl UpnpServerStateInner {
                     loop {
                         tokio::select! {
                             _ = refresh_notify.notified() => {
-                                timeout = state.upgrade().context("upnp server dead")?.subscriptions.get_timeout(&sid)?;
+                                timeout = state.upgrade().context("upnp server dead")?.content_directory_subscriptions.get_timeout(&sid)?;
                             },
                             _ = tokio::time::sleep(timeout) => {
-                                state.upgrade().context("upnp server dead")?.subscriptions.remove(&sid)?;
+                                state.upgrade().context("upnp server dead")?.content_directory_subscriptions.remove(&sid)?;
                                 return Ok(())
                             }
                         }
@@ -197,5 +163,64 @@ impl UpnpServerStateInner {
         );
 
         Ok(sid)
+    }
+}
+
+pub struct SubscribeRequest {
+    pub callback: url::Url,
+    pub subscription_id: Option<String>,
+    pub timeout: Duration,
+}
+
+impl SubscribeRequest {
+    pub fn parse(
+        request: axum::extract::Request,
+    ) -> Result<SubscribeRequest, axum::response::Response> {
+        if request.method().as_str() != "SUBSCRIBE" {
+            return Err(StatusCode::METHOD_NOT_ALLOWED.into_response());
+        }
+
+        let (parts, _body) = request.into_parts();
+        let is_event = parts
+            .headers
+            .get(HeaderName::from_static("nt"))
+            .map(|v| v.as_bytes() == b"upnp:event")
+            .unwrap_or_default();
+        if !is_event {
+            return Err((StatusCode::BAD_REQUEST, "expected NT: upnp:event header").into_response());
+        }
+
+        let callback = parts
+            .headers
+            .get(HeaderName::from_static("callback"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim_matches(|c| c == '>' || c == '<'))
+            .and_then(|u| url::Url::parse(u).ok());
+        let callback = match callback {
+            Some(c) => c,
+            None => return Err((StatusCode::BAD_REQUEST, "callback not provided").into_response()),
+        };
+        let subscription_id = parts
+            .headers
+            .get(HeaderName::from_static("sid"))
+            .and_then(|v| v.to_str().ok());
+
+        let timeout = parts
+            .headers
+            .get(HeaderName::from_static("timeout"))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|t| t.strip_prefix("Second-"))
+            .and_then(|t| t.parse::<u16>().ok())
+            .map(|t| Duration::from_secs(t as u64));
+
+        const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1800);
+
+        let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT);
+
+        Ok(SubscribeRequest {
+            callback,
+            subscription_id: subscription_id.map(|s| s.to_owned()),
+            timeout,
+        })
     }
 }

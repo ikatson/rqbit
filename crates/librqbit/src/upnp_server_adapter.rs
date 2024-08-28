@@ -20,8 +20,8 @@ use itertools::Itertools;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use tracing::{debug, trace, warn};
 use upnp_serve::{
-    upnp_types::content_directory::{
-        response::{Container, Item, ItemOrContainer},
+    services::content_directory::{
+        browse::response::{Container, Item, ItemOrContainer},
         ContentDirectoryBrowseProvider,
     },
     UpnpServer, UpnpServerOptions,
@@ -346,8 +346,8 @@ mod tests {
         TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned,
     };
     use tempfile::TempDir;
-    use upnp_serve::upnp_types::content_directory::{
-        response::{Container, Item, ItemOrContainer},
+    use upnp_serve::services::content_directory::{
+        browse::response::{Container, Item, ItemOrContainer},
         ContentDirectoryBrowseProvider,
     };
 

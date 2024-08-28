@@ -2,21 +2,20 @@ use std::{io::Write, time::Duration};
 
 use anyhow::Context;
 use gethostname::gethostname;
-use http_handlers::make_router;
 use librqbit_sha1_wrapper::ISha1;
+use services::content_directory::ContentDirectoryBrowseProvider;
 use ssdp::SsdpRunner;
 
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
-use upnp_types::content_directory::ContentDirectoryBrowseProvider;
 
 mod constants;
-mod http_handlers;
+mod http_server;
+pub mod services;
 mod ssdp;
 pub mod state;
 mod subscriptions;
 mod templates;
-pub mod upnp_types;
 
 pub struct UpnpServerOptions {
     pub friendly_name: String,
@@ -78,7 +77,7 @@ impl UpnpServer {
         .await
         .context("error initializing SsdpRunner")?;
 
-        let router = make_router(
+        let router = crate::http_server::make_router(
             opts.friendly_name,
             opts.http_prefix,
             usn,
