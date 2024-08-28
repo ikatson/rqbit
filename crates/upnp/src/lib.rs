@@ -4,7 +4,6 @@ use futures::{stream::FuturesUnordered, StreamExt, TryFutureExt};
 use network_interface::NetworkInterfaceConfig;
 use reqwest::Client;
 use serde::Deserialize;
-use serde_xml_rs::from_str;
 use std::{
     collections::HashSet,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -115,19 +114,19 @@ async fn forward_port(
     Ok(())
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct RootDesc {
     #[serde(rename = "device")]
     devices: Vec<Device>,
 }
 
-#[derive(Default, Clone, Debug, Deserialize)]
+#[derive(Default, Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct DeviceList {
     #[serde(rename = "device")]
     devices: Vec<Device>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Device {
     #[serde(rename = "deviceType")]
     pub device_type: String,
@@ -169,13 +168,13 @@ impl Device {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
 pub struct ServiceList {
     #[serde(rename = "service", default)]
     pub services: Vec<Service>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct Service {
     #[serde(rename = "serviceType")]
     pub service_type: String,
@@ -256,7 +255,7 @@ async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
         .await
         .context("failed to read response body")?;
     trace!("received from {location}: {response}");
-    let root_desc: RootDesc = from_str(&response)
+    let root_desc: RootDesc = quick_xml::de::from_str(&response)
         .context("failed to parse response body as xml")
         .map_err(|e| {
             debug!("failed to parse this XML: {response}");
@@ -476,12 +475,56 @@ impl UpnpPortForwarder {
 
 #[cfg(test)]
 mod tests {
-    use serde_xml_rs::from_str;
+    use quick_xml::de::from_str;
 
-    use crate::RootDesc;
+    use crate::{Device, DeviceList, RootDesc, Service, ServiceList};
 
     #[test]
     fn test_parse() {
-        dbg!(from_str::<RootDesc>(include_str!("resources/test/devices-0.xml")).unwrap());
+        let actual = from_str::<RootDesc>(include_str!("resources/test/devices-0.xml")).unwrap();
+        let expected = RootDesc {
+            devices: vec![Device {
+                device_type: "urn:schemas-upnp-org:device:InternetGatewayDevice:1".into(),
+                friendly_name: "ARRIS TG3492LG".into(),
+                service_list: ServiceList {
+                    services: vec![Service {
+                        service_type: "urn:schemas-upnp-org:service:Layer3Forwarding:1".into(),
+                        control_url: "/upnp/control/Layer3Forwarding".into(),
+                        scpd_url: "/Layer3ForwardingSCPD.xml".into(),
+                    }],
+                },
+                device_list: DeviceList {
+                    devices: vec![Device {
+                        device_type: "urn:schemas-upnp-org:device:WANDevice:1".into(),
+                        friendly_name: "WANDevice:1".into(),
+                        service_list: ServiceList {
+                            services: vec![Service {
+                                service_type:
+                                    "urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1".into(),
+                                control_url: "/upnp/control/WANCommonInterfaceConfig0".into(),
+                                scpd_url: "/WANCommonInterfaceConfigSCPD.xml".into(),
+                            }],
+                        },
+                        device_list: DeviceList {
+                            devices: vec![Device {
+                                device_type: "urn:schemas-upnp-org:device:WANConnectionDevice:1"
+                                    .into(),
+                                friendly_name: "WANConnectionDevice:1".into(),
+                                service_list: ServiceList {
+                                    services: vec![Service {
+                                        service_type:
+                                            "urn:schemas-upnp-org:service:WANIPConnection:1".into(),
+                                        control_url: "/upnp/control/WANIPConnection0".into(),
+                                        scpd_url: "/WANIPConnectionServiceSCPD.xml".into(),
+                                    }],
+                                },
+                                device_list: DeviceList { devices: vec![] },
+                            }],
+                        },
+                    }],
+                },
+            }],
+        };
+        assert_eq!(actual, expected);
     }
 }
