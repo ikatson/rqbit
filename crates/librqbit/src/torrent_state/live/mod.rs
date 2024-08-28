@@ -883,7 +883,6 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
                     .with_context(|| format!("error sending metadata piece {metadata_piece_id}"))?;
             }
             Message::Extended(ExtendedMessage::UtPex(pex)) => {
-                trace!("received ut_pex: {:?}", pex);
                 self.on_pex_message(pex);
             }
             message => {
