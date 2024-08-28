@@ -32,6 +32,7 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error_span;
+use tracing::trace;
 use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
@@ -271,7 +272,7 @@ impl ManagedTorrent {
                         loop {
                             match timeout(Duration::from_secs(5), peer_rx.next()).await {
                                 Ok(Some(peer)) => {
-                                    debug!(?peer, "received peer from peer_rx");
+                                    trace!(?peer, "received peer from peer_rx");
                                     let live = match live.upgrade() {
                                         Some(live) => live,
                                         None => return Ok(()),

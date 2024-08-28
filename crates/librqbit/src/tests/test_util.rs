@@ -10,7 +10,7 @@ use librqbit_core::Id20;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
-use tracing::{debug, info};
+use tracing::{info, trace};
 
 pub fn setup_test_logging() {
     if std::env::var("RUST_LOG").is_err() {
@@ -26,7 +26,7 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
         .open(path)
         .unwrap();
 
-    debug!(?path, "creating temp file");
+    trace!(?path, "creating temp file");
 
     const BUF_SIZE: usize = 8192 * 16;
     let mut rng = rand::rngs::SmallRng::from_entropy();

@@ -979,7 +979,7 @@ impl PeerHandler {
             PeerState::Live(live) => {
                 let mut g = self.state.lock_write("mark_chunk_requests_canceled");
                 for req in live.inflight_requests {
-                    debug!(
+                    trace!(
                         "peer dead, marking chunk request cancelled, index={}, chunk={}",
                         req.piece_index.get(),
                         req.chunk_index
@@ -1036,9 +1036,9 @@ impl PeerHandler {
                     duration = format!("{dur:?}")
                 ),
                 async move {
-                    debug!("waiting to reconnect again");
+                    trace!("waiting to reconnect again");
                     tokio::time::sleep(dur).await;
-                    debug!("finished waiting");
+                    trace!("finished waiting");
                     self.state
                         .peers
                         .with_peer_mut(handle, "dead_to_queued", |peer| {

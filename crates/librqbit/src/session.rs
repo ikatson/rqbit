@@ -74,7 +74,7 @@ struct ParsedTorrentFile {
 }
 
 fn torrent_from_bytes(bytes: Bytes) -> anyhow::Result<ParsedTorrentFile> {
-    debug!(
+    trace!(
         "all fields in torrent: {:#?}",
         bencode::dyn_from_bytes::<ByteBuf>(&bytes)
     );

@@ -199,9 +199,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .await
             .context("error reading handshake")?;
         let h_supports_extended = h.supports_extended();
-        debug!(
-            "connected: id={:?}",
-            try_decode_peer_id(Id20::new(h.peer_id))
+        trace!(
+            peer_id=?h.peer_id,
+            decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
+            "connected",
         );
         if h.info_hash != self.info_hash.0 {
             anyhow::bail!("info hash does not match");
