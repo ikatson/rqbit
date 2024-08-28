@@ -1510,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "anyhow",
  "async-backtrace",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "anyhow",
  "bytes",

@@ -1846,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
