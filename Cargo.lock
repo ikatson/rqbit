@@ -1639,6 +1639,7 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
+ "network-interface",
  "parking_lot",
  "quick-xml",
  "reqwest",

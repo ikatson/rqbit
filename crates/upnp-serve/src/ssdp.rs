@@ -133,16 +133,15 @@ impl SsdpRunner {
         Ok(Self { opts, socket })
     }
 
-    fn generate_notify_message(&self, kind: &str, nts: &str) -> String {
+    fn generate_notify_message(&self, kind: &str, nts: &str, location: &str) -> String {
         let usn: &str = &self.opts.usn;
-        let description_http_location = &self.opts.description_http_location;
         let server: &str = &self.opts.server_string;
         let bcast_addr = UPNP_BROADCAST_ADDR;
         format!(
             "NOTIFY * HTTP/1.1\r
 Host: {bcast_addr}\r
 Cache-Control: max-age=75\r
-Location: {description_http_location}\r
+Location: {location}\r
 NT: {kind}\r
 NTS: {nts}\r
 Server: {server}\r
@@ -169,17 +168,49 @@ Content-Length: 0\r\n\r\n"
     }
 
     async fn try_send_notifies(&self, nts: &str) {
-        for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
-            let msg = self.generate_notify_message(kind, nts);
-            trace!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
-            if let Err(e) = self
-                .socket
-                .send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR)
-                .await
-            {
-                warn!(error=?e, "error sending SSDP NOTIFY")
-            } else {
-                debug!(kind, nts, "sent SSDP NOTIFY")
+        use network_interface::NetworkInterfaceConfig;
+        let interfaces = network_interface::NetworkInterface::show();
+        let interfaces = match interfaces {
+            Ok(interfaces) => interfaces,
+            Err(e) => {
+                warn!(error=?e, "error determining network interfaces");
+                return;
+            }
+        };
+
+        let location = match url::Url::parse(&self.opts.description_http_location) {
+            Ok(u) => u,
+            // TODO: rewrite this
+            Err(e) => {
+                warn!(error=?e, "error parsing description_http_location");
+                return;
+            }
+        };
+
+        for ni in interfaces {
+            for niaddr in ni.addr {
+                let ip = niaddr.ip();
+                let addr = SocketAddr::new(ip, 0);
+                let sock = match tokio::net::UdpSocket::bind(addr).await {
+                    Ok(sock) => sock,
+                    Err(e) => {
+                        debug!(%addr, error=?e, "error binding UDP to send NOTIFY");
+                        continue;
+                    }
+                };
+
+                let mut location = location.clone();
+                location.set_host(Some(&format!("{ip}"))).unwrap();
+
+                for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
+                    let msg = self.generate_notify_message(kind, nts, &format!("{location}"));
+                    trace!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
+                    if let Err(e) = sock.send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR).await {
+                        warn!(error=?e, "error sending SSDP NOTIFY")
+                    } else {
+                        debug!(kind, nts, "sent SSDP NOTIFY")
+                    }
+                }
             }
         }
     }
