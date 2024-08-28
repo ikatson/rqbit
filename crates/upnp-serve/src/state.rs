@@ -19,6 +19,7 @@ pub struct UpnpServerStateInner {
     pub(crate) provider: Box<dyn ContentDirectoryBrowseProvider>,
     pub(crate) system_update_id: AtomicU64,
     pub(crate) content_directory_subscriptions: Subscriptions,
+    pub(crate) connection_manager_subscriptions: Subscriptions,
 
     pub(crate) span: Span,
     pub(crate) system_update_bcast_tx: tokio::sync::broadcast::Sender<u64>,
@@ -45,6 +46,7 @@ impl UpnpServerStateInner {
             provider,
             system_update_id: AtomicU64::new(new_system_update_id()?),
             content_directory_subscriptions: Default::default(),
+            connection_manager_subscriptions: Default::default(),
             system_update_bcast_tx: btx,
             _drop_guard: drop_guard,
             span: span.clone(),

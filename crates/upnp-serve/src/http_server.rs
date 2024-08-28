@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use http::{header::CONTENT_TYPE, StatusCode};
+use http::header::CONTENT_TYPE;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -69,6 +69,17 @@ pub fn make_router(
         }
     };
 
+    let connection_manager_sub_handler = {
+        let state = state.clone();
+        move |request: axum::extract::Request| async move {
+            crate::services::connection_manager::subscribe_http_handler(
+                State(state.clone()),
+                request,
+            )
+            .await
+        }
+    };
+
     let app = axum::Router::new()
         .route("/description.xml", get(description_xml))
         .route(
@@ -85,15 +96,15 @@ pub fn make_router(
         )
         .route(
             "/control/ConnectionManager",
-            post(|| async { (StatusCode::NOT_IMPLEMENTED, "") }),
+            post(crate::services::connection_manager::http_handler),
         )
         .route_service(
             "/subscribe/ContentDirectory",
             content_dir_sub_handler.into_service(),
         )
-        .route(
+        .route_service(
             "/subscribe/ConnectionManager",
-            post(|| async { (StatusCode::NOT_IMPLEMENTED, "") }),
+            connection_manager_sub_handler.into_service(),
         )
         .with_state(state);
 

@@ -80,6 +80,15 @@ impl UpnpServerStateInner {
             .update_timeout(sid, new_timeout)
     }
 
+    pub fn renew_connection_manager_subscription(
+        &self,
+        sid: &str,
+        new_timeout: Duration,
+    ) -> anyhow::Result<()> {
+        self.content_directory_subscriptions
+            .update_timeout(sid, new_timeout)
+    }
+
     pub fn new_content_directory_subscription(
         self: &Arc<Self>,
         url: url::Url,
@@ -157,7 +166,55 @@ impl UpnpServerStateInner {
         };
 
         spawn_with_cancel(
-            error_span!(parent: pspan, "subscription-manager", sid, %url),
+            error_span!(parent: pspan, "subscription-manager", sid, %url, service="ContentDirectory"),
+            token,
+            subscription_manager,
+        );
+
+        Ok(sid)
+    }
+
+    pub fn new_connection_manager_subscription(
+        self: &Arc<Self>,
+        url: url::Url,
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
+        let (sid, refresh_notify) = self
+            .content_directory_subscriptions
+            .add(url.clone(), timeout);
+        let token = self.cancel_token.child_token();
+
+        // Spawn a task that will notify it of system id changes.
+        // Spawn a task that will wait for timeout or subscription refreshes.
+        // When it times out, kill all of them.
+
+        let pspan = self.span.clone();
+        let subscription_manager = {
+            let state = Arc::downgrade(self);
+            let sid = sid.clone();
+
+            async move {
+                let timeout_notifier = async {
+                    let mut timeout = timeout;
+                    loop {
+                        tokio::select! {
+                            _ = refresh_notify.notified() => {
+                                timeout = state.upgrade().context("upnp server dead")?.connection_manager_subscriptions.get_timeout(&sid)?;
+                            },
+                            _ = tokio::time::sleep(timeout) => {
+                                state.upgrade().context("upnp server dead")?.connection_manager_subscriptions.remove(&sid)?;
+                                return Ok(())
+                            }
+                        }
+                    }
+                }.instrument(error_span!("timeout-killer"));
+
+                timeout_notifier.await
+            }
+        };
+
+        spawn_with_cancel(
+            error_span!(parent: pspan, "subscription-manager", sid, %url, service="ConnectionManager"),
             token,
             subscription_manager,
         );
