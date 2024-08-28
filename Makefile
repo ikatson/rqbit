@@ -33,13 +33,13 @@ export CORS_ALLOW_REGEXP ?= '.*'
 
 @PHONY: devserver
 devserver:
-	echo -n '' > /tmp/rqbit-log && \
-	   cargo run -- \
-	   server start $(RQBIT_OUTPUT_FOLDER)
+	echo -n '' > $(RQBIT_LOG_FILE) && \
+	cargo run -- \
+	server start $(RQBIT_OUTPUT_FOLDER)
 
 @PHONY: devserver
 devserver-postgres:
-	echo -n '' > /tmp/rqbit-log && \
+	echo -n '' > $(RQBIT_LOG_FILE) && \
 	cargo run -- \
 	server start --fastresume --persistence-location $(RQBIT_POSTGRES_CONNECTION_STRING) $(RQBIT_OUTPUT_FOLDER)
 
