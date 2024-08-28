@@ -99,7 +99,7 @@ impl Serialize for YourIP {
             IpAddr::V6(ipv6) => {
                 let buf = ipv6.octets();
                 serializer.serialize_bytes(&buf)
-            },
+            }
         }
     }
 }

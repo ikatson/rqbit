@@ -27,7 +27,7 @@ impl StorageFactory for InMemoryExampleStorageFactory {
 
     fn create(
         &self,
-        info: &crate::torrent_state::ManagedTorrentInfo,
+        info: &crate::torrent_state::ManagedTorrentShared,
     ) -> anyhow::Result<InMemoryExampleStorage> {
         InMemoryExampleStorage::new(info.lengths, info.file_infos.clone())
     }
@@ -111,7 +111,7 @@ impl TorrentStorage for InMemoryExampleStorage {
         }))
     }
 
-    fn init(&mut self, _meta: &crate::ManagedTorrentInfo) -> anyhow::Result<()> {
+    fn init(&mut self, _meta: &crate::ManagedTorrentShared) -> anyhow::Result<()> {
         Ok(())
     }
 

@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context};
+use anyhow::bail;
 use librqbit_core::Id20;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng, RngCore, SeedableRng};
@@ -97,6 +97,7 @@ impl TestPeerMetadata {
 
 #[cfg(feature = "http-api")]
 async fn debug_server() -> anyhow::Result<()> {
+    use anyhow::Context;
     use axum::{response::IntoResponse, routing::get, Router};
     async fn backtraces() -> impl IntoResponse {
         #[cfg(feature = "async-bt")]

@@ -215,6 +215,8 @@ impl<'a> FileOps<'a> {
                 format!("error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{name:?}\")")
             })?;
 
+            self.files.on_piece_completed(piece_index)?;
+
             piece_remaining_bytes -= to_read_in_file;
 
             if piece_remaining_bytes == 0 {
