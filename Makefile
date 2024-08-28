@@ -16,7 +16,7 @@ webui-build: webui-deps
 	npm run build
 
 # NOTE: on LG TV using hostname is unstable for some reason, use IP address.
-export RQBIT_UPNP_SERVER_HOSTNAME ?= $(shell hostname)
+export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= 0.0.0.0:3030
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch

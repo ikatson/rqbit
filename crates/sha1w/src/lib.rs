@@ -11,6 +11,11 @@ pub trait ISha1 {
     fn finish(self) -> [u8; 20];
 }
 
+assert_cfg::exactly_one! {
+    feature = "sha1-crypto-hash",
+    feature = "sha1-ring",
+}
+
 #[cfg(feature = "sha1-crypto-hash")]
 mod crypto_hash_impl {
     use super::ISha1;

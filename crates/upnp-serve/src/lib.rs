@@ -20,7 +20,6 @@ pub mod upnp_types;
 
 pub struct UpnpServerOptions {
     pub friendly_name: String,
-    pub http_hostname: String,
     pub http_listen_port: u16,
     pub http_prefix: String,
     pub browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
@@ -57,14 +56,16 @@ impl UpnpServer {
         let usn = create_usn(&opts).context("error generating USN")?;
 
         let description_http_location = {
-            let hostname = &opts.http_hostname;
             let port = opts.http_listen_port;
             let http_prefix = &opts.http_prefix;
-            format!("http://{hostname}:{port}{http_prefix}/description.xml")
+            let surl = format!("http://0.0.0.0:{port}{http_prefix}/description.xml");
+            url::Url::parse(&surl)
+                .context(surl)
+                .context("error parsing url")?
         };
 
         info!(
-            location = description_http_location,
+            location = %description_http_location,
             "starting UPnP/SSDP announcer for MediaServer"
         );
         let ssdp_runner = crate::ssdp::SsdpRunner::new(ssdp::SsdpRunnerOptions {

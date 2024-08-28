@@ -122,13 +122,6 @@ async fn api_from_config(
         let api = api.clone();
         let read_only = config.http_api.read_only;
         let upnp_router = if config.upnp.enable_server {
-            let hostname = config
-                .upnp
-                .server_hostname
-                .as_ref()
-                .map(|h| h.trim())
-                .context("empty UPNP hostname")?
-                .to_owned();
             let friendly_name = config
                 .upnp
                 .server_friendly_name
@@ -136,10 +129,15 @@ async fn api_from_config(
                 .map(|f| f.trim())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_owned())
-                .unwrap_or_else(|| format!("rqbit@{hostname}"));
+                .unwrap_or_else(|| {
+                    format!(
+                        "rqbit-desktop@{}",
+                        gethostname::gethostname().to_string_lossy()
+                    )
+                });
 
             let mut upnp_adapter = session
-                .make_upnp_adapter(friendly_name, hostname, config.http_api.listen_addr.port())
+                .make_upnp_adapter(friendly_name, config.http_api.listen_addr.port())
                 .await
                 .context("error starting UPnP server")?;
             let router = upnp_adapter.take_router()?;

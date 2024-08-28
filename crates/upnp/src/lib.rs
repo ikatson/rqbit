@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::{
     collections::HashSet,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -23,7 +23,14 @@ const SSDP_SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r\n\
                                    ST: urn:schemas-upnp-org:service:WANIPConnection:1\r\n\
                                    \r\n";
 
-fn get_local_ip_relative_to(local_dest: Ipv4Addr) -> anyhow::Result<Ipv4Addr> {
+pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<Ipv4Addr> {
+    let local_dest = match local_dest {
+        IpAddr::V4(v4) => v4,
+        IpAddr::V6(v6) => {
+            anyhow::bail!("get_local_ip_relative_to not implemented for IPv6; addr={v6}")
+        }
+    };
+
     // Ipv4Addr.to_bits() is only there in nightly rust, so copying here for now.
     fn ip_bits(addr: Ipv4Addr) -> u32 {
         u32::from_be_bytes(addr.octets())
@@ -214,14 +221,9 @@ impl UpnpEndpoint {
     }
 
     fn my_local_ip(&self) -> anyhow::Result<Ipv4Addr> {
-        let dest_ipv4 = match self.discover_response.received_from {
-            SocketAddr::V4(v4) => *v4.ip(),
-            SocketAddr::V6(v6) => {
-                bail!("don't support IPv6, but remote ip is {}", v6.ip())
-            }
-        };
-        let local_ip = get_local_ip_relative_to(dest_ipv4)
-            .with_context(|| format!("can't determine local IP relative to {dest_ipv4}"))?;
+        let dest_ip = self.discover_response.received_from.ip();
+        let local_ip = get_local_ip_relative_to(dest_ip)
+            .with_context(|| format!("can't determine local IP relative to {dest_ip}"))?;
         Ok(local_ip)
     }
 

@@ -11,7 +11,7 @@ services:
       - 4240:4240 # TCP BitTorrent port
     environment:
       # Replace this with your LAN hostname or IP, resolvable from other devices in your LAN
-      RQBIT_UPNP_SERVER_HOSTNAME: 192.168.0.112
+      RQBIT_UPNP_SERVER_ENABLE: "true"
       RQBIT_UPNP_SERVER_FRIENDLY_NAME: rqbit-docker
 
       # Replace this if you want to change the HTTP/Web UI port
