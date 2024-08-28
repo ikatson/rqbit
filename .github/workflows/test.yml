@@ -40,10 +40,19 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo check
   test:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        features: [default-tls, rust-tls]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test
+        run: cargo test --no-default-features --features=${{ matrix.features }}
+      - name: Ensure openssl isn't included
+        if: ${{ matrix.features == 'rust-tls' && matrix.os == 'ubuntu-latest' }}
+        run: |
+          cargo install cargo-tree
+          cargo tree --no-default-features --features ${{ matrix.features }} | grep openssl && false || true
