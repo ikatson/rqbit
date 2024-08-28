@@ -1,19 +1,18 @@
-use std::{
-    collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-};
+use std::{collections::HashMap, net::IpAddr};
 
-use buffers::ByteBuf;
-use byteorder::ByteOrder;
-use byteorder::BE;
+use buffers::{ByteBuf, ByteBufT};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{EXTENDED_UT_METADATA_KEY, MY_EXTENDED_UT_METADATA};
+use crate::{
+    EXTENDED_UT_METADATA_KEY, EXTENDED_UT_PEX_KEY, MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX,
+};
+
+use super::PeerExtendedMessageIds;
 
 #[derive(Deserialize, Serialize, Debug, Default)]
-pub struct ExtendedHandshake<ByteBuf: Eq + std::hash::Hash> {
+pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
     #[serde(bound(deserialize = "ByteBuf: From<&'de [u8]>"))]
     pub m: HashMap<ByteBuf, u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,6 +39,7 @@ impl ExtendedHandshake<ByteBuf<'static>> {
     pub fn new() -> Self {
         let mut features = HashMap::new();
         features.insert(ByteBuf(EXTENDED_UT_METADATA_KEY), MY_EXTENDED_UT_METADATA);
+        features.insert(ByteBuf(EXTENDED_UT_PEX_KEY), MY_EXTENDED_UT_PEX);
         Self {
             m: features,
             ..Default::default()
@@ -49,7 +49,7 @@ impl ExtendedHandshake<ByteBuf<'static>> {
 
 impl<'a, ByteBuf> ExtendedHandshake<ByteBuf>
 where
-    ByteBuf: Eq + std::hash::Hash + std::borrow::Borrow<[u8]>,
+    ByteBuf: ByteBufT,
 {
     fn get_msgid(&self, msg_type: &'a [u8]) -> Option<u8> {
         self.m.get(msg_type).copied()
@@ -58,12 +58,23 @@ where
     pub fn ut_metadata(&self) -> Option<u8> {
         self.get_msgid(EXTENDED_UT_METADATA_KEY)
     }
+
+    pub fn ut_pex(&self) -> Option<u8> {
+        self.get_msgid(EXTENDED_UT_PEX_KEY)
+    }
+
+    pub fn peer_extended_messages(&self) -> PeerExtendedMessageIds {
+        PeerExtendedMessageIds {
+            ut_metadata: self.ut_metadata(),
+            ut_pex: self.ut_pex(),
+        }
+    }
 }
 
 impl<ByteBuf> CloneToOwned for ExtendedHandshake<ByteBuf>
 where
-    ByteBuf: CloneToOwned + Eq + std::hash::Hash,
-    <ByteBuf as CloneToOwned>::Target: Eq + std::hash::Hash,
+    ByteBuf: ByteBufT,
+    <ByteBuf as CloneToOwned>::Target: ByteBufT,
 {
     type Target = ExtendedHandshake<<ByteBuf as CloneToOwned>::Target>;
 
@@ -122,18 +133,11 @@ impl<'de> Deserialize<'de> for YourIP {
                 E: serde::de::Error,
             {
                 if v.len() == 4 {
-                    return Ok(YourIP(IpAddr::V4(Ipv4Addr::new(v[0], v[1], v[2], v[3]))));
+                    let ip_bytes: &[u8; 4] = v[0..4].try_into().unwrap(); // Safe to unwrap as we check slice length
+                    return Ok(YourIP(IpAddr::from(*ip_bytes)));
                 } else if v.len() == 16 {
-                    return Ok(YourIP(IpAddr::V6(Ipv6Addr::new(
-                        BE::read_u16(&v[..2]),
-                        BE::read_u16(&v[2..4]),
-                        BE::read_u16(&v[4..6]),
-                        BE::read_u16(&v[6..8]),
-                        BE::read_u16(&v[8..10]),
-                        BE::read_u16(&v[10..12]),
-                        BE::read_u16(&v[12..14]),
-                        BE::read_u16(&v[14..]),
-                    ))));
+                    let ip_bytes: &[u8; 16] = v[0..16].try_into().unwrap(); // Safe to unwrap as we check slice length
+                    return Ok(YourIP(IpAddr::from(*ip_bytes)));
                 }
                 Err(E::custom("expected 4 or 16 byte address"))
             }

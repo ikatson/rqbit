@@ -1,5 +1,6 @@
 use bencode::bencode_serialize_to_writer;
 use bencode::BencodeDeserializer;
+use buffers::ByteBufT;
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
@@ -39,7 +40,7 @@ impl<ByteBuf: CloneToOwned> CloneToOwned for UtMetadata<ByteBuf> {
     }
 }
 
-impl<'a, ByteBuf: 'a> UtMetadata<ByteBuf> {
+impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
     pub fn serialize(&self, buf: &mut Vec<u8>)
     where
         ByteBuf: AsRef<[u8]>,
@@ -83,7 +84,7 @@ impl<'a, ByteBuf: 'a> UtMetadata<ByteBuf> {
             }
         }
     }
-    pub fn deserialize(buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
+    pub fn deserialize<'a>(buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
     where
         ByteBuf: From<&'a [u8]>,
     {

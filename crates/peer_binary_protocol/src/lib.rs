@@ -5,10 +5,11 @@
 pub mod extended;
 
 use bincode::Options;
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use byteorder::{ByteOrder, BE};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
+use extended::PeerExtendedMessageIds;
 use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +47,9 @@ const MSGID_EXTENDED: u8 = 20;
 
 pub const EXTENDED_UT_METADATA_KEY: &[u8] = b"ut_metadata";
 pub const MY_EXTENDED_UT_METADATA: u8 = 3;
+
+pub const EXTENDED_UT_PEX_KEY: &[u8] = b"ut_pex";
+pub const MY_EXTENDED_UT_PEX: u8 = 1;
 
 #[derive(Debug)]
 pub enum MessageDeserializeError {
@@ -182,7 +186,7 @@ impl From<anyhow::Error> for MessageDeserializeError {
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf: std::hash::Hash + Eq> {
+pub enum Message<ByteBuf: ByteBufT> {
     Request(Request),
     Cancel(Request),
     Bitfield(ByteBuf),
@@ -208,8 +212,8 @@ pub struct Bitfield<'a> {
 
 impl<ByteBuf> CloneToOwned for Message<ByteBuf>
 where
-    ByteBuf: CloneToOwned + std::hash::Hash + Eq,
-    <ByteBuf as CloneToOwned>::Target: std::hash::Hash + Eq,
+    ByteBuf: ByteBufT,
+    <ByteBuf as CloneToOwned>::Target: ByteBufT,
 {
     type Target = Message<<ByteBuf as CloneToOwned>::Target>;
 
@@ -253,7 +257,7 @@ impl<'a> std::fmt::Debug for Bitfield<'a> {
 
 impl<ByteBuf> Message<ByteBuf>
 where
-    ByteBuf: AsRef<[u8]> + std::hash::Hash + Eq + Serialize,
+    ByteBuf: ByteBufT,
 {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
@@ -276,7 +280,7 @@ where
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
-        extended_handshake_ut_metadata: &dyn Fn() -> Option<u8>,
+        peer_extended_messages: &dyn Fn() -> PeerExtendedMessageIds,
     ) -> anyhow::Result<usize> {
         let (lp, msg_id) = self.len_prefix_and_msg_id();
 
@@ -326,7 +330,7 @@ where
                 Ok(msg_len)
             }
             Message::Extended(e) => {
-                e.serialize(out, extended_handshake_ut_metadata)?;
+                e.serialize(out, peer_extended_messages)?;
                 let msg_size = out.len();
                 // no fucking idea why +1, but I tweaked that for it all to match up
                 // with real messages.
@@ -636,7 +640,7 @@ mod tests {
     fn test_extended_serialize() {
         let msg = Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
         let mut out = Vec::new();
-        msg.serialize(&mut out, &|| None).unwrap();
+        msg.serialize(&mut out, &Default::default).unwrap();
         dbg!(out);
     }
 
@@ -652,7 +656,7 @@ mod tests {
         let (msg, size) = MessageBorrowed::deserialize(&buf).unwrap();
         assert_eq!(size, buf.len());
         let mut write_buf = Vec::new();
-        msg.serialize(&mut write_buf, &|| None).unwrap();
+        msg.serialize(&mut write_buf, &Default::default).unwrap();
         if buf != write_buf {
             {
                 use std::io::Write;
