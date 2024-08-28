@@ -103,6 +103,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub disk_write_queue: Option<DiskWorkQueueSender>,
+    pub disable_upload: bool,
 }
 
 /// Common information about torrent shared among all possible states.

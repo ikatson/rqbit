@@ -202,6 +202,9 @@ struct Opts {
     #[cfg(not(target_os = "windows"))]
     #[arg(long, env = "RQBIT_UMASK", value_parser=parse_umask)]
     umask: Option<libc::mode_t>,
+
+    #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
+    disable_upload: bool,
 }
 
 #[derive(Parser)]
@@ -454,6 +457,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         root_span: None,
         fastresume: false,
         cancellation_token: Some(cancel.clone()),
+        disable_upload: opts.disable_upload,
     };
 
     let stats_printer = |session: Arc<Session>| async move {
