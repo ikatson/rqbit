@@ -1649,6 +1649,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bstr",
+ "futures",
  "gethostname",
  "http",
  "httparse",
