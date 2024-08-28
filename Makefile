@@ -53,6 +53,10 @@ docker-build-xx-one-platform:
 docker-build-amd64:
 	PLATFORM=linux/amd64 $(MAKE) docker-build-xx-one-platform
 
+@PHONY: docker-build-armv7
+docker-build-armv7:
+		PLATFORM=linux/arm/v7 $(MAKE) docker-build-xx-one-platform
+
 @PHONY: clean
 clean:
 	rm -rf target
