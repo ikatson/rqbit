@@ -1,7 +1,7 @@
 use axum::{body::Bytes, extract::State, response::IntoResponse};
 use bstr::BStr;
 use http::{HeaderMap, StatusCode};
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::{state::UnpnServerState, subscriptions::SubscribeRequest};
 
@@ -52,44 +52,11 @@ pub(crate) async fn subscribe_http_handler(
     State(state): State<UnpnServerState>,
     request: axum::extract::Request,
 ) -> impl IntoResponse {
-    let SubscribeRequest {
-        callback,
-        subscription_id,
-        timeout,
-    } = match SubscribeRequest::parse(request) {
+    let req = match SubscribeRequest::parse(request) {
         Ok(sub) => sub,
-        Err(e) => return e,
+        Err(err) => return err,
     };
 
-    if let Some(sid) = subscription_id {
-        match state.renew_connection_manager_subscription(&sid, timeout) {
-            Ok(()) => (
-                StatusCode::OK,
-                [
-                    ("SID", sid.to_owned()),
-                    ("TIMEOUT", format!("Second-{}", timeout.as_secs())),
-                ],
-            )
-                .into_response(),
-            Err(e) => {
-                warn!(sid, error=?e, "error renewing subscription");
-                StatusCode::NOT_FOUND.into_response()
-            }
-        }
-    } else {
-        match state.new_connection_manager_subscription(callback, timeout) {
-            Ok(sid) => (
-                StatusCode::OK,
-                [
-                    ("SID", sid),
-                    ("TIMEOUT", format!("Second-{}", timeout.as_secs())),
-                ],
-            )
-                .into_response(),
-            Err(e) => {
-                warn!(error=?e, "error creating subscription");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-        }
-    }
+    let resp = state.handle_connection_manager_subscription_request(&req);
+    crate::subscriptions::subscription_into_response(&req, resp)
 }

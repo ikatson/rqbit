@@ -191,8 +191,7 @@ pub mod get_system_update_id {
 
 pub mod subscription {
     use axum::{extract::State, response::IntoResponse};
-    use http::{Method, StatusCode};
-    use tracing::warn;
+    use http::Method;
 
     use crate::{state::UnpnServerState, subscriptions::SubscribeRequest};
 
@@ -200,46 +199,13 @@ pub mod subscription {
         State(state): State<UnpnServerState>,
         request: axum::extract::Request,
     ) -> impl IntoResponse {
-        let SubscribeRequest {
-            callback,
-            subscription_id,
-            timeout,
-        } = match SubscribeRequest::parse(request) {
+        let req = match SubscribeRequest::parse(request) {
             Ok(sub) => sub,
             Err(err) => return err,
         };
 
-        if let Some(sid) = subscription_id {
-            match state.renew_content_directory_subscription(&sid, timeout) {
-                Ok(()) => (
-                    StatusCode::OK,
-                    [
-                        ("SID", sid.to_owned()),
-                        ("TIMEOUT", format!("Second-{}", timeout.as_secs())),
-                    ],
-                )
-                    .into_response(),
-                Err(e) => {
-                    warn!(sid, error=?e, "error renewing subscription");
-                    StatusCode::NOT_FOUND.into_response()
-                }
-            }
-        } else {
-            match state.new_content_directory_subscription(callback, timeout) {
-                Ok(sid) => (
-                    StatusCode::OK,
-                    [
-                        ("SID", sid),
-                        ("TIMEOUT", format!("Second-{}", timeout.as_secs())),
-                    ],
-                )
-                    .into_response(),
-                Err(e) => {
-                    warn!(error=?e, "error creating subscription");
-                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                }
-            }
-        }
+        let resp = state.handle_content_directory_subscription_request(&req);
+        crate::subscriptions::subscription_into_response(&req, resp)
     }
 
     pub async fn notify_system_id_update(
