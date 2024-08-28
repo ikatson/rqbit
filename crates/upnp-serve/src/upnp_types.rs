@@ -70,11 +70,19 @@ pub mod content_directory {
     }
 
     pub trait ContentDirectoryBrowseProvider: Send + Sync {
-        fn browse_direct_children(&self, parent_id: usize) -> Vec<ItemOrContainer>;
+        fn browse_direct_children(
+            &self,
+            parent_id: usize,
+            http_hostname: &str,
+        ) -> Vec<ItemOrContainer>;
     }
 
     impl ContentDirectoryBrowseProvider for Vec<ItemOrContainer> {
-        fn browse_direct_children(&self, _parent_id: usize) -> Vec<ItemOrContainer> {
+        fn browse_direct_children(
+            &self,
+            _parent_id: usize,
+            _http_host: &str,
+        ) -> Vec<ItemOrContainer> {
             self.clone()
         }
     }

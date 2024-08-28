@@ -139,13 +139,16 @@ struct Opts {
     tcp_listen_max_port: u16,
 
     /// If set, will try to publish the chosen port through upnp on your router.
-    #[arg(long = "disable-upnp", env = "RQBIT_UPNP_DISABLE_PORT_FORWARD")]
-    disable_upnp: bool,
+    #[arg(
+        long = "disable-upnp-port-forward",
+        env = "RQBIT_UPNP_PORT_FORWARD_DISABLE"
+    )]
+    disable_upnp_port_forward: bool,
 
     /// If set, will run a UPNP Media server and stream all the torrents through it.
     /// Should be set to your hostname/IP as seen by your LAN neighbors.
-    #[arg(long = "upnp-server-hostname", env = "RQBIT_UPNP_SERVER_HOSTNAME")]
-    upnp_server_hostname: Option<String>,
+    #[arg(long = "enable-upnp-server", env = "RQBIT_UPNP_SERVER_ENABLE")]
+    enable_upnp_server: bool,
 
     /// UPNP server name that would be displayed on devices in your network.
     #[arg(
@@ -425,7 +428,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         } else {
             None
         },
-        enable_upnp_port_forwarding: !opts.disable_upnp,
+        enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
@@ -544,23 +547,26 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 );
 
                 let mut upnp_server = {
-                    match opts.upnp_server_hostname {
-                        Some(hn) => {
+                    match opts.enable_upnp_server {
+                        true => {
                             if opts.http_api_listen_addr.ip().is_loopback() {
                                 bail!("cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0");
                             }
                             let server = session
                                 .make_upnp_adapter(
-                                    opts.upnp_server_friendly_name
-                                        .unwrap_or_else(|| format!("rqbit at {hn}")),
-                                    hn,
+                                    opts.upnp_server_friendly_name.unwrap_or_else(|| {
+                                        format!(
+                                            "rqbit@{}",
+                                            gethostname::gethostname().to_string_lossy()
+                                        )
+                                    }),
                                     opts.http_api_listen_addr.port(),
                                 )
                                 .await
                                 .context("error starting UPNP server")?;
                             Some(server)
                         }
-                        None => None,
+                        false => None,
                     }
                 };
 

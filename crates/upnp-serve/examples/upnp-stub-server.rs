@@ -34,8 +34,6 @@ async fn main() -> anyhow::Result<()> {
     info!("Creating UpnpServer");
     let mut server = UpnpServer::new(UpnpServerOptions {
         friendly_name: "demo upnp server".to_owned(),
-        http_hostname: std::env::var("UPNP_HOSTNAME")
-            .context("you need to set UPNP_HOSTNAME to your IP visible from LAN")?,
         http_listen_port: HTTP_PORT,
         http_prefix: HTTP_PREFIX.to_owned(),
         browse_provider: Box::new(items),

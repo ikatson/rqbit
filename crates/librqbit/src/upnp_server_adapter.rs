@@ -11,7 +11,6 @@ use crate::{session::TorrentId, ManagedTorrent, Session};
 #[derive(Clone)]
 pub struct UpnpServerSessionAdapter {
     session: Arc<Session>,
-    hostname: String,
     port: u16,
 }
 
@@ -54,6 +53,7 @@ impl TorrentFileTreeNode {
     fn as_item_or_container(
         &self,
         id: usize,
+        http_host: &str,
         torrent: &ManagedTorrent,
         adapter: &UpnpServerSessionAdapter,
     ) -> ItemOrContainer {
@@ -79,7 +79,7 @@ impl TorrentFileTreeNode {
                     mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
                         "http://{}:{}/torrents/{}/stream/{}/{}",
-                        adapter.hostname,
+                        http_host,
                         adapter.port,
                         torrent.id(),
                         fid,
@@ -197,7 +197,7 @@ impl TorrentFileTree {
 }
 
 impl UpnpServerSessionAdapter {
-    fn build_root(&self) -> Vec<ItemOrContainer> {
+    fn build_root(&self, hostname: &str) -> Vec<ItemOrContainer> {
         let mut all = self
             .session
             .with_torrents(|torrents| torrents.map(|(_, t)| t.clone()).collect_vec());
@@ -216,7 +216,7 @@ impl UpnpServerSessionAdapter {
                     let mime_type = mime_guess::from_path(rf).first();
                     let url = format!(
                         "http://{}:{}/torrents/{real_id}/stream/0/{title}",
-                        self.hostname, self.port
+                        hostname, self.port
                     );
                     Some(ItemOrContainer::Item(Item {
                         id: upnp_id,
@@ -249,9 +249,13 @@ impl UpnpServerSessionAdapter {
 }
 
 impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
-    fn browse_direct_children(&self, parent_id: usize) -> Vec<ItemOrContainer> {
+    fn browse_direct_children(
+        &self,
+        parent_id: usize,
+        http_hostname: &str,
+    ) -> Vec<ItemOrContainer> {
         if parent_id == 0 {
-            return self.build_root();
+            return self.build_root(http_hostname);
         }
 
         let (node_id, torrent_id) = match decode_id(parent_id) {
@@ -292,14 +296,19 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
         let mut result = Vec::new();
 
         if node.real_torrent_file_id.is_some() {
-            result.push(node.as_item_or_container(node_id, &torrent, self))
+            result.push(node.as_item_or_container(node_id, http_hostname, &torrent, self))
         } else {
             for (child_node_id, child_node) in node
                 .children
                 .iter()
                 .filter_map(|id| Some((*id, tree.nodes.get(*id)?)))
             {
-                result.push(child_node.as_item_or_container(child_node_id, &torrent, self));
+                result.push(child_node.as_item_or_container(
+                    child_node_id,
+                    http_hostname,
+                    &torrent,
+                    self,
+                ));
             }
         };
 
@@ -311,17 +320,14 @@ impl Session {
     pub async fn make_upnp_adapter(
         self: &Arc<Self>,
         friendly_name: String,
-        http_hostname: String,
         http_listen_port: u16,
     ) -> anyhow::Result<UpnpServer> {
         UpnpServer::new(UpnpServerOptions {
             friendly_name,
-            http_hostname: http_hostname.clone(),
             http_listen_port,
             http_prefix: "/upnp".to_owned(),
             browse_provider: Box::new(UpnpServerSessionAdapter {
                 session: self.clone(),
-                hostname: http_hostname,
                 port: http_listen_port,
             }),
             cancellation_token: self.cancellation_token().child_token(),
@@ -536,12 +542,11 @@ mod tests {
 
         let adapter = UpnpServerSessionAdapter {
             session,
-            hostname: "127.0.0.1".into(),
             port: 9005,
         };
 
         assert_eq!(
-            adapter.browse_direct_children(0),
+            adapter.browse_direct_children(0, "127.0.0.1"),
             vec![
                 ItemOrContainer::Item(Item {
                     id: encode_id(0, 0),
@@ -560,7 +565,7 @@ mod tests {
         );
 
         assert_eq!(
-            adapter.browse_direct_children(encode_id(0, 1)),
+            adapter.browse_direct_children(encode_id(0, 1), "127.0.0.1"),
             vec![ItemOrContainer::Container(Container {
                 id: encode_id(1, 1),
                 parent_id: Some(encode_id(0, 1)),
@@ -570,7 +575,7 @@ mod tests {
         );
 
         assert_eq!(
-            adapter.browse_direct_children(encode_id(1, 1)),
+            adapter.browse_direct_children(encode_id(1, 1), "127.0.0.1"),
             vec![ItemOrContainer::Item(Item {
                 id: encode_id(2, 1),
                 parent_id: Some(encode_id(1, 1)),

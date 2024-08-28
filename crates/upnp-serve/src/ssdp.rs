@@ -94,7 +94,7 @@ pub fn try_parse_ssdp<'a, 'h>(
 
 pub struct SsdpRunnerOptions {
     pub usn: String,
-    pub description_http_location: String,
+    pub description_http_location: url::Url,
     pub server_string: String,
     pub notify_interval: Duration,
     pub shutdown: CancellationToken,
@@ -151,11 +151,20 @@ USN: {usn}::{kind}\r
         )
     }
 
-    fn generate_ssdp_discover_response(&self, st: &str) -> String {
-        let location = &self.opts.description_http_location;
+    fn generate_ssdp_discover_response(
+        &self,
+        st: &str,
+        addr: SocketAddr,
+    ) -> anyhow::Result<String> {
+        let local_ip = ::librqbit_upnp::get_local_ip_relative_to(addr.ip())?;
+        let location = {
+            let mut loc = self.opts.description_http_location.clone();
+            loc.set_host(Some(&format!("{local_ip}")))?;
+            loc
+        };
         let usn = &self.opts.usn;
         let server = &self.opts.server_string;
-        format!(
+        Ok(format!(
             "HTTP/1.1 200 OK\r
 Cache-Control: max-age=75\r
 Ext: \r
@@ -164,7 +173,7 @@ Server: {server}\r
 St: {st}\r
 Usn: {usn}::{st}\r
 Content-Length: 0\r\n\r\n"
-        )
+        ))
     }
 
     async fn try_send_notifies(&self, nts: &str) {
@@ -178,18 +187,12 @@ Content-Length: 0\r\n\r\n"
             }
         };
 
-        let location = match url::Url::parse(&self.opts.description_http_location) {
-            Ok(u) => u,
-            // TODO: rewrite this
-            Err(e) => {
-                warn!(error=?e, "error parsing description_http_location");
-                return;
-            }
-        };
-
         for ni in interfaces {
             for niaddr in ni.addr {
                 let ip = niaddr.ip();
+                if ip.is_ipv6() || ip.is_loopback() {
+                    continue;
+                }
                 let addr = SocketAddr::new(ip, 0);
                 let sock = match tokio::net::UdpSocket::bind(addr).await {
                     Ok(sock) => sock,
@@ -199,16 +202,16 @@ Content-Length: 0\r\n\r\n"
                     }
                 };
 
-                let mut location = location.clone();
+                let mut location = self.opts.description_http_location.clone();
                 location.set_host(Some(&format!("{ip}"))).unwrap();
 
                 for kind in [UPNP_KIND_ROOT_DEVICE, UPNP_KIND_MEDIASERVER] {
                     let msg = self.generate_notify_message(kind, nts, &format!("{location}"));
                     trace!(content=?msg, addr=?UPNP_BROADCAST_ADDR, "sending SSDP NOTIFY");
                     if let Err(e) = sock.send_to(msg.as_bytes(), UPNP_BROADCAST_ADDR).await {
-                        warn!(error=?e, "error sending SSDP NOTIFY")
+                        warn!(sock_addr=%addr, error=%e, "error sending SSDP NOTIFY")
                     } else {
-                        debug!(kind, nts, "sent SSDP NOTIFY")
+                        debug!(kind, nts, %location, "sent SSDP NOTIFY")
                     }
                 }
             }
@@ -244,7 +247,7 @@ Content-Length: 0\r\n\r\n"
         }
 
         if let Ok(st) = std::str::from_utf8(msg.st) {
-            let response = self.generate_ssdp_discover_response(st);
+            let response = self.generate_ssdp_discover_response(st, addr)?;
             trace!(content = response, ?addr, "sending SSDP discover response");
             self.socket
                 .send_to(response.as_bytes(), addr)

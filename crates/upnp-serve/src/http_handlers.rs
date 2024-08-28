@@ -52,6 +52,15 @@ async fn generate_content_directory_control_response(
     };
     match action.as_ref() {
         SOAP_ACTION_CONTENT_DIRECTORY_BROWSE => {
+            let http_hostname = headers
+                .get("host")
+                .and_then(|h| std::str::from_utf8(h.as_bytes()).ok())
+                .and_then(|h| h.split(':').next());
+            let http_hostname = match http_hostname {
+                Some(h) => h,
+                None => return StatusCode::BAD_REQUEST.into_response(),
+            };
+
             let body = match std::str::from_utf8(body) {
                 Ok(body) => body,
                 Err(_) => return (StatusCode::BAD_REQUEST, "cannot parse request").into_response(),
@@ -71,7 +80,9 @@ async fn generate_content_directory_control_response(
                 BrowseFlag::BrowseDirectChildren => (
                     [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
                     render_content_directory_browse(
-                        state.provider.browse_direct_children(request.object_id),
+                        state
+                            .provider
+                            .browse_direct_children(request.object_id, http_hostname),
                     ),
                 )
                     .into_response(),
