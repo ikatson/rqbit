@@ -203,6 +203,11 @@ struct Opts {
     #[arg(long, env = "RQBIT_UMASK", value_parser=parse_umask)]
     umask: Option<libc::mode_t>,
 
+    /// Disable uploading entirely. If this is set, rqbit won't share piece availability
+    /// and will disconnect on download request.
+    ///
+    /// Might be useful e.g. if rqbit upload consumes all your upload bandwidth and interferes
+    /// with your other Internet usage.
     #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
     disable_upload: bool,
 }
