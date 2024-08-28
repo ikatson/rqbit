@@ -69,6 +69,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3d1d046238990b9cf5bcde22a3fb3584ee5cf65fb2765f454ed428c7a0063da"
 
 [[package]]
+name = "assert_cfg"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04e2651f366b7ee3f97729fded1441539b49d5f39eeb05b842689e11e84501b2"
+dependencies = [
+ "const_panic",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -497,6 +506,12 @@ checksum = "1fed34f46747aa73dfaa578069fd8279d2818ade2b55f38f22a9401c7f4083e2"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "const_panic"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7782af8f90fe69a4bb41e460abe1727d493403d8b2cc43201a3a3e906b24379f"
 
 [[package]]
 name = "convert_case"
@@ -1916,6 +1931,7 @@ name = "librqbit-core"
 version = "4.0.1"
 dependencies = [
  "anyhow",
+ "assert_cfg",
  "bytes",
  "data-encoding",
  "directories",
@@ -1980,6 +1996,7 @@ dependencies = [
 name = "librqbit-sha1-wrapper"
 version = "4.0.0"
 dependencies = [
+ "assert_cfg",
  "crypto-hash",
 ]
 
@@ -2034,6 +2051,7 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
+ "network-interface",
  "parking_lot",
  "quick-xml 0.36.1",
  "reqwest",
@@ -3051,6 +3069,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "directories",
+ "gethostname",
  "http 1.1.0",
  "librqbit",
  "parking_lot",

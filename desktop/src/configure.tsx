@@ -295,16 +295,6 @@ export const ConfigModal: React.FC<{
 
             <FormInput
               inputType="text"
-              label="[Required] Hostname"
-              name="upnp.server_hostname"
-              value={config.upnp.server_hostname}
-              disabled={!config.upnp.enable_server}
-              onChange={handleInputChange}
-              help="Set this to your LAN IP or hostname resolvable from LAN."
-            />
-
-            <FormInput
-              inputType="text"
               label="Friendly name"
               name="upnp.server_friendly_name"
               value={config.upnp.server_friendly_name}

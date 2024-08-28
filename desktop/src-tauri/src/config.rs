@@ -136,9 +136,6 @@ pub struct RqbitDesktopConfigUpnp {
     pub enable_server: bool,
 
     #[serde(default)]
-    pub server_hostname: Option<String>,
-
-    #[serde(default)]
     pub server_friendly_name: Option<String>,
 }
 
@@ -182,12 +179,6 @@ impl RqbitDesktopConfig {
             }
             if self.http_api.listen_addr.ip().is_loopback() {
                 anyhow::bail!("if UPnP server is enabled, you need to set HTTP API IP to 0.0.0.0 or at least non-localhost address.")
-            }
-            match self.upnp.server_hostname.as_ref().map(|s| s.trim()) {
-                Some("") | None => {
-                    anyhow::bail!("UPnP hostname must be set to non-empty string")
-                }
-                Some(_) => {}
             }
         }
         Ok(())
