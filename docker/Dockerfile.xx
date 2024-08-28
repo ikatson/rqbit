@@ -31,7 +31,7 @@ find /src/target \
 xx-cargo build \
     --target-dir "target/${TT}" \
     --profile "${PROFILE_NAME}" \
-    --no-default-features --features rust-tls,webui
+    --features openssl-vendored
 find /src/target -maxdepth 4 -type d
 xx-verify --static "${BIN}"
 mv "${BIN}" /bin/rqbit
