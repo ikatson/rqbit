@@ -2,6 +2,8 @@ name: Release binaries for Linux and Docker
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
 
@@ -69,6 +71,7 @@ jobs:
           cp -l ${{ matrix.platform }}/rqbit rqbit-${{ steps.gen_artifact_key.outputs.key }}
 
       - uses: softprops/action-gh-release@v1
+        if: ${{ github.ref_type == 'tag' }}
         with:
           generate_release_notes: true
           files: |
@@ -85,6 +88,17 @@ jobs:
     needs: build-docker-cross
     steps:
       - uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ikatson/rqbit
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       - uses: actions/download-artifact@v4
         with:
@@ -114,7 +128,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: ikatson/rqbit:${{ github.ref_name }}
+          tags: ${{ steps.meta.outputs.tags }}
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           context: target/cross/
           file: docker/Dockerfile
