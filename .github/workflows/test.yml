@@ -25,8 +25,8 @@ jobs:
           rustup toolchain install ${{ matrix.rust_version }}
       - uses: actions/checkout@v4
       - run: rustup override set ${{ matrix.rust_version }}
-      - name: cargo check
-        run: cargo check
+      - name: cargo check --workspace
+        run: cargo check --workspace
   test:
     strategy:
       matrix:
@@ -39,4 +39,4 @@ jobs:
         with:
           prefix-key: v1
       - name: Run tests
-        run: cargo test
+        run: cargo test --workspace
