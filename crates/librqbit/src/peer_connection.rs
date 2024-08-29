@@ -200,7 +200,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .context("error reading handshake")?;
         let h_supports_extended = h.supports_extended();
         trace!(
-            peer_id=?h.peer_id,
+            peer_id=?Id20::new(h.peer_id),
             decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
             "connected",
         );
