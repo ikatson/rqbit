@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context;
 use axum::routing::get;
 use librqbit_upnp_serve::{
-    upnp_types::content_directory::response::{Item, ItemOrContainer},
+    services::content_directory::browse::response::{Item, ItemOrContainer},
     UpnpServer, UpnpServerOptions,
 };
 use mime_guess::Mime;

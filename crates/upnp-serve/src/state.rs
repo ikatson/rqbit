@@ -12,19 +12,18 @@ use librqbit_core::spawn_utils::spawn_with_cancel;
 use tokio_util::sync::CancellationToken;
 use tracing::{error_span, Span};
 
-use crate::{
-    subscriptions::Subscriptions, upnp_types::content_directory::ContentDirectoryBrowseProvider,
-};
+use crate::{subscriptions::Subscriptions, ContentDirectoryBrowseProvider};
 
 pub struct UpnpServerStateInner {
-    pub rendered_root_description: Bytes,
-    pub provider: Box<dyn ContentDirectoryBrowseProvider>,
-    pub system_update_id: AtomicU64,
-    pub subscriptions: Subscriptions,
+    pub(crate) rendered_root_description: Bytes,
+    pub(crate) provider: Box<dyn ContentDirectoryBrowseProvider>,
+    pub(crate) system_update_id: AtomicU64,
+    pub(crate) content_directory_subscriptions: Subscriptions,
+    pub(crate) connection_manager_subscriptions: Subscriptions,
 
-    pub span: Span,
-    pub system_update_bcast_tx: tokio::sync::broadcast::Sender<u64>,
-    pub cancel_token: tokio_util::sync::CancellationToken,
+    pub(crate) span: Span,
+    pub(crate) system_update_bcast_tx: tokio::sync::broadcast::Sender<u64>,
+    pub(crate) cancel_token: tokio_util::sync::CancellationToken,
     _drop_guard: tokio_util::sync::DropGuard,
 }
 
@@ -46,7 +45,8 @@ impl UpnpServerStateInner {
             rendered_root_description,
             provider,
             system_update_id: AtomicU64::new(new_system_update_id()?),
-            subscriptions: Default::default(),
+            content_directory_subscriptions: Default::default(),
+            connection_manager_subscriptions: Default::default(),
             system_update_bcast_tx: btx,
             _drop_guard: drop_guard,
             span: span.clone(),
