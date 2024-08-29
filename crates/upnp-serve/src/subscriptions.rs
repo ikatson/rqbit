@@ -82,6 +82,19 @@ pub enum SubscribeRequest {
     },
 }
 
+impl core::fmt::Display for SubscribeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscribeRequest::Create { callback, timeout } => {
+                write!(f, "create;callback={callback};timeout={timeout:?}")
+            }
+            SubscribeRequest::Renew { sid, timeout } => {
+                write!(f, "renew;sid={sid};timeout={timeout:?}")
+            }
+        }
+    }
+}
+
 impl SubscribeRequest {
     fn timeout(&self) -> Duration {
         match self {
@@ -159,7 +172,7 @@ pub(crate) fn subscription_into_response(
     request: &SubscribeRequest,
     result: anyhow::Result<SubscriptionResult>,
 ) -> axum::response::Response {
-    trace!(?request, ?result, "subscription request->response");
+    trace!(%request, ?result, "request->response");
 
     let result = match result {
         Ok(r) => r,

@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<s:Envelope
+    xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+    s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+    <s:Body>
+        <u:GetCurrentConnectionInfoResponse xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">
+            <RcsID>0</RcsID>
+            <AVTransportID>0</AVTransportID>
+            <ProtocolInfo>http-get:*:*:DLNA.ORG_OP=01</ProtocolInfo>
+            <PeerConnectionManager></PeerConnectionManager>
+            <PeerConnectionID>-1</PeerConnectionID>
+            <Direction>Output</Direction>
+            <Status>OK</Status>
+        </u:GetCurrentConnectionInfoResponse>
+    </s:Body>
+</s:Envelope>

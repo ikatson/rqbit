@@ -20,7 +20,7 @@
 				</argument>
 			</argumentList>
 		</action>
-		<action>
+		<!--action>
 			<name>PrepareForConnection</name>
 			<argumentList>
 				<argument>
@@ -59,8 +59,8 @@
 					<relatedStateVariable>A_ARG_TYPE_RcsID</relatedStateVariable>
 				</argument>
 			</argumentList>
-		</action>
-		<action>
+		</action-->
+		<!--action>
 			<name>ConnectionComplete</name>
 			<argumentList>
 				<argument>
@@ -69,7 +69,7 @@
 					<relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable>
 				</argument>
 			</argumentList>
-		</action>
+		</action-->
 		<action>
 			<name>GetCurrentConnectionIDs</name>
 			<argumentList>

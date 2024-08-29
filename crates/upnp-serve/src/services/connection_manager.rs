@@ -38,7 +38,7 @@ pub(crate) async fn http_handler(
         }
     };
 
-    let not_implemented = StatusCode::NOT_IMPLEMENTED.into_response();
+    let not_implemented = || StatusCode::NOT_IMPLEMENTED.into_response();
 
     match action.as_ref() {
         SOAP_ACTION_GET_PROTOCOL_INFO => (
@@ -46,10 +46,23 @@ pub(crate) async fn http_handler(
             include_str!("../resources/templates/connection_manager/control/get_protocol_info.xml"),
         )
             .into_response(),
-        SOAP_ACTION_CONNECTION_COMPLETE => not_implemented,
-        SOAP_ACTION_GET_CURRENT_CONNECTION_INFO => not_implemented,
-        SOAP_ACTION_GET_CURRENT_CONNECTION_IDS => not_implemented,
-        SOAP_ACTION_PREPARE_FOR_CONNECTION => not_implemented,
+
+        SOAP_ACTION_GET_CURRENT_CONNECTION_INFO => (
+            [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+            include_str!(
+                "../resources/templates/connection_manager/control/get_current_connection_info.xml"
+            ),
+        )
+            .into_response(),
+        SOAP_ACTION_GET_CURRENT_CONNECTION_IDS => (
+            [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+            include_str!(
+                "../resources/templates/connection_manager/control/get_current_connection_ids.xml"
+            ),
+        )
+            .into_response(),
+        SOAP_ACTION_PREPARE_FOR_CONNECTION => not_implemented(),
+        SOAP_ACTION_CONNECTION_COMPLETE => not_implemented(),
         _ => StatusCode::BAD_REQUEST.into_response(),
     }
 }
