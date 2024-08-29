@@ -200,7 +200,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .context("error reading handshake")?;
         let h_supports_extended = h.supports_extended();
         trace!(
-            peer_id=?h.peer_id,
+            peer_id=?Id20::new(h.peer_id),
             decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
             "connected",
         );
@@ -247,6 +247,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         if supports_extended {
             let mut my_extended = ExtendedHandshake::new();
+            my_extended.v = Some(ByteBuf(crate::client_name_and_version().as_bytes()));
             self.handler
                 .update_my_extended_handshake(&mut my_extended)?;
             let my_extended = Message::Extended(ExtendedMessage::Handshake(my_extended));
