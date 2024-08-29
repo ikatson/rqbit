@@ -3,7 +3,6 @@ use std::net::{IpAddr, SocketAddr};
 use byteorder::{ByteOrder, BE};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 
 pub struct PexPeerInfo {
@@ -23,16 +22,20 @@ impl core::fmt::Debug for PexPeerInfo {
 
 #[derive(Serialize, Default, Deserialize)]
 pub struct UtPex<B> {
-    added: B,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    added: Option<B>,
     #[serde(rename = "added.f")]
     #[serde(skip_serializing_if = "Option::is_none")]
     added_f: Option<B>,
-    added6: B,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    added6: Option<B>,
     #[serde(rename = "added6.f")]
     #[serde(skip_serializing_if = "Option::is_none")]
     added6_f: Option<B>,
-    dropped: B,
-    dropped6: B,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dropped: Option<B>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dropped6: Option<B>,
 }
 
 impl<B> core::fmt::Debug for UtPex<B>
@@ -79,28 +82,31 @@ where
 {
     fn added_peers_inner<'a>(
         &'a self,
-        buf: &'a B,
+        buf: &'a Option<B>,
         flags: &'a Option<B>,
         ip_len: usize,
     ) -> impl Iterator<Item = PexPeerInfo> + Clone + 'a {
-        let addrs = buf.as_ref().chunks_exact(ip_len + 2).map(move |c| {
-            let ip = match ip_len {
-                4 => IpAddr::from(TryInto::<[u8; 4]>::try_into(&c[..4]).unwrap()),
-                16 => IpAddr::from(TryInto::<[u8; 16]>::try_into(&c[..16]).unwrap()),
-                _ => unreachable!(),
-            };
-            let port = BE::read_u16(&c[ip_len..]);
-            SocketAddr::new(ip, port)
-        });
-        let flags = flags
+        const PORT_LEN: usize = 2;
+        const DEFAULT_FLAGS: u8 = 0;
+        let addrs = buf
             .as_ref()
-            .map(|b| b.as_ref().iter().copied())
             .into_iter()
-            .flatten();
-        addrs.zip_longest(flags).filter_map(|eob| match eob {
-            EitherOrBoth::Both(addr, flags) => Some(PexPeerInfo { flags, addr }),
-            EitherOrBoth::Left(addr) => Some(PexPeerInfo { flags: 0, addr }),
-            EitherOrBoth::Right(_) => None,
+            .flat_map(move |it| it.as_ref().chunks_exact(ip_len + PORT_LEN))
+            .map(move |c| {
+                let ip = match ip_len {
+                    4 => IpAddr::from(TryInto::<[u8; 4]>::try_into(&c[..4]).unwrap()),
+                    16 => IpAddr::from(TryInto::<[u8; 16]>::try_into(&c[..16]).unwrap()),
+                    _ => unreachable!(),
+                };
+                let port = BE::read_u16(&c[ip_len..]);
+                SocketAddr::new(ip, port)
+            });
+        addrs.enumerate().map(move |(id, addr)| PexPeerInfo {
+            addr,
+            flags: flags
+                .as_ref()
+                .and_then(|f| f.as_ref().get(id).copied())
+                .unwrap_or(DEFAULT_FLAGS),
         })
     }
 
