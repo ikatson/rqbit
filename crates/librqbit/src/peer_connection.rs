@@ -26,7 +26,7 @@ use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner, stream_connect::Str
 
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
-    fn get_have_bytes(&self) -> u64;
+    fn should_send_bitfield(&self) -> bool;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize>;
     fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()>;
     fn on_extended_handshake(
@@ -268,7 +268,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 .keep_alive_interval
                 .unwrap_or_else(|| Duration::from_secs(120));
 
-            if self.handler.get_have_bytes() > 0 {
+            if self.handler.should_send_bitfield() {
                 let len = self
                     .handler
                     .serialize_bitfield_message_to_buf(&mut write_buf)?;

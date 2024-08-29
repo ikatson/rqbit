@@ -202,6 +202,14 @@ struct Opts {
     #[cfg(not(target_os = "windows"))]
     #[arg(long, env = "RQBIT_UMASK", value_parser=parse_umask)]
     umask: Option<libc::mode_t>,
+
+    /// Disable uploading entirely. If this is set, rqbit won't share piece availability
+    /// and will disconnect on download request.
+    ///
+    /// Might be useful e.g. if rqbit upload consumes all your upload bandwidth and interferes
+    /// with your other Internet usage.
+    #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
+    disable_upload: bool,
 }
 
 #[derive(Parser)]
@@ -454,6 +462,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         root_span: None,
         fastresume: false,
         cancellation_token: Some(cancel.clone()),
+        disable_upload: opts.disable_upload,
     };
 
     let stats_printer = |session: Arc<Session>| async move {

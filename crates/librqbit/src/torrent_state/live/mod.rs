@@ -173,14 +173,6 @@ impl TorrentStateLocked {
     }
 }
 
-#[derive(Default)]
-pub struct TorrentStateOptions {
-    #[allow(dead_code)]
-    pub peer_connect_timeout: Option<Duration>,
-    #[allow(dead_code)]
-    pub peer_read_write_timeout: Option<Duration>,
-}
-
 const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub struct TorrentStateLive {
@@ -929,11 +921,18 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         Ok(())
     }
 
-    fn get_have_bytes(&self) -> u64 {
-        self.state.get_approx_have_bytes()
+    fn should_send_bitfield(&self) -> bool {
+        if self.state.torrent().options.disable_upload {
+            return false;
+        }
+
+        self.state.get_approx_have_bytes() > 0
     }
 
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool {
+        if self.state.torrent.options.disable_upload {
+            return false;
+        }
         let have = self
             .state
             .peers
@@ -1164,6 +1163,10 @@ impl PeerHandler {
     }
 
     fn on_download_request(&self, request: Request) -> anyhow::Result<()> {
+        if self.state.torrent().options.disable_upload {
+            anyhow::bail!("upload disabled, but peer requested a piece")
+        }
+
         let piece_index = match self.state.lengths.validate_piece_index(request.index) {
             Some(p) => p,
             None => {

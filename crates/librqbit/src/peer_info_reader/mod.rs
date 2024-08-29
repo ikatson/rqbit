@@ -148,8 +148,8 @@ struct Handler {
 }
 
 impl PeerConnectionHandler for Handler {
-    fn get_have_bytes(&self) -> u64 {
-        0
+    fn should_send_bitfield(&self) -> bool {
+        false
     }
 
     fn serialize_bitfield_message_to_buf(&self, _buf: &mut Vec<u8>) -> anyhow::Result<usize> {

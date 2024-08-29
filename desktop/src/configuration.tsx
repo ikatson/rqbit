@@ -41,6 +41,7 @@ interface RqbitDesktopConfigUpnp {
 
 export interface RqbitDesktopConfig {
   default_download_location: PathLike;
+  disable_upload: boolean;
   dht: RqbitDesktopConfigDht;
   tcp_listen: RqbitDesktopConfigTcpListen;
   upnp: RqbitDesktopConfigUpnp;
