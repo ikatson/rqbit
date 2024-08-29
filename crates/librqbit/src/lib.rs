@@ -93,8 +93,12 @@ pub use librqbit_core::torrent_metainfo::*;
 mod tests;
 
 /// The cargo version of librqbit.
-pub fn version() -> &'static str {
+pub const fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+pub const fn client_name_and_version() -> &'static str {
+    concat!("rqbit ", env!("CARGO_PKG_VERSION"))
 }
 
 pub fn try_increase_nofile_limit() -> anyhow::Result<u64> {

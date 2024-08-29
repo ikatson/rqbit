@@ -247,6 +247,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         if supports_extended {
             let mut my_extended = ExtendedHandshake::new();
+            my_extended.v = Some(ByteBuf(crate::client_name_and_version().as_bytes()));
             self.handler
                 .update_my_extended_handshake(&mut my_extended)?;
             let my_extended = Message::Extended(ExtendedMessage::Handshake(my_extended));
