@@ -210,6 +210,16 @@ export const ConfigModal: React.FC<{
             onChange={handleInputChange}
             help="Where to download torrents by default. You can override this per torrent."
           />
+
+          <FormCheck
+            label="Disable upload"
+            name="disable_upload"
+            checked={config.disable_upload}
+            onChange={handleToggleChange}
+            help="Disable uploading entirely. If this is set, rqbit won't share piece availability and will disconnect on download request.
+
+Might be useful e.g. if rqbit upload consumes all your upload bandwidth and interferes with your other Internet usage."
+          />
         </Tab>
 
         <Tab name="DHT" currentTab={tab}>
