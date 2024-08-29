@@ -11,11 +11,11 @@ members = [
     "crates/peer_binary_protocol",
     "crates/dht",
     "crates/upnp",
-    "crates/tracker_comms", "crates/upnp-serve",
+    "crates/tracker_comms",
+    "crates/upnp-serve",
+    "desktop/src-tauri",
 ]
-
-[profile.dev]
-panic = "abort"
+default-members = ["crates/rqbit"]
 
 [profile.release]
 panic = "abort"
