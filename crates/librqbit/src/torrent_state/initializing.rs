@@ -1,5 +1,8 @@
 use std::{
-    sync::{atomic::AtomicU64, Arc},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Instant,
 };
 
@@ -105,11 +108,18 @@ impl TorrentStateInitializing {
             have_pieces.shuffle(&mut rand::thread_rng());
 
             // Validate a certain threshold of fastresume pieces with decreasing probability of actual disk reads.
-            for (denom_minus_one, hpiece) in have_pieces.into_iter().enumerate() {
-                let denom: u32 = (denom_minus_one + 1).min(50).try_into().unwrap();
-                if rand::thread_rng().gen_ratio(1, denom) && fo.check_piece(hpiece).is_err() {
+            for (tmp_id, hpiece) in have_pieces.iter().enumerate() {
+                let denom: u32 = (tmp_id + 1).min(50).try_into().unwrap();
+                if rand::thread_rng().gen_ratio(1, denom) && fo.check_piece(*hpiece).is_err() {
                     return true;
                 }
+
+                #[allow(clippy::cast_possible_truncation)]
+                let progress = (self.shared.lengths.total_length() as f64
+                    / have_pieces.len() as f64
+                    * (tmp_id + 1) as f64) as u64;
+                let progress = progress.min(self.shared.lengths.total_length());
+                self.checked_bytes.store(progress, Ordering::Relaxed);
             }
             false
         });
@@ -119,6 +129,7 @@ impl TorrentStateInitializing {
             if let Err(e) = bitv_factory.clear(self.shared.id.into()).await {
                 warn!(error=?e, "error clearing bitfield");
             }
+            self.checked_bytes.store(0, Ordering::Relaxed);
             return None;
         }
 
