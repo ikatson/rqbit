@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/librqbit",
     "crates/rqbit",
+    "crates/librqbit",
     "crates/buffers",
     "crates/clone_to_owned",
     "crates/bencode",
@@ -15,7 +15,22 @@ members = [
     "crates/upnp-serve",
     "desktop/src-tauri",
 ]
-default-members = ["crates/rqbit"]
+
+# Everything except desktop
+default-members = [
+    "crates/rqbit",
+    "crates/librqbit",
+    "crates/buffers",
+    "crates/clone_to_owned",
+    "crates/bencode",
+    "crates/sha1w",
+    "crates/librqbit_core",
+    "crates/peer_binary_protocol",
+    "crates/dht",
+    "crates/upnp",
+    "crates/tracker_comms",
+    "crates/upnp-serve",
+]
 
 [profile.release]
 panic = "abort"

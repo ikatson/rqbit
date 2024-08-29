@@ -25,8 +25,8 @@ jobs:
           rustup toolchain install ${{ matrix.rust_version }}
       - uses: actions/checkout@v4
       - run: rustup override set ${{ matrix.rust_version }}
-      - name: cargo check --workspace
-        run: cargo check --workspace
+      - name: cargo check
+        run: cargo check
   test:
     strategy:
       matrix:
@@ -38,5 +38,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1
-      - name: Run tests
+      - name: Run tests (whole workspace, including desktop)
+        if: ${{ matrix.os != 'ubuntu-latest' }}
         run: cargo test --workspace
+      - name: Run tests
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo test
