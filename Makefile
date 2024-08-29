@@ -14,6 +14,7 @@ webui-dev: webui-deps
 export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= 0.0.0.0:3030
+export RQBIT_FASTRESUME = true
 CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
 RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit

@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
                         println!("{}: {s:#?}", r.location);
                     }
                     Err(e) => {
-                        tracing::error!(location=%r.location, "error discovering")
+                        tracing::error!(error=?e, location=%r.location, "error discovering")
                     }
                 }
                 drop(stx);
@@ -30,6 +30,6 @@ async fn main() -> anyhow::Result<()> {
 
     let f3 = async move { while (srx.recv().await).is_some() {} };
 
-    tokio::join!(f1, f2, f3);
+    tokio::join!(f1, f2, f3).0.unwrap();
     Ok(())
 }
