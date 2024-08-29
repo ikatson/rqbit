@@ -1,5 +1,6 @@
 /// Spawn a future inside a tracing span, while logging it's start,
 /// finish and periodically logging if it's still alive.
+#[track_caller]
 pub fn spawn(
     _name: &str,
     span: tracing::Span,

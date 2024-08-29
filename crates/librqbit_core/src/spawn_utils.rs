@@ -12,6 +12,7 @@ impl std::fmt::Display for CancelledError {
 }
 
 /// Spawns a future with tracing instrumentation.
+#[track_caller]
 pub fn spawn(
     span: tracing::Span,
     fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
@@ -49,6 +50,7 @@ pub fn spawn(
     tokio::task::spawn(fut)
 }
 
+#[track_caller]
 pub fn spawn_with_cancel(
     span: tracing::Span,
     cancellation_token: CancellationToken,

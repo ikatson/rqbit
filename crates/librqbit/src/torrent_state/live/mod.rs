@@ -310,6 +310,7 @@ impl TorrentStateLive {
         Ok(state)
     }
 
+    #[track_caller]
     pub(crate) fn spawn(
         &self,
         span: tracing::Span,

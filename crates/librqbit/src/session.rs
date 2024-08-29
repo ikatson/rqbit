@@ -816,6 +816,7 @@ impl Session {
     }
 
     /// Spawn a task in the context of the session.
+    #[track_caller]
     pub fn spawn(
         &self,
         span: tracing::Span,
