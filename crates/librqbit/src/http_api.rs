@@ -190,6 +190,7 @@ impl HttpApi {
             let body = it
                 .into_iter()
                 .map(|(torrent_idx, file_idx, filename)| {
+                    // TODO: add #EXTINF:{duration} and maybe codecs ?
                     format!("http://{host}/torrents/{torrent_idx}/stream/{file_idx}/{filename}")
                 })
                 .join("\r\n");
@@ -201,7 +202,7 @@ impl HttpApi {
                         "attachment; filename=\"rqbit-playlist.m3u8\"",
                     ),
                 ],
-                body,
+                format!("#EXTM3U\r\n{body}"), // https://en.wikipedia.org/wiki/M3U
             )
         }
 
