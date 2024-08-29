@@ -105,6 +105,7 @@ async fn api_from_config(
             },
             enable_upnp_port_forwarding: !config.upnp.disable_tcp_port_forward,
             fastresume: config.persistence.fastresume,
+            disable_upload: config.disable_upload,
             ..Default::default()
         },
     )
