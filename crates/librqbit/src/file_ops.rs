@@ -173,12 +173,7 @@ impl<'a> FileOps<'a> {
         Ok(have_pieces)
     }
 
-    pub fn check_piece(
-        &self,
-        who_sent: PeerHandle,
-        piece_index: ValidPieceIndex,
-        last_received_chunk: &ChunkInfo,
-    ) -> anyhow::Result<bool> {
+    pub fn check_piece(&self, piece_index: ValidPieceIndex) -> anyhow::Result<bool> {
         let mut h = Sha1::new();
         let piece_length = self.lengths.piece_length(piece_index);
         let mut absolute_offset = self.lengths.piece_offset(piece_index);
@@ -196,12 +191,10 @@ impl<'a> FileOps<'a> {
             let to_read_in_file: usize =
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64).try_into()?;
             trace!(
-                "piece={}, handle={}, file_idx={}, seeking to {}. Last received chunk: {:?}",
+                "piece={}, file_idx={}, seeking to {}",
                 piece_index,
-                who_sent,
                 file_idx,
                 absolute_offset,
-                &last_received_chunk
             );
             update_hash_from_file(
                 file_idx,

@@ -5,13 +5,16 @@ use std::{
 
 use anyhow::Context;
 
+use itertools::Itertools;
 use librqbit_core::lengths::Lengths;
+use rand::Rng;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{info, trace, warn};
 
 use crate::{
     api::TorrentIdOrHash,
     bitv::BitV,
+    bitv_factory::BitVFactory,
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
     type_aliases::{FileStorage, BF},
@@ -67,6 +70,61 @@ impl TorrentStateInitializing {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    async fn validate_fastresume(
+        &self,
+        bitv_factory: &dyn BitVFactory,
+        have_pieces: Option<Box<dyn BitV>>,
+    ) -> Option<Box<dyn BitV>> {
+        let hp = have_pieces?;
+        let actual = hp.as_bytes().len();
+        let expected = self.shared.lengths.piece_bitfield_bytes();
+        if actual != expected {
+            warn!(
+                actual,
+                expected,
+                "the bitfield loaded isn't of correct length, ignoring it, will do full check"
+            );
+            return None;
+        }
+
+        let is_broken = self.shared.spawner.spawn_block_in_place(|| {
+            let fo = crate::file_ops::FileOps::new(
+                &self.shared.info,
+                &self.files,
+                &self.shared.file_infos,
+                &self.shared.lengths,
+            );
+
+            use rand::seq::SliceRandom;
+
+            let mut have_pieces = hp
+                .as_slice()
+                .iter_ones()
+                .filter_map(|i| self.shared.lengths.validate_piece_index(i.try_into().ok()?))
+                .collect_vec();
+            have_pieces.shuffle(&mut rand::thread_rng());
+
+            // Validate a certain threshold of fastresume pieces with decreasing probability of actual disk reads.
+            for (denom_minus_one, hpiece) in have_pieces.into_iter().enumerate() {
+                let denom: u32 = (denom_minus_one + 1).min(50).try_into().unwrap();
+                if rand::thread_rng().gen_ratio(1, denom) && fo.check_piece(hpiece).is_err() {
+                    return true;
+                }
+            }
+            false
+        });
+
+        if is_broken {
+            warn!("data corrupted, ignoring fastresume data");
+            if let Err(e) = bitv_factory.clear(self.shared.id.into()).await {
+                warn!(error=?e, "error clearing bitfield");
+            }
+            return None;
+        }
+
+        Some(hp)
+    }
+
     pub async fn check(&self) -> anyhow::Result<TorrentStatePaused> {
         let id: TorrentIdOrHash = self.shared.info_hash.into();
         let bitv_factory = self
@@ -76,7 +134,7 @@ impl TorrentStateInitializing {
             .context("session is dead")?
             .bitv_factory
             .clone();
-        let mut have_pieces = if self.previously_errored {
+        let have_pieces = if self.previously_errored {
             if let Err(e) = bitv_factory.clear(id).await {
                 warn!(error=?e, "error clearing bitfield");
             }
@@ -88,18 +146,8 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
-        if let Some(hp) = have_pieces.as_ref() {
-            let actual = hp.as_bytes().len();
-            let expected = self.shared.lengths.piece_bitfield_bytes();
-            if actual != expected {
-                warn!(
-                    actual,
-                    expected,
-                    "the bitfield loaded isn't of correct length, ignoring it, will do full check"
-                );
-                have_pieces = None;
-            }
-        }
+        let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
+
         let have_pieces = match have_pieces {
             Some(h) => h,
             None => {

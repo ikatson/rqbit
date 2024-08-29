@@ -1557,7 +1557,7 @@ impl PeerHandler {
 
             match state
                 .file_ops()
-                .check_piece(addr, chunk_info.piece_index, chunk_info)
+                .check_piece(chunk_info.piece_index)
                 .with_context(|| format!("error checking piece={index}"))?
             {
                 true => {
