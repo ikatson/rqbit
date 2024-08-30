@@ -322,7 +322,7 @@ impl UpnpServerStateInner {
         let (sid, refresh_notify) = self
             .connection_manager_subscriptions
             .add(url.clone(), timeout);
-        let token = self.cancel_token.child_token();
+        let token = self.cancel_token.clone();
 
         // Spawn a task that will notify it of system id changes.
         // Spawn a task that will wait for timeout or subscription refreshes.
