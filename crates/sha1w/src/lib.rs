@@ -50,7 +50,7 @@ mod crypto_hash_impl {
 mod ring_impl {
     use super::ISha1;
 
-    use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY as SHA1};
+    use aws_lc_rs::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY as SHA1};
 
     pub struct Sha1Ring {
         ctx: Context,
