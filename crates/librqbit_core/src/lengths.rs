@@ -1,6 +1,6 @@
 use anyhow::Context;
 
-use crate::{constants::CHUNK_SIZE, torrent_metainfo::TorrentMetaV1Info};
+use crate::constants::CHUNK_SIZE;
 
 pub fn last_element_size<T>(total_length: T, piece_length: T) -> T
 where
@@ -73,8 +73,9 @@ impl ValidPieceIndex {
 }
 
 impl Lengths {
+    #[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
     pub fn from_torrent<ByteBuf: AsRef<[u8]>>(
-        torrent: &TorrentMetaV1Info<ByteBuf>,
+        torrent: &crate::torrent_metainfo::TorrentMetaV1Info<ByteBuf>,
     ) -> anyhow::Result<Lengths> {
         let total_length = torrent.iter_file_lengths()?.sum();
         Lengths::new(total_length, torrent.piece_length)
@@ -157,11 +158,7 @@ impl Lengths {
     }
 
     // A helper to iterate over pieces in a file.
-    pub(crate) fn iter_pieces_within_offset(
-        &self,
-        offset_bytes: u64,
-        len: u64,
-    ) -> std::ops::Range<u32> {
+    pub fn iter_pieces_within_offset(&self, offset_bytes: u64, len: u64) -> std::ops::Range<u32> {
         // Validation and correction
         let offset_bytes = offset_bytes.min(self.total_length);
         let end_bytes = (offset_bytes + len).min(self.total_length);

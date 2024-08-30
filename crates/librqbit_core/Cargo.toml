@@ -31,8 +31,6 @@ directories = "5"
 tokio-util = "0.7.10"
 data-encoding = "2.6.0"
 bytes = "1.7.1"
-assert_cfg = "0.1.0"
-
 
 [dev-dependencies]
 serde_json = "1"
