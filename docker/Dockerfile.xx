@@ -4,10 +4,10 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
 FROM --platform=$BUILDPLATFORM rust:alpine AS builder
 COPY --from=xx / /
 
-RUN apk update && apk add clang lld npm python3 perl make
+RUN apk update && apk add clang lld npm python3 pkgconf
 
 ARG TARGETPLATFORM
-RUN xx-apk add gcc musl-dev
+RUN xx-apk add gcc musl-dev openssl-dev openssl-libs-static
 
 COPY / /src/
 WORKDIR /src/
@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
 set -e
 export TT="$(xx-cargo --print-target-triple)"
 export BIN="./target/${TT}/${TT}/${PROFILE_FOLDER}/rqbit"
+export OPENSSL_STATIC=1
 
 find /src/target \
         /usr/local/cargo/git/db \
@@ -30,8 +31,7 @@ find /src/target \
         -maxdepth 2 -type d
 xx-cargo build \
     --target-dir "target/${TT}" \
-    --profile "${PROFILE_NAME}" \
-    --features openssl-vendored
+    --profile "${PROFILE_NAME}"
 find /src/target -maxdepth 4 -type d
 xx-verify --static "${BIN}"
 mv "${BIN}" /bin/rqbit
