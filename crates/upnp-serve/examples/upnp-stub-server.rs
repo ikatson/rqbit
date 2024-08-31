@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
         mime_type: Some(Mime::from_str("video/x-matroska")?),
         url: "http://192.168.0.165:3030/torrents/4/stream/0/file.mkv".to_owned(),
         id: 1,
-        parent_id: Some(0),
+        parent_id: 0,
     })];
 
     const HTTP_PORT: u16 = 9005;

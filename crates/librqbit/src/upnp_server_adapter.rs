@@ -74,7 +74,7 @@ impl TorrentFileTreeNode {
                     .unwrap_or_else(|| self.title.clone());
                 ItemOrContainer::Item(Item {
                     id: encoded_id,
-                    parent_id: encoded_parent_id.map(|id| id as isize),
+                    parent_id: encoded_parent_id.unwrap_or_default(),
                     title: self.title.clone(),
                     mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
@@ -124,7 +124,7 @@ impl TorrentFileTree {
                 .context("bug")??;
             let root_node = TorrentFileTreeNode {
                 title: filename.to_owned(),
-                parent_id: None,
+                parent_id: Some(0),
                 children: vec![],
                 real_torrent_file_id: Some(0),
             };
@@ -220,7 +220,7 @@ impl UpnpServerSessionAdapter {
                     );
                     Some(ItemOrContainer::Item(Item {
                         id: upnp_id,
-                        parent_id: None,
+                        parent_id: 0,
                         title,
                         mime_type,
                         url,
@@ -238,7 +238,7 @@ impl UpnpServerSessionAdapter {
                     // Create a folder
                     Some(ItemOrContainer::Container(Container {
                         id: upnp_id,
-                        parent_id: None,
+                        parent_id: Some(0),
                         title,
                         children_count: None,
                     }))
@@ -572,14 +572,14 @@ mod tests {
             vec![
                 ItemOrContainer::Item(Item {
                     id: encode_id(0, 0),
-                    parent_id: None,
+                    parent_id: Some(0),
                     title: "f1".into(),
                     mime_type: None,
                     url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into()
                 }),
                 ItemOrContainer::Container(Container {
                     id: encode_id(0, 1),
-                    parent_id: None,
+                    parent_id: Some(0),
                     children_count: None,
                     title: "t2".into()
                 })
