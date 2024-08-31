@@ -523,7 +523,7 @@ impl TorrentStateLive {
         let state = self;
         loop {
             let addr = peer_queue_rx.recv().await.context("torrent closed")?;
-            if state.is_finished_and_no_active_streams() {
+            if state.torrent.options.disable_upload && state.is_finished_and_no_active_streams() {
                 debug!("ignoring peer {} as we are finished", addr);
                 state.peers.mark_peer_not_needed(addr);
                 continue;
