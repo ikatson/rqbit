@@ -1222,6 +1222,13 @@ impl PeerHandler {
                     }
                 };
                 trace!("updated bitfield with have={}", have);
+                if let Some(true) = live
+                    .bitfield
+                    .get(..self.state.lengths.total_pieces() as usize)
+                    .map(|s| s.all())
+                {
+                    debug!("peer has full torrent");
+                }
             });
         self.on_bitfield_notify.notify_waiters();
     }
@@ -1234,9 +1241,14 @@ impl PeerHandler {
                 self.state.lengths.piece_bitfield_bytes(),
             );
         }
-        self.state
-            .peers
-            .update_bitfield_from_vec(self.addr, bitfield.0.to_vec().into_boxed_slice());
+        let bf = BF::from_boxed_slice(bitfield.0.to_vec().into_boxed_slice());
+        if let Some(true) = bf
+            .get(..self.state.lengths.total_pieces() as usize)
+            .map(|s| s.all())
+        {
+            debug!("peer has full torrent");
+        }
+        self.state.peers.update_bitfield(self.addr, bf);
         self.on_bitfield_notify.notify_waiters();
         Ok(())
     }
