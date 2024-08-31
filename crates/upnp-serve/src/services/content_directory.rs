@@ -70,7 +70,7 @@ pub mod browse {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Item {
             pub id: usize,
-            pub parent_id: Option<usize>,
+            pub parent_id: Option<isize>,
             pub title: String,
             pub mime_type: Option<mime_guess::Mime>,
             pub url: String,
@@ -97,7 +97,7 @@ pub mod browse {
                             "../resources/templates/content_directory/control/browse/item.tmpl.xml"
                         ),
                         id = item.id,
-                        parent_id = item.parent_id.unwrap_or(0),
+                        parent_id = item.parent_id.unwrap_or(-1),
                         mime_type = mime,
                         url = item.url,
                         upnp_class = upnp_class,

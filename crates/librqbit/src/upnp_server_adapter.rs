@@ -74,7 +74,7 @@ impl TorrentFileTreeNode {
                     .unwrap_or_else(|| self.title.clone());
                 ItemOrContainer::Item(Item {
                     id: encoded_id,
-                    parent_id: encoded_parent_id,
+                    parent_id: encoded_parent_id.map(|id| id as isize),
                     title: self.title.clone(),
                     mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
@@ -600,7 +600,7 @@ mod tests {
             adapter.browse_direct_children(encode_id(1, 1), "127.0.0.1"),
             vec![ItemOrContainer::Item(Item {
                 id: encode_id(2, 1),
-                parent_id: Some(encode_id(1, 1)),
+                parent_id: Some(encode_id(1, 1) as isize),
                 title: "f2".into(),
                 mime_type: None,
                 url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into()
