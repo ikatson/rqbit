@@ -14,7 +14,10 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    extended::{handshake::ExtendedHandshake, ExtendedMessage},
+    extended::{
+        handshake::{ExtendedHandshake, YourIP},
+        ExtendedMessage,
+    },
     serialize_piece_preamble, Handshake, Message, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
 };
 use serde::{Deserialize, Serialize};
@@ -248,6 +251,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         if supports_extended {
             let mut my_extended = ExtendedHandshake::new();
             my_extended.v = Some(ByteBuf(crate::client_name_and_version().as_bytes()));
+            my_extended.yourip = Some(YourIP(self.addr.ip()));
             self.handler
                 .update_my_extended_handshake(&mut my_extended)?;
             let my_extended = Message::Extended(ExtendedMessage::Handshake(my_extended));

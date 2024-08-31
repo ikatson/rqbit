@@ -68,10 +68,7 @@ use librqbit_core::{
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     extended::{
-        handshake::{ExtendedHandshake, YourIP},
-        ut_metadata::UtMetadata,
-        ut_pex::UtPex,
-        ExtendedMessage,
+        handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex, ExtendedMessage,
     },
     Handshake, Message, MessageOwned, Piece, Request,
 };
@@ -948,8 +945,6 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         &self,
         handshake: &mut ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
-        let your_ip = self.addr.ip();
-        handshake.yourip = Some(YourIP(your_ip));
         let info_bytes = &self.state.torrent().info_bytes;
         if !info_bytes.is_empty() {
             if let Ok(len) = info_bytes.len().try_into() {

@@ -56,14 +56,18 @@ impl ReadBuf {
         if self.filled == 0 {
             anyhow::bail!("peer disconnected while reading handshake");
         }
-        let (h, size) = Handshake::deserialize(&self.buf[..self.filled])
-            .map_err(|e| anyhow::anyhow!("error deserializing handshake: {:?} hadshake data {:?}", e, &self.buf[..self.filled.min(19)]))?;
+        let (h, size) = Handshake::deserialize(&self.buf[..self.filled]).map_err(|e| {
+            anyhow::anyhow!(
+                "error deserializing handshake: {:?} hadshake data {:?}",
+                e,
+                &self.buf[..self.filled.min(19)]
+            )
+        })?;
         self.processed = size;
         Ok(h)
     }
 
     // Read a message into the buffer, try to deserialize it and call the callback on it.
-    // We can't return the message because of a borrow checker issue.
     pub async fn read_message(
         &mut self,
         mut conn: impl AsyncReadExt + Unpin,
@@ -77,13 +81,15 @@ impl ReadBuf {
                         self.processed += size;
 
                         // Rust's borrow checker can't do this early return so resort to unsafe.
-                        #[allow(clippy::missing_transmute_annotations)]
-                        let msg = unsafe { std::mem::transmute(msg) };
+                        // This erases the lifetime so that it's happy.
+                        let msg: MessageBorrowed<'_> =
+                            unsafe { std::mem::transmute(msg as MessageBorrowed<'_>) };
                         return Ok(msg);
                     }
                     Err(e) => return Err(e.into()),
                 };
             self.prepare_for_read(need_additional_bytes);
+            debug_assert!(!self.buf[self.filled..].is_empty());
             let size = with_timeout(timeout, conn.read(&mut self.buf[self.filled..]))
                 .await
                 .context("error reading from peer")?;
