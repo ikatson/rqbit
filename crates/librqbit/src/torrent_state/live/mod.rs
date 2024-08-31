@@ -892,8 +892,6 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 
     fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()> {
         self.state.set_peer_live(self.addr, handshake);
-        self.tx
-            .send(WriterRequest::Message(MessageOwned::Unchoke))?;
         Ok(())
     }
 

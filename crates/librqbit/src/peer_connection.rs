@@ -283,6 +283,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("sent bitfield");
             }
 
+            let len = MessageOwned::Unchoke.serialize(&mut write_buf, &Default::default)?;
+            with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
+                .await
+                .context("error writing unchoke")?;
+            trace!("sent unchoke");
+
             let mut broadcast_closed = false;
 
             loop {
@@ -378,7 +384,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
                     .await
                     .context("error writing the message to peer")?;
-                write_buf.clear();
 
                 if let Some(uploaded_add) = uploaded_add {
                     self.handler.on_uploaded_bytes(uploaded_add)
