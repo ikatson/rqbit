@@ -135,11 +135,21 @@ pub mod browse {
             }
 
             fn render_response(envelope: &Envelope<'_>) -> String {
+                let items_encoded = format!(
+                    r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
+                xmlns:dc="http://purl.org/dc/elements/1.1/"
+                xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+      {items}
+    </DIDL-Lite>"#,
+                    items = envelope.items
+                );
+                let items_encoded = quick_xml::escape::escape(items_encoded.as_ref());
+
                 format!(
                     include_str!(
                         "../resources/templates/content_directory/control/browse/response.tmpl.xml"
                     ),
-                    items = envelope.items,
+                    items_encoded = items_encoded,
                     number_returned = envelope.number_returned,
                     total_matches = envelope.total_matches,
                     update_id = envelope.update_id
