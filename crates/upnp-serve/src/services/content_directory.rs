@@ -293,7 +293,15 @@ pub(crate) async fn http_handler(
                     ),
                 )
                     .into_response(),
-                BrowseFlag::BrowseMetadata => StatusCode::NOT_IMPLEMENTED.into_response(),
+                BrowseFlag::BrowseMetadata => (
+                    [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+                    browse::response::render(
+                        state
+                            .provider
+                            .browse_metadata(request.object_id, http_hostname),
+                    ),
+                )
+                    .into_response(),
             }
         }
         SOAP_ACTION_GET_SYSTEM_UPDATE_ID => {
@@ -314,11 +322,17 @@ pub(crate) async fn http_handler(
 pub trait ContentDirectoryBrowseProvider: Send + Sync {
     fn browse_direct_children(&self, parent_id: usize, http_hostname: &str)
         -> Vec<ItemOrContainer>;
+    fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer>;
 }
 
 impl ContentDirectoryBrowseProvider for Vec<ItemOrContainer> {
     fn browse_direct_children(&self, _parent_id: usize, _http_host: &str) -> Vec<ItemOrContainer> {
         self.clone()
+    }
+
+    fn browse_metadata(&self, _object_id: usize, _http_hostname: &str) -> Vec<ItemOrContainer> {
+        // TODO. Remove the vec provider from core code.
+        vec![]
     }
 }
 

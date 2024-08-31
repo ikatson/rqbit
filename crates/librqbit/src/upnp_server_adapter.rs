@@ -246,26 +246,34 @@ impl UpnpServerSessionAdapter {
             })
             .collect_vec()
     }
-}
 
-impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
-    fn browse_direct_children(
+    fn build_impl(
         &self,
-        parent_id: usize,
+        object_id: usize,
         http_hostname: &str,
+        metadata: bool,
     ) -> Vec<ItemOrContainer> {
-        if parent_id == 0 {
-            return self.build_root(http_hostname);
+        if object_id == 0 {
+            let root = self.build_root(http_hostname);
+            if metadata {
+                return vec![ItemOrContainer::Container(Container {
+                    id: 0,
+                    parent_id: None,
+                    children_count: Some(root.len()),
+                    title: "root".to_owned(),
+                })];
+            }
+            return root;
         }
 
-        let (node_id, torrent_id) = match decode_id(parent_id) {
+        let (node_id, torrent_id) = match decode_id(object_id) {
             Ok((node_id, torrent_id)) => (node_id, torrent_id),
             Err(_) => {
-                debug!(id=?parent_id, "invalid id");
+                debug!(id=?object_id, "invalid id");
                 return vec![];
             }
         };
-        trace!(parent_id, node_id, torrent_id);
+        trace!(object_id, node_id, torrent_id);
 
         let torrent = match self.session.get(torrent_id.into()) {
             Some(t) => t,
@@ -278,7 +286,7 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
         let tree = match TorrentFileTree::build(torrent.id(), &torrent.shared().info) {
             Ok(tree) => tree,
             Err(e) => {
-                warn!(parent_id, error=?e, "error building torrent file tree");
+                warn!(object_id, error=?e, "error building torrent file tree");
                 return vec![];
             }
         };
@@ -295,7 +303,7 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
 
         let mut result = Vec::new();
 
-        if node.real_torrent_file_id.is_some() {
+        if node.real_torrent_file_id.is_some() || metadata {
             result.push(node.as_item_or_container(node_id, http_hostname, &torrent, self))
         } else {
             for (child_node_id, child_node) in node
@@ -313,6 +321,20 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
         };
 
         result
+    }
+}
+
+impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
+    fn browse_direct_children(
+        &self,
+        object_id: usize,
+        http_hostname: &str,
+    ) -> Vec<ItemOrContainer> {
+        self.build_impl(object_id, http_hostname, false)
+    }
+
+    fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer> {
+        self.build_impl(object_id, http_hostname, true)
     }
 }
 
