@@ -336,13 +336,24 @@ impl Api {
             .context("error adding torrent")
             .with_error_status_code(StatusCode::BAD_REQUEST)?
         {
-            AddTorrentResponse::AlreadyManaged(id, managed) => {
-                return Err(anyhow::anyhow!(
-                    "{:?} is already managed, id={}",
-                    managed.info_hash(),
-                    id,
-                ))
-                .with_error_status_code(StatusCode::CONFLICT);
+            AddTorrentResponse::AlreadyManaged(id, handle) => {
+                let details = make_torrent_details(
+                    &handle.info_hash(),
+                    &handle.shared().info,
+                    handle.only_files().as_deref(),
+                )
+                .context("error making torrent details")?;
+                ApiAddTorrentResponse {
+                    id: Some(id),
+                    details,
+                    seen_peers: None,
+                    output_folder: handle
+                        .shared()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
+                }
             }
             AddTorrentResponse::ListOnly(ListOnlyResponse {
                 info_hash,
