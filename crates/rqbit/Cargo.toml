@@ -1,6 +1,6 @@
 [package]
 name = "rqbit"
-version = "7.0.1"
+version = "7.1.0-beta.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "A bittorrent command line client and server."
@@ -23,7 +23,7 @@ debug_slow_disk = ["librqbit/storage_middleware"]
 postgres = ["librqbit/postgres"]
 
 [dependencies]
-librqbit = { version = "7.0.0", path = "../librqbit", default-features = false, features = [
+librqbit = { version = "7.1.0-beta.0", path = "../librqbit", default-features = false, features = [
     "http-api",
     "tracing-subscriber-utils",
     "upnp-serve-adapter",
