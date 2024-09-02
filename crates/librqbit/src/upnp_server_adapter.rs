@@ -62,7 +62,8 @@ impl TorrentFileTreeNode {
         let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id()));
         match self.real_torrent_file_id {
             Some(fid) => {
-                let filename = &torrent.shared().file_infos[fid].relative_filename;
+                let fi = &torrent.shared().file_infos[fid];
+                let filename = &fi.relative_filename;
                 // Torrent path joined with "/"
                 let last_url_bit = torrent
                     .shared()
@@ -91,6 +92,7 @@ impl TorrentFileTreeNode {
                         fid,
                         last_url_bit
                     ),
+                    size: fi.len,
                 })
             }
             None => ItemOrContainer::Container(Container {
@@ -588,7 +590,8 @@ mod tests {
                     parent_id: 0,
                     title: "f1".into(),
                     mime_type: None,
-                    url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into()
+                    url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into(),
+                    size: 1,
                 }),
                 ItemOrContainer::Container(Container {
                     id: encode_id(0, 1),
@@ -606,7 +609,8 @@ mod tests {
                 parent_id: 0,
                 title: "f1".into(),
                 mime_type: None,
-                url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into()
+                url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into(),
+                size: 1,
             })]
         );
 
@@ -648,6 +652,7 @@ mod tests {
                 title: "f2".into(),
                 mime_type: None,
                 url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+                size: 1,
             })]
         );
 
@@ -659,6 +664,7 @@ mod tests {
                 title: "f2".into(),
                 mime_type: None,
                 url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+                size: 1,
             })]
         );
     }

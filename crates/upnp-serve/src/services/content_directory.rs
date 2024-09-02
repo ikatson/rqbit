@@ -76,6 +76,7 @@ pub mod browse {
             pub title: String,
             pub mime_type: Option<mime_guess::Mime>,
             pub url: String,
+            pub size: u64,
         }
 
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +104,8 @@ pub mod browse {
                         mime_type = mime,
                         url = item.url,
                         upnp_class = upnp_class,
-                        title = item.title
+                        title = item.title,
+                        size = item.size
                     ))
                 }
 
