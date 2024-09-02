@@ -62,6 +62,8 @@ pub mod browse {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Container {
             pub id: usize,
+            // Parent id is None only for the root container.
+            // The only way to see the root container is BrowseMetadata on ObjectID=0
             pub parent_id: Option<usize>,
             pub children_count: Option<usize>,
             pub title: String,
