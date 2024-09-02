@@ -346,6 +346,16 @@ impl HttpApi {
             let mut output_headers = HeaderMap::new();
             output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
 
+            output_headers.insert(
+                "transferMode.dlna.org",
+                HeaderValue::from_static("Streaming"),
+            );
+
+            output_headers.insert(
+                "contentFeatures.dlna.org",
+                HeaderValue::from_static("DLNA.ORG_OP=01"),
+            );
+
             if let Ok(mime) = state.torrent_file_mime_type(idx, file_id) {
                 output_headers.insert(
                     http::header::CONTENT_TYPE,
