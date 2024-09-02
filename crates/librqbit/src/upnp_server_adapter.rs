@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_browse_direct_children() {
+    async fn test_browse() {
         setup_test_logging();
 
         let t1 = create_torrent(Some("t1"), &["f1"]);
@@ -571,6 +571,16 @@ mod tests {
         };
 
         assert_eq!(
+            adapter.browse_metadata(0, "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: 0,
+                parent_id: None,
+                children_count: Some(2),
+                title: "root".into()
+            })]
+        );
+
+        assert_eq!(
             adapter.browse_direct_children(0, "127.0.0.1"),
             vec![
                 ItemOrContainer::Item(Item {
@@ -590,6 +600,27 @@ mod tests {
         );
 
         assert_eq!(
+            adapter.browse_metadata(encode_id(0, 0), "127.0.0.1"),
+            vec![ItemOrContainer::Item(Item {
+                id: encode_id(0, 0),
+                parent_id: 0,
+                title: "f1".into(),
+                mime_type: None,
+                url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into()
+            })]
+        );
+
+        assert_eq!(
+            adapter.browse_metadata(encode_id(0, 1), "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: encode_id(0, 1),
+                parent_id: Some(0),
+                children_count: Some(1),
+                title: "t2".into()
+            })]
+        );
+
+        assert_eq!(
             adapter.browse_direct_children(encode_id(0, 1), "127.0.0.1"),
             vec![ItemOrContainer::Container(Container {
                 id: encode_id(1, 1),
@@ -600,7 +631,28 @@ mod tests {
         );
 
         assert_eq!(
+            adapter.browse_metadata(encode_id(1, 1), "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: encode_id(1, 1),
+                parent_id: Some(encode_id(0, 1)),
+                children_count: Some(1),
+                title: "d1".into()
+            }),]
+        );
+
+        assert_eq!(
             adapter.browse_direct_children(encode_id(1, 1), "127.0.0.1"),
+            vec![ItemOrContainer::Item(Item {
+                id: encode_id(2, 1),
+                parent_id: encode_id(1, 1),
+                title: "f2".into(),
+                mime_type: None,
+                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+            })]
+        );
+
+        assert_eq!(
+            adapter.browse_metadata(encode_id(2, 1), "127.0.0.1"),
             vec![ItemOrContainer::Item(Item {
                 id: encode_id(2, 1),
                 parent_id: encode_id(1, 1),
