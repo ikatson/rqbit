@@ -63,12 +63,21 @@ impl TorrentFileTreeNode {
         match self.real_torrent_file_id {
             Some(fid) => {
                 let filename = &torrent.shared().file_infos[fid].relative_filename;
-                let extension = filename.extension().and_then(|e| e.to_str());
-                // Samsung TVs don't support utf-8 in URLs, so just use the ID instead of the actual title.
-                let last_url_bit = match extension {
-                    Some(e) => format!("{encoded_id}.{e}"),
-                    None => format!("{encoded_id}"),
-                };
+                // Torrent path joined with "/"
+                let last_url_bit = torrent
+                    .shared()
+                    .info
+                    .iter_filenames_and_lengths()
+                    .ok()
+                    .and_then(|mut it| it.nth(fid))
+                    .and_then(|(fi, _)| fi.to_vec().ok())
+                    .map(|components| {
+                        components
+                            .into_iter()
+                            .map(|c| urlencoding::encode(&c).into_owned())
+                            .join("/")
+                    })
+                    .unwrap_or_else(|| self.title.clone());
                 ItemOrContainer::Item(Item {
                     id: encoded_id,
                     parent_id: encoded_parent_id.unwrap_or_default(),
@@ -569,10 +578,7 @@ mod tests {
                     parent_id: 0,
                     title: "f1".into(),
                     mime_type: None,
-                    url: format!(
-                        "http://127.0.0.1:9005/torrents/0/stream/0/{}",
-                        encode_id(0, 0)
-                    )
+                    url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into()
                 }),
                 ItemOrContainer::Container(Container {
                     id: encode_id(0, 1),
@@ -600,10 +606,7 @@ mod tests {
                 parent_id: encode_id(1, 1),
                 title: "f2".into(),
                 mime_type: None,
-                url: format!(
-                    "http://127.0.0.1:9005/torrents/1/stream/0/{}",
-                    encode_id(2, 1)
-                )
+                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
             })]
         );
     }
