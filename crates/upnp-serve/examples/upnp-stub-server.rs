@@ -6,11 +6,27 @@ use std::{
 use anyhow::Context;
 use axum::routing::get;
 use librqbit_upnp_serve::{
-    services::content_directory::browse::response::{Item, ItemOrContainer},
+    services::content_directory::{
+        browse::response::{Item, ItemOrContainer},
+        ContentDirectoryBrowseProvider,
+    },
     UpnpServer, UpnpServerOptions,
 };
 use mime_guess::Mime;
 use tracing::{error, info};
+
+struct VecWrap(Vec<ItemOrContainer>);
+
+impl ContentDirectoryBrowseProvider for VecWrap {
+    fn browse_direct_children(&self, _parent_id: usize, _http_host: &str) -> Vec<ItemOrContainer> {
+        self.0.clone()
+    }
+
+    fn browse_metadata(&self, _object_id: usize, _http_hostname: &str) -> Vec<ItemOrContainer> {
+        // TODO. Remove the vec provider from core code.
+        vec![]
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -20,13 +36,14 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt::init();
 
-    let items: Vec<ItemOrContainer> = vec![ItemOrContainer::Item(Item {
+    let items = VecWrap(vec![ItemOrContainer::Item(Item {
         title: "Example".to_owned(),
         mime_type: Some(Mime::from_str("video/x-matroska")?),
         url: "http://192.168.0.165:3030/torrents/4/stream/0/file.mkv".to_owned(),
         id: 1,
-        parent_id: Some(0),
-    })];
+        parent_id: 0,
+        size: 1,
+    })]);
 
     const HTTP_PORT: u16 = 9005;
     const HTTP_PREFIX: &str = "/upnp";

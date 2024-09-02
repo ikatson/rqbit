@@ -62,6 +62,8 @@ pub mod browse {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Container {
             pub id: usize,
+            // Parent id is None only for the root container.
+            // The only way to see the root container is BrowseMetadata on ObjectID=0
             pub parent_id: Option<usize>,
             pub children_count: Option<usize>,
             pub title: String,
@@ -70,10 +72,11 @@ pub mod browse {
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Item {
             pub id: usize,
-            pub parent_id: Option<usize>,
+            pub parent_id: usize,
             pub title: String,
             pub mime_type: Option<mime_guess::Mime>,
             pub url: String,
+            pub size: u64,
         }
 
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,11 +100,12 @@ pub mod browse {
                             "../resources/templates/content_directory/control/browse/item.tmpl.xml"
                         ),
                         id = item.id,
-                        parent_id = item.parent_id.unwrap_or(0),
+                        parent_id = item.parent_id,
                         mime_type = mime,
                         url = item.url,
                         upnp_class = upnp_class,
-                        title = item.title
+                        title = item.title,
+                        size = item.size
                     ))
                 }
 
@@ -115,7 +119,7 @@ pub mod browse {
                             "../resources/templates/content_directory/control/browse/container.tmpl.xml"
                         ),
                         id = item.id,
-                        parent_id = item.parent_id.unwrap_or(0),
+                        parent_id = item.parent_id.map(|p| p as isize).unwrap_or(-1),
                         title = item.title,
                         childCountTag = child_count_tag
                     )
@@ -135,11 +139,24 @@ pub mod browse {
             }
 
             fn render_response(envelope: &Envelope<'_>) -> String {
+                let items_encoded = format!(
+                    r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
+                xmlns:dc="http://purl.org/dc/elements/1.1/"
+                xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+      {items}
+    </DIDL-Lite>"#,
+                    items = envelope.items
+                );
+
+                // This COULD have been done with CDATA, but some Samsung TVs don't like that, they want
+                // escaped XML instead.
+                let items_encoded = quick_xml::escape::escape(items_encoded.as_ref());
+
                 format!(
                     include_str!(
                         "../resources/templates/content_directory/control/browse/response.tmpl.xml"
                     ),
-                    items = envelope.items,
+                    items_encoded = items_encoded,
                     number_returned = envelope.number_returned,
                     total_matches = envelope.total_matches,
                     update_id = envelope.update_id
@@ -293,7 +310,15 @@ pub(crate) async fn http_handler(
                     ),
                 )
                     .into_response(),
-                BrowseFlag::BrowseMetadata => StatusCode::NOT_IMPLEMENTED.into_response(),
+                BrowseFlag::BrowseMetadata => (
+                    [(CONTENT_TYPE, CONTENT_TYPE_XML_UTF8)],
+                    browse::response::render(
+                        state
+                            .provider
+                            .browse_metadata(request.object_id, http_hostname),
+                    ),
+                )
+                    .into_response(),
             }
         }
         SOAP_ACTION_GET_SYSTEM_UPDATE_ID => {
@@ -314,12 +339,7 @@ pub(crate) async fn http_handler(
 pub trait ContentDirectoryBrowseProvider: Send + Sync {
     fn browse_direct_children(&self, parent_id: usize, http_hostname: &str)
         -> Vec<ItemOrContainer>;
-}
-
-impl ContentDirectoryBrowseProvider for Vec<ItemOrContainer> {
-    fn browse_direct_children(&self, _parent_id: usize, _http_host: &str) -> Vec<ItemOrContainer> {
-        self.clone()
-    }
+    fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer>;
 }
 
 #[cfg(test)]

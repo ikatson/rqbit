@@ -30,6 +30,7 @@ use upnp_serve::{
 #[derive(Debug, PartialEq, Eq)]
 struct TorrentFileTreeNode {
     title: String,
+    // must be set for all nodes except the root node.
     parent_id: Option<usize>,
     children: Vec<usize>,
 
@@ -61,7 +62,8 @@ impl TorrentFileTreeNode {
         let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id()));
         match self.real_torrent_file_id {
             Some(fid) => {
-                let filename = &torrent.shared().file_infos[fid].relative_filename;
+                let fi = &torrent.shared().file_infos[fid];
+                let filename = &fi.relative_filename;
                 // Torrent path joined with "/"
                 let last_url_bit = torrent
                     .shared()
@@ -70,11 +72,16 @@ impl TorrentFileTreeNode {
                     .ok()
                     .and_then(|mut it| it.nth(fid))
                     .and_then(|(fi, _)| fi.to_vec().ok())
-                    .map(|components| components.join("/"))
+                    .map(|components| {
+                        components
+                            .into_iter()
+                            .map(|c| urlencoding::encode(&c).into_owned())
+                            .join("/")
+                    })
                     .unwrap_or_else(|| self.title.clone());
                 ItemOrContainer::Item(Item {
                     id: encoded_id,
-                    parent_id: encoded_parent_id,
+                    parent_id: encoded_parent_id.unwrap_or_default(),
                     title: self.title.clone(),
                     mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
@@ -85,11 +92,12 @@ impl TorrentFileTreeNode {
                         fid,
                         last_url_bit
                     ),
+                    size: fi.len,
                 })
             }
             None => ItemOrContainer::Container(Container {
                 id: encoded_id,
-                parent_id: encoded_parent_id,
+                parent_id: Some(encoded_parent_id.unwrap_or_default()),
                 title: self.title.clone(),
                 children_count: Some(self.children.len()),
             }),
@@ -213,18 +221,15 @@ impl UpnpServerSessionAdapter {
                     // Just add the file directly
                     let rf = &t.shared().file_infos[0].relative_filename;
                     let title = rf.file_name()?.to_str()?.to_owned();
-                    let mime_type = mime_guess::from_path(rf).first();
-                    let url = format!(
-                        "http://{}:{}/torrents/{real_id}/stream/0/{title}",
-                        hostname, self.port
-                    );
-                    Some(ItemOrContainer::Item(Item {
-                        id: upnp_id,
-                        parent_id: None,
-                        title,
-                        mime_type,
-                        url,
-                    }))
+                    Some(
+                        TorrentFileTreeNode {
+                            title,
+                            parent_id: None,
+                            children: vec![],
+                            real_torrent_file_id: Some(0),
+                        }
+                        .as_item_or_container(0, hostname, t, self),
+                    )
                 } else {
                     let title = t
                         .shared()
@@ -238,7 +243,7 @@ impl UpnpServerSessionAdapter {
                     // Create a folder
                     Some(ItemOrContainer::Container(Container {
                         id: upnp_id,
-                        parent_id: None,
+                        parent_id: Some(0),
                         title,
                         children_count: None,
                     }))
@@ -246,26 +251,34 @@ impl UpnpServerSessionAdapter {
             })
             .collect_vec()
     }
-}
 
-impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
-    fn browse_direct_children(
+    fn build_impl(
         &self,
-        parent_id: usize,
+        object_id: usize,
         http_hostname: &str,
+        metadata: bool,
     ) -> Vec<ItemOrContainer> {
-        if parent_id == 0 {
-            return self.build_root(http_hostname);
+        if object_id == 0 {
+            let root = self.build_root(http_hostname);
+            if metadata {
+                return vec![ItemOrContainer::Container(Container {
+                    id: 0,
+                    parent_id: None,
+                    children_count: Some(root.len()),
+                    title: "root".to_owned(),
+                })];
+            }
+            return root;
         }
 
-        let (node_id, torrent_id) = match decode_id(parent_id) {
+        let (node_id, torrent_id) = match decode_id(object_id) {
             Ok((node_id, torrent_id)) => (node_id, torrent_id),
             Err(_) => {
-                debug!(id=?parent_id, "invalid id");
+                debug!(id=?object_id, "invalid id");
                 return vec![];
             }
         };
-        trace!(parent_id, node_id, torrent_id);
+        trace!(object_id, node_id, torrent_id);
 
         let torrent = match self.session.get(torrent_id.into()) {
             Some(t) => t,
@@ -278,7 +291,7 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
         let tree = match TorrentFileTree::build(torrent.id(), &torrent.shared().info) {
             Ok(tree) => tree,
             Err(e) => {
-                warn!(parent_id, error=?e, "error building torrent file tree");
+                warn!(object_id, error=?e, "error building torrent file tree");
                 return vec![];
             }
         };
@@ -295,7 +308,7 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
 
         let mut result = Vec::new();
 
-        if node.real_torrent_file_id.is_some() {
+        if node.real_torrent_file_id.is_some() || metadata {
             result.push(node.as_item_or_container(node_id, http_hostname, &torrent, self))
         } else {
             for (child_node_id, child_node) in node
@@ -313,6 +326,20 @@ impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
         };
 
         result
+    }
+}
+
+impl ContentDirectoryBrowseProvider for UpnpServerSessionAdapter {
+    fn browse_direct_children(
+        &self,
+        object_id: usize,
+        http_hostname: &str,
+    ) -> Vec<ItemOrContainer> {
+        self.build_impl(object_id, http_hostname, false)
+    }
+
+    fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer> {
+        self.build_impl(object_id, http_hostname, true)
     }
 }
 
@@ -496,7 +523,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_browse_direct_children() {
+    async fn test_browse() {
         setup_test_logging();
 
         let t1 = create_torrent(Some("t1"), &["f1"]);
@@ -546,22 +573,55 @@ mod tests {
         };
 
         assert_eq!(
+            adapter.browse_metadata(0, "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: 0,
+                parent_id: None,
+                children_count: Some(2),
+                title: "root".into()
+            })]
+        );
+
+        assert_eq!(
             adapter.browse_direct_children(0, "127.0.0.1"),
             vec![
                 ItemOrContainer::Item(Item {
                     id: encode_id(0, 0),
-                    parent_id: None,
+                    parent_id: 0,
                     title: "f1".into(),
                     mime_type: None,
-                    url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into()
+                    url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into(),
+                    size: 1,
                 }),
                 ItemOrContainer::Container(Container {
                     id: encode_id(0, 1),
-                    parent_id: None,
+                    parent_id: Some(0),
                     children_count: None,
                     title: "t2".into()
                 })
             ]
+        );
+
+        assert_eq!(
+            adapter.browse_metadata(encode_id(0, 0), "127.0.0.1"),
+            vec![ItemOrContainer::Item(Item {
+                id: encode_id(0, 0),
+                parent_id: 0,
+                title: "f1".into(),
+                mime_type: None,
+                url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into(),
+                size: 1,
+            })]
+        );
+
+        assert_eq!(
+            adapter.browse_metadata(encode_id(0, 1), "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: encode_id(0, 1),
+                parent_id: Some(0),
+                children_count: Some(1),
+                title: "t2".into()
+            })]
         );
 
         assert_eq!(
@@ -575,13 +635,36 @@ mod tests {
         );
 
         assert_eq!(
+            adapter.browse_metadata(encode_id(1, 1), "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: encode_id(1, 1),
+                parent_id: Some(encode_id(0, 1)),
+                children_count: Some(1),
+                title: "d1".into()
+            }),]
+        );
+
+        assert_eq!(
             adapter.browse_direct_children(encode_id(1, 1), "127.0.0.1"),
             vec![ItemOrContainer::Item(Item {
                 id: encode_id(2, 1),
-                parent_id: Some(encode_id(1, 1)),
+                parent_id: encode_id(1, 1),
                 title: "f2".into(),
                 mime_type: None,
-                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into()
+                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+                size: 1,
+            })]
+        );
+
+        assert_eq!(
+            adapter.browse_metadata(encode_id(2, 1), "127.0.0.1"),
+            vec![ItemOrContainer::Item(Item {
+                id: encode_id(2, 1),
+                parent_id: encode_id(1, 1),
+                title: "f2".into(),
+                mime_type: None,
+                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+                size: 1,
             })]
         );
     }

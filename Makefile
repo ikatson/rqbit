@@ -63,13 +63,23 @@ docker-build-armv7:
 clean:
 	rm -rf target
 
+CARGO_RELEASE_PROFILE ?= release-github
+
 @PHONY: release-linux-current-target
 release-linux-current-target:
 	CC_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-gcc \
 	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
 	AR_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-ar \
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
-	cargo build  --profile release-github --target=$(TARGET) --features=openssl-vendored
+	cargo build  --profile $(CARGO_RELEASE_PROFILE) --target=$(TARGET) --features=openssl-vendored
+
+@PHONY: debug-linux-docker-x86_64
+debug-linux-docker-x86_64:
+	CARGO_RELEASE_PROFILE=dev \
+	$(MAKE) release-linux-x86_64 && \
+	cp target/x86_64-unknown-linux-musl/debug/rqbit target/cross/linux/amd64/ && \
+	docker build -t ikatson/rqbit:tmp-debug -f docker/Dockerfile --platform linux/amd64 target/cross && \
+	docker push ikatson/rqbit:tmp-debug
 
 @PHONY: release-linux-x86_64
 release-linux-x86_64:
