@@ -147,6 +147,9 @@ pub mod browse {
     </DIDL-Lite>"#,
                     items = envelope.items
                 );
+
+                // This COULD have been done with CDATA, but some Samsung TVs don't like that, they want
+                // escaped XML instead.
                 let items_encoded = quick_xml::escape::escape(items_encoded.as_ref());
 
                 format!(
@@ -337,17 +340,6 @@ pub trait ContentDirectoryBrowseProvider: Send + Sync {
     fn browse_direct_children(&self, parent_id: usize, http_hostname: &str)
         -> Vec<ItemOrContainer>;
     fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer>;
-}
-
-impl ContentDirectoryBrowseProvider for Vec<ItemOrContainer> {
-    fn browse_direct_children(&self, _parent_id: usize, _http_host: &str) -> Vec<ItemOrContainer> {
-        self.clone()
-    }
-
-    fn browse_metadata(&self, _object_id: usize, _http_hostname: &str) -> Vec<ItemOrContainer> {
-        // TODO. Remove the vec provider from core code.
-        vec![]
-    }
 }
 
 #[cfg(test)]
