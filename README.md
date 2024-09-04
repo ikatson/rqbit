@@ -50,7 +50,7 @@ rqbit can advertise managed torrents to LAN, e.g. your TVs and stream torrents t
 Usage from CLI
 
 ```
-rqbit --upnp-server-hostname <YOUR_IP_VISIBLE_FROM_LAN> server start ...
+rqbit --enable-upnp-server server start ...
 ```
 
 ## Performance
