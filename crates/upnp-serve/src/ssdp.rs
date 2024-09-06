@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use bstr::BStr;
+use network_interface::NetworkInterfaceConfig;
 use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
@@ -125,10 +126,27 @@ impl SsdpRunner {
         let socket = tokio::net::UdpSocket::from_std(sock.into())
             .context("error converting socket2 socket to tokio")?;
 
-        trace!(multiaddr=?UPNP_BROADCAST_IP, interface=?Ipv4Addr::UNSPECIFIED, "joining multicast v4 group");
-        socket
-            .join_multicast_v4(UPNP_BROADCAST_IP, Ipv4Addr::UNSPECIFIED)
-            .context("error joining multicast group")?;
+        let default_multiast_membership_ip = std::iter::once(Ipv4Addr::UNSPECIFIED);
+        let all_multicast_membership_ips = network_interface::NetworkInterface::show()
+            .into_iter()
+            .flatten()
+            .flat_map(|nic| nic.addr.into_iter())
+            .filter_map(|addr| {
+                let ip = addr.ip();
+                match ip {
+                    std::net::IpAddr::V4(addr) if addr.is_private() && !addr.is_loopback() => {
+                        Some(addr)
+                    }
+                    _ => None,
+                }
+            });
+
+        for ifaddr in default_multiast_membership_ip.chain(all_multicast_membership_ips) {
+            trace!(multiaddr=?UPNP_BROADCAST_IP, interface=?ifaddr, "joining multicast v4 group");
+            if let Err(e) = socket.join_multicast_v4(UPNP_BROADCAST_IP, ifaddr) {
+                debug!(error=?e, multiaddr=?UPNP_BROADCAST_IP, interface=?ifaddr, "error joining multicast v4 group");
+            }
+        }
 
         Ok(Self { opts, socket })
     }
@@ -191,15 +209,13 @@ Content-Length: 0\r\n\r\n"
             .into_iter()
             .flat_map(|ni| ni.addr)
             .filter_map(|addr| {
-                let ip = addr.ip();
-                if ip.is_ipv4() && !ip.is_loopback() {
-                    Some(ip)
-                } else {
-                    None
+                match addr.ip() {
+                    std::net::IpAddr::V4(a) if !a.is_loopback() && a.is_private() => Some(a),
+                    _ => None
                 }
             })
             .map(|ip| async move {
-                let addr = SocketAddr::new(ip, 0);
+                let addr = SocketAddrV4::new(ip, 0);
                 let sock = match tokio::net::UdpSocket::bind(addr).await {
                     Ok(sock) => sock,
                     Err(e) => {
