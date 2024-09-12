@@ -192,3 +192,10 @@ Supported query parameters, all optional:
 First of all, I love Rust. The project was created purely for the fun of the process of writing code in Rust.
 
 I was not satisfied with my regular bittorrent client, and was wondering how much work would it be to create a new one from scratch, and it got where it is, starting from bencode protocol implemenation, then peer protocol, etc, etc.
+
+## Donations
+
+If you love rqbit, please consider donating using one of these methods:
+
+- [Bitback.me](https://bitback.me/ikatson/profile/)
+- Other methods WIP
