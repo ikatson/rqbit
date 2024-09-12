@@ -197,6 +197,8 @@ I was not satisfied with my regular bittorrent client, and was wondering how muc
 
 If you love rqbit, please consider donating using one of these methods:
 
-- ETH (Ethreum) 0x68c54b26b5372d5f091b6c08cc62883686c63527
-- XMR (Monero) 49LcgFreJuedrP8FgnUVB8GkAyoPX7A9PjWfKZA1hNYz5vPCEcYQ9HzKr3pccGR6Lc3V3hn52bukwZShLDhZsk57V41c2ea
+- Crypto
+  - ETH (Ethereum) 0x68c54b26b5372d5f091b6c08cc62883686c63527
+  - XMR (Monero) 49LcgFreJuedrP8FgnUVB8GkAyoPX7A9PjWfKZA1hNYz5vPCEcYQ9HzKr3pccGR6Lc3V3hn52bukwZShLDhZsk57V41c2ea
+  - XNO (Nano) nano_1ghid3z6x41x8cuoffb6bbrt4e14wsqdbyqwp5d8rk166meo3h77q7mkjusr
 - Other methods WIP
