@@ -197,5 +197,6 @@ I was not satisfied with my regular bittorrent client, and was wondering how muc
 
 If you love rqbit, please consider donating using one of these methods:
 
-- [Bitback.me](https://bitback.me/ikatson/profile/)
+- ETH (Ethreum) 0x68c54b26b5372d5f091b6c08cc62883686c63527
+- XMR (Monero) 49LcgFreJuedrP8FgnUVB8GkAyoPX7A9PjWfKZA1hNYz5vPCEcYQ9HzKr3pccGR6Lc3V3hn52bukwZShLDhZsk57V41c2ea
 - Other methods WIP
