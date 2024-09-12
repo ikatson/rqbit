@@ -8,6 +8,7 @@ use bitvec::{
     vec::BitVec,
     view::{AsBits, AsMutBits},
 };
+use tracing::trace;
 
 pub trait BitV: Send + Sync {
     fn as_slice(&self) -> &BitSlice<u8, Msb0>;
@@ -22,6 +23,12 @@ pub type BoxBitV = Box<dyn BitV>;
 pub struct MmapBitV {
     _file: File,
     mmap: memmap2::MmapMut,
+}
+
+impl Drop for MmapBitV {
+    fn drop(&mut self) {
+        trace!("dropping MmapBitV, this should unmap the .bitv file")
+    }
 }
 
 impl MmapBitV {
