@@ -189,13 +189,15 @@ Supported query parameters, all optional:
 
 ## Motivation
 
-First of all, I love Rust. The project was created purely for the fun of the process of writing code in Rust.
+First of all, I love Rust. This project began purely out of my enjoyment of writing code in Rust. I wasn’t satisfied with my regular BitTorrent client and wanted to see how much effort it would take to build one from scratch. Starting with the bencode protocol, then the peer protocol, it gradually evolved into what it is today.
 
-I was not satisfied with my regular bittorrent client, and was wondering how much work would it be to create a new one from scratch, and it got where it is, starting from bencode protocol implemenation, then peer protocol, etc, etc.
+What really drives me to keep improving rqbit is seeing genuine interest from users. For example, my dad found the CLI too difficult, so I built a desktop app just for him. Later, he got into Docker Compose and now runs rqbit on his NAS, showing how user feedback and needs can inspire new features. You can find other examples of new features born from user requests in the issues/PRs.
 
-## Donations
+Hearing from people who use and appreciate rqbit keeps me motivated to continue adding new features and making it even better.
 
-If you love rqbit, please consider donating using one of these methods:
+## Donations and sponsorship
+
+If you love rqbit, please consider donating through one of these methods. With enough support, I might be able to make this my full-time job one day — which would be amazing!
 
 - [Github Sponsors](https://github.com/sponsors/ikatson)
 - Crypto
