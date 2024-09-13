@@ -20,28 +20,13 @@ pub struct CreateTorrentOptions<'a> {
 }
 
 fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Result<()> {
-    let mut stack = vec![Cow::Borrowed(dir)];
-    while let Some(dir) = stack.pop() {
-        let rd = std::fs::read_dir(&dir).with_context(|| format!("error reading {:?}", dir))?;
-        for element in rd {
-            let element =
-                element.with_context(|| format!("error reading DirEntry from {:?}", dir))?;
-            let ft = element.file_type().with_context(|| {
-                format!(
-                    "error determining filetype of DirEntry {:?} while reading {:?}",
-                    element.file_name(),
-                    dir
-                )
-            })?;
-
-            let full_path = Cow::Owned(dir.join(element.file_name()));
-            if ft.is_dir() {
-                stack.push(full_path);
-            } else {
-                out.push(full_path);
-            }
-        }
-    }
+    out.extend(
+        walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_owned().into()),
+    );
     Ok(())
 }
 
