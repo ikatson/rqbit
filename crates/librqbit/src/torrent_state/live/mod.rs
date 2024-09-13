@@ -719,6 +719,9 @@ impl TorrentStateLive {
     }
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
+        if let Err(e) = self.files.on_piece_completed(id) {
+            debug!(?id, "file storage errored in on_piece_completed(): {e:#}");
+        }
         let mut g = self.lock_write("on_piece_completed");
         let locked = &mut **g;
         let chunks = locked.get_chunks_mut()?;
