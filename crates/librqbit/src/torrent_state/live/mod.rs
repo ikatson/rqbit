@@ -1687,14 +1687,16 @@ impl PeerHandler {
         B: AsRef<[u8]> + std::fmt::Debug,
     {
         // TODO: this is just first attempt at pex - will need more sophistication on adding peers - BEP 40,  check number of live, seen peers ...
-        msg.added_peers().for_each(|peer| {
-            self.state
-                .add_peer_if_not_seen(peer.addr)
-                .map_err(|error| {
-                    warn!(?peer, ?error, "failed to add peer");
-                    error
-                })
-                .ok();
-        });
+        msg.dropped_peers()
+            .chain(msg.added_peers())
+            .for_each(|peer| {
+                self.state
+                    .add_peer_if_not_seen(peer.addr)
+                    .map_err(|error| {
+                        warn!(?peer, ?error, "failed to add peer");
+                        error
+                    })
+                    .ok();
+            });
     }
 }
