@@ -1,4 +1,11 @@
-use std::{io, net::SocketAddr, path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 
 use anyhow::{bail, Context};
 use clap::{CommandFactory, Parser, ValueEnum};
@@ -236,6 +243,11 @@ struct ServerStartOptions {
     /// [Experimental] if set, will try to resume quickly after restart and skip checksumming.
     #[arg(long = "fastresume", env = "RQBIT_FASTRESUME")]
     fastresume: bool,
+
+    /// The folder to watch for added .torrent files. All files in this folder will be automatically added
+    /// to the session.
+    #[arg(long = "watch-folder", env = "RQBIT_WATCH_FOLDER")]
+    watch_folder: Option<String>,
 }
 
 #[derive(Parser)]
@@ -580,7 +592,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 };
 
                 let api = Api::new(
-                    session,
+                    session.clone(),
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
@@ -594,6 +606,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
 
                 let upnp_router = upnp_server.as_mut().and_then(|s| s.take_router().ok());
                 let http_api_fut = http_api.make_http_api_and_run(tcp_listener, upnp_router);
+
+                if let Some(watch_folder) = start_opts.watch_folder.as_ref() {
+                    session.watch_folder(Path::new(watch_folder));
+                }
 
                 let res = match upnp_server {
                     Some(srv) => {
@@ -609,7 +625,6 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         r = http_api_fut => r,
                     },
                 };
-
                 res.context("error running server")
             }
         },

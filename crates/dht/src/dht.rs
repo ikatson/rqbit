@@ -265,7 +265,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
         let request_one = |id, addr, depth| {
             req.request_one(id, addr, depth)
                 .map_err(|e| {
-                    debug!("error: {e:?}");
+                    debug!("error: {e:#}");
                     e
                 })
                 .instrument(error_span!(
@@ -341,7 +341,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                                 Ok(n) if n < 8 => REQUERY_INTERVAL / 8 * (n as u32),
                                 Ok(_) => REQUERY_INTERVAL,
                                 Err(e) => {
-                                    error!("error in get_peers_root(): {e:?}");
+                                    error!("error in get_peers_root(): {e:#}");
                                     return Err::<(), anyhow::Error>(e);
                                 }
                             };
@@ -359,7 +359,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                             let (id, addr, depth) = addr.unwrap();
                             futs.push(
                                 this.request_one(id, addr, depth)
-                                    .map_err(|e| debug!("error: {e:?}"))
+                                    .map_err(|e| debug!("error: {e:#}"))
                                     .instrument(error_span!("addr", addr=addr.to_string()))
                             );
                         }
@@ -996,7 +996,7 @@ impl DhtWorker {
                             },
                             Err(e) => {
                                 self.dht.routing_table.write().mark_error(&id);
-                                debug!("error: {e:?}");
+                                debug!("error: {e:#}");
                             }
                         }
                     }.instrument(error_span!("ping", addr=addr.to_string())))
@@ -1033,7 +1033,7 @@ impl DhtWorker {
                 )
                 .unwrap();
                 if let Err(e) = socket.send_to(&buf, addr).await {
-                    debug!("error sending to {addr}: {e:?}");
+                    debug!("error sending to {addr}: {e:#}");
                     if let Some(tid) = our_tid {
                         self.on_send_error(tid, addr, e.into());
                     }
