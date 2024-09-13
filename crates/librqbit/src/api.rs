@@ -72,7 +72,7 @@ impl<'de> Deserialize<'de> for TorrentIdOrHash {
 
         macro_rules! visit_int {
             ($v:expr) => {{
-                let tid: TorrentId = $v.try_into().map_err(|e| E::custom(format!("{e:?}")))?;
+                let tid: TorrentId = $v.try_into().map_err(|e| E::custom(format!("{e:#}")))?;
                 Ok(TorrentIdOrHash::from(tid))
             }};
         }
@@ -118,7 +118,7 @@ impl<'de> Deserialize<'de> for TorrentIdOrHash {
             {
                 TorrentIdOrHash::parse(v).map_err(|e| {
                     E::custom(format!(
-                        "expected integer or 40 byte info hash, couldn't parse string: {e:?}"
+                        "expected integer or 40 byte info hash, couldn't parse string: {e:#}"
                     ))
                 })
             }
