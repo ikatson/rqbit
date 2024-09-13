@@ -27,6 +27,7 @@ librqbit = { version = "7.1.0-beta.0", path = "../librqbit", default-features = 
     "http-api",
     "tracing-subscriber-utils",
     "upnp-serve-adapter",
+    "watch",
 ] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 console-subscriber = { version = "0.4", optional = true }

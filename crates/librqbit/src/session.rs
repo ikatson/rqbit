@@ -673,7 +673,7 @@ impl Session {
                     tokio::select! {
                         Some(res) = futs.next(), if !futs.is_empty() => {
                             if let Err(e) = res {
-                                error!("error adding torrent to session: {e:?}");
+                                error!("error adding torrent to session: {e:#}");
                             }
                         }
                         st = ps.next(), if !added_all => {
@@ -1207,6 +1207,10 @@ impl Session {
                 .context("error starting torrent")?;
         }
 
+        if let Some(name) = managed_torrent.shared().info.name.as_ref() {
+            info!(?name, id, "added torrent");
+        }
+
         Ok(AddTorrentResponse::Added(id, managed_torrent))
     }
 
@@ -1248,7 +1252,7 @@ impl Session {
             .with_context(|| format!("torrent with id {} did not exist", id))?;
 
         if let Err(e) = removed.pause() {
-            debug!("error pausing torrent before deletion: {e:?}")
+            debug!("error pausing torrent before deletion: {e:#}")
         }
 
         let storage = removed
@@ -1259,7 +1263,7 @@ impl Session {
                     .pause()
                     // inspect_err not available in 1.75
                     .map_err(|e| {
-                        warn!("error pausing torrent: {e:?}");
+                        warn!("error pausing torrent: {e:#}");
                         e
                     })
                     .ok()
@@ -1285,7 +1289,7 @@ impl Session {
                 if removed.shared().options.output_folder != self.output_folder {
                     if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
                         warn!(
-                            "error removing {:?}: {e:?}",
+                            "error removing {:?}: {e:#}",
                             removed.shared().options.output_folder
                         )
                     }
@@ -1398,7 +1402,7 @@ fn remove_files_and_dirs(info: &ManagedTorrentShared, files: &dyn TorrentStorage
     };
     for dir in all_dirs {
         if let Err(e) = files.remove_directory_if_empty(dir) {
-            warn!("error removing {dir:?}: {e:?}");
+            warn!("error removing {dir:?}: {e:#}");
         } else {
             debug!("removed {dir:?}")
         }

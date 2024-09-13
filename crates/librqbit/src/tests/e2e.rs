@@ -147,7 +147,7 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                                 }
                                 Ok(true)
                             }
-                            crate::ManagedTorrentState::Error(e) => bail!("error: {e:?}"),
+                            crate::ManagedTorrentState::Error(e) => bail!("error: {e:#}"),
                             _ => bail!("broken state"),
                         })
                         .context("error checking for torrent liveness")?;

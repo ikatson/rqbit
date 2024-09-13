@@ -163,7 +163,7 @@ impl std::fmt::Display for MessageDeserializeError {
                 len_prefix,
             } => write!(
                 f,
-                "error deserializing {name} (msg_id={msg_id}, len_prefix={len_prefix}): {error:?}"
+                "error deserializing {name} (msg_id={msg_id}, len_prefix={len_prefix}): {error:#}"
             ),
             MessageDeserializeError::Other(e) => write!(f, "{e}"),
         }

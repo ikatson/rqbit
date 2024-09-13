@@ -154,7 +154,7 @@ macro_rules! poll_try_io {
         match e {
             Ok(r) => r,
             Err(e) => {
-                debug!("stream error {e:?}");
+                debug!("stream error {e:#}");
                 return Poll::Ready(Err(e));
             }
         }
