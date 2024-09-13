@@ -1519,7 +1519,7 @@ impl PeerHandler {
             match state.file_ops().write_chunk(addr, piece, chunk_info) {
                 Ok(()) => {}
                 Err(e) => {
-                    error!("FATAL: error writing chunk to disk: {:?}", e);
+                    error!("FATAL: error writing chunk to disk: {e:#}");
                     return state.on_fatal_error(e);
                 }
             };

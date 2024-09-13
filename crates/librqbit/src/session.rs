@@ -1207,6 +1207,10 @@ impl Session {
                 .context("error starting torrent")?;
         }
 
+        if let Some(name) = managed_torrent.shared().info.name.as_ref() {
+            info!(?name, id, "added torrent");
+        }
+
         Ok(AddTorrentResponse::Added(id, managed_torrent))
     }
 

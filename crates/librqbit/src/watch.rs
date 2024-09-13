@@ -10,6 +10,7 @@ use librqbit_core::torrent_metainfo::torrent_from_bytes;
 use notify::Watcher;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, error, error_span, trace, warn};
+use walkdir::WalkDir;
 
 use crate::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
 
@@ -40,10 +41,14 @@ impl ThreadCancelEvent {
     }
 }
 
-async fn watch_adder(session_w: Weak<Session>, mut rx: UnboundedReceiver<AddTorrent<'static>>) {
+async fn watch_adder(
+    session_w: Weak<Session>,
+    mut rx: UnboundedReceiver<(AddTorrent<'static>, PathBuf)>,
+) {
     async fn add_one(
         session_w: &Weak<Session>,
         add_torrent: AddTorrent<'static>,
+        path: PathBuf,
     ) -> anyhow::Result<()> {
         let session = match session_w.upgrade() {
             Some(s) => s,
@@ -57,19 +62,20 @@ async fn watch_adder(session_w: Weak<Session>, mut rx: UnboundedReceiver<AddTorr
                     ..Default::default()
                 }),
             )
-            .await?;
+            .await
+            .with_context(|| format!("error adding torrent from {path:?}"))?;
         match res {
             AddTorrentResponse::Added(_, _) => {}
             AddTorrentResponse::AlreadyManaged(_, _) => {
-                debug!("already managed");
+                debug!(?path, "already managed");
             }
             AddTorrentResponse::ListOnly(..) => bail!("bug: unexpected list only"),
         }
         Ok(())
     }
 
-    while let Some(add_torrent) = rx.recv().await {
-        if let Err(e) = add_one(&session_w, add_torrent).await {
+    while let Some((add_torrent, path)) = rx.recv().await {
+        if let Err(e) = add_one(&session_w, add_torrent, path).await {
             warn!("error adding torrent: {e:#}");
         }
     }
@@ -77,7 +83,7 @@ async fn watch_adder(session_w: Weak<Session>, mut rx: UnboundedReceiver<AddTorr
 
 fn watch_thread(
     folder: PathBuf,
-    tx: UnboundedSender<AddTorrent<'static>>,
+    tx: UnboundedSender<(AddTorrent<'static>, PathBuf)>,
     cancel_event: &ThreadCancelEvent,
 ) -> anyhow::Result<()> {
     fn read_and_validate_torrent(path: &Path) -> anyhow::Result<AddTorrent<'static>> {
@@ -92,7 +98,7 @@ fn watch_thread(
 
     fn watch_cb(
         ev: notify::Result<notify::Event>,
-        tx: &UnboundedSender<AddTorrent<'static>>,
+        tx: &UnboundedSender<(AddTorrent<'static>, PathBuf)>,
     ) -> anyhow::Result<()> {
         trace!(event=?ev, "watch event");
         let ev = ev.context("error event")?;
@@ -111,16 +117,35 @@ fn watch_thread(
             let add = match read_and_validate_torrent(&path) {
                 Ok(add) => add,
                 Err(e) => {
-                    debug!(?path, "error validating torrent: {e:#}");
+                    warn!(?path, "error validating torrent: {e:#}");
                     continue;
                 }
             };
 
-            if tx.send(add).is_err() {
+            if tx.send((add, path.to_owned())).is_err() {
                 return Ok(());
             }
         }
         Ok(())
+    }
+
+    for entry in WalkDir::new(&folder)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().and_then(|e| e.to_str()) == Some("torrent"))
+    {
+        let t = match read_and_validate_torrent(entry.path()) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(path=?entry.path(), "error validating torrent: {e:#}");
+                continue;
+            }
+        };
+        if tx.send((t, entry.path().to_owned())).is_err() {
+            debug!(?folder, "watcher thread done");
+            return Ok(());
+        }
     }
 
     let mut watcher = notify::recommended_watcher(move |ev| {
@@ -164,10 +189,11 @@ impl Session {
         let session_span = self.rs();
         std::thread::spawn(move || {
             let span = error_span!(parent: session_span, "watcher", folder=?watch_folder);
-            let _ = span.enter();
-            if let Err(e) = watch_thread(watch_folder, tx, &cancel_event_2) {
-                error!("error in watcher thread: {e:#}");
-            }
+            span.in_scope(move || {
+                if let Err(e) = watch_thread(watch_folder, tx, &cancel_event_2) {
+                    error!("error in watcher thread: {e:#}");
+                }
+            })
         });
     }
 }

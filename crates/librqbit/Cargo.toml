@@ -107,6 +107,7 @@ tokio-socks = "0.5.2"
 async-trait = "0.1.81"
 async-backtrace = { version = "0.2", optional = true }
 notify = { version = "6.1.1", optional = true }
+walkdir = "2.5.0"
 
 [build-dependencies]
 anyhow = "1"
