@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "7.1.0-beta.0"
+version = "7.1.0-beta.1"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -38,8 +38,7 @@ postgres = ["sqlx"]
 async-bt = ["async-backtrace"]
 
 [dependencies]
-# TODO: 0.8.1 doesn't compile, upgrade once released.
-sqlx = { version = "=0.8.0", features = [
+sqlx = { version = "0.8.2", features = [
     "runtime-tokio",
     "postgres",
 ], optional = true }
