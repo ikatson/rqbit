@@ -1251,14 +1251,6 @@ impl Session {
             debug!("error pausing torrent before deletion: {e:?}")
         }
 
-        if let Some(p) = self.persistence.as_ref() {
-            if let Err(e) = p.delete(id).await {
-                error!(error=?e, "error deleting torrent from persistence database");
-            } else {
-                debug!(?id, "deleted torrent from persistence database")
-            }
-        }
-
         let storage = removed
             .with_state_mut(|s| match s.take() {
                 ManagedTorrentState::Initializing(p) => p.files.take().ok(),
@@ -1276,6 +1268,14 @@ impl Session {
             })
             .map(Ok)
             .unwrap_or_else(|| removed.shared.storage_factory.create(removed.shared()));
+
+        if let Some(p) = self.persistence.as_ref() {
+            if let Err(e) = p.delete(id).await {
+                error!(error=?e, "error deleting torrent from persistence database");
+            } else {
+                debug!(?id, "deleted torrent from persistence database")
+            }
+        }
 
         match (storage, delete_files) {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),

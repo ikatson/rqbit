@@ -100,27 +100,60 @@ impl TorrentStateInitializing {
 
             use rand::seq::SliceRandom;
 
-            let mut have_pieces = hp
-                .as_slice()
-                .iter_ones()
-                .filter_map(|i| self.shared.lengths.validate_piece_index(i.try_into().ok()?))
-                .collect_vec();
-            have_pieces.shuffle(&mut rand::thread_rng());
+            let mut to_validate = BF::from_boxed_slice(
+                vec![0u8; self.shared.lengths.piece_bitfield_bytes()].into_boxed_slice(),
+            );
+            let mut queue = hp.as_slice().to_owned();
 
-            // Validate a certain threshold of fastresume pieces with decreasing probability of actual disk reads.
-            for (tmp_id, hpiece) in have_pieces.iter().enumerate() {
+            // Validate at least one piece from each file, if we claim we have it.
+            for fi in self.shared.file_infos.iter() {
+                let prange = fi.piece_range_usize();
+                let offset = prange.start;
+                for piece_id in hp
+                    .as_slice()
+                    .get(fi.piece_range_usize())
+                    .into_iter()
+                    .flat_map(|s| s.iter_ones())
+                    .map(|pid| pid + offset)
+                    .take(1)
+                {
+                    to_validate.set(piece_id, true);
+                    queue.set(piece_id, false);
+                }
+            }
+
+            // For all the remaining pieces we claim we have, validate them with decreasing probability.
+            let mut queue = queue.iter_ones().collect_vec();
+            queue.shuffle(&mut rand::thread_rng());
+            for (tmp_id, piece_id) in queue.into_iter().enumerate() {
                 let denom: u32 = (tmp_id + 1).min(50).try_into().unwrap();
-                if rand::thread_rng().gen_ratio(1, denom) && fo.check_piece(*hpiece).is_err() {
+                if rand::thread_rng().gen_ratio(1, denom) {
+                    to_validate.set(piece_id, true);
+                }
+            }
+
+            let to_validate_count = to_validate.count_ones();
+            for (id, piece_id) in to_validate
+                .iter_ones()
+                .filter_map(|id| {
+                    self.shared
+                        .lengths
+                        .validate_piece_index(id.try_into().ok()?)
+                })
+                .enumerate()
+            {
+                if fo.check_piece(piece_id).is_err() {
                     return true;
                 }
 
                 #[allow(clippy::cast_possible_truncation)]
                 let progress = (self.shared.lengths.total_length() as f64
-                    / have_pieces.len() as f64
-                    * (tmp_id + 1) as f64) as u64;
+                    / to_validate_count as f64
+                    * (id + 1) as f64) as u64;
                 let progress = progress.min(self.shared.lengths.total_length());
                 self.checked_bytes.store(progress, Ordering::Relaxed);
             }
+
             false
         });
 
