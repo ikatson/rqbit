@@ -2692,6 +2692,7 @@ dependencies = [
  "gethostname",
  "http 1.1.0",
  "httparse",
+ "libc",
  "librqbit-core",
  "librqbit-sha1-wrapper",
  "librqbit-upnp",

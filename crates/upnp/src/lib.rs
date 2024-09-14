@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::{
     collections::HashSet,
-    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -30,21 +30,21 @@ pub fn make_ssdp_search_request(kind: &str) -> String {
     )
 }
 
-pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<Ipv4Addr> {
-    let local_dest = match local_dest {
-        IpAddr::V4(v4) => v4,
-        IpAddr::V6(v6) => {
-            anyhow::bail!("get_local_ip_relative_to not implemented for IPv6; addr={v6}")
-        }
-    };
-
-    // Ipv4Addr.to_bits() is only there in nightly rust, so copying here for now.
-    fn ip_bits(addr: Ipv4Addr) -> u32 {
+pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<IpAddr> {
+    fn ip_bits_v4(addr: Ipv4Addr) -> u32 {
         u32::from_be_bytes(addr.octets())
     }
 
-    fn masked(ip: Ipv4Addr, mask: Ipv4Addr) -> u32 {
-        ip_bits(ip) & ip_bits(mask)
+    fn masked_v4(ip: Ipv4Addr, mask: Ipv4Addr) -> u32 {
+        ip_bits_v4(ip) & ip_bits_v4(mask)
+    }
+
+    fn ip_bits_v6(addr: Ipv6Addr) -> u128 {
+        u128::from_be_bytes(addr.octets())
+    }
+
+    fn masked_v6(ip: Ipv6Addr, mask: Ipv6Addr) -> u128 {
+        ip_bits_v6(ip) & ip_bits_v6(mask)
     }
 
     let interfaces =
@@ -52,18 +52,18 @@ pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<Ipv4Addr> 
 
     for i in interfaces {
         for addr in i.addr {
-            if let network_interface::Addr::V4(v4) = addr {
-                let ip = v4.ip;
-                let mask = match v4.netmask {
-                    Some(mask) => mask,
-                    None => continue,
-                };
-                trace!("found local addr {ip}/{mask}");
-                // If the masked address is the same, means we are on the same network, return
-                // the ip address
-                if masked(ip, mask) == masked(local_dest, mask) {
-                    return Ok(ip);
+            match (local_dest, addr.ip(), addr.netmask()) {
+                (IpAddr::V4(l), IpAddr::V4(a), Some(IpAddr::V4(m)))
+                    if masked_v4(l, m) == masked_v4(a, m) =>
+                {
+                    return Ok(addr.ip())
                 }
+                (IpAddr::V6(l), IpAddr::V6(a), Some(IpAddr::V6(m)))
+                    if masked_v6(l, m) == masked_v6(a, m) =>
+                {
+                    return Ok(addr.ip())
+                }
+                _ => continue,
             }
         }
     }
@@ -72,7 +72,7 @@ pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<Ipv4Addr> 
 
 async fn forward_port(
     control_url: Url,
-    local_ip: Ipv4Addr,
+    local_ip: IpAddr,
     port: u16,
     lease_duration: Duration,
 ) -> anyhow::Result<()> {
@@ -229,7 +229,7 @@ impl UpnpEndpoint {
             .flat_map(move |d| d.iter_services(self_span.clone()))
     }
 
-    fn my_local_ip(&self) -> anyhow::Result<Ipv4Addr> {
+    fn my_local_ip(&self) -> anyhow::Result<IpAddr> {
         let dest_ip = self.discover_response.received_from.ip();
         let local_ip = get_local_ip_relative_to(dest_ip)
             .with_context(|| format!("can't determine local IP relative to {dest_ip}"))?;
@@ -419,7 +419,7 @@ impl UpnpPortForwarder {
         }
     }
 
-    async fn manage_port(&self, control_url: Url, local_ip: Ipv4Addr, port: u16) -> ! {
+    async fn manage_port(&self, control_url: Url, local_ip: IpAddr, port: u16) -> ! {
         let lease_duration = self.opts.lease_duration;
         let mut interval = tokio::time::interval(lease_duration / 2);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -433,7 +433,7 @@ impl UpnpPortForwarder {
         }
     }
 
-    async fn manage_service(&self, control_url: Url, local_ip: Ipv4Addr) -> anyhow::Result<()> {
+    async fn manage_service(&self, control_url: Url, local_ip: IpAddr) -> anyhow::Result<()> {
         futures::future::join_all(self.ports.iter().cloned().map(|port| {
             self.manage_port(control_url.clone(), local_ip, port)
                 .instrument(error_span!("manage_port", port = port))
