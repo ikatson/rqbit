@@ -2710,6 +2710,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "winapi",
 ]
 
 [[package]]

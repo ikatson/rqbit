@@ -1,7 +1,6 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    os::fd::{AsFd, AsRawFd},
     time::Duration,
 };
 
@@ -217,24 +216,43 @@ struct MulticastOpts {
     addr: SocketAddr,
 }
 
-fn set_mcast_if(sock: &UdpSocket, local_ip: Ipv4Addr) -> std::io::Result<()> {
-    let addr = libc::in_addr {
-        s_addr: u32::from_ne_bytes(local_ip.octets()),
-    };
-    const SZ: usize = std::mem::size_of::<libc::in_addr>();
+fn set_mcast_if(sock: &UdpSocket, local_ip: Ipv4Addr) -> anyhow::Result<()> {
+    // in_addr is the same on unix and windows and contains just the 4 bytes of IPv4 in network
+    // byte order.
+    let addr = u32::from_ne_bytes(local_ip.octets());
+    let sz: usize = std::mem::size_of_val(&addr);
 
     trace!(addr = %local_ip, "setting IP_MULTICAST_IF");
-    let ret = unsafe {
-        libc::setsockopt(
-            sock.as_fd().as_raw_fd(),
-            libc::IPPROTO_IP,
-            libc::IP_MULTICAST_IF,
-            &addr as *const _ as _,
-            SZ as u32,
-        )
-    };
+
+    let ret: i32;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::io::AsRawSocket;
+        ret = unsafe {
+            winapi::um::winsock2::setsockopt(
+                sock.as_raw_socket().try_into()?,
+                winapi::shared::ws2def::IPPROTO_IP,
+                winapi::shared::ws2ipdef::IP_MULTICAST_IF,
+                &addr as *const _ as _,
+                sz.try_into()?,
+            )
+        };
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::fd::{AsFd, AsRawFd};
+        ret = unsafe {
+            libc::setsockopt(
+                sock.as_fd().as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_MULTICAST_IF,
+                &addr as *const _ as _,
+                sz.try_into()?,
+            )
+        };
+    }
     if ret < 0 {
-        return Err(std::io::Error::last_os_error());
+        return Err(std::io::Error::last_os_error().into());
     }
     Ok(())
 }
