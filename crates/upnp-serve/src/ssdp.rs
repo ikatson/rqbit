@@ -494,7 +494,7 @@ MX: 2\r\n\r\n"
             r = wait => r,
             _ = self.opts.shutdown.cancelled() => {
                 self.try_send_notifies(NTS_BYEBYE).await;
-                bail!("canceled");
+                Ok(())
             }
         }
     }
