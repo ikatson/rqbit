@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use bstr::BStr;
+use librqbit_upnp::ipv6_is_link_local;
 use network_interface::NetworkInterfaceConfig;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -20,13 +21,6 @@ const SSDP_MCAST_IPV6_SITE_LOCAL: Ipv6Addr = Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0
 
 const NTS_ALIVE: &str = "ssdp:alive";
 const NTS_BYEBYE: &str = "ssdp:byebye";
-
-fn ipv6_is_link_local(ip: Ipv6Addr) -> bool {
-    const LL: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0);
-    const MASK: Ipv6Addr = Ipv6Addr::new(0xffff, 0xffff, 0xffff, 0xffff, 0, 0, 0, 0);
-
-    ip.to_bits() & MASK.to_bits() == LL.to_bits() & MASK.to_bits()
-}
 
 #[derive(Debug)]
 pub enum SsdpMessage<'a, 'h> {
@@ -286,7 +280,7 @@ USN: {usn}::{device_kind}\r
         st: &str,
         addr: SocketAddr,
     ) -> anyhow::Result<String> {
-        let local_ip = ::librqbit_upnp::get_local_ip_relative_to(addr.ip())?;
+        let local_ip = ::librqbit_upnp::get_local_ip_relative_to(addr)?;
         let location = {
             let mut loc = self.opts.description_http_location.clone();
             let _ = loc.set_ip_host(local_ip);

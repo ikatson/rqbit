@@ -30,17 +30,25 @@ pub fn make_ssdp_search_request(kind: &str) -> String {
     )
 }
 
-pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<IpAddr> {
+// .to_bits() isn't yet available on min rust version we support (1.75 at the time of writing this)
+const fn ip_bits_v6(addr: Ipv6Addr) -> u128 {
+    u128::from_be_bytes(addr.octets())
+}
+
+pub fn ipv6_is_link_local(ip: Ipv6Addr) -> bool {
+    const LL: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0);
+    const MASK: Ipv6Addr = Ipv6Addr::new(0xffff, 0xffff, 0xffff, 0xffff, 0, 0, 0, 0);
+
+    ip_bits_v6(ip) & ip_bits_v6(MASK) == ip_bits_v6(LL) & ip_bits_v6(MASK)
+}
+
+pub fn get_local_ip_relative_to(local_dest: SocketAddr) -> anyhow::Result<IpAddr> {
     fn ip_bits_v4(addr: Ipv4Addr) -> u32 {
         u32::from_be_bytes(addr.octets())
     }
 
     fn masked_v4(ip: Ipv4Addr, mask: Ipv4Addr) -> u32 {
         ip_bits_v4(ip) & ip_bits_v4(mask)
-    }
-
-    fn ip_bits_v6(addr: Ipv6Addr) -> u128 {
-        u128::from_be_bytes(addr.octets())
     }
 
     fn masked_v6(ip: Ipv6Addr, mask: Ipv6Addr) -> u128 {
@@ -54,16 +62,30 @@ pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<IpAddr> {
         for addr in i.addr {
             trace!(%local_dest, nic=i.index, ip=?addr.ip(), nm=?addr.netmask(), "dbg");
             match (local_dest, addr.ip(), addr.netmask()) {
-                (IpAddr::V4(l), IpAddr::V4(a), Some(IpAddr::V4(m)))
-                    if masked_v4(l, m) == masked_v4(a, m) =>
+                // We are connecting to ourselves, return itself.
+                (l, a, _) if l.ip() == a => return Ok(addr.ip()),
+                // IPv4 masks match.
+                (SocketAddr::V4(l), IpAddr::V4(a), Some(IpAddr::V4(m)))
+                    if masked_v4(*l.ip(), m) == masked_v4(a, m) =>
                 {
                     return Ok(addr.ip())
                 }
-                (IpAddr::V6(l), IpAddr::V6(a), Some(IpAddr::V6(m)))
-                    if masked_v6(l, m) == masked_v6(a, m) =>
+                // Return IPv6 link-local addresses when source is link-local address and there's a scope_id set.
+                (SocketAddr::V6(l), IpAddr::V6(a), _)
+                    if ipv6_is_link_local(*l.ip()) && l.scope_id() > 0 =>
+                {
+                    if ipv6_is_link_local(a) && l.scope_id() == i.index {
+                        return Ok(addr.ip());
+                    }
+                }
+                // If V6 masks match, return.
+                (SocketAddr::V6(l), IpAddr::V6(a), Some(IpAddr::V6(m)))
+                    if masked_v6(*l.ip(), m) == masked_v6(a, m) =>
                 {
                     return Ok(addr.ip())
                 }
+                // For IPv6 fallback to returning a random (first encountered) IPv6 address.
+                (SocketAddr::V6(_), IpAddr::V6(_), None) => return Ok(addr.ip()),
                 _ => continue,
             }
         }
@@ -231,9 +253,9 @@ impl UpnpEndpoint {
     }
 
     fn my_local_ip(&self) -> anyhow::Result<IpAddr> {
-        let dest_ip = self.discover_response.received_from.ip();
-        let local_ip = get_local_ip_relative_to(dest_ip)
-            .with_context(|| format!("can't determine local IP relative to {dest_ip}"))?;
+        let received_from = self.discover_response.received_from;
+        let local_ip = get_local_ip_relative_to(received_from)
+            .with_context(|| format!("can't determine local IP relative to {received_from}"))?;
         Ok(local_ip)
     }
 
