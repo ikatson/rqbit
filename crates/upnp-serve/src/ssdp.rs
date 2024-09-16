@@ -196,8 +196,8 @@ async fn bind_v6_socket() -> anyhow::Result<UdpSocket> {
             }
         }
         for (present, multiaddr) in [
-            (has_link_local, SSDP_MCAST_IPV6_LINK_LOCAL),
             (has_site_local, SSDP_MCAST_IPV6_SITE_LOCAL),
+            (has_link_local, SSDP_MCAST_IPV6_LINK_LOCAL),
         ] {
             if !present {
                 continue;
@@ -356,7 +356,10 @@ Content-Length: 0\r\n\r\n"
 
         let futs = interfaces
             .into_iter()
-            .flat_map(|ni| ni.addr.into_iter().map(move |a| (ni.index, a)))
+            .flat_map(|ni| {
+                trace!(name=ni.name, addr=?ni.addr, id=ni.index, "found network interface");
+                ni.addr.into_iter().map(move |a| (ni.index, a))
+            })
             .filter_map(|(ifidx, addr)| match addr.ip() {
                 std::net::IpAddr::V4(a) if !a.is_loopback() && a.is_private() => {
                     Some(MulticastOpts {
@@ -369,15 +372,17 @@ Content-Length: 0\r\n\r\n"
                     interface_addr: addr.ip(),
                     interface_id: ifidx,
                     mcast_addr: {
-                        let bip = if ipv6_is_link_local(a) {
-                            SSDP_MCAST_IPV6_LINK_LOCAL
+                        if ipv6_is_link_local(a) {
+                            SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_LINK_LOCAL, SSDP_PORT, 0, ifidx))
                         } else {
-                            SSDP_MCAST_IPV6_SITE_LOCAL
-                        };
-                        SocketAddr::V6(SocketAddrV6::new(bip, SSDP_PORT, 0, ifidx))
+                            SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_SITE_LOCAL, SSDP_PORT, 0, 0))
+                        }
                     },
                 }),
-                _ => None,
+                _ => {
+                    trace!(oif_id=ifidx, addr=%addr.ip(), "ignoring address");
+                    None
+                },
             })
             .map(|opts| async move {
                 let payload = get_payload(&opts);
@@ -385,7 +390,7 @@ Content-Length: 0\r\n\r\n"
                     .lock()
                     .insert((payload.clone(), opts.interface_id, opts.mcast_addr))
                 {
-                    // don't send duplicates
+                    trace!(oif_id=opts.interface_id, addr=%opts.mcast_addr, "not sending duplicate payload");
                     return;
                 }
 
@@ -408,13 +413,16 @@ Content-Length: 0\r\n\r\n"
                         sock_v4
                     }
                     (IpAddr::V6(_), _, Some(sock_v6)) => sock_v6,
-                    _ => return,
+                    _ => {
+                        trace!(addr=%opts.interface_addr, "ignoring address, no socket to send to");
+                        return;
+                    },
                 };
 
                 match sock.send_to(payload.as_slice(), opts.mcast_addr).await {
-                    Ok(sz) => trace!(payload=?payload, addr=%opts.mcast_addr, size=sz, "sent"),
+                    Ok(sz) => trace!(addr=%opts.mcast_addr, oif_id=opts.interface_id, oif_addr=%opts.interface_addr, size=sz, payload=?payload, "sent"),
                     Err(e) => {
-                        debug!(payload=?payload, addr=%opts.mcast_addr, "error sending: {e:#}")
+                        debug!(addr=%opts.mcast_addr, oif_id=opts.interface_id, oif_addr=%opts.interface_addr, payload=?payload, "error sending: {e:#}")
                     }
                 };
             });
