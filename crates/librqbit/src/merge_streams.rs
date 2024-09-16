@@ -36,11 +36,7 @@ fn poll_two<I, S1: Stream<Item = I> + Unpin, S2: Stream<Item = I> + Unpin>(
     let s1p = s1.poll_next_unpin(cx);
     match s1p {
         Poll::Ready(Some(v)) => Poll::Ready(Some(v)),
-        Poll::Ready(None) => match s2.poll_next_unpin(cx) {
-            Poll::Ready(Some(v)) => Poll::Ready(Some(v)),
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        },
+        Poll::Ready(None) => s2.poll_next_unpin(cx),
         Poll::Pending => match s2.poll_next_unpin(cx) {
             Poll::Ready(Some(v)) => Poll::Ready(Some(v)),
             Poll::Ready(None) | Poll::Pending => Poll::Pending,
