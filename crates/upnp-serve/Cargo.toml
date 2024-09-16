@@ -39,10 +39,6 @@ socket2 = "0.5.7"
 quick-xml = { version = "0.36.1", features = ["serialize"] }
 network-interface = "2.0.0"
 futures = "0.3.30"
-libc = "0.2.158"
-
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["winsock2"] }
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"
