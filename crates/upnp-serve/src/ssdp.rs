@@ -219,7 +219,7 @@ struct MulticastOpts {
     mcast_addr: SocketAddr,
 }
 
-fn set_mcast_if(sock: &UdpSocket, local_ip: Ipv4Addr) -> anyhow::Result<()> {
+fn set_mcast_if_v4(sock: &UdpSocket, local_ip: Ipv4Addr) -> anyhow::Result<()> {
     // in_addr is the same on unix and windows and contains just the 4 bytes of IPv4 in network
     // byte order.
     let addr = u32::from_ne_bytes(local_ip.octets());
@@ -250,6 +250,47 @@ fn set_mcast_if(sock: &UdpSocket, local_ip: Ipv4Addr) -> anyhow::Result<()> {
                 libc::IPPROTO_IP,
                 libc::IP_MULTICAST_IF,
                 &addr as *const _ as _,
+                sz.try_into()?,
+            )
+        };
+    }
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+fn set_mcast_if_v6(sock: &UdpSocket, dev_idx: u32) -> anyhow::Result<()> {
+    // in_addr is the same on unix and windows and contains just the 4 bytes of IPv4 in network
+    // byte order.
+    trace!(dev_idx, "setting IP_MULTICAST_IF");
+
+    let ret: i32;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::io::AsRawSocket;
+        let sz: usize = std::mem::size_of_val(&dev_idx);
+        ret = unsafe {
+            winapi::um::winsock2::setsockopt(
+                sock.as_raw_socket().try_into()?,
+                winapi::shared::ws2def::IPPROTO_IPV6,
+                winapi::shared::ws2ipdef::IPV6_MULTICAST_IF,
+                &dev_idx as *const _ as _,
+                sz.try_into()?,
+            )
+        };
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::fd::{AsFd, AsRawFd};
+        let dev_idx = dev_idx as i32;
+        let sz: usize = std::mem::size_of_val(&dev_idx);
+        ret = unsafe {
+            libc::setsockopt(
+                sock.as_fd().as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                libc::IPV6_MULTICAST_IF,
+                &dev_idx as *const _ as _,
                 sz.try_into()?,
             )
         };
@@ -356,10 +397,9 @@ Content-Length: 0\r\n\r\n"
 
         let futs = interfaces
             .into_iter()
-            .flat_map(|ni| {
-                trace!(name=ni.name, addr=?ni.addr, id=ni.index, "found network interface");
+            .flat_map(|ni|
                 ni.addr.into_iter().map(move |a| (ni.index, a))
-            })
+            )
             .filter_map(|(ifidx, addr)| match addr.ip() {
                 std::net::IpAddr::V4(a) if !a.is_loopback() && a.is_private() => {
                     Some(MulticastOpts {
@@ -375,7 +415,7 @@ Content-Length: 0\r\n\r\n"
                         if ipv6_is_link_local(a) {
                             SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_LINK_LOCAL, SSDP_PORT, 0, ifidx))
                         } else {
-                            SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_SITE_LOCAL, SSDP_PORT, 0, 0))
+                            SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_SITE_LOCAL, SSDP_PORT, 0, ifidx))
                         }
                     },
                 }),
@@ -399,20 +439,21 @@ Content-Length: 0\r\n\r\n"
                     self.socket_v4.as_ref(),
                     self.socket_v6.as_ref(),
                 ) {
-                    // For IPv4 sockets, call setsockopt(IP_MULTICAST_IF), so that the message
+                    // Call setsockopt(IP_MULTICAST_IF), so that the message
                     // gets sent out of the interface we want (otherwise it'll get sent through
                     // default one).
-                    // For IPv6 it's not necessary as we specify scope_id in SocketAddr.
-                    //
-                    // It's important we don't .await() in between also, so that concurrent sends
-                    // have the proper IP_MULTICAST_IF.
                     (IpAddr::V4(ip), Some(sock_v4), _) => {
-                        if let Err(e) = set_mcast_if(sock_v4, ip) {
-                            debug!(addr=%ip, "error setting IP_MULTICAST_IF: {e:#}");
+                        if let Err(e) = set_mcast_if_v4(sock_v4, ip) {
+                            debug!(addr=%ip, "error calling set_mcast_if_v4: {e:#}");
                         }
                         sock_v4
                     }
-                    (IpAddr::V6(_), _, Some(sock_v6)) => sock_v6,
+                    (IpAddr::V6(_), _, Some(sock_v6)) => {
+                        if let Err(e) = set_mcast_if_v6(sock_v6, opts.interface_id) {
+                            debug!(oif_id=opts.interface_id, "error calling set_mcast_if_v6: {e:#}");
+                        }
+                        sock_v6
+                    },
                     _ => {
                         trace!(addr=%opts.interface_addr, "ignoring address, no socket to send to");
                         return;
