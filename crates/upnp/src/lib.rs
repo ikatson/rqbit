@@ -52,6 +52,7 @@ pub fn get_local_ip_relative_to(local_dest: IpAddr) -> anyhow::Result<IpAddr> {
 
     for i in interfaces {
         for addr in i.addr {
+            trace!(%local_dest, nic=i.index, ip=?addr.ip(), nm=?addr.netmask(), "dbg");
             match (local_dest, addr.ip(), addr.netmask()) {
                 (IpAddr::V4(l), IpAddr::V4(a), Some(IpAddr::V4(m)))
                     if masked_v4(l, m) == masked_v4(a, m) =>
