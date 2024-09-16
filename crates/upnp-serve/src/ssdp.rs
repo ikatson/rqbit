@@ -12,7 +12,7 @@ use tokio::net::UdpSocket;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::constants::{UPNP_KIND_MEDIASERVER, UPNP_KIND_ROOT_DEVICE};
+use crate::constants::{UPNP_DEVICE_MEDIASERVER, UPNP_DEVICE_ROOT};
 
 const SSDP_PORT: u16 = 1900;
 const SSDM_MCAST_IPV4: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
@@ -23,8 +23,10 @@ const NTS_ALIVE: &str = "ssdp:alive";
 const NTS_BYEBYE: &str = "ssdp:byebye";
 
 fn ipv6_is_link_local(ip: Ipv6Addr) -> bool {
-    let s = ip.segments();
-    [s[0], s[1], s[2], s[3]] == [0xfe80, 0, 0, 0]
+    const LL: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0);
+    const MASK: Ipv6Addr = Ipv6Addr::new(0xffff, 0xffff, 0xffff, 0xffff, 0, 0, 0, 0);
+
+    ip.to_bits() & MASK.to_bits() == LL.to_bits() & MASK.to_bits()
 }
 
 #[derive(Debug)]
@@ -49,7 +51,7 @@ impl<'a> SsdpMSearchRequest<'a> {
         if self.man != "\"ssdp:discover\"" {
             return false;
         }
-        if self.st == UPNP_KIND_ROOT_DEVICE || self.st == UPNP_KIND_MEDIASERVER {
+        if self.st == UPNP_DEVICE_ROOT || self.st == UPNP_DEVICE_MEDIASERVER {
             return true;
         }
         false
@@ -200,6 +202,7 @@ async fn bind_v6_socket() -> anyhow::Result<UdpSocket> {
             if !present {
                 continue;
             }
+            trace!(multiaddr=?multiaddr, interface=?nic.index, "joining multicast v6 group");
             if let Err(e) = socket.join_multicast_v6(&multiaddr, nic.index) {
                 debug!(multiaddr=?multiaddr, interface=?nic.index, "error joining multicast v6 group: {e:#}");
             }
@@ -210,10 +213,10 @@ async fn bind_v6_socket() -> anyhow::Result<UdpSocket> {
 }
 
 struct MulticastOpts {
-    local_interface_ip: IpAddr,
+    interface_addr: IpAddr,
     #[allow(dead_code)]
-    local_interface_id: u32,
-    addr: SocketAddr,
+    interface_id: u32,
+    mcast_addr: SocketAddr,
 }
 
 fn set_mcast_if(sock: &UdpSocket, local_ip: Ipv4Addr) -> anyhow::Result<()> {
@@ -259,7 +262,7 @@ fn set_mcast_if(sock: &UdpSocket, local_ip: Ipv4Addr) -> anyhow::Result<()> {
 
 impl MulticastOpts {
     fn addr_no_scope(&self) -> SocketAddr {
-        let mut addr = self.addr;
+        let mut addr = self.mcast_addr;
         if let SocketAddr::V6(v6) = &mut addr {
             v6.set_scope_id(0);
         }
@@ -284,21 +287,26 @@ impl SsdpRunner {
         })
     }
 
-    fn generate_notify_message(&self, kind: &str, nts: &str, opts: &MulticastOpts) -> String {
+    fn generate_notify_message(
+        &self,
+        device_kind: &str,
+        nts: &str,
+        opts: &MulticastOpts,
+    ) -> String {
         let usn: &str = &self.opts.usn;
         let server: &str = &self.opts.server_string;
         let host = opts.addr_no_scope();
         let mut location = self.opts.description_http_location.clone();
-        let _ = location.set_ip_host(opts.local_interface_ip);
+        let _ = location.set_ip_host(opts.interface_addr);
         format!(
             "NOTIFY * HTTP/1.1\r
 Host: {host}\r
 Cache-Control: max-age=75\r
 Location: {location}\r
-NT: {kind}\r
+NT: {device_kind}\r
 NTS: {nts}\r
 Server: {server}\r
-USN: {usn}::{kind}\r
+USN: {usn}::{device_kind}\r
 \r
 "
         )
@@ -352,15 +360,15 @@ Content-Length: 0\r\n\r\n"
             .filter_map(|(ifidx, addr)| match addr.ip() {
                 std::net::IpAddr::V4(a) if !a.is_loopback() && a.is_private() => {
                     Some(MulticastOpts {
-                        local_interface_ip: addr.ip(),
-                        local_interface_id: ifidx,
-                        addr: SocketAddr::V4(SocketAddrV4::new(SSDM_MCAST_IPV4, SSDP_PORT)),
+                        interface_addr: addr.ip(),
+                        interface_id: ifidx,
+                        mcast_addr: SocketAddr::V4(SocketAddrV4::new(SSDM_MCAST_IPV4, SSDP_PORT)),
                     })
                 }
                 std::net::IpAddr::V6(a) if !a.is_loopback() => Some(MulticastOpts {
-                    local_interface_ip: addr.ip(),
-                    local_interface_id: ifidx,
-                    addr: {
+                    interface_addr: addr.ip(),
+                    interface_id: ifidx,
+                    mcast_addr: {
                         let bip = if ipv6_is_link_local(a) {
                             SSDP_MCAST_IPV6_LINK_LOCAL
                         } else {
@@ -375,20 +383,27 @@ Content-Length: 0\r\n\r\n"
                 let payload = get_payload(&opts);
                 if !sent
                     .lock()
-                    .insert((payload.clone(), opts.local_interface_id, opts.addr))
+                    .insert((payload.clone(), opts.interface_id, opts.mcast_addr))
                 {
                     // don't send duplicates
                     return;
                 }
 
                 let sock = match (
-                    opts.local_interface_ip,
+                    opts.interface_addr,
                     self.socket_v4.as_ref(),
                     self.socket_v6.as_ref(),
                 ) {
+                    // For IPv4 sockets, call setsockopt(IP_MULTICAST_IF), so that the message
+                    // gets sent out of the interface we want (otherwise it'll get sent through
+                    // default one).
+                    // For IPv6 it's not necessary as we specify scope_id in SocketAddr.
+                    //
+                    // It's important we don't .await() in between also, so that concurrent sends
+                    // have the proper IP_MULTICAST_IF.
                     (IpAddr::V4(ip), Some(sock_v4), _) => {
                         if let Err(e) = set_mcast_if(sock_v4, ip) {
-                            debug!(addr=%ip, "error calling set_mcast_if: {e:#}");
+                            debug!(addr=%ip, "error setting IP_MULTICAST_IF: {e:#}");
                         }
                         sock_v4
                     }
@@ -396,10 +411,10 @@ Content-Length: 0\r\n\r\n"
                     _ => return,
                 };
 
-                match sock.send_to(payload.as_slice(), opts.addr).await {
-                    Ok(sz) => trace!(payload=?payload, addr=%opts.addr, size=sz, "sent"),
+                match sock.send_to(payload.as_slice(), opts.mcast_addr).await {
+                    Ok(sz) => trace!(payload=?payload, addr=%opts.mcast_addr, size=sz, "sent"),
                     Err(e) => {
-                        debug!(payload=?payload, addr=%opts.addr, "error sending: {e:#}")
+                        debug!(payload=?payload, addr=%opts.mcast_addr, "error sending: {e:#}")
                     }
                 };
             });
@@ -409,7 +424,7 @@ Content-Length: 0\r\n\r\n"
 
     async fn try_send_notifies(&self, nts: &str) {
         self.try_send_mcast_everywhere(&|opts| {
-            self.generate_notify_message(UPNP_KIND_MEDIASERVER, nts, opts)
+            self.generate_notify_message(UPNP_DEVICE_MEDIASERVER, nts, opts)
                 .into()
         })
         .await
