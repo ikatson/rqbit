@@ -343,7 +343,7 @@ Content-Length: 0\r\n\r\n"
                         if ipv6_is_link_local(a) {
                             SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_LINK_LOCAL, SSDP_PORT, 0, ifidx))
                         } else {
-                            SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_SITE_LOCAL, SSDP_PORT, 0, ifidx))
+                            SocketAddr::V6(SocketAddrV6::new(SSDP_MCAST_IPV6_SITE_LOCAL, SSDP_PORT, 0, 0))
                         }
                     },
                 }),
