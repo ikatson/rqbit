@@ -438,11 +438,11 @@ impl TorrentStateLive {
         match res {
             // We disconnected the peer ourselves as we don't need it
             Ok(()) => {
-                handler.on_peer_died(None)?;
+                handler.on_peer_died(None, true)?;
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e))?;
+                handler.on_peer_died(Some(e), true)?;
             }
         };
         drop(permit);
@@ -505,11 +505,11 @@ impl TorrentStateLive {
         match res {
             // We disconnected the peer ourselves as we don't need it
             Ok(()) => {
-                handler.on_peer_died(None)?;
+                handler.on_peer_died(None, false)?;
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e))?;
+                handler.on_peer_died(Some(e), false)?;
             }
         }
         drop(permit);
@@ -957,7 +957,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 }
 
 impl PeerHandler {
-    fn on_peer_died(self, error: Option<anyhow::Error>) -> anyhow::Result<()> {
+    fn on_peer_died(self, error: Option<anyhow::Error>, incoming: bool) -> anyhow::Result<()> {
         let peers = &self.state.peers;
         let pstats = self.state.peer_stats();
         let handle = self.addr;
@@ -999,7 +999,7 @@ impl PeerHandler {
             }
         };
 
-        let _error = match error {
+        let error = match error {
             Some(e) => e,
             None => {
                 trace!("peer died without errors, not re-queueing");
@@ -1024,11 +1024,16 @@ impl PeerHandler {
         drop(pe);
 
         if let Some(dur) = backoff {
+            debug!(
+                "{} peer {} died -  {error} and will retry in {dur:?}",
+                if incoming { "incoming" } else { "outgoing" },
+                self.addr
+            );
             self.state.clone().spawn(
                 error_span!(
                     parent: self.state.torrent.span.clone(),
                     "wait_for_peer",
-                    peer = handle.to_string(),
+                    peer = handle.to_string(), 
                     duration = format!("{dur:?}")
                 ),
                 async move {
