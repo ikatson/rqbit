@@ -1013,10 +1013,20 @@ impl PeerHandler {
         if self.state.is_finished_and_no_active_streams() {
             debug!("torrent finished, not re-queueing");
             pe.value_mut().state.set(PeerState::NotNeeded, &pstats);
+            // also cancel all retried dead peers
+            if ! self.state.cancellation_token.is_cancelled() {
+                self.state.cancellation_token.cancel();
+            }
+            
             return Ok(());
         }
 
         pe.value_mut().state.set(PeerState::Dead, &pstats);
+
+        if incoming {
+            // do not retry incoming peers
+            return Ok(());
+        }
 
         let backoff = pe.value_mut().stats.backoff.next_backoff();
 
