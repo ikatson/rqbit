@@ -4,10 +4,27 @@ FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
 FROM --platform=$BUILDPLATFORM rust:alpine AS builder
 COPY --from=xx / /
 
-RUN apk update && apk add clang lld npm python3 pkgconf
+RUN apk update && apk add clang lld npm python3 pkgconf make rsync curl
+
+RUN rustup toolchain install nightly
+RUN rustup component add rust-src --toolchain nightly
 
 ARG TARGETPLATFORM
 RUN xx-apk add gcc musl-dev openssl-dev openssl-libs-static
+RUN rustup target add $(xx-cargo --print-target-triple) --toolchain nightly
+
+RUN <<EOF
+set -e
+mkdir -p /musl/
+cd /musl/
+curl -LO https://musl.libc.org/releases/musl-1.2.5.tar.gz
+tar xf musl-1.2.5.tar.gz
+cd musl-1.2.5
+
+CFLAGS='-fno-omit-frame-pointer' CC=xx-clang AR=ar RANLIB=ranlib ./configure --prefix=/musl/prefix/
+make -j4
+make install
+EOF
 
 COPY / /src/
 WORKDIR /src/
@@ -20,7 +37,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/git/db \
     --mount=type=cache,target=/usr/local/cargo/registry/index \
     --mount=type=cache,target=/src/target <<EOF
 set -e
+
+export TOOLCHAIN="$(rustup toolchain list | grep nightly)"
 export TT="$(xx-cargo --print-target-triple)"
+
+SCDIR=/usr/local/rustup/toolchains/${TOOLCHAIN}/lib/rustlib/${TT}/lib/self-contained
+rsync -aP /musl/prefix/lib/ "${SCDIR}"
+
 export BIN="./target/${TT}/${TT}/${PROFILE_FOLDER}/rqbit"
 export OPENSSL_STATIC=1
 
@@ -29,7 +52,8 @@ find /src/target \
         /usr/local/cargo/registry/cache \
         /usr/local/cargo/registry/index \
         -maxdepth 2 -type d
-xx-cargo build \
+RUSTFLAGS='-C force-frame-pointers=yes' \
+xx-cargo +nightly build \
     --target-dir "target/${TT}" \
     --profile "${PROFILE_NAME}"
 find /src/target -maxdepth 4 -type d
