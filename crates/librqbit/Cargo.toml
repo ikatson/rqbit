@@ -62,7 +62,10 @@ tokio = { version = "1", features = [
 ] }
 console-subscriber = { version = "0.4", optional = true }
 axum = { version = "0.7", optional = true }
-tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+tower-http = { git = "https://github.com/ikatson/tower-http.git", branch = "tracing-span-disabled-optimisation", features = [
+    "cors",
+    "trace",
+], optional = true }
 tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

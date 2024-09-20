@@ -2529,7 +2529,7 @@ dependencies = [
  "tokio-stream",
  "tokio-test",
  "tokio-util",
- "tower-http",
+ "tower-http 0.6.0",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2704,7 +2704,7 @@ dependencies = [
  "socket2",
  "tokio",
  "tokio-util",
- "tower-http",
+ "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -5507,6 +5507,21 @@ dependencies = [
  "http 1.1.0",
  "http-body",
  "http-body-util",
+ "pin-project-lite",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.6.0"
+source = "git+https://github.com/ikatson/tower-http.git?branch=tracing-span-disabled-optimisation#879392f48be3bd2544e34b08cea65d411c63be0b"
+dependencies = [
+ "bitflags 2.6.0",
+ "bytes",
+ "http 1.1.0",
+ "http-body",
  "pin-project-lite",
  "tower-layer",
  "tower-service",
