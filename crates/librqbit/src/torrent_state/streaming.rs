@@ -226,6 +226,12 @@ impl AsyncRead for FileStream {
         self.as_mut().advance(bytes_to_read as u64);
         tbuf.advance(bytes_to_read);
 
+        // Buffer has yet been filled with data:
+        // - Check if other streams actually need this piece
+        //      - if not needed by other, ask underlying storage to delete the piece
+        //      - on_piece_completed() could thus be replaced by delete_chunk()
+        //      - update value in chunk tracker to say we do not have this piece anymore (or add a new BitV when removed pieces ?)
+
         Poll::Ready(Ok(()))
     }
 }
