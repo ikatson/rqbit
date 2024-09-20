@@ -1198,17 +1198,13 @@ impl Session {
             peer_rx,
         );
 
-        {
-            let span = managed_torrent.shared.span.clone();
-            let _ = span.enter();
-
-            managed_torrent
-                .start(peer_rx, opts.paused)
-                .context("error starting torrent")?;
-        }
+        let _e = managed_torrent.shared.span.clone().entered();
+        managed_torrent
+            .start(peer_rx, opts.paused)
+            .context("error starting torrent")?;
 
         if let Some(name) = managed_torrent.shared().info.name.as_ref() {
-            info!(?name, id, "added torrent");
+            info!(?name, "added torrent");
         }
 
         Ok(AddTorrentResponse::Added(id, managed_torrent))
