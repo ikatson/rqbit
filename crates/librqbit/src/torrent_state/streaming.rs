@@ -200,6 +200,12 @@ impl AsyncRead for FileStream {
         }
 
         // actually stream the piece
+
+        // TODO: guard this optimisation under some flag.
+        {
+            let rem = tbuf.remaining();
+            unsafe { tbuf.assume_init(rem) };
+        }
         let buf = tbuf.initialize_unfilled();
         let file_remaining = self.file_len - self.position;
         let bytes_to_read: usize = poll_try_io!((buf.len() as u64)
