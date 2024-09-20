@@ -416,7 +416,7 @@ impl HttpApi {
                 );
             }
 
-            let s = tokio_util::io::ReaderStream::new(stream);
+            let s = tokio_util::io::ReaderStream::with_capacity(stream, 65536);
             Ok((status, (output_headers, axum::body::Body::from_stream(s))))
         }
 
