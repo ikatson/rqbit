@@ -38,6 +38,32 @@ macro_rules! aframe {
     }};
 }
 
+macro_rules! futinstr {
+    ($fut:expr, $type:tt) => {{
+        struct $type<T> {
+            inner: T,
+        }
+
+        impl<T> std::future::Future for $type<T>
+        where
+            T: std::future::Future,
+        {
+            type Output = T::Output;
+
+            #[inline(never)]
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Self::Output> {
+                unsafe { std::pin::Pin::new_unchecked(&mut self.get_unchecked_mut().inner) }
+                    .poll(cx)
+            }
+        }
+
+        $type { inner: $fut }
+    }};
+}
+
 pub mod api;
 mod api_error;
 mod bitv;

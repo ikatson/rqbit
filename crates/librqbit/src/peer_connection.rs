@@ -217,13 +217,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         self.handler.on_handshake(h)?;
 
-        self.manage_peer(
-            h_supports_extended,
-            read_buf,
-            write_buf,
-            conn,
-            outgoing_chan,
-            have_broadcast,
+        futinstr!(
+            self.manage_peer(
+                h_supports_extended,
+                read_buf,
+                write_buf,
+                conn,
+                outgoing_chan,
+                have_broadcast,
+            ),
+            ManagePeer
         )
         .await
     }
@@ -293,6 +296,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
             loop {
                 let req = loop {
+                    let f = timeout(keep_alive_interval, outgoing_chan.recv());
+                    let f = futinstr!(f, OutgoingChanRecv);
                     break tokio::select! {
                         r = have_broadcast.recv(), if !broadcast_closed => match r {
                             Ok(id) => {
@@ -309,7 +314,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             },
                             _ => continue
                         },
-                        r = timeout(keep_alive_interval, outgoing_chan.recv()) => match r {
+                        r = f => match r {
                             Ok(Some(msg)) => msg,
                             Ok(None) => {
                                 anyhow::bail!("closing writer, channel closed");
@@ -381,9 +386,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     }
                 };
 
-                with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
-                    .await
-                    .context("error writing the message to peer")?;
+                futinstr!(
+                    with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]),),
+                    PeerConnWriteHalfWriteAll
+                )
+                .await
+                .context("error writing the message to peer")?;
 
                 if let Some(uploaded_add) = uploaded_add {
                     self.handler.on_uploaded_bytes(uploaded_add)
@@ -395,22 +403,28 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             Ok::<_, anyhow::Error>(())
         };
 
+        let writer = futinstr!(writer, Writer);
+
         let reader = async move {
             loop {
-                let message = read_buf
-                    .read_message(&mut read_half, rwtimeout)
-                    .await
-                    .context("error reading message")?;
+                let message = futinstr!(
+                    read_buf.read_message(&mut read_half, rwtimeout),
+                    ReaderReadMessage
+                )
+                .await
+                .context("error reading message")?;
                 trace!("received: {:?}", &message);
 
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
                     *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
                     self.handler.on_extended_handshake(h)?;
                 } else {
-                    self.handler
-                        .on_received_message(message)
-                        .await
-                        .context("error in handler.on_received_message()")?;
+                    futinstr!(
+                        self.handler.on_received_message(message),
+                        HandlerOnReceivedMessage
+                    )
+                    .await
+                    .context("error in handler.on_received_message()")?;
                 }
             }
 
@@ -418,6 +432,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             #[allow(unreachable_code)]
             Ok::<_, anyhow::Error>(())
         };
+        let reader = futinstr!(reader, Reader);
 
         tokio::select! {
             r = reader => {

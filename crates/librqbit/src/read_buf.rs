@@ -90,9 +90,15 @@ impl ReadBuf {
                 };
             self.prepare_for_read(need_additional_bytes);
             debug_assert!(!self.buf[self.filled..].is_empty());
-            let size = with_timeout(timeout, conn.read(&mut self.buf[self.filled..]))
-                .await
-                .context("error reading from peer")?;
+            let size = futinstr!(
+                with_timeout(
+                    timeout,
+                    futinstr!(conn.read(&mut self.buf[self.filled..]), ConnRead),
+                ),
+                WithTimeoutConnRead
+            )
+            .await
+            .context("error reading from peer")?;
             if size == 0 {
                 anyhow::bail!("disconnected while reading, read so far: {}", self.filled)
             }
