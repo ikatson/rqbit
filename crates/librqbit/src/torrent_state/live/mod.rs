@@ -113,7 +113,7 @@ use super::{
 
 #[derive(Debug)]
 struct InflightPiece {
-    peer: PeerHandle, 
+    peer: PeerHandle,
     started: Instant,
 }
 
@@ -1001,7 +1001,7 @@ impl PeerHandler {
             }
         };
 
-        let error = match error {
+        let _error = match error {
             Some(e) => e,
             None => {
                 trace!("peer died without errors, not re-queueing");
@@ -1022,6 +1022,7 @@ impl PeerHandler {
 
         if self.incoming {
             // do not retry incoming peers
+            debug!("incoming peer {handle} died, not re-queueing");
             return Ok(());
         }
 
@@ -1031,16 +1032,11 @@ impl PeerHandler {
         drop(pe);
 
         if let Some(dur) = backoff {
-            debug!(
-                "{} peer {} died -  {error} and will retry in {dur:?}",
-                if self.incoming { "incoming" } else { "outgoing" },
-                self.addr
-            );
             self.state.clone().spawn(
                 error_span!(
                     parent: self.state.torrent.span.clone(),
                     "wait_for_peer",
-                    peer = handle.to_string(), 
+                    peer = handle.to_string(),
                     duration = format!("{dur:?}")
                 ),
                 async move {
