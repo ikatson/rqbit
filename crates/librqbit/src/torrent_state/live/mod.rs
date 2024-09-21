@@ -399,6 +399,7 @@ impl TorrentStateLive {
         // TODO: bump counters for incoming
         let handler = PeerHandler {
             addr: checked_peer.addr,
+            incoming: true,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
             locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
@@ -438,11 +439,11 @@ impl TorrentStateLive {
         match res {
             // We disconnected the peer ourselves as we don't need it
             Ok(()) => {
-                handler.on_peer_died(None, true)?;
+                handler.on_peer_died(None)?;
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e), true)?;
+                handler.on_peer_died(Some(e))?;
             }
         };
         drop(permit);
@@ -463,6 +464,7 @@ impl TorrentStateLive {
 
         let handler = PeerHandler {
             addr,
+            incoming: false,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
             locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
@@ -505,11 +507,11 @@ impl TorrentStateLive {
         match res {
             // We disconnected the peer ourselves as we don't need it
             Ok(()) => {
-                handler.on_peer_died(None, false)?;
+                handler.on_peer_died(None)?;
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e), false)?;
+                handler.on_peer_died(Some(e))?;
             }
         }
         drop(permit);
@@ -818,7 +820,7 @@ struct PeerHandler {
     requests_sem: Semaphore,
 
     addr: SocketAddr,
-
+    incoming: bool,
     tx: PeerTx,
 
     first_message_received: AtomicBool,
@@ -957,7 +959,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 }
 
 impl PeerHandler {
-    fn on_peer_died(self, error: Option<anyhow::Error>, incoming: bool) -> anyhow::Result<()> {
+    fn on_peer_died(self, error: Option<anyhow::Error>) -> anyhow::Result<()> {
         let peers = &self.state.peers;
         let pstats = self.state.peer_stats();
         let handle = self.addr;
@@ -1018,7 +1020,7 @@ impl PeerHandler {
 
         pe.value_mut().state.set(PeerState::Dead, &pstats);
 
-        if incoming {
+        if self.incoming {
             // do not retry incoming peers
             return Ok(());
         }
@@ -1031,7 +1033,7 @@ impl PeerHandler {
         if let Some(dur) = backoff {
             debug!(
                 "{} peer {} died -  {error} and will retry in {dur:?}",
-                if incoming { "incoming" } else { "outgoing" },
+                if self.incoming { "incoming" } else { "outgoing" },
                 self.addr
             );
             self.state.clone().spawn(
