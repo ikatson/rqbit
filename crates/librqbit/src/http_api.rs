@@ -28,14 +28,12 @@ use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 
-type ApiState = Api;
-
 use crate::api::Result;
 use crate::{ApiError, ListOnlyResponse, ManagedTorrent};
 
 /// An HTTP server for the API.
 pub struct HttpApi {
-    inner: ApiState,
+    api: Api,
     opts: HttpApiOptions,
 }
 
@@ -74,24 +72,24 @@ async fn api_root() -> impl IntoResponse {
     }))
 }
 
-async fn dht_stats(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+async fn dht_stats(State(state): State<Api>) -> Result<impl IntoResponse> {
     state.api_dht_stats().map(axum::Json)
 }
 
-async fn dht_table(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+async fn dht_table(State(state): State<Api>) -> Result<impl IntoResponse> {
     state.api_dht_table().map(axum::Json)
 }
 
-async fn session_stats(State(state): State<ApiState>) -> impl IntoResponse {
+async fn session_stats(State(state): State<Api>) -> impl IntoResponse {
     axum::Json(state.api_session_stats())
 }
 
-async fn torrents_list(State(state): State<ApiState>) -> impl IntoResponse {
+async fn torrents_list(State(state): State<Api>) -> impl IntoResponse {
     axum::Json(state.api_torrent_list())
 }
 
 async fn torrents_post(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Query(params): Query<TorrentAddQueryParams>,
     data: Bytes,
 ) -> Result<impl IntoResponse> {
@@ -123,7 +121,7 @@ async fn torrents_post(
 }
 
 async fn torrent_details(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_torrent_details(idx).map(axum::Json)
@@ -188,7 +186,7 @@ fn build_playlist_content(
 }
 
 async fn resolve_magnet(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     inp_headers: HeaderMap,
     url: String,
 ) -> Result<impl IntoResponse> {
@@ -252,7 +250,7 @@ async fn resolve_magnet(
 }
 
 async fn torrent_playlist(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     headers: HeaderMap,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
@@ -267,7 +265,7 @@ async fn torrent_playlist(
 }
 
 async fn global_playlist(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     let host = get_host(&headers)?;
@@ -289,28 +287,28 @@ async fn global_playlist(
 }
 
 async fn torrent_haves(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_dump_haves(idx)
 }
 
 async fn torrent_stats_v0(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_stats_v0(idx).map(axum::Json)
 }
 
 async fn torrent_stats_v1(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_stats_v1(idx).map(axum::Json)
 }
 
 async fn peer_stats(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
     Query(filter): Query<PeerStatsFilter>,
 ) -> Result<impl IntoResponse> {
@@ -318,7 +316,7 @@ async fn peer_stats(
 }
 
 async fn torrent_stream_file(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path((idx, file_id)): Path<(TorrentIdOrHash, usize)>,
     headers: http::HeaderMap,
 ) -> Result<impl IntoResponse> {
@@ -402,28 +400,28 @@ async fn torrent_stream_file(
 }
 
 async fn torrent_action_pause(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_torrent_action_pause(idx).await.map(axum::Json)
 }
 
 async fn torrent_action_start(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_torrent_action_start(idx).await.map(axum::Json)
 }
 
 async fn torrent_action_forget(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_torrent_action_forget(idx).await.map(axum::Json)
 }
 
 async fn torrent_action_delete(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api_torrent_action_delete(idx).await.map(axum::Json)
@@ -435,7 +433,7 @@ struct UpdateOnlyFilesRequest {
 }
 
 async fn torrent_action_update_only_files(
-    State(state): State<ApiState>,
+    State(state): State<Api>,
     Path(idx): Path<TorrentIdOrHash>,
     axum::Json(req): axum::Json<UpdateOnlyFilesRequest>,
 ) -> Result<impl IntoResponse> {
@@ -445,14 +443,11 @@ async fn torrent_action_update_only_files(
         .map(axum::Json)
 }
 
-async fn set_rust_log(
-    State(state): State<ApiState>,
-    new_value: String,
-) -> Result<impl IntoResponse> {
+async fn set_rust_log(State(state): State<Api>, new_value: String) -> Result<impl IntoResponse> {
     state.api_set_rust_log(new_value).map(axum::Json)
 }
 
-async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+async fn stream_logs(State(state): State<Api>) -> Result<impl IntoResponse> {
     let s = state.api_log_lines_stream()?.map_err(|e| {
         debug!(error=%e, "stream_logs");
         e
@@ -518,10 +513,51 @@ macro_rules! make_trace_layer {
     }
 }
 
+#[cfg(feature = "webui")]
+fn make_webui_router() -> axum::Router {
+    Router::new()
+        .route(
+            "/",
+            get(|| async {
+                (
+                    [("Content-Type", "text/html")],
+                    include_str!("../webui/dist/index.html"),
+                )
+            }),
+        )
+        .route(
+            "/assets/index.js",
+            get(|| async {
+                (
+                    [("Content-Type", "application/javascript")],
+                    include_str!("../webui/dist/assets/index.js"),
+                )
+            }),
+        )
+        .route(
+            "/assets/index.css",
+            get(|| async {
+                (
+                    [("Content-Type", "text/css")],
+                    include_str!("../webui/dist/assets/index.css"),
+                )
+            }),
+        )
+        .route(
+            "/assets/logo.svg",
+            get(|| async {
+                (
+                    [("Content-Type", "image/svg+xml")],
+                    include_str!("../webui/dist/assets/logo.svg"),
+                )
+            }),
+        )
+}
+
 impl HttpApi {
     pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
-            inner: api,
+            api,
             opts: opts.unwrap_or_default(),
         }
     }
@@ -534,12 +570,11 @@ impl HttpApi {
         listener: TcpListener,
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
-        let state = self.inner;
+        let api = self.api;
 
-        let mut app = Router::new()
+        let mut router = Router::new()
             .route("/", get(api_root))
             .route("/stream_logs", get(stream_logs))
-            .route("/rust_log", post(set_rust_log))
             .route("/dht/stats", get(dht_stats))
             .route("/dht/table", get(dht_table))
             .route("/stats", get(session_stats))
@@ -549,17 +584,13 @@ impl HttpApi {
             .route("/torrents/:id/stats", get(torrent_stats_v0))
             .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
             .route("/torrents/:id/peer_stats", get(peer_stats))
-            .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
             .route("/torrents/:id/playlist", get(torrent_playlist))
             .route("/torrents/playlist", get(global_playlist))
-            .route("/torrents/resolve_magnet", post(resolve_magnet))
-            .route(
-                "/torrents/:id/stream/:file_id/*filename",
-                get(torrent_stream_file),
-            );
+            .route("/torrents/resolve_magnet", post(resolve_magnet));
 
         if !self.opts.read_only {
-            app = app
+            router = router
+                .route("/rust_log", post(set_rust_log))
                 .route("/torrents", post(torrents_post))
                 .route("/torrents/:id/pause", post(torrent_action_pause))
                 .route("/torrents/:id/start", post(torrent_action_start))
@@ -571,65 +602,34 @@ impl HttpApi {
                 );
         }
 
+        let mut router = router.with_state(api.clone());
+
         #[cfg(feature = "webui")]
         {
             use axum::response::Redirect;
-
-            let webui_router = Router::new()
-                .route(
-                    "/",
-                    get(|| async {
-                        (
-                            [("Content-Type", "text/html")],
-                            include_str!("../webui/dist/index.html"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/index.js",
-                    get(|| async {
-                        (
-                            [("Content-Type", "application/javascript")],
-                            include_str!("../webui/dist/assets/index.js"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/index.css",
-                    get(|| async {
-                        (
-                            [("Content-Type", "text/css")],
-                            include_str!("../webui/dist/assets/index.css"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/logo.svg",
-                    get(|| async {
-                        (
-                            [("Content-Type", "image/svg+xml")],
-                            include_str!("../webui/dist/assets/logo.svg"),
-                        )
-                    }),
-                );
-
-            app = app.nest("/web/", webui_router);
-            app = app.route("/web", get(|| async { Redirect::permanent("/web/") }))
+            router = router.nest("/web/", make_webui_router());
+            router = router.route("/web", get(|| async { Redirect::permanent("/web/") }))
         }
 
-        let mut app = app
-            .with_state(state)
+        // Streaming: no tracing (performance optimisation)
+        let streaming_router = Router::new()
+            .route("/:file_id", get(torrent_stream_file))
+            .route("/:file_id/*filename", get(torrent_stream_file))
+            .with_state(api.clone());
+
+        let mut router = router
             .layer(make_cors_layer())
-            .layer(make_trace_layer!(false));
+            .layer(make_trace_layer!(false))
+            .nest("/torrents/:id/stream/", streaming_router);
 
         if let Some(upnp_router) = upnp_router {
-            app = app.nest("/upnp", upnp_router.layer(make_trace_layer!(true)));
+            router = router.nest("/upnp", upnp_router.layer(make_trace_layer!(true)));
         }
 
-        let app = app.into_make_service_with_connect_info::<SocketAddr>();
+        let service = router.into_make_service_with_connect_info::<SocketAddr>();
 
         async move {
-            axum::serve(listener, app)
+            axum::serve(listener, service)
                 .await
                 .context("error running HTTP API")
         }
