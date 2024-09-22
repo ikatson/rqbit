@@ -399,6 +399,7 @@ impl TorrentStateLive {
         // TODO: bump counters for incoming
         let handler = PeerHandler {
             addr: checked_peer.addr,
+            incoming: true,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
             locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
@@ -463,6 +464,7 @@ impl TorrentStateLive {
 
         let handler = PeerHandler {
             addr,
+            incoming: false,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
             locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
@@ -818,7 +820,7 @@ struct PeerHandler {
     requests_sem: Semaphore,
 
     addr: SocketAddr,
-
+    incoming: bool,
     tx: PeerTx,
 
     first_message_received: AtomicBool,
@@ -1017,6 +1019,15 @@ impl PeerHandler {
         }
 
         pe.value_mut().state.set(PeerState::Dead, &pstats);
+
+        if self.incoming {
+            // do not retry incoming peers
+            debug!(
+                peer = handle.to_string(),
+                "incoming peer died, not re-queueing"
+            );
+            return Ok(());
+        }
 
         let backoff = pe.value_mut().stats.backoff.next_backoff();
 
