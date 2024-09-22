@@ -42,7 +42,7 @@ use tokio::{
 };
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, error_span, info, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, error_span, info, trace, trace_span, warn, Instrument};
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
@@ -265,10 +265,10 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
         let request_one = |id, addr, depth| {
             req.request_one(id, addr, depth)
                 .map_err(|e| {
-                    debug!("error: {e:#}");
+                    error!("error: {e:#}");
                     e
                 })
-                .instrument(error_span!(
+                .instrument(trace_span!(
                     "find_node",
                     target = format!("{target:?}"),
                     addr = addr.to_string()
@@ -359,7 +359,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                             let (id, addr, depth) = addr.unwrap();
                             futs.push(
                                 this.request_one(id, addr, depth)
-                                    .map_err(|e| debug!("error: {e:#}"))
+                                    .map_err(|e| error!("error: {e:#}"))
                                     .instrument(error_span!("addr", addr=addr.to_string()))
                             );
                         }
@@ -873,7 +873,7 @@ impl DhtWorker {
         loop {
             let backoff = match self
                 .bootstrap_hostname(addr)
-                .instrument(error_span!("bootstrap", hostname = addr))
+                .instrument(debug_span!("bootstrap", hostname = addr))
                 .await
             {
                 Ok(_) => return Ok(()),
@@ -996,7 +996,7 @@ impl DhtWorker {
                             },
                             Err(e) => {
                                 self.dht.routing_table.write().mark_error(&id);
-                                debug!("error: {e:#}");
+                                error!("error: {e:#}");
                             }
                         }
                     }.instrument(error_span!("ping", addr=addr.to_string())))
@@ -1033,7 +1033,7 @@ impl DhtWorker {
                 )
                 .unwrap();
                 if let Err(e) = socket.send_to(&buf, addr).await {
-                    debug!("error sending to {addr}: {e:#}");
+                    error!("error sending to {addr}: {e:#}");
                     if let Some(tid) = our_tid {
                         self.on_send_error(tid, addr, e.into());
                     }
@@ -1055,7 +1055,7 @@ impl DhtWorker {
                         Ok(_) => {}
                         Err(_) => break,
                     },
-                    Err(e) => debug!("{}: error deserializing incoming message: {}", addr, e),
+                    Err(e) => error!("{}: error deserializing incoming message: {}", addr, e),
                 }
             }
             Err::<(), _>(anyhow::anyhow!(
@@ -1087,7 +1087,7 @@ impl DhtWorker {
             async move {
                 while let Some((response, addr)) = out_rx.recv().await {
                     if let Err(e) = this.dht.on_received_message(response, addr) {
-                        debug!("error in on_response, addr={:?}: {}", addr, e)
+                        error!("error in on_response, addr={:?}: {}", addr, e)
                     }
                 }
                 Err::<(), _>(anyhow::anyhow!(
