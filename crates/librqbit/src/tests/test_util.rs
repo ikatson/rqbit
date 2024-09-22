@@ -14,7 +14,7 @@ use tracing::{info, trace};
 
 pub fn setup_test_logging() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "debug");
+        std::env::set_var("RUST_LOG", "debug,librqbit_core=trace");
     }
     let _ = tracing_subscriber::fmt::try_init();
 }
@@ -206,7 +206,8 @@ pub async fn wait_until_i_am_the_last_task() {
             }
             Ok(())
         },
-        Duration::from_secs(5),
+        // This needs to be higher than the timeout the tasks print "still running"
+        Duration::from_secs(6),
     )
     .await
     .unwrap();
