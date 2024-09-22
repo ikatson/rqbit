@@ -17,6 +17,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
 use tracing::{debug, error_span, trace, Span};
 
@@ -459,6 +460,64 @@ async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse>
     Ok(axum::body::Body::from_stream(s))
 }
 
+fn make_cors_layer() -> CorsLayer {
+    use tower_http::cors::{AllowHeaders, AllowOrigin};
+
+    const ALLOWED_ORIGINS: [&[u8]; 4] = [
+        // Webui-dev
+        b"http://localhost:3031",
+        b"http://127.0.0.1:3031",
+        // Tauri dev
+        b"http://localhost:1420",
+        // Tauri prod
+        b"tauri://localhost",
+    ];
+
+    let allow_regex = std::env::var("CORS_ALLOW_REGEXP")
+        .ok()
+        .and_then(|value| regex::bytes::Regex::new(&value).ok());
+
+    tower_http::cors::CorsLayer::default()
+        .allow_origin(AllowOrigin::predicate(move |v, _| {
+            ALLOWED_ORIGINS.contains(&v.as_bytes())
+                || allow_regex
+                    .as_ref()
+                    .map(move |r| r.is_match(v.as_bytes()))
+                    .unwrap_or(false)
+        }))
+        .allow_headers(AllowHeaders::any())
+}
+
+macro_rules! make_trace_layer {
+    ($with_request_headers:expr) => {
+        tower_http::trace::TraceLayer::new_for_http()
+            .make_span_with(|req: &Request| {
+                let method = req.method();
+                let uri = req.uri();
+                if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
+                    error_span!("request", %method, %uri, %addr)
+                } else {
+                    error_span!("request", %method, %uri)
+                }
+            })
+            .on_request(|req: &Request, _: &Span| {
+                if $with_request_headers {
+                    debug!(headers=?req.headers())
+                }
+            })
+            .on_response(DefaultOnResponse::new().include_headers(true))
+            .on_failure({
+                let mut default = DefaultOnFailure::new();
+                move |failure_class, latency, span: &Span| match failure_class {
+                    tower_http::classify::ServerErrorsFailureClass::StatusCode(
+                        StatusCode::NOT_IMPLEMENTED,
+                    ) => {}
+                    _ => default.on_failure(failure_class, latency, span),
+                }
+            })
+    }
+}
+
 impl HttpApi {
     pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
@@ -558,72 +617,16 @@ impl HttpApi {
             app = app.route("/web", get(|| async { Redirect::permanent("/web/") }))
         }
 
-        let cors_layer = {
-            use tower_http::cors::{AllowHeaders, AllowOrigin};
-
-            const ALLOWED_ORIGINS: [&[u8]; 4] = [
-                // Webui-dev
-                b"http://localhost:3031",
-                b"http://127.0.0.1:3031",
-                // Tauri dev
-                b"http://localhost:1420",
-                // Tauri prod
-                b"tauri://localhost",
-            ];
-
-            let allow_regex = std::env::var("CORS_ALLOW_REGEXP")
-                .ok()
-                .and_then(|value| regex::bytes::Regex::new(&value).ok());
-
-            tower_http::cors::CorsLayer::default()
-                .allow_origin(AllowOrigin::predicate(move |v, _| {
-                    ALLOWED_ORIGINS.contains(&v.as_bytes())
-                        || allow_regex
-                            .as_ref()
-                            .map(move |r| r.is_match(v.as_bytes()))
-                            .unwrap_or(false)
-                }))
-                .allow_headers(AllowHeaders::any())
-        };
-
-        let mut app = app.with_state(state);
+        let mut app = app
+            .with_state(state)
+            .layer(make_cors_layer())
+            .layer(make_trace_layer!(false));
 
         if let Some(upnp_router) = upnp_router {
-            app = app.nest("/upnp", upnp_router);
+            app = app.nest("/upnp", upnp_router.layer(make_trace_layer!(true)));
         }
 
-        let app = app
-            .layer(cors_layer)
-            .layer(
-                tower_http::trace::TraceLayer::new_for_http()
-                    .make_span_with(|req: &Request| {
-                        let method = req.method();
-                        let uri = req.uri();
-                        if let Some(ConnectInfo(addr)) =
-                            req.extensions().get::<ConnectInfo<SocketAddr>>()
-                        {
-                            error_span!("request", %method, %uri, %addr)
-                        } else {
-                            error_span!("request", %method, %uri)
-                        }
-                    })
-                    .on_request(|req: &Request, _: &Span| {
-                        if req.uri().path().starts_with("/upnp") {
-                            debug!(headers=?req.headers())
-                        }
-                    })
-                    .on_response(DefaultOnResponse::new().include_headers(true))
-                    .on_failure({
-                        let mut default = DefaultOnFailure::new();
-                        move |failure_class, latency, span: &Span| match failure_class {
-                            tower_http::classify::ServerErrorsFailureClass::StatusCode(
-                                StatusCode::NOT_IMPLEMENTED,
-                            ) => {}
-                            _ => default.on_failure(failure_class, latency, span),
-                        }
-                    }),
-            )
-            .into_make_service_with_connect_info::<SocketAddr>();
+        let app = app.into_make_service_with_connect_info::<SocketAddr>();
 
         async move {
             axum::serve(listener, app)
