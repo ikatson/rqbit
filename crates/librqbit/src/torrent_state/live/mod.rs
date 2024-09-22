@@ -1022,7 +1022,10 @@ impl PeerHandler {
 
         if self.incoming {
             // do not retry incoming peers
-            debug!("incoming peer {handle} died, not re-queueing");
+            debug!(
+                peer = handle.to_string(),
+                "incoming peer died, not re-queueing"
+            );
             return Ok(());
         }
 
