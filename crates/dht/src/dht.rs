@@ -999,7 +999,7 @@ impl DhtWorker {
                                 error!("error: {e:#}");
                             }
                         }
-                    }.instrument(error_span!("ping", addr=addr.to_string())))
+                    }.instrument(trace_span!("ping", addr=addr.to_string())))
                 },
                 _ = futs.next(), if !futs.is_empty() => {},
             }
