@@ -274,6 +274,9 @@ pub struct AddTorrentOptions {
     // If true, will write to disk in separate threads. The downside is additional allocations.
     // May be useful if the disk is slow.
     pub defer_writes: Option<bool>,
+
+    // Custom trackers
+    pub trackers: Option<Vec<String>>,
 }
 
 pub struct ListOnlyResponse {
@@ -888,7 +891,11 @@ impl Session {
                         if opts.disable_trackers {
                             Default::default()
                         } else {
-                            magnet.trackers.clone()
+                            let mut trackers = magnet.trackers.clone();
+                            if let Some(custom_trackers) = opts.trackers.clone() {
+                                 trackers.extend(custom_trackers);
+                            }
+                            trackers  
                         },
                         announce_port,
                         opts.force_tracker_interval,
@@ -922,7 +929,10 @@ impl Session {
                             seen,
                         } => {
                             trace!(?info, "received result from DHT");
-                            let trackers = magnet.trackers.into_iter().unique().collect_vec();
+                            let mut trackers = magnet.trackers.into_iter().unique().collect_vec();
+                            if let Some(custom_trackers) = opts.trackers.clone() {
+                                trackers.extend(custom_trackers);
+                            }
                             InternalAddResult {
                                 info_hash,
                                 torrent_bytes: torrent_file_from_info_bytes(
@@ -965,7 +975,7 @@ impl Session {
                                 .context("error decoding torrent")?
                     };
 
-                    let trackers = torrent.info
+                    let mut trackers = torrent.info
                         .iter_announce()
                         .unique()
                         .filter_map(|tracker| match std::str::from_utf8(tracker.as_ref()) {
@@ -976,7 +986,10 @@ impl Session {
                             }
                         })
                         .collect::<Vec<_>>();
-
+                    if let Some(custom_trackers) = opts.trackers.clone() {
+                        trackers.extend(custom_trackers);
+                    }
+                            
                     let peer_rx = if paused {
                         None
                     } else {
