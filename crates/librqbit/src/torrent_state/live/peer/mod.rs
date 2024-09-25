@@ -1,6 +1,7 @@
 pub mod stats;
 
 use std::collections::HashSet;
+use std::net::SocketAddr;
 
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ChunkInfo;
@@ -20,6 +21,7 @@ pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 pub(crate) struct Peer {
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
+    pub outgoing_address: Option<SocketAddr>,
 }
 
 impl Peer {
@@ -35,6 +37,7 @@ impl Peer {
         Self {
             state,
             stats: Default::default(),
+            outgoing_address: None,
         }
     }
 }

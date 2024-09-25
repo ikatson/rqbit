@@ -919,6 +919,17 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         if let Some(peer_pex_msg_id) = hs.ut_pex() {
             trace!("peer supports pex at {peer_pex_msg_id}");
         }
+        if let Some(port) = hs.p {
+            // Lets update outgoing Socket address for incoming connection
+            if self.incoming {
+                if let Ok(port) = <u32 as TryInto<u16>>::try_into(port) {
+                    let outgoing_addr = SocketAddr::new(self.addr.ip(), port);
+                    self.state.peers.with_peer_mut(self.addr, "update outgoing addr", 
+                |peer| peer.outgoing_address=Some(outgoing_addr));
+                }
+                
+            }
+        }
         Ok(())
     }
 
