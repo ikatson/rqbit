@@ -895,7 +895,7 @@ impl Session {
                             if let Some(custom_trackers) = opts.trackers.clone() {
                                  trackers.extend(custom_trackers);
                             }
-                            trackers  
+                            trackers
                         },
                         announce_port,
                         opts.force_tracker_interval,
@@ -989,7 +989,7 @@ impl Session {
                     if let Some(custom_trackers) = opts.trackers.clone() {
                         trackers.extend(custom_trackers);
                     }
-                            
+
                     let peer_rx = if paused {
                         None
                     } else {
