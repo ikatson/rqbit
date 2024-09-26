@@ -71,14 +71,14 @@ where
     }
 
     pub fn ip_addr(&self) -> Option<IpAddr> {
-        if let Some(b) = self.ipv4 {
+        if let Some(ref b) = self.ipv4 {
             let b = b.as_slice();
             if b.len() == 4 {
                 let ip_bytes: &[u8; 4] = b[0..4].try_into().unwrap(); // Safe to unwrap as we check slice length
                 return Some(IpAddr::from(*ip_bytes));
             }
         }
-        if let Some(b) = self.ipv6 {
+        if let Some(ref b) = self.ipv6 {
             let b = b.as_slice();
             if b.len() == 16 {
                 let ip_bytes: &[u8; 16] = b[0..16].try_into().unwrap(); // Safe to unwrap as we check slice length

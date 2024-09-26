@@ -66,6 +66,7 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use peer::OutgoingAddressType;
 use peer_binary_protocol::{
     extended::{
         handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex, ExtendedMessage,
@@ -785,7 +786,11 @@ impl TorrentStateLive {
     pub(crate) fn reconnect_all_not_needed_peers(&self) {
         for mut pe in self.peers.states.iter_mut() {
             if pe.state.not_needed_to_queued(&self.peer_stats()) {
-                let retry_addr = pe.value().outgoing_address.unwrap_or_else(|| *pe.key());
+                let retry_addr = match pe.value().outgoing_address {
+                    peer::OutgoingAddressType::Default => *pe.key(),
+                    peer::OutgoingAddressType::None => continue,
+                    peer::OutgoingAddressType::Known(socket_addr) => socket_addr,
+                };
                 if self.peer_queue_tx.send(retry_addr).is_err() {
                     return;
                 }
@@ -920,18 +925,16 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         if let Some(peer_pex_msg_id) = hs.ut_pex() {
             trace!("peer supports pex at {peer_pex_msg_id}");
         }
-        if let Some(port) = hs.p {
-            // Lets update outgoing Socket address for incoming connection
-            if self.incoming {
-                if let Ok(port) = hs.port() {
-                    let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
-                    let outgoing_addr = SocketAddr::new(peer_ip, port);
-                    self.state
-                        .peers
-                        .with_peer_mut(self.addr, "update outgoing addr", |peer| {
-                            peer.outgoing_address = Some(outgoing_addr)
-                        });
-                }
+        // Lets update outgoing Socket address for incoming connection
+        if self.incoming {
+            if let Some(port) = hs.port() {
+                let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
+                let outgoing_addr = SocketAddr::new(peer_ip, port);
+                self.state
+                    .peers
+                    .with_peer_mut(self.addr, "update outgoing addr", |peer| {
+                        peer.outgoing_address = OutgoingAddressType::Known(outgoing_addr)
+                    });
             }
         }
         Ok(())

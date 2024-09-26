@@ -18,10 +18,18 @@ pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 
 #[derive(Debug, Default)]
+pub(crate) enum OutgoingAddressType {
+    #[default]
+    Default,
+    None,
+    Known(SocketAddr),
+}
+
+#[derive(Debug, Default)]
 pub(crate) struct Peer {
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
-    pub outgoing_address: Option<SocketAddr>,
+    pub outgoing_address: OutgoingAddressType,
 }
 
 impl Peer {
@@ -37,7 +45,7 @@ impl Peer {
         Self {
             state,
             stats: Default::default(),
-            outgoing_address: None,
+            outgoing_address: OutgoingAddressType::None,
         }
     }
 }
