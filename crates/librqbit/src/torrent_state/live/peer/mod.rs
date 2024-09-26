@@ -48,6 +48,36 @@ impl Peer {
             outgoing_address: OutgoingAddressType::None,
         }
     }
+
+    pub(crate) fn reconnect_not_needed_peer(
+        &mut self,
+        known_address: SocketAddr,
+        counters: &[&AggregatePeerStatsAtomic],
+    ) -> Option<SocketAddr> {
+        if let PeerState::NotNeeded = self.state.get() {
+            match self.outgoing_address {
+                OutgoingAddressType::Default => {
+                    self.state.set(PeerState::Queued, counters);
+                    Some(known_address)
+                }
+                OutgoingAddressType::None => None,
+                OutgoingAddressType::Known(socket_addr) => {
+                    if known_address == socket_addr {
+                        self.state.set(PeerState::Queued, counters);
+                    }
+                    Some(socket_addr)
+                },
+            }
+        } else {
+            None
+        }
+        // pe.state.not_needed_to_queued(&self.peer_stats()) {
+        //     let retry_addr = match pe.value().outgoing_address {
+        //         peer::OutgoingAddressType::Default => *pe.key(),
+        //         peer::OutgoingAddressType::None => unreachable!("bug"), // already filtered
+        //         peer::OutgoingAddressType::Known(socket_addr) => socket_addr,
+        //     };
+    }
 }
 
 #[derive(Debug, Default)]

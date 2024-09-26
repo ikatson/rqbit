@@ -784,18 +784,17 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn reconnect_all_not_needed_peers(&self) {
-        for mut pe in self.peers.states.iter_mut() {
-            if pe.state.not_needed_to_queued(&self.peer_stats()) {
-                let retry_addr = match pe.value().outgoing_address {
-                    peer::OutgoingAddressType::Default => *pe.key(),
-                    peer::OutgoingAddressType::None => continue,
-                    peer::OutgoingAddressType::Known(socket_addr) => socket_addr,
-                };
-                if self.peer_queue_tx.send(retry_addr).is_err() {
-                    return;
-                }
-            }
-        }
+        self.peers
+            .states
+            .iter_mut()
+            .filter_map(|mut p| {
+                let known_addr = *p.key();
+                p.value_mut()
+                    .reconnect_not_needed_peer(known_addr, &self.peer_stats())
+            })
+            .map(|socket_addr| self.peer_queue_tx.send(socket_addr))
+            .take_while(|r| r.is_ok())
+            .last();
     }
 }
 
