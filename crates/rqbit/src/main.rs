@@ -81,6 +81,10 @@ struct Opts {
     )]
     log_file_rust_log: String,
 
+    /// Use structured logging when emitting to stdout
+    #[arg(long = "structured-stdout", default_value_t = false)]
+    structured_stdout: bool,
+
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
     /// pretty big, e.g. 30 minutes. This can force a certain value.
@@ -423,7 +427,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             LogLevel::Error => "error",
         }),
         log_file: opts.log_file.as_deref(),
-        log_file_rust_log: Some(&opts.log_file_rust_log),
+        log_file_rust_log: &opts.log_file_rust_log,
+        structured_stdout: opts.structured_stdout,
     })?;
 
     match librqbit::try_increase_nofile_limit() {

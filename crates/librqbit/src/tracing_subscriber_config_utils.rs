@@ -52,7 +52,8 @@ impl std::io::Write for Writer {
 pub struct InitLoggingOptions<'a> {
     pub default_rust_log_value: Option<&'a str>,
     pub log_file: Option<&'a str>,
-    pub log_file_rust_log: Option<&'a str>,
+    pub log_file_rust_log: &'a str,
+    pub structured_stdout: bool,
 }
 
 pub struct InitLoggingResult {
@@ -114,7 +115,25 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                     .with_writer(log_file)
                     .with_filter(
                         EnvFilter::builder()
-                            .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
+                            .parse(opts.log_file_rust_log)
+                            .context("can't parse log-file-rust-log")?,
+                    ),
+            )
+            .try_init()
+            .context("can't init logging")?;
+    } else if opts.structured_stdout {
+        // Use JSON logging to stdout
+        layered
+            .with(
+                fmt::layer()
+                    .with_ansi(false)
+                    .json()
+                    .with_current_span(true)
+                    .with_target(true)
+                    .with_writer(std::io::stdout)
+                    .with_filter(
+                        EnvFilter::builder()
+                            .parse(opts.log_file_rust_log)
                             .context("can't parse log-file-rust-log")?,
                     ),
             )
