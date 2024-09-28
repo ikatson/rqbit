@@ -77,12 +77,6 @@ impl Peer {
         } else {
             None
         }
-        // pe.state.not_needed_to_queued(&self.peer_stats()) {
-        //     let retry_addr = match pe.value().outgoing_address {
-        //         peer::OutgoingAddressType::Default => *pe.key(),
-        //         peer::OutgoingAddressType::None => unreachable!("bug"), // already filtered
-        //         peer::OutgoingAddressType::Known(socket_addr) => socket_addr,
-        //     };
     }
 }
 
