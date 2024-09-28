@@ -7,6 +7,7 @@ use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ChunkInfo;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::debug;
 
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
@@ -64,9 +65,14 @@ impl Peer {
                 OutgoingAddressType::Known(socket_addr) => {
                     if known_address == socket_addr {
                         self.state.set(PeerState::Queued, counters);
+                    } else {
+                        debug!(
+                            peer = known_address.to_string(),
+                            "peer will by retried on  different address {}", socket_addr
+                        );
                     }
                     Some(socket_addr)
-                },
+                }
             }
         } else {
             None
@@ -172,14 +178,6 @@ impl PeerStateNoMut {
             }
             _ => None,
         }
-    }
-
-    pub fn not_needed_to_queued(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> bool {
-        if let PeerState::NotNeeded = &self.0 {
-            self.set(PeerState::Queued, counters);
-            return true;
-        }
-        false
     }
 
     pub fn incoming_connection(
