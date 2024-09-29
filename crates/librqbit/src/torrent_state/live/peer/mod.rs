@@ -19,18 +19,10 @@ pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 
 #[derive(Debug, Default)]
-pub(crate) enum OutgoingAddressType {
-    #[default]
-    Default,
-    None,
-    Known(SocketAddr),
-}
-
-#[derive(Debug, Default)]
 pub(crate) struct Peer {
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
-    pub outgoing_address: OutgoingAddressType,
+    pub outgoing_address: Option<SocketAddr>,
 }
 
 impl Peer {
@@ -46,7 +38,14 @@ impl Peer {
         Self {
             state,
             stats: Default::default(),
-            outgoing_address: OutgoingAddressType::None,
+            outgoing_address: None,
+        }
+    }
+
+    pub fn new_with_outgoing_address(addr: SocketAddr) -> Self {
+        Self {
+            outgoing_address: Some(addr),
+            ..Default::default()
         }
     }
 
@@ -57,18 +56,15 @@ impl Peer {
     ) -> Option<SocketAddr> {
         if let PeerState::NotNeeded = self.state.get() {
             match self.outgoing_address {
-                OutgoingAddressType::Default => {
-                    self.state.set(PeerState::Queued, counters);
-                    Some(known_address)
-                }
-                OutgoingAddressType::None => None,
-                OutgoingAddressType::Known(socket_addr) => {
+                None => None,
+                Some(socket_addr) => {
                     if known_address == socket_addr {
                         self.state.set(PeerState::Queued, counters);
                     } else {
                         debug!(
                             peer = known_address.to_string(),
-                            "peer will by retried on  different address {}", socket_addr
+                            outgoing_addr = socket_addr.to_string(),
+                            "peer will by retried on different address",
                         );
                     }
                     Some(socket_addr)

@@ -66,7 +66,6 @@ use librqbit_core::{
     torrent_metainfo::TorrentMetaV1Info,
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use peer::OutgoingAddressType;
 use peer_binary_protocol::{
     extended::{
         handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex, ExtendedMessage,
@@ -932,7 +931,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
                 self.state
                     .peers
                     .with_peer_mut(self.addr, "update outgoing addr", |peer| {
-                        peer.outgoing_address = OutgoingAddressType::Known(outgoing_addr)
+                        peer.outgoing_address = Some(outgoing_addr)
                     });
             }
         }
