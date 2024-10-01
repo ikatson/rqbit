@@ -783,13 +783,17 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn reconnect_all_not_needed_peers(&self) {
-        for mut pe in self.peers.states.iter_mut() {
-            if pe.state.not_needed_to_queued(&self.peer_stats())
-                && self.peer_queue_tx.send(*pe.key()).is_err()
-            {
-                return;
-            }
-        }
+        self.peers
+            .states
+            .iter_mut()
+            .filter_map(|mut p| {
+                let known_addr = *p.key();
+                p.value_mut()
+                    .reconnect_not_needed_peer(known_addr, &self.peer_stats())
+            })
+            .map(|socket_addr| self.peer_queue_tx.send(socket_addr))
+            .take_while(|r| r.is_ok())
+            .last();
     }
 }
 
@@ -918,6 +922,18 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
         if let Some(peer_pex_msg_id) = hs.ut_pex() {
             trace!("peer supports pex at {peer_pex_msg_id}");
+        }
+        // Lets update outgoing Socket address for incoming connection
+        if self.incoming {
+            if let Some(port) = hs.port() {
+                let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
+                let outgoing_addr = SocketAddr::new(peer_ip, port);
+                self.state
+                    .peers
+                    .with_peer_mut(self.addr, "update outgoing addr", |peer| {
+                        peer.outgoing_address = Some(outgoing_addr)
+                    });
+            }
         }
         Ok(())
     }

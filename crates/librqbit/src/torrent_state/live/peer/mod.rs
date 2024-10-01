@@ -1,11 +1,13 @@
 pub mod stats;
 
 use std::collections::HashSet;
+use std::net::SocketAddr;
 
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ChunkInfo;
 
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tracing::debug;
 
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
@@ -20,6 +22,7 @@ pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 pub(crate) struct Peer {
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
+    pub outgoing_address: Option<SocketAddr>,
 }
 
 impl Peer {
@@ -35,6 +38,40 @@ impl Peer {
         Self {
             state,
             stats: Default::default(),
+            outgoing_address: None,
+        }
+    }
+
+    pub fn new_with_outgoing_address(addr: SocketAddr) -> Self {
+        Self {
+            outgoing_address: Some(addr),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn reconnect_not_needed_peer(
+        &mut self,
+        known_address: SocketAddr,
+        counters: &[&AggregatePeerStatsAtomic],
+    ) -> Option<SocketAddr> {
+        if let PeerState::NotNeeded = self.state.get() {
+            match self.outgoing_address {
+                None => None,
+                Some(socket_addr) => {
+                    if known_address == socket_addr {
+                        self.state.set(PeerState::Queued, counters);
+                    } else {
+                        debug!(
+                            peer = known_address.to_string(),
+                            outgoing_addr = socket_addr.to_string(),
+                            "peer will by retried on different address",
+                        );
+                    }
+                    Some(socket_addr)
+                }
+            }
+        } else {
+            None
         }
     }
 }
@@ -131,14 +168,6 @@ impl PeerStateNoMut {
             }
             _ => None,
         }
-    }
-
-    pub fn not_needed_to_queued(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> bool {
-        if let PeerState::NotNeeded = &self.0 {
-            self.set(PeerState::Queued, counters);
-            return true;
-        }
-        false
     }
 
     pub fn incoming_connection(
