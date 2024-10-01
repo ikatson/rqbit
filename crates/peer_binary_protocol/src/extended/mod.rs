@@ -14,6 +14,10 @@ use self::{handshake::ExtendedHandshake, ut_metadata::UtMetadata};
 use super::MessageDeserializeError;
 
 pub mod handshake;
+mod ip;
+
+pub use ip::{PeerIP, PeerIP4, PeerIP6, PeerIPAny};
+
 pub mod ut_metadata;
 pub mod ut_pex;
 

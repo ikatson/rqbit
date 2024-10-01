@@ -3,13 +3,13 @@ use std::{collections::HashMap, net::IpAddr};
 use buffers::{ByteBuf, ByteBufT};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     EXTENDED_UT_METADATA_KEY, EXTENDED_UT_PEX_KEY, MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX,
 };
 
-use super::PeerExtendedMessageIds;
+use super::{PeerExtendedMessageIds, PeerIP4, PeerIP6, PeerIPAny};
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
@@ -20,11 +20,11 @@ pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<ByteBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub yourip: Option<YourIP>,
+    pub yourip: Option<PeerIPAny>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv6: Option<ByteBuf>,
+    pub ipv6: Option<PeerIP6>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv4: Option<ByteBuf>,
+    pub ipv4: Option<PeerIP4>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reqq: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,18 +72,10 @@ where
 
     pub fn ip_addr(&self) -> Option<IpAddr> {
         if let Some(ref b) = self.ipv4 {
-            let b = b.as_slice();
-            if b.len() == 4 {
-                let ip_bytes: &[u8; 4] = b[0..4].try_into().unwrap(); // Safe to unwrap as we check slice length
-                return Some(IpAddr::from(*ip_bytes));
-            }
+            return Some(b.0.into());
         }
         if let Some(ref b) = self.ipv6 {
-            let b = b.as_slice();
-            if b.len() == 16 {
-                let ip_bytes: &[u8; 16] = b[0..16].try_into().unwrap(); // Safe to unwrap as we check slice length
-                return Some(IpAddr::from(*ip_bytes));
-            }
+            return Some(b.0.into());
         }
         None
     }
@@ -106,64 +98,12 @@ where
             p: self.p,
             v: self.v.clone_to_owned(within_buffer),
             yourip: self.yourip,
-            ipv6: self.ipv6.clone_to_owned(within_buffer),
-            ipv4: self.ipv4.clone_to_owned(within_buffer),
+            ipv6: self.ipv6,
+            ipv4: self.ipv4,
             reqq: self.reqq,
             metadata_size: self.metadata_size,
             complete_ago: self.complete_ago,
             upload_only: self.upload_only,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct YourIP(pub IpAddr);
-
-impl Serialize for YourIP {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self.0 {
-            IpAddr::V4(ipv4) => {
-                let buf = ipv4.octets();
-                serializer.serialize_bytes(&buf)
-            }
-            IpAddr::V6(ipv6) => {
-                let buf = ipv6.octets();
-                serializer.serialize_bytes(&buf)
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for YourIP {
-    fn deserialize<D>(de: D) -> Result<YourIP, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct Visitor {}
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = YourIP;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(f, "expecting 4 bytes of ipv4 or 16 bytes of ipv6")
-            }
-
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v.len() == 4 {
-                    let ip_bytes: &[u8; 4] = v[0..4].try_into().unwrap(); // Safe to unwrap as we check slice length
-                    return Ok(YourIP(IpAddr::from(*ip_bytes)));
-                } else if v.len() == 16 {
-                    let ip_bytes: &[u8; 16] = v[0..16].try_into().unwrap(); // Safe to unwrap as we check slice length
-                    return Ok(YourIP(IpAddr::from(*ip_bytes)));
-                }
-                Err(E::custom("expected 4 or 16 byte address"))
-            }
-        }
-        de.deserialize_bytes(Visitor {})
     }
 }
