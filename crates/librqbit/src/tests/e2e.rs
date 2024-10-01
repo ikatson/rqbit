@@ -196,7 +196,7 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(1usize);
 
-    let magnet = Magnet::from_id20(torrent_file.info_hash(), Vec::new()).to_string();
+    let magnet = Magnet::from_id20(torrent_file.info_hash(), Vec::new(), None).to_string();
 
     // 3. Start a client with the initial peers, and download the file.
     for _ in 0..client_iters {

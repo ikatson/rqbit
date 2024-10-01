@@ -868,7 +868,7 @@ impl Session {
     ) -> BoxFuture<'a, anyhow::Result<AddTorrentResponse>> {
         async move {
             // Magnet links are different in that we first need to discover the metadata.
-            let opts = opts.unwrap_or_default();
+            let mut opts = opts.unwrap_or_default();
 
             let paused = opts.list_only || opts.paused;
 
@@ -885,6 +885,9 @@ impl Session {
                     let info_hash = magnet
                         .as_id20()
                         .context("magnet link didn't contain a BTv1 infohash")?;
+                    if let Some(so) = magnet.get_select_only() {
+                        opts.only_files = Some(so);
+                    }
 
                     let peer_rx = self.make_peer_rx(
                         info_hash,

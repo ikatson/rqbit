@@ -9,6 +9,7 @@ pub struct Magnet {
     id20: Option<Id20>,
     id32: Option<Id32>,
     pub trackers: Vec<String>,
+    select_only: Option<Vec<usize>>
 }
 
 impl Magnet {
@@ -19,12 +20,16 @@ impl Magnet {
     pub fn as_id32(&self) -> Option<Id32> {
         self.id32
     }
+    pub fn get_select_only(&self) -> Option<Vec<usize>> {
+        self.select_only.clone()
+    }
 
-    pub fn from_id20(id20: Id20, trackers: Vec<String>) -> Self {
+    pub fn from_id20(id20: Id20, trackers: Vec<String>, select_only: Option<Vec<usize>> ) -> Self {
         Self {
             id20: Some(id20),
             id32: None,
             trackers,
+            select_only,
         }
     }
 
@@ -38,6 +43,7 @@ impl Magnet {
         let mut id20: Option<Id20> = None;
         let mut id32: Option<Id32> = None;
         let mut trackers = Vec::<String>::new();
+        let mut files = Vec::<usize>::new();
         for (key, value) in url.query_pairs() {
             match key.as_ref() {
                 "xt" => {
@@ -54,6 +60,26 @@ impl Magnet {
                     }
                 }
                 "tr" => trackers.push(value.into()),
+                "so" => {
+                    for file_desc in value.split(',') {
+                        if file_desc.is_empty() {
+                            continue;
+                        }
+                        // Handling ranges of file indices
+                        if let Some((start, end)) = file_desc.split_once('-') {
+                            let start_idx: usize = start.parse()?;
+                            let end_idx: usize = end.parse()?;
+                            if start_idx >= end_idx {
+                                anyhow::bail!("range start must be less than range end");
+                            }
+                            files.extend(start_idx..=end_idx);
+                        } else {
+                            // Handling single file index
+                            let idx: usize = file_desc.parse()?;
+                            files.push(idx);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -62,6 +88,10 @@ impl Magnet {
                 id20,
                 id32,
                 trackers,
+                select_only: match files.is_empty() {
+                    true => None,
+                    false => Some(files),
+                },
             }),
             false => {
                 anyhow::bail!("did not find infohash")
@@ -96,6 +126,18 @@ impl std::fmt::Display for Magnet {
         for tracker in self.trackers.iter() {
             write_ampersand(f)?;
             write!(f, "tr={tracker}")?;
+        }
+        if let Some(select_only) = &self.select_only {
+            if !select_only.is_empty() {
+                write_ampersand(f)?;
+                write!(f, "so=")?;
+                for (index, file) in select_only.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ",")?; // Add a comma before all but the first index
+                    }
+                    write!(f, "{}", file)?;
+                }
+            }
         }
         Ok(())
     }
@@ -133,13 +175,19 @@ mod tests {
     fn test_magnet_to_string() {
         let id20 = Id20::from_str("a621779b5e3d486e127c3efbca9b6f8d135f52e5").unwrap();
         assert_eq!(
-            &Magnet::from_id20(id20, Default::default()).to_string(),
+            &Magnet::from_id20(id20, Default::default(), None).to_string(),
             "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5"
         );
 
         assert_eq!(
-            &Magnet::from_id20(id20, vec!["foo".to_string(), "bar".to_string()]).to_string(),
+            &Magnet::from_id20(id20, vec!["foo".to_string(), "bar".to_string()], None).to_string(),
             "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&tr=foo&tr=bar"
         );
+
+        assert_eq!(
+            &Magnet::from_id20(id20, Default::default(), Some(vec![1,2,3])).to_string(),
+            "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&so=1,2,3"
+        );
+
     }
 }

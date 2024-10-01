@@ -41,7 +41,7 @@ impl SerializedTorrent {
             AddTorrent::TorrentFileBytes(self.torrent_bytes)
         } else {
             let magnet =
-                Magnet::from_id20(self.info_hash, self.trackers.into_iter().collect()).to_string();
+                Magnet::from_id20(self.info_hash, self.trackers.into_iter().collect(), self.only_files.clone()).to_string();
             AddTorrent::from_url(magnet)
         };
 
