@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
-import { invoke } from "@tauri-apps/api";
+import { invoke } from "@tauri-apps/api/core";
 import { CurrentDesktopState, RqbitDesktopConfig } from "./configuration";
 import { RqbitDesktop } from "./rqbit-desktop";
 import "./styles/index.css";
