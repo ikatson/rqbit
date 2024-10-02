@@ -9,7 +9,7 @@ pub struct Magnet {
     id20: Option<Id20>,
     id32: Option<Id32>,
     pub trackers: Vec<String>,
-    select_only: Option<Vec<usize>>
+    select_only: Option<Vec<usize>>,
 }
 
 impl Magnet {
@@ -24,7 +24,7 @@ impl Magnet {
         self.select_only.clone()
     }
 
-    pub fn from_id20(id20: Id20, trackers: Vec<String>, select_only: Option<Vec<usize>> ) -> Self {
+    pub fn from_id20(id20: Id20, trackers: Vec<String>, select_only: Option<Vec<usize>>) -> Self {
         Self {
             id20: Some(id20),
             id32: None,
@@ -187,9 +187,8 @@ mod tests {
         );
 
         assert_eq!(
-            &Magnet::from_id20(id20, Default::default(), Some(vec![1,2,3])).to_string(),
+            &Magnet::from_id20(id20, Default::default(), Some(vec![1, 2, 3])).to_string(),
             "magnet:?xt=urn:btih:a621779b5e3d486e127c3efbca9b6f8d135f52e5&so=1,2,3"
         );
-
     }
 }
