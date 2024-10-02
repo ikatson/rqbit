@@ -61,22 +61,24 @@ impl Magnet {
                 }
                 "tr" => trackers.push(value.into()),
                 "so" => {
+                    // Process 'so' values, but silently ignore any which fail parsing
                     for file_desc in value.split(',') {
                         if file_desc.is_empty() {
                             continue;
                         }
                         // Handling ranges of file indices
                         if let Some((start, end)) = file_desc.split_once('-') {
-                            let start_idx: usize = start.parse()?;
-                            let end_idx: usize = end.parse()?;
-                            if start_idx >= end_idx {
-                                anyhow::bail!("range start must be less than range end");
+                            let maybe_start_idx: Result<usize, _> = start.parse();
+                            let maybe_end_idx: Result<usize, _> = end.parse();
+                            if let (Ok(start_idx), Ok(end_idx)) = (maybe_start_idx, maybe_end_idx) {
+                                files.extend(start_idx..=end_idx);
                             }
-                            files.extend(start_idx..=end_idx);
                         } else {
                             // Handling single file index
-                            let idx: usize = file_desc.parse()?;
-                            files.push(idx);
+                            let idx = file_desc.parse();
+                            if let Ok(idx) = idx {
+                                files.push(idx);
+                            }
                         }
                     }
                 }
