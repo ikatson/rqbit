@@ -90,9 +90,10 @@ impl Magnet {
                 id20,
                 id32,
                 trackers,
-                select_only: match files.is_empty() {
-                    true => None,
-                    false => Some(files),
+                select_only: if files.is_empty() {
+                    None
+                } else {
+                    Some(files)
                 },
             }),
             false => {
