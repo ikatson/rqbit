@@ -886,7 +886,10 @@ impl Session {
                         .as_id20()
                         .context("magnet link didn't contain a BTv1 infohash")?;
                     if let Some(so) = magnet.get_select_only() {
-                        opts.only_files = Some(so);
+                        // Only overwrite opts.only_files if user didn't specify
+                        if opts.only_files.is_none() {
+                            opts.only_files = Some(so);
+                        }
                     }
 
                     let peer_rx = self.make_peer_rx(
