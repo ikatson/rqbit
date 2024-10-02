@@ -9,7 +9,7 @@ import {
   SessionStats,
 } from "rqbit-webui/src/api-types";
 
-import { InvokeArgs, invoke } from "@tauri-apps/api/tauri";
+import { InvokeArgs, invoke } from "@tauri-apps/api/core";
 
 interface InvokeErrorResponse {
   error_kind: string;
