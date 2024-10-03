@@ -1,33 +1,30 @@
-#!/usr/bin/env python3
+#!/usr/bin/env node
 
-import os
-import os.path
-import json
-import re
-import itertools
+import fs from 'fs';
+import path from 'path';
 
-os.chdir('dist')
+// Change directory to 'dist'
+process.chdir('dist');
 
-with open(os.path.join('.vite', 'manifest.json'), 'r') as f:
-    manifest = json.load(f)
+// Read and parse the manifest file
+const manifestPath = path.join('.vite', 'manifest.json');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
 
+// Read the 'index.html' file
+let indexHtml = fs.readFileSync('index.html', 'utf-8');
 
-# For rust to "include_str!", we need to have predictable filenames.
-# So strip all hashes out of the generated files.
+// List of files to process
+const files = [
+    { dst: 'assets/logo.svg', src: manifest['assets/logo.svg'].file },
+    { dst: 'assets/index.css', src: manifest['index.html'].css[0] },
+    { dst: 'assets/index.js', src: manifest['index.html'].file }
+];
 
-with open('index.html', 'r') as f:
-    index_html = f.read()
+// Replace and rename files
+files.forEach(({ dst, src }) => {
+    indexHtml = indexHtml.replace(`/${src}`, dst);
+    fs.renameSync(src, dst);
+});
 
-for dst, src in [
-    ("assets/logo.svg", manifest["assets/logo.svg"]["file"]),
-    ("assets/index.css", manifest["index.html"]["css"][0]),
-    ("assets/index.js", manifest["index.html"]["file"])
-]:
-    generated_file = src
-    new_file = dst
-
-    index_html = index_html.replace("/" + generated_file, new_file)
-    os.rename(generated_file, new_file)
-
-with open('index.html', 'w') as f:
-    f.write(index_html)
+// Write the updated 'index.html'
+fs.writeFileSync('index.html', indexHtml, 'utf-8');
