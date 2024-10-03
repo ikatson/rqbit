@@ -1,2 +1,3 @@
 /target
+/desktop/src-tauri/gen/
 .DS_Store
