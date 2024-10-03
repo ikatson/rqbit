@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import os
+import os.path
 import json
 import re
+import itertools
 
 os.chdir('dist')
 
-with open('manifest.json', 'r') as f:
+with open(os.path.join('.vite', 'manifest.json'), 'r') as f:
     manifest = json.load(f)
 
 
@@ -16,9 +18,13 @@ with open('manifest.json', 'r') as f:
 with open('index.html', 'r') as f:
     index_html = f.read()
 
-for key, item in manifest.items():
-    generated_file = item['file']
-    new_file = re.sub(r'^(assets/.+)-.+(\..+)$', r'\1\2', generated_file)
+for dst, src in [
+    ("assets/logo.svg", manifest["assets/logo.svg"]["file"]),
+    ("assets/index.css", manifest["index.html"]["css"][0]),
+    ("assets/index.js", manifest["index.html"]["file"])
+]:
+    generated_file = src
+    new_file = dst
 
     index_html = index_html.replace("/" + generated_file, new_file)
     os.rename(generated_file, new_file)
