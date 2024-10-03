@@ -4,7 +4,7 @@ use anyhow::Context;
 use bytes::Bytes;
 use librqbit_core::spawn_utils::spawn;
 use tracing::error_span;
-use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::fmt::{Layer, MakeWriter};
 
 struct Subscriber {
     tx: tokio::sync::broadcast::Sender<Bytes>,
@@ -49,11 +49,16 @@ impl std::io::Write for Writer {
     }
 }
 
+pub enum Format {
+    Human,
+    Json,
+}
+
 pub struct InitLoggingOptions<'a> {
     pub default_rust_log_value: Option<&'a str>,
     pub log_file: Option<&'a str>,
-    pub log_file_rust_log: &'a str,
-    pub structured_stdout: bool,
+    pub log_file_rust_log: Option<&'a str>,
+    pub format: Format,
 }
 
 pub struct InitLoggingResult {
@@ -80,9 +85,19 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
 
     let (line_sub, line_broadcast) = Subscriber::new();
 
+    let format: Layer<_> = match opts.format {
+        // TODO this almost works, but the type errors are getting a bit gnarly
+        Format::Json => Some(fmt::layer().json()),
+        Format::Human => None,
+    };
+
     let layered = tracing_subscriber::registry()
         // Stderr logging layer.
-        .with(fmt::layer().with_filter(stderr_filter))
+        .with(
+            fmt::layer()
+                .with_filter(stderr_filter)
+                .and_then(format),
+        )
         // HTTP API log broadcast layer.
         .with(
             fmt::layer()
@@ -113,27 +128,10 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 fmt::layer()
                     .with_ansi(false)
                     .with_writer(log_file)
+                    .and_then(format)
                     .with_filter(
                         EnvFilter::builder()
-                            .parse(opts.log_file_rust_log)
-                            .context("can't parse log-file-rust-log")?,
-                    ),
-            )
-            .try_init()
-            .context("can't init logging")?;
-    } else if opts.structured_stdout {
-        // Use JSON logging to stdout
-        layered
-            .with(
-                fmt::layer()
-                    .with_ansi(false)
-                    .json()
-                    .with_current_span(true)
-                    .with_target(true)
-                    .with_writer(std::io::stdout)
-                    .with_filter(
-                        EnvFilter::builder()
-                            .parse(opts.log_file_rust_log)
+                            .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
                             .context("can't parse log-file-rust-log")?,
                     ),
             )
