@@ -4,7 +4,7 @@ use anyhow::Context;
 use bytes::Bytes;
 use librqbit_core::spawn_utils::spawn;
 use tracing::error_span;
-use tracing_subscriber::fmt::{Layer, MakeWriter};
+use tracing_subscriber::fmt::MakeWriter;
 
 struct Subscriber {
     tx: tokio::sync::broadcast::Sender<Bytes>,
@@ -85,18 +85,12 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
 
     let (line_sub, line_broadcast) = Subscriber::new();
 
-    let format: Layer<_> = match opts.format {
-        // TODO this almost works, but the type errors are getting a bit gnarly
-        Format::Json => Some(fmt::layer().json()),
-        Format::Human => None,
-    };
-
     let layered = tracing_subscriber::registry()
         // Stderr logging layer.
         .with(
             fmt::layer()
                 .with_filter(stderr_filter)
-                .and_then(format),
+                .and_then(if let Format::Json = opts.format { Some(fmt::layer().json())} else { None } ),
         )
         // HTTP API log broadcast layer.
         .with(
@@ -128,7 +122,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 fmt::layer()
                     .with_ansi(false)
                     .with_writer(log_file)
-                    .and_then(format)
+                    .and_then(if let Format::Json = opts.format { Some(fmt::layer().json())} else { None } )
                     .with_filter(
                         EnvFilter::builder()
                             .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
