@@ -144,6 +144,7 @@ pub struct RqbitDesktopConfigUpnp {
 pub struct RqbitDesktopConfig {
     pub default_download_location: PathBuf,
 
+    #[cfg(feature = "disable-upload")]
     #[serde(default)]
     pub disable_upload: bool,
 
@@ -171,6 +172,7 @@ impl Default for RqbitDesktopConfig {
             persistence: Default::default(),
             peer_opts: Default::default(),
             http_api: Default::default(),
+            #[cfg(feature = "disable-upload")]
             disable_upload: false,
         }
     }

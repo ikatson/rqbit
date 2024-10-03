@@ -124,7 +124,8 @@ pub struct Session {
 
     pub(crate) stats: SessionStats,
 
-    disable_upload: bool,
+    #[cfg(feature = "disable-upload")]
+    _disable_upload: bool,
 
     // This is stored for all tasks to stop when session is dropped.
     _cancellation_token_drop_guard: DropGuard,
@@ -416,6 +417,7 @@ pub struct SessionOptions {
     // the root span to use. If not set will be None.
     pub root_span: Option<Span>,
 
+    #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 }
 
@@ -492,6 +494,7 @@ impl Session {
             let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
             let token = opts.cancellation_token.take().unwrap_or_default();
 
+            #[cfg(feature = "disable-upload")]
             if opts.disable_upload {
                 warn!("uploading disabled");
             }
@@ -629,7 +632,8 @@ impl Session {
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
-                disable_upload: opts.disable_upload,
+                #[cfg(feature = "disable-upload")]
+                _disable_upload: opts.disable_upload,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -1170,7 +1174,8 @@ impl Session {
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     disk_write_queue: self.disk_write_tx.clone(),
-                    disable_upload: self.disable_upload,
+                    #[cfg(feature = "disable-upload")]
+                    _disable_upload: self._disable_upload,
                 },
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
