@@ -21,6 +21,7 @@ default-tls = ["librqbit/default-tls"]
 rust-tls = ["librqbit/rust-tls"]
 debug_slow_disk = ["librqbit/storage_middleware"]
 postgres = ["librqbit/postgres"]
+disable-upload = ["librqbit/disable-upload"]
 
 [dependencies]
 librqbit = { version = "7.1.0-beta.0", path = "../librqbit", default-features = false, features = [

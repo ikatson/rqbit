@@ -525,7 +525,7 @@ impl TorrentStateLive {
         let state = self;
         loop {
             let addr = peer_queue_rx.recv().await.context("torrent closed")?;
-            if state.torrent.options.disable_upload && state.is_finished_and_no_active_streams() {
+            if state.torrent.options.disable_upload() && state.is_finished_and_no_active_streams() {
                 debug!("ignoring peer {} as we are finished", addr);
                 state.peers.mark_peer_not_needed(addr);
                 continue;
@@ -939,7 +939,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     }
 
     fn should_send_bitfield(&self) -> bool {
-        if self.state.torrent().options.disable_upload {
+        if self.state.torrent().options.disable_upload() {
             return false;
         }
 
@@ -947,7 +947,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     }
 
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool {
-        if self.state.torrent.options.disable_upload {
+        if self.state.torrent.options.disable_upload() {
             return false;
         }
         let have = self
@@ -1187,7 +1187,7 @@ impl PeerHandler {
     }
 
     fn on_download_request(&self, request: Request) -> anyhow::Result<()> {
-        if self.state.torrent().options.disable_upload {
+        if self.state.torrent().options.disable_upload() {
             anyhow::bail!("upload disabled, but peer requested a piece")
         }
 

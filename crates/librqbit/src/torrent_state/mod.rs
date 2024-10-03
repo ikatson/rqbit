@@ -103,7 +103,20 @@ pub(crate) struct ManagedTorrentOptions {
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub disk_write_queue: Option<DiskWorkQueueSender>,
-    pub disable_upload: bool,
+    #[cfg(feature = "disable-upload")]
+    pub _disable_upload: bool,
+}
+
+impl ManagedTorrentOptions {
+    #[cfg(feature = "disable-upload")]
+    pub fn disable_upload(&self) -> bool {
+        self._disable_upload
+    }
+
+    #[cfg(not(feature = "disable-upload"))]
+    pub const fn disable_upload(&self) -> bool {
+        false
+    }
 }
 
 /// Common information about torrent shared among all possible states.

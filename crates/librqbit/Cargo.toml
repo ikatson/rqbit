@@ -37,6 +37,7 @@ tracing-subscriber-utils = ["tracing-subscriber"]
 postgres = ["sqlx"]
 async-bt = ["async-backtrace"]
 watch = ["notify"]
+disable-upload = []
 
 [dependencies]
 sqlx = { version = "0.8.2", features = [

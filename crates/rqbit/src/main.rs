@@ -215,6 +215,7 @@ struct Opts {
     ///
     /// Might be useful e.g. if rqbit upload consumes all your upload bandwidth and interferes
     /// with your other Internet usage.
+    #[cfg(feature = "disable-upload")]
     #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
     disable_upload: bool,
 }
@@ -474,6 +475,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         root_span: None,
         fastresume: false,
         cancellation_token: Some(cancel.clone()),
+        #[cfg(feature = "disable-upload")]
         disable_upload: opts.disable_upload,
     };
 
