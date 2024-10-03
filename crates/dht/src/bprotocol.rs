@@ -5,6 +5,7 @@ use std::{
 };
 
 use bencode::{ByteBuf, ByteBufOwned};
+use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use librqbit_core::hash_id::Id20;
@@ -196,9 +197,7 @@ impl Serialize for CompactNodeInfo {
             let ip_octets = node.addr.ip().octets();
             let port = node.addr.port();
             buf.extend_from_slice(&ip_octets);
-            // BE encoding for port.
-            buf.push((port >> 8) as u8);
-            buf.push((port & 0xff) as u8);
+            buf.write_u16::<BigEndian>(port).unwrap();
         }
         serializer.serialize_bytes(&buf)
     }
@@ -228,7 +227,7 @@ impl<'de> Deserialize<'de> for CompactNodeInfo {
                     let mut node_id = [0u8; 20];
                     node_id.copy_from_slice(&chunk[..20]);
                     let ip = Ipv4Addr::new(chunk[20], chunk[21], chunk[22], chunk[23]);
-                    let port = ((chunk[24] as u16) << 8) + chunk[25] as u16;
+                    let port = BigEndian::read_u16(&chunk[24..26]);
                     buf.push(Node {
                         id: Id20::new(node_id),
                         addr: SocketAddrV4::new(ip, port),
@@ -258,14 +257,10 @@ impl Serialize for CompactPeerInfo {
     {
         let octets = self.addr.ip().octets();
         let port = self.addr.port();
-        let buf = [
-            octets[0],
-            octets[1],
-            octets[2],
-            octets[3],
-            (port >> 8) as u8,
-            (port & 0xff) as u8,
-        ];
+        let mut buf = [0u8; 6];
+        buf[..4].copy_from_slice(&octets);
+        BigEndian::write_u16(&mut buf[4..], port);
+
         serializer.serialize_bytes(&buf)
     }
 }
@@ -287,10 +282,11 @@ impl<'de> Deserialize<'de> for CompactPeerInfo {
                 E: serde::de::Error,
             {
                 if v.len() != 6 {
-                    return Err(E::invalid_length(6, &self));
+                    return Err(E::invalid_length(v.len(), &self));
                 }
                 let ip = Ipv4Addr::new(v[0], v[1], v[2], v[3]);
-                let port = ((v[4] as u16) << 8) + v[5] as u16;
+                let port = BigEndian::read_u16(&v[4..6]); // Read the port number as big-endian from the last 2 bytes
+
                 Ok(CompactPeerInfo {
                     addr: SocketAddrV4::new(ip, port),
                 })
