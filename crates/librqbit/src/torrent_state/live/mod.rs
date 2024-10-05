@@ -88,8 +88,9 @@ use crate::{
     },
     session::CheckedIncomingConnection,
     session_stats::atomic::AtomicSessionStats,
+    storage::MemoryWatcherStorage,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{DiskWorkQueueSender, FilePriorities, FileStorage, PeerHandle, BF},
+    type_aliases::{DiskWorkQueueSender, FilePriorities, PeerHandle, BF},
 };
 
 use self::{
@@ -177,7 +178,7 @@ pub struct TorrentStateLive {
     torrent: Arc<ManagedTorrentShared>,
     locked: RwLock<TorrentStateLocked>,
 
-    pub(crate) files: FileStorage,
+    pub(crate) files: MemoryWatcherStorage,
 
     per_piece_locks: Vec<RwLock<()>>,
 
@@ -201,6 +202,9 @@ pub struct TorrentStateLive {
 
     pub(crate) streams: Arc<TorrentStreams>,
     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
+
+    pub(crate) read_controller_rx: tokio::sync::watch::Receiver<bool>,
+    pub(crate) read_controller_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl TorrentStateLive {
@@ -208,6 +212,8 @@ impl TorrentStateLive {
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
+        read_controller_rx: tokio::sync::watch::Receiver<bool>,
+        read_controller_tx: tokio::sync::watch::Sender<bool>,
     ) -> anyhow::Result<Arc<Self>> {
         let (peer_queue_tx, peer_queue_rx) = unbounded_channel();
         let session = paused
@@ -253,7 +259,7 @@ impl TorrentStateLive {
                 fatal_errors_tx: Some(fatal_errors_tx),
                 unflushed_bitv_bytes: 0,
             }),
-            files: paused.files,
+            files: MemoryWatcherStorage::new(paused.files),
             stats: AtomicStats {
                 have_bytes: AtomicU64::new(have_bytes),
                 ..Default::default()
@@ -272,6 +278,8 @@ impl TorrentStateLive {
             per_piece_locks: (0..lengths.total_pieces())
                 .map(|_| RwLock::new(()))
                 .collect(),
+            read_controller_rx,
+            read_controller_tx,
         });
 
         state.spawn(
@@ -422,6 +430,7 @@ impl TorrentStateLive {
             Some(options),
             self.torrent.spawner,
             self.torrent.connector.clone(),
+            self.read_controller_rx.clone(),
         );
         let requester = handler.task_peer_chunk_requester();
 
@@ -487,6 +496,7 @@ impl TorrentStateLive {
             Some(options),
             state.torrent.spawner,
             state.torrent.connector.clone(),
+            state.read_controller_rx.clone(),
         );
         let requester = aframe!(handler
             .task_peer_chunk_requester()
@@ -555,7 +565,7 @@ impl TorrentStateLive {
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
         FileOps::new(
             &self.torrent.info,
-            &*self.files,
+            self.files.as_storage(),
             &self.torrent().file_infos,
             &self.lengths,
         )
@@ -666,7 +676,7 @@ impl TorrentStateLive {
         // g.chunks;
         Ok(TorrentStatePaused {
             shared: self.torrent.clone(),
-            files: self.files.take()?,
+            files: self.files.as_storage().take()?,
             chunk_tracker,
             streams: self.streams.clone(),
         })
@@ -721,7 +731,7 @@ impl TorrentStateLive {
     }
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
-        if let Err(e) = self.files.on_piece_completed(id) {
+        if let Err(e) = self.files.as_storage().on_piece_completed(id) {
             debug!(?id, "file storage errored in on_piece_completed(): {e:#}");
         }
         let mut g = self.lock_write("on_piece_completed");
@@ -844,6 +854,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     async fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
         // The first message must be "bitfield", but if it's not sent,
         // assume the bitfield is all zeroes and was sent.
+
         if !matches!(&message, Message::Bitfield(..))
             && !self.first_message_received.swap(true, Ordering::Relaxed)
         {

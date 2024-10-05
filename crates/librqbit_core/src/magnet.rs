@@ -90,11 +90,7 @@ impl Magnet {
                 id20,
                 id32,
                 trackers,
-                select_only: if files.is_empty() {
-                    None
-                } else {
-                    Some(files)
-                },
+                select_only: if files.is_empty() { None } else { Some(files) },
             }),
             false => {
                 anyhow::bail!("did not find infohash")

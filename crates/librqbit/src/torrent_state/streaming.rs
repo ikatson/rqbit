@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{debug, trace};
 
 use crate::{
-    file_info::FileInfo, spawn_utils::BlockingSpawner, storage::TorrentStorage, ManagedTorrent,
+    file_info::FileInfo, spawn_utils::BlockingSpawner, storage::TorrentStorage, ManagedTorrent, StreamOptions,
 };
 
 use super::ManagedTorrentHandle;
@@ -275,14 +275,14 @@ impl Drop for FileStream {
 }
 
 impl ManagedTorrent {
-    fn with_storage_and_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
+    pub fn with_storage_and_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
     where
         F: FnOnce(&dyn TorrentStorage, &FileInfo) -> R,
     {
         self.with_state(|s| {
             let files = match s {
                 crate::ManagedTorrentState::Paused(p) => &*p.files,
-                crate::ManagedTorrentState::Live(l) => &*l.files,
+                crate::ManagedTorrentState::Live(l) => l.files.as_storage(),
                 s => anyhow::bail!("with_storage_and_file: invalid state: {}", s.name()),
             };
             let fi = self
@@ -321,7 +321,7 @@ impl ManagedTorrent {
             .unwrap_or(false)
     }
 
-    pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
+    pub fn stream(self: Arc<Self>, file_id: usize, options: StreamOptions) -> anyhow::Result<FileStream> {
         let (fd_len, fd_offset) =
             self.with_storage_and_file(file_id, |_fd, fi| (fi.len, fi.offset_in_torrent))?;
         let streams = self.streams()?;

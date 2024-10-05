@@ -8,7 +8,7 @@ use tracing::info;
 use crate::{
     create_torrent,
     tests::test_util::{setup_test_logging, TestPeerMetadata},
-    AddTorrent, CreateTorrentOptions, Session,
+    AddTorrent, CreateTorrentOptions, Session, StreamOptions,
 };
 
 use super::test_util::create_default_random_dir_with_torrents;
@@ -103,7 +103,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
     info!("client torrent initialized, starting stream");
 
-    let mut stream = client_handle.stream(0)?;
+    let mut stream = client_handle.stream(0, StreamOptions::default())?;
     let mut buf = Vec::<u8>::with_capacity(8192);
     stream.read_to_end(&mut buf).await?;
 

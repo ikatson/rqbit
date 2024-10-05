@@ -402,9 +402,8 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             self.callbacks.on_request_start(self, id, addr);
         }
 
-        let response = self.dht.request(self.request.clone(), addr).await.map(|r| {
+        let response = self.dht.request(self.request.clone(), addr).await.inspect(|r| {
             self.mark_node_responded(addr, &r);
-            r
         });
         if let Some(id) = id {
             self.callbacks.on_request_end(self, id, addr, &response);
