@@ -1,4 +1,7 @@
 pub mod filesystem;
+mod internal_storage;
+
+pub use internal_storage::MemoryWatcherStorage;
 
 #[cfg(feature = "storage_examples")]
 pub mod examples;

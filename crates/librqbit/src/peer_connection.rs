@@ -73,6 +73,7 @@ pub(crate) struct PeerConnection<H> {
     options: PeerConnectionOptions,
     spawner: BlockingSpawner,
     connector: Arc<StreamConnector>,
+    read_controller: tokio::sync::watch::Receiver<bool>,
 }
 
 pub(crate) async fn with_timeout<T, E>(
@@ -97,6 +98,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         options: Option<PeerConnectionOptions>,
         spawner: BlockingSpawner,
         connector: Arc<StreamConnector>,
+        read_controller: tokio::sync::watch::Receiver<bool>,
     ) -> Self {
         PeerConnection {
             handler,
@@ -106,6 +108,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             spawner,
             options: options.unwrap_or_default(),
             connector,
+            read_controller,
         }
     }
 
@@ -394,20 +397,27 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         let reader = async move {
             loop {
-                let message = read_buf
-                    .read_message(&mut read_half, rwtimeout)
-                    .await
-                    .context("error reading message")?;
-                trace!("received: {:?}", &message);
-
-                if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
-                    *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
-                    self.handler.on_extended_handshake(h)?;
-                } else {
-                    self.handler
-                        .on_received_message(message)
+                // Check if value has been marked as "true", meaning that we do not have to wait before reading further messages
+                if *self.read_controller.borrow() {
+                    let message = read_buf
+                        .read_message(&mut read_half, rwtimeout)
                         .await
-                        .context("error in handler.on_received_message()")?;
+                        .context("error reading message")?;
+                    trace!("received: {:?}", &message);
+
+                    if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
+                        *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
+                        self.handler.on_extended_handshake(h)?;
+                    } else {
+                        self.handler
+                            .on_received_message(message)
+                            .await
+                            .context("error in handler.on_received_message()")?;
+                    }
+                } else {
+                    // Todo: make it configurable
+                    println!("cannot read, must wait (500ms)...");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             }
 

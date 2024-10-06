@@ -61,6 +61,7 @@ pub mod session_stats;
 mod spawn_utils;
 pub mod storage;
 mod stream_connect;
+mod stream_ops;
 mod torrent_state;
 #[cfg(feature = "tracing-subscriber-utils")]
 pub mod tracing_subscriber_config_utils;
@@ -80,6 +81,7 @@ pub use session::{
     SessionPersistenceConfig, SUPPORTED_SCHEMES,
 };
 pub use spawn_utils::spawn as librqbit_spawn;
+pub use stream_ops::StreamOptions;
 pub use torrent_state::{
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentStats, TorrentStatsState,
 };
