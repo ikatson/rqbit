@@ -36,6 +36,27 @@ enum LogLevel {
     Error,
 }
 
+#[derive(Debug, Clone, ValueEnum)]
+enum LogFormat {
+    Human,
+    Json,
+}
+
+impl Default for LogFormat {
+    fn default() -> Self {
+        LogFormat::Human
+    }
+}
+
+impl From<LogFormat> for librqbit::tracing_subscriber_config_utils::Format {
+    fn from(log_format: LogFormat) -> Self {
+        match log_format {
+            LogFormat::Human => librqbit::tracing_subscriber_config_utils::Format::Human,
+            LogFormat::Json => librqbit::tracing_subscriber_config_utils::Format::Json,
+        }
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 fn parse_umask(value: &str) -> anyhow::Result<libc::mode_t> {
     fn parse_oct_digit(d: u8) -> Option<libc::mode_t> {
@@ -80,6 +101,10 @@ struct Opts {
         env = "RQBIT_LOG_FILE_RUST_LOG"
     )]
     log_file_rust_log: String,
+
+    /// Use structured logging when emitting to stdout
+    #[arg(long = "structured-stdout", default_value_t = false)]
+    structured_stdout: bool,
 
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
@@ -218,6 +243,15 @@ struct Opts {
     #[cfg(feature = "disable-upload")]
     #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
     disable_upload: bool,
+
+    /// Log file and logging to stdout will use the specified format.
+    #[arg(
+        long = "log-format",
+        value_enum,
+        default_value_t = LogFormat::default(),
+        env = "RQBIT_LOG_FORMAT"
+    )]
+    log_format: LogFormat,
 }
 
 #[derive(Parser)]
@@ -425,6 +459,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         }),
         log_file: opts.log_file.as_deref(),
         log_file_rust_log: Some(&opts.log_file_rust_log),
+        format: opts.log_format.into(),
     })?;
 
     match librqbit::try_increase_nofile_limit() {

@@ -49,10 +49,16 @@ impl std::io::Write for Writer {
     }
 }
 
+pub enum Format {
+    Human,
+    Json,
+}
+
 pub struct InitLoggingOptions<'a> {
     pub default_rust_log_value: Option<&'a str>,
     pub log_file: Option<&'a str>,
     pub log_file_rust_log: Option<&'a str>,
+    pub format: Format,
 }
 
 pub struct InitLoggingResult {
@@ -81,7 +87,11 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
 
     let layered = tracing_subscriber::registry()
         // Stderr logging layer.
-        .with(fmt::layer().with_filter(stderr_filter))
+        .with(
+            fmt::layer()
+                .with_filter(stderr_filter)
+                .and_then(if let Format::Json = opts.format { Some(fmt::layer().json())} else { None } ),
+        )
         // HTTP API log broadcast layer.
         .with(
             fmt::layer()
@@ -112,6 +122,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 fmt::layer()
                     .with_ansi(false)
                     .with_writer(log_file)
+                    .and_then(if let Format::Json = opts.format { Some(fmt::layer().json())} else { None } )
                     .with_filter(
                         EnvFilter::builder()
                             .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
