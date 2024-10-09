@@ -90,11 +90,7 @@ impl Magnet {
                 id20,
                 id32,
                 trackers,
-                select_only: if files.is_empty() {
-                    None
-                } else {
-                    Some(files)
-                },
+                select_only: if files.is_empty() { None } else { Some(files) },
             }),
             false => {
                 anyhow::bail!("did not find infohash")
@@ -124,7 +120,7 @@ impl std::fmt::Display for Magnet {
         }
         if let Some(id32) = self.id32 {
             write_ampersand(f)?;
-            write!(f, "xt=xt=urn:btmh:1220{}", id32.as_string(),)?;
+            write!(f, "xt=urn:btmh:1220{}", id32.as_string(),)?;
         }
         for tracker in self.trackers.iter() {
             write_ampersand(f)?;
