@@ -1365,16 +1365,17 @@ impl Session {
     }
 
     pub async fn pause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let mut g = handle.locked.write();
-        let prev = g.paused;
-        g.paused = true;
-        drop(g);
+        let prev_state;
+        {
+            let mut g = handle.locked.write();
+            prev_state = g.paused;
+            g.paused = true;
+        }
 
-        handle.locked.write().paused = true;
         match handle.pause() {
             Ok(()) => {}
             Err(err) => {
-                handle.locked.write().paused = prev;
+                handle.locked.write().paused = prev_state;
                 return Err(err);
             }
         }
