@@ -1365,20 +1365,7 @@ impl Session {
     }
 
     pub async fn pause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let prev_state;
-        {
-            let mut g = handle.locked.write();
-            prev_state = g.paused;
-            g.paused = true;
-        }
-
-        match handle.pause() {
-            Ok(()) => {}
-            Err(err) => {
-                handle.locked.write().paused = prev_state;
-                return Err(err);
-            }
-        }
+        handle.pause().map(|_| handle.locked.write().paused = true)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
