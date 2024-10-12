@@ -1365,8 +1365,19 @@ impl Session {
     }
 
     pub async fn pause(&self, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+        let mut g = handle.locked.write();
+        let prev = g.paused;
+        g.paused = true;
+        drop(g);
+
         handle.locked.write().paused = true;
-        handle.pause()?;
+        match handle.pause() {
+            Ok(()) => {}
+            Err(err) => {
+                handle.locked.write().paused = prev;
+                return Err(err);
+            }
+        }
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
