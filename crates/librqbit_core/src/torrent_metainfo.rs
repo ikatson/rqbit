@@ -181,7 +181,7 @@ where
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct FileDetailsAttrs {
     pub symlink: bool,
     pub hidden: bool,

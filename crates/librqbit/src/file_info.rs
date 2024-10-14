@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
+use librqbit_core::torrent_metainfo::FileDetailsAttrs;
+
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub relative_filename: PathBuf,
     pub offset_in_torrent: u64,
     pub piece_range: std::ops::Range<u32>,
+    pub attrs: FileDetailsAttrs,
     pub len: u64,
 }
 

@@ -1149,6 +1149,7 @@ impl Session {
                         offset_in_torrent: fd.offset,
                         piece_range: fd.pieces,
                         len: fd.details.len,
+                        attrs: fd.details.attrs(),
                     })
                 })
                 .collect::<anyhow::Result<Vec<FileInfo>>>()?;
