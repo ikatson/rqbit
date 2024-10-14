@@ -245,6 +245,9 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
+                    if fi.attrs.padding {
+                        continue;
+                    }
                     if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
