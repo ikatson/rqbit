@@ -154,6 +154,7 @@ impl TorrentStorage for FilesystemStorage {
         for file_details in meta.info.iter_file_details_ext(&meta.lengths)? {
             let mut full_path = self.output_folder.clone();
             let relative_path = file_details
+                .details
                 .filename
                 .to_pathbuf()
                 .context("error converting file to path")?;

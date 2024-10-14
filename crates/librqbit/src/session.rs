@@ -1144,10 +1144,10 @@ impl Session {
                 .iter_file_details_ext(&lengths)?
                 .map(|fd| {
                     Ok::<_, anyhow::Error>(FileInfo {
-                        relative_filename: fd.filename.to_pathbuf()?,
-                        offset_in_torrent: fd.offset,
+                        relative_filename: fd.details.filename.to_pathbuf()?,
+                        offset_in_torrent: fd.details.offset,
                         piece_range: fd.pieces,
-                        len: fd.len,
+                        len: fd.details.len,
                     })
                 })
                 .collect::<anyhow::Result<Vec<FileInfo>>>()?;
