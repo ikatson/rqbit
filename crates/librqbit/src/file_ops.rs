@@ -181,8 +181,8 @@ impl<'a> FileOps<'a> {
 
         let mut piece_remaining_bytes = piece_length as usize;
 
-        for (file_idx, file_details) in self.torrent.iter_file_details()?.enumerate() {
-            let file_len = file_details.len;
+        for (file_idx, fi) in self.file_infos.iter().enumerate() {
+            let file_len = fi.len;
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -208,7 +208,7 @@ impl<'a> FileOps<'a> {
             .with_context(|| {
                 format!(
                     "error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{:?}\")",
-                    file_details.filename
+                    fi.relative_filename
                 )
             })?;
 
@@ -250,7 +250,7 @@ impl<'a> FileOps<'a> {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
         let mut buf = result_buf;
 
-        for (file_idx, file_len) in self.torrent.iter_file_lengths()?.enumerate() {
+        for (file_idx, file_len) in self.file_infos.iter().map(|d| d.len).enumerate() {
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -296,8 +296,8 @@ impl<'a> FileOps<'a> {
         let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
 
-        for (file_idx, file_details) in self.torrent.iter_file_details()?.enumerate() {
-            let file_len = file_details.len;
+        for (file_idx, file_info) in self.file_infos.iter().enumerate() {
+            let file_len = file_info.len;
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -321,7 +321,7 @@ impl<'a> FileOps<'a> {
                 .with_context(|| {
                     format!(
                         "error writing to file {file_idx} (\"{:?}\")",
-                        file_details.filename
+                        file_info.relative_filename
                     )
                 })?;
             buf = &buf[to_write..];
