@@ -124,7 +124,13 @@ async fn create_torrent_raw<'a>(
                     .components()
                     .map(|c| osstr_to_bytes(c.as_os_str()).into())
                     .collect();
-                output_files.push(TorrentMetaV1File { length, path });
+                output_files.push(TorrentMetaV1File {
+                    length,
+                    path,
+                    attr: None,
+                    sha1: None,
+                    symlink_path: None,
+                });
                 continue 'outer;
             }
 
@@ -154,6 +160,9 @@ async fn create_torrent_raw<'a>(
         } else {
             Some(output_files)
         },
+        attr: None,
+        sha1: None,
+        symlink_path: None,
     })
 }
 

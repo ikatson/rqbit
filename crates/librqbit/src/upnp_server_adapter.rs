@@ -402,9 +402,15 @@ mod tests {
                         .map(|f| TorrentMetaV1File {
                             length: 1,
                             path: f.split("/").map(|f| f.as_bytes().into()).collect(),
+                            attr: None,
+                            sha1: None,
+                            symlink_path: None,
                         })
                         .collect(),
                 ),
+                attr: None,
+                sha1: None,
+                symlink_path: None,
             },
             comment: None,
             created_by: None,
