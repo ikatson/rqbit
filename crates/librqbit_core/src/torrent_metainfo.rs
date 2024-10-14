@@ -99,6 +99,12 @@ pub struct TorrentMetaV1Info<BufType> {
     // Single-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
+    #[serde(default = "none")]
+    pub attr: Option<BufType>,
+    #[serde(default = "none")]
+    pub sha1: Option<BufType>,
+    #[serde(default = "none", rename = "symlink path")]
+    pub symlink_path: Option<Vec<BufType>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub md5sum: Option<BufType>,
@@ -253,10 +259,21 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     }
 }
 
+const fn none<T>() -> Option<T> {
+    None
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
+
+    #[serde(default = "none")]
+    pub attr: Option<BufType>,
+    #[serde(default = "none")]
+    pub sha1: Option<BufType>,
+    #[serde(default = "none", rename = "symlink path")]
+    pub symlink_path: Option<Vec<BufType>>,
 }
 
 impl<BufType> TorrentMetaV1File<BufType>
@@ -282,6 +299,9 @@ where
         TorrentMetaV1File {
             length: self.length,
             path: self.path.clone_to_owned(within_buffer),
+            attr: self.attr.clone_to_owned(within_buffer),
+            sha1: self.sha1.clone_to_owned(within_buffer),
+            symlink_path: self.symlink_path.clone_to_owned(within_buffer),
         }
     }
 }
@@ -300,6 +320,9 @@ where
             length: self.length,
             md5sum: self.md5sum.clone_to_owned(within_buffer),
             files: self.files.clone_to_owned(within_buffer),
+            attr: self.attr.clone_to_owned(within_buffer),
+            sha1: self.sha1.clone_to_owned(within_buffer),
+            symlink_path: self.symlink_path.clone_to_owned(within_buffer),
         }
     }
 }
