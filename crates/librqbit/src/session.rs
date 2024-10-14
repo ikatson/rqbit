@@ -1141,7 +1141,7 @@ impl Session {
 
             let lengths = Lengths::from_torrent(&info)?;
             let file_infos = info
-                .iter_file_details(&lengths)?
+                .iter_file_details_ext(&lengths)?
                 .map(|fd| {
                     Ok::<_, anyhow::Error>(FileInfo {
                         relative_filename: fd.filename.to_pathbuf()?,

@@ -151,7 +151,7 @@ impl TorrentStorage for FilesystemStorage {
 
     fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         let mut files = Vec::<OpenedFile>::new();
-        for file_details in meta.info.iter_file_details(&meta.lengths)? {
+        for file_details in meta.info.iter_file_details_ext(&meta.lengths)? {
             let mut full_path = self.output_folder.clone();
             let relative_path = file_details
                 .filename
