@@ -21,6 +21,7 @@ use crate::{
 
 pub fn update_hash_from_file<Sha1: ISha1>(
     file_id: usize,
+    file_info: &FileInfo,
     mut pos: u64,
     files: &dyn TorrentStorage,
     hash: &mut Sha1,
@@ -30,9 +31,15 @@ pub fn update_hash_from_file<Sha1: ISha1>(
     let mut read = 0;
     while bytes_to_read > 0 {
         let chunk = std::cmp::min(buf.len(), bytes_to_read);
-        files
-            .pread_exact(file_id, pos, &mut buf[..chunk])
-            .with_context(|| format!("failed reading chunk of size {chunk}, read so far {read}"))?;
+        if file_info.attrs.padding {
+            buf[..chunk].fill(0);
+        } else {
+            files
+                .pread_exact(file_id, pos, &mut buf[..chunk])
+                .with_context(|| {
+                    format!("failed reading chunk of size {chunk}, read so far {read}")
+                })?;
+        }
         bytes_to_read -= chunk;
         read += chunk;
         pos += chunk as u64;
@@ -138,6 +145,7 @@ impl<'a> FileOps<'a> {
 
                 if let Err(err) = update_hash_from_file(
                     current_file.index,
+                    current_file.fi,
                     pos,
                     self.files,
                     &mut computed_hash,
@@ -199,6 +207,7 @@ impl<'a> FileOps<'a> {
             );
             update_hash_from_file(
                 file_idx,
+                fi,
                 absolute_offset,
                 self.files,
                 &mut h,
@@ -250,7 +259,8 @@ impl<'a> FileOps<'a> {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
         let mut buf = result_buf;
 
-        for (file_idx, file_len) in self.file_infos.iter().map(|d| d.len).enumerate() {
+        for (file_idx, file_info) in self.file_infos.iter().enumerate() {
+            let file_len = file_info.len;
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -266,11 +276,15 @@ impl<'a> FileOps<'a> {
                 absolute_offset,
                 &chunk_info
             );
-            self.files
-                .pread_exact(file_idx, absolute_offset, &mut buf[..to_read_in_file])
-                .with_context(|| {
-                    format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
-                })?;
+            if file_info.attrs.padding {
+                buf[..to_read_in_file].fill(0);
+            } else {
+                self.files
+                    .pread_exact(file_idx, absolute_offset, &mut buf[..to_read_in_file])
+                    .with_context(|| {
+                        format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
+                    })?;
+            }
 
             buf = &mut buf[to_read_in_file..];
 
@@ -316,14 +330,16 @@ impl<'a> FileOps<'a> {
                 to_write,
                 absolute_offset
             );
-            self.files
-                .pwrite_all(file_idx, absolute_offset, &buf[..to_write])
-                .with_context(|| {
-                    format!(
-                        "error writing to file {file_idx} (\"{:?}\")",
-                        file_info.relative_filename
-                    )
-                })?;
+            if !file_info.attrs.padding {
+                self.files
+                    .pwrite_all(file_idx, absolute_offset, &buf[..to_write])
+                    .with_context(|| {
+                        format!(
+                            "error writing to file {file_idx} (\"{:?}\")",
+                            file_info.relative_filename
+                        )
+                    })?;
+            }
             buf = &buf[to_write..];
             if buf.is_empty() {
                 break;
