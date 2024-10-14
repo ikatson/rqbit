@@ -6,6 +6,7 @@ use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use std::{iter::once, path::PathBuf};
+use tracing::debug;
 
 use crate::{hash_id::Id20, lengths::Lengths};
 
@@ -180,14 +181,45 @@ where
     }
 }
 
+#[derive(Default)]
+pub struct FileDetailsAttrs {
+    pub symlink: bool,
+    pub hidden: bool,
+    pub padding: bool,
+    pub executable: bool,
+}
+
 pub struct FileDetails<'a, BufType> {
     pub filename: FileIteratorName<'a, BufType>,
     pub len: u64,
 
     // bep-47
-    pub attr: Option<&'a BufType>,
+    attr: Option<&'a BufType>,
     pub sha1: Option<&'a BufType>,
     pub symlink_path: Option<&'a [BufType]>,
+}
+
+impl<'a, BufType> FileDetails<'a, BufType>
+where
+    BufType: AsRef<[u8]>,
+{
+    pub fn attrs(&self) -> FileDetailsAttrs {
+        let attrs = match self.attr {
+            Some(attrs) => attrs,
+            None => return FileDetailsAttrs::default(),
+        };
+        let mut result = FileDetailsAttrs::default();
+        for byte in attrs.as_ref().iter().copied() {
+            match byte {
+                b'l' => result.symlink = true,
+                b'h' => result.hidden = true,
+                b'p' => result.padding = true,
+                b'x' => result.executable = true,
+                other => debug!(attr = other, "unknown file attribute"),
+            }
+        }
+        result
+    }
 }
 
 pub struct FileDetailsExt<'a, BufType> {
