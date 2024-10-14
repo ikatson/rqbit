@@ -182,18 +182,19 @@ where
 
 pub struct FileDetails<'a, BufType> {
     pub filename: FileIteratorName<'a, BufType>,
-    // absolute offset in torrent if it was a flat blob of bytes
-    pub offset: u64,
     pub len: u64,
 
     // bep-47
-    pub attr: Option<BufType>,
-    pub sha1: Option<BufType>,
-    pub symlink_path: Option<Vec<BufType>>,
+    pub attr: Option<&'a BufType>,
+    pub sha1: Option<&'a BufType>,
+    pub symlink_path: Option<&'a [BufType]>,
 }
 
 pub struct FileDetailsExt<'a, BufType> {
     pub details: FileDetails<'a, BufType>,
+    // absolute offset in torrent if it was a flat blob of bytes
+    pub offset: u64,
+
     // the pieces that contain this file
     pub pieces: std::ops::Range<u32>,
 }
@@ -220,33 +221,38 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     }
 
     #[inline(never)]
-    pub fn iter_filenames_and_lengths(
+    pub fn iter_file_details(
         &self,
-    ) -> anyhow::Result<impl Iterator<Item = (FileIteratorName<'_, BufType>, u64)>> {
+    ) -> anyhow::Result<impl Iterator<Item = FileDetails<'_, BufType>>> {
         match (self.length, self.files.as_ref()) {
             // Single-file
-            (Some(length), None) => Ok(Either::Left(once((
-                FileIteratorName::Single(self.name.as_ref()),
-                length,
-            )))),
+            (Some(length), None) => Ok(Either::Left(once(FileDetails {
+                filename: FileIteratorName::Single(self.name.as_ref()),
+                len: length,
+                attr: self.attr.as_ref(),
+                sha1: self.sha1.as_ref(),
+                symlink_path: self.symlink_path.as_deref(),
+            }))),
 
             // Multi-file
             (None, Some(files)) => {
                 if files.is_empty() {
                     anyhow::bail!("expected multi-file torrent to have at least one file")
                 }
-                Ok(Either::Right(
-                    files
-                        .iter()
-                        .map(|f| (FileIteratorName::Tree(&f.path), f.length)),
-                ))
+                Ok(Either::Right(files.iter().map(|f| FileDetails {
+                    filename: FileIteratorName::Tree(&f.path),
+                    len: f.length,
+                    attr: f.attr.as_ref(),
+                    sha1: f.sha1.as_ref(),
+                    symlink_path: f.symlink_path.as_deref(),
+                })))
             }
             _ => anyhow::bail!("torrent can't be both in single and multi-file mode"),
         }
     }
 
     pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
-        Ok(self.iter_filenames_and_lengths()?.map(|(_, l)| l))
+        Ok(self.iter_file_details()?.map(|d| d.len))
     }
 
     // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
@@ -255,23 +261,15 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         &'a self,
         lengths: &'a Lengths,
     ) -> anyhow::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
-        Ok(self
-            .iter_filenames_and_lengths()?
-            .scan(0u64, |acc_offset, (filename, len)| {
-                let offset = *acc_offset;
-                *acc_offset += len;
-                Some(FileDetailsExt {
-                    details: FileDetails {
-                        filename,
-                        offset,
-                        len,
-                        attr: None,
-                        sha1: None,
-                        symlink_path: None,
-                    },
-                    pieces: lengths.iter_pieces_within_offset(offset, len),
-                })
-            }))
+        Ok(self.iter_file_details()?.scan(0u64, |acc_offset, details| {
+            let offset = *acc_offset;
+            *acc_offset += details.len;
+            Some(FileDetailsExt {
+                pieces: lengths.iter_pieces_within_offset(offset, details.len),
+                details,
+                offset,
+            })
+        }))
     }
 }
 

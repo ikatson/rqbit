@@ -181,7 +181,8 @@ impl<'a> FileOps<'a> {
 
         let mut piece_remaining_bytes = piece_length as usize;
 
-        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths()?.enumerate() {
+        for (file_idx, file_details) in self.torrent.iter_file_details()?.enumerate() {
+            let file_len = file_details.len;
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -205,7 +206,10 @@ impl<'a> FileOps<'a> {
                 to_read_in_file,
             )
             .with_context(|| {
-                format!("error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{name:?}\")")
+                format!(
+                    "error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{:?}\")",
+                    file_details.filename
+                )
             })?;
 
             piece_remaining_bytes -= to_read_in_file;
@@ -292,7 +296,8 @@ impl<'a> FileOps<'a> {
         let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
 
-        for (file_idx, (name, file_len)) in self.torrent.iter_filenames_and_lengths()?.enumerate() {
+        for (file_idx, file_details) in self.torrent.iter_file_details()?.enumerate() {
+            let file_len = file_details.len;
             if absolute_offset > file_len {
                 absolute_offset -= file_len;
                 continue;
@@ -313,7 +318,12 @@ impl<'a> FileOps<'a> {
             );
             self.files
                 .pwrite_all(file_idx, absolute_offset, &buf[..to_write])
-                .with_context(|| format!("error writing to file {file_idx} (\"{name:?}\")"))?;
+                .with_context(|| {
+                    format!(
+                        "error writing to file {file_idx} (\"{:?}\")",
+                        file_details.filename
+                    )
+                })?;
             buf = &buf[to_write..];
             if buf.is_empty() {
                 break;

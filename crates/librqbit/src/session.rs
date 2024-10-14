@@ -156,8 +156,9 @@ fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
 ) -> anyhow::Result<Vec<usize>> {
     let filename_re = regex::Regex::new(filename_re).context("filename regex is incorrect")?;
     let mut only_files = Vec::new();
-    for (idx, (filename, _)) in torrent.iter_filenames_and_lengths()?.enumerate() {
-        let full_path = filename
+    for (idx, fd) in torrent.iter_file_details()?.enumerate() {
+        let full_path = fd
+            .filename
             .to_pathbuf()
             .with_context(|| format!("filename of file {idx} is not valid utf8"))?;
         if filename_re.is_match(full_path.to_str().unwrap()) {
@@ -191,12 +192,12 @@ fn compute_only_files(
         }
         (None, Some(filename_re)) => {
             let only_files = compute_only_files_regex(info, &filename_re)?;
-            for (idx, (filename, _)) in info.iter_filenames_and_lengths()?.enumerate() {
+            for (idx, fd) in info.iter_file_details()?.enumerate() {
                 if !only_files.contains(&idx) {
                     continue;
                 }
                 if !list_only {
-                    info!(?filename, "will download");
+                    info!(filename=?fd.filename, "will download");
                 }
             }
             Ok(Some(only_files))
@@ -1043,8 +1044,8 @@ impl Session {
         info: &TorrentMetaV1Info<ByteBufOwned>,
     ) -> anyhow::Result<Option<PathBuf>> {
         let files = info
-            .iter_filenames_and_lengths()?
-            .map(|(f, l)| Ok((f.to_pathbuf()?, l)))
+            .iter_file_details()?
+            .map(|fd| Ok((fd.filename.to_pathbuf()?, fd.len)))
             .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
         if files.len() < 2 {
             return Ok(None);
@@ -1145,7 +1146,7 @@ impl Session {
                 .map(|fd| {
                     Ok::<_, anyhow::Error>(FileInfo {
                         relative_filename: fd.details.filename.to_pathbuf()?,
-                        offset_in_torrent: fd.details.offset,
+                        offset_in_torrent: fd.offset,
                         piece_range: fd.pieces,
                         len: fd.details.len,
                     })

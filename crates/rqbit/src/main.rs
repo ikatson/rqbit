@@ -762,17 +762,15 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                                 only_files,
                                 ..
                             }) => {
-                                for (idx, (filename, len)) in
-                                    info.iter_filenames_and_lengths()?.enumerate()
-                                {
+                                for (idx, fd) in info.iter_file_details()?.enumerate() {
                                     let included = match &only_files {
                                         Some(files) => files.contains(&idx),
                                         None => true,
                                     };
                                     info!(
-                                        "File {}, size {}{}",
-                                        filename.to_string()?,
-                                        SF::new(len),
+                                        "File {:?}, size {}{}",
+                                        fd.filename,
+                                        SF::new(fd.len),
                                         if included { "" } else { ", will skip" }
                                     )
                                 }

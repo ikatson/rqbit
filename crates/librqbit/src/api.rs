@@ -533,23 +533,23 @@ fn make_torrent_details(
     output_folder: String,
 ) -> Result<TorrentDetailsResponse> {
     let files = info
-        .iter_filenames_and_lengths()
+        .iter_file_details()
         .context("error iterating filenames and lengths")?
         .enumerate()
-        .map(|(idx, (filename_it, length))| {
-            let name = match filename_it.to_string() {
+        .map(|(idx, d)| {
+            let name = match d.filename.to_string() {
                 Ok(s) => s,
                 Err(err) => {
                     warn!("error reading filename: {:?}", err);
                     "<INVALID NAME>".to_string()
                 }
             };
-            let components = filename_it.to_vec().unwrap_or_default();
+            let components = d.filename.to_vec().unwrap_or_default();
             let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
             TorrentDetailsResponseFile {
                 name,
                 components,
-                length,
+                length: d.len,
                 included,
             }
         })
@@ -568,10 +568,11 @@ fn torrent_file_mime_type(
     info: &TorrentMetaV1Info<ByteBufOwned>,
     file_idx: usize,
 ) -> Result<&'static str> {
-    info.iter_filenames_and_lengths()?
+    info.iter_file_details()?
         .nth(file_idx)
-        .and_then(|(f, _)| {
-            f.iter_components()
+        .and_then(|d| {
+            d.filename
+                .iter_components()
                 .last()
                 .and_then(|r| r.ok())
                 .and_then(|s| mime_guess::from_path(s).first_raw())
