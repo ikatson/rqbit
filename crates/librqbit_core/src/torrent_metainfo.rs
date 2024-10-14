@@ -182,12 +182,23 @@ where
 
 pub struct FileDetails<'a, BufType> {
     pub filename: FileIteratorName<'a, BufType>,
+    // absolute offset in torrent if it was a flat blob of bytes
     pub offset: u64,
     pub len: u64,
+
+    // bep-47
+    pub attr: Option<BufType>,
+    pub sha1: Option<BufType>,
+    pub symlink_path: Option<Vec<BufType>>,
+}
+
+pub struct FileDetailsExt<'a, BufType> {
+    pub details: FileDetails<'a, BufType>,
+    // the pieces that contain this file
     pub pieces: std::ops::Range<u32>,
 }
 
-impl<'a, BufType> FileDetails<'a, BufType> {
+impl<'a, BufType> FileDetailsExt<'a, BufType> {
     pub fn pieces_usize(&self) -> std::ops::Range<usize> {
         self.pieces.start as usize..self.pieces.end as usize
     }
@@ -243,17 +254,22 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn iter_file_details_ext<'a>(
         &'a self,
         lengths: &'a Lengths,
-    ) -> anyhow::Result<impl Iterator<Item = FileDetails<'a, BufType>> + 'a> {
+    ) -> anyhow::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
         Ok(self
             .iter_filenames_and_lengths()?
             .scan(0u64, |acc_offset, (filename, len)| {
                 let offset = *acc_offset;
                 *acc_offset += len;
-                Some(FileDetails {
-                    filename,
+                Some(FileDetailsExt {
+                    details: FileDetails {
+                        filename,
+                        offset,
+                        len,
+                        attr: None,
+                        sha1: None,
+                        symlink_path: None,
+                    },
                     pieces: lengths.iter_pieces_within_offset(offset, len),
-                    offset,
-                    len,
                 })
             }))
     }
