@@ -240,7 +240,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
 
     // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
     // the yielded results will be garbage.
-    pub fn iter_file_details<'a>(
+    pub fn iter_file_details_ext<'a>(
         &'a self,
         lengths: &'a Lengths,
     ) -> anyhow::Result<impl Iterator<Item = FileDetails<'a, BufType>> + 'a> {
