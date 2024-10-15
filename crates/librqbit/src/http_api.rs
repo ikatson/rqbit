@@ -604,6 +604,7 @@ impl HttpApi {
                         if let Some(ConnectInfo(addr)) =
                             req.extensions().get::<ConnectInfo<SocketAddr>>()
                         {
+                            let addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
                             error_span!("request", %method, %uri, %addr)
                         } else {
                             error_span!("request", %method, %uri)
