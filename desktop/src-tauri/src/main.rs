@@ -20,7 +20,7 @@ use librqbit::{
     },
     dht::PersistentDhtConfig,
     session_stats::snapshot::SessionStatsSnapshot,
-    tracing_subscriber_config_utils::{init_logging, InitLoggingOptions, InitLoggingResult},
+    tracing_subscriber_config_utils::{self, init_logging, InitLoggingOptions, InitLoggingResult},
     AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
     SessionPersistenceConfig,
 };
@@ -381,6 +381,7 @@ async fn start() {
         default_rust_log_value: Some("info"),
         log_file: None,
         log_file_rust_log: None,
+        format: tracing_subscriber_config_utils::Format::Human,
     })
     .unwrap();
 
