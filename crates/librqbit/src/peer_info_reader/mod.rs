@@ -45,6 +45,8 @@ pub(crate) async fn read_metainfo_from_peer(
         result_tx: Mutex::new(Some(result_tx)),
         locked: RwLock::new(None),
     };
+
+    let (_, rx) = tokio::sync::watch::channel(true);
     let connection = PeerConnection::new(
         addr,
         info_hash,
@@ -53,6 +55,7 @@ pub(crate) async fn read_metainfo_from_peer(
         peer_connection_options,
         spawner,
         connector,
+        rx,
     );
 
     let result_reader = async move { result_rx.await? };

@@ -20,7 +20,8 @@ use crate::{
     session_stats::SessionStats,
     spawn_utils::BlockingSpawner,
     storage::{
-        filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
+        filesystem::FilesystemStorageFactory, BoxStorageFactory, MemoryWatcherStorage,
+        StorageFactoryExt, TorrentStorage,
     },
     stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
@@ -702,6 +703,7 @@ impl Session {
             }
 
             session.start_speed_estimator_updater();
+            session.start_memory_usage_updater();
 
             Ok(session)
         }
@@ -834,6 +836,53 @@ impl Session {
 
     pub(crate) fn rs(&self) -> Option<tracing::Id> {
         self.root_span.as_ref().and_then(|s| s.id())
+    }
+
+    pub(crate) fn start_memory_usage_updater(self: &Arc<Self>) {
+        self.spawn(error_span!(parent: self.rs(), "memory_usage"), {
+            let s = Arc::downgrade(self);
+
+            async move {
+                let mut poll_interval = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    poll_interval.tick().await;
+                    // Check memory usage here
+                    let s = s.upgrade().context("session is dead")?;
+
+                    let r = s.db.read();
+
+                    let max_size = 100 * 1024 * 1024;
+
+                    for v in r.torrents.values() {
+                        if let Some(t) = v.live() {
+                            if t.files.get_current_memory_size() > max_size {
+                                println!(
+                                    "TOO MUCH MEMORY, PAUSING {}: {}/{} = {} %",
+                                    v.id(),
+                                    t.files.get_current_memory_size(),
+                                    max_size,
+                                    (t.files.get_current_memory_size() as f32 / (max_size as f32)
+                                        * 100.0) as usize
+                                );
+                                // TODO: ADD SEND !
+                                // if let Err(e) = t.read_controller_tx.send(false) {
+                                //     println!("{}", e);
+                                // }
+                            } else {
+                                println!(
+                                    "Torrent {} is OK: {}/{} = {} %",
+                                    v.id(),
+                                    t.files.get_current_memory_size(),
+                                    max_size,
+                                    (t.files.get_current_memory_size() as f32 / (max_size as f32)
+                                        * 100.0) as usize
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Stop the session and all managed tasks.
@@ -1184,9 +1233,10 @@ impl Session {
             let initializing = Arc::new(TorrentStateInitializing::new(
                 minfo.clone(),
                 only_files.clone(),
-                minfo.storage_factory.create_and_init(&minfo)?,
+                MemoryWatcherStorage::new(minfo.storage_factory.create_and_init(&minfo)?),
                 false,
             ));
+            let (tx, rx) = tokio::sync::watch::channel(true);
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
                     paused: opts.paused,
@@ -1195,6 +1245,8 @@ impl Session {
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
+                read_controller_recv: rx,
+                read_controller_send: tx,
             });
 
             g.add_torrent(handle.clone(), id);

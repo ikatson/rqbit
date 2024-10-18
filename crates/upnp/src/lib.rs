@@ -291,9 +291,8 @@ pub async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
     trace!("received from {location}: {response}");
     let root_desc: RootDesc = quick_xml::de::from_str(&response)
         .context("failed to parse response body as xml")
-        .map_err(|e| {
+        .inspect_err(|e| {
             debug!("failed to parse this XML: {response}");
-            e
         })?;
     Ok(root_desc)
 }
