@@ -301,6 +301,10 @@ struct DownloadOpts {
 
     #[arg(long = "initial-peers")]
     initial_peers: Option<InitialPeers>,
+
+
+    #[arg(long = "server-url")]
+    server_url: Option<String>,
 }
 
 #[derive(Clone)]
@@ -634,7 +638,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             if download_opts.torrent_path.is_empty() {
                 anyhow::bail!("you must provide at least one URL to download")
             }
-            let http_api_url = format!("http://{}", opts.http_api_listen_addr);
+            let http_api_url = download_opts.server_url.clone().unwrap_or_else(||  format!("http://{}", opts.http_api_listen_addr));
             let client = http_api_client::HttpApiClient::new(&http_api_url)?;
 
             let torrent_opts = |with_output_folder: bool| AddTorrentOptions {
@@ -662,6 +666,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     false
                 }
             };
+            if !connect_to_existing && download_opts.server_url.is_some() {
+                anyhow::bail!("cannot connect to server at {}", client.base_url());
+                
+            }
             if connect_to_existing {
                 for torrent_url in &download_opts.torrent_path {
                     match client
