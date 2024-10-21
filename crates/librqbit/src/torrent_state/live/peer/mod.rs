@@ -148,6 +148,10 @@ impl PeerStateNoMut {
         }
     }
 
+    pub fn is_live(&self) -> bool {
+        matches!(&self.0, PeerState::Live(_))
+    }
+
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
         match &mut self.0 {
             PeerState::Live(l) => Some(l),
