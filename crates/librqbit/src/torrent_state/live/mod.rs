@@ -69,7 +69,7 @@ use librqbit_core::{
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     extended::{
-        handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex, ExtendedMessage,
+        self, handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex, ExtendedMessage,
     },
     Handshake, Message, MessageOwned, Piece, Request,
 };
@@ -838,6 +838,74 @@ impl TorrentStateLive {
             .take_while(|r| r.is_ok())
             .last();
     }
+
+    async fn task_send_pex_to_peer(
+        self: Arc<Self>,
+        peer_addr: SocketAddr,
+        tx: PeerTx,
+    ) -> anyhow::Result<()> {
+        let mut sent_peers_live: HashSet<SocketAddr> = HashSet::new();
+        const MAX_SENT_PEERS: usize = 50; // As per BEP 11 we should not send more than 50 peers at once (here it also applies to fist message, should be OK as we anyhow really have more)
+        loop {
+            let addrs_live_to_sent = self
+                .peers
+                .states
+                .iter()
+                .filter_map(|e| {
+                    let peer = e.value();
+                    let addr = peer.outgoing_address.as_ref().unwrap_or_else(|| e.key());
+
+                    if *addr != peer_addr {
+                        if peer.state.is_live() && !sent_peers_live.contains(addr) {
+                            Some(*addr)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .take(50) 
+                .collect::<HashSet<_>>();
+
+            let addrs_closed_to_sent = sent_peers_live
+                .iter()
+                .filter(|addr| {
+                    self.peers
+                        .states
+                        .get(addr)
+                        .map(|p| !p.value().state.is_live())
+                        .unwrap_or(true)
+                })
+                .copied()
+                .take(MAX_SENT_PEERS)
+                .collect::<HashSet<_>>();
+
+            // BEP 11 - Dont send closed if they are now in live 
+            // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent, 
+            // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
+
+            if !addrs_live_to_sent.is_empty() || !addrs_closed_to_sent.is_empty() {
+                let pex_msg = extended::ut_pex::UtPex::from_addrs(&addrs_live_to_sent, &addrs_closed_to_sent);
+                let ext_msg = extended::ExtendedMessage::UtPex(pex_msg);
+                let msg = Message::Extended(ext_msg);
+
+                tx.send(WriterRequest::Message(msg))?;
+
+                debug!(peer=?peer_addr, "sending PEX with {} live and {} closed peers", addrs_live_to_sent.len(), addrs_closed_to_sent.len());
+                sent_peers_live.extend(&addrs_live_to_sent);
+                sent_peers_live.retain(|addr| !addrs_closed_to_sent.contains(addr));
+
+
+            }
+
+            tokio::select! {
+                _ = tx.closed() => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_secs(60)) => {},
+
+            }
+        }
+    }
 }
 
 struct PeerHandlerLocked {
@@ -963,8 +1031,17 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
-        if let Some(peer_pex_msg_id) = hs.ut_pex() {
-            trace!("peer supports pex at {peer_pex_msg_id}");
+        if let Some(_peer_pex_msg_id) = hs.ut_pex() {
+            self.state.clone().spawn(
+                error_span!(
+                    parent: self.state.torrent.span.clone(),
+                    "sending_pex_to_peer",
+                    peer = self.addr.to_string()
+                ),
+                self.state
+                    .clone()
+                    .task_send_pex_to_peer(self.addr, self.tx.clone()),
+            );
         }
         // Lets update outgoing Socket address for incoming connection
         if self.incoming {
