@@ -905,7 +905,7 @@ impl TorrentStateLive {
             // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
 
             if !addrs_live_to_sent.is_empty() || !addrs_closed_to_sent.is_empty() {
-                debug!(peer=?peer_addr, "sending PEX with {} live ({:?})and {} closed peers", addrs_live_to_sent.len(), addrs_live_to_sent,addrs_closed_to_sent.len());
+                debug!("sending PEX with {} live ({:?})and {} closed peers", addrs_live_to_sent.len(), addrs_live_to_sent,addrs_closed_to_sent.len());
                 let pex_msg =
                     extended::ut_pex::UtPex::from_addrs(&addrs_live_to_sent, &addrs_closed_to_sent);
                 let ext_msg = extended::ExtendedMessage::UtPex(pex_msg);
@@ -1859,6 +1859,7 @@ impl PeerHandler {
         B: AsRef<[u8]> + std::fmt::Debug,
     {
         // TODO: this is just first attempt at pex - will need more sophistication on adding peers - BEP 40,  check number of live, seen peers ...
+        debug!("received PEX message with {} added peers and {} dropped peers", msg.added_peers().count(), msg.dropped_peers().count());
         msg.dropped_peers()
             .chain(msg.added_peers())
             .for_each(|peer| {
