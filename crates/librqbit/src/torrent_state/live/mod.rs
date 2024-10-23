@@ -846,7 +846,17 @@ impl TorrentStateLive {
     ) -> anyhow::Result<()> {
         let mut sent_peers_live: HashSet<SocketAddr> = HashSet::new();
         const MAX_SENT_PEERS: usize = 50; // As per BEP 11 we should not send more than 50 peers at once (here it also applies to fist message, should be OK as we anyhow really have more)
+        const PEX_MESSAGE_INTERVAL: Duration = Duration::from_secs(60); // As per BEP 11 recommended interval is min 60 seconds
+        let mut delay = Duration::from_secs(10); // Wait 10 seconds before sending the first message to assure that peer will stay with us
+
         loop {
+            tokio::select! {
+                _ = tx.closed() => return Ok(()),
+                _ = tokio::time::sleep(delay) => {},
+
+            }
+            delay = PEX_MESSAGE_INTERVAL;
+
             let addrs_live_to_sent = self
                 .peers
                 .states
@@ -856,7 +866,16 @@ impl TorrentStateLive {
                     let addr = peer.outgoing_address.as_ref().unwrap_or_else(|| e.key());
 
                     if *addr != peer_addr {
-                        if peer.state.is_live() && !sent_peers_live.contains(addr) {
+                        let has_outgoing_connections = peer
+                            .stats
+                            .counters
+                            .outgoing_connections
+                            .load(Ordering::Relaxed)
+                            > 0; // As per BEP 11 share only those we were able to connect
+                        if peer.state.is_live()
+                            && has_outgoing_connections
+                            && !sent_peers_live.contains(addr)
+                        {
                             Some(*addr)
                         } else {
                             None
@@ -865,7 +884,7 @@ impl TorrentStateLive {
                         None
                     }
                 })
-                .take(50) 
+                .take(50)
                 .collect::<HashSet<_>>();
 
             let addrs_closed_to_sent = sent_peers_live
@@ -881,28 +900,21 @@ impl TorrentStateLive {
                 .take(MAX_SENT_PEERS)
                 .collect::<HashSet<_>>();
 
-            // BEP 11 - Dont send closed if they are now in live 
-            // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent, 
+            // BEP 11 - Dont send closed if they are now in live
+            // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent,
             // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
 
             if !addrs_live_to_sent.is_empty() || !addrs_closed_to_sent.is_empty() {
-                let pex_msg = extended::ut_pex::UtPex::from_addrs(&addrs_live_to_sent, &addrs_closed_to_sent);
+                debug!(peer=?peer_addr, "sending PEX with {} live ({:?})and {} closed peers", addrs_live_to_sent.len(), addrs_live_to_sent,addrs_closed_to_sent.len());
+                let pex_msg =
+                    extended::ut_pex::UtPex::from_addrs(&addrs_live_to_sent, &addrs_closed_to_sent);
                 let ext_msg = extended::ExtendedMessage::UtPex(pex_msg);
                 let msg = Message::Extended(ext_msg);
 
-                tx.send(WriterRequest::Message(msg))?;
-
-                debug!(peer=?peer_addr, "sending PEX with {} live and {} closed peers", addrs_live_to_sent.len(), addrs_closed_to_sent.len());
-                sent_peers_live.extend(&addrs_live_to_sent);
-                sent_peers_live.retain(|addr| !addrs_closed_to_sent.contains(addr));
-
-
-            }
-
-            tokio::select! {
-                _ = tx.closed() => return Ok(()),
-                _ = tokio::time::sleep(Duration::from_secs(60)) => {},
-
+                if tx.send(WriterRequest::Message(msg)).is_ok() {
+                    sent_peers_live.extend(&addrs_live_to_sent);
+                    sent_peers_live.retain(|addr| !addrs_closed_to_sent.contains(addr));
+                }
             }
         }
     }
