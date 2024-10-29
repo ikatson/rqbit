@@ -208,7 +208,9 @@ impl Api {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.shared().info_hash;
         let only_files = handle.only_files();
-        make_torrent_details(&info_hash, &handle.shared().info, only_files.as_deref())
+        let output_folder =  handle.shared().options.output_folder.to_string_lossy().into_owned().to_string();
+        make_torrent_details(&info_hash, &handle.shared().info, only_files.as_deref(), output_folder)
+
     }
 
     pub fn api_session_stats(&self) -> SessionStatsSnapshot {
@@ -341,6 +343,7 @@ impl Api {
                     &handle.info_hash(),
                     &handle.shared().info,
                     handle.only_files().as_deref(),
+                    handle.shared().options.output_folder.to_string_lossy().into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -366,14 +369,15 @@ impl Api {
                 id: None,
                 output_folder: output_folder.to_string_lossy().into_owned(),
                 seen_peers: Some(seen_peers),
-                details: make_torrent_details(&info_hash, &info, only_files.as_deref())
+                details: make_torrent_details(&info_hash, &info, only_files.as_deref(), output_folder.to_string_lossy().into_owned().to_string())
                     .context("error making torrent details")?,
             },
             AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
                     &handle.info_hash(),
                     &handle.shared().info,
-                    handle.only_files().as_deref(),
+        handle.only_files().as_deref(),
+     handle.shared().options.output_folder.to_string_lossy().into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -454,6 +458,7 @@ pub struct TorrentDetailsResponse {
     pub info_hash: String,
     pub name: Option<String>,
     pub files: Vec<TorrentDetailsResponseFile>,
+    pub destination_folder: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -468,6 +473,7 @@ fn make_torrent_details(
     info_hash: &Id20,
     info: &TorrentMetaV1Info<ByteBufOwned>,
     only_files: Option<&[usize]>,
+    destination_folder: String,
 ) -> Result<TorrentDetailsResponse> {
     let files = info
         .iter_filenames_and_lengths()
@@ -495,6 +501,7 @@ fn make_torrent_details(
         info_hash: info_hash.as_string(),
         name: info.name.as_ref().map(|b| b.to_string()),
         files,
+        destination_folder,
     })
 }
 
