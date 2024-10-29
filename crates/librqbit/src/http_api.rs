@@ -65,7 +65,6 @@ impl HttpApi {
             axum::Json(serde_json::json!({
                 "apis": {
                     "GET /": "list all available APIs",
-                    "GET /options": "list application configs",
                     "GET /dht/stats": "DHT stats",
                     "GET /dht/table": "DHT routing table",
                     "GET /torrents": "List torrents",

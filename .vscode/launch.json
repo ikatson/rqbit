@@ -10,7 +10,7 @@
              "request": "launch",
              "preLaunchTask": "rust: cargo build",
              "program": "${workspaceRoot}/target/debug/rqbit.exe",
-             "args": ["server", "start", "C:\\Output"],
+             "args": ["server", "start", "./Output"],
              "stopAtEntry": false,
              "cwd": "${workspaceRoot}",
              "environment": [],
