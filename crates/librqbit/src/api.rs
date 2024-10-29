@@ -458,7 +458,7 @@ pub struct TorrentDetailsResponse {
     pub info_hash: String,
     pub name: Option<String>,
     pub files: Vec<TorrentDetailsResponseFile>,
-    pub destination_folder: String,
+    pub output_folder: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -473,7 +473,7 @@ fn make_torrent_details(
     info_hash: &Id20,
     info: &TorrentMetaV1Info<ByteBufOwned>,
     only_files: Option<&[usize]>,
-    destination_folder: String,
+    output_folder: String,
 ) -> Result<TorrentDetailsResponse> {
     let files = info
         .iter_filenames_and_lengths()
@@ -501,7 +501,7 @@ fn make_torrent_details(
         info_hash: info_hash.as_string(),
         name: info.name.as_ref().map(|b| b.to_string()),
         files,
-        destination_folder,
+        output_folder,
     })
 }
 
