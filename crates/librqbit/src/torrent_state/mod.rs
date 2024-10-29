@@ -39,6 +39,7 @@ use crate::chunk_tracker::ChunkTracker;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
+use crate::storage::MemoryWatcherStorage;
 use crate::stream_connect::StreamConnector;
 use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::DiskWorkQueueSender;
@@ -146,6 +147,8 @@ pub struct ManagedTorrent {
     pub shared: Arc<ManagedTorrentShared>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
+    pub(crate) read_controller_send: tokio::sync::watch::Sender<bool>,
+    pub(crate) read_controller_recv: tokio::sync::watch::Receiver<bool>,
 }
 
 impl ManagedTorrent {
@@ -321,6 +324,9 @@ impl ManagedTorrent {
                 let span = self.shared().span.clone();
                 let token = cancellation_token.clone();
 
+                let pause_read_rx = t.read_controller_recv.clone();
+                let pause_write_rx = t.read_controller_send.clone();
+
                 spawn_with_cancel(
                     error_span!(parent: span.clone(), "initialize_and_start"),
                     token.clone(),
@@ -348,7 +354,13 @@ impl ManagedTorrent {
                                 }
 
                                 let (tx, rx) = tokio::sync::oneshot::channel();
-                                let live = TorrentStateLive::new(paused, tx, cancellation_token)?;
+                                let live = TorrentStateLive::new(
+                                    paused,
+                                    tx,
+                                    cancellation_token,
+                                    pause_read_rx,
+                                    pause_write_rx,
+                                )?;
                                 g.state = ManagedTorrentState::Live(live.clone());
                                 drop(g);
 
@@ -371,9 +383,18 @@ impl ManagedTorrent {
                 Ok(())
             }
             ManagedTorrentState::Paused(_) => {
+                let pause_read_rx = self.read_controller_recv.clone();
+                let pause_read_tx = self.read_controller_send.clone();
+
                 let paused = g.state.take().assert_paused();
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                let live = TorrentStateLive::new(paused, tx, cancellation_token.clone())?;
+                let live = TorrentStateLive::new(
+                    paused,
+                    tx,
+                    cancellation_token.clone(),
+                    pause_read_rx,
+                    pause_read_tx,
+                )?;
                 g.state = ManagedTorrentState::Live(live.clone());
                 drop(g);
 
@@ -385,7 +406,9 @@ impl ManagedTorrent {
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.shared.clone(),
                     g.only_files.clone(),
-                    self.shared.storage_factory.create_and_init(self.shared())?,
+                    MemoryWatcherStorage::new(
+                        self.shared.storage_factory.create_and_init(self.shared())?,
+                    ),
                     true,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());

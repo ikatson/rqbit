@@ -15,19 +15,14 @@ use size_format::SizeFormatterBinary as SF;
 use tracing::{info, trace, warn};
 
 use crate::{
-    api::TorrentIdOrHash,
-    bitv::BitV,
-    bitv_factory::BitVFactory,
-    chunk_tracker::ChunkTracker,
-    file_ops::FileOps,
-    type_aliases::{FileStorage, BF},
-    FileInfos,
+    api::TorrentIdOrHash, bitv::BitV, bitv_factory::BitVFactory, chunk_tracker::ChunkTracker,
+    file_ops::FileOps, storage::MemoryWatcherStorage, type_aliases::BF, FileInfos,
 };
 
 use super::{paused::TorrentStatePaused, ManagedTorrentShared};
 
 pub struct TorrentStateInitializing {
-    pub(crate) files: FileStorage,
+    pub(crate) files: MemoryWatcherStorage,
     pub(crate) shared: Arc<ManagedTorrentShared>,
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
@@ -56,7 +51,7 @@ impl TorrentStateInitializing {
     pub fn new(
         meta: Arc<ManagedTorrentShared>,
         only_files: Option<Vec<usize>>,
-        files: FileStorage,
+        files: MemoryWatcherStorage,
         previously_errored: bool,
     ) -> Self {
         Self {
@@ -245,7 +240,7 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
-                    if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
+                    if let Err(err) = self.files.as_storage().ensure_file_length(idx, fi.len) {
                         warn!(
                             "Error setting length for file {:?} to {}: {:#?}",
                             fi.relative_filename, fi.len, err
@@ -265,7 +260,7 @@ impl TorrentStateInitializing {
 
         let paused = TorrentStatePaused {
             shared: self.shared.clone(),
-            files: self.files.take()?,
+            files: self.files.as_storage().take()?,
             chunk_tracker,
             streams: Arc::new(Default::default()),
         };
