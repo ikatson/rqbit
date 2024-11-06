@@ -23,7 +23,7 @@ use crate::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e_download() {
-    wait_until_i_am_the_last_task().await.unwrap();
+    let dbg_srv = spawn_debug_server();
 
     let timeout = std::env::var("E2E_TIMEOUT")
         .ok()
@@ -39,6 +39,8 @@ async fn test_e2e_download() {
     .context("test_e2e_download timed out")
     .unwrap();
 
+    dbg_srv.abort();
+
     // Wait to ensure everything is dropped.
     wait_until_i_am_the_last_task().await.unwrap();
 
@@ -51,8 +53,6 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
         Ok(limit) => info!(limit, "increased ulimit"),
         Err(e) => error!(error=?e, "error increasing ulimit"),
     };
-
-    spawn_debug_server();
 
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.

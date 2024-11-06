@@ -134,8 +134,8 @@ async fn debug_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn spawn_debug_server() {
-    tokio::spawn(debug_server());
+pub fn spawn_debug_server() -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(debug_server())
 }
 
 pub trait DropPlaceholder: Send + Sync {}
