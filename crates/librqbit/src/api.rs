@@ -195,9 +195,20 @@ impl Api {
     pub fn api_torrent_list(&self) -> TorrentListResponse {
         let items = self.session.with_torrents(|torrents| {
             torrents
-                .map(|(id, mgr)| TorrentListResponseItem {
-                    id,
+                .map(|(id, mgr)| TorrentDetailsResponse {
+                    id: Some(id),
                     info_hash: mgr.shared().info_hash.as_string(),
+                    name: mgr.shared().info.name.as_ref().map(|n| n.to_string()),
+                    output_folder: mgr
+                        .shared()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
+
+                    // These will be filled in /details and /stats endpoints
+                    files: None,
+                    stats: None,
                 })
                 .collect()
         });
@@ -216,6 +227,7 @@ impl Api {
             .into_owned()
             .to_string();
         make_torrent_details(
+            Some(handle.id()),
             &info_hash,
             &handle.shared().info,
             only_files.as_deref(),
@@ -350,6 +362,7 @@ impl Api {
         {
             AddTorrentResponse::AlreadyManaged(id, handle) => {
                 let details = make_torrent_details(
+                    Some(id),
                     &handle.info_hash(),
                     &handle.shared().info,
                     handle.only_files().as_deref(),
@@ -385,6 +398,7 @@ impl Api {
                 output_folder: output_folder.to_string_lossy().into_owned(),
                 seen_peers: Some(seen_peers),
                 details: make_torrent_details(
+                    None,
                     &info_hash,
                     &info,
                     only_files.as_deref(),
@@ -394,6 +408,7 @@ impl Api {
             },
             AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
+                    Some(id),
                     &handle.info_hash(),
                     &handle.shared().info,
                     handle.only_files().as_deref(),
@@ -457,14 +472,8 @@ impl Api {
 }
 
 #[derive(Serialize)]
-pub struct TorrentListResponseItem {
-    pub id: usize,
-    pub info_hash: String,
-}
-
-#[derive(Serialize)]
 pub struct TorrentListResponse {
-    pub torrents: Vec<TorrentListResponseItem>,
+    pub torrents: Vec<TorrentDetailsResponse>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -480,10 +489,16 @@ pub struct EmptyJsonResponse {}
 
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<usize>,
     pub info_hash: String,
     pub name: Option<String>,
-    pub files: Vec<TorrentDetailsResponseFile>,
     pub output_folder: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<TorrentDetailsResponseFile>>,
+    #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
+    pub stats: Option<TorrentStats>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -495,6 +510,7 @@ pub struct ApiAddTorrentResponse {
 }
 
 fn make_torrent_details(
+    id: Option<TorrentId>,
     info_hash: &Id20,
     info: &TorrentMetaV1Info<ByteBufOwned>,
     only_files: Option<&[usize]>,
@@ -523,10 +539,12 @@ fn make_torrent_details(
         })
         .collect();
     Ok(TorrentDetailsResponse {
+        id,
         info_hash: info_hash.as_string(),
         name: info.name.as_ref().map(|b| b.to_string()),
-        files,
+        files: Some(files),
         output_folder,
+        stats: None,
     })
 }
 

@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::torrent_state::live::peers::stats::snapshot::AggregatePeerStats;
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct StatsSnapshot {
     pub downloaded_and_checked_bytes: u64,
 
