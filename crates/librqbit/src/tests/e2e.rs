@@ -23,6 +23,8 @@ use crate::{
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e_download() {
+    wait_until_i_am_the_last_task().await.unwrap();
+
     let timeout = std::env::var("E2E_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -38,7 +40,7 @@ async fn test_e2e_download() {
     .unwrap();
 
     // Wait to ensure everything is dropped.
-    wait_until_i_am_the_last_task().await;
+    wait_until_i_am_the_last_task().await.unwrap();
 
     drop_checks.check().unwrap();
 }
