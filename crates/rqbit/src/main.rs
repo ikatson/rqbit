@@ -684,7 +684,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                             if let Some(id) = id {
                                 info!("{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details", details.info_hash, id, http_api_url, id)
                             }
-                            for file in details.files {
+                            for file in details.files.into_iter().flat_map(|i| i.into_iter()) {
                                 info!(
                                     "file {:?}, size {}{}",
                                     file.name,
