@@ -168,6 +168,12 @@ impl TorrentIdOrHash {
     }
 }
 
+#[derive(Deserialize, Default)]
+pub struct ApiTorrentListOpts {
+    #[serde(default)]
+    pub with_stats: bool,
+}
+
 impl Api {
     pub fn new(
         session: Arc<Session>,
@@ -193,22 +199,32 @@ impl Api {
     }
 
     pub fn api_torrent_list(&self) -> TorrentListResponse {
+        self.api_torrent_list_ext(ApiTorrentListOpts { with_stats: false })
+    }
+
+    pub fn api_torrent_list_ext(&self, opts: ApiTorrentListOpts) -> TorrentListResponse {
         let items = self.session.with_torrents(|torrents| {
             torrents
-                .map(|(id, mgr)| TorrentDetailsResponse {
-                    id: Some(id),
-                    info_hash: mgr.shared().info_hash.as_string(),
-                    name: mgr.shared().info.name.as_ref().map(|n| n.to_string()),
-                    output_folder: mgr
-                        .shared()
-                        .options
-                        .output_folder
-                        .to_string_lossy()
-                        .into_owned(),
+                .map(|(id, mgr)| {
+                    let mut r = TorrentDetailsResponse {
+                        id: Some(id),
+                        info_hash: mgr.shared().info_hash.as_string(),
+                        name: mgr.shared().info.name.as_ref().map(|n| n.to_string()),
+                        output_folder: mgr
+                            .shared()
+                            .options
+                            .output_folder
+                            .to_string_lossy()
+                            .into_owned(),
 
-                    // These will be filled in /details and /stats endpoints
-                    files: None,
-                    stats: None,
+                        // These will be filled in /details and /stats endpoints
+                        files: None,
+                        stats: None,
+                    };
+                    if opts.with_stats {
+                        r.stats = Some(mgr.stats());
+                    }
+                    r
                 })
                 .collect()
         });

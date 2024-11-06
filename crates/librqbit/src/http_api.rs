@@ -22,7 +22,7 @@ use tracing::{debug, error_span, trace, Span};
 
 use axum::Router;
 
-use crate::api::{Api, TorrentIdOrHash};
+use crate::api::{Api, ApiTorrentListOpts, TorrentIdOrHash};
 use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
@@ -103,8 +103,11 @@ impl HttpApi {
             axum::Json(state.api_session_stats())
         }
 
-        async fn torrents_list(State(state): State<ApiState>) -> impl IntoResponse {
-            axum::Json(state.api_torrent_list())
+        async fn torrents_list(
+            State(state): State<ApiState>,
+            Query(opts): Query<ApiTorrentListOpts>,
+        ) -> impl IntoResponse {
+            axum::Json(state.api_torrent_list_ext(opts))
         }
 
         async fn torrents_post(
