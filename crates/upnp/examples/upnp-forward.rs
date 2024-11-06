@@ -19,6 +19,5 @@ async fn main() -> anyhow::Result<()> {
 
     let port_forwarder = UpnpPortForwarder::new(vec![port], None)?;
 
-    port_forwarder.run_forever().await;
-    Ok(())
+    port_forwarder.run_forever().await
 }
