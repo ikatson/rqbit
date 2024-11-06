@@ -23,6 +23,8 @@ jobs:
       - run: rustup override set ${{ matrix.rust_version }}
       - name: cargo check
         run: cargo check
+      - name: cargo fmt --check
+        run: cargo fmt --check
   test:
     strategy:
       matrix:

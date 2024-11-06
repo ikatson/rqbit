@@ -208,9 +208,19 @@ impl Api {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.shared().info_hash;
         let only_files = handle.only_files();
-        let output_folder =  handle.shared().options.output_folder.to_string_lossy().into_owned().to_string();
-        make_torrent_details(&info_hash, &handle.shared().info, only_files.as_deref(), output_folder)
-
+        let output_folder = handle
+            .shared()
+            .options
+            .output_folder
+            .to_string_lossy()
+            .into_owned()
+            .to_string();
+        make_torrent_details(
+            &info_hash,
+            &handle.shared().info,
+            only_files.as_deref(),
+            output_folder,
+        )
     }
 
     pub fn api_session_stats(&self) -> SessionStatsSnapshot {
@@ -343,7 +353,12 @@ impl Api {
                     &handle.info_hash(),
                     &handle.shared().info,
                     handle.only_files().as_deref(),
-                    handle.shared().options.output_folder.to_string_lossy().into_owned(),
+                    handle
+                        .shared()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -369,15 +384,25 @@ impl Api {
                 id: None,
                 output_folder: output_folder.to_string_lossy().into_owned(),
                 seen_peers: Some(seen_peers),
-                details: make_torrent_details(&info_hash, &info, only_files.as_deref(), output_folder.to_string_lossy().into_owned().to_string())
-                    .context("error making torrent details")?,
+                details: make_torrent_details(
+                    &info_hash,
+                    &info,
+                    only_files.as_deref(),
+                    output_folder.to_string_lossy().into_owned().to_string(),
+                )
+                .context("error making torrent details")?,
             },
             AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
                     &handle.info_hash(),
                     &handle.shared().info,
-        handle.only_files().as_deref(),
-     handle.shared().options.output_folder.to_string_lossy().into_owned(),
+                    handle.only_files().as_deref(),
+                    handle
+                        .shared()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
