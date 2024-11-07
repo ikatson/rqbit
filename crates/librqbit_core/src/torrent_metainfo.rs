@@ -6,6 +6,7 @@ use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use std::{iter::once, path::PathBuf};
+use tracing::debug;
 
 use crate::{hash_id::Id20, lengths::Lengths};
 
@@ -99,6 +100,16 @@ pub struct TorrentMetaV1Info<BufType> {
     // Single-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
+    pub attr: Option<BufType>,
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
+    pub sha1: Option<BufType>,
+    #[serde(
+        default = "none",
+        rename = "symlink path",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub symlink_path: Option<Vec<BufType>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub md5sum: Option<BufType>,
@@ -174,14 +185,57 @@ where
     }
 }
 
+#[derive(Default, Debug, Clone, Copy)]
+pub struct FileDetailsAttrs {
+    pub symlink: bool,
+    pub hidden: bool,
+    pub padding: bool,
+    pub executable: bool,
+}
+
 pub struct FileDetails<'a, BufType> {
     pub filename: FileIteratorName<'a, BufType>,
-    pub offset: u64,
     pub len: u64,
+
+    // bep-47
+    attr: Option<&'a BufType>,
+    pub sha1: Option<&'a BufType>,
+    pub symlink_path: Option<&'a [BufType]>,
+}
+
+impl<'a, BufType> FileDetails<'a, BufType>
+where
+    BufType: AsRef<[u8]>,
+{
+    pub fn attrs(&self) -> FileDetailsAttrs {
+        let attrs = match self.attr {
+            Some(attrs) => attrs,
+            None => return FileDetailsAttrs::default(),
+        };
+        let mut result = FileDetailsAttrs::default();
+        for byte in attrs.as_ref().iter().copied() {
+            match byte {
+                b'l' => result.symlink = true,
+                b'h' => result.hidden = true,
+                b'p' => result.padding = true,
+                b'x' => result.executable = true,
+                other => debug!(attr = other, "unknown file attribute"),
+            }
+        }
+        result
+    }
+}
+
+pub struct FileDetailsExt<'a, BufType> {
+    pub details: FileDetails<'a, BufType>,
+    // absolute offset in torrent if it was a flat blob of bytes
+    pub offset: u64,
+
+    // the pieces that contain this file
     pub pieces: std::ops::Range<u32>,
 }
 
-impl<'a, BufType> FileDetails<'a, BufType> {
+impl<'a, BufType> FileDetailsExt<'a, BufType> {
     pub fn pieces_usize(&self) -> std::ops::Range<usize> {
         self.pieces.start as usize..self.pieces.end as usize
     }
@@ -203,60 +257,77 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     }
 
     #[inline(never)]
-    pub fn iter_filenames_and_lengths(
+    pub fn iter_file_details(
         &self,
-    ) -> anyhow::Result<impl Iterator<Item = (FileIteratorName<'_, BufType>, u64)>> {
+    ) -> anyhow::Result<impl Iterator<Item = FileDetails<'_, BufType>>> {
         match (self.length, self.files.as_ref()) {
             // Single-file
-            (Some(length), None) => Ok(Either::Left(once((
-                FileIteratorName::Single(self.name.as_ref()),
-                length,
-            )))),
+            (Some(length), None) => Ok(Either::Left(once(FileDetails {
+                filename: FileIteratorName::Single(self.name.as_ref()),
+                len: length,
+                attr: self.attr.as_ref(),
+                sha1: self.sha1.as_ref(),
+                symlink_path: self.symlink_path.as_deref(),
+            }))),
 
             // Multi-file
             (None, Some(files)) => {
                 if files.is_empty() {
                     anyhow::bail!("expected multi-file torrent to have at least one file")
                 }
-                Ok(Either::Right(
-                    files
-                        .iter()
-                        .map(|f| (FileIteratorName::Tree(&f.path), f.length)),
-                ))
+                Ok(Either::Right(files.iter().map(|f| FileDetails {
+                    filename: FileIteratorName::Tree(&f.path),
+                    len: f.length,
+                    attr: f.attr.as_ref(),
+                    sha1: f.sha1.as_ref(),
+                    symlink_path: f.symlink_path.as_deref(),
+                })))
             }
             _ => anyhow::bail!("torrent can't be both in single and multi-file mode"),
         }
     }
 
     pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
-        Ok(self.iter_filenames_and_lengths()?.map(|(_, l)| l))
+        Ok(self.iter_file_details()?.map(|d| d.len))
     }
 
     // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
     // the yielded results will be garbage.
-    pub fn iter_file_details<'a>(
+    pub fn iter_file_details_ext<'a>(
         &'a self,
         lengths: &'a Lengths,
-    ) -> anyhow::Result<impl Iterator<Item = FileDetails<'a, BufType>> + 'a> {
-        Ok(self
-            .iter_filenames_and_lengths()?
-            .scan(0u64, |acc_offset, (filename, len)| {
-                let offset = *acc_offset;
-                *acc_offset += len;
-                Some(FileDetails {
-                    filename,
-                    pieces: lengths.iter_pieces_within_offset(offset, len),
-                    offset,
-                    len,
-                })
-            }))
+    ) -> anyhow::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
+        Ok(self.iter_file_details()?.scan(0u64, |acc_offset, details| {
+            let offset = *acc_offset;
+            *acc_offset += details.len;
+            Some(FileDetailsExt {
+                pieces: lengths.iter_pieces_within_offset(offset, details.len),
+                details,
+                offset,
+            })
+        }))
     }
+}
+
+const fn none<T>() -> Option<T> {
+    None
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
+
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
+    pub attr: Option<BufType>,
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
+    pub sha1: Option<BufType>,
+    #[serde(
+        default = "none",
+        rename = "symlink path",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub symlink_path: Option<Vec<BufType>>,
 }
 
 impl<BufType> TorrentMetaV1File<BufType>
@@ -282,6 +353,9 @@ where
         TorrentMetaV1File {
             length: self.length,
             path: self.path.clone_to_owned(within_buffer),
+            attr: self.attr.clone_to_owned(within_buffer),
+            sha1: self.sha1.clone_to_owned(within_buffer),
+            symlink_path: self.symlink_path.clone_to_owned(within_buffer),
         }
     }
 }
@@ -300,6 +374,9 @@ where
             length: self.length,
             md5sum: self.md5sum.clone_to_owned(within_buffer),
             files: self.files.clone_to_owned(within_buffer),
+            attr: self.attr.clone_to_owned(within_buffer),
+            sha1: self.sha1.clone_to_owned(within_buffer),
+            symlink_path: self.symlink_path.clone_to_owned(within_buffer),
         }
     }
 }

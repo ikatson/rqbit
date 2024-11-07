@@ -151,23 +151,26 @@ impl TorrentStorage for FilesystemStorage {
 
     fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         let mut files = Vec::<OpenedFile>::new();
-        for file_details in meta.info.iter_file_details(&meta.lengths)? {
+        for file_details in meta.file_infos.iter() {
             let mut full_path = self.output_folder.clone();
-            let relative_path = file_details
-                .filename
-                .to_pathbuf()
-                .context("error converting file to path")?;
+            let relative_path = &file_details.relative_filename;
             full_path.push(relative_path);
 
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let file = if meta.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+            let file = if file_details.attrs.padding {
+                OpenedFile::new_dummy()
+            } else if meta.options.allow_overwrite {
+                OpenedFile::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .read(true)
+                        .write(true)
+                        .open(&full_path)
+                        .with_context(|| {
+                            format!("error opening {full_path:?} in read/write mode")
+                        })?,
+                )
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
                 OpenOptions::new()
@@ -180,9 +183,9 @@ impl TorrentStorage for FilesystemStorage {
                             &full_path
                         )
                     })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
+                OpenedFile::new(OpenOptions::new().read(true).write(true).open(&full_path)?)
             };
-            files.push(OpenedFile::new(file));
+            files.push(file);
         }
 
         self.opened_files = files;

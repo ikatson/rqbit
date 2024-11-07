@@ -68,10 +68,10 @@ impl TorrentFileTreeNode {
                 let last_url_bit = torrent
                     .shared()
                     .info
-                    .iter_filenames_and_lengths()
+                    .iter_file_details()
                     .ok()
                     .and_then(|mut it| it.nth(fid))
-                    .and_then(|(fi, _)| fi.to_vec().ok())
+                    .and_then(|fd| fd.filename.to_vec().ok())
                     .map(|components| {
                         components
                             .into_iter()
@@ -111,10 +111,10 @@ struct TorrentFileTree {
 }
 
 fn is_single_file_at_root(info: &TorrentMetaV1Info<ByteBufOwned>) -> bool {
-    info.iter_filenames_and_lengths()
+    info.iter_file_details()
         .into_iter()
         .flatten()
-        .flat_map(|(f, _)| f.iter_components())
+        .flat_map(|fd| fd.filename.iter_components())
         .nth(1)
         .is_none()
 }
@@ -123,10 +123,10 @@ impl TorrentFileTree {
     fn build(torent_id: TorrentId, info: &TorrentMetaV1Info<ByteBufOwned>) -> anyhow::Result<Self> {
         if is_single_file_at_root(info) {
             let filename = info
-                .iter_filenames_and_lengths()?
+                .iter_file_details()?
                 .next()
                 .context("bug")?
-                .0
+                .filename
                 .iter_components()
                 .last()
                 .context("bug")??;
@@ -159,8 +159,8 @@ impl TorrentFileTree {
 
         let mut name_cache = HashMap::new();
 
-        for (fid, (fi, _)) in info.iter_filenames_and_lengths()?.enumerate() {
-            let components = match fi.to_vec() {
+        for (fid, fd) in info.iter_file_details()?.enumerate() {
+            let components = match fd.filename.to_vec() {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -402,9 +402,15 @@ mod tests {
                         .map(|f| TorrentMetaV1File {
                             length: 1,
                             path: f.split("/").map(|f| f.as_bytes().into()).collect(),
+                            attr: None,
+                            sha1: None,
+                            symlink_path: None,
                         })
                         .collect(),
                 ),
+                attr: None,
+                sha1: None,
+                symlink_path: None,
             },
             comment: None,
             created_by: None,
