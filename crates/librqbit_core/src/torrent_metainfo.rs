@@ -185,7 +185,7 @@ where
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone, Copy)]
 pub struct FileDetailsAttrs {
     pub symlink: bool,
     pub hidden: bool,

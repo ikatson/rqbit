@@ -156,21 +156,19 @@ impl TorrentStorage for FilesystemStorage {
             let relative_path = &file_details.relative_filename;
             full_path.push(relative_path);
 
+            if file_details.attrs.padding {
+                files.push(OpenedFile::new_dummy());
+                continue;
+            };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let file = if file_details.attrs.padding {
-                OpenedFile::new_dummy()
-            } else if meta.options.allow_overwrite {
-                OpenedFile::new(
-                    OpenOptions::new()
-                        .create(true)
-                        .truncate(false)
-                        .read(true)
-                        .write(true)
-                        .open(&full_path)
-                        .with_context(|| {
-                            format!("error opening {full_path:?} in read/write mode")
-                        })?,
-                )
+            let f = if meta.options.allow_overwrite {
+                OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(&full_path)
+                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
                 OpenOptions::new()
@@ -183,9 +181,9 @@ impl TorrentStorage for FilesystemStorage {
                             &full_path
                         )
                     })?;
-                OpenedFile::new(OpenOptions::new().read(true).write(true).open(&full_path)?)
+                OpenOptions::new().read(true).write(true).open(&full_path)?
             };
-            files.push(file);
+            files.push(OpenedFile::new(f));
         }
 
         self.opened_files = files;

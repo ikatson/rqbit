@@ -9,6 +9,14 @@ export interface TorrentFile {
   components: string[];
   length: number;
   included: boolean;
+  attributes: TorrentFileAttributes;
+}
+
+export interface TorrentFileAttributes {
+  symlink: boolean;
+  hidden: boolean;
+  padding: boolean;
+  executable: boolean;
 }
 
 // Interface for the Torrent Details API response
