@@ -35,6 +35,16 @@ impl Magnet {
 
     /// Parse a magnet link.
     pub fn parse(url: &str) -> anyhow::Result<Magnet> {
+        if url.len() == 40 {
+            if let Ok(id20) = Id20::from_str(url) {
+                return Ok(Magnet {
+                    id20: Some(id20),
+                    id32: None,
+                    trackers: vec![],
+                    select_only: None,
+                });
+            }
+        }
         let url = url::Url::parse(url).context("magnet link must be a valid URL")?;
         if url.scheme() != "magnet" {
             anyhow::bail!("expected scheme magnet");

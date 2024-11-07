@@ -334,6 +334,9 @@ impl<'a> AddTorrent<'a> {
         if SUPPORTED_SCHEMES.iter().any(|s| path.starts_with(s)) {
             return Ok(Self::Url(Cow::Borrowed(path)));
         }
+        if path.len() == 40 && !Path::new(path).exists() && Magnet::parse(path).is_ok() {
+            return Ok(Self::Url(Cow::Borrowed(path)));
+        }
         Self::from_local_filename(path)
     }
 
@@ -884,7 +887,7 @@ impl Session {
             // So we must discover at least one peer and connect to it to be able to proceed further.
 
             let add_res = match add {
-                AddTorrent::Url(magnet) if magnet.starts_with("magnet:") => {
+                AddTorrent::Url(magnet) if magnet.starts_with("magnet:") || magnet.len() == 40 => {
                     let magnet = Magnet::parse(&magnet)
                         .context("provided path is not a valid magnet URL")?;
                     let info_hash = magnet
