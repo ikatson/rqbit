@@ -4,7 +4,7 @@ use anyhow::Context;
 use buffers::ByteBufOwned;
 use dht::{DhtStats, Id20};
 use http::StatusCode;
-use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
+use librqbit_core::torrent_metainfo::{FileDetailsAttrs, TorrentMetaV1Info};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
@@ -498,6 +498,7 @@ pub struct TorrentDetailsResponseFile {
     pub components: Vec<String>,
     pub length: u64,
     pub included: bool,
+    pub attributes: FileDetailsAttrs,
 }
 
 #[derive(Default, Serialize)]
@@ -551,6 +552,7 @@ fn make_torrent_details(
                 components,
                 length: d.len,
                 included,
+                attributes: d.attrs(),
             }
         })
         .collect();
