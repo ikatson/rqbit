@@ -100,11 +100,15 @@ pub struct TorrentMetaV1Info<BufType> {
     // Single-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
-    #[serde(default = "none")]
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
     pub attr: Option<BufType>,
-    #[serde(default = "none")]
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
     pub sha1: Option<BufType>,
-    #[serde(default = "none", rename = "symlink path")]
+    #[serde(
+        default = "none",
+        rename = "symlink path",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub symlink_path: Option<Vec<BufType>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -314,11 +318,15 @@ pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
 
-    #[serde(default = "none")]
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
     pub attr: Option<BufType>,
-    #[serde(default = "none")]
+    #[serde(default = "none", skip_serializing_if = "Option::is_none")]
     pub sha1: Option<BufType>,
-    #[serde(default = "none", rename = "symlink path")]
+    #[serde(
+        default = "none",
+        rename = "symlink path",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub symlink_path: Option<Vec<BufType>>,
 }
 
