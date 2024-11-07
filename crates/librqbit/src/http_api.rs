@@ -10,6 +10,7 @@ use futures::{FutureExt, TryStreamExt};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use itertools::Itertools;
 
+use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Serialize};
 use std::io::SeekFrom;
 use std::net::SocketAddr;
@@ -118,6 +119,12 @@ impl HttpApi {
             let is_url = params.is_url;
             let opts = params.into_add_torrent_options();
             let data = data.to_vec();
+            let maybe_magnet = |data: &[u8]| -> bool {
+                std::str::from_utf8(data)
+                    .ok()
+                    .and_then(|s| Magnet::parse(s).ok())
+                    .is_some()
+            };
             let add = match is_url {
                 Some(true) => AddTorrent::Url(
                     String::from_utf8(data)
@@ -129,7 +136,8 @@ impl HttpApi {
                 // Guess the format.
                 None if SUPPORTED_SCHEMES
                     .iter()
-                    .any(|s| data.starts_with(s.as_bytes())) =>
+                    .any(|s| data.starts_with(s.as_bytes()))
+                    || maybe_magnet(&data) =>
                 {
                     AddTorrent::Url(
                         String::from_utf8(data)
