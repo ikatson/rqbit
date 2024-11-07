@@ -480,6 +480,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         cancellation_token: Some(cancel.clone()),
         #[cfg(feature = "disable-upload")]
         disable_upload: opts.disable_upload,
+        // TODO: expose
+        ratelimits: Default::default(),
     };
 
     let stats_printer = |session: Arc<Session>| async move {

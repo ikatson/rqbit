@@ -83,6 +83,7 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
     file_ops::FileOps,
+    limits::Limits,
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
@@ -201,6 +202,12 @@ pub struct TorrentStateLive {
 
     pub(crate) streams: Arc<TorrentStreams>,
     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
+
+    ratelimit_upload_tx: tokio::sync::mpsc::UnboundedSender<(
+        tokio::sync::mpsc::UnboundedSender<WriterRequest>,
+        ChunkInfo,
+    )>,
+    ratelimits: Limits,
 }
 
 impl TorrentStateLive {
@@ -238,6 +245,12 @@ impl TorrentStateLive {
 
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
+        let (ratelimit_upload_tx, ratelimit_upload_rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
+            ChunkInfo,
+        )>();
+        let ratelimits = Limits::new(paused.shared.options.ratelimits);
+
         let state = Arc::new(TorrentStateLive {
             torrent: paused.shared.clone(),
             peers: PeerStates {
@@ -272,6 +285,8 @@ impl TorrentStateLive {
             per_piece_locks: (0..lengths.total_pieces())
                 .map(|_| RwLock::new(()))
                 .collect(),
+            ratelimit_upload_tx,
+            ratelimits,
         });
 
         state.spawn(
@@ -303,6 +318,11 @@ impl TorrentStateLive {
         state.spawn(
             error_span!(parent: state.torrent.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
+        );
+
+        state.spawn(
+            error_span!(parent: state.torrent.span.clone(), "upload_scheduler"),
+            state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
         Ok(state)
     }
@@ -385,6 +405,26 @@ impl TorrentStateLive {
                 .clone()
                 .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)),
         );
+        Ok(())
+    }
+
+    async fn task_upload_scheduler(
+        self: Arc<Self>,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<(
+            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
+            ChunkInfo,
+        )>,
+    ) -> anyhow::Result<()> {
+        while let Some((tx, ci)) = rx.recv().await {
+            self.ratelimits.prepare_for_upload(ci.size as usize).await;
+            if let Some(session) = self.torrent.session.upgrade() {
+                session
+                    .ratelimits
+                    .prepare_for_upload(ci.size as usize)
+                    .await;
+            }
+            let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
+        }
         Ok(())
     }
 
@@ -1227,12 +1267,10 @@ impl PeerHandler {
             );
         }
 
-        // TODO: this is not super efficient as it does copying multiple times.
-        // Theoretically, this could be done in the sending code, so that it reads straight into
-        // the send buffer.
-        let request = WriterRequest::ReadChunkRequest(chunk_info);
-        trace!("sending {:?}", &request);
-        Ok::<_, anyhow::Error>(self.tx.send(request)?)
+        self.state
+            .ratelimit_upload_tx
+            .send((self.tx.clone(), chunk_info))?;
+        Ok(())
     }
 
     fn on_have(&self, have: u32) {
@@ -1405,6 +1443,18 @@ impl PeerHandler {
                     // peer died
                     None => return Ok(()),
                 };
+
+                self.state
+                    .ratelimits
+                    .prepare_for_download(request.length as usize)
+                    .await;
+
+                if let Some(session) = self.state.torrent().session.upgrade() {
+                    session
+                        .ratelimits
+                        .prepare_for_download(request.length as usize)
+                        .await;
+                }
 
                 loop {
                     match aframe!(tokio::time::timeout(

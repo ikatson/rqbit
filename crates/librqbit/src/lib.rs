@@ -51,6 +51,7 @@ mod file_ops;
 pub mod http_api;
 #[cfg(feature = "http-api")]
 pub mod http_api_client;
+mod limits;
 mod merge_streams;
 mod peer_connection;
 mod peer_info_reader;

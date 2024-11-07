@@ -36,6 +36,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
+use crate::limits::LimitsConfig;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
@@ -103,6 +104,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub disk_write_queue: Option<DiskWorkQueueSender>,
+    pub ratelimits: LimitsConfig,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

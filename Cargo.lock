@@ -2593,6 +2593,7 @@ dependencies = [
  "hex 0.4.3",
  "http",
  "itertools 0.13.0",
+ "leaky-bucket",
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
