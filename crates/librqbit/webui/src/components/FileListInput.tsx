@@ -73,15 +73,20 @@ const newFileTree = (
   return newFileTreeInner(
     "",
     "filetree-root",
-    torrentDetails.files.map((file, id) => {
-      return {
-        id,
-        filename: file.components[file.components.length - 1],
-        pathComponents: file.components,
-        length: file.length,
-        have_bytes: stats ? stats.file_progress[id] ?? 0 : 0,
-      };
-    }),
+    torrentDetails.files
+      .map((file, id) => {
+        if (file.attributes.padding) {
+          return null;
+        }
+        return {
+          id,
+          filename: file.components[file.components.length - 1],
+          pathComponents: file.components,
+          length: file.length,
+          have_bytes: stats ? (stats.file_progress[id] ?? 0) : 0,
+        };
+      })
+      .filter((f) => f !== null),
     0,
   );
 };
@@ -156,10 +161,7 @@ const FileTreeComponent: React.FC<{
   };
 
   const fileLink = (file: TorrentFileForCheckbox) => {
-    if (
-      allowStream &&
-      torrentId != null
-    ) {
+    if (allowStream && torrentId != null) {
       return API.getTorrentStreamUrl(torrentId, file.id, file.filename);
     }
   };

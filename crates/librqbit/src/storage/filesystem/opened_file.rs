@@ -14,6 +14,12 @@ impl OpenedFile {
         }
     }
 
+    pub fn new_dummy() -> Self {
+        Self {
+            file: RwLock::new(None),
+        }
+    }
+
     pub fn take(&self) -> anyhow::Result<Option<File>> {
         let mut f = self.file.write();
         Ok(f.take())

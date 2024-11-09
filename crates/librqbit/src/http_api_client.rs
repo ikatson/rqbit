@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     api::ApiAddTorrentResponse,
-    http_api::TorrentAddQueryParams,
+    http_api::{InitialPeers, TorrentAddQueryParams},
     session::{AddTorrent, AddTorrentOptions},
 };
 
@@ -99,6 +99,7 @@ impl HttpApiClient {
                 output_folder: opts.output_folder,
                 sub_folder: opts.sub_folder,
                 list_only: Some(opts.list_only),
+                initial_peers: opts.initial_peers.map(InitialPeers),
                 ..Default::default()
             };
             let qs = serde_urlencoded::to_string(&params).unwrap();

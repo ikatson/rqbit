@@ -134,8 +134,8 @@ async fn debug_server() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn spawn_debug_server() {
-    tokio::spawn(debug_server());
+pub fn spawn_debug_server() -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(debug_server())
 }
 
 pub trait DropPlaceholder: Send + Sync {}
@@ -196,13 +196,13 @@ pub async fn wait_until(
     Ok(())
 }
 
-pub async fn wait_until_i_am_the_last_task() {
+pub async fn wait_until_i_am_the_last_task() -> anyhow::Result<()> {
     let metrics = tokio::runtime::Handle::current().metrics();
     wait_until(
         || {
             let num_alive = metrics.num_alive_tasks();
-            if num_alive != 1 {
-                bail!("metrics.num_alive_tasks() = {num_alive}, expected 1")
+            if num_alive != 0 {
+                bail!("metrics.num_alive_tasks() = {num_alive}, expected 0")
             }
             Ok(())
         },
@@ -210,5 +210,4 @@ pub async fn wait_until_i_am_the_last_task() {
         Duration::from_secs(6),
     )
     .await
-    .unwrap();
 }

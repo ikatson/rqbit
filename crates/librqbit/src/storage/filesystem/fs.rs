@@ -151,16 +151,17 @@ impl TorrentStorage for FilesystemStorage {
 
     fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
         let mut files = Vec::<OpenedFile>::new();
-        for file_details in meta.info.iter_file_details(&meta.lengths)? {
+        for file_details in meta.file_infos.iter() {
             let mut full_path = self.output_folder.clone();
-            let relative_path = file_details
-                .filename
-                .to_pathbuf()
-                .context("error converting file to path")?;
+            let relative_path = &file_details.relative_filename;
             full_path.push(relative_path);
 
+            if file_details.attrs.padding {
+                files.push(OpenedFile::new_dummy());
+                continue;
+            };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let file = if meta.options.allow_overwrite {
+            let f = if meta.options.allow_overwrite {
                 OpenOptions::new()
                     .create(true)
                     .truncate(false)
@@ -182,7 +183,7 @@ impl TorrentStorage for FilesystemStorage {
                     })?;
                 OpenOptions::new().read(true).write(true).open(&full_path)?
             };
-            files.push(OpenedFile::new(file));
+            files.push(OpenedFile::new(f));
         }
 
         self.opened_files = files;

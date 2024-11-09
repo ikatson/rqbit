@@ -10,6 +10,7 @@ use futures::{FutureExt, TryStreamExt};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use itertools::Itertools;
 
+use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Serialize};
 use std::io::SeekFrom;
 use std::net::SocketAddr;
@@ -22,7 +23,7 @@ use tracing::{debug, error_span, trace, Span};
 
 use axum::Router;
 
-use crate::api::{Api, TorrentIdOrHash};
+use crate::api::{Api, ApiTorrentListOpts, TorrentIdOrHash};
 use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
@@ -103,8 +104,11 @@ impl HttpApi {
             axum::Json(state.api_session_stats())
         }
 
-        async fn torrents_list(State(state): State<ApiState>) -> impl IntoResponse {
-            axum::Json(state.api_torrent_list())
+        async fn torrents_list(
+            State(state): State<ApiState>,
+            Query(opts): Query<ApiTorrentListOpts>,
+        ) -> impl IntoResponse {
+            axum::Json(state.api_torrent_list_ext(opts))
         }
 
         async fn torrents_post(
@@ -115,6 +119,12 @@ impl HttpApi {
             let is_url = params.is_url;
             let opts = params.into_add_torrent_options();
             let data = data.to_vec();
+            let maybe_magnet = |data: &[u8]| -> bool {
+                std::str::from_utf8(data)
+                    .ok()
+                    .and_then(|s| Magnet::parse(s).ok())
+                    .is_some()
+            };
             let add = match is_url {
                 Some(true) => AddTorrent::Url(
                     String::from_utf8(data)
@@ -126,7 +136,8 @@ impl HttpApi {
                 // Guess the format.
                 None if SUPPORTED_SCHEMES
                     .iter()
-                    .any(|s| data.starts_with(s.as_bytes())) =>
+                    .any(|s| data.starts_with(s.as_bytes()))
+                    || maybe_magnet(&data) =>
                 {
                     AddTorrent::Url(
                         String::from_utf8(data)
@@ -150,10 +161,10 @@ impl HttpApi {
             let mut playlist_items = handle
                 .shared()
                 .info
-                .iter_filenames_and_lengths()?
+                .iter_file_details()?
                 .enumerate()
-                .filter_map(|(file_idx, (filename, _))| {
-                    let filename = filename.to_vec().ok()?.join("/");
+                .filter_map(|(file_idx, file_details)| {
+                    let filename = file_details.filename.to_vec().ok()?.join("/");
                     let is_playable = mime_guess::from_path(&filename)
                         .first()
                         .map(|mime| {
@@ -604,6 +615,7 @@ impl HttpApi {
                         if let Some(ConnectInfo(addr)) =
                             req.extensions().get::<ConnectInfo<SocketAddr>>()
                         {
+                            let addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
                             error_span!("request", %method, %uri, %addr)
                         } else {
                             error_span!("request", %method, %uri)

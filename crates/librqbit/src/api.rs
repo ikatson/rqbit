@@ -4,7 +4,7 @@ use anyhow::Context;
 use buffers::ByteBufOwned;
 use dht::{DhtStats, Id20};
 use http::StatusCode;
-use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
+use librqbit_core::torrent_metainfo::{FileDetailsAttrs, TorrentMetaV1Info};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
@@ -168,6 +168,12 @@ impl TorrentIdOrHash {
     }
 }
 
+#[derive(Deserialize, Default)]
+pub struct ApiTorrentListOpts {
+    #[serde(default)]
+    pub with_stats: bool,
+}
+
 impl Api {
     pub fn new(
         session: Arc<Session>,
@@ -193,11 +199,32 @@ impl Api {
     }
 
     pub fn api_torrent_list(&self) -> TorrentListResponse {
+        self.api_torrent_list_ext(ApiTorrentListOpts { with_stats: false })
+    }
+
+    pub fn api_torrent_list_ext(&self, opts: ApiTorrentListOpts) -> TorrentListResponse {
         let items = self.session.with_torrents(|torrents| {
             torrents
-                .map(|(id, mgr)| TorrentListResponseItem {
-                    id,
-                    info_hash: mgr.shared().info_hash.as_string(),
+                .map(|(id, mgr)| {
+                    let mut r = TorrentDetailsResponse {
+                        id: Some(id),
+                        info_hash: mgr.shared().info_hash.as_string(),
+                        name: mgr.shared().info.name.as_ref().map(|n| n.to_string()),
+                        output_folder: mgr
+                            .shared()
+                            .options
+                            .output_folder
+                            .to_string_lossy()
+                            .into_owned(),
+
+                        // These will be filled in /details and /stats endpoints
+                        files: None,
+                        stats: None,
+                    };
+                    if opts.with_stats {
+                        r.stats = Some(mgr.stats());
+                    }
+                    r
                 })
                 .collect()
         });
@@ -208,7 +235,20 @@ impl Api {
         let handle = self.mgr_handle(idx)?;
         let info_hash = handle.shared().info_hash;
         let only_files = handle.only_files();
-        make_torrent_details(&info_hash, &handle.shared().info, only_files.as_deref())
+        let output_folder = handle
+            .shared()
+            .options
+            .output_folder
+            .to_string_lossy()
+            .into_owned()
+            .to_string();
+        make_torrent_details(
+            Some(handle.id()),
+            &info_hash,
+            &handle.shared().info,
+            only_files.as_deref(),
+            output_folder,
+        )
     }
 
     pub fn api_session_stats(&self) -> SessionStatsSnapshot {
@@ -338,9 +378,16 @@ impl Api {
         {
             AddTorrentResponse::AlreadyManaged(id, handle) => {
                 let details = make_torrent_details(
+                    Some(id),
                     &handle.info_hash(),
                     &handle.shared().info,
                     handle.only_files().as_deref(),
+                    handle
+                        .shared()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -366,14 +413,27 @@ impl Api {
                 id: None,
                 output_folder: output_folder.to_string_lossy().into_owned(),
                 seen_peers: Some(seen_peers),
-                details: make_torrent_details(&info_hash, &info, only_files.as_deref())
-                    .context("error making torrent details")?,
+                details: make_torrent_details(
+                    None,
+                    &info_hash,
+                    &info,
+                    only_files.as_deref(),
+                    output_folder.to_string_lossy().into_owned().to_string(),
+                )
+                .context("error making torrent details")?,
             },
             AddTorrentResponse::Added(id, handle) => {
                 let details = make_torrent_details(
+                    Some(id),
                     &handle.info_hash(),
                     &handle.shared().info,
                     handle.only_files().as_deref(),
+                    handle
+                        .shared()
+                        .options
+                        .output_folder
+                        .to_string_lossy()
+                        .into_owned(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -428,14 +488,8 @@ impl Api {
 }
 
 #[derive(Serialize)]
-pub struct TorrentListResponseItem {
-    pub id: usize,
-    pub info_hash: String,
-}
-
-#[derive(Serialize)]
 pub struct TorrentListResponse {
-    pub torrents: Vec<TorrentListResponseItem>,
+    pub torrents: Vec<TorrentDetailsResponse>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -444,6 +498,7 @@ pub struct TorrentDetailsResponseFile {
     pub components: Vec<String>,
     pub length: u64,
     pub included: bool,
+    pub attributes: FileDetailsAttrs,
 }
 
 #[derive(Default, Serialize)]
@@ -451,9 +506,16 @@ pub struct EmptyJsonResponse {}
 
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<usize>,
     pub info_hash: String,
     pub name: Option<String>,
-    pub files: Vec<TorrentDetailsResponseFile>,
+    pub output_folder: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<TorrentDetailsResponseFile>>,
+    #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
+    pub stats: Option<TorrentStats>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -465,36 +527,42 @@ pub struct ApiAddTorrentResponse {
 }
 
 fn make_torrent_details(
+    id: Option<TorrentId>,
     info_hash: &Id20,
     info: &TorrentMetaV1Info<ByteBufOwned>,
     only_files: Option<&[usize]>,
+    output_folder: String,
 ) -> Result<TorrentDetailsResponse> {
     let files = info
-        .iter_filenames_and_lengths()
+        .iter_file_details()
         .context("error iterating filenames and lengths")?
         .enumerate()
-        .map(|(idx, (filename_it, length))| {
-            let name = match filename_it.to_string() {
+        .map(|(idx, d)| {
+            let name = match d.filename.to_string() {
                 Ok(s) => s,
                 Err(err) => {
                     warn!("error reading filename: {:?}", err);
                     "<INVALID NAME>".to_string()
                 }
             };
-            let components = filename_it.to_vec().unwrap_or_default();
+            let components = d.filename.to_vec().unwrap_or_default();
             let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
             TorrentDetailsResponseFile {
                 name,
                 components,
-                length,
+                length: d.len,
                 included,
+                attributes: d.attrs(),
             }
         })
         .collect();
     Ok(TorrentDetailsResponse {
+        id,
         info_hash: info_hash.as_string(),
         name: info.name.as_ref().map(|b| b.to_string()),
-        files,
+        files: Some(files),
+        output_folder,
+        stats: None,
     })
 }
 
@@ -502,10 +570,11 @@ fn torrent_file_mime_type(
     info: &TorrentMetaV1Info<ByteBufOwned>,
     file_idx: usize,
 ) -> Result<&'static str> {
-    info.iter_filenames_and_lengths()?
+    info.iter_file_details()?
         .nth(file_idx)
-        .and_then(|(f, _)| {
-            f.iter_components()
+        .and_then(|d| {
+            d.filename
+                .iter_components()
                 .last()
                 .and_then(|r| r.ok())
                 .and_then(|s| mime_guess::from_path(s).first_raw())

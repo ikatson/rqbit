@@ -21,8 +21,11 @@ jobs:
           rustup toolchain install ${{ matrix.rust_version }}
       - uses: actions/checkout@v4
       - run: rustup override set ${{ matrix.rust_version }}
+      - run: rustup component add rustfmt
       - name: cargo check
         run: cargo check
+      - name: cargo fmt --check
+        run: cargo fmt --check
   test:
     strategy:
       matrix:
