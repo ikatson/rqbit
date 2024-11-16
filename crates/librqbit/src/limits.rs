@@ -1,49 +1,42 @@
-use std::sync::Arc;
-use std::time::Duration;
-
-use leaky_bucket::RateLimiter;
+use governor::DefaultDirectRateLimiter as RateLimiter;
+use governor::Quota;
 use parking_lot::RwLock;
-use peer_binary_protocol::PIECE_MESSAGE_DEFAULT_LEN;
 use serde::Deserialize;
 use serde::Serialize;
+use std::num::NonZero;
+use std::num::NonZeroU32;
+use std::sync::Arc;
 
 #[derive(Default, Serialize, Deserialize, Clone, Copy)]
 pub struct LimitsConfig {
-    pub upload_bps: Option<usize>,
-    pub download_bps: Option<usize>,
+    pub upload_bps: Option<NonZero<u32>>,
+    pub download_bps: Option<NonZero<u32>>,
 }
 
-struct Limit(RwLock<Arc<Option<leaky_bucket::RateLimiter>>>);
+struct Limit(RwLock<Arc<Option<RateLimiter>>>);
 
 impl Limit {
-    fn new_inner(bps: Option<usize>) -> Arc<Option<leaky_bucket::RateLimiter>> {
+    fn new_inner(bps: Option<NonZero<u32>>) -> Arc<Option<RateLimiter>> {
         let bps = match bps {
             Some(bps) => bps,
             None => return Arc::new(None),
         };
-        let b_per_100_ms = bps.div_ceil(10);
-        Arc::new(Some(
-            RateLimiter::builder()
-                .interval(Duration::from_millis(100))
-                .refill(b_per_100_ms)
-                // whatever the limit is, we need to be able to download / upload a chunk
-                .max(PIECE_MESSAGE_DEFAULT_LEN.max(bps))
-                .build(),
-        ))
+        Arc::new(Some(RateLimiter::direct(Quota::per_second(bps))))
     }
 
-    fn new(bps: Option<usize>) -> Self {
+    fn new(bps: Option<NonZero<u32>>) -> Self {
         Self(RwLock::new(Self::new_inner(bps)))
     }
 
-    async fn acquire(&self, size: usize) {
+    async fn acquire(&self, size: NonZero<u32>) -> anyhow::Result<()> {
         let lim = self.0.read().clone();
         if let Some(rl) = lim.as_ref() {
-            rl.acquire(size).await
+            rl.until_n_ready(size).await?;
         }
+        Ok(())
     }
 
-    fn set(&self, limit: Option<usize>) {
+    fn set(&self, limit: Option<NonZero<u32>>) {
         let new = Self::new_inner(limit);
         *self.0.write() = new;
     }
@@ -62,19 +55,19 @@ impl Limits {
         }
     }
 
-    pub async fn prepare_for_upload(&self, len: usize) {
+    pub async fn prepare_for_upload(&self, len: NonZero<u32>) -> anyhow::Result<()> {
         self.up.acquire(len).await
     }
 
-    pub async fn prepare_for_download(&self, len: usize) {
+    pub async fn prepare_for_download(&self, len: NonZero<u32>) -> anyhow::Result<()> {
         self.down.acquire(len).await
     }
 
-    pub fn set_upload_bps(&self, bps: Option<usize>) {
+    pub fn set_upload_bps(&self, bps: Option<NonZero<u32>>) {
         self.up.set(bps);
     }
 
-    pub fn set_download_bps(&self, bps: Option<usize>) {
+    pub fn set_download_bps(&self, bps: Option<NonZeroU32>) {
         self.down.set(bps);
     }
 }

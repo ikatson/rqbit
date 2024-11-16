@@ -61,7 +61,7 @@ tokio = { version = "1", features = [
     "fs",
     "io-util",
 ] }
-leaky-bucket = "1.1"
+governor = "0.7"
 console-subscriber = { version = "0.4", optional = true }
 axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }

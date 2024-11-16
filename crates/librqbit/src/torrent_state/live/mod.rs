@@ -46,6 +46,7 @@ pub mod stats;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
+    num::NonZero,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -416,12 +417,14 @@ impl TorrentStateLive {
         )>,
     ) -> anyhow::Result<()> {
         while let Some((tx, ci)) = rx.recv().await {
-            self.ratelimits.prepare_for_upload(ci.size as usize).await;
+            self.ratelimits
+                .prepare_for_upload(NonZero::new(ci.size).unwrap())
+                .await?;
             if let Some(session) = self.torrent.session.upgrade() {
                 session
                     .ratelimits
-                    .prepare_for_upload(ci.size as usize)
-                    .await;
+                    .prepare_for_upload(NonZero::new(ci.size).unwrap())
+                    .await?;
             }
             let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
         }
@@ -1446,14 +1449,14 @@ impl PeerHandler {
 
                 self.state
                     .ratelimits
-                    .prepare_for_download(request.length as usize)
-                    .await;
+                    .prepare_for_download(NonZero::new(request.length).unwrap())
+                    .await?;
 
                 if let Some(session) = self.state.torrent().session.upgrade() {
                     session
                         .ratelimits
-                        .prepare_for_download(request.length as usize)
-                        .await;
+                        .prepare_for_download(NonZero::new(request.length).unwrap())
+                        .await?;
                 }
 
                 loop {
