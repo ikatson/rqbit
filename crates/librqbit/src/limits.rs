@@ -13,15 +13,12 @@ pub struct LimitsConfig {
     pub download_bps: Option<NonZero<u32>>,
 }
 
-struct Limit(RwLock<Arc<Option<RateLimiter>>>);
+struct Limit(RwLock<Option<Arc<RateLimiter>>>);
 
 impl Limit {
-    fn new_inner(bps: Option<NonZero<u32>>) -> Arc<Option<RateLimiter>> {
-        let bps = match bps {
-            Some(bps) => bps,
-            None => return Arc::new(None),
-        };
-        Arc::new(Some(RateLimiter::direct(Quota::per_second(bps))))
+    fn new_inner(bps: Option<NonZero<u32>>) -> Option<Arc<RateLimiter>> {
+        let bps = bps?;
+        Some(Arc::new(RateLimiter::direct(Quota::per_second(bps))))
     }
 
     fn new(bps: Option<NonZero<u32>>) -> Self {
