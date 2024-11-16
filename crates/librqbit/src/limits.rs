@@ -1,6 +1,6 @@
+use arc_swap::ArcSwapOption;
 use governor::DefaultDirectRateLimiter as RateLimiter;
 use governor::Quota;
-use parking_lot::RwLock;
 use serde::Deserialize;
 use serde::Serialize;
 use std::num::NonZero;
@@ -13,7 +13,7 @@ pub struct LimitsConfig {
     pub download_bps: Option<NonZero<u32>>,
 }
 
-struct Limit(RwLock<Option<Arc<RateLimiter>>>);
+struct Limit(ArcSwapOption<RateLimiter>);
 
 impl Limit {
     fn new_inner(bps: Option<NonZero<u32>>) -> Option<Arc<RateLimiter>> {
@@ -22,11 +22,11 @@ impl Limit {
     }
 
     fn new(bps: Option<NonZero<u32>>) -> Self {
-        Self(RwLock::new(Self::new_inner(bps)))
+        Self(ArcSwapOption::new(Self::new_inner(bps)))
     }
 
     async fn acquire(&self, size: NonZero<u32>) -> anyhow::Result<()> {
-        let lim = self.0.read().clone();
+        let lim = self.0.load().clone();
         if let Some(rl) = lim.as_ref() {
             rl.until_n_ready(size).await?;
         }
@@ -35,7 +35,7 @@ impl Limit {
 
     fn set(&self, limit: Option<NonZero<u32>>) {
         let new = Self::new_inner(limit);
-        *self.0.write() = new;
+        self.0.swap(new);
     }
 }
 
