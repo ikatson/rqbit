@@ -496,6 +496,15 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         },
     };
 
+    let http_api_basic_auth = if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
+        let (u, p) = up
+            .split_once(":")
+            .context("basic auth credentials should be in format username:password")?;
+        Some((u.to_owned(), p.to_owned()))
+    } else {
+        None
+    };
+
     let stats_printer = |session: Arc<Session>| async move {
         loop {
             session.with_torrents(|torrents| {
@@ -615,7 +624,13 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: false }));
+                let http_api = HttpApi::new(
+                    api,
+                    Some(HttpApiOptions {
+                        read_only: false,
+                        basic_auth: http_api_basic_auth,
+                    }),
+                );
                 let http_api_listen_addr = opts.http_api_listen_addr;
 
                 info!("starting HTTP API at http://{http_api_listen_addr}");
@@ -735,7 +750,13 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: true }));
+                let http_api = HttpApi::new(
+                    api,
+                    Some(HttpApiOptions {
+                        read_only: true,
+                        basic_auth: http_api_basic_auth,
+                    }),
+                );
                 let http_api_listen_addr = opts.http_api_listen_addr;
 
                 info!("starting HTTP API at http://{http_api_listen_addr}");

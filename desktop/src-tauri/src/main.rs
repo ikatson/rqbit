@@ -157,7 +157,10 @@ async fn api_from_config(
                 .with_context(|| format!("error listening on {}", listen_addr))?;
             librqbit::http_api::HttpApi::new(
                 api.clone(),
-                Some(librqbit::http_api::HttpApiOptions { read_only }),
+                Some(librqbit::http_api::HttpApiOptions {
+                    read_only,
+                    basic_auth: None,
+                }),
             )
             .make_http_api_and_run(listener, upnp_router)
             .await

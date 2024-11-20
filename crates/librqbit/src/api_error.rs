@@ -55,6 +55,10 @@ impl ApiError {
         }
     }
 
+    pub const fn unathorized() -> Self {
+        Self::new_from_text(StatusCode::UNAUTHORIZED, "unauthorized")
+    }
+
     pub fn status(&self) -> StatusCode {
         self.status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     }
