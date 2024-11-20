@@ -39,6 +39,11 @@ interface RqbitDesktopConfigUpnp {
   server_friendly_name: string;
 }
 
+export interface LimitsConfig {
+  upload_bps?: number | null;
+  download_bps?: number | null;
+}
+
 export interface RqbitDesktopConfig {
   default_download_location: PathLike;
   disable_upload?: boolean;
@@ -48,6 +53,7 @@ export interface RqbitDesktopConfig {
   persistence: RqbitDesktopConfigPersistence;
   peer_opts: RqbitDesktopConfigPeerOpts;
   http_api: RqbitDesktopConfigHttpApi;
+  ratelimits: LimitsConfig;
 }
 
 export interface CurrentDesktopState {

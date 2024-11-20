@@ -61,6 +61,7 @@ tokio = { version = "1", features = [
     "fs",
     "io-util",
 ] }
+governor = "0.7"
 console-subscriber = { version = "0.4", optional = true }
 axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
@@ -109,6 +110,7 @@ async-trait = "0.1.81"
 async-backtrace = { version = "0.2", optional = true }
 notify = { version = "6.1.1", optional = true }
 walkdir = "2.5.0"
+arc-swap = "1.7.1"
 
 [build-dependencies]
 anyhow = "1"

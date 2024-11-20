@@ -21,9 +21,10 @@ use tokio::net::TcpListener;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
 use tracing::{debug, error_span, trace, Span};
 
-use axum::Router;
+use axum::{Json, Router};
 
-use crate::api::{Api, ApiTorrentListOpts, TorrentIdOrHash};
+use crate::api::{Api, ApiTorrentListOpts, EmptyJsonResponse, TorrentIdOrHash};
+use crate::limits::LimitsConfig;
 use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
@@ -490,6 +491,18 @@ impl HttpApi {
             Ok(axum::body::Body::from_stream(s))
         }
 
+        async fn update_session_ratelimits(
+            State(state): State<ApiState>,
+            Json(limits): Json<LimitsConfig>,
+        ) -> Result<impl IntoResponse> {
+            state.session().ratelimits.set_upload_bps(limits.upload_bps);
+            state
+                .session()
+                .ratelimits
+                .set_download_bps(limits.download_bps);
+            Ok(Json(EmptyJsonResponse {}))
+        }
+
         let mut app = Router::new()
             .route("/", get(api_root))
             .route("/stream_logs", get(stream_logs))
@@ -515,6 +528,7 @@ impl HttpApi {
         if !self.opts.read_only {
             app = app
                 .route("/torrents", post(torrents_post))
+                .route("/torrents/limits", post(update_session_ratelimits))
                 .route("/torrents/:id/pause", post(torrent_action_pause))
                 .route("/torrents/:id/start", post(torrent_action_start))
                 .route("/torrents/:id/forget", post(torrent_action_forget))

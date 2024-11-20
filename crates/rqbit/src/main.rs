@@ -1,6 +1,7 @@
 use std::{
     io,
     net::SocketAddr,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
     thread,
@@ -14,6 +15,7 @@ use librqbit::{
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
+    limits::LimitsConfig,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
         StorageFactory, StorageFactoryExt,
@@ -218,6 +220,14 @@ struct Opts {
     #[cfg(feature = "disable-upload")]
     #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
     disable_upload: bool,
+
+    /// Limit download to bytes-per-second.
+    #[arg(long = "ratelimit-download", env = "RQBIT_RATELIMIT_DOWNLOAD")]
+    ratelimit_download_bps: Option<NonZeroU32>,
+
+    /// Limit upload to bytes-per-second.
+    #[arg(long = "ratelimit-upload", env = "RQBIT_RATELIMIT_UPLOAD")]
+    ratelimit_upload_bps: Option<NonZeroU32>,
 }
 
 #[derive(Parser)]
@@ -480,6 +490,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         cancellation_token: Some(cancel.clone()),
         #[cfg(feature = "disable-upload")]
         disable_upload: opts.disable_upload,
+        ratelimits: LimitsConfig {
+            upload_bps: opts.ratelimit_upload_bps,
+            download_bps: opts.ratelimit_download_bps,
+        },
     };
 
     let stats_printer = |session: Arc<Session>| async move {
