@@ -7,7 +7,7 @@ use std::num::NonZero;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-#[derive(Default, Serialize, Deserialize, Clone, Copy)]
+#[derive(Default, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LimitsConfig {
     pub upload_bps: Option<NonZero<u32>>,
     pub download_bps: Option<NonZero<u32>>,
