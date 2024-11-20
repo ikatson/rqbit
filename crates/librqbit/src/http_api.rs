@@ -67,7 +67,13 @@ async fn simple_basic_auth(
         .and_then(|v| String::from_utf8(v).ok());
     let user_pass = match user_pass {
         Some(user_pass) => user_pass,
-        None => return Err(ApiError::unathorized()),
+        None => {
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                [("WWW-Authenticate", "Basic realm=\"API\"")],
+            )
+                .into_response())
+        }
     };
     // TODO: constant time compare
     match user_pass.split_once(':') {
