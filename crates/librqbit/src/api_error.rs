@@ -55,6 +55,14 @@ impl ApiError {
         }
     }
 
+    pub const fn unathorized() -> Self {
+        Self {
+            status: Some(StatusCode::UNAUTHORIZED),
+            kind: ApiErrorKind::Unauthorized,
+            plaintext: true,
+        }
+    }
+
     pub fn status(&self) -> StatusCode {
         self.status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     }
@@ -80,6 +88,7 @@ impl ApiError {
 enum ApiErrorKind {
     TorrentNotFound(TorrentIdOrHash),
     DhtDisabled,
+    Unauthorized,
     Text(&'static str),
     Other(anyhow::Error),
 }
@@ -102,6 +111,7 @@ impl Serialize for ApiError {
             error_kind: match self.kind {
                 ApiErrorKind::TorrentNotFound(_) => "torrent_not_found",
                 ApiErrorKind::DhtDisabled => "dht_disabled",
+                ApiErrorKind::Unauthorized => "unathorized",
                 ApiErrorKind::Other(_) => "internal_error",
                 ApiErrorKind::Text(_) => "internal_error",
             },
@@ -142,6 +152,7 @@ impl std::fmt::Display for ApiError {
         match &self.kind {
             ApiErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
             ApiErrorKind::Other(err) => write!(f, "{err:?}"),
+            ApiErrorKind::Unauthorized => write!(f, "unathorized"),
             ApiErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
             ApiErrorKind::Text(t) => write!(f, "{t}"),
         }

@@ -1,8 +1,10 @@
 use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, Query, Request, State};
+use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use base64::Engine;
 use bencode::AsDisplay;
 use buffers::ByteBuf;
 use futures::future::BoxFuture;
@@ -19,7 +21,7 @@ use std::time::Duration;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpListener;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
-use tracing::{debug, error_span, trace, Span};
+use tracing::{debug, error_span, info, trace, Span};
 
 use axum::{Json, Router};
 
@@ -43,6 +45,41 @@ pub struct HttpApi {
 #[derive(Debug, Default)]
 pub struct HttpApiOptions {
     pub read_only: bool,
+    pub basic_auth: Option<(String, String)>,
+}
+
+async fn simple_basic_auth(
+    expected_username: Option<&str>,
+    expected_password: Option<&str>,
+    headers: HeaderMap,
+    request: axum::extract::Request,
+    next: Next,
+) -> Result<axum::response::Response> {
+    let (expected_user, expected_pass) = match (expected_username, expected_password) {
+        (Some(u), Some(p)) => (u, p),
+        _ => return Ok(next.run(request).await),
+    };
+    let user_pass = headers
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Basic "))
+        .and_then(|v| base64::engine::general_purpose::STANDARD.decode(v).ok())
+        .and_then(|v| String::from_utf8(v).ok());
+    let user_pass = match user_pass {
+        Some(user_pass) => user_pass,
+        None => {
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                [("WWW-Authenticate", "Basic realm=\"API\"")],
+            )
+                .into_response())
+        }
+    };
+    // TODO: constant time compare
+    match user_pass.split_once(':') {
+        Some((u, p)) if u == expected_user && p == expected_pass => Ok(next.run(request).await),
+        _ => Err(ApiError::unathorized()),
+    }
 }
 
 impl HttpApi {
@@ -57,7 +94,7 @@ impl HttpApi {
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
     pub fn make_http_api_and_run(
-        self,
+        mut self,
         listener: TcpListener,
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
@@ -614,6 +651,19 @@ impl HttpApi {
         };
 
         let mut app = app.with_state(state);
+
+        // Simple one-user basic auth
+        if let Some((user, pass)) = self.opts.basic_auth.take() {
+            info!("Enabling simple basic authentication in HTTP API");
+            app =
+                app.route_layer(axum::middleware::from_fn(move |headers, request, next| {
+                    let user = user.clone();
+                    let pass = pass.clone();
+                    async move {
+                        simple_basic_auth(Some(&user), Some(&pass), headers, request, next).await
+                    }
+                }));
+        }
 
         if let Some(upnp_router) = upnp_router {
             app = app.nest("/upnp", upnp_router);
