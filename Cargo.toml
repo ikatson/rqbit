@@ -40,3 +40,4 @@ lto = "thin"
 [profile.release-github]
 inherits = "release"
 debug = false
+lto = false
