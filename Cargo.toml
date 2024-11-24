@@ -35,6 +35,7 @@ default-members = [
 [profile.release]
 panic = "abort"
 debug = true
+lto = "thin"
 
 [profile.release-github]
 inherits = "release"
