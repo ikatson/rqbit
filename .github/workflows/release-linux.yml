@@ -2,10 +2,6 @@ name: Release binaries for Linux and Docker
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "v*.*.*"
 
 jobs:
   build-docker-cross:
