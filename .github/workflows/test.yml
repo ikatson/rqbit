@@ -2,9 +2,7 @@ name: Run tests
 
 on:
   push:
-    branches: [main, dev]
   pull_request:
-    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
