@@ -14,8 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Binstall
+        uses: cargo-bins/cargo-binstall@main
       - name: install Tauri
-        run: cargo install tauri-cli --profile dev
+        run: cargo binstall tauri-cli --no-confirm
       - name: npm install (desktop)
         working-directory: desktop
         run: npm install
