@@ -845,9 +845,13 @@ impl TorrentStateLive {
         tx: PeerTx,
     ) -> anyhow::Result<()> {
         let mut sent_peers_live: HashSet<SocketAddr> = HashSet::new();
-        const MAX_SENT_PEERS: usize = 50; // As per BEP 11 we should not send more than 50 peers at once (here it also applies to fist message, should be OK as we anyhow really have more)
-        const PEX_MESSAGE_INTERVAL: Duration = Duration::from_secs(60); // As per BEP 11 recommended interval is min 60 seconds
-        let mut delay = Duration::from_secs(10); // Wait 10 seconds before sending the first message to assure that peer will stay with us
+        // As per BEP 11 we should not send more than 50 peers at once
+        // (here it also applies to fist message, should be OK as we anyhow really have more)
+        const MAX_SENT_PEERS: usize = 50;
+        // As per BEP 11 recommended interval is min 60 seconds
+        const PEX_MESSAGE_INTERVAL: Duration = Duration::from_secs(60);
+        // Wait 10 seconds before sending the first message to assure that peer will stay with us
+        let mut delay = Duration::from_secs(10);
 
         loop {
             tokio::select! {
