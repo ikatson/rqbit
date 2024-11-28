@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust_version: ["1.75", "1.76", "1.78"]
+        rust_version: ["1.76", "1.78", "1.82"]
     steps:
       - name: rustup toolchain install ${{ matrix.rust_version }}
         run: |

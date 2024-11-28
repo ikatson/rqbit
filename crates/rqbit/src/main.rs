@@ -1,6 +1,7 @@
 use std::{
     io,
     net::SocketAddr,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
     thread,
@@ -14,6 +15,7 @@ use librqbit::{
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
+    limits::LimitsConfig,
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
         StorageFactory, StorageFactoryExt,
@@ -218,6 +220,14 @@ struct Opts {
     #[cfg(feature = "disable-upload")]
     #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
     disable_upload: bool,
+
+    /// Limit download to bytes-per-second.
+    #[arg(long = "ratelimit-download", env = "RQBIT_RATELIMIT_DOWNLOAD")]
+    ratelimit_download_bps: Option<NonZeroU32>,
+
+    /// Limit upload to bytes-per-second.
+    #[arg(long = "ratelimit-upload", env = "RQBIT_RATELIMIT_UPLOAD")]
+    ratelimit_upload_bps: Option<NonZeroU32>,
 }
 
 #[derive(Parser)]
@@ -480,6 +490,19 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         cancellation_token: Some(cancel.clone()),
         #[cfg(feature = "disable-upload")]
         disable_upload: opts.disable_upload,
+        ratelimits: LimitsConfig {
+            upload_bps: opts.ratelimit_upload_bps,
+            download_bps: opts.ratelimit_download_bps,
+        },
+    };
+
+    let http_api_basic_auth = if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
+        let (u, p) = up
+            .split_once(":")
+            .context("basic auth credentials should be in format username:password")?;
+        Some((u.to_owned(), p.to_owned()))
+    } else {
+        None
     };
 
     let stats_printer = |session: Arc<Session>| async move {
@@ -601,7 +624,13 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: false }));
+                let http_api = HttpApi::new(
+                    api,
+                    Some(HttpApiOptions {
+                        read_only: false,
+                        basic_auth: http_api_basic_auth,
+                    }),
+                );
                 let http_api_listen_addr = opts.http_api_listen_addr;
 
                 info!("starting HTTP API at http://{http_api_listen_addr}");
@@ -721,7 +750,13 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(api, Some(HttpApiOptions { read_only: true }));
+                let http_api = HttpApi::new(
+                    api,
+                    Some(HttpApiOptions {
+                        read_only: true,
+                        basic_auth: http_api_basic_auth,
+                    }),
+                );
                 let http_api_listen_addr = opts.http_api_listen_addr;
 
                 info!("starting HTTP API at http://{http_api_listen_addr}");

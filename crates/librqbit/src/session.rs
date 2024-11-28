@@ -13,6 +13,7 @@ use crate::{
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     file_info::FileInfo,
+    limits::{Limits, LimitsConfig},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
@@ -121,6 +122,8 @@ pub struct Session {
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
 
     root_span: Option<Span>,
+
+    pub(crate) ratelimits: Limits,
 
     pub(crate) stats: SessionStats,
 
@@ -263,6 +266,9 @@ pub struct AddTorrentOptions {
 
     #[serde(default)]
     pub disable_trackers: bool,
+
+    #[serde(default)]
+    pub ratelimits: LimitsConfig,
 
     /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
@@ -420,6 +426,8 @@ pub struct SessionOptions {
 
     // the root span to use. If not set will be None.
     pub root_span: Option<Span>,
+
+    pub ratelimits: LimitsConfig,
 
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
@@ -636,6 +644,7 @@ impl Session {
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
+                ratelimits: Limits::new(opts.ratelimits),
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
             });
@@ -1179,6 +1188,7 @@ impl Session {
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     disk_write_queue: self.disk_write_tx.clone(),
+                    ratelimits: opts.ratelimits,
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },

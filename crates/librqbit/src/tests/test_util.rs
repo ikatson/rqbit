@@ -46,7 +46,7 @@ pub fn create_default_random_dir_with_torrents(
     let dir = TempDir::with_prefix(tempdir_prefix.unwrap_or("rqbit_test")).unwrap();
     info!(path=?dir.path(), "created tempdir");
     for f in 0..num_files {
-        create_new_file_with_random_content(&dir.path().join(&format!("{f}.data")), file_size);
+        create_new_file_with_random_content(&dir.path().join(format!("{f}.data")), file_size);
     }
     dir
 }
