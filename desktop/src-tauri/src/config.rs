@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use librqbit::dht::PersistentDht;
+use librqbit::{dht::PersistentDht, limits::LimitsConfig};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -154,6 +154,9 @@ pub struct RqbitDesktopConfig {
     pub persistence: RqbitDesktopConfigPersistence,
     pub peer_opts: RqbitDesktopConfigPeerOpts,
     pub http_api: RqbitDesktopConfigHttpApi,
+
+    #[serde(default)]
+    pub ratelimits: LimitsConfig,
 }
 
 impl Default for RqbitDesktopConfig {
@@ -172,6 +175,7 @@ impl Default for RqbitDesktopConfig {
             persistence: Default::default(),
             peer_opts: Default::default(),
             http_api: Default::default(),
+            ratelimits: Default::default(),
             #[cfg(feature = "disable-upload")]
             disable_upload: false,
         }

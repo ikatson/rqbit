@@ -10,6 +10,7 @@ import { Modal } from "rqbit-webui/src/components/modal/Modal";
 import { Fieldset } from "rqbit-webui/src/components/forms/Fieldset";
 import { ModalFooter } from "rqbit-webui/src/components/modal/ModalFooter";
 import { Button } from "rqbit-webui/src/components/buttons/Button";
+import { formatBytes } from "rqbit-webui/src/helper/formatBytes";
 
 const FormCheck: React.FC<{
   label: string;
@@ -343,6 +344,36 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
               checked={config.persistence.fastresume}
               onChange={handleToggleChange}
               help="If enabled, restarting will not rehash torrents, and thus will be faster. You should not modify the downloaded files in any way if you use that."
+            />
+
+            <FormInput
+              label="Download rate limit"
+              name="ratelimits.download_bps"
+              inputType="number"
+              value={config.ratelimits.download_bps ?? ""}
+              onChange={handleInputChange}
+              help={`Limit total download speed to this number of bytes per second (${
+                (config.ratelimits.download_bps ?? 0) > 0
+                  ? "current " +
+                    formatBytes(config.ratelimits.download_bps ?? 0) +
+                    " per second"
+                  : "currently disabled"
+              })`}
+            />
+
+            <FormInput
+              label="Upload rate limit"
+              name="ratelimits.upload_bps"
+              inputType="number"
+              value={config.ratelimits.upload_bps ?? ""}
+              onChange={handleInputChange}
+              help={`Limit total upload speed to this number of bytes per second (${
+                (config.ratelimits.upload_bps ?? 0) > 0
+                  ? "current " +
+                    formatBytes(config.ratelimits.upload_bps ?? 0) +
+                    " per second"
+                  : "currently disabled"
+              })`}
             />
           </Fieldset>
         </Tab>
