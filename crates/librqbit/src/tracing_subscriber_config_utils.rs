@@ -53,6 +53,8 @@ pub struct InitLoggingOptions<'a> {
     pub default_rust_log_value: Option<&'a str>,
     pub log_file: Option<&'a str>,
     pub log_file_rust_log: Option<&'a str>,
+    pub log_file_json: bool,
+    pub log_json: bool,
 }
 
 pub struct InitLoggingResult {
@@ -62,7 +64,7 @@ pub struct InitLoggingResult {
 
 #[inline(never)]
 pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResult> {
-    let stderr_filter = EnvFilter::builder()
+    let stdout_filter = EnvFilter::builder()
         .with_default_directive(
             opts.default_rust_log_value
                 .unwrap_or("info")
@@ -72,16 +74,23 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         .from_env()
         .context("invalid RUST_LOG value")?;
 
-    let (stderr_filter, reload_stderr_filter) =
-        tracing_subscriber::reload::Layer::new(stderr_filter);
+    let (stdout_filter, reload_stdout_filter) =
+        tracing_subscriber::reload::Layer::new(stdout_filter);
 
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let (line_sub, line_broadcast) = Subscriber::new();
 
+    // Stdout logging layer.
+    let (json, human) = if opts.log_json {
+        (
+            Some(fmt::Layer::default().json().with_filter(stdout_filter)),
+            None,
+        )
+    } else {
+        (None, Some(fmt::Layer::default().with_filter(stdout_filter)))
+    };
     let layered = tracing_subscriber::registry()
-        // Stderr logging layer.
-        .with(fmt::layer().with_filter(stderr_filter))
         // HTTP API log broadcast layer.
         .with(
             fmt::layer()
@@ -107,19 +116,30 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 .open(&log_file)
                 .with_context(|| format!("error opening log file {:?}", log_file))?,
         ));
-        layered
-            .with(
-                fmt::layer()
-                    .with_ansi(false)
-                    .with_writer(log_file)
-                    .with_filter(
-                        EnvFilter::builder()
-                            .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
-                            .context("can't parse log-file-rust-log")?,
-                    ),
-            )
-            .try_init()
-            .context("can't init logging")?;
+        let log_env_filter = EnvFilter::builder()
+            .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
+            .context("can't parse log-file-rust-log")?;
+        if opts.log_file_json {
+            layered
+                .with(
+                    fmt::layer()
+                        .json()
+                        .with_writer(log_file)
+                        .with_filter(log_env_filter),
+                )
+                .try_init()
+                .context("can't init json file logging")?;
+        } else {
+            layered
+                .with(
+                    fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(log_file)
+                        .with_filter(log_env_filter),
+                )
+                .try_init()
+                .context("can't init logging to file")?;
+        }
     } else {
         layered.try_init().context("can't init logging")?;
     }
@@ -127,7 +147,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     spawn(error_span!("fmt_filter_reloader"), async move {
         while let Some(rust_log) = reload_rx.recv().await {
-            let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
+            let stdout_env_filter = match EnvFilter::builder().parse(&rust_log) {
                 Ok(f) => f,
                 Err(e) => {
                     eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
@@ -135,7 +155,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 }
             };
             eprintln!("setting RUST_LOG to {:?}", rust_log);
-            let _ = reload_stderr_filter.reload(stderr_env_filter);
+            let _ = reload_stdout_filter.reload(stdout_env_filter);
         }
         Ok(())
     });
