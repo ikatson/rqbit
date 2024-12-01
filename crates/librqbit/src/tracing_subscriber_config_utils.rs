@@ -117,7 +117,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         let log_env_filter = EnvFilter::builder()
             .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
             .context("can't parse log-file-rust-log")?;
-        let log_layer: Box<dyn Layer<_> + Send + Sync> = if opts.log_json {
+        let log_layer: Box<dyn Layer<_> + Send + Sync> = if opts.log_file_json {
             Box::new(
                 fmt::layer()
                     .json()
@@ -127,7 +127,6 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         } else {
             Box::new(
                 fmt::layer()
-                    .json()
                     .with_writer(log_file)
                     .with_filter(log_env_filter),
             )
