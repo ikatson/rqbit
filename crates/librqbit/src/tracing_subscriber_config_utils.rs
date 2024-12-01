@@ -79,15 +79,14 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         .from_env()
         .context("invalid RUST_LOG value")?;
 
+    let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(stdout_filter);
+    let (line_sub, line_broadcast) = Subscriber::new();
+
     let stdout_layer: Box<dyn Layer<_> + Send + Sync> = if opts.log_json {
         Box::new(fmt::layer().json())
     } else {
         Box::new(fmt::layer())
     };
-
-    let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(stdout_filter);
-
-    let (line_sub, line_broadcast) = Subscriber::new();
 
     let layered = tracing_subscriber::registry()
         .with(stdout_layer.with_filter(filter_layer))
@@ -118,27 +117,25 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         let log_env_filter = EnvFilter::builder()
             .parse(opts.log_file_rust_log.unwrap_or("info,librqbit=debug"))
             .context("can't parse log-file-rust-log")?;
-        if opts.log_file_json {
-            layered
-                .with(
-                    fmt::layer()
-                        .json()
-                        .with_writer(log_file)
-                        .with_filter(log_env_filter),
-                )
-                .try_init()
-                .context("can't init json file logging")?;
+        let log_layer: Box<dyn Layer<_> + Send + Sync> = if opts.log_json {
+            Box::new(
+                fmt::layer()
+                    .json()
+                    .with_writer(log_file)
+                    .with_filter(log_env_filter),
+            )
         } else {
-            layered
-                .with(
-                    fmt::layer()
-                        .with_ansi(false)
-                        .with_writer(log_file)
-                        .with_filter(log_env_filter),
-                )
-                .try_init()
-                .context("can't init logging to file")?;
-        }
+            Box::new(
+                fmt::layer()
+                    .json()
+                    .with_writer(log_file)
+                    .with_filter(log_env_filter),
+            )
+        };
+        layered
+            .with(log_layer)
+            .try_init()
+            .context("Can't init file logging")?;
     } else {
         layered.try_init().context("can't init logging")?;
     }
