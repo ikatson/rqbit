@@ -88,17 +88,17 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         Box::new(fmt::layer())
     };
 
+    let http_api_log_broadcast_layer = fmt::layer()
+        .with_ansi(false)
+        .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
+        .event_format(fmt::format().with_ansi(false).json())
+        .with_writer(line_sub)
+        .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap());
+
     let layered = tracing_subscriber::registry()
         .with(stdout_layer.with_filter(filter_layer))
-        // HTTP API log broadcast layer.
-        .with(
-            fmt::layer()
-                .with_ansi(false)
-                .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
-                .event_format(fmt::format().with_ansi(false).json())
-                .with_writer(line_sub)
-                .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
-        );
+        .with(http_api_log_broadcast_layer);
+
     #[cfg(feature = "tokio-console")]
     let console_layer = console_subscriber::spawn();
 
