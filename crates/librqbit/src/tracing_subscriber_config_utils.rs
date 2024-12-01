@@ -4,7 +4,12 @@ use anyhow::Context;
 use bytes::Bytes;
 use librqbit_core::spawn_utils::spawn;
 use tracing::error_span;
-use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::Layer;
+use tracing_subscriber::{
+    fmt::{self, MakeWriter},
+    prelude::*,
+    EnvFilter,
+};
 
 struct Subscriber {
     tx: tokio::sync::broadcast::Sender<Bytes>,
@@ -64,7 +69,7 @@ pub struct InitLoggingResult {
 
 #[inline(never)]
 pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResult> {
-    let stdout_filter = EnvFilter::builder()
+    let initial_filter = EnvFilter::builder()
         .with_default_directive(
             opts.default_rust_log_value
                 .unwrap_or("info")
@@ -74,23 +79,19 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         .from_env()
         .context("invalid RUST_LOG value")?;
 
-    let (stdout_filter, reload_stdout_filter) =
-        tracing_subscriber::reload::Layer::new(stdout_filter);
+    let stdout_layer: Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync> = if opts.log_json
+    {
+        Box::new(fmt::layer().json())
+    } else {
+        Box::new(fmt::layer())
+    };
 
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(initial_filter);
 
     let (line_sub, line_broadcast) = Subscriber::new();
 
-    // Stdout logging layer.
-    let (json, human) = if opts.log_json {
-        (
-            Some(fmt::Layer::default().json().with_filter(stdout_filter)),
-            None,
-        )
-    } else {
-        (None, Some(fmt::Layer::default().with_filter(stdout_filter)))
-    };
     let layered = tracing_subscriber::registry()
+        .with(stdout_layer.with_filter(filter_layer))
         // HTTP API log broadcast layer.
         .with(
             fmt::layer()
@@ -100,7 +101,6 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 .with_writer(line_sub)
                 .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
         );
-
     #[cfg(feature = "tokio-console")]
     let console_layer = console_subscriber::spawn();
 
@@ -155,7 +155,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 }
             };
             eprintln!("setting RUST_LOG to {:?}", rust_log);
-            let _ = reload_stdout_filter.reload(stdout_env_filter);
+            let _ = reload_handle.reload(stdout_env_filter);
         }
         Ok(())
     });
