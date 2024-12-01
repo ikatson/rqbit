@@ -69,7 +69,7 @@ pub struct InitLoggingResult {
 
 #[inline(never)]
 pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResult> {
-    let initial_filter = EnvFilter::builder()
+    let stdout_filter = EnvFilter::builder()
         .with_default_directive(
             opts.default_rust_log_value
                 .unwrap_or("info")
@@ -79,14 +79,13 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
         .from_env()
         .context("invalid RUST_LOG value")?;
 
-    let stdout_layer: Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync> = if opts.log_json
-    {
+    let stdout_layer: Box<dyn Layer<_> + Send + Sync> = if opts.log_json {
         Box::new(fmt::layer().json())
     } else {
         Box::new(fmt::layer())
     };
 
-    let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(initial_filter);
+    let (filter_layer, reload_handle) = tracing_subscriber::reload::Layer::new(stdout_filter);
 
     let (line_sub, line_broadcast) = Subscriber::new();
 
