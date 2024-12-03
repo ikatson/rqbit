@@ -93,6 +93,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 uuid = { version = "1.2", features = ["v4"] }
 futures = "0.3"
 url = { version = "2", default-features = false }
+idna = "=0.5.0" # we don't need this crate, but see https://github.com/servo/rust-url/issues/992. It's a dependency of reqwest that we can't turn off, but we need to force pin it to a lower version.
+
 hex = "0.4"
 backoff = "0.4.0"
 dashmap = "6"
