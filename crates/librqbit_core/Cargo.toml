@@ -19,7 +19,7 @@ tracing = "0.1.40"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 hex = "0.4"
 anyhow = "1"
-url = "2"
+url = { version = "2", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

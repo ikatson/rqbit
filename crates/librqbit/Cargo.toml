@@ -92,7 +92,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ], optional = true }
 uuid = { version = "1.2", features = ["v4"] }
 futures = "0.3"
-url = "2"
+url = { version = "2", default-features = false }
 hex = "0.4"
 backoff = "0.4.0"
 dashmap = "6"
