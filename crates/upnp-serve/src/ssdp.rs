@@ -80,13 +80,11 @@ pub fn try_parse_ssdp<'a, 'h>(
             }
 
             match (host, man, st) {
-                (Some(host), Some(man), Some(st)) => {
-                    Ok(SsdpMessage::MSearch(SsdpMSearchRequest {
-                        host: BStr::new(host),
-                        man: BStr::new(man),
-                        st: BStr::new(st),
-                    }))
-                }
+                (Some(host), Some(man), Some(st)) => Ok(SsdpMessage::MSearch(SsdpMSearchRequest {
+                    host: BStr::new(host),
+                    man: BStr::new(man),
+                    st: BStr::new(st),
+                })),
                 _ => bail!("not all of host, man and st are set"),
             }
         }
