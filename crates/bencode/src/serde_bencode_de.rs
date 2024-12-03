@@ -202,7 +202,7 @@ impl serde::de::Error for Error {
     }
 }
 
-impl<'de, 'a> serde::de::Deserializer<'de> for &'a mut BencodeDeserializer<'de> {
+impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     type Error = Error;
 
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -517,7 +517,7 @@ struct SeqAccess<'a, 'de> {
     de: &'a mut BencodeDeserializer<'de>,
 }
 
-impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
+impl<'de> serde::de::MapAccess<'de> for MapAccess<'_, 'de> {
     type Error = Error;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
@@ -559,7 +559,7 @@ impl<'a, 'de> serde::de::MapAccess<'de> for MapAccess<'a, 'de> {
     }
 }
 
-impl<'a, 'de> serde::de::SeqAccess<'de> for SeqAccess<'a, 'de> {
+impl<'de> serde::de::SeqAccess<'de> for SeqAccess<'_, 'de> {
     type Error = Error;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>

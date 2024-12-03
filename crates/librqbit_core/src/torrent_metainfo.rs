@@ -125,7 +125,7 @@ pub enum FileIteratorName<'a, BufType> {
     Tree(&'a [BufType]),
 }
 
-impl<'a, BufType> std::fmt::Debug for FileIteratorName<'a, BufType>
+impl<BufType> std::fmt::Debug for FileIteratorName<'_, BufType>
 where
     BufType: AsRef<[u8]>,
 {
@@ -203,7 +203,7 @@ pub struct FileDetails<'a, BufType> {
     pub symlink_path: Option<&'a [BufType]>,
 }
 
-impl<'a, BufType> FileDetails<'a, BufType>
+impl<BufType> FileDetails<'_, BufType>
 where
     BufType: AsRef<[u8]>,
 {
@@ -235,7 +235,7 @@ pub struct FileDetailsExt<'a, BufType> {
     pub pieces: std::ops::Range<u32>,
 }
 
-impl<'a, BufType> FileDetailsExt<'a, BufType> {
+impl<BufType> FileDetailsExt<'_, BufType> {
     pub fn pieces_usize(&self) -> std::ops::Range<usize> {
         self.pieces.start as usize..self.pieces.end as usize
     }

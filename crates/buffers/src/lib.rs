@@ -29,14 +29,14 @@ impl ByteBufT for ByteBufOwned {
     }
 }
 
-impl<'a> ByteBufT for ByteBuf<'a> {
+impl ByteBufT for ByteBuf<'_> {
     fn as_slice(&self) -> &[u8] {
         self.as_ref()
     }
 }
 
 struct HexBytes<'a>(&'a [u8]);
-impl<'a> std::fmt::Display for HexBytes<'a> {
+impl std::fmt::Display for HexBytes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
             write!(f, "{byte:02x?}")?;
@@ -71,13 +71,13 @@ fn debug_bytes(b: &[u8], f: &mut std::fmt::Formatter<'_>, debug_strings: bool) -
     write!(f, "<{} bytes>", b.len())
 }
 
-impl<'a> std::fmt::Debug for ByteBuf<'a> {
+impl std::fmt::Debug for ByteBuf<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_bytes(self.0, f, true)
     }
 }
 
-impl<'a> std::fmt::Display for ByteBuf<'a> {
+impl std::fmt::Display for ByteBuf<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         debug_bytes(self.0, f, false)
     }
@@ -95,7 +95,7 @@ impl std::fmt::Display for ByteBufOwned {
     }
 }
 
-impl<'a> CloneToOwned for ByteBuf<'a> {
+impl CloneToOwned for ByteBuf<'_> {
     type Target = ByteBufOwned;
 
     fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
@@ -126,7 +126,7 @@ impl CloneToOwned for ByteBufOwned {
     }
 }
 
-impl<'a> std::convert::AsRef<[u8]> for ByteBuf<'a> {
+impl std::convert::AsRef<[u8]> for ByteBuf<'_> {
     fn as_ref(&self) -> &[u8] {
         self.0
     }
@@ -144,13 +144,13 @@ impl std::borrow::Borrow<[u8]> for ByteBufOwned {
     }
 }
 
-impl<'a> std::borrow::Borrow<[u8]> for ByteBuf<'a> {
+impl std::borrow::Borrow<[u8]> for ByteBuf<'_> {
     fn borrow(&self) -> &[u8] {
         self.0
     }
 }
 
-impl<'a> std::ops::Deref for ByteBuf<'a> {
+impl std::ops::Deref for ByteBuf<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -190,7 +190,7 @@ impl From<Bytes> for ByteBufOwned {
     }
 }
 
-impl<'a> serde::ser::Serialize for ByteBuf<'a> {
+impl serde::ser::Serialize for ByteBuf<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -215,7 +215,7 @@ impl<'de> serde::de::Deserialize<'de> for ByteBufOwned {
     {
         struct Visitor;
 
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = ByteBufOwned;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

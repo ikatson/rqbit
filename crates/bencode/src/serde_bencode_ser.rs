@@ -97,7 +97,7 @@ impl<W: std::io::Write> BencodeSerializer<W> {
 struct SerializeSeq<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
 }
-impl<'ser, W: std::io::Write> serde::ser::SerializeSeq for SerializeSeq<'ser, W> {
+impl<W: std::io::Write> serde::ser::SerializeSeq for SerializeSeq<'_, W> {
     type Ok = ();
 
     type Error = SerError;
@@ -117,7 +117,7 @@ impl<'ser, W: std::io::Write> serde::ser::SerializeSeq for SerializeSeq<'ser, W>
 struct SerializeTuple<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
 }
-impl<'ser, W: std::io::Write> serde::ser::SerializeTuple for SerializeTuple<'ser, W> {
+impl<W: std::io::Write> serde::ser::SerializeTuple for SerializeTuple<'_, W> {
     type Ok = ();
 
     type Error = SerError;
@@ -139,7 +139,7 @@ struct SerializeMap<'ser, W: std::io::Write> {
     tmp: BTreeMap<ByteBufOwned, ByteBufOwned>,
     last_key: Option<ByteBufOwned>,
 }
-impl<'ser, W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'ser, W> {
+impl<W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'_, W> {
     type Ok = ();
 
     type Error = SerError;
@@ -182,7 +182,7 @@ struct SerializeStruct<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
     tmp: BTreeMap<&'static str, ByteBufOwned>,
 }
-impl<'ser, W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'ser, W> {
+impl<W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'_, W> {
     type Ok = ();
 
     type Error = SerError;

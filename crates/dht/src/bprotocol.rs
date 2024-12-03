@@ -27,7 +27,7 @@ impl<'de> Deserialize<'de> for MessageType {
         D: serde::Deserializer<'de>,
     {
         struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = MessageType;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -271,7 +271,7 @@ impl<'de> Deserialize<'de> for CompactPeerInfo {
         D: Deserializer<'de>,
     {
         struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = CompactPeerInfo;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {

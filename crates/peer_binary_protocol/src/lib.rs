@@ -246,7 +246,7 @@ impl<'a> Bitfield<'a> {
     }
 }
 
-impl<'a> std::fmt::Debug for Bitfield<'a> {
+impl std::fmt::Debug for Bitfield<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Bitfield")
             .field("_ones", &self.data.count_ones())
