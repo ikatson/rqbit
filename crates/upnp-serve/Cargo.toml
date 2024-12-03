@@ -36,13 +36,13 @@ parking_lot = "0.12.3"
 tokio-util = "0.7.11"
 reqwest = { version = "0.12.7", default-features = false }
 socket2 = "0.5.7"
-quick-xml = { version = "0.36.1", features = ["serialize"] }
+quick-xml = { version = "0.37.1", features = ["serialize"] }
 network-interface = "2.0.0"
 futures = "0.3.30"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"
-tower-http = { version = "0.5", features = ["trace"] }
+tower-http = { version = "0.6.2", features = ["trace"] }
 
 [[example]]
 name = "upnp-stub-server"

@@ -22,7 +22,7 @@ url = "2"
 network-interface = { version = "2" }
 httparse = "1.9.4"
 bstr = "1.10.0"
-quick-xml = { version = "0.36.1", features = ["serialize"] }
+quick-xml = { version = "0.37.1", features = ["serialize"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
