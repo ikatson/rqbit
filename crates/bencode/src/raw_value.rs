@@ -14,7 +14,7 @@ where
     {
         struct Wrapper<'a>(&'a [u8]);
 
-        impl<'a> Serialize for Wrapper<'a> {
+        impl Serialize for Wrapper<'_> {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: serde::Serializer,

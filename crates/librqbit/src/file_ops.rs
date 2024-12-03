@@ -85,7 +85,7 @@ impl<'a> FileOps<'a> {
             processed_bytes: u64,
             is_broken: bool,
         }
-        impl<'a> CurrentFile<'a> {
+        impl CurrentFile<'_> {
             fn remaining(&self) -> u64 {
                 self.fi.len - self.processed_bytes
             }

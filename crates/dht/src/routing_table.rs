@@ -83,7 +83,7 @@ pub struct BucketTreeIteratorItem<'a> {
     pub leaf: &'a LeafBucket,
 }
 
-impl<'a> BucketTreeIteratorItem<'a> {
+impl BucketTreeIteratorItem<'_> {
     pub fn random_within(&self) -> Id20 {
         generate_random_id(self.start, self.bits)
     }

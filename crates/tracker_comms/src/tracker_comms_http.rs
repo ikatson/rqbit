@@ -52,7 +52,7 @@ pub struct DictPeer<'a> {
     port: u16,
 }
 
-impl<'a> DictPeer<'a> {
+impl DictPeer<'_> {
     fn as_sockaddr(&self) -> SocketAddr {
         SocketAddr::new(self.ip, self.port)
     }
@@ -118,7 +118,7 @@ where
     D: Deserializer<'de>,
 {
     struct Visitor;
-    impl<'de> serde::de::Visitor<'de> for Visitor {
+    impl serde::de::Visitor<'_> for Visitor {
         type Value = IpAddr;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
