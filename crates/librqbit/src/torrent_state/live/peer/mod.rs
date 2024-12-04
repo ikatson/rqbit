@@ -56,22 +56,21 @@ impl Peer {
 
     pub(crate) fn reconnect_not_needed_peer(
         &mut self,
-        known_address: SocketAddr,
         counters: &PeerStates,
     ) -> Option<SocketAddr> {
         if let PeerState::NotNeeded = self.get_state() {
             match self.outgoing_address {
                 None => None,
+                Some(socket_addr) if self.addr == socket_addr => {
+                    self.set_state(PeerState::Queued, counters);
+                    Some(socket_addr)
+                }
                 Some(socket_addr) => {
-                    if known_address == socket_addr {
-                        self.set_state(PeerState::Queued, counters);
-                    } else {
-                        debug!(
-                            peer = known_address.to_string(),
-                            outgoing_addr = socket_addr.to_string(),
-                            "peer will by retried on different address",
-                        );
-                    }
+                    debug!(
+                        peer = %self.addr,
+                        outgoing_addr = %socket_addr,
+                        "peer will by retried on different address",
+                    );
                     Some(socket_addr)
                 }
             }

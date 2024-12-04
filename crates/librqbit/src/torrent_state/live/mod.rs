@@ -824,11 +824,7 @@ impl TorrentStateLive {
         self.peers
             .states
             .iter_mut()
-            .filter_map(|mut p| {
-                let known_addr = *p.key();
-                p.value_mut()
-                    .reconnect_not_needed_peer(known_addr, &self.peers)
-            })
+            .filter_map(|mut p| p.value_mut().reconnect_not_needed_peer(&self.peers))
             .map(|socket_addr| self.peer_queue_tx.send(socket_addr))
             .take_while(|r| r.is_ok())
             .last();
