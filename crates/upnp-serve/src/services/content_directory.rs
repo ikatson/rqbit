@@ -150,7 +150,7 @@ pub mod browse {
 
                 // This COULD have been done with CDATA, but some Samsung TVs don't like that, they want
                 // escaped XML instead.
-                let items_encoded = quick_xml::escape::escape(items_encoded.as_ref());
+                let items_encoded = quick_xml::escape::escape(items_encoded);
 
                 format!(
                     include_str!(

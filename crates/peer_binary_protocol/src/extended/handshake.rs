@@ -47,11 +47,11 @@ impl ExtendedHandshake<ByteBuf<'static>> {
     }
 }
 
-impl<'a, ByteBuf> ExtendedHandshake<ByteBuf>
+impl<ByteBuf> ExtendedHandshake<ByteBuf>
 where
     ByteBuf: ByteBufT,
 {
-    fn get_msgid(&self, msg_type: &'a [u8]) -> Option<u8> {
+    fn get_msgid(&self, msg_type: &[u8]) -> Option<u8> {
         self.m.get(msg_type).copied()
     }
 

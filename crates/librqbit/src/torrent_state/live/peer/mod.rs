@@ -2,6 +2,7 @@ pub mod stats;
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ChunkInfo;
@@ -12,30 +13,33 @@ use tracing::debug;
 use crate::peer_connection::WriterRequest;
 use crate::type_aliases::BF;
 
-use super::peers::stats::atomic::AggregatePeerStatsAtomic;
+use super::PeerStates;
 
 pub(crate) type InflightRequest = ChunkInfo;
 pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Peer {
-    pub state: PeerStateNoMut,
+    pub addr: SocketAddr,
+    state: PeerState,
     pub stats: stats::atomic::PeerStats,
     pub outgoing_address: Option<SocketAddr>,
 }
 
 impl Peer {
     pub fn new_live_for_incoming_connection(
+        addr: SocketAddr,
         peer_id: Id20,
         tx: PeerTx,
-        counters: &[&AggregatePeerStatsAtomic],
+        counters: &PeerStates,
     ) -> Self {
-        let state = PeerStateNoMut(PeerState::Live(LivePeerState::new(peer_id, tx, true)));
-        for counter in counters {
-            counter.inc(&state.0);
+        let state = PeerState::Live(LivePeerState::new(peer_id, tx, true));
+        for counter in [&counters.session_stats.peers, &counters.stats] {
+            counter.inc(&state);
         }
         Self {
+            addr,
             state,
             stats: Default::default(),
             outgoing_address: None,
@@ -44,29 +48,30 @@ impl Peer {
 
     pub fn new_with_outgoing_address(addr: SocketAddr) -> Self {
         Self {
+            addr,
             outgoing_address: Some(addr),
-            ..Default::default()
+            stats: Default::default(),
+            state: Default::default(),
         }
     }
 
     pub(crate) fn reconnect_not_needed_peer(
         &mut self,
-        known_address: SocketAddr,
-        counters: &[&AggregatePeerStatsAtomic],
+        counters: &PeerStates,
     ) -> Option<SocketAddr> {
-        if let PeerState::NotNeeded = self.state.get() {
+        if let PeerState::NotNeeded = self.get_state() {
             match self.outgoing_address {
                 None => None,
+                Some(socket_addr) if self.addr == socket_addr => {
+                    self.set_state(PeerState::Queued, counters);
+                    Some(socket_addr)
+                }
                 Some(socket_addr) => {
-                    if known_address == socket_addr {
-                        self.state.set(PeerState::Queued, counters);
-                    } else {
-                        debug!(
-                            peer = known_address.to_string(),
-                            outgoing_addr = socket_addr.to_string(),
-                            "peer will by retried on different address",
-                        );
-                    }
+                    debug!(
+                        peer = %self.addr,
+                        outgoing_addr = %socket_addr,
+                        "peer will by retried on different address",
+                    );
                     Some(socket_addr)
                 }
             }
@@ -116,54 +121,67 @@ impl PeerState {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct PeerStateNoMut(PeerState);
-
-impl PeerStateNoMut {
-    pub fn get(&self) -> &PeerState {
-        &self.0
+impl Peer {
+    pub fn get_state(&self) -> &PeerState {
+        &self.state
     }
 
-    pub fn take(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
-        self.set(Default::default(), counters)
+    pub fn take_state(&mut self, counters: &PeerStates) -> PeerState {
+        self.set_state(Default::default(), counters)
     }
 
-    pub fn destroy(self, counters: &[&AggregatePeerStatsAtomic]) {
-        for counter in counters {
-            counter.dec(&self.0);
+    pub fn destroy(self, counters: &PeerStates) {
+        for counter in [&counters.session_stats.peers, &counters.stats] {
+            counter.dec(&self.state);
+        }
+        if let (Some(addr), PeerState::Live(..)) = (self.outgoing_address, &self.state) {
+            counters.live_outgoing_peers.write().remove(&addr);
         }
     }
 
-    pub fn set(&mut self, new: PeerState, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
-        for counter in counters {
-            counter.incdec(&self.0, &new);
+    pub fn set_state(&mut self, new: PeerState, counters: &PeerStates) -> PeerState {
+        for counter in [&counters.session_stats.peers, &counters.stats] {
+            counter.incdec(&self.state, &new);
         }
-        std::mem::replace(&mut self.0, new)
+        if let Some(addr) = self.outgoing_address {
+            if matches!(&self.state, PeerState::Live(..)) {
+                counters.live_outgoing_peers.write().remove(&addr);
+            }
+            if matches!(&new, PeerState::Live(..))
+                && self
+                    .stats
+                    .counters
+                    .outgoing_connections
+                    .load(Ordering::Relaxed)
+                    > 0
+            {
+                counters.live_outgoing_peers.write().insert(addr);
+            }
+        }
+
+        std::mem::replace(&mut self.state, new)
     }
 
     pub fn get_live(&self) -> Option<&LivePeerState> {
-        match &self.0 {
+        match &self.state {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
     }
 
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
-        match &mut self.0 {
+        match &mut self.state {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
     }
 
-    pub fn idle_to_connecting(
-        &mut self,
-        counters: &[&AggregatePeerStatsAtomic],
-    ) -> Option<(PeerRx, PeerTx)> {
-        match &self.0 {
+    pub fn idle_to_connecting(&mut self, counters: &PeerStates) -> Option<(PeerRx, PeerTx)> {
+        match &self.state {
             PeerState::Queued | PeerState::NotNeeded => {
                 let (tx, rx) = unbounded_channel();
                 let tx_2 = tx.clone();
-                self.set(PeerState::Connecting(tx), counters);
+                self.set_state(PeerState::Connecting(tx), counters);
                 Some((rx, tx_2))
             }
             _ => None,
@@ -174,14 +192,14 @@ impl PeerStateNoMut {
         &mut self,
         peer_id: Id20,
         tx: PeerTx,
-        counters: &[&AggregatePeerStatsAtomic],
+        counters: &PeerStates,
     ) -> anyhow::Result<()> {
-        if matches!(&self.0, PeerState::Connecting(..) | PeerState::Live(..)) {
+        if matches!(&self.state, PeerState::Connecting(..) | PeerState::Live(..)) {
             anyhow::bail!("peer already active");
         }
-        match self.take(counters) {
+        match self.take_state(counters) {
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
-                self.set(
+                self.set_state(
                     PeerState::Live(LivePeerState::new(peer_id, tx, true)),
                     counters,
                 );
@@ -194,14 +212,14 @@ impl PeerStateNoMut {
     pub fn connecting_to_live(
         &mut self,
         peer_id: Id20,
-        counters: &[&AggregatePeerStatsAtomic],
+        counters: &PeerStates,
     ) -> Option<&mut LivePeerState> {
-        if let PeerState::Connecting(_) = &self.0 {
-            let tx = match self.take(counters) {
+        if let PeerState::Connecting(_) = &self.state {
+            let tx = match self.take_state(counters) {
                 PeerState::Connecting(tx) => tx,
                 _ => unreachable!(),
             };
-            self.set(
+            self.set_state(
                 PeerState::Live(LivePeerState::new(peer_id, tx, false)),
                 counters,
             );
@@ -211,8 +229,8 @@ impl PeerStateNoMut {
         }
     }
 
-    pub fn set_not_needed(&mut self, counters: &[&AggregatePeerStatsAtomic]) -> PeerState {
-        self.set(PeerState::NotNeeded, counters)
+    pub fn set_not_needed(&mut self, counters: &PeerStates) -> PeerState {
+        self.set_state(PeerState::NotNeeded, counters)
     }
 }
 

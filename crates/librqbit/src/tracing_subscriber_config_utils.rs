@@ -28,7 +28,7 @@ impl Subscriber {
     }
 }
 
-impl<'a> MakeWriter<'a> for Subscriber {
+impl MakeWriter<'_> for Subscriber {
     type Writer = LineWriter<Writer>;
 
     fn make_writer(&self) -> Self::Writer {

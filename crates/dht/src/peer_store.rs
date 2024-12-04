@@ -51,7 +51,7 @@ impl Serialize for PeerStore {
             peers: &'a dashmap::DashMap<Id20, Vec<StoredPeer>>,
         }
 
-        impl<'a> Serialize for SerializePeers<'a> {
+        impl Serialize for SerializePeers<'_> {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where
                 S: serde::Serializer,
