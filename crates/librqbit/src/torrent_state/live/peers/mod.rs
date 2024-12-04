@@ -87,7 +87,7 @@ impl PeerStates {
 
     pub fn drop_peer(&self, handle: PeerHandle) -> Option<Peer> {
         let p = self.states.remove(&handle).map(|r| r.1)?;
-        let s = p.state.get();
+        let s = p.state.get_state();
         self.stats.dec(s);
         self.session_stats.peers.dec(s);
 

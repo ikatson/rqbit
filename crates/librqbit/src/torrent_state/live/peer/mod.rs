@@ -59,7 +59,7 @@ impl Peer {
         known_address: SocketAddr,
         counters: &PeerStates,
     ) -> Option<SocketAddr> {
-        if let PeerState::NotNeeded = self.state.get() {
+        if let PeerState::NotNeeded = self.state.get_state() {
             match self.outgoing_address {
                 None => None,
                 Some(socket_addr) => {
@@ -125,11 +125,11 @@ impl PeerState {
 pub(crate) struct PeerStateNoMut(PeerState);
 
 impl PeerStateNoMut {
-    pub fn get(&self) -> &PeerState {
+    pub fn get_state(&self) -> &PeerState {
         &self.0
     }
 
-    pub fn take(&mut self, counters: &PeerStates) -> PeerState {
+    pub fn take_state(&mut self, counters: &PeerStates) -> PeerState {
         self.set(Default::default(), counters)
     }
 
@@ -185,7 +185,7 @@ impl PeerStateNoMut {
         if matches!(&self.0, PeerState::Connecting(..) | PeerState::Live(..)) {
             anyhow::bail!("peer already active");
         }
-        match self.take(counters) {
+        match self.take_state(counters) {
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
                 self.set(
                     PeerState::Live(LivePeerState::new(peer_id, tx, true)),
@@ -203,7 +203,7 @@ impl PeerStateNoMut {
         counters: &PeerStates,
     ) -> Option<&mut LivePeerState> {
         if let PeerState::Connecting(_) = &self.0 {
-            let tx = match self.take(counters) {
+            let tx = match self.take_state(counters) {
                 PeerState::Connecting(tx) => tx,
                 _ => unreachable!(),
             };

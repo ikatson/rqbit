@@ -674,7 +674,7 @@ impl TorrentStateLive {
                 .peers
                 .states
                 .iter()
-                .filter(|e| filter.state.matches(e.value().state.get()))
+                .filter(|e| filter.state.matches(e.value().state.get_state()))
                 .map(|e| (e.key().to_string(), e.value().into()))
                 .collect(),
         }
@@ -809,7 +809,7 @@ impl TorrentStateLive {
 
     fn disconnect_all_peers_that_have_full_torrent(&self) {
         for mut pe in self.peers.states.iter_mut() {
-            if let PeerState::Live(l) = pe.value().state.get() {
+            if let PeerState::Live(l) = pe.value().state.get_state() {
                 if l.has_full_torrent(self.lengths.total_pieces() as usize) {
                     let prev = pe.value_mut().state.set_not_needed(&self.peers);
                     let _ = prev
@@ -1122,7 +1122,7 @@ impl PeerHandler {
                 return Ok(());
             }
         };
-        let prev = pe.value_mut().state.take(pstats);
+        let prev = pe.value_mut().state.take_state(pstats);
 
         match prev {
             PeerState::Connecting(_) => {}
@@ -1201,7 +1201,7 @@ impl PeerHandler {
                     self.state
                         .peers
                         .with_peer_mut(handle, "dead_to_queued", |peer| {
-                            match peer.state.get() {
+                            match peer.state.get_state() {
                                 PeerState::Dead => {
                                     peer.state.set(PeerState::Queued, &self.state.peers)
                                 }
