@@ -30,7 +30,7 @@ pub(crate) struct PeerStates {
 impl Drop for PeerStates {
     fn drop(&mut self) {
         for (_, p) in std::mem::take(&mut self.states).into_iter() {
-            p.state.destroy(self);
+            p.destroy(self);
         }
     }
 }
@@ -71,7 +71,7 @@ impl PeerStates {
     }
 
     pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
-        self.with_peer(addr, |peer| peer.state.get_live().map(f))
+        self.with_peer(addr, |peer| peer.get_live().map(f))
             .flatten()
     }
 
@@ -81,13 +81,13 @@ impl PeerStates {
         reason: &'static str,
         f: impl FnOnce(&mut LivePeerState) -> R,
     ) -> Option<R> {
-        self.with_peer_mut(addr, reason, |peer| peer.state.get_live_mut().map(f))
+        self.with_peer_mut(addr, reason, |peer| peer.get_live_mut().map(f))
             .flatten()
     }
 
     pub fn drop_peer(&self, handle: PeerHandle) -> Option<Peer> {
         let p = self.states.remove(&handle).map(|r| r.1)?;
-        let s = p.state.get_state();
+        let s = p.get_state();
         self.stats.dec(s);
         self.session_stats.peers.dec(s);
 
@@ -116,9 +116,7 @@ impl PeerStates {
     pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<(PeerRx, PeerTx)> {
         let rx = self
             .with_peer_mut(h, "mark_peer_connecting", |peer| {
-                peer.state
-                    .idle_to_connecting(self)
-                    .context("invalid peer state")
+                peer.idle_to_connecting(self).context("invalid peer state")
             })
             .context("peer not found in states")??;
         Ok(rx)
@@ -132,7 +130,7 @@ impl PeerStates {
 
     pub fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
         let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
-            peer.state.set_not_needed(self)
+            peer.set_not_needed(self)
         })?;
         Some(prev)
     }

@@ -21,7 +21,7 @@ pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 #[derive(Debug)]
 pub(crate) struct Peer {
     pub addr: SocketAddr,
-    pub state: PeerStateNoMut,
+    state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
     pub outgoing_address: Option<SocketAddr>,
 }
@@ -59,12 +59,12 @@ impl Peer {
         known_address: SocketAddr,
         counters: &PeerStates,
     ) -> Option<SocketAddr> {
-        if let PeerState::NotNeeded = self.state.get_state() {
+        if let PeerState::NotNeeded = self.get_state() {
             match self.outgoing_address {
                 None => None,
                 Some(socket_addr) => {
                     if known_address == socket_addr {
-                        self.state.set(PeerState::Queued, counters);
+                        self.set_state(PeerState::Queued, counters);
                     } else {
                         debug!(
                             peer = known_address.to_string(),
@@ -124,52 +124,52 @@ impl PeerState {
 #[derive(Debug, Default)]
 pub(crate) struct PeerStateNoMut(PeerState);
 
-impl PeerStateNoMut {
+impl Peer {
     pub fn get_state(&self) -> &PeerState {
-        &self.0
+        &self.state.0
     }
 
     pub fn take_state(&mut self, counters: &PeerStates) -> PeerState {
-        self.set(Default::default(), counters)
+        self.set_state(Default::default(), counters)
     }
 
     pub fn destroy(self, counters: &PeerStates) {
         for counter in [&counters.session_stats.peers, &counters.stats] {
-            counter.dec(&self.0);
+            counter.dec(&self.state.0);
         }
     }
 
-    pub fn set(&mut self, new: PeerState, counters: &PeerStates) -> PeerState {
+    pub fn set_state(&mut self, new: PeerState, counters: &PeerStates) -> PeerState {
         for counter in [&counters.session_stats.peers, &counters.stats] {
-            counter.incdec(&self.0, &new);
+            counter.incdec(&self.state.0, &new);
         }
-        std::mem::replace(&mut self.0, new)
+        std::mem::replace(&mut self.state.0, new)
     }
 
     pub fn get_live(&self) -> Option<&LivePeerState> {
-        match &self.0 {
+        match &self.state.0 {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
     }
 
     pub fn is_live(&self) -> bool {
-        matches!(&self.0, PeerState::Live(_))
+        matches!(&self.state.0, PeerState::Live(_))
     }
 
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {
-        match &mut self.0 {
+        match &mut self.state.0 {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
     }
 
     pub fn idle_to_connecting(&mut self, counters: &PeerStates) -> Option<(PeerRx, PeerTx)> {
-        match &self.0 {
+        match &self.state.0 {
             PeerState::Queued | PeerState::NotNeeded => {
                 let (tx, rx) = unbounded_channel();
                 let tx_2 = tx.clone();
-                self.set(PeerState::Connecting(tx), counters);
+                self.set_state(PeerState::Connecting(tx), counters);
                 Some((rx, tx_2))
             }
             _ => None,
@@ -182,12 +182,15 @@ impl PeerStateNoMut {
         tx: PeerTx,
         counters: &PeerStates,
     ) -> anyhow::Result<()> {
-        if matches!(&self.0, PeerState::Connecting(..) | PeerState::Live(..)) {
+        if matches!(
+            &self.state.0,
+            PeerState::Connecting(..) | PeerState::Live(..)
+        ) {
             anyhow::bail!("peer already active");
         }
         match self.take_state(counters) {
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
-                self.set(
+                self.set_state(
                     PeerState::Live(LivePeerState::new(peer_id, tx, true)),
                     counters,
                 );
@@ -202,12 +205,12 @@ impl PeerStateNoMut {
         peer_id: Id20,
         counters: &PeerStates,
     ) -> Option<&mut LivePeerState> {
-        if let PeerState::Connecting(_) = &self.0 {
+        if let PeerState::Connecting(_) = &self.state.0 {
             let tx = match self.take_state(counters) {
                 PeerState::Connecting(tx) => tx,
                 _ => unreachable!(),
             };
-            self.set(
+            self.set_state(
                 PeerState::Live(LivePeerState::new(peer_id, tx, false)),
                 counters,
             );
@@ -218,7 +221,7 @@ impl PeerStateNoMut {
     }
 
     pub fn set_not_needed(&mut self, counters: &PeerStates) -> PeerState {
-        self.set(PeerState::NotNeeded, counters)
+        self.set_state(PeerState::NotNeeded, counters)
     }
 }
 

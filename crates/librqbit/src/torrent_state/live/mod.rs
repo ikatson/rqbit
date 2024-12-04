@@ -369,13 +369,12 @@ impl TorrentStateLive {
         let counters = match self.peers.states.entry(checked_peer.addr) {
             Entry::Occupied(mut occ) => {
                 let peer = occ.get_mut();
-                peer.state
-                    .incoming_connection(
-                        Id20::new(checked_peer.handshake.peer_id),
-                        tx.clone(),
-                        &self.peers,
-                    )
-                    .context("peer already existed")?;
+                peer.incoming_connection(
+                    Id20::new(checked_peer.handshake.peer_id),
+                    tx.clone(),
+                    &self.peers,
+                )
+                .context("peer already existed")?;
                 peer.stats.counters.clone()
             }
             Entry::Vacant(vac) => {
@@ -616,8 +615,7 @@ impl TorrentStateLive {
 
     fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
-            p.state
-                .connecting_to_live(Id20::new(h.peer_id), &self.peers);
+            p.connecting_to_live(Id20::new(h.peer_id), &self.peers);
         });
     }
 
@@ -674,7 +672,7 @@ impl TorrentStateLive {
                 .peers
                 .states
                 .iter()
-                .filter(|e| filter.state.matches(e.value().state.get_state()))
+                .filter(|e| filter.state.matches(e.value().get_state()))
                 .map(|e| (e.key().to_string(), e.value().into()))
                 .collect(),
         }
@@ -809,9 +807,9 @@ impl TorrentStateLive {
 
     fn disconnect_all_peers_that_have_full_torrent(&self) {
         for mut pe in self.peers.states.iter_mut() {
-            if let PeerState::Live(l) = pe.value().state.get_state() {
+            if let PeerState::Live(l) = pe.value().get_state() {
                 if l.has_full_torrent(self.lengths.total_pieces() as usize) {
-                    let prev = pe.value_mut().state.set_not_needed(&self.peers);
+                    let prev = pe.value_mut().set_not_needed(&self.peers);
                     let _ = prev
                         .take_live_no_counters()
                         .unwrap()
@@ -874,7 +872,7 @@ impl TorrentStateLive {
                     .load(Ordering::Relaxed)
                     > 0;
 
-                let is_live = has_outgoing_connections && ps.value().state.is_live();
+                let is_live = has_outgoing_connections && ps.value().is_live();
                 if is_live {
                     live_peers.insert(addr);
                 } else {
@@ -1122,7 +1120,7 @@ impl PeerHandler {
                 return Ok(());
             }
         };
-        let prev = pe.value_mut().state.take_state(pstats);
+        let prev = pe.value_mut().take_state(pstats);
 
         match prev {
             PeerState::Connecting(_) => {}
@@ -1141,7 +1139,7 @@ impl PeerHandler {
             }
             PeerState::NotNeeded => {
                 // Restore it as std::mem::take() replaced it above.
-                pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+                pe.value_mut().set_state(PeerState::NotNeeded, pstats);
                 return Ok(());
             }
             s @ PeerState::Queued | s @ PeerState::Dead => {
@@ -1157,7 +1155,7 @@ impl PeerHandler {
             Some(e) => e,
             None => {
                 trace!("peer died without errors, not re-queueing");
-                pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+                pe.value_mut().set_state(PeerState::NotNeeded, pstats);
                 return Ok(());
             }
         };
@@ -1166,11 +1164,11 @@ impl PeerHandler {
 
         if self.state.is_finished_and_no_active_streams() {
             debug!("torrent finished, not re-queueing");
-            pe.value_mut().state.set(PeerState::NotNeeded, pstats);
+            pe.value_mut().set_state(PeerState::NotNeeded, pstats);
             return Ok(());
         }
 
-        pe.value_mut().state.set(PeerState::Dead, pstats);
+        pe.value_mut().set_state(PeerState::Dead, pstats);
 
         if self.incoming {
             // do not retry incoming peers
@@ -1201,9 +1199,9 @@ impl PeerHandler {
                     self.state
                         .peers
                         .with_peer_mut(handle, "dead_to_queued", |peer| {
-                            match peer.state.get_state() {
+                            match peer.get_state() {
                                 PeerState::Dead => {
-                                    peer.state.set(PeerState::Queued, &self.state.peers)
+                                    peer.set_state(PeerState::Queued, &self.state.peers)
                                 }
                                 other => bail!(
                                     "peer is in unexpected state: {}. Expected dead",

@@ -51,7 +51,7 @@ impl From<&Peer> for PeerStats {
     fn from(peer: &Peer) -> Self {
         Self {
             counters: peer.stats.counters.as_ref().into(),
-            state: peer.state.get_state().name(),
+            state: peer.get_state().name(),
         }
     }
 }
