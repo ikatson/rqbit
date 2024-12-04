@@ -4,6 +4,7 @@ use anyhow::Context;
 use backoff::backoff::Backoff;
 use dashmap::DashMap;
 use librqbit_core::lengths::ValidPieceIndex;
+use parking_lot::RwLock;
 use peer_binary_protocol::{Message, Request};
 
 use crate::{
@@ -21,6 +22,7 @@ pub mod stats;
 
 pub(crate) struct PeerStates {
     pub session_stats: Arc<AtomicSessionStats>,
+    pub live_peers: RwLock<Vec<PeerHandle>>,
     pub stats: AggregatePeerStatsAtomic,
     pub states: DashMap<PeerHandle, Peer>,
 }
@@ -28,7 +30,7 @@ pub(crate) struct PeerStates {
 impl Drop for PeerStates {
     fn drop(&mut self) {
         for (_, p) in std::mem::take(&mut self.states).into_iter() {
-            p.state.destroy(&[&self.session_stats.peers]);
+            p.state.destroy(self);
         }
     }
 }
@@ -115,7 +117,7 @@ impl PeerStates {
         let rx = self
             .with_peer_mut(h, "mark_peer_connecting", |peer| {
                 peer.state
-                    .idle_to_connecting(&[&self.stats, &self.session_stats.peers])
+                    .idle_to_connecting(self)
                     .context("invalid peer state")
             })
             .context("peer not found in states")??;
@@ -130,8 +132,7 @@ impl PeerStates {
 
     pub fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
         let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
-            peer.state
-                .set_not_needed(&[&self.stats, &self.session_stats.peers])
+            peer.state.set_not_needed(self)
         })?;
         Some(prev)
     }
