@@ -1,9 +1,10 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use backoff::backoff::Backoff;
 use dashmap::DashMap;
 use librqbit_core::lengths::ValidPieceIndex;
+use parking_lot::RwLock;
 use peer_binary_protocol::{Message, Request};
 
 use crate::{
@@ -21,6 +22,9 @@ pub mod stats;
 
 pub(crate) struct PeerStates {
     pub session_stats: Arc<AtomicSessionStats>,
+
+    // This keeps track of live addresses we connected to, for PEX.
+    pub live_outgoing_peers: RwLock<HashSet<PeerHandle>>,
     pub stats: AggregatePeerStatsAtomic,
     pub states: DashMap<PeerHandle, Peer>,
 }
@@ -28,7 +32,7 @@ pub(crate) struct PeerStates {
 impl Drop for PeerStates {
     fn drop(&mut self) {
         for (_, p) in std::mem::take(&mut self.states).into_iter() {
-            p.state.destroy(&[&self.session_stats.peers]);
+            p.destroy(self);
         }
     }
 }
@@ -69,7 +73,7 @@ impl PeerStates {
     }
 
     pub fn with_live<R>(&self, addr: PeerHandle, f: impl FnOnce(&LivePeerState) -> R) -> Option<R> {
-        self.with_peer(addr, |peer| peer.state.get_live().map(f))
+        self.with_peer(addr, |peer| peer.get_live().map(f))
             .flatten()
     }
 
@@ -79,13 +83,13 @@ impl PeerStates {
         reason: &'static str,
         f: impl FnOnce(&mut LivePeerState) -> R,
     ) -> Option<R> {
-        self.with_peer_mut(addr, reason, |peer| peer.state.get_live_mut().map(f))
+        self.with_peer_mut(addr, reason, |peer| peer.get_live_mut().map(f))
             .flatten()
     }
 
     pub fn drop_peer(&self, handle: PeerHandle) -> Option<Peer> {
         let p = self.states.remove(&handle).map(|r| r.1)?;
-        let s = p.state.get();
+        let s = p.get_state();
         self.stats.dec(s);
         self.session_stats.peers.dec(s);
 
@@ -114,9 +118,7 @@ impl PeerStates {
     pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<(PeerRx, PeerTx)> {
         let rx = self
             .with_peer_mut(h, "mark_peer_connecting", |peer| {
-                peer.state
-                    .idle_to_connecting(&[&self.stats, &self.session_stats.peers])
-                    .context("invalid peer state")
+                peer.idle_to_connecting(self).context("invalid peer state")
             })
             .context("peer not found in states")??;
         Ok(rx)
@@ -130,8 +132,7 @@ impl PeerStates {
 
     pub fn mark_peer_not_needed(&self, handle: PeerHandle) -> Option<PeerState> {
         let prev = self.with_peer_mut(handle, "mark_peer_not_needed", |peer| {
-            peer.state
-                .set_not_needed(&[&self.stats, &self.session_stats.peers])
+            peer.set_not_needed(self)
         })?;
         Some(prev)
     }

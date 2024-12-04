@@ -1,7 +1,8 @@
 use std::net::{IpAddr, SocketAddr};
 
+use buffers::ByteBufOwned;
 use byteorder::{ByteOrder, BE};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
 
@@ -121,9 +122,58 @@ where
     }
 }
 
+impl UtPex<ByteBufOwned> {
+    pub fn from_addrs<'a, I, J>(addrs_live: I, addrs_closed: J) -> Self
+    where
+        I: IntoIterator<Item = &'a SocketAddr>,
+        J: IntoIterator<Item = &'a SocketAddr>,
+    {
+        fn addrs_to_bytes<'a, I>(addrs: I) -> (Option<ByteBufOwned>, Option<ByteBufOwned>)
+        where
+            I: IntoIterator<Item = &'a SocketAddr>,
+        {
+            let mut ipv4_addrs = BytesMut::new();
+            let mut ipv6_addrs = BytesMut::new();
+            for addr in addrs {
+                match addr {
+                    SocketAddr::V4(v4) => {
+                        ipv4_addrs.extend_from_slice(&v4.ip().octets());
+                        ipv4_addrs.extend_from_slice(&v4.port().to_be_bytes());
+                    }
+                    SocketAddr::V6(v6) => {
+                        ipv6_addrs.extend_from_slice(&v6.ip().octets());
+                        ipv6_addrs.extend_from_slice(&v6.port().to_be_bytes());
+                    }
+                }
+            }
+
+            let freeze = |buf: BytesMut| -> Option<ByteBufOwned> {
+                if !buf.is_empty() {
+                    Some(buf.freeze().into())
+                } else {
+                    None
+                }
+            };
+
+            (freeze(ipv4_addrs), freeze(ipv6_addrs))
+        }
+
+        let (added, added6) = addrs_to_bytes(addrs_live);
+        let (dropped, dropped6) = addrs_to_bytes(addrs_closed);
+
+        Self {
+            added,
+            added6,
+            dropped,
+            dropped6,
+            ..Default::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use bencode::from_bytes;
+    use bencode::{bencode_serialize_to_writer, from_bytes};
     use buffers::ByteBuf;
 
     use super::*;
@@ -153,5 +203,36 @@ mod tests {
             addrs[1].addr
         );
         assert_eq!(0, addrs[1].flags);
+    }
+
+    #[test]
+    fn test_pex_roundtrip() {
+        let a1 = "185.159.157.20:46439".parse::<SocketAddr>().unwrap();
+        let a2 = "151.249.105.134:4240".parse::<SocketAddr>().unwrap();
+        //IPV6
+        let aa1 = "[5be8:dde9:7f0b:d5a7:bd01:b3be:9c69:573b]:46439"
+            .parse::<SocketAddr>()
+            .unwrap();
+        let aa2 = "[f16c:f7ec:cfa2:e1c5:9a3c:cb08:801f:36b8]:4240"
+            .parse::<SocketAddr>()
+            .unwrap();
+
+        let addrs = vec![a1, aa1, a2, aa2];
+        let pex = UtPex::from_addrs(&addrs, &addrs);
+        let mut bytes = Vec::new();
+        bencode_serialize_to_writer(&pex, &mut bytes).unwrap();
+        let pex2 = from_bytes::<UtPex<ByteBuf>>(&bytes).unwrap();
+        assert_eq!(4, pex2.added_peers().count());
+        assert_eq!(pex.added_peers().count(), pex2.added_peers().count());
+        let addrs2: Vec<_> = pex2.added_peers().collect();
+        assert_eq!(a1, addrs2[0].addr);
+        assert_eq!(a2, addrs2[1].addr);
+        assert_eq!(aa1, addrs2[2].addr);
+        assert_eq!(aa2, addrs2[3].addr);
+        let addrs2: Vec<_> = pex2.dropped_peers().collect();
+        assert_eq!(a1, addrs2[0].addr);
+        assert_eq!(a2, addrs2[1].addr);
+        assert_eq!(aa1, addrs2[2].addr);
+        assert_eq!(aa2, addrs2[3].addr);
     }
 }
