@@ -381,6 +381,7 @@ impl TorrentStateLive {
             Entry::Vacant(vac) => {
                 atomic_inc(&self.peers.stats.seen);
                 let peer = Peer::new_live_for_incoming_connection(
+                    *vac.key(),
                     Id20::new(checked_peer.handshake.peer_id),
                     tx.clone(),
                     &self.peers,

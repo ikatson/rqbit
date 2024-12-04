@@ -18,8 +18,9 @@ pub(crate) type InflightRequest = ChunkInfo;
 pub(crate) type PeerRx = UnboundedReceiver<WriterRequest>;
 pub(crate) type PeerTx = UnboundedSender<WriterRequest>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Peer {
+    pub addr: SocketAddr,
     pub state: PeerStateNoMut,
     pub stats: stats::atomic::PeerStats,
     pub outgoing_address: Option<SocketAddr>,
@@ -27,6 +28,7 @@ pub(crate) struct Peer {
 
 impl Peer {
     pub fn new_live_for_incoming_connection(
+        addr: SocketAddr,
         peer_id: Id20,
         tx: PeerTx,
         counters: &PeerStates,
@@ -36,6 +38,7 @@ impl Peer {
             counter.inc(&state.0);
         }
         Self {
+            addr,
             state,
             stats: Default::default(),
             outgoing_address: None,
@@ -44,8 +47,10 @@ impl Peer {
 
     pub fn new_with_outgoing_address(addr: SocketAddr) -> Self {
         Self {
+            addr,
             outgoing_address: Some(addr),
-            ..Default::default()
+            stats: Default::default(),
+            state: Default::default(),
         }
     }
 
