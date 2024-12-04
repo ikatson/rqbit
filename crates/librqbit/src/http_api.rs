@@ -82,6 +82,67 @@ async fn simple_basic_auth(
     }
 }
 
+mod timeout {
+    use std::time::Duration;
+
+    use anyhow::Context;
+    use axum::{extract::Query, RequestPartsExt};
+    use http::request::Parts;
+    use serde::Deserialize;
+
+    use crate::ApiError;
+
+    pub struct Timeout<const DEFAULT_MS: usize, const MAX_MS: usize>(pub Duration);
+
+    #[async_trait::async_trait]
+    impl<S, const DEFAULT_MS: usize, const MAX_MS: usize> axum::extract::FromRequestParts<S>
+        for Timeout<DEFAULT_MS, MAX_MS>
+    where
+        S: Send + Sync,
+    {
+        type Rejection = ApiError;
+
+        /// Perform the extraction.
+        async fn from_request_parts(
+            parts: &mut Parts,
+            _state: &S,
+        ) -> Result<Self, Self::Rejection> {
+            #[derive(Deserialize)]
+            struct QueryT {
+                timeout_ms: Option<usize>,
+            }
+
+            let q = parts
+                .extract::<Query<QueryT>>()
+                .await
+                .context("error running Timeout extractor")?;
+
+            let timeout_ms = q
+                .timeout_ms
+                .map(Ok)
+                .or_else(|| {
+                    parts
+                        .headers
+                        .get("x-req-timeout-ms")
+                        .map(|v| {
+                            std::str::from_utf8(v.as_bytes())
+                                .context("invalid utf-8 in timeout value")
+                        })
+                        .map(|v| {
+                            v.and_then(|v| v.parse::<usize>().context("invalid timeout integer"))
+                        })
+                })
+                .transpose()
+                .context("error parsing timeout")?
+                .unwrap_or(DEFAULT_MS);
+            let timeout_ms = timeout_ms.min(MAX_MS);
+            Ok(Timeout(Duration::from_millis(timeout_ms as u64)))
+        }
+    }
+}
+
+use timeout::Timeout;
+
 impl HttpApi {
     pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
@@ -152,6 +213,7 @@ impl HttpApi {
         async fn torrents_post(
             State(state): State<ApiState>,
             Query(params): Query<TorrentAddQueryParams>,
+            Timeout(timeout): Timeout<600_000, 3_600_000>,
             data: Bytes,
         ) -> Result<impl IntoResponse> {
             let is_url = params.is_url;
@@ -185,7 +247,10 @@ impl HttpApi {
                 }
                 _ => AddTorrent::TorrentFileBytes(data.into()),
             };
-            state.api_add_torrent(add, Some(opts)).await.map(axum::Json)
+            tokio::time::timeout(timeout, state.api_add_torrent(add, Some(opts)))
+                .await
+                .context("timeout")?
+                .map(axum::Json)
         }
 
         async fn torrent_details(
@@ -257,19 +322,23 @@ impl HttpApi {
 
         async fn resolve_magnet(
             State(state): State<ApiState>,
+            Timeout(timeout): Timeout<600_000, 3_600_000>,
             inp_headers: HeaderMap,
             url: String,
         ) -> Result<impl IntoResponse> {
-            let added = state
-                .session()
-                .add_torrent(
+            let added = tokio::time::timeout(
+                timeout,
+                state.session().add_torrent(
                     AddTorrent::from_url(&url),
                     Some(AddTorrentOptions {
                         list_only: true,
                         ..Default::default()
                     }),
-                )
-                .await?;
+                ),
+            )
+            .await
+            .context("timeout")??;
+
             let (info, content) = match added {
                 crate::AddTorrentResponse::AlreadyManaged(_, handle) => (
                     handle.shared().info.clone(),
