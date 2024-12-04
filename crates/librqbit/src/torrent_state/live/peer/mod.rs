@@ -2,6 +2,7 @@ pub mod stats;
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ChunkInfo;
@@ -133,8 +134,8 @@ impl Peer {
         for counter in [&counters.session_stats.peers, &counters.stats] {
             counter.dec(&self.state);
         }
-        if matches!(&self.state, PeerState::Live(..)) {
-            counters.live_peers.write().retain(|a| *a != self.addr);
+        if let (Some(addr), PeerState::Live(..)) = (self.outgoing_address, &self.state) {
+            counters.live_outgoing_peers.write().remove(&addr);
         }
     }
 
@@ -142,12 +143,22 @@ impl Peer {
         for counter in [&counters.session_stats.peers, &counters.stats] {
             counter.incdec(&self.state, &new);
         }
-        if matches!(&self.state, PeerState::Live(..)) {
-            counters.live_peers.write().retain(|a| *a != self.addr);
+        if let Some(addr) = self.outgoing_address {
+            if matches!(&self.state, PeerState::Live(..)) {
+                counters.live_outgoing_peers.write().remove(&addr);
+            }
+            if matches!(&new, PeerState::Live(..))
+                && self
+                    .stats
+                    .counters
+                    .outgoing_connections
+                    .load(Ordering::Relaxed)
+                    > 0
+            {
+                counters.live_outgoing_peers.write().insert(addr);
+            }
         }
-        if matches!(&new, PeerState::Live(..)) {
-            counters.live_peers.write().push(self.addr);
-        }
+
         std::mem::replace(&mut self.state, new)
     }
 
@@ -156,10 +167,6 @@ impl Peer {
             PeerState::Live(l) => Some(l),
             _ => None,
         }
-    }
-
-    pub fn is_live(&self) -> bool {
-        matches!(&self.state, PeerState::Live(_))
     }
 
     pub fn get_live_mut(&mut self) -> Option<&mut LivePeerState> {

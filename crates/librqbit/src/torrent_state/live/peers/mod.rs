@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use backoff::backoff::Backoff;
@@ -22,7 +22,9 @@ pub mod stats;
 
 pub(crate) struct PeerStates {
     pub session_stats: Arc<AtomicSessionStats>,
-    pub live_peers: RwLock<Vec<PeerHandle>>,
+
+    // This keeps track of live addresses we connected to, for PEX.
+    pub live_outgoing_peers: RwLock<HashSet<PeerHandle>>,
     pub stats: AggregatePeerStatsAtomic,
     pub states: DashMap<PeerHandle, Peer>,
 }

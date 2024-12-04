@@ -257,7 +257,7 @@ impl TorrentStateLive {
                 session_stats: session_stats.clone(),
                 stats: Default::default(),
                 states: Default::default(),
-                live_peers: Default::default(),
+                live_outgoing_peers: Default::default(),
             },
             locked: RwLock::new(TorrentStateLocked {
                 chunks: Some(paused.chunk_tracker),
@@ -841,7 +841,6 @@ impl TorrentStateLive {
         // As per BEP 11 recommended interval is min 60 seconds
         const PEX_MESSAGE_INTERVAL: Duration = Duration::from_secs(60);
 
-        let mut live_peers = HashSet::new();
         let mut connected = Vec::with_capacity(MAX_SENT_PEERS);
         let mut dropped = Vec::with_capacity(MAX_SENT_PEERS);
         let mut peer_view_of_live_peers = HashSet::new();
@@ -854,43 +853,24 @@ impl TorrentStateLive {
         loop {
             interval.tick().await;
 
-            // TODO: store them in a shared place
-            // Fill in live_peers
-            for ps in self.peers.states.iter() {
-                let peer = ps.value();
-                let addr = *peer.outgoing_address.as_ref().unwrap_or_else(|| ps.key());
+            {
+                let live_peers = self.peers.live_outgoing_peers.read();
+                connected.clear();
+                dropped.clear();
 
-                // As per BEP 11 share only those we were able to connect
-                let has_outgoing_connections = peer
-                    .stats
-                    .counters
-                    .outgoing_connections
-                    .load(Ordering::Relaxed)
-                    > 0;
-
-                let is_live = has_outgoing_connections && ps.value().is_live();
-                if is_live {
-                    live_peers.insert(addr);
-                } else {
-                    live_peers.remove(&addr);
-                }
+                connected.extend(
+                    live_peers
+                        .difference(&peer_view_of_live_peers)
+                        .take(MAX_SENT_PEERS)
+                        .copied(),
+                );
+                dropped.extend(
+                    peer_view_of_live_peers
+                        .difference(&live_peers)
+                        .take(MAX_SENT_PEERS)
+                        .copied(),
+                );
             }
-
-            connected.clear();
-            dropped.clear();
-
-            connected.extend(
-                live_peers
-                    .difference(&peer_view_of_live_peers)
-                    .take(MAX_SENT_PEERS)
-                    .copied(),
-            );
-            dropped.extend(
-                peer_view_of_live_peers
-                    .difference(&live_peers)
-                    .take(MAX_SENT_PEERS)
-                    .copied(),
-            );
 
             // BEP 11 - Dont send closed if they are now in live
             // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent,
@@ -1104,10 +1084,6 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
 impl PeerHandler {
     fn on_peer_died(self, error: Option<anyhow::Error>) -> anyhow::Result<()> {
         let peers = &self.state.peers;
-        let pstats = {
-            let this = &self.state;
-            &this.peers
-        };
         let handle = self.addr;
         let mut pe = match peers.states.get_mut(&handle) {
             Some(peer) => TimedExistence::new(peer, "on_peer_died"),
@@ -1116,7 +1092,7 @@ impl PeerHandler {
                 return Ok(());
             }
         };
-        let prev = pe.value_mut().take_state(pstats);
+        let prev = pe.value_mut().take_state(peers);
 
         match prev {
             PeerState::Connecting(_) => {}
@@ -1135,7 +1111,7 @@ impl PeerHandler {
             }
             PeerState::NotNeeded => {
                 // Restore it as std::mem::take() replaced it above.
-                pe.value_mut().set_state(PeerState::NotNeeded, pstats);
+                pe.value_mut().set_state(PeerState::NotNeeded, peers);
                 return Ok(());
             }
             s @ PeerState::Queued | s @ PeerState::Dead => {
@@ -1151,7 +1127,7 @@ impl PeerHandler {
             Some(e) => e,
             None => {
                 trace!("peer died without errors, not re-queueing");
-                pe.value_mut().set_state(PeerState::NotNeeded, pstats);
+                pe.value_mut().set_state(PeerState::NotNeeded, peers);
                 return Ok(());
             }
         };
@@ -1160,11 +1136,11 @@ impl PeerHandler {
 
         if self.state.is_finished_and_no_active_streams() {
             debug!("torrent finished, not re-queueing");
-            pe.value_mut().set_state(PeerState::NotNeeded, pstats);
+            pe.value_mut().set_state(PeerState::NotNeeded, peers);
             return Ok(());
         }
 
-        pe.value_mut().set_state(PeerState::Dead, pstats);
+        pe.value_mut().set_state(PeerState::Dead, peers);
 
         if self.incoming {
             // do not retry incoming peers
