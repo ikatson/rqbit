@@ -11,7 +11,7 @@ import {
 // Define API URL and base path
 const apiUrl = (() => {
   if (window.origin === "null" || window.origin === "http://localhost:3031") {
-    return "http://localhost:3030"
+    return "http://localhost:3030";
   }
   let port = /http.*:\/\/.*:(\d+)/.exec(window.origin)?.[1];
   if (port == "3031") {

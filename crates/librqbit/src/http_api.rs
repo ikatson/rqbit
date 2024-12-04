@@ -213,7 +213,7 @@ impl HttpApi {
         async fn torrents_post(
             State(state): State<ApiState>,
             Query(params): Query<TorrentAddQueryParams>,
-            Timeout(timeout): Timeout<60_000, 3_600_000>,
+            Timeout(timeout): Timeout<600_000, 3_600_000>,
             data: Bytes,
         ) -> Result<impl IntoResponse> {
             let is_url = params.is_url;
@@ -322,7 +322,7 @@ impl HttpApi {
 
         async fn resolve_magnet(
             State(state): State<ApiState>,
-            Timeout(timeout): Timeout<60_000, 3_600_000>,
+            Timeout(timeout): Timeout<600_000, 3_600_000>,
             inp_headers: HeaderMap,
             url: String,
         ) -> Result<impl IntoResponse> {
