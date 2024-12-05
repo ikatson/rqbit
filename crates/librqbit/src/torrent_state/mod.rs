@@ -411,6 +411,7 @@ impl ManagedTorrent {
                                 false,
                             ),
                         ));
+
                         t.resolved.swap(Some(resolved));
                         t.locked.write().state = new_state;
                         t.start(peer_rx, start_paused)

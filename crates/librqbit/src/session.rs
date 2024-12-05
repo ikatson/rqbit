@@ -29,7 +29,7 @@ use crate::{
         ManagedTorrentOptions, ManagedTorrentState, ResolvedTorrent, TorrentStateLive,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
-    ManagedTorrent, ManagedTorrentShared,
+    FileInfos, ManagedTorrent, ManagedTorrentShared,
 };
 use anyhow::{bail, Context};
 use arc_swap::ArcSwapOption;
@@ -154,60 +154,42 @@ async fn torrent_from_url(
     torrent_from_bytes(b).context("error decoding torrent")
 }
 
-fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
-    torrent: &TorrentMetaV1Info<ByteBuf>,
-    filename_re: &str,
-) -> anyhow::Result<Vec<usize>> {
-    let filename_re = regex::Regex::new(filename_re).context("filename regex is incorrect")?;
+fn compute_only_files_regex(file_infos: &FileInfos, filename_re: &regex::Regex) -> Vec<usize> {
     let mut only_files = Vec::new();
-    for (idx, fd) in torrent.iter_file_details()?.enumerate() {
-        let full_path = fd
-            .filename
-            .to_pathbuf()
-            .with_context(|| format!("filename of file {idx} is not valid utf8"))?;
+    for (idx, fd) in file_infos.iter().enumerate() {
+        let full_path = &fd.relative_filename;
         if filename_re.is_match(full_path.to_str().unwrap()) {
             only_files.push(idx);
         }
     }
-    if only_files.is_empty() {
-        bail!("none of the filenames match the given regex")
-    }
-    Ok(only_files)
+    only_files
+}
+
+pub(crate) enum OnlyFiles {
+    Vec(Vec<usize>),
+    Regex(regex::Regex),
 }
 
 // TODO: rewrite to never fail
 fn compute_only_files(
-    info: &TorrentMetaV1Info<ByteBufOwned>,
-    only_files: Option<Vec<usize>>,
-    only_files_regex: Option<String>,
+    file_infos: &FileInfos,
+    only_files: Option<OnlyFiles>,
     list_only: bool,
-) -> anyhow::Result<Option<Vec<usize>>> {
-    match (only_files, only_files_regex) {
-        (Some(_), Some(_)) => {
-            bail!("only_files and only_files_regex are mutually exclusive");
+) -> Option<Vec<usize>> {
+    match only_files? {
+        OnlyFiles::Vec(mut only_files) => {
+            only_files.retain(|id| *id < file_infos.len());
+            Some(only_files)
         }
-        (Some(only_files), None) => {
-            let total_files = info.iter_file_lengths()?.count();
-            for id in only_files.iter().copied() {
-                if id >= total_files {
-                    bail!("file id {} is out of range", id);
+        OnlyFiles::Regex(filename_re) => {
+            let only_files = compute_only_files_regex(file_infos, &filename_re);
+            if !list_only {
+                for id in &only_files {
+                    info!(filename=?file_infos[*id].relative_filename, "will download");
                 }
             }
-            Ok(Some(only_files))
+            Some(only_files)
         }
-        (None, Some(filename_re)) => {
-            let only_files = compute_only_files_regex(info, &filename_re)?;
-            for (idx, fd) in info.iter_file_details()?.enumerate() {
-                if !only_files.contains(&idx) {
-                    continue;
-                }
-                if !list_only {
-                    info!(filename=?fd.filename, "will download");
-                }
-            }
-            Ok(Some(only_files))
-        }
-        (None, None) => Ok(None),
     }
 }
 
