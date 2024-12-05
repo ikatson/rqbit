@@ -269,7 +269,7 @@ impl ManagedTorrent {
                 );
             };
 
-        fn spawn_peer_adder(live: &Arc<TorrentStateLive>, peer_rx: Option<PeerStream>) {
+        fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
             live.spawn(
                 error_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
                 {
@@ -279,12 +279,6 @@ impl ManagedTorrent {
                             let weak = Arc::downgrade(&live);
                             drop(live);
                             weak
-                        };
-
-                        let mut peer_rx = if let Some(peer_rx) = peer_rx {
-                            peer_rx
-                        } else {
-                            return Ok(());
                         };
 
                         loop {
@@ -359,7 +353,9 @@ impl ManagedTorrent {
                                 t.state_change_notify.notify_waiters();
 
                                 spawn_fatal_errors_receiver(&t, rx, token);
-                                spawn_peer_adder(&live, peer_rx);
+                                if let Some(peer_rx) = peer_rx {
+                                    spawn_peer_adder(&live, peer_rx);
+                                }
 
                                 Ok(())
                             }
@@ -382,7 +378,9 @@ impl ManagedTorrent {
                 drop(g);
 
                 spawn_fatal_errors_receiver(self, rx, cancellation_token);
-                spawn_peer_adder(&live, peer_rx);
+                if let Some(peer_rx) = peer_rx {
+                    spawn_peer_adder(&live, peer_rx);
+                }
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
