@@ -1330,6 +1330,21 @@ impl Session {
         Ok(())
     }
 
+    pub fn make_peer_rx_managed_torrent(
+        self: &Arc<Self>,
+        t: &Arc<ManagedTorrent>,
+        announce: bool,
+    ) -> anyhow::Result<PeerStream> {
+        self.make_peer_rx(
+            t.info_hash(),
+            t.shared().trackers.iter().cloned().collect(),
+            announce,
+            t.shared().options.force_tracker_interval,
+            t.shared().options.initial_peers.clone(),
+        )?
+        .context("no peer source")
+    }
+
     // Get a peer stream from both DHT and trackers.
     fn make_peer_rx(
         self: &Arc<Self>,
@@ -1387,14 +1402,8 @@ impl Session {
     }
 
     pub async fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let peer_rx = self.make_peer_rx(
-            handle.info_hash(),
-            handle.shared().trackers.clone().into_iter().collect(),
-            true,
-            handle.shared().options.force_tracker_interval,
-            handle.shared().options.initial_peers.clone(),
-        )?;
-        handle.start(peer_rx, false)?;
+        let peer_rx = self.make_peer_rx_managed_torrent(handle, true)?;
+        handle.start(Some(peer_rx), false)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
