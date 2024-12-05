@@ -10,7 +10,7 @@ use buffers::ByteBuf;
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryStreamExt};
 use http::{HeaderMap, HeaderValue, StatusCode};
-use itertools::{rev, Itertools};
+use itertools::Itertools;
 
 use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Serialize};

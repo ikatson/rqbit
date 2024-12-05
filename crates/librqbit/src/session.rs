@@ -41,7 +41,7 @@ use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
 use futures::{
     future::BoxFuture,
     stream::{BoxStream, FuturesUnordered},
-    FutureExt, Stream, TryFutureExt,
+    FutureExt, Stream, StreamExt, TryFutureExt,
 };
 use itertools::Itertools;
 use librqbit_core::{
@@ -60,7 +60,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::Notify,
 };
-use tokio_stream::StreamExt;
+
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument, Span};
 use tracker_comms::TrackerComms;
@@ -175,6 +175,7 @@ fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
     Ok(only_files)
 }
 
+// TODO: rewrite to never fail
 fn compute_only_files(
     info: &TorrentMetaV1Info<ByteBufOwned>,
     only_files: Option<Vec<usize>>,
@@ -477,17 +478,17 @@ pub(crate) struct CheckedIncomingConnection {
     pub handshake: Handshake<ByteBufOwned>,
 }
 
-enum ResolveResult {
-    Resolved(ResolvedTorrent),
-    Deferred,
+pub(crate) struct MagnetResolveResult {
+    pub resolved: ResolvedTorrent,
+    pub peer_rx: PeerStream,
+    pub seen_peers: Vec<SocketAddr>,
 }
 
 struct InternalAddResult {
     info_hash: Id20,
-    resolve_result: ResolveResult,
+    name: Option<String>,
+    resolve_result: Option<ResolvedTorrent>,
     trackers: Vec<String>,
-    peer_rx: Option<PeerStream>,
-    initial_peers: Vec<SocketAddr>,
 }
 
 impl Session {
@@ -894,9 +895,7 @@ impl Session {
             // Magnet links are different in that we first need to discover the metadata.
             let mut opts = opts.unwrap_or_default();
 
-            let paused = opts.list_only || opts.paused;
-
-            let announce_port = if paused { None } else { self.tcp_listen_port };
+            opts.paused |= opts.list_only;
 
             if opts.defer && opts.list_only {
                 bail!("defer and list_only options are mutually exclusive, but both were set")
@@ -920,75 +919,16 @@ impl Session {
                         }
                     }
 
-                    let peer_rx = self.make_peer_rx(
-                        info_hash,
-                        if opts.disable_trackers {
-                            Default::default()
-                        } else {
-                            let mut trackers = magnet.trackers.clone();
-                            if let Some(custom_trackers) = opts.trackers.clone() {
-                                 trackers.extend(custom_trackers);
-                            }
-                            trackers
-                        },
-                        announce_port,
-                        opts.force_tracker_interval,
-                    )?;
-                    let initial_peers_stream = opts
-                        .initial_peers
-                        .clone()
-                        .and_then(|v| if v.is_empty() { None } else { Some(v) })
-                        .map(futures::stream::iter);
-                    let peer_rx = merge_two_optional_streams(peer_rx, initial_peers_stream);
-                    let peer_rx = match peer_rx {
-                        Some(peer_rx) => peer_rx,
-                        None => bail!("can't find peers: DHT is disabled, no trackers in magnet, and no initial peers provided"),
-                    };
+                    let mut trackers = magnet.trackers.into_iter().unique().collect_vec();
+                    if let Some(custom_trackers) = opts.trackers.clone() {
+                        trackers.extend(custom_trackers);
+                    }
 
-                    debug!(?info_hash, "querying DHT");
-                    match read_metainfo_from_peer_receiver(
-                        self.peer_id,
+                    InternalAddResult {
                         info_hash,
-                        Default::default(),
-                        peer_rx,
-                        Some(self.merge_peer_opts(opts.peer_opts)),
-                        self.connector.clone(),
-                    )
-                    .await
-                    {
-                        ReadMetainfoResult::Found {
-                            info,
-                            info_bytes,
-                            rx,
-                            seen,
-                        } => {
-                            trace!(?info, "received result from DHT");
-                            let mut trackers = magnet.trackers.into_iter().unique().collect_vec();
-                            if let Some(custom_trackers) = opts.trackers.clone() {
-                                trackers.extend(custom_trackers);
-                            }
-                            InternalAddResult {
-                                info_hash,
-                                torrent_bytes: torrent_file_from_info_bytes(
-                                    &info_bytes,
-                                    &trackers,
-                                )?,
-                                info_bytes: info_bytes.0,
-                                info,
-                                trackers,
-                                peer_rx: Some(rx),
-                                initial_peers: {
-                                    let seen = seen.into_iter().collect_vec();
-                                    for peer in &seen {
-                                        trace!(?peer, "seen")
-                                    }
-                                    seen
-                                },
-                            }
-                        }
-                        ReadMetainfoResult::ChannelClosed { .. } => {
-                            bail!("input address stream exhausted, no way to discover torrent metainfo")
-                        }
+                        resolve_result: None,
+                        name: magnet.name,
+                        trackers,
                     }
                 }
                 other => {
@@ -1004,12 +944,13 @@ impl Session {
                                 url
                             )
                         }
-                        AddTorrent::TorrentFileBytes(bytes) =>
-                            torrent_from_bytes(bytes)
-                                .context("error decoding torrent")?
+                        AddTorrent::TorrentFileBytes(bytes) => {
+                            torrent_from_bytes(bytes).context("error decoding torrent")?
+                        }
                     };
 
-                    let mut trackers = torrent.info
+                    let mut trackers = torrent
+                        .info
                         .iter_announce()
                         .unique()
                         .filter_map(|tracker| match std::str::from_utf8(tracker.as_ref()) {
@@ -1024,41 +965,29 @@ impl Session {
                         trackers.extend(custom_trackers);
                     }
 
-                    let peer_rx = if paused {
-                        None
-                    } else {
-                        self.make_peer_rx(
-                            torrent.info.info_hash,
-                            if opts.disable_trackers {
-                                Default::default()
-                            } else {
-                                trackers.clone()
-                            },
-                            announce_port,
-                            opts.force_tracker_interval,
-                        )?
-                    };
-
                     InternalAddResult {
                         info_hash: torrent.info.info_hash,
-                        resolve_result: ResolveResult::Resolved(ResolvedTorrent::new(
-                            torrent.info.info,
-                            torrent.torrent_bytes,
-                            torrent.info_bytes,
-                        ).context("error constructing ResolvedTorrent")?),
+                        name: torrent
+                            .info
+                            .info
+                            .name
+                            .as_ref()
+                            .and_then(|n| std::str::from_utf8(n.as_ref()).ok())
+                            .map(|s| s.to_owned()),
+                        resolve_result: Some(
+                            ResolvedTorrent::new(
+                                torrent.info.info,
+                                torrent.torrent_bytes,
+                                torrent.info_bytes,
+                            )
+                            .context("error constructing ResolvedTorrent")?,
+                        ),
                         trackers,
-                        peer_rx,
-                        initial_peers: opts
-                            .initial_peers
-                            .clone()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .collect(),
                     }
                 }
             };
 
-            self.main_torrent_info(add_res, opts).await
+            self.add_torrent_internal(add_res, opts).await
         }
         .instrument(error_span!(parent: self.rs(), "add_torrent"))
         .boxed()
@@ -1091,29 +1020,65 @@ impl Session {
         Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
     }
 
-    async fn main_torrent_info(
+    async fn add_torrent_internal(
         self: &Arc<Self>,
         add_res: InternalAddResult,
         mut opts: AddTorrentOptions,
     ) -> anyhow::Result<AddTorrentResponse> {
         let InternalAddResult {
-            info,
             info_hash,
+            mut resolve_result,
             trackers,
-            peer_rx,
-            initial_peers,
-            torrent_bytes,
-            info_bytes,
+            mut name,
         } = add_res;
 
-        trace!("Torrent info: {:#?}", &info);
+        let mut peer_rx: Option<PeerStream> = None;
+        let mut seen_peers: Vec<SocketAddr> = Vec::new();
 
-        let only_files = compute_only_files(
-            &info,
-            opts.only_files,
-            opts.only_files_regex,
-            opts.list_only,
-        )?;
+        if resolve_result.is_none() && (opts.list_only || !opts.defer) {
+            let new_peer_rx = self
+                .make_peer_rx(
+                    info_hash,
+                    trackers,
+                    !opts.paused,
+                    opts.force_tracker_interval,
+                    opts.initial_peers.unwrap_or_default(),
+                )?
+                .context("no peer source")?;
+            let resolved_magnet = self
+                .resolve_magnet(info_hash, new_peer_rx, &trackers, opts.peer_opts)
+                .await
+                .context("erorr resolving magnet")?;
+            name = resolved_magnet
+                .resolved
+                .info
+                .name
+                .as_ref()
+                .and_then(|name| std::str::from_utf8(name.as_slice()).ok())
+                .map(|s| s.to_owned());
+            resolve_result = Some(resolved_magnet.resolved);
+            seen_peers = resolved_magnet.seen_peers.clone();
+            peer_rx = Some(
+                merge_streams(
+                    resolved_magnet.peer_rx,
+                    futures::stream::iter(resolved_magnet.seen_peers),
+                )
+                .boxed(),
+            );
+        }
+
+        let mut only_files = None;
+
+        // TODO: smell
+        if let Some(r) = &resolve_result {
+            trace!("Torrent info: {:#?}", &r.info);
+            only_files = compute_only_files(
+                &r.info,
+                opts.only_files,
+                opts.only_files_regex,
+                opts.list_only,
+            )?;
+        }
 
         let output_folder = match (opts.output_folder, opts.sub_folder) {
             (None, None) => self.output_folder.join(
@@ -1134,13 +1099,14 @@ impl Session {
             .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
 
         if opts.list_only {
+            let resolved = resolve_result.context("bug")?;
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
                 info_hash,
-                info,
+                info: resolved.info,
                 only_files,
                 output_folder,
-                seen_peers: initial_peers,
-                torrent_bytes,
+                seen_peers,
+                torrent_bytes: resolved.torrent_bytes,
             }));
         }
 
@@ -1167,13 +1133,7 @@ impl Session {
 
             let span = error_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);
-            let resolved = Arc::new(ResolvedTorrent {
-                file_infos,
-                info,
-                torrent_bytes,
-                info_bytes,
-                lengths,
-            });
+            let resolved = resolve_result.map(Arc::new);
             let minfo = Arc::new(ManagedTorrentShared {
                 id,
                 span,
@@ -1195,24 +1155,32 @@ impl Session {
                 },
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
+                initial_peers: opts.initial_peers.clone().unwrap_or_default(),
             });
 
-            let initializing = Arc::new(TorrentStateInitializing::new(
-                minfo.clone(),
-                resolved.clone(),
-                only_files.clone(),
-                minfo.storage_factory.create_and_init(&minfo, &resolved)?,
-                false,
-            ));
+            let state = match resolved.clone() {
+                Some(resolved) => {
+                    let initializing = Arc::new(TorrentStateInitializing::new(
+                        minfo.clone(),
+                        resolved.clone(),
+                        only_files.clone(),
+                        minfo.storage_factory.create_and_init(&minfo, &resolved)?,
+                        false,
+                    ));
+                    ManagedTorrentState::Initializing(initializing)
+                }
+                None => ManagedTorrentState::ResolvingPaused,
+            };
+
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
                     paused: opts.paused,
-                    state: ManagedTorrentState::Initializing(initializing),
+                    state,
                     only_files,
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
-                resolved: ArcSwapOption::new(Some(resolved.clone())),
+                resolved: ArcSwapOption::new(resolved),
             });
 
             g.add_torrent(handle.clone(), id);
@@ -1225,6 +1193,9 @@ impl Session {
                 return Err(e);
             }
         }
+
+        let mut initial_peers = opts.initial_peers.take().unwrap_or_default();
+        initial_peers.extend(seen_peers);
 
         // Merge "initial_peers" and "peer_rx" into one stream.
         let peer_rx = merge_two_optional_streams(
@@ -1245,7 +1216,7 @@ impl Session {
             .start(peer_rx, opts.paused)
             .context("error starting torrent")?;
 
-        if let Some(name) = resolved.info.name.as_ref() {
+        if let Some(name) = name {
             info!(?name, "added torrent");
         }
 
@@ -1351,36 +1322,59 @@ impl Session {
         Ok(())
     }
 
+    pub(crate) fn make_peer_rx_managed_torrent(
+        self: &Arc<Self>,
+        t: &Arc<ManagedTorrent>,
+        announce: bool,
+    ) -> anyhow::Result<PeerStream> {
+        self.make_peer_rx(
+            t.info_hash(),
+            t.shared().trackers.iter().cloned().collect(),
+            announce,
+            t.shared().options.force_tracker_interval,
+            t.shared().initial_peers.clone(),
+        )?
+        .context("no peer source")
+    }
+
     // Get a peer stream from both DHT and trackers.
     fn make_peer_rx(
         self: &Arc<Self>,
         info_hash: Id20,
         trackers: Vec<String>,
-        announce_port: Option<u16>,
+        announce: bool,
         force_tracker_interval: Option<Duration>,
+        initial_peers: Vec<SocketAddr>,
     ) -> anyhow::Result<Option<PeerStream>> {
-        let announce_port = announce_port.or(self.tcp_listen_port);
+        let announce_port = if announce { self.tcp_listen_port } else { None };
         let dht_rx = self
             .dht
             .as_ref()
             .map(|dht| dht.get_peers(info_hash, announce_port))
             .transpose()?;
 
-        let peer_rx_stats = PeerRxTorrentInfo {
+        let tracker_rx_stats = PeerRxTorrentInfo {
             info_hash,
             session: self.clone(),
         };
-        let peer_rx = TrackerComms::start(
+        let tracker_rx = TrackerComms::start(
             info_hash,
             self.peer_id,
             trackers,
-            Box::new(peer_rx_stats),
+            Box::new(tracker_rx_stats),
             force_tracker_interval,
             announce_port,
             self.reqwest_client.clone(),
         );
 
-        Ok(merge_two_optional_streams(dht_rx, peer_rx))
+        let initial_peers_rx = if initial_peers.is_empty() {
+            None
+        } else {
+            Some(futures::stream::iter(initial_peers))
+        };
+        let peer_rx = merge_two_optional_streams(dht_rx, tracker_rx);
+        let peer_rx = merge_two_optional_streams(peer_rx, initial_peers_rx);
+        Ok(peer_rx)
     }
 
     async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
@@ -1400,13 +1394,8 @@ impl Session {
     }
 
     pub async fn unpause(self: &Arc<Self>, handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let peer_rx = self.make_peer_rx(
-            handle.info_hash(),
-            handle.shared().trackers.clone().into_iter().collect(),
-            self.tcp_listen_port,
-            handle.shared().options.force_tracker_interval,
-        )?;
-        handle.start(peer_rx, false)?;
+        let peer_rx = self.make_peer_rx_managed_torrent(handle, true)?;
+        handle.start(Some(peer_rx), false)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
     }
@@ -1423,6 +1412,53 @@ impl Session {
 
     pub fn tcp_listen_port(&self) -> Option<u16> {
         self.tcp_listen_port
+    }
+
+    pub(crate) async fn resolve_magnet(
+        self: &Arc<Self>,
+        info_hash: Id20,
+        peer_rx: PeerStream,
+        trackers: &[String],
+        peer_opts: Option<PeerConnectionOptions>,
+    ) -> anyhow::Result<MagnetResolveResult> {
+        debug!(?info_hash, "querying DHT");
+        match read_metainfo_from_peer_receiver(
+            self.peer_id,
+            info_hash,
+            Default::default(),
+            peer_rx,
+            Some(self.merge_peer_opts(peer_opts)),
+            self.connector.clone(),
+        )
+        .await
+        {
+            ReadMetainfoResult::Found {
+                info,
+                info_bytes,
+                rx,
+                seen,
+            } => {
+                trace!(?info, "received result from DHT");
+                Ok(MagnetResolveResult {
+                    resolved: ResolvedTorrent::new(
+                        info,
+                        torrent_file_from_info_bytes(&info_bytes, &trackers)?,
+                        info_bytes.0,
+                    )?,
+                    peer_rx: rx,
+                    seen_peers: {
+                        let seen = seen.into_iter().collect_vec();
+                        for peer in &seen {
+                            trace!(?peer, "seen")
+                        }
+                        seen
+                    },
+                })
+            }
+            ReadMetainfoResult::ChannelClosed { .. } => {
+                bail!("input address stream exhausted, no way to discover torrent metainfo")
+            }
+        }
     }
 }
 
@@ -1494,6 +1530,8 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
                 TS::Live => S::Live,
                 TS::Paused => S::Paused,
                 TS::Error => S::None,
+                TS::ResolvingMagnet => S::Initializing,
+                TS::ResolvingMagnetPaused => S::Paused,
             },
         }
     }

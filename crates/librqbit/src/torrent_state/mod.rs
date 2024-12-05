@@ -6,6 +6,7 @@ mod streaming;
 pub mod utils;
 
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -19,6 +20,8 @@ use buffers::ByteBufOwned;
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::StreamExt;
+use itertools::Itertools;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
 
@@ -29,7 +32,6 @@ use parking_lot::RwLock;
 
 use tokio::sync::Notify;
 use tokio::time::timeout;
-use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error_span;
@@ -39,6 +41,8 @@ use tracing::warn;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
+use crate::merge_streams;
+use crate::merge_streams::merge_streams;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
@@ -47,6 +51,7 @@ use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::DiskWorkQueueSender;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
+use crate::PeerConnectionOptions;
 use crate::Session;
 
 use initializing::TorrentStateInitializing;
@@ -56,6 +61,8 @@ pub use self::stats::{TorrentStats, TorrentStatsState};
 pub use self::streaming::FileStream;
 
 pub enum ManagedTorrentState {
+    Resolving,
+    ResolvingPaused,
     Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
     Live(Arc<TorrentStateLive>),
@@ -73,6 +80,8 @@ impl ManagedTorrentState {
             ManagedTorrentState::Live(_) => "live",
             ManagedTorrentState::Error(_) => "error",
             ManagedTorrentState::None => "<invalid: none>",
+            ManagedTorrentState::Resolving => "resolving magnet",
+            ManagedTorrentState::ResolvingPaused => "resolving magnet paused",
         }
     }
 
@@ -139,6 +148,7 @@ pub struct ManagedTorrentShared {
     pub(crate) connector: Arc<StreamConnector>,
     pub(crate) storage_factory: BoxStorageFactory,
     pub(crate) session: Weak<Session>,
+    pub(crate) initial_peers: Vec<SocketAddr>,
 }
 
 pub struct ResolvedTorrent {
@@ -281,6 +291,10 @@ impl ManagedTorrent {
             .session
             .upgrade()
             .context("session is dead, cannot start torrent")?;
+        let peer_rx = match peer_rx {
+            Some(peer_rx) => peer_rx,
+            None => session.make_peer_rx_managed_torrent(self, !start_paused)?,
+        };
         let mut g = self.locked.write();
         g.paused = start_paused;
         let cancellation_token = session.cancellation_token().child_token();
@@ -309,7 +323,7 @@ impl ManagedTorrent {
                 );
             };
 
-        fn spawn_peer_adder(live: &Arc<TorrentStateLive>, peer_rx: Option<PeerStream>) {
+        fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
             live.spawn(
                 error_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
                 {
@@ -319,12 +333,6 @@ impl ManagedTorrent {
                             let weak = Arc::downgrade(&live);
                             drop(live);
                             weak
-                        };
-
-                        let mut peer_rx = if let Some(peer_rx) = peer_rx {
-                            peer_rx
-                        } else {
-                            return Ok(());
                         };
 
                         loop {
@@ -355,7 +363,62 @@ impl ManagedTorrent {
         }
 
         match &g.state {
-            ManagedTorrentState::Live(_) => {
+            ManagedTorrentState::ResolvingPaused => {
+                let t = self.clone();
+                let span = self.shared().span.clone();
+                let token = cancellation_token.clone();
+                let session = self
+                    .shared
+                    .session
+                    .upgrade()
+                    .context("couldn't upgrade session")?;
+                drop(g);
+
+                spawn_with_cancel(
+                    error_span!(parent: span.clone(), "resolve_then_start"),
+                    token.clone(),
+                    async move {
+                        let resolved_magnet = session
+                            .resolve_magnet(
+                                t.info_hash(),
+                                peer_rx,
+                                &t.shared().trackers.iter().cloned().collect_vec(),
+                                Some(PeerConnectionOptions {
+                                    connect_timeout: t.shared().options.peer_connect_timeout,
+                                    read_write_timeout: t.shared().options.peer_read_write_timeout,
+                                    ..Default::default()
+                                }),
+                            )
+                            .await?;
+                        let peer_rx = Some(
+                            merge_streams(
+                                resolved_magnet.peer_rx,
+                                futures::stream::iter(resolved_magnet.seen_peers),
+                            )
+                            .boxed(),
+                        );
+                        let resolved = Arc::new(resolved_magnet.resolved);
+                        let files = t
+                            .shared
+                            .storage_factory
+                            .create_and_init(t.shared(), &resolved)?;
+                        let new_state = ManagedTorrentState::Initializing(Arc::new(
+                            TorrentStateInitializing::new(
+                                t.shared.clone(),
+                                resolved.clone(),
+                                t.only_files(),
+                                files,
+                                false,
+                            ),
+                        ));
+                        t.resolved.swap(Some(resolved));
+                        t.locked.write().state = new_state;
+                        t.start(peer_rx, start_paused)
+                    },
+                );
+                Ok(())
+            }
+            ManagedTorrentState::Live(_) | ManagedTorrentState::Resolving => {
                 bail!("torrent is already live");
             }
             ManagedTorrentState::Initializing(init) => {
@@ -426,10 +489,11 @@ impl ManagedTorrent {
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
-                let resolved = self.resolved.load();
+                let resolved = self.resolved.load_full();
                 let resolved = resolved.context("bug")?;
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.shared.clone(),
+                    resolved.clone(),
                     g.only_files.clone(),
                     self.shared
                         .storage_factory
@@ -442,7 +506,7 @@ impl ManagedTorrent {
                 self.state_change_notify.notify_waiters();
 
                 // Recurse.
-                self.start(peer_rx, start_paused)
+                self.start(Some(peer_rx), start_paused)
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         }
@@ -456,6 +520,9 @@ impl ManagedTorrent {
     pub(crate) fn pause(&self) -> anyhow::Result<()> {
         let mut g = self.locked.write();
         match &g.state {
+            ManagedTorrentState::Resolving => {
+                todo!()
+            }
             ManagedTorrentState::Live(live) => {
                 let paused = live.pause()?;
                 g.state = ManagedTorrentState::Paused(paused);
@@ -465,7 +532,7 @@ impl ManagedTorrent {
             ManagedTorrentState::Initializing(_) => {
                 bail!("torrent is initializing, can't pause");
             }
-            ManagedTorrentState::Paused(_) => {
+            ManagedTorrentState::Paused(_) | ManagedTorrentState::ResolvingPaused => {
                 bail!("torrent is already paused");
             }
             ManagedTorrentState::Error(_) => {
@@ -531,6 +598,8 @@ impl ManagedTorrent {
                     resp.state = S::Error;
                     resp.error = Some("bug: torrent in broken \"None\" state".to_string());
                 }
+                ManagedTorrentState::Resolving => resp.state = S::ResolvingMagnet,
+                ManagedTorrentState::ResolvingPaused => resp.state = S::ResolvingMagnetPaused,
             }
             resp
         })
@@ -562,9 +631,10 @@ impl ManagedTorrent {
             // TODO: rewrite, this polling is horrible
             let live = loop {
                 let live = self.with_state(|s| match s {
-                    ManagedTorrentState::Initializing(_) | ManagedTorrentState::Paused(_) => {
-                        Ok(None)
-                    }
+                    ManagedTorrentState::Initializing(_)
+                    | ManagedTorrentState::Paused(_)
+                    | ManagedTorrentState::Resolving
+                    | ManagedTorrentState::ResolvingPaused => Ok(None),
                     ManagedTorrentState::Live(l) => Ok(Some(l.clone())),
                     ManagedTorrentState::Error(e) => bail!("{:?}", e),
                     ManagedTorrentState::None => bail!("bug: torrent state is None"),
@@ -603,7 +673,9 @@ impl ManagedTorrent {
 
         let mut g = self.locked.write();
         match &mut g.state {
-            ManagedTorrentState::Initializing(_) => {
+            ManagedTorrentState::Initializing(_)
+            | ManagedTorrentState::Resolving
+            | ManagedTorrentState::ResolvingPaused => {
                 bail!("can't update initializing or resolving torrent")
             }
             ManagedTorrentState::Error(_) => {}

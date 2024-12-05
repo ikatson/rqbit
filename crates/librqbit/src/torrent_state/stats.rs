@@ -53,6 +53,10 @@ pub enum TorrentStatsState {
     Paused,
     #[serde(rename = "error")]
     Error,
+    #[serde(rename = "resolving magnet")]
+    ResolvingMagnet,
+    #[serde(rename = "resolving magnet paused")]
+    ResolvingMagnetPaused,
 }
 
 impl std::fmt::Display for TorrentStatsState {
@@ -62,6 +66,8 @@ impl std::fmt::Display for TorrentStatsState {
             TorrentStatsState::Live => f.write_str("live"),
             TorrentStatsState::Paused => f.write_str("paused"),
             TorrentStatsState::Error => f.write_str("error"),
+            TorrentStatsState::ResolvingMagnet => f.write_str("resolving magnet"),
+            TorrentStatsState::ResolvingMagnetPaused => f.write_str("resolving magnet paused"),
         }
     }
 }
