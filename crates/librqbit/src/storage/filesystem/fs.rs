@@ -6,7 +6,10 @@ use std::{
 use anyhow::Context;
 use tracing::warn;
 
-use crate::{storage::StorageFactoryExt, torrent_state::ManagedTorrentShared};
+use crate::{
+    storage::StorageFactoryExt,
+    torrent_state::{ManagedTorrentShared, ResolvedTorrent},
+};
 
 use crate::storage::{StorageFactory, TorrentStorage};
 
@@ -18,7 +21,11 @@ pub struct FilesystemStorageFactory {}
 impl StorageFactory for FilesystemStorageFactory {
     type Storage = FilesystemStorage;
 
-    fn create(&self, meta: &ManagedTorrentShared) -> anyhow::Result<FilesystemStorage> {
+    fn create(
+        &self,
+        meta: &ManagedTorrentShared,
+        _resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<FilesystemStorage> {
         Ok(FilesystemStorage {
             output_folder: meta.options.output_folder.clone(),
             opened_files: Default::default(),
@@ -149,9 +156,13 @@ impl TorrentStorage for FilesystemStorage {
         }
     }
 
-    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
+    fn init(
+        &mut self,
+        meta: &ManagedTorrentShared,
+        resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<()> {
         let mut files = Vec::<OpenedFile>::new();
-        for file_details in meta.file_infos.iter() {
+        for file_details in resolved.file_infos.iter() {
             let mut full_path = self.output_folder.clone();
             let relative_path = &file_details.relative_filename;
             full_path.push(relative_path);

@@ -96,7 +96,12 @@ impl SessionPersistenceStore for PostgresSessionStorage {
     }
 
     async fn store(&self, id: TorrentId, torrent: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let torrent_bytes: &[u8] = &torrent.shared().torrent_bytes;
+        let torrent_bytes = torrent
+            .resolved
+            .load_full()
+            .map(|b| b.torrent_bytes.clone())
+            .unwrap_or_default();
+        let torrent_bytes: &[u8] = &torrent_bytes;
         let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused)
         VALUES($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT(id) DO NOTHING";

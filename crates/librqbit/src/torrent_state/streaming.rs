@@ -19,7 +19,7 @@ use crate::{
     file_info::FileInfo, spawn_utils::BlockingSpawner, storage::TorrentStorage, ManagedTorrent,
 };
 
-use super::ManagedTorrentHandle;
+use super::{ManagedTorrentHandle, ResolvedTorrent};
 
 type StreamId = usize;
 
@@ -130,6 +130,7 @@ impl TorrentStreams {
 
 pub struct FileStream {
     torrent: ManagedTorrentHandle,
+    resolved: Arc<ResolvedTorrent>,
     streams: Arc<TorrentStreams>,
     stream_id: usize,
     file_id: usize,
@@ -178,8 +179,7 @@ impl AsyncRead for FileStream {
         }
 
         let current = poll_try_io!(self
-            .torrent
-            .shared()
+            .resolved
             .lengths
             .compute_current_piece(self.position, self.file_torrent_abs_offset)
             .context("invalid position"));
@@ -216,11 +216,14 @@ impl AsyncRead for FileStream {
         );
 
         poll_try_io!(poll_try_io!(self.spawner.spawn_block_in_place(|| {
-            self.torrent
-                .with_storage_and_file(self.file_id, |files, _fi| {
+            self.torrent.with_storage_and_file(
+                self.file_id,
+                |files, _fi| {
                     files.pread_exact(self.file_id, self.position, buf)?;
                     Ok::<_, anyhow::Error>(())
-                })
+                },
+                &self.resolved,
+            )
         })));
 
         self.as_mut().advance(bytes_to_read as u64);
@@ -269,7 +272,12 @@ impl Drop for FileStream {
 }
 
 impl ManagedTorrent {
-    fn with_storage_and_file<F, R>(&self, file_id: usize, f: F) -> anyhow::Result<R>
+    fn with_storage_and_file<F, R>(
+        &self,
+        file_id: usize,
+        f: F,
+        resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<R>
     where
         F: FnOnce(&dyn TorrentStorage, &FileInfo) -> R,
     {
@@ -279,11 +287,7 @@ impl ManagedTorrent {
                 crate::ManagedTorrentState::Live(l) => &*l.files,
                 s => anyhow::bail!("with_storage_and_file: invalid state: {}", s.name()),
             };
-            let fi = self
-                .shared()
-                .file_infos
-                .get(file_id)
-                .context("invalid file")?;
+            let fi = resolved.file_infos.get(file_id).context("invalid file")?;
             Ok(f(files, fi))
         })
     }
@@ -310,14 +314,26 @@ impl ManagedTorrent {
     }
 
     fn is_file_finished(&self, file_id: usize) -> bool {
+        let resolved = self.resolved.load();
+        let resolved = match resolved.as_ref() {
+            Some(r) => r,
+            None => return false,
+        };
         // TODO: would be nice to remove locking
-        self.with_chunk_tracker(|ct| ct.is_file_finished(&self.shared.file_infos[file_id]))
+        self.with_chunk_tracker(|ct| ct.is_file_finished(&resolved.file_infos[file_id]))
             .unwrap_or(false)
     }
 
     pub fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
-        let (fd_len, fd_offset) =
-            self.with_storage_and_file(file_id, |_fd, fi| (fi.len, fi.offset_in_torrent))?;
+        let resolved = self
+            .resolved
+            .load_full()
+            .context("torrent is not resolved")?;
+        let (fd_len, fd_offset) = self.with_storage_and_file(
+            file_id,
+            |_fd, fi| (fi.len, fi.offset_in_torrent),
+            &resolved,
+        )?;
         let streams = self.streams()?;
         let s = FileStream {
             stream_id: streams.next_id(),
@@ -329,6 +345,7 @@ impl ManagedTorrent {
             file_torrent_abs_offset: fd_offset,
             torrent: self,
             spawner: BlockingSpawner::default(),
+            resolved,
         };
         s.torrent.maybe_reconnect_needed_peers_for_file(file_id);
         streams.streams.insert(

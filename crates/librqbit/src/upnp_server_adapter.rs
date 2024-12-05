@@ -6,7 +6,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::{session::TorrentId, ManagedTorrent, Session};
+use crate::{
+    session::TorrentId, torrent_state::ResolvedTorrent, ManagedTorrent, ManagedTorrentShared,
+    Session,
+};
 
 #[derive(Clone)]
 pub struct UpnpServerSessionAdapter {
@@ -55,18 +58,18 @@ impl TorrentFileTreeNode {
         &self,
         id: usize,
         http_host: &str,
-        torrent: &ManagedTorrent,
+        torrent: &ManagedTorrentShared,
+        resolved: &ResolvedTorrent,
         adapter: &UpnpServerSessionAdapter,
     ) -> ItemOrContainer {
-        let encoded_id = encode_id(id, torrent.id());
-        let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id()));
+        let encoded_id = encode_id(id, torrent.id);
+        let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id));
         match self.real_torrent_file_id {
             Some(fid) => {
-                let fi = &torrent.shared().file_infos[fid];
+                let fi = &resolved.file_infos[fid];
                 let filename = &fi.relative_filename;
                 // Torrent path joined with "/"
-                let last_url_bit = torrent
-                    .shared()
+                let last_url_bit = resolved
                     .info
                     .iter_file_details()
                     .ok()
@@ -86,11 +89,7 @@ impl TorrentFileTreeNode {
                     mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
                         "http://{}:{}/torrents/{}/stream/{}/{}",
-                        http_host,
-                        adapter.port,
-                        torrent.id(),
-                        fid,
-                        last_url_bit
+                        http_host, adapter.port, torrent.id, fid, last_url_bit
                     ),
                     size: fi.len,
                 })
@@ -216,10 +215,16 @@ impl UpnpServerSessionAdapter {
             .filter_map(|t| {
                 let real_id = t.id();
                 let upnp_id = real_id + 1;
+                let resolved = t.resolved.load();
+                let resolved = resolved.as_ref();
+                let resolved = match resolved {
+                    Some(r) => r,
+                    None => return None,
+                };
 
-                if is_single_file_at_root(&t.shared().info) {
+                if is_single_file_at_root(&resolved.info) {
                     // Just add the file directly
-                    let rf = &t.shared().file_infos[0].relative_filename;
+                    let rf = &resolved.file_infos[0].relative_filename;
                     let title = rf.file_name()?.to_str()?.to_owned();
                     Some(
                         TorrentFileTreeNode {
@@ -228,11 +233,16 @@ impl UpnpServerSessionAdapter {
                             children: vec![],
                             real_torrent_file_id: Some(0),
                         }
-                        .as_item_or_container(0, hostname, t, self),
+                        .as_item_or_container(
+                            0,
+                            hostname,
+                            t.shared(),
+                            resolved,
+                            self,
+                        ),
                     )
                 } else {
-                    let title = t
-                        .shared()
+                    let title = resolved
                         .info
                         .name
                         .as_ref()
@@ -288,7 +298,13 @@ impl UpnpServerSessionAdapter {
             }
         };
 
-        let tree = match TorrentFileTree::build(torrent.id(), &torrent.shared().info) {
+        let resolved = torrent.resolved.load();
+        let resolved = match resolved.as_ref() {
+            Some(r) => r,
+            None => return vec![],
+        };
+
+        let tree = match TorrentFileTree::build(torrent.id(), &resolved.info) {
             Ok(tree) => tree,
             Err(e) => {
                 warn!(object_id, error=?e, "error building torrent file tree");
@@ -309,7 +325,13 @@ impl UpnpServerSessionAdapter {
         let mut result = Vec::new();
 
         if node.real_torrent_file_id.is_some() || metadata {
-            result.push(node.as_item_or_container(node_id, http_hostname, &torrent, self))
+            result.push(node.as_item_or_container(
+                node_id,
+                http_hostname,
+                torrent.shared(),
+                resolved,
+                self,
+            ))
         } else {
             for (child_node_id, child_node) in node
                 .children
@@ -319,7 +341,8 @@ impl UpnpServerSessionAdapter {
                 result.push(child_node.as_item_or_container(
                     child_node_id,
                     http_hostname,
-                    &torrent,
+                    torrent.shared(),
+                    resolved,
                     self,
                 ));
             }

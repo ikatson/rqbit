@@ -14,6 +14,7 @@ use parking_lot::RwLock;
 
 use crate::{
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
+    torrent_state::ResolvedTorrent,
     FileInfos, ManagedTorrentShared,
 };
 
@@ -35,18 +36,22 @@ impl<U> WriteThroughCacheStorageFactory<U> {
 impl<U: StorageFactory + Clone> StorageFactory for WriteThroughCacheStorageFactory<U> {
     type Storage = WriteThroughCacheStorage<U::Storage>;
 
-    fn create(&self, info: &crate::ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
+    fn create(
+        &self,
+        info: &crate::ManagedTorrentShared,
+        resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<Self::Storage> {
         let pieces = self
             .max_cache_bytes
-            .div_ceil(info.lengths.default_piece_length() as u64)
+            .div_ceil(resolved.lengths.default_piece_length() as u64)
             .try_into()?;
         let pieces = NonZeroUsize::new(pieces).context("bug: pieces == 0")?;
         let lru = RwLock::new(LruCache::new(pieces));
         Ok(WriteThroughCacheStorage {
             lru,
-            underlying: self.underlying.create(info)?,
-            lengths: info.lengths,
-            file_infos: info.file_infos.clone(),
+            underlying: self.underlying.create(info, resolved)?,
+            lengths: resolved.lengths,
+            file_infos: resolved.file_infos.clone(),
         })
     }
 
@@ -121,7 +126,11 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
         self.underlying.remove_directory_if_empty(path)
     }
 
-    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
-        self.underlying.init(meta)
+    fn init(
+        &mut self,
+        meta: &ManagedTorrentShared,
+        resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<()> {
+        self.underlying.init(meta, resolved)
     }
 }

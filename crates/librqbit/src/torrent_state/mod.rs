@@ -55,6 +55,8 @@ pub use self::stats::{TorrentStats, TorrentStatsState};
 pub use self::streaming::FileStream;
 
 pub enum ManagedTorrentState {
+    Resolving,
+    ResolvingPaused,
     Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
     Live(Arc<TorrentStateLive>),
@@ -72,6 +74,8 @@ impl ManagedTorrentState {
             ManagedTorrentState::Live(_) => "live",
             ManagedTorrentState::Error(_) => "error",
             ManagedTorrentState::None => "<invalid: none>",
+            ManagedTorrentState::Resolving => "resolving magnet",
+            ManagedTorrentState::ResolvingPaused => "resolving magnet paused",
         }
     }
 
@@ -166,8 +170,13 @@ impl ManagedTorrent {
         &self.shared
     }
 
-    pub fn get_total_bytes(&self) -> u64 {
-        self.shared.lengths.total_length()
+    pub fn with_resolved<R>(
+        &self,
+        mut f: impl FnMut(&Arc<ResolvedTorrent>) -> R,
+    ) -> anyhow::Result<R> {
+        let r = self.resolved.load();
+        let r = r.as_ref().context("torrent is not resolved")?;
+        Ok(f(r))
     }
 
     pub fn info_hash(&self) -> Id20 {
@@ -320,6 +329,12 @@ impl ManagedTorrent {
         }
 
         match &g.state {
+            ManagedTorrentState::Resolving => {
+                todo_break!()
+            }
+            ManagedTorrentState::ResolvingPaused => {
+                todo_break!()
+            }
             ManagedTorrentState::Live(_) => {
                 bail!("torrent is already live");
             }
@@ -433,6 +448,12 @@ impl ManagedTorrent {
                 bail!("can't pause torrent in error state")
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+            ManagedTorrentState::Resolving => {
+                todo_break!()
+            }
+            ManagedTorrentState::ResolvingPaused => {
+                todo_break!()
+            }
         }
     }
 
@@ -440,7 +461,11 @@ impl ManagedTorrent {
     pub fn stats(&self) -> TorrentStats {
         use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
-            total_bytes: self.shared().lengths.total_length(),
+            total_bytes: self
+                .resolved
+                .load()
+                .as_ref()
+                .map_or(0, |r| r.lengths.total_length()),
             file_progress: Vec::new(),
             state: S::Error,
             error: None,
@@ -488,6 +513,8 @@ impl ManagedTorrent {
                     resp.state = S::Error;
                     resp.error = Some("bug: torrent in broken \"None\" state".to_string());
                 }
+                ManagedTorrentState::Resolving => todo_break!(),
+                ManagedTorrentState::ResolvingPaused => todo_break!(),
             }
             resp
         })
@@ -541,7 +568,13 @@ impl ManagedTorrent {
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let file_count = self.shared().info.iter_file_lengths()?.count();
+        let file_count = self
+            .resolved
+            .load()
+            .as_ref()
+            .context("torrent is still resolving, can't update")?
+            .file_infos
+            .len();
         for f in only_files.iter().copied() {
             if f >= file_count {
                 anyhow::bail!("only_files contains invalid value {f}")
@@ -554,7 +587,11 @@ impl ManagedTorrent {
 
         let mut g = self.locked.write();
         match &mut g.state {
-            ManagedTorrentState::Initializing(_) => bail!("can't update initializing torrent"),
+            ManagedTorrentState::Initializing(_)
+            | ManagedTorrentState::Resolving
+            | ManagedTorrentState::ResolvingPaused => {
+                bail!("can't update initializing or resolving torrent")
+            }
             ManagedTorrentState::Error(_) => {}
             ManagedTorrentState::None => {}
             ManagedTorrentState::Paused(p) => {

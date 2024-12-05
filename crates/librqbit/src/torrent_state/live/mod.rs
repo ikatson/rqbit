@@ -109,7 +109,7 @@ use super::{
     paused::TorrentStatePaused,
     streaming::TorrentStreams,
     utils::{timeit, TimedExistence},
-    ManagedTorrentShared,
+    ManagedTorrentShared, ResolvedTorrent,
 };
 
 #[derive(Debug)]
@@ -176,6 +176,7 @@ const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 pub struct TorrentStateLive {
     peers: PeerStates,
     torrent: Arc<ManagedTorrentShared>,
+    resolved: Arc<ResolvedTorrent>,
     locked: RwLock<TorrentStateLocked>,
 
     pub(crate) files: FileStorage,
@@ -231,11 +232,11 @@ impl TorrentStateLive {
 
         // TODO: make it configurable
         let file_priorities = {
-            let mut pri = (0..paused.shared.file_infos.len()).collect::<Vec<usize>>();
+            let mut pri = (0..paused.resolved.file_infos.len()).collect::<Vec<usize>>();
             // sort by filename, cause many torrents have random sort order.
             pri.sort_unstable_by_key(|id| {
                 paused
-                    .shared
+                    .resolved
                     .file_infos
                     .get(*id)
                     .map(|fi| fi.relative_filename.as_path())
@@ -253,6 +254,7 @@ impl TorrentStateLive {
 
         let state = Arc::new(TorrentStateLive {
             torrent: paused.shared.clone(),
+            resolved: paused.resolved.clone(),
             peers: PeerStates {
                 session_stats: session_stats.clone(),
                 stats: Default::default(),
@@ -583,7 +585,7 @@ impl TorrentStateLive {
     }
 
     pub fn info(&self) -> &TorrentMetaV1Info<ByteBufOwned> {
-        &self.torrent.info
+        &self.resolved.info
     }
     pub fn info_hash(&self) -> Id20 {
         self.torrent.info_hash
@@ -593,9 +595,9 @@ impl TorrentStateLive {
     }
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
         FileOps::new(
-            &self.torrent.info,
+            &self.resolved.info,
             &*self.files,
-            &self.torrent().file_infos,
+            &self.resolved.file_infos,
             &self.lengths,
         )
     }
@@ -704,6 +706,7 @@ impl TorrentStateLive {
         // g.chunks;
         Ok(TorrentStatePaused {
             shared: self.torrent.clone(),
+            resolved: self.resolved.clone(),
             files: self.files.take()?,
             chunk_tracker,
             streams: self.streams.clone(),
@@ -727,7 +730,7 @@ impl TorrentStateLive {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
         let hns =
-            ct.update_only_files(self.torrent().file_infos.iter().map(|f| f.len), only_files)?;
+            ct.update_only_files(self.resolved.file_infos.iter().map(|f| f.len), only_files)?;
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -746,7 +749,7 @@ impl TorrentStateLive {
         };
         self.streams
             .streamed_file_ids()
-            .any(|file_id| !chunks.is_file_finished(&self.torrent.file_infos[file_id]))
+            .any(|file_id| !chunks.is_file_finished(&self.resolved.file_infos[file_id]))
     }
 
     // We might have the torrent "finished" i.e. no selected files. But if someone is streaming files despite
@@ -768,7 +771,7 @@ impl TorrentStateLive {
 
         // if we have all the pieces of the file, reopen it read only
         for (idx, file_info) in self
-            .torrent()
+            .resolved
             .file_infos
             .iter()
             .enumerate()
@@ -779,9 +782,9 @@ impl TorrentStateLive {
         }
 
         self.streams
-            .wake_streams_on_piece_completed(id, &self.torrent.lengths);
+            .wake_streams_on_piece_completed(id, &self.resolved.lengths);
 
-        locked.unflushed_bitv_bytes += self.torrent.lengths.piece_length(id) as u64;
+        locked.unflushed_bitv_bytes += self.resolved.lengths.piece_length(id) as u64;
         if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
             locked.try_flush_bitv()
         }
@@ -1071,7 +1074,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         &self,
         handshake: &mut ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
-        let info_bytes = &self.state.torrent().info_bytes;
+        let info_bytes = &self.state.resolved.info_bytes;
         if !info_bytes.is_empty() {
             if let Ok(len) = info_bytes.len().try_into() {
                 handshake.metadata_size = Some(len);
@@ -1218,7 +1221,7 @@ impl PeerHandler {
                                 && !g.inflight_pieces.contains_key(pid)
                         });
                     let natural_order_pieces = chunk_tracker
-                        .iter_queued_pieces(&g.file_priorities, &self.state.torrent().file_infos);
+                        .iter_queued_pieces(&g.file_priorities, &self.state.resolved.file_infos);
                     for n in priority_streamed_pieces.chain(natural_order_pieces) {
                         if bf.get(n.get() as usize).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
@@ -1799,7 +1802,7 @@ impl PeerHandler {
     }
 
     fn send_metadata_piece(&self, piece_id: u32) -> anyhow::Result<()> {
-        let data = &self.state.torrent().info_bytes;
+        let data = &self.state.resolved.info_bytes;
         let metadata_size = data.len();
         if metadata_size == 0 {
             anyhow::bail!("peer requested for info metadata but we don't have it")

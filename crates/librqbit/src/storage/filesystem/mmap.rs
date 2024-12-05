@@ -4,7 +4,7 @@ use anyhow::Context;
 use memmap2::{MmapMut, MmapOptions};
 use parking_lot::RwLock;
 
-use crate::torrent_state::ManagedTorrentShared;
+use crate::torrent_state::{ManagedTorrentShared, ResolvedTorrent};
 
 use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
 
@@ -22,8 +22,12 @@ fn dummy_mmap() -> anyhow::Result<MmapMut> {
 impl StorageFactory for MmapFilesystemStorageFactory {
     type Storage = MmapFilesystemStorage;
 
-    fn create(&self, meta: &ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
-        let fs_storage = FilesystemStorageFactory::default().create(meta)?;
+    fn create(
+        &self,
+        meta: &ManagedTorrentShared,
+        resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<Self::Storage> {
+        let fs_storage = FilesystemStorageFactory::default().create(meta, resolved)?;
 
         Ok(MmapFilesystemStorage {
             opened_mmaps: Vec::new(),
@@ -97,13 +101,17 @@ impl TorrentStorage for MmapFilesystemStorage {
         }))
     }
 
-    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
-        self.fs.init(meta)?;
+    fn init(
+        &mut self,
+        meta: &ManagedTorrentShared,
+        resolved: &ResolvedTorrent,
+    ) -> anyhow::Result<()> {
+        self.fs.init(meta, resolved)?;
         let mut mmaps = Vec::new();
         for (idx, file) in self.fs.opened_files.iter().enumerate() {
             let fg = file.file.write();
             let fg = fg.as_ref().context("file is None")?;
-            fg.set_len(meta.file_infos[idx].len)
+            fg.set_len(resolved.file_infos[idx].len)
                 .context("mmap storage: error setting length")?;
             let mmap = unsafe { MmapOptions::new().map_mut(fg) }.context("error mapping file")?;
             mmaps.push(RwLock::new(mmap));

@@ -150,7 +150,13 @@ impl JsonSessionPersistenceStore {
             output_folder: torrent.shared().options.output_folder.clone(),
         };
 
-        if write_torrent_file && !torrent.shared().torrent_bytes.is_empty() {
+        let torrent_bytes = torrent
+            .resolved
+            .load_full()
+            .map(|b| b.torrent_bytes.clone())
+            .unwrap_or_default();
+
+        if write_torrent_file && !torrent_bytes.is_empty() {
             let torrent_bytes_file = self.torrent_bytes_filename(&torrent.info_hash());
             match tokio::fs::OpenOptions::new()
                 .create(true)
@@ -160,7 +166,7 @@ impl JsonSessionPersistenceStore {
                 .await
             {
                 Ok(mut f) => {
-                    if let Err(e) = f.write_all(&torrent.shared().torrent_bytes).await {
+                    if let Err(e) = f.write_all(&torrent_bytes).await {
                         warn!(error=?e, file=?torrent_bytes_file, "error writing torrent bytes")
                     }
                 }

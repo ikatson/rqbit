@@ -10,7 +10,7 @@ use buffers::ByteBuf;
 use futures::future::BoxFuture;
 use futures::{FutureExt, TryStreamExt};
 use http::{HeaderMap, HeaderValue, StatusCode};
-use itertools::Itertools;
+use itertools::{rev, Itertools};
 
 use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Serialize};
@@ -262,7 +262,10 @@ impl HttpApi {
 
         fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
             let mut playlist_items = handle
-                .shared()
+                .resolved
+                .load()
+                .as_ref()
+                .context("torrent not resolved")?
                 .info
                 .iter_file_details()?
                 .enumerate()
@@ -340,10 +343,9 @@ impl HttpApi {
             .context("timeout")??;
 
             let (info, content) = match added {
-                crate::AddTorrentResponse::AlreadyManaged(_, handle) => (
-                    handle.shared().info.clone(),
-                    handle.shared().torrent_bytes.clone(),
-                ),
+                crate::AddTorrentResponse::AlreadyManaged(_, handle) => {
+                    handle.with_resolved(|r| (r.info.clone(), r.torrent_bytes.clone()))?
+                }
                 crate::AddTorrentResponse::ListOnly(ListOnlyResponse {
                     info,
                     torrent_bytes,
