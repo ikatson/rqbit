@@ -128,15 +128,19 @@ impl ManagedTorrentOptions {
 // of stuff, but it shouldn't access the state.
 pub struct ManagedTorrentShared {
     pub id: TorrentId,
+
+    // These 5 are derived from torrent info.
+    // If the torrent is still resolving the magnet though, none of these would be available!
     pub info: TorrentMetaV1Info<ByteBufOwned>,
     pub torrent_bytes: Bytes,
     pub info_bytes: Bytes,
+    pub lengths: Lengths,
+    pub file_infos: FileInfos,
+
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<String>,
     pub peer_id: Id20,
-    pub lengths: Lengths,
-    pub file_infos: FileInfos,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
     pub(crate) connector: Arc<StreamConnector>,
