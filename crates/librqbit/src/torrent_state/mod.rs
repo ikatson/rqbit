@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Context;
+use arc_swap::ArcSwapOption;
 use buffers::ByteBufOwned;
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -37,6 +38,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
+use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
@@ -123,6 +125,44 @@ impl ManagedTorrentOptions {
     }
 }
 
+// Torrent bencodee "info" + some precomputed fields based on it for frequent access.
+pub struct TorrentMetadata {
+    pub info: TorrentMetaV1Info<ByteBufOwned>,
+    pub torrent_bytes: Bytes,
+    pub info_bytes: Bytes,
+    pub lengths: Lengths,
+    pub file_infos: FileInfos,
+}
+
+impl TorrentMetadata {
+    pub(crate) fn new(
+        info: TorrentMetaV1Info<ByteBufOwned>,
+        torrent_bytes: Bytes,
+        info_bytes: Bytes,
+    ) -> anyhow::Result<Self> {
+        let lengths = Lengths::from_torrent(&info)?;
+        let file_infos = info
+            .iter_file_details_ext(&lengths)?
+            .map(|fd| {
+                Ok::<_, anyhow::Error>(FileInfo {
+                    relative_filename: fd.details.filename.to_pathbuf()?,
+                    offset_in_torrent: fd.offset,
+                    piece_range: fd.pieces,
+                    len: fd.details.len,
+                    attrs: fd.details.attrs(),
+                })
+            })
+            .collect::<anyhow::Result<Vec<FileInfo>>>()?;
+        Ok(Self {
+            info,
+            torrent_bytes,
+            info_bytes,
+            lengths,
+            file_infos,
+        })
+    }
+}
+
 /// Common information about torrent shared among all possible states.
 ///
 // The reason it's not inlined into ManagedTorrent is to break the Arc cycle:
@@ -130,15 +170,10 @@ impl ManagedTorrentOptions {
 // of stuff, but it shouldn't access the state.
 pub struct ManagedTorrentShared {
     pub id: TorrentId,
-    pub info: TorrentMetaV1Info<ByteBufOwned>,
-    pub torrent_bytes: Bytes,
-    pub info_bytes: Bytes,
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<String>,
     pub peer_id: Id20,
-    pub lengths: Lengths,
-    pub file_infos: FileInfos,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
     pub(crate) connector: Arc<StreamConnector>,
@@ -148,6 +183,7 @@ pub struct ManagedTorrentShared {
 
 pub struct ManagedTorrent {
     pub shared: Arc<ManagedTorrentShared>,
+    pub metadata: ArcSwapOption<TorrentMetadata>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
 }
@@ -161,8 +197,13 @@ impl ManagedTorrent {
         &self.shared
     }
 
-    pub fn get_total_bytes(&self) -> u64 {
-        self.shared.lengths.total_length()
+    pub fn with_metadata<R>(
+        &self,
+        mut f: impl FnMut(&Arc<TorrentMetadata>) -> R,
+    ) -> anyhow::Result<R> {
+        let r = self.metadata.load();
+        let r = r.as_ref().context("torrent is not resolved")?;
+        Ok(f(r))
     }
 
     pub fn info_hash(&self) -> Id20 {
@@ -384,10 +425,14 @@ impl ManagedTorrent {
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
+                let metadata = self.metadata.load_full().expect("TODO");
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.shared.clone(),
+                    metadata.clone(),
                     g.only_files.clone(),
-                    self.shared.storage_factory.create_and_init(self.shared())?,
+                    self.shared
+                        .storage_factory
+                        .create_and_init(self.shared(), &metadata)?,
                     true,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
@@ -433,7 +478,12 @@ impl ManagedTorrent {
     pub fn stats(&self) -> TorrentStats {
         use stats::TorrentStatsState as S;
         let mut resp = TorrentStats {
-            total_bytes: self.shared().lengths.total_length(),
+            total_bytes: self
+                .metadata
+                .load()
+                .as_ref()
+                .map(|r| r.lengths.total_length())
+                .unwrap_or_default(),
             file_progress: Vec::new(),
             state: S::Error,
             error: None,
@@ -534,7 +584,9 @@ impl ManagedTorrent {
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let file_count = self.shared().info.iter_file_lengths()?.count();
+        let metadata = self.metadata.load();
+        let metadata = metadata.as_ref().context("torrent is not resolved")?;
+        let file_count = metadata.file_infos.len();
         for f in only_files.iter().copied() {
             if f >= file_count {
                 anyhow::bail!("only_files contains invalid value {f}")

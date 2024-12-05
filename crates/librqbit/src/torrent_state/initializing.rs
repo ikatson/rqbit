@@ -24,11 +24,12 @@ use crate::{
     FileInfos,
 };
 
-use super::{paused::TorrentStatePaused, ManagedTorrentShared};
+use super::{paused::TorrentStatePaused, ManagedTorrentShared, TorrentMetadata};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
     pub(crate) shared: Arc<ManagedTorrentShared>,
+    pub(crate) metadata: Arc<TorrentMetadata>,
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
     previously_errored: bool,
@@ -54,13 +55,15 @@ fn compute_selected_pieces(
 
 impl TorrentStateInitializing {
     pub fn new(
-        meta: Arc<ManagedTorrentShared>,
+        shared: Arc<ManagedTorrentShared>,
+        metadata: Arc<TorrentMetadata>,
         only_files: Option<Vec<usize>>,
         files: FileStorage,
         previously_errored: bool,
     ) -> Self {
         Self {
-            shared: meta,
+            shared,
+            metadata,
             only_files,
             files,
             checked_bytes: AtomicU64::new(0),
@@ -80,7 +83,7 @@ impl TorrentStateInitializing {
     ) -> Option<Box<dyn BitV>> {
         let hp = have_pieces?;
         let actual = hp.as_bytes().len();
-        let expected = self.shared.lengths.piece_bitfield_bytes();
+        let expected = self.metadata.lengths.piece_bitfield_bytes();
         if actual != expected {
             warn!(
                 actual,
@@ -92,21 +95,21 @@ impl TorrentStateInitializing {
 
         let is_broken = self.shared.spawner.spawn_block_in_place(|| {
             let fo = crate::file_ops::FileOps::new(
-                &self.shared.info,
+                &self.metadata.info,
                 &self.files,
-                &self.shared.file_infos,
-                &self.shared.lengths,
+                &self.metadata.file_infos,
+                &self.metadata.lengths,
             );
 
             use rand::seq::SliceRandom;
 
             let mut to_validate = BF::from_boxed_slice(
-                vec![0u8; self.shared.lengths.piece_bitfield_bytes()].into_boxed_slice(),
+                vec![0u8; self.metadata.lengths.piece_bitfield_bytes()].into_boxed_slice(),
             );
             let mut queue = hp.as_slice().to_owned();
 
             // Validate at least one piece from each file, if we claim we have it.
-            for fi in self.shared.file_infos.iter() {
+            for fi in self.metadata.file_infos.iter() {
                 let prange = fi.piece_range_usize();
                 let offset = prange.start;
                 for piece_id in hp
@@ -136,7 +139,7 @@ impl TorrentStateInitializing {
             for (id, piece_id) in to_validate
                 .iter_ones()
                 .filter_map(|id| {
-                    self.shared
+                    self.metadata
                         .lengths
                         .validate_piece_index(id.try_into().ok()?)
                 })
@@ -147,10 +150,10 @@ impl TorrentStateInitializing {
                 }
 
                 #[allow(clippy::cast_possible_truncation)]
-                let progress = (self.shared.lengths.total_length() as f64
+                let progress = (self.metadata.lengths.total_length() as f64
                     / to_validate_count as f64
                     * (id + 1) as f64) as u64;
-                let progress = progress.min(self.shared.lengths.total_length());
+                let progress = progress.min(self.metadata.lengths.total_length());
                 self.checked_bytes.store(progress, Ordering::Relaxed);
             }
 
@@ -198,10 +201,10 @@ impl TorrentStateInitializing {
                 info!("Doing initial checksum validation, this might take a while...");
                 let have_pieces = self.shared.spawner.spawn_block_in_place(|| {
                     FileOps::new(
-                        &self.shared.info,
+                        &self.metadata.info,
                         &self.files,
-                        &self.shared.file_infos,
-                        &self.shared.lengths,
+                        &self.metadata.file_infos,
+                        &self.metadata.lengths,
                     )
                     .initial_check(&self.checked_bytes)
                 })?;
@@ -213,16 +216,16 @@ impl TorrentStateInitializing {
         };
 
         let selected_pieces = compute_selected_pieces(
-            &self.shared.lengths,
+            &self.metadata.lengths,
             self.only_files.as_deref(),
-            &self.shared.file_infos,
+            &self.metadata.file_infos,
         );
 
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
             selected_pieces,
-            self.shared.lengths,
-            &self.shared.file_infos,
+            self.metadata.lengths,
+            &self.metadata.file_infos,
         )
         .context("error creating chunk tracker")?;
 
@@ -237,7 +240,7 @@ impl TorrentStateInitializing {
 
         // Ensure file lenghts are correct, and reopen read-only.
         self.shared.spawner.spawn_block_in_place(|| {
-            for (idx, fi) in self.shared.file_infos.iter().enumerate() {
+            for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
                 if self
                     .only_files
                     .as_ref()
@@ -268,6 +271,7 @@ impl TorrentStateInitializing {
 
         let paused = TorrentStatePaused {
             shared: self.shared.clone(),
+            metadata: self.metadata.clone(),
             files: self.files.take()?,
             chunk_tracker,
             streams: Arc::new(Default::default()),

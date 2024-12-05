@@ -12,7 +12,6 @@ use crate::{
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
-    file_info::FileInfo,
     limits::{Limits, LimitsConfig},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
@@ -26,12 +25,13 @@ use crate::{
     stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
         initializing::TorrentStateInitializing, ManagedTorrentHandle, ManagedTorrentLocked,
-        ManagedTorrentOptions, ManagedTorrentState, TorrentStateLive,
+        ManagedTorrentOptions, ManagedTorrentState, TorrentMetadata, TorrentStateLive,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
-    ManagedTorrent, ManagedTorrentShared,
+    FileInfos, ManagedTorrent, ManagedTorrentShared,
 };
 use anyhow::{bail, Context};
+use arc_swap::ArcSwapOption;
 use bencode::bencode_serialize_to_writer;
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use bytes::Bytes;
@@ -46,7 +46,6 @@ use itertools::Itertools;
 use librqbit_core::{
     constants::CHUNK_SIZE,
     directories::get_configuration_directory,
-    lengths::Lengths,
     magnet::Magnet,
     peer_id::generate_peer_id,
     spawn_utils::spawn_with_cancel,
@@ -1130,7 +1129,7 @@ impl Session {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         };
 
-        let managed_torrent = {
+        let (managed_torrent, metadata) = {
             let mut g = self.db.write();
             if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
                 if t.info_hash() == info_hash || *eid == id {
@@ -1142,34 +1141,16 @@ impl Session {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
 
-            let lengths = Lengths::from_torrent(&info)?;
-            let file_infos = info
-                .iter_file_details_ext(&lengths)?
-                .map(|fd| {
-                    Ok::<_, anyhow::Error>(FileInfo {
-                        relative_filename: fd.details.filename.to_pathbuf()?,
-                        offset_in_torrent: fd.offset,
-                        piece_range: fd.pieces,
-                        len: fd.details.len,
-                        attrs: fd.details.attrs(),
-                    })
-                })
-                .collect::<anyhow::Result<Vec<FileInfo>>>()?;
-
             let span = error_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);
+            let metadata = Arc::new(TorrentMetadata::new(info, torrent_bytes, info_bytes)?);
             let minfo = Arc::new(ManagedTorrentShared {
                 id,
                 span,
-                file_infos,
-                info,
-                torrent_bytes,
-                info_bytes,
                 info_hash,
                 trackers: trackers.into_iter().collect(),
                 spawner: self.spawner,
                 peer_id: self.peer_id,
-                lengths,
                 storage_factory,
                 options: ManagedTorrentOptions {
                     force_tracker_interval: opts.force_tracker_interval,
@@ -1189,8 +1170,9 @@ impl Session {
 
             let initializing = Arc::new(TorrentStateInitializing::new(
                 minfo.clone(),
+                metadata.clone(),
                 only_files.clone(),
-                minfo.storage_factory.create_and_init(&minfo)?,
+                minfo.storage_factory.create_and_init(&minfo, &metadata)?,
                 false,
             ));
             let handle = Arc::new(ManagedTorrent {
@@ -1201,10 +1183,11 @@ impl Session {
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
+                metadata: ArcSwapOption::new(Some(metadata.clone())),
             });
 
             g.add_torrent(handle.clone(), id);
-            handle
+            (handle, metadata)
         };
 
         if let Some(p) = self.persistence.as_ref() {
@@ -1233,7 +1216,7 @@ impl Session {
             .start(peer_rx, opts.paused)
             .context("error starting torrent")?;
 
-        if let Some(name) = managed_torrent.shared().info.name.as_ref() {
+        if let Some(name) = metadata.info.name.as_ref() {
             info!(?name, "added torrent");
         }
 
@@ -1281,6 +1264,8 @@ impl Session {
             debug!("error pausing torrent before deletion: {e:#}")
         }
 
+        let metadata = removed.metadata.load_full().expect("TODO");
+
         let storage = removed
             .with_state_mut(|s| match s.take() {
                 ManagedTorrentState::Initializing(p) => p.files.take().ok(),
@@ -1297,7 +1282,12 @@ impl Session {
                 _ => None,
             })
             .map(Ok)
-            .unwrap_or_else(|| removed.shared.storage_factory.create(removed.shared()));
+            .unwrap_or_else(|| {
+                removed
+                    .shared
+                    .storage_factory
+                    .create(removed.shared(), &metadata)
+            });
 
         if let Some(p) = self.persistence.as_ref() {
             if let Err(e) = p.delete(id).await {
@@ -1311,7 +1301,7 @@ impl Session {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
             (Ok(storage), true) => {
                 debug!("will delete files");
-                remove_files_and_dirs(removed.shared(), &storage);
+                remove_files_and_dirs(&metadata.file_infos, &storage);
                 if removed.shared().options.output_folder != self.output_folder {
                     if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
                         warn!(
@@ -1423,9 +1413,9 @@ impl Session {
     }
 }
 
-fn remove_files_and_dirs(info: &ManagedTorrentShared, files: &dyn TorrentStorage) {
+fn remove_files_and_dirs(infos: &FileInfos, files: &dyn TorrentStorage) {
     let mut all_dirs = HashSet::new();
-    for (id, fi) in info.file_infos.iter().enumerate() {
+    for (id, fi) in infos.iter().enumerate() {
         let mut fname = &*fi.relative_filename;
         if let Err(e) = files.remove_file(id, fname) {
             warn!(?fi.relative_filename, error=?e, "could not delete file");

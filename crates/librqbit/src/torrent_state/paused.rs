@@ -5,10 +5,11 @@ use crate::{
     type_aliases::FileStorage,
 };
 
-use super::{streaming::TorrentStreams, ManagedTorrentShared};
+use super::{streaming::TorrentStreams, ManagedTorrentShared, TorrentMetadata};
 
 pub struct TorrentStatePaused {
     pub(crate) shared: Arc<ManagedTorrentShared>,
+    pub(crate) metadata: Arc<TorrentMetadata>,
     pub(crate) files: FileStorage,
     pub(crate) chunk_tracker: ChunkTracker,
     pub(crate) streams: Arc<TorrentStreams>,
@@ -17,7 +18,7 @@ pub struct TorrentStatePaused {
 impl TorrentStatePaused {
     pub(crate) fn update_only_files(&mut self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
         self.chunk_tracker
-            .update_only_files(self.shared.info.iter_file_lengths()?, only_files)?;
+            .update_only_files(self.metadata.info.iter_file_lengths()?, only_files)?;
         Ok(())
     }
 

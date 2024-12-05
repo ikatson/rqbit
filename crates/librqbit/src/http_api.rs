@@ -262,7 +262,10 @@ impl HttpApi {
 
         fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
             let mut playlist_items = handle
-                .shared()
+                .metadata
+                .load()
+                .as_ref()
+                .context("torrent metadata not resolved")?
                 .info
                 .iter_file_details()?
                 .enumerate()
@@ -340,10 +343,9 @@ impl HttpApi {
             .context("timeout")??;
 
             let (info, content) = match added {
-                crate::AddTorrentResponse::AlreadyManaged(_, handle) => (
-                    handle.shared().info.clone(),
-                    handle.shared().torrent_bytes.clone(),
-                ),
+                crate::AddTorrentResponse::AlreadyManaged(_, handle) => {
+                    handle.with_metadata(|r| (r.info.clone(), r.torrent_bytes.clone()))?
+                }
                 crate::AddTorrentResponse::ListOnly(ListOnlyResponse {
                     info,
                     torrent_bytes,

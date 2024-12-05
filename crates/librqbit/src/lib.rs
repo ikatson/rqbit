@@ -82,7 +82,8 @@ pub use session::{
 };
 pub use spawn_utils::spawn as librqbit_spawn;
 pub use torrent_state::{
-    ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentStats, TorrentStatsState,
+    ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentMetadata, TorrentStats,
+    TorrentStatsState,
 };
 pub use type_aliases::FileInfos;
 

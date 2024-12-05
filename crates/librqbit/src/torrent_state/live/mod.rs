@@ -109,7 +109,7 @@ use super::{
     paused::TorrentStatePaused,
     streaming::TorrentStreams,
     utils::{timeit, TimedExistence},
-    ManagedTorrentShared,
+    ManagedTorrentShared, TorrentMetadata,
 };
 
 #[derive(Debug)]
@@ -175,7 +175,8 @@ const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub struct TorrentStateLive {
     peers: PeerStates,
-    torrent: Arc<ManagedTorrentShared>,
+    shared: Arc<ManagedTorrentShared>,
+    metadata: Arc<TorrentMetadata>,
     locked: RwLock<TorrentStateLocked>,
 
     pub(crate) files: FileStorage,
@@ -231,11 +232,11 @@ impl TorrentStateLive {
 
         // TODO: make it configurable
         let file_priorities = {
-            let mut pri = (0..paused.shared.file_infos.len()).collect::<Vec<usize>>();
+            let mut pri = (0..paused.metadata.file_infos.len()).collect::<Vec<usize>>();
             // sort by filename, cause many torrents have random sort order.
             pri.sort_unstable_by_key(|id| {
                 paused
-                    .shared
+                    .metadata
                     .file_infos
                     .get(*id)
                     .map(|fi| fi.relative_filename.as_path())
@@ -252,7 +253,8 @@ impl TorrentStateLive {
         let ratelimits = Limits::new(paused.shared.options.ratelimits);
 
         let state = Arc::new(TorrentStateLive {
-            torrent: paused.shared.clone(),
+            shared: paused.shared.clone(),
+            metadata: paused.metadata.clone(),
             peers: PeerStates {
                 session_stats: session_stats.clone(),
                 stats: Default::default(),
@@ -291,7 +293,7 @@ impl TorrentStateLive {
         });
 
         state.spawn(
-            error_span!(parent: state.torrent.span.clone(), "speed_estimator_updater"),
+            error_span!(parent: state.shared.span.clone(), "speed_estimator_updater"),
             {
                 let state = Arc::downgrade(&state);
                 async move {
@@ -317,12 +319,12 @@ impl TorrentStateLive {
         );
 
         state.spawn(
-            error_span!(parent: state.torrent.span.clone(), "peer_adder"),
+            error_span!(parent: state.shared.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
         );
 
         state.spawn(
-            error_span!(parent: state.torrent.span.clone(), "upload_scheduler"),
+            error_span!(parent: state.shared.span.clone(), "upload_scheduler"),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
         Ok(state)
@@ -346,7 +348,7 @@ impl TorrentStateLive {
     }
 
     fn disk_work_tx(&self) -> Option<&DiskWorkQueueSender> {
-        self.torrent.options.disk_write_queue.as_ref()
+        self.shared.options.disk_write_queue.as_ref()
     }
 
     pub(crate) fn add_incoming_peer(
@@ -394,7 +396,7 @@ impl TorrentStateLive {
 
         self.spawn(
             error_span!(
-                parent: self.torrent.span.clone(),
+                parent: self.shared.span.clone(),
                 "manage_incoming_peer",
                 addr = %checked_peer.addr
             ),
@@ -416,7 +418,7 @@ impl TorrentStateLive {
             self.ratelimits
                 .prepare_for_upload(NonZeroU32::new(ci.size).unwrap())
                 .await?;
-            if let Some(session) = self.torrent.session.upgrade() {
+            if let Some(session) = self.shared.session.upgrade() {
                 session
                     .ratelimits
                     .prepare_for_upload(NonZeroU32::new(ci.size).unwrap())
@@ -449,18 +451,18 @@ impl TorrentStateLive {
             first_message_received: AtomicBool::new(false),
         };
         let options = PeerConnectionOptions {
-            connect_timeout: self.torrent.options.peer_connect_timeout,
-            read_write_timeout: self.torrent.options.peer_read_write_timeout,
+            connect_timeout: self.shared.options.peer_connect_timeout,
+            read_write_timeout: self.shared.options.peer_read_write_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
             checked_peer.addr,
-            self.torrent.info_hash,
-            self.torrent.peer_id,
+            self.shared.info_hash,
+            self.shared.peer_id,
             &handler,
             Some(options),
-            self.torrent.spawner,
-            self.torrent.connector.clone(),
+            self.shared.spawner,
+            self.shared.connector.clone(),
         );
         let requester = handler.task_peer_chunk_requester();
 
@@ -514,18 +516,18 @@ impl TorrentStateLive {
             first_message_received: AtomicBool::new(false),
         };
         let options = PeerConnectionOptions {
-            connect_timeout: state.torrent.options.peer_connect_timeout,
-            read_write_timeout: state.torrent.options.peer_read_write_timeout,
+            connect_timeout: state.shared.options.peer_connect_timeout,
+            read_write_timeout: state.shared.options.peer_read_write_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
             addr,
-            state.torrent.info_hash,
-            state.torrent.peer_id,
+            state.shared.info_hash,
+            state.shared.peer_id,
             &handler,
             Some(options),
-            state.torrent.spawner,
-            state.torrent.connector.clone(),
+            state.shared.spawner,
+            state.shared.connector.clone(),
         );
         let requester = aframe!(handler
             .task_peer_chunk_requester()
@@ -564,7 +566,7 @@ impl TorrentStateLive {
         let state = self;
         loop {
             let addr = peer_queue_rx.recv().await.context("torrent closed")?;
-            if state.torrent.options.disable_upload() && state.is_finished_and_no_active_streams() {
+            if state.shared.options.disable_upload() && state.is_finished_and_no_active_streams() {
                 debug!("ignoring peer {} as we are finished", addr);
                 state.peers.mark_peer_not_needed(addr);
                 continue;
@@ -572,30 +574,30 @@ impl TorrentStateLive {
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
-                error_span!(parent: state.torrent.span.clone(), "manage_peer", peer = addr.to_string()),
+                error_span!(parent: state.shared.span.clone(), "manage_peer", peer = addr.to_string()),
                 aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
         }
     }
 
     pub fn torrent(&self) -> &ManagedTorrentShared {
-        &self.torrent
+        &self.shared
     }
 
     pub fn info(&self) -> &TorrentMetaV1Info<ByteBufOwned> {
-        &self.torrent.info
+        &self.metadata.info
     }
     pub fn info_hash(&self) -> Id20 {
-        self.torrent.info_hash
+        self.shared.info_hash
     }
     pub fn peer_id(&self) -> Id20 {
-        self.torrent.peer_id
+        self.shared.peer_id
     }
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
         FileOps::new(
-            &self.torrent.info,
+            &self.metadata.info,
             &*self.files,
-            &self.torrent().file_infos,
+            &self.metadata.file_infos,
             &self.lengths,
         )
     }
@@ -703,7 +705,8 @@ impl TorrentStateLive {
 
         // g.chunks;
         Ok(TorrentStatePaused {
-            shared: self.torrent.clone(),
+            shared: self.shared.clone(),
+            metadata: self.metadata.clone(),
             files: self.files.take()?,
             chunk_tracker,
             streams: self.streams.clone(),
@@ -727,7 +730,7 @@ impl TorrentStateLive {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
         let hns =
-            ct.update_only_files(self.torrent().file_infos.iter().map(|f| f.len), only_files)?;
+            ct.update_only_files(self.metadata.file_infos.iter().map(|f| f.len), only_files)?;
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -746,7 +749,7 @@ impl TorrentStateLive {
         };
         self.streams
             .streamed_file_ids()
-            .any(|file_id| !chunks.is_file_finished(&self.torrent.file_infos[file_id]))
+            .any(|file_id| !chunks.is_file_finished(&self.metadata.file_infos[file_id]))
     }
 
     // We might have the torrent "finished" i.e. no selected files. But if someone is streaming files despite
@@ -768,7 +771,7 @@ impl TorrentStateLive {
 
         // if we have all the pieces of the file, reopen it read only
         for (idx, file_info) in self
-            .torrent()
+            .metadata
             .file_infos
             .iter()
             .enumerate()
@@ -779,9 +782,9 @@ impl TorrentStateLive {
         }
 
         self.streams
-            .wake_streams_on_piece_completed(id, &self.torrent.lengths);
+            .wake_streams_on_piece_completed(id, &self.metadata.lengths);
 
-        locked.unflushed_bitv_bytes += self.torrent.lengths.piece_length(id) as u64;
+        locked.unflushed_bitv_bytes += self.metadata.lengths.piece_length(id) as u64;
         if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
             locked.try_flush_bitv()
         }
@@ -1021,7 +1024,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         if let Some(_peer_pex_msg_id) = hs.ut_pex() {
             self.state.clone().spawn(
                 error_span!(
-                    parent: self.state.torrent.span.clone(),
+                    parent: self.state.shared.span.clone(),
                     "sending_pex_to_peer",
                     peer = self.addr.to_string()
                 ),
@@ -1054,7 +1057,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
     }
 
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool {
-        if self.state.torrent.options.disable_upload() {
+        if self.state.shared.options.disable_upload() {
             return false;
         }
         let have = self
@@ -1071,7 +1074,7 @@ impl<'a> PeerConnectionHandler for &'a PeerHandler {
         &self,
         handshake: &mut ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
-        let info_bytes = &self.state.torrent().info_bytes;
+        let info_bytes = &self.state.metadata.info_bytes;
         if !info_bytes.is_empty() {
             if let Ok(len) = info_bytes.len().try_into() {
                 handshake.metadata_size = Some(len);
@@ -1159,7 +1162,7 @@ impl PeerHandler {
         if let Some(dur) = backoff {
             self.state.clone().spawn(
                 error_span!(
-                    parent: self.state.torrent.span.clone(),
+                    parent: self.state.shared.span.clone(),
                     "wait_for_peer",
                     peer = handle.to_string(),
                     duration = format!("{dur:?}")
@@ -1218,7 +1221,7 @@ impl PeerHandler {
                                 && !g.inflight_pieces.contains_key(pid)
                         });
                     let natural_order_pieces = chunk_tracker
-                        .iter_queued_pieces(&g.file_priorities, &self.state.torrent().file_infos);
+                        .iter_queued_pieces(&g.file_priorities, &self.state.metadata.file_infos);
                     for n in priority_streamed_pieces.chain(natural_order_pieces) {
                         if bf.get(n.get() as usize).map(|v| *v) == Some(true) {
                             n_opt = Some(n);
@@ -1787,7 +1790,7 @@ impl PeerHandler {
             dtx.send(Box::new(work)).await?;
         } else {
             self.state
-                .torrent
+                .shared
                 .spawner
                 .spawn_block_in_place(|| {
                     write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
@@ -1799,7 +1802,7 @@ impl PeerHandler {
     }
 
     fn send_metadata_piece(&self, piece_id: u32) -> anyhow::Result<()> {
-        let data = &self.state.torrent().info_bytes;
+        let data = &self.state.metadata.info_bytes;
         let metadata_size = data.len();
         if metadata_size == 0 {
             anyhow::bail!("peer requested for info metadata but we don't have it")

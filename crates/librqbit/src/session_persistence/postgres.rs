@@ -96,14 +96,19 @@ impl SessionPersistenceStore for PostgresSessionStorage {
     }
 
     async fn store(&self, id: TorrentId, torrent: &ManagedTorrentHandle) -> anyhow::Result<()> {
-        let torrent_bytes: &[u8] = &torrent.shared().torrent_bytes;
+        let torrent_bytes = torrent
+            .metadata
+            .load()
+            .as_ref()
+            .map(|i| i.torrent_bytes.clone())
+            .unwrap_or_default();
         let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused)
         VALUES($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT(id) DO NOTHING";
         sqlx::query(q)
             .bind::<i32>(id.try_into()?)
             .bind(&torrent.info_hash().0[..])
-            .bind(torrent_bytes)
+            .bind(torrent_bytes.as_ref())
             .bind(
                 torrent
                     .shared()
