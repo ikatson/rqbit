@@ -1035,7 +1035,7 @@ impl Session {
                 }
             };
 
-            self.main_torrent_info(add_res, opts).await
+            self.add_torrent_internal(add_res, opts).await
         }
         .instrument(error_span!(parent: self.rs(), "add_torrent"))
         .boxed()
@@ -1068,7 +1068,7 @@ impl Session {
         Ok::<_, anyhow::Error>(Some(PathBuf::from(longest)))
     }
 
-    async fn main_torrent_info(
+    async fn add_torrent_internal(
         self: &Arc<Self>,
         add_res: InternalAddResult,
         mut opts: AddTorrentOptions,
