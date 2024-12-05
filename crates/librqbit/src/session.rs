@@ -284,6 +284,9 @@ pub struct AddTorrentOptions {
     // May be useful if the disk is slow.
     pub defer_writes: Option<bool>,
 
+    // If set, the "add" method will return ASAP, unless "list only" is set.
+    pub defer: bool,
+
     // Custom trackers
     pub trackers: Option<Vec<String>>,
 }
@@ -474,11 +477,14 @@ pub(crate) struct CheckedIncomingConnection {
     pub handshake: Handshake<ByteBufOwned>,
 }
 
+enum ResolveResult {
+    Resolved(ResolvedTorrent),
+    Deferred,
+}
+
 struct InternalAddResult {
     info_hash: Id20,
-    info: TorrentMetaV1Info<ByteBufOwned>,
-    torrent_bytes: Bytes,
-    info_bytes: Bytes,
+    resolve_result: ResolveResult,
     trackers: Vec<String>,
     peer_rx: Option<PeerStream>,
     initial_peers: Vec<SocketAddr>,
@@ -892,6 +898,10 @@ impl Session {
 
             let announce_port = if paused { None } else { self.tcp_listen_port };
 
+            if opts.defer && opts.list_only {
+                bail!("defer and list_only options are mutually exclusive, but both were set")
+            }
+
             // The main difference between magnet link and torrent file, is that we need to resolve the magnet link
             // into a torrent file by connecting to peers that support extended handshakes.
             // So we must discover at least one peer and connect to it to be able to proceed further.
@@ -1031,9 +1041,11 @@ impl Session {
 
                     InternalAddResult {
                         info_hash: torrent.info.info_hash,
-                        info: torrent.info.info,
-                        torrent_bytes: torrent.torrent_bytes,
-                        info_bytes: torrent.info_bytes,
+                        resolve_result: ResolveResult::Resolved(ResolvedTorrent::new(
+                            torrent.info.info,
+                            torrent.torrent_bytes,
+                            torrent.info_bytes,
+                        ).context("error constructing ResolvedTorrent")?),
                         trackers,
                         peer_rx,
                         initial_peers: opts
@@ -1152,20 +1164,6 @@ impl Session {
             }) {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
-
-            let lengths = Lengths::from_torrent(&info)?;
-            let file_infos = info
-                .iter_file_details_ext(&lengths)?
-                .map(|fd| {
-                    Ok::<_, anyhow::Error>(FileInfo {
-                        relative_filename: fd.details.filename.to_pathbuf()?,
-                        offset_in_torrent: fd.offset,
-                        piece_range: fd.pieces,
-                        len: fd.details.len,
-                        attrs: fd.details.attrs(),
-                    })
-                })
-                .collect::<anyhow::Result<Vec<FileInfo>>>()?;
 
             let span = error_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);

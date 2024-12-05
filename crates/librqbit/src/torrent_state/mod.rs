@@ -37,6 +37,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::chunk_tracker::ChunkTracker;
+use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
@@ -152,6 +153,35 @@ pub struct ResolvedTorrent {
     pub info_bytes: Bytes,
     pub lengths: Lengths,
     pub file_infos: FileInfos,
+}
+
+impl ResolvedTorrent {
+    pub(crate) fn new(
+        info: TorrentMetaV1Info<ByteBufOwned>,
+        torrent_bytes: Bytes,
+        info_bytes: Bytes,
+    ) -> anyhow::Result<Self> {
+        let lengths = Lengths::from_torrent(&info)?;
+        let file_infos = info
+            .iter_file_details_ext(&lengths)?
+            .map(|fd| {
+                Ok::<_, anyhow::Error>(FileInfo {
+                    relative_filename: fd.details.filename.to_pathbuf()?,
+                    offset_in_torrent: fd.offset,
+                    piece_range: fd.pieces,
+                    len: fd.details.len,
+                    attrs: fd.details.attrs(),
+                })
+            })
+            .collect::<anyhow::Result<Vec<FileInfo>>>()?;
+        Ok(Self {
+            info,
+            torrent_bytes,
+            info_bytes,
+            lengths,
+            file_infos,
+        })
+    }
 }
 
 pub struct ManagedTorrent {
