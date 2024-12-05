@@ -56,8 +56,6 @@ pub use self::stats::{TorrentStats, TorrentStatsState};
 pub use self::streaming::FileStream;
 
 pub enum ManagedTorrentState {
-    Resolving,
-    ResolvingPaused,
     Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
     Live(Arc<TorrentStateLive>),
@@ -75,8 +73,6 @@ impl ManagedTorrentState {
             ManagedTorrentState::Live(_) => "live",
             ManagedTorrentState::Error(_) => "error",
             ManagedTorrentState::None => "<invalid: none>",
-            ManagedTorrentState::Resolving => "resolving magnet",
-            ManagedTorrentState::ResolvingPaused => "resolving magnet paused",
         }
     }
 
@@ -359,12 +355,6 @@ impl ManagedTorrent {
         }
 
         match &g.state {
-            ManagedTorrentState::Resolving => {
-                todo_break!()
-            }
-            ManagedTorrentState::ResolvingPaused => {
-                todo_break!()
-            }
             ManagedTorrentState::Live(_) => {
                 bail!("torrent is already live");
             }
@@ -436,10 +426,14 @@ impl ManagedTorrent {
                 Ok(())
             }
             ManagedTorrentState::Error(_) => {
+                let resolved = self.resolved.load();
+                let resolved = resolved.context("bug")?;
                 let initializing = Arc::new(TorrentStateInitializing::new(
                     self.shared.clone(),
                     g.only_files.clone(),
-                    self.shared.storage_factory.create_and_init(self.shared())?,
+                    self.shared
+                        .storage_factory
+                        .create_and_init(self.shared(), &resolved)?,
                     true,
                 ));
                 g.state = ManagedTorrentState::Initializing(initializing.clone());
@@ -478,12 +472,6 @@ impl ManagedTorrent {
                 bail!("can't pause torrent in error state")
             }
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
-            ManagedTorrentState::Resolving => {
-                todo_break!()
-            }
-            ManagedTorrentState::ResolvingPaused => {
-                todo_break!()
-            }
         }
     }
 
@@ -543,8 +531,6 @@ impl ManagedTorrent {
                     resp.state = S::Error;
                     resp.error = Some("bug: torrent in broken \"None\" state".to_string());
                 }
-                ManagedTorrentState::Resolving => todo_break!(),
-                ManagedTorrentState::ResolvingPaused => todo_break!(),
             }
             resp
         })
@@ -617,9 +603,7 @@ impl ManagedTorrent {
 
         let mut g = self.locked.write();
         match &mut g.state {
-            ManagedTorrentState::Initializing(_)
-            | ManagedTorrentState::Resolving
-            | ManagedTorrentState::ResolvingPaused => {
+            ManagedTorrentState::Initializing(_) => {
                 bail!("can't update initializing or resolving torrent")
             }
             ManagedTorrentState::Error(_) => {}
