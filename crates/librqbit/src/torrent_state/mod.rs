@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Context;
+use arc_swap::ArcSwapOption;
 use buffers::ByteBufOwned;
 use bytes::Bytes;
 use futures::future::BoxFuture;
@@ -128,15 +129,6 @@ impl ManagedTorrentOptions {
 // of stuff, but it shouldn't access the state.
 pub struct ManagedTorrentShared {
     pub id: TorrentId,
-
-    // These 5 are derived from torrent info.
-    // If the torrent is still resolving the magnet though, none of these would be available!
-    pub info: TorrentMetaV1Info<ByteBufOwned>,
-    pub torrent_bytes: Bytes,
-    pub info_bytes: Bytes,
-    pub lengths: Lengths,
-    pub file_infos: FileInfos,
-
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<String>,
@@ -148,8 +140,19 @@ pub struct ManagedTorrentShared {
     pub(crate) session: Weak<Session>,
 }
 
+pub struct ResolvedTorrent {
+    // These 5 are derived from torrent info.
+    // If the torrent is still resolving the magnet though, none of these would be available!
+    pub info: TorrentMetaV1Info<ByteBufOwned>,
+    pub torrent_bytes: Bytes,
+    pub info_bytes: Bytes,
+    pub lengths: Lengths,
+    pub file_infos: FileInfos,
+}
+
 pub struct ManagedTorrent {
     pub shared: Arc<ManagedTorrentShared>,
+    pub resolved: ArcSwapOption<ResolvedTorrent>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
 }
