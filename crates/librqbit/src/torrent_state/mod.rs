@@ -6,6 +6,7 @@ mod streaming;
 pub mod utils;
 
 use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -105,6 +106,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub output_folder: PathBuf,
     pub disk_write_queue: Option<DiskWorkQueueSender>,
     pub ratelimits: LimitsConfig,
+    pub initial_peers: Vec<SocketAddr>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

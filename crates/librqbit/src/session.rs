@@ -1179,6 +1179,7 @@ impl Session {
                     output_folder,
                     disk_write_queue: self.disk_write_tx.clone(),
                     ratelimits: opts.ratelimits,
+                    initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },
@@ -1391,7 +1392,7 @@ impl Session {
             handle.shared().trackers.clone().into_iter().collect(),
             true,
             handle.shared().options.force_tracker_interval,
-            Default::default(),
+            handle.shared().options.initial_peers.clone(),
         )?;
         handle.start(peer_rx, false)?;
         self.try_update_persistence_metadata(handle).await;
