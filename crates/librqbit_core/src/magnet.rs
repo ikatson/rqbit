@@ -9,6 +9,7 @@ pub struct Magnet {
     id20: Option<Id20>,
     id32: Option<Id32>,
     pub trackers: Vec<String>,
+    pub name: Option<String>,
     select_only: Option<Vec<usize>>,
 }
 
@@ -29,6 +30,7 @@ impl Magnet {
             id20: Some(id20),
             id32: None,
             trackers,
+            name: None,
             select_only,
         }
     }
@@ -40,6 +42,7 @@ impl Magnet {
                 return Ok(Magnet {
                     id20: Some(id20),
                     id32: None,
+                    name: None,
                     trackers: vec![],
                     select_only: None,
                 });
@@ -52,6 +55,7 @@ impl Magnet {
         let mut info_hash_found = false;
         let mut id20: Option<Id20> = None;
         let mut id32: Option<Id32> = None;
+        let mut name: Option<String> = None;
         let mut trackers = Vec::<String>::new();
         let mut files = Vec::<usize>::new();
         for (key, value) in url.query_pairs() {
@@ -70,6 +74,11 @@ impl Magnet {
                     }
                 }
                 "tr" => trackers.push(value.into()),
+                "dn" => {
+                    if !value.is_empty() {
+                        name = Some(value.into_owned())
+                    }
+                }
                 "so" => {
                     // Process 'so' values, but silently ignore any which fail parsing
                     for file_desc in value.split(',') {
@@ -100,6 +109,7 @@ impl Magnet {
                 id20,
                 id32,
                 trackers,
+                name,
                 select_only: if files.is_empty() { None } else { Some(files) },
             }),
             false => {

@@ -209,10 +209,7 @@ impl Api {
                     let mut r = TorrentDetailsResponse {
                         id: Some(id),
                         info_hash: mgr.shared().info_hash.as_string(),
-                        name: mgr
-                            .with_metadata(|r| r.info.name.as_ref().map(|n| n.to_string()))
-                            .ok()
-                            .flatten(),
+                        name: mgr.name(),
                         output_folder: mgr
                             .shared()
                             .options
@@ -249,6 +246,7 @@ impl Api {
             Some(handle.id()),
             &info_hash,
             handle.metadata.load().as_ref().map(|r| &r.info),
+            handle.name().as_deref(),
             only_files.as_deref(),
             output_folder,
         )
@@ -383,6 +381,7 @@ impl Api {
                     Some(id),
                     &handle.info_hash(),
                     handle.metadata.load().as_ref().map(|r| &r.info),
+                    handle.name().as_deref(),
                     handle.only_files().as_deref(),
                     handle
                         .shared()
@@ -419,6 +418,7 @@ impl Api {
                     None,
                     &info_hash,
                     Some(&info),
+                    None,
                     only_files.as_deref(),
                     output_folder.to_string_lossy().into_owned().to_string(),
                 )
@@ -429,6 +429,7 @@ impl Api {
                     Some(id),
                     &handle.info_hash(),
                     handle.metadata.load().as_ref().map(|r| &r.info),
+                    handle.name().as_deref(),
                     handle.only_files().as_deref(),
                     handle
                         .shared()
@@ -532,6 +533,7 @@ fn make_torrent_details(
     id: Option<TorrentId>,
     info_hash: &Id20,
     info: Option<&TorrentMetaV1Info<ByteBufOwned>>,
+    name: Option<&str>,
     only_files: Option<&[usize]>,
     output_folder: String,
 ) -> Result<TorrentDetailsResponse> {
@@ -564,7 +566,9 @@ fn make_torrent_details(
     Ok(TorrentDetailsResponse {
         id,
         info_hash: info_hash.as_string(),
-        name: info.and_then(|i| i.name.as_ref().map(|b| b.to_string())),
+        name: name
+            .map(|s| s.to_owned())
+            .or_else(|| info.and_then(|i| i.name.as_ref().map(|b| b.to_string()))),
         files: Some(files),
         output_folder,
         stats: None,

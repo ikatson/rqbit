@@ -477,6 +477,7 @@ struct InternalAddResult {
     info_hash: Id20,
     metadata: Option<TorrentMetadata>,
     trackers: Vec<String>,
+    name: Option<String>,
 }
 
 impl Session {
@@ -899,6 +900,7 @@ impl Session {
                         info_hash,
                         trackers: magnet.trackers,
                         metadata: None,
+                        name: magnet.name,
                     }
                 }
                 other => {
@@ -943,6 +945,7 @@ impl Session {
                             torrent.info_bytes,
                         )?),
                         trackers,
+                        name: None,
                     }
                 }
             };
@@ -956,6 +959,7 @@ impl Session {
     fn get_default_subfolder_for_torrent(
         &self,
         info: &TorrentMetaV1Info<ByteBufOwned>,
+        magnet_name: Option<&str>,
     ) -> anyhow::Result<Option<PathBuf>> {
         let files = info
             .iter_file_details()?
@@ -964,11 +968,23 @@ impl Session {
         if files.len() < 2 {
             return Ok(None);
         }
+        fn check_valid(name: &str) -> anyhow::Result<()> {
+            if name.contains("/") || name.contains("\\") || name.contains("..") {
+                bail!("path traversal in torrent name detected")
+            }
+            Ok(())
+        }
+
         if let Some(name) = &info.name {
             let s =
                 std::str::from_utf8(name.as_slice()).context("invalid UTF-8 in torrent name")?;
+            check_valid(s)?;
             return Ok(Some(PathBuf::from(s)));
         };
+        if let Some(name) = magnet_name {
+            check_valid(name)?;
+            return Ok(Some(PathBuf::from(name)));
+        }
         // Let the subfolder name be the longest filename
         let longest = files
             .iter()
@@ -989,6 +1005,7 @@ impl Session {
             info_hash,
             metadata,
             trackers,
+            name,
         } = add_res;
 
         let peer_stream_permanent = !opts.paused && !opts.list_only;
@@ -1045,7 +1062,7 @@ impl Session {
 
         let output_folder = match (opts.output_folder, opts.sub_folder) {
             (None, None) => self.output_folder.join(
-                self.get_default_subfolder_for_torrent(&metadata.info)?
+                self.get_default_subfolder_for_torrent(&metadata.info, name.as_deref())?
                     .unwrap_or_default(),
             ),
             (Some(o), None) => PathBuf::from(o),
@@ -1118,6 +1135,7 @@ impl Session {
                 },
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
+                magnet_name: name,
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(

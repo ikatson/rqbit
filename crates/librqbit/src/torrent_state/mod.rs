@@ -141,6 +141,7 @@ pub struct TorrentMetadata {
     pub info_bytes: Bytes,
     pub lengths: Lengths,
     pub file_infos: FileInfos,
+    pub name: Option<String>,
 }
 
 impl TorrentMetadata {
@@ -162,12 +163,18 @@ impl TorrentMetadata {
                 })
             })
             .collect::<anyhow::Result<Vec<FileInfo>>>()?;
+        let name = info
+            .name
+            .as_ref()
+            .and_then(|n| std::str::from_utf8(n.as_ref()).ok())
+            .map(|s| s.to_owned());
         Ok(Self {
             info,
             torrent_bytes,
             info_bytes,
             lengths,
             file_infos,
+            name,
         })
     }
 }
@@ -188,6 +195,9 @@ pub struct ManagedTorrentShared {
     pub(crate) connector: Arc<StreamConnector>,
     pub(crate) storage_factory: BoxStorageFactory,
     pub(crate) session: Weak<Session>,
+
+    // "dn" from magnet link
+    pub(crate) magnet_name: Option<String>,
 }
 
 pub struct ManagedTorrent {
@@ -202,6 +212,13 @@ pub struct ManagedTorrent {
 impl ManagedTorrent {
     pub fn id(&self) -> TorrentId {
         self.shared.id
+    }
+
+    pub fn name(&self) -> Option<String> {
+        if let Some(m) = &*self.metadata.load() {
+            return m.name.clone().or_else(|| self.shared.magnet_name.clone());
+        }
+        self.shared.magnet_name.clone()
     }
 
     pub fn shared(&self) -> &ManagedTorrentShared {
