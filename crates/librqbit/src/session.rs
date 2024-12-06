@@ -97,39 +97,41 @@ impl SessionDatabase {
 }
 
 pub struct Session {
-    peer_id: Id20,
-    dht: Option<Dht>,
-    persistence: Option<Arc<dyn SessionPersistenceStore>>,
-    pub(crate) bitv_factory: Arc<dyn BitVFactory>,
-    peer_opts: PeerConnectionOptions,
-    spawner: BlockingSpawner,
+    // Core state and services
+    pub(crate) db: RwLock<SessionDatabase>,
     next_id: AtomicUsize,
-    db: RwLock<SessionDatabase>,
-    output_folder: PathBuf,
+    pub(crate) bitv_factory: Arc<dyn BitVFactory>,
+    spawner: BlockingSpawner,
 
+    // Network
+    peer_id: Id20,
     tcp_listen_port: Option<u16>,
+    dht: Option<Dht>,
+    pub(crate) connector: Arc<StreamConnector>,
+    reqwest_client: reqwest::Client,
 
+    // Lifecycle management
     cancellation_token: CancellationToken,
+    _cancellation_token_drop_guard: DropGuard,
 
+    // Runtime settings
+    output_folder: PathBuf,
+    peer_opts: PeerConnectionOptions,
+    default_storage_factory: Option<BoxStorageFactory>,
+    persistence: Option<Arc<dyn SessionPersistenceStore>>,
     disk_write_tx: Option<DiskWorkQueueSender>,
 
-    default_storage_factory: Option<BoxStorageFactory>,
-
-    reqwest_client: reqwest::Client,
-    pub(crate) connector: Arc<StreamConnector>,
+    // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
-
-    root_span: Option<Span>,
-
     pub(crate) ratelimits: Limits,
 
+    // Monitoring / tracing / logging
     pub(crate) stats: SessionStats,
+    root_span: Option<Span>,
 
+    // Feature flags
     #[cfg(feature = "disable-upload")]
     _disable_upload: bool,
-
-    // This is stored for all tasks to stop when session is dropped.
-    _cancellation_token_drop_guard: DropGuard,
 }
 
 async fn torrent_from_url(
