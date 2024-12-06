@@ -274,6 +274,8 @@ impl ManagedTorrent {
         g.state = ManagedTorrentState::Error(error)
     }
 
+    /// peer_rx: the peer stream. If start_paused=false, must be set.
+    /// start_paused: if set, the torrent will initialize (check file integrity), but will not start
     pub(crate) fn start(
         self: &Arc<Self>,
         peer_rx: Option<PeerStream>,
@@ -389,6 +391,10 @@ impl ManagedTorrent {
             }
         }
 
+        if !start_paused && peer_rx.is_none() {
+            bail!("logic bug: start(start_paused=true, peer_rx=None) called. peer_rx must be set if starting the torrent")
+        }
+
         let session = self
             .shared
             .session
@@ -419,6 +425,7 @@ impl ManagedTorrent {
             ManagedTorrentState::Live(live) => {
                 let paused = live.pause()?;
                 g.state = ManagedTorrentState::Paused(paused);
+                g.paused = true;
                 self.state_change_notify.notify_waiters();
                 Ok(())
             }
