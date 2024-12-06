@@ -56,6 +56,15 @@ use self::paused::TorrentStatePaused;
 pub use self::stats::{TorrentStats, TorrentStatsState};
 pub use self::streaming::FileStream;
 
+// State machine transitions.
+//
+// - error -> initializing
+// - initializing -> paused
+// - paused -> live
+// - live -> paused
+//
+// - initializing -> error
+// - live -> error
 pub enum ManagedTorrentState {
     Initializing(Arc<TorrentStateInitializing>),
     Paused(TorrentStatePaused),
@@ -281,16 +290,6 @@ impl ManagedTorrent {
         peer_rx: Option<PeerStream>,
         start_paused: bool,
     ) -> anyhow::Result<()> {
-        // State machine transitions.
-        //
-        // - error -> initializing
-        // - initializing -> paused
-        // - paused -> live
-        // - live -> paused
-        //
-        // - initializing -> error
-        // - live -> error
-
         fn _start<'a>(
             t: &'a Arc<ManagedTorrent>,
             peer_rx: Option<PeerStream>,
