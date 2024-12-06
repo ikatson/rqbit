@@ -306,7 +306,6 @@ impl ManagedTorrent {
                 }
                 ManagedTorrentState::Initializing(init) => {
                     let init = init.clone();
-                    drop(g);
                     let t = t.clone();
                     let span = t.shared().span.clone();
                     let token = token.clone();
@@ -355,7 +354,6 @@ impl ManagedTorrent {
                     let live = TorrentStateLive::new(paused, tx, token.clone())?;
                     g.state = ManagedTorrentState::Live(live.clone());
                     t.state_change_notify.notify_waiters();
-                    drop(g);
 
                     spawn_fatal_errors_receiver(t, rx, token);
                     if let Some(peer_rx) = peer_rx {
