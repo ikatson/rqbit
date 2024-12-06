@@ -334,11 +334,6 @@ impl ManagedTorrent {
 
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
-
-                                    if start_paused {
-                                        return Ok(());
-                                    }
-
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {
@@ -354,7 +349,6 @@ impl ManagedTorrent {
                 }
                 ManagedTorrentState::Paused(_) => {
                     if start_paused {
-                        warn!("start(start_paused=true) called, but torrent already paused");
                         return Ok(());
                     }
                     let paused = g.state.take().assert_paused();
