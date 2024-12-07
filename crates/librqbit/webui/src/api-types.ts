@@ -114,6 +114,7 @@ export interface ErrorDetails {
   status?: number;
   statusText?: string;
   text: string | React.ReactNode;
+  timedOut: boolean;
 }
 
 export type Duration = number;
@@ -193,7 +194,8 @@ export interface RqbitAPI {
   ) => string | null;
   uploadTorrent: (
     data: string | File,
-    opts?: AddTorrentOptions,
+    opts: AddTorrentOptions,
+    timeout?: number | undefined
   ) => Promise<AddTorrentResponse>;
 
   pause: (index: number) => Promise<void>;

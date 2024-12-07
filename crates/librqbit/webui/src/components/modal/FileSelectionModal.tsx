@@ -52,16 +52,18 @@ export const FileSelectionModal = (props: {
   };
 
   const handleUpload = async () => {
-    if (!listTorrentResponse) {
-      return;
-    }
+    // TODO this comment refers to the desired state, not the current state
+    // TODO implement listTorrentResponse==null support
+    // If listTorrentResponse is null, that indicates that the data is not available at the moment
+    // This is typically the case for magnet links that may not have dht peers
     setUploading(true);
-    let initialPeers = listTorrentResponse.seen_peers
+    let initialPeers = listTorrentResponse?.seen_peers
       ? listTorrentResponse.seen_peers.slice(0, 32)
       : null;
+    let only_files = selectedFiles.size <= 0 ? null : Array.from(selectedFiles);
     let opts: AddTorrentOptions = {
       overwrite: true,
-      only_files: Array.from(selectedFiles),
+      only_files,
       initial_peers: initialPeers,
       output_folder: outputFolder,
     };

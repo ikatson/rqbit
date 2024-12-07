@@ -49,7 +49,10 @@ export const RqbitWebUI = (props: {
     );
     setTorrents(torrents.torrents);
   };
-  setRefreshTorrents(refreshTorrents);
+
+  useEffect(() => {
+    setRefreshTorrents(refreshTorrents);
+  }, [])
 
   const setStats = useStatsStore((state) => state.setStats);
 

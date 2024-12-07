@@ -31,13 +31,20 @@ export const UploadButton: React.FC<{
     let t = setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await API.uploadTorrent(data, { list_only: true });
+        const response = await API.uploadTorrent(data, { list_only: true }, 2_000);
         setListTorrentResponse(response);
-      } catch (e) {
-        setListTorrentError({
-          text: "Error listing torrent files",
-          details: e as ApiErrorDetails,
-        });
+      } catch (e: unknown) {
+        let error = e as ApiErrorDetails;
+        if (error.timedOut) {
+          setListTorrentResponse(null);
+          // Timeout is not an error for a listOnly request
+          setListTorrentError(null);
+        } else {
+          setListTorrentError({
+            text: "Error listing torrent files",
+            details: error,
+          });
+        }
       } finally {
         setLoading(false);
       }

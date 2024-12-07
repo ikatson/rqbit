@@ -1,4 +1,5 @@
 import {
+  AddTorrentOptions,
   AddTorrentResponse,
   ErrorDetails,
   ListTorrentsResponse,
@@ -20,11 +21,39 @@ const apiUrl = (() => {
   return "";
 })();
 
+// Wrapper around `fetch` to support a custom timeout.
+// If specified, uses `AbortController` to timeout the pending fetch
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeout: number | undefined) {
+  let pending;
+  let timeoutId = undefined;
+  if (timeout !== undefined) {
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    timeoutId = setTimeout(() => controller.abort(), timeout);
+    console.log("Fetching with timeout: ", timeout);
+    pending = fetch(url, { ...options, signal })
+  } else {
+    pending = fetch(url, options)
+  }
+
+  return pending
+    .then(response => {
+      clearTimeout(timeoutId);
+      return response;
+    })
+    .catch(error => {
+      clearTimeout(timeoutId);
+      throw error;
+    });
+}
+
 const makeRequest = async (
   method: string,
   path: string,
   data?: any,
   isJson?: boolean,
+  timeout?: number,
 ): Promise<any> => {
   console.log(method, path);
   const url = apiUrl + path;
@@ -48,13 +77,21 @@ const makeRequest = async (
     method: method,
     path: path,
     text: "",
+    timedOut: false,
   };
 
   let response: Response;
 
   try {
-    response = await fetch(url, options);
-  } catch (e) {
+    response = await fetchWithTimeout(url, options, timeout);
+  } catch (e: any) {
+    console.log(e);
+    if (e.name === "AbortError") {
+      error.text = "fetch timed out after " + timeout + "ms"
+      error.timedOut = true;
+      return Promise.reject(error);
+    }
+    // else, generic network error
     error.text = "network error";
     return Promise.reject(error);
   }
@@ -92,8 +129,8 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   stats: (): Promise<SessionStats> => {
     return makeRequest("GET", "/stats");
   },
-
-  uploadTorrent: (data, opts): Promise<AddTorrentResponse> => {
+  uploadTorrent: (data: string | File, opts: AddTorrentOptions, timeout: number | undefined): Promise<AddTorrentResponse> => {
+    console.log("Uploading torrent with ", data, opts, timeout);
     let url = "/torrents?&overwrite=true";
     if (opts?.list_only) {
       url += "&list_only=true";
@@ -116,7 +153,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     if (typeof data === "string") {
       url += "&is_url=true";
     }
-    return makeRequest("POST", url, data);
+    return makeRequest("POST", url, data, undefined, timeout);
   },
 
   updateOnlyFiles: (index: number, files: number[]): Promise<void> => {
