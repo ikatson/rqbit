@@ -13,15 +13,23 @@ use std::{
 
 use librqbit_core::lengths::ValidPieceIndex;
 
-use crate::torrent_state::ManagedTorrentShared;
+use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
 
 pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
 
-    fn create(&self, info: &ManagedTorrentShared) -> anyhow::Result<Self::Storage>;
-    fn create_and_init(&self, info: &ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
-        let mut storage = self.create(info)?;
-        storage.init(info)?;
+    fn create(
+        &self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<Self::Storage>;
+    fn create_and_init(
+        &self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<Self::Storage> {
+        let mut storage = self.create(shared, metadata)?;
+        storage.init(shared, metadata)?;
         Ok(storage)
     }
 
@@ -46,8 +54,12 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
         impl<SF: StorageFactory> StorageFactory for Wrapper<SF> {
             type Storage = Box<dyn TorrentStorage>;
 
-            fn create(&self, info: &ManagedTorrentShared) -> anyhow::Result<Self::Storage> {
-                let s = self.sf.create(info)?;
+            fn create(
+                &self,
+                shared: &ManagedTorrentShared,
+                metadata: &TorrentMetadata,
+            ) -> anyhow::Result<Self::Storage> {
+                let s = self.sf.create(shared, metadata)?;
                 Ok(Box::new(s))
             }
 
@@ -67,8 +79,12 @@ impl<SF: StorageFactory> StorageFactoryExt for SF {
 impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
     type Storage = U::Storage;
 
-    fn create(&self, info: &ManagedTorrentShared) -> anyhow::Result<U::Storage> {
-        (**self).create(info)
+    fn create(
+        &self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<U::Storage> {
+        (**self).create(shared, metadata)
     }
 
     fn clone_box(&self) -> BoxStorageFactory {
@@ -78,7 +94,11 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
 
 pub trait TorrentStorage: Send + Sync {
     // Create/open files etc.
-    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()>;
+    fn init(
+        &mut self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<()>;
 
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// read buf.len() bytes into buf at offset.
@@ -132,8 +152,12 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         (**self).remove_directory_if_empty(path)
     }
 
-    fn init(&mut self, meta: &ManagedTorrentShared) -> anyhow::Result<()> {
-        (**self).init(meta)
+    fn init(
+        &mut self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<()> {
+        (**self).init(shared, metadata)
     }
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {

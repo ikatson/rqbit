@@ -209,7 +209,7 @@ impl Api {
                     let mut r = TorrentDetailsResponse {
                         id: Some(id),
                         info_hash: mgr.shared().info_hash.as_string(),
-                        name: mgr.shared().info.name.as_ref().map(|n| n.to_string()),
+                        name: mgr.name(),
                         output_folder: mgr
                             .shared()
                             .options
@@ -245,7 +245,8 @@ impl Api {
         make_torrent_details(
             Some(handle.id()),
             &info_hash,
-            &handle.shared().info,
+            handle.metadata.load().as_ref().map(|r| &r.info),
+            handle.name().as_deref(),
             only_files.as_deref(),
             output_folder,
         )
@@ -261,8 +262,7 @@ impl Api {
         file_idx: usize,
     ) -> Result<&'static str> {
         let handle = self.mgr_handle(idx)?;
-        let info = &handle.shared().info;
-        torrent_file_mime_type(info, file_idx)
+        handle.with_metadata(|r| torrent_file_mime_type(&r.info, file_idx))?
     }
 
     pub fn api_peer_stats(
@@ -380,7 +380,8 @@ impl Api {
                 let details = make_torrent_details(
                     Some(id),
                     &handle.info_hash(),
-                    &handle.shared().info,
+                    handle.metadata.load().as_ref().map(|r| &r.info),
+                    handle.name().as_deref(),
                     handle.only_files().as_deref(),
                     handle
                         .shared()
@@ -416,7 +417,8 @@ impl Api {
                 details: make_torrent_details(
                     None,
                     &info_hash,
-                    &info,
+                    Some(&info),
+                    None,
                     only_files.as_deref(),
                     output_folder.to_string_lossy().into_owned().to_string(),
                 )
@@ -426,7 +428,8 @@ impl Api {
                 let details = make_torrent_details(
                     Some(id),
                     &handle.info_hash(),
-                    &handle.shared().info,
+                    handle.metadata.load().as_ref().map(|r| &r.info),
+                    handle.name().as_deref(),
                     handle.only_files().as_deref(),
                     handle
                         .shared()
@@ -529,37 +532,43 @@ pub struct ApiAddTorrentResponse {
 fn make_torrent_details(
     id: Option<TorrentId>,
     info_hash: &Id20,
-    info: &TorrentMetaV1Info<ByteBufOwned>,
+    info: Option<&TorrentMetaV1Info<ByteBufOwned>>,
+    name: Option<&str>,
     only_files: Option<&[usize]>,
     output_folder: String,
 ) -> Result<TorrentDetailsResponse> {
-    let files = info
-        .iter_file_details()
-        .context("error iterating filenames and lengths")?
-        .enumerate()
-        .map(|(idx, d)| {
-            let name = match d.filename.to_string() {
-                Ok(s) => s,
-                Err(err) => {
-                    warn!("error reading filename: {:?}", err);
-                    "<INVALID NAME>".to_string()
+    let files = match info {
+        Some(info) => info
+            .iter_file_details()
+            .context("error iterating filenames and lengths")?
+            .enumerate()
+            .map(|(idx, d)| {
+                let name = match d.filename.to_string() {
+                    Ok(s) => s,
+                    Err(err) => {
+                        warn!("error reading filename: {:?}", err);
+                        "<INVALID NAME>".to_string()
+                    }
+                };
+                let components = d.filename.to_vec().unwrap_or_default();
+                let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
+                TorrentDetailsResponseFile {
+                    name,
+                    components,
+                    length: d.len,
+                    included,
+                    attributes: d.attrs(),
                 }
-            };
-            let components = d.filename.to_vec().unwrap_or_default();
-            let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
-            TorrentDetailsResponseFile {
-                name,
-                components,
-                length: d.len,
-                included,
-                attributes: d.attrs(),
-            }
-        })
-        .collect();
+            })
+            .collect(),
+        None => Default::default(),
+    };
     Ok(TorrentDetailsResponse {
         id,
         info_hash: info_hash.as_string(),
-        name: info.name.as_ref().map(|b| b.to_string()),
+        name: name
+            .map(|s| s.to_owned())
+            .or_else(|| info.and_then(|i| i.name.as_ref().map(|b| b.to_string()))),
         files: Some(files),
         output_folder,
         stats: None,

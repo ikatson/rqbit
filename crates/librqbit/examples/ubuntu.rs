@@ -49,7 +49,9 @@ async fn main() -> Result<(), anyhow::Error> {
         _ => unreachable!(),
     };
 
-    info!("Details: {:?}", &handle.shared().info);
+    handle.with_metadata(|r| {
+        info!("Details: {:?}", &r.info);
+    })?;
 
     // Print stats periodically.
     tokio::spawn({
