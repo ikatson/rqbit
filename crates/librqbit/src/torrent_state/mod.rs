@@ -203,7 +203,7 @@ pub struct ManagedTorrentShared {
 pub struct ManagedTorrent {
     // Static torrent configuration that doesn't change.
     pub shared: Arc<ManagedTorrentShared>,
-    // Torrent metadata. Maybe be None when the magnet is resolving.
+    // Torrent metadata. Maybe be None when the magnet is resolving (not implemented yet)
     pub metadata: ArcSwapOption<TorrentMetadata>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
