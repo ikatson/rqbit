@@ -1168,6 +1168,7 @@ impl Session {
         }
 
         let _e = managed_torrent.shared.span.clone().entered();
+
         managed_torrent
             .start(peer_rx, opts.paused)
             .context("error starting torrent")?;

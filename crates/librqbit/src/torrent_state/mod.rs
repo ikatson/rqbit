@@ -399,10 +399,6 @@ impl ManagedTorrent {
             }
         }
 
-        if !start_paused && peer_rx.is_none() {
-            bail!("logic bug: start(start_paused=false, peer_rx=None) called. peer_rx must be set if starting the torrent")
-        }
-
         let session = self
             .shared
             .session
