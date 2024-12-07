@@ -1167,20 +1167,6 @@ impl Session {
             }
         }
 
-        // Merge "initial_peers" and "peer_rx" into one stream.
-        let peer_rx = merge_two_optional_streams(
-            if !seen_peers.is_empty() {
-                debug!(
-                    count = seen_peers.len(),
-                    "merging initial peers into peer_rx"
-                );
-                Some(futures::stream::iter(seen_peers.into_iter()))
-            } else {
-                None
-            },
-            peer_rx,
-        );
-
         let _e = managed_torrent.shared.span.clone().entered();
         managed_torrent
             .start(peer_rx, opts.paused)
