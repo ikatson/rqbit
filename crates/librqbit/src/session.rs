@@ -1008,12 +1008,11 @@ impl Session {
             name,
         } = add_res;
 
-        let peer_stream_permanent = !opts.paused && !opts.list_only;
         let make_peer_rx = || {
             self.make_peer_rx(
                 info_hash,
                 trackers.clone(),
-                peer_stream_permanent,
+                !opts.paused && !opts.list_only,
                 opts.force_tracker_interval,
                 opts.initial_peers.clone().unwrap_or_default(),
             )
@@ -1026,7 +1025,7 @@ impl Session {
             match metadata {
                 Some(metadata) => {
                     let mut peer_rx = None;
-                    if peer_stream_permanent {
+                    if !opts.paused && !opts.list_only {
                         peer_rx = make_peer_rx()?;
                     }
                     (metadata, peer_rx)
@@ -1038,6 +1037,9 @@ impl Session {
                     let resolved_magnet = self
                         .resolve_magnet(info_hash, peer_rx, &trackers, opts.peer_opts)
                         .await?;
+
+                    // Add back seen_peers into the peer stream, as we consumed some peers
+                    // while resolving the magnet.
                     seen_peers = resolved_magnet.seen_peers.clone();
                     let peer_rx = Some(
                         merge_streams(
@@ -1072,12 +1074,6 @@ impl Session {
             (None, Some(s)) => self.output_folder.join(s),
         };
 
-        let storage_factory = opts
-            .storage_factory
-            .take()
-            .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
-            .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
-
         if opts.list_only {
             return Ok(AddTorrentResponse::ListOnly(ListOnlyResponse {
                 info_hash,
@@ -1088,6 +1084,12 @@ impl Session {
                 torrent_bytes: metadata.torrent_bytes,
             }));
         }
+
+        let storage_factory = opts
+            .storage_factory
+            .take()
+            .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
+            .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
 
         let id = if let Some(id) = opts.preferred_id {
             id
