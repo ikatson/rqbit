@@ -1,6 +1,6 @@
 [package]
 name = "rqbit"
-version = "7.1.0-beta.1"
+version = "8.0.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "A bittorrent command line client and server."
@@ -24,7 +24,7 @@ postgres = ["librqbit/postgres"]
 disable-upload = ["librqbit/disable-upload"]
 
 [dependencies]
-librqbit = { version = "7.1.0-beta.0", path = "../librqbit", default-features = false, features = [
+librqbit = { version = "8.0.0", path = "../librqbit", default-features = false, features = [
     "http-api",
     "tracing-subscriber-utils",
     "upnp-serve-adapter",
@@ -46,7 +46,7 @@ serde_json = "1"
 size_format = "1"
 bytes = "1.5.0"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
-upnp-serve = { path = "../upnp-serve", default-features = false, version = "0.1.0", package = "librqbit-upnp-serve" }
+upnp-serve = { path = "../upnp-serve", default-features = false, version = "1", package = "librqbit-upnp-serve" }
 libc = "0.2.158"
 signal-hook = "0.3.17"
 tokio-util = "0.7.11"

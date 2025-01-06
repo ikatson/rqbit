@@ -15,16 +15,14 @@ use tracing::{error, error_span, info, Instrument};
 use crate::{
     create_torrent,
     tests::test_util::{
-        create_default_random_dir_with_torrents, setup_test_logging, spawn_debug_server,
-        wait_until_i_am_the_last_task, DropChecks, TestPeerMetadata,
+        create_default_random_dir_with_torrents, setup_test_logging, wait_until_i_am_the_last_task,
+        DropChecks, TestPeerMetadata,
     },
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
 async fn test_e2e_download() {
-    let dbg_srv = spawn_debug_server();
-
     let timeout = std::env::var("E2E_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -38,8 +36,6 @@ async fn test_e2e_download() {
     .await
     .context("test_e2e_download timed out")
     .unwrap();
-
-    dbg_srv.abort();
 
     // Wait to ensure everything is dropped.
     wait_until_i_am_the_last_task().await.unwrap();

@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "7.1.0-beta.1"
+version = "8.0.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -34,26 +34,30 @@ rust-tls = [
 storage_middleware = ["lru"]
 storage_examples = []
 tracing-subscriber-utils = ["tracing-subscriber"]
-postgres = ["sqlx"]
+postgres = ["sqlx", "home"]
 async-bt = ["async-backtrace"]
 watch = ["notify"]
 disable-upload = []
 
 [dependencies]
-sqlx = { version = "0.8.2", features = [
+# sqlx and home are pinned so that we can compile on older Rusts
+sqlx = { version = "=0.8.2", features = [
     "runtime-tokio",
+    "macros",
     "postgres",
-], optional = true }
+], default-features = false, optional = true }
+home = { version = "=0.5.5", optional = true }
+
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
-tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2" }
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.1" }
-librqbit-core = { path = "../librqbit_core", default-features = false, version = "4" }
+tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2.1" }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
+librqbit-core = { path = "../librqbit_core", default-features = false, version = "4.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.1" }
-sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4" }
-dht = { path = "../dht", package = "librqbit-dht", version = "5.1.0" }
-librqbit-upnp = { path = "../upnp", version = "0.1.1" }
-upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "0.1.0", optional = true }
+sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
+dht = { path = "../dht", package = "librqbit-dht", version = "5.2.0" }
+librqbit-upnp = { path = "../upnp", version = "1" }
+upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "1", optional = true }
 
 tokio = { version = "1", features = [
     "macros",
@@ -61,16 +65,16 @@ tokio = { version = "1", features = [
     "fs",
     "io-util",
 ] }
-governor = "0.7"
+governor = "0.8"
 console-subscriber = { version = "0.4", optional = true }
-axum = { version = "0.7", optional = true }
-tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
 tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 anyhow = "1"
-itertools = "0.13"
+itertools = "0.14"
 http = "1"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = [
@@ -109,7 +113,7 @@ mime_guess = { version = "2.0.5", default-features = false }
 tokio-socks = "0.5.2"
 async-trait = "0.1.81"
 async-backtrace = { version = "0.2", optional = true }
-notify = { version = "6.1.1", optional = true }
+notify = { version = "7", optional = true }
 walkdir = "2.5.0"
 arc-swap = "1.7.1"
 
