@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::io::SeekFrom;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpListener;
@@ -94,7 +95,6 @@ mod timeout {
 
     pub struct Timeout<const DEFAULT_MS: usize, const MAX_MS: usize>(pub Duration);
 
-    #[async_trait::async_trait]
     impl<S, const DEFAULT_MS: usize, const MAX_MS: usize> axum::extract::FromRequestParts<S>
         for Timeout<DEFAULT_MS, MAX_MS>
     where
@@ -456,12 +456,20 @@ impl HttpApi {
             state.api_peer_stats(idx, filter).map(axum::Json)
         }
 
+        #[derive(Deserialize)]
+        struct StreamPathParams {
+            id: TorrentIdOrHash,
+            file_id: usize,
+            #[serde(rename = "filename")]
+            _filename: Option<Arc<str>>,
+        }
+
         async fn torrent_stream_file(
             State(state): State<ApiState>,
-            Path((idx, file_id)): Path<(TorrentIdOrHash, usize)>,
+            Path(StreamPathParams { id, file_id, .. }): Path<StreamPathParams>,
             headers: http::HeaderMap,
         ) -> Result<impl IntoResponse> {
-            let mut stream = state.api_stream(idx, file_id)?;
+            let mut stream = state.api_stream(id, file_id)?;
             let mut status = StatusCode::OK;
             let mut output_headers = HeaderMap::new();
             output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
@@ -489,7 +497,7 @@ impl HttpApi {
                 );
             }
 
-            if let Ok(mime) = state.torrent_file_mime_type(idx, file_id) {
+            if let Ok(mime) = state.torrent_file_mime_type(id, file_id) {
                 output_headers.insert(
                     http::header::CONTENT_TYPE,
                     HeaderValue::from_str(mime).context("bug - invalid MIME")?,
@@ -497,7 +505,7 @@ impl HttpApi {
             }
 
             let range_header = headers.get(http::header::RANGE);
-            trace!(torrent_id=%idx, file_id=file_id, range=?range_header, "request for HTTP stream");
+            trace!(torrent_id=%id, file_id=file_id, range=?range_header, "request for HTTP stream");
 
             if let Some(range) = range_header {
                 let offset: Option<u64> = range
@@ -619,17 +627,17 @@ impl HttpApi {
             .route("/dht/table", get(dht_table))
             .route("/stats", get(session_stats))
             .route("/torrents", get(torrents_list))
-            .route("/torrents/:id", get(torrent_details))
-            .route("/torrents/:id/haves", get(torrent_haves))
-            .route("/torrents/:id/stats", get(torrent_stats_v0))
-            .route("/torrents/:id/stats/v1", get(torrent_stats_v1))
-            .route("/torrents/:id/peer_stats", get(peer_stats))
-            .route("/torrents/:id/stream/:file_id", get(torrent_stream_file))
-            .route("/torrents/:id/playlist", get(torrent_playlist))
+            .route("/torrents/{id}", get(torrent_details))
+            .route("/torrents/{id}/haves", get(torrent_haves))
+            .route("/torrents/{id}/stats", get(torrent_stats_v0))
+            .route("/torrents/{id}/stats/v1", get(torrent_stats_v1))
+            .route("/torrents/{id}/peer_stats", get(peer_stats))
+            .route("/torrents/{id}/playlist", get(torrent_playlist))
             .route("/torrents/playlist", get(global_playlist))
             .route("/torrents/resolve_magnet", post(resolve_magnet))
+            .route("/torrents/{id}/stream/{file_id}", get(torrent_stream_file))
             .route(
-                "/torrents/:id/stream/:file_id/*filename",
+                "/torrents/{id}/stream/{file_id}/{*filename}",
                 get(torrent_stream_file),
             );
 
@@ -637,12 +645,12 @@ impl HttpApi {
             app = app
                 .route("/torrents", post(torrents_post))
                 .route("/torrents/limits", post(update_session_ratelimits))
-                .route("/torrents/:id/pause", post(torrent_action_pause))
-                .route("/torrents/:id/start", post(torrent_action_start))
-                .route("/torrents/:id/forget", post(torrent_action_forget))
-                .route("/torrents/:id/delete", post(torrent_action_delete))
+                .route("/torrents/{id}/pause", post(torrent_action_pause))
+                .route("/torrents/{id}/start", post(torrent_action_start))
+                .route("/torrents/{id}/forget", post(torrent_action_forget))
+                .route("/torrents/{id}/delete", post(torrent_action_delete))
                 .route(
-                    "/torrents/:id/update_only_files",
+                    "/torrents/{id}/update_only_files",
                     post(torrent_action_update_only_files),
                 );
         }
