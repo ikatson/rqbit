@@ -40,7 +40,8 @@ watch = ["notify"]
 disable-upload = []
 
 [dependencies]
-sqlx = { version = "=0.8.2", features = [
+# sqlx and home are pinned so that we can compile on older Rusts
+sqlx = { version = "=0.8.1", features = [
     "runtime-tokio",
     "postgres",
 ], default-features = false, optional = true }
