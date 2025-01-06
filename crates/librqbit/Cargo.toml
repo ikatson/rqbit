@@ -53,7 +53,7 @@ tracker_comms = { path = "../tracker_comms", default-features = false, package =
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 librqbit-core = { path = "../librqbit_core", default-features = false, version = "4.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.1" }
+peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.2" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
 dht = { path = "../dht", package = "librqbit-dht", default-features = false, version = "5.2.0" }
 librqbit-upnp = { path = "../upnp", version = "1" }
