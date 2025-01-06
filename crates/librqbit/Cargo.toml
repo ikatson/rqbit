@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "7.1.0-beta.1"
+version = "8.0.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -45,15 +45,15 @@ sqlx = { version = "0.8.2", features = [
     "postgres",
 ], optional = true }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
-tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2" }
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.1" }
-librqbit-core = { path = "../librqbit_core", default-features = false, version = "4" }
+tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2.1" }
+buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
+librqbit-core = { path = "../librqbit_core", default-features = false, version = "4.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.1" }
-sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4" }
-dht = { path = "../dht", package = "librqbit-dht", version = "5.1.0" }
-librqbit-upnp = { path = "../upnp", version = "0.1.1" }
-upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "0.1.0", optional = true }
+sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
+dht = { path = "../dht", package = "librqbit-dht", version = "5.2.0" }
+librqbit-upnp = { path = "../upnp", version = "1" }
+upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "1", optional = true }
 
 tokio = { version = "1", features = [
     "macros",

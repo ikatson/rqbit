@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-upnp"
-version = "0.1.1"
+version = "1.0.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "Library used by rqbit torrent client to lease port forwards on the router."
