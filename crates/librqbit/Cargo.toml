@@ -41,8 +41,9 @@ disable-upload = []
 
 [dependencies]
 # sqlx and home are pinned so that we can compile on older Rusts
-sqlx = { version = "=0.8.1", features = [
+sqlx = { version = "=0.8.2", features = [
     "runtime-tokio",
+    "macros",
     "postgres",
 ], default-features = false, optional = true }
 home = { version = "=0.5.5", optional = true }
