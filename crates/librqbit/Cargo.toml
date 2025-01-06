@@ -55,7 +55,7 @@ librqbit-core = { path = "../librqbit_core", default-features = false, version =
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.1" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
-dht = { path = "../dht", package = "librqbit-dht", version = "5.2.0" }
+dht = { path = "../dht", package = "librqbit-dht", default-features = false, version = "5.2.0" }
 librqbit-upnp = { path = "../upnp", version = "1" }
 upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "1", optional = true }
 
