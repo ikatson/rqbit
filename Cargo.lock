@@ -18,6 +18,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 
 [[package]]
+name = "ahash"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89da841a80418a9b391ebaea17f5c112ffaaa96f621d2c285b5174da76b9011"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1975,6 +1987,10 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+ "allocator-api2",
+]
 
 [[package]]
 name = "hashbrown"
@@ -1989,11 +2005,11 @@ dependencies = [
 
 [[package]]
 name = "hashlink"
-version = "0.10.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
+checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
 dependencies = [
- "hashbrown 0.15.2",
+ "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -4951,10 +4967,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlx"
-version = "0.8.3"
+name = "sqlformat"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4410e73b3c0d8442c5f99b425d7a435b5ee0ae4167b3196771dd3f7a01be745f"
+checksum = "7bba3a93db0cc4f7bdece8bb09e77e2e785c20bfebf79eb8340ed80708048790"
+dependencies = [
+ "nom",
+ "unicode_categories",
+]
+
+[[package]]
+name = "sqlx"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93334716a037193fac19df402f8571269c84a00852f6a7066b5d2616dcd64d3e"
 dependencies = [
  "sqlx-core",
  "sqlx-macros",
@@ -4963,31 +4989,37 @@ dependencies = [
 
 [[package]]
 name = "sqlx-core"
-version = "0.8.3"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a007b6936676aa9ab40207cde35daab0a04b823be8ae004368c0793b96a61e0"
+checksum = "d4d8060b456358185f7d50c55d9b5066ad956956fddec42ee2e8567134a8936e"
 dependencies = [
+ "atoi",
+ "byteorder",
  "bytes",
  "crc",
  "crossbeam-queue",
  "either",
  "event-listener",
+ "futures-channel",
  "futures-core",
  "futures-intrusive",
  "futures-io",
  "futures-util",
- "hashbrown 0.15.2",
+ "hashbrown 0.14.5",
  "hashlink",
+ "hex 0.4.3",
  "indexmap 2.7.0",
  "log",
  "memchr",
  "once_cell",
+ "paste",
  "percent-encoding",
  "serde",
  "serde_json",
  "sha2",
  "smallvec",
- "thiserror 2.0.9",
+ "sqlformat",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -4996,9 +5028,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-macros"
-version = "0.8.3"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3112e2ad78643fef903618d78cf0aec1cb3134b019730edb039b69eaf531f310"
+checksum = "cac0692bcc9de3b073e8d747391827297e075c7710ff6276d9f7a1f3d58c6657"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5009,9 +5041,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-macros-core"
-version = "0.8.3"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e9f90acc5ab146a99bf5061a7eb4976b573f560bc898ef3bf8435448dd5e7ad"
+checksum = "1804e8a7c7865599c9c79be146dc8a9fd8cc86935fa641d3ea58e5f0688abaa5"
 dependencies = [
  "dotenvy",
  "either",
@@ -5033,9 +5065,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-postgres"
-version = "0.8.3"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5b98a57f363ed6764d5b3a12bfedf62f07aa16e1856a7ddc2a0bb190a959613"
+checksum = "6fa91a732d854c5d7726349bb4bb879bb9478993ceb764247660aee25f67c2f8"
 dependencies = [
  "atoi",
  "base64 0.22.1",
@@ -5046,6 +5078,7 @@ dependencies = [
  "etcetera",
  "futures-channel",
  "futures-core",
+ "futures-io",
  "futures-util",
  "hex 0.4.3",
  "hkdf",
@@ -5063,7 +5096,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.9",
+ "thiserror 1.0.69",
  "tracing",
  "whoami",
 ]
@@ -6082,6 +6115,12 @@ name = "unicode-segmentation"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
+
+[[package]]
+name = "unicode_categories"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
 
 [[package]]
 name = "untrusted"
