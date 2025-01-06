@@ -34,16 +34,18 @@ rust-tls = [
 storage_middleware = ["lru"]
 storage_examples = []
 tracing-subscriber-utils = ["tracing-subscriber"]
-postgres = ["sqlx"]
+postgres = ["sqlx", "home"]
 async-bt = ["async-backtrace"]
 watch = ["notify"]
 disable-upload = []
 
 [dependencies]
-sqlx = { version = "0.8.2", features = [
+sqlx = { version = "0.8.3", features = [
     "runtime-tokio",
     "postgres",
-], optional = true }
+], default-features = false, optional = true }
+home = { version = "=0.5.5", optional = true }
+
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
 tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2.1" }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
