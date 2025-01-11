@@ -89,6 +89,23 @@ struct Opts {
     #[arg(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse, env="RQBIT_TRACKER_REFRESH_INTERVAL")]
     force_tracker_interval: Option<Duration>,
 
+    /// The HTTP path prefix under which to assume HTTP API is.
+    /// Default is "/" meaning the API is at "/".
+    #[arg(
+        long = "http-api-path",
+        env = "RQBIT_HTTP_API_PATH",
+        default_value = "/"
+    )]
+    http_api_path: Option<String>,
+
+    /// The HTTP path prefix under which to assume HTTP API is.
+    #[arg(
+        long = "http-api-path",
+        env = "RQBIT_HTTP_WEBUI_PATH",
+        default_value = "/web/"
+    )]
+    http_webui_base: Option<String>,
+
     /// The listen address for HTTP API
     #[arg(
         long = "http-api-listen-addr",
@@ -629,6 +646,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(HttpApiOptions {
                         read_only: false,
                         basic_auth: http_api_basic_auth,
+                        api_path: opts.http_api_path.clone(),
+                        webui_path: opts.http_webui_base.clone(),
                     }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;
@@ -755,6 +774,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(HttpApiOptions {
                         read_only: true,
                         basic_auth: http_api_basic_auth,
+                        api_path: opts.http_api_path.clone(),
+                        webui_path: opts.http_webui_base.clone(),
                     }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;

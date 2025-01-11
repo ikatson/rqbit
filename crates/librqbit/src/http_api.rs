@@ -47,6 +47,8 @@ pub struct HttpApi {
 pub struct HttpApiOptions {
     pub read_only: bool,
     pub basic_auth: Option<(String, String)>,
+    pub api_path: Option<String>,
+    pub webui_path: Option<String>,
 }
 
 async fn simple_basic_auth(
@@ -153,43 +155,61 @@ impl HttpApi {
 
     /// Run the HTTP server forever on the given address.
     /// If read_only is passed, no state-modifying methods will be exposed.
-    #[inline(never)]
-    pub fn make_http_api_and_run(
+    pub async fn make_http_api_and_run(
         mut self,
         listener: TcpListener,
         upnp_router: Option<Router>,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
+    ) -> anyhow::Result<()> {
         let state = self.inner;
 
-        async fn api_root() -> impl IntoResponse {
-            axum::Json(serde_json::json!({
+        let api_base = self
+            .opts
+            .api_path
+            .as_deref()
+            .map(|p| p.strip_suffix("/").unwrap_or(p))
+            .unwrap_or("");
+
+        let webui_base = self
+            .opts
+            .webui_path
+            .as_deref()
+            .map(|p| p.strip_suffix("/").unwrap_or(p))
+            .unwrap_or("/web");
+
+        if api_base == webui_base {
+            anyhow::bail!("API path can't be the same as web UI path")
+        }
+
+        let api_root = {
+            let response = axum::Json(Arc::new(serde_json::json!({
                 "apis": {
-                    "GET /": "list all available APIs",
-                    "GET /dht/stats": "DHT stats",
-                    "GET /dht/table": "DHT routing table",
-                    "GET /torrents": "List torrents",
-                    "GET /torrents/playlist": "Generate M3U8 playlist for all files in all torrents",
-                    "GET /stats": "Global session stats",
-                    "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
-                    "GET /torrents/{id_or_infohash}": "Torrent details",
-                    "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
-                    "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
-                    "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
-                    "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
-                    "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
-                    "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
-                    "POST /torrents/{id_or_infohash}/start": "Resume torrent",
-                    "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
-                    "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
-                    "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
-                    "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-                    "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
-                    "GET /web/": "Web UI",
+                    format!("GET {api_base}/"): "list all available APIs",
+                    format!("GET {api_base}/dht/stats"): "DHT stats",
+                    format!("GET {api_base}/dht/table"): "DHT routing table",
+                    format!("GET {api_base}/torrents"): "List torrents",
+                    format!("GET {api_base}/torrents/playlist"): "Generate M3U8 playlist for all files in all torrents",
+                    format!("GET {api_base}/stats"): "Global session stats",
+                    format!("POST {api_base}/torrents/resolve_magnet"): "Resolve a magnet to torrent file bytes",
+                    format!("GET {api_base}/torrents/{{id_or_infohash}}"): "Torrent details",
+                    format!("GET {api_base}/torrents/{{id_or_infohash}}/haves"): "The bitfield of have pieces",
+                    format!("GET {api_base}/torrents/{{id_or_infohash}}/playlist"): "Generate M3U8 playlist for this torrent",
+                    format!("GET {api_base}/torrents/{{id_or_infohash}}/stats/v1"): "Torrent stats",
+                    format!("GET {api_base}/torrents/{{id_or_infohash}}/peer_stats"): "Per peer stats",
+                    format!("GET {api_base}/torrents/{{id_or_infohash}}/stream/{{file_idx}}"): "Stream a file. Accepts Range header to seek.",
+                    format!("POST {api_base}/torrents/{{id_or_infohash}}/pause"): "Pause torrent",
+                    format!("POST {api_base}/torrents/{{id_or_infohash}}/start"): "Resume torrent",
+                    format!("POST {api_base}/torrents/{{id_or_infohash}}/forget"): "Forget about the torrent, keep the files",
+                    format!("POST {api_base}/torrents/{{id_or_infohash}}/delete"): "Forget about the torrent, remove the files",
+                    format!("POST {api_base}/torrents/{{id_or_infohash}}/update_only_files"): "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+                    format!("POST {api_base}/torrents"): "Add a torrent here. magnet: or http:// or a local file.",
+                    format!("POST {api_base}/rust_log"): "Set RUST_LOG to this post launch (for debugging)",
+                    format!("GET {webui_base}/"): "Web UI",
                 },
                 "server": "rqbit",
                 "version": env!("CARGO_PKG_VERSION"),
-            }))
-        }
+            })));
+            move || async move { response.clone() }
+        };
 
         async fn dht_stats(State(state): State<ApiState>) -> Result<impl IntoResponse> {
             state.api_dht_stats().map(axum::Json)
@@ -619,7 +639,9 @@ impl HttpApi {
             Ok(Json(EmptyJsonResponse {}))
         }
 
-        let mut app = Router::new()
+        let mut app = Router::new();
+
+        let mut api_router = Router::new()
             .route("/", get(api_root))
             .route("/stream_logs", get(stream_logs))
             .route("/rust_log", post(set_rust_log))
@@ -642,7 +664,7 @@ impl HttpApi {
             );
 
         if !self.opts.read_only {
-            app = app
+            api_router = api_router
                 .route("/torrents", post(torrents_post))
                 .route("/torrents/limits", post(update_session_ratelimits))
                 .route("/torrents/{id}/pause", post(torrent_action_pause))
@@ -653,6 +675,13 @@ impl HttpApi {
                     "/torrents/{id}/update_only_files",
                     post(torrent_action_update_only_files),
                 );
+        }
+
+        let api_router = api_router.with_state(state);
+        if api_base.is_empty() {
+            app = api_router;
+        } else {
+            app = app.nest(api_base, api_router);
         }
 
         #[cfg(feature = "webui")]
@@ -697,8 +726,16 @@ impl HttpApi {
                     }),
                 );
 
-            app = app.nest("/web/", webui_router);
-            app = app.route("/web", get(|| async { Redirect::permanent("/web/") }))
+            if webui_base.is_empty() {
+                app = app.merge(webui_router)
+            } else {
+                app = app.nest(webui_base, webui_router);
+                let redir = format!("{webui_base}/");
+                app = app.route(
+                    webui_base,
+                    get(move || async move { Redirect::permanent(&redir) }),
+                )
+            }
         }
 
         let cors_layer = {
@@ -728,8 +765,6 @@ impl HttpApi {
                 }))
                 .allow_headers(AllowHeaders::any())
         };
-
-        let mut app = app.with_state(state);
 
         // Simple one-user basic auth
         if let Some((user, pass)) = self.opts.basic_auth.take() {
@@ -782,12 +817,9 @@ impl HttpApi {
             )
             .into_make_service_with_connect_info::<SocketAddr>();
 
-        async move {
-            axum::serve(listener, app)
-                .await
-                .context("error running HTTP API")
-        }
-        .boxed()
+        axum::serve(listener, app)
+            .await
+            .context("error running HTTP API")
     }
 }
 
