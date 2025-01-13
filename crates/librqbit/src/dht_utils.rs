@@ -130,7 +130,7 @@ mod tests {
         let info_hash = Id20::from_str("cab507494d02ebb1178b38f2e9d7be299c86b862").unwrap();
         let dht = DhtBuilder::new().await.unwrap();
 
-        let peer_rx = dht.get_peers(info_hash, None).unwrap();
+        let peer_rx = dht.get_peers(info_hash, None);
         let peer_id = generate_peer_id();
         match read_metainfo_from_peer_receiver(
             peer_id,

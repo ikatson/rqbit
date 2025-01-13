@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
 
     let dht = DhtBuilder::new().await.context("error initializing DHT")?;
 
-    let mut stream = dht.get_peers(info_hash, None)?;
+    let mut stream = dht.get_peers(info_hash, None);
 
     let stats_printer = async {
         loop {
