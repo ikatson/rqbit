@@ -413,47 +413,28 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-
     use bencode::BencodeValue;
 
     use super::*;
 
-    const TORRENT_FILENAME: &str = "../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent";
+    const TORRENT_BYTES: &[u8] =
+        include_bytes!("../../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent");
 
     #[test]
     fn test_deserialize_torrent_owned() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Owned = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Owned = torrent_from_bytes(TORRENT_BYTES).unwrap();
         dbg!(torrent);
     }
 
     #[test]
     fn test_deserialize_torrent_borrowed() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
         dbg!(torrent);
     }
 
     #[test]
     fn test_deserialize_torrent_with_info_hash() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
         assert_eq!(
             torrent.info_hash.as_string(),
             "64a980abe6e448226bb930ba061592e44c3781a1"
@@ -462,13 +443,7 @@ mod tests {
 
     #[test]
     fn test_serialize_then_deserialize_bencode() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(&buf).unwrap().info;
+        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(TORRENT_BYTES).unwrap().info;
         let mut writer = Vec::new();
         bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
         let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
