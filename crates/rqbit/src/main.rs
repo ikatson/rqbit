@@ -98,13 +98,21 @@ struct Opts {
     )]
     http_api_path: Option<String>,
 
-    /// The HTTP path prefix under which to assume HTTP API is.
+    /// The HTTP path prefix under which to assume Web UI is.
     #[arg(
         long = "http-webui-path",
         env = "RQBIT_HTTP_WEBUI_PATH",
         default_value = "/web/"
     )]
     http_webui_base: Option<String>,
+
+    /// The HTTP path prefix under which to assume UPNP MediaServer is (if enabled).
+    #[arg(
+        long = "http-upnp-path",
+        env = "RQBIT_HTTP_UPNP_PATH",
+        default_value = "/upnp/"
+    )]
+    http_upnp_base: Option<String>,
 
     /// The listen address for HTTP API
     #[arg(
@@ -627,6 +635,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                                         )
                                     }),
                                     opts.http_api_listen_addr.port(),
+                                    opts.http_upnp_base.clone(),
                                 )
                                 .await
                                 .context("error starting UPNP server")?;
@@ -648,6 +657,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         basic_auth: http_api_basic_auth,
                         api_path: opts.http_api_path.clone(),
                         webui_path: opts.http_webui_base.clone(),
+                        upnp_path: opts.http_upnp_base.clone(),
                     }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;
@@ -776,6 +786,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         basic_auth: http_api_basic_auth,
                         api_path: opts.http_api_path.clone(),
                         webui_path: opts.http_webui_base.clone(),
+                        upnp_path: opts.http_upnp_base.clone(),
                     }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;

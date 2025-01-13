@@ -367,11 +367,12 @@ impl Session {
         self: &Arc<Self>,
         friendly_name: String,
         http_listen_port: u16,
+        http_prefix: Option<String>,
     ) -> anyhow::Result<UpnpServer> {
         UpnpServer::new(UpnpServerOptions {
             friendly_name,
             http_listen_port,
-            http_prefix: "/upnp".to_owned(),
+            http_prefix: http_prefix.unwrap_or_else(|| "/upnp".to_owned()),
             browse_provider: Box::new(UpnpServerSessionAdapter {
                 session: self.clone(),
                 port: http_listen_port,

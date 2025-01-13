@@ -48,6 +48,7 @@ pub struct HttpApiOptions {
     pub basic_auth: Option<(String, String)>,
     pub api_path: Option<String>,
     pub webui_path: Option<String>,
+    pub upnp_path: Option<String>,
 }
 
 async fn simple_basic_auth(
@@ -161,19 +162,15 @@ impl HttpApi {
     ) -> anyhow::Result<()> {
         let state = self.inner;
 
-        let api_base = self
-            .opts
-            .api_path
-            .as_deref()
-            .map(|p| p.strip_suffix("/").unwrap_or(p))
-            .unwrap_or("");
+        fn canonicalize_base_path<'a>(p: &'a Option<String>, default: &'static str) -> &'a str {
+            p.as_deref()
+                .map(|p| p.strip_suffix("/").unwrap_or(p))
+                .unwrap_or(default)
+        }
 
-        let webui_base = self
-            .opts
-            .webui_path
-            .as_deref()
-            .map(|p| p.strip_suffix("/").unwrap_or(p))
-            .unwrap_or("/web");
+        let api_base = canonicalize_base_path(&self.opts.api_path, "");
+        let webui_base = canonicalize_base_path(&self.opts.webui_path, "/web");
+        let upnp_base = canonicalize_base_path(&self.opts.upnp_path, "/upnp");
 
         if api_base == webui_base {
             anyhow::bail!("API path can't be the same as web UI path")
@@ -790,7 +787,7 @@ impl HttpApi {
         }
 
         if let Some(upnp_router) = upnp_router {
-            app = app.nest("/upnp", upnp_router);
+            app = app.nest(&format!("{upnp_base}/"), upnp_router);
         }
 
         let app = app

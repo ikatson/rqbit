@@ -140,7 +140,7 @@ async fn api_from_config(
                 });
 
             let mut upnp_adapter = session
-                .make_upnp_adapter(friendly_name, config.http_api.listen_addr.port())
+                .make_upnp_adapter(friendly_name, config.http_api.listen_addr.port(), None)
                 .await
                 .context("error starting UPnP server")?;
             let router = upnp_adapter.take_router()?;
