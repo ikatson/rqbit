@@ -218,11 +218,8 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     type SerializeStruct = SerializeStruct<'ser, W>;
     type SerializeStructVariant = Impossible<(), SerError>;
 
-    fn serialize_bool(self, _: bool) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support booleans",
-            self,
-        ))
+    fn serialize_bool(self, value: bool) -> Result<Self::Ok, Self::Error> {
+        self.write_number(if value { 1 } else { 0 })
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {

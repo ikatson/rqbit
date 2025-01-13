@@ -218,14 +218,26 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         }
     }
 
-    fn deserialize_bool<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(
-            Error::new_from_kind(ErrorKind::NotSupported("bencode doesn't support booleans"))
-                .set_context(self),
-        )
+        if !self.buf.starts_with(b"i") {
+            return Err(Error::custom_with_de(
+                "expected bencode int to represent bool",
+                self,
+            ));
+        }
+        let value = self.parse_integer()?;
+        if value > 1 {
+            return Err(Error::custom_with_de(
+                format!("expected 0 or 1 for boolean, but got {value}"),
+                self,
+            ));
+        }
+        visitor
+            .visit_bool(value == 1)
+            .map_err(|e: Self::Error| e.set_context(self))
     }
 
     fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>

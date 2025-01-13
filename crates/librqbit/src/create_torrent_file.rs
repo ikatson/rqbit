@@ -163,6 +163,7 @@ async fn create_torrent_raw<'a>(
         attr: None,
         sha1: None,
         symlink_path: None,
+        private: false,
     })
 }
 

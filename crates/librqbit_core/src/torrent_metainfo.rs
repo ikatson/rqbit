@@ -50,6 +50,10 @@ pub fn torrent_from_bytes<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
     torrent_from_bytes_ext(buf).map(|r| r.meta)
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A parsed .torrent file.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TorrentMetaV1<BufType> {
@@ -89,7 +93,7 @@ impl<BufType> TorrentMetaV1<BufType> {
 }
 
 /// Main torrent information, shared by .torrent files and magnet link contents.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1Info<BufType> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<BufType>,
@@ -117,6 +121,9 @@ pub struct TorrentMetaV1Info<BufType> {
     // Multi-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
+
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub private: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -377,6 +384,7 @@ where
             attr: self.attr.clone_to_owned(within_buffer),
             sha1: self.sha1.clone_to_owned(within_buffer),
             symlink_path: self.symlink_path.clone_to_owned(within_buffer),
+            private: self.private,
         }
     }
 }
@@ -405,45 +413,28 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use bencode::BencodeValue;
 
     use super::*;
 
-    const TORRENT_FILENAME: &str = "../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent";
+    const TORRENT_BYTES: &[u8] =
+        include_bytes!("../../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent");
 
     #[test]
     fn test_deserialize_torrent_owned() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Owned = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Owned = torrent_from_bytes(TORRENT_BYTES).unwrap();
         dbg!(torrent);
     }
 
     #[test]
     fn test_deserialize_torrent_borrowed() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
         dbg!(torrent);
     }
 
     #[test]
     fn test_deserialize_torrent_with_info_hash() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(&buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
         assert_eq!(
             torrent.info_hash.as_string(),
             "64a980abe6e448226bb930ba061592e44c3781a1"
@@ -452,13 +443,7 @@ mod tests {
 
     #[test]
     fn test_serialize_then_deserialize_bencode() {
-        let mut buf = Vec::new();
-        std::fs::File::open(TORRENT_FILENAME)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-
-        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(&buf).unwrap().info;
+        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(TORRENT_BYTES).unwrap().info;
         let mut writer = Vec::new();
         bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
         let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
@@ -467,5 +452,43 @@ mod tests {
         .unwrap();
 
         assert_eq!(torrent, deserialized);
+    }
+
+    #[test]
+    fn test_private_serialize_deserialize() {
+        for private in [false, true] {
+            let info: TorrentMetaV1Info<ByteBufOwned> = TorrentMetaV1Info {
+                private,
+                ..Default::default()
+            };
+            let mut buf = Vec::new();
+            bencode::bencode_serialize_to_writer(&info, &mut buf).unwrap();
+
+            let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
+                &mut BencodeDeserializer::new_from_buf(&buf),
+            )
+            .unwrap();
+            assert_eq!(info.private, deserialized.private);
+
+            let deserialized_dyn = ::bencode::dyn_from_bytes::<ByteBuf>(&buf).unwrap();
+            let hm = match deserialized_dyn {
+                bencode::BencodeValue::Dict(hm) => hm,
+                _ => panic!("expected dict"),
+            };
+            match (private, hm.get(&ByteBuf(b"private"))) {
+                (true, Some(BencodeValue::Integer(1))) => {}
+                (false, None) => {}
+                (_, v) => {
+                    panic!("unexpected value for \"private\": {v:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_private_real_torrent() {
+        let buf = include_bytes!("resources/test/private.torrent");
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(buf).unwrap();
+        assert!(torrent.info.private);
     }
 }

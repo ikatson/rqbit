@@ -430,6 +430,7 @@ mod tests {
                 attr: None,
                 sha1: None,
                 symlink_path: None,
+                private: false,
             },
             comment: None,
             created_by: None,
