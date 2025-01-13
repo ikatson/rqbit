@@ -93,7 +93,7 @@ impl<BufType> TorrentMetaV1<BufType> {
 }
 
 /// Main torrent information, shared by .torrent files and magnet link contents.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct TorrentMetaV1Info<BufType> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<BufType>,
@@ -415,6 +415,8 @@ where
 mod tests {
     use std::io::Read;
 
+    use bencode::BencodeValue;
+
     use super::*;
 
     const TORRENT_FILENAME: &str = "../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent";
@@ -475,5 +477,36 @@ mod tests {
         .unwrap();
 
         assert_eq!(torrent, deserialized);
+    }
+
+    #[test]
+    fn test_private_serialize_deserialize() {
+        for private in [false, true] {
+            let info: TorrentMetaV1Info<ByteBufOwned> = TorrentMetaV1Info {
+                private,
+                ..Default::default()
+            };
+            let mut buf = Vec::new();
+            bencode::bencode_serialize_to_writer(&info, &mut buf).unwrap();
+
+            let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
+                &mut BencodeDeserializer::new_from_buf(&buf),
+            )
+            .unwrap();
+            assert_eq!(info.private, deserialized.private);
+
+            let deserialized_dyn = ::bencode::dyn_from_bytes::<ByteBuf>(&buf).unwrap();
+            let hm = match deserialized_dyn {
+                bencode::BencodeValue::Dict(hm) => hm,
+                _ => panic!("expected dict"),
+            };
+            match (private, hm.get(&ByteBuf(b"private"))) {
+                (true, Some(BencodeValue::Integer(1))) => {}
+                (false, None) => {}
+                (_, v) => {
+                    panic!("unexpected value for \"private\": {v:?}")
+                }
+            }
+        }
     }
 }
