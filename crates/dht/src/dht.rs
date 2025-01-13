@@ -1197,17 +1197,12 @@ impl DhtState {
         .boxed()
     }
 
-    #[inline(never)]
     pub fn get_peers(
         self: &Arc<Self>,
         info_hash: Id20,
         announce_port: Option<u16>,
-    ) -> anyhow::Result<RequestPeersStream> {
-        Ok(RequestPeersStream::new(
-            self.clone(),
-            info_hash,
-            announce_port,
-        ))
+    ) -> RequestPeersStream {
+        RequestPeersStream::new(self.clone(), info_hash, announce_port)
     }
 
     pub fn listen_addr(&self) -> SocketAddr {
