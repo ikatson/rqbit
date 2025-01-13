@@ -8,25 +8,34 @@ import {
   TorrentStats,
 } from "./api-types";
 
+declare global {
+  interface Window {
+    RQBIT_API_PATH?: string;
+  }
+}
+
+const API_PATH = window.RQBIT_API_PATH ?? "";
+
 // Define API URL and base path
-const apiUrl = (() => {
-  if (window.origin === "null" || window.origin === "http://localhost:3031") {
-    return "http://localhost:3030";
-  }
-  let port = /http.*:\/\/.*:(\d+)/.exec(window.origin)?.[1];
-  if (port == "3031") {
-    return window.origin.replace("3031", "3030");
-  }
-  return "";
-})();
+const apiUrl =
+  (() => {
+    if (window.origin === "null" || window.origin === "http://localhost:3031") {
+      return "http://localhost:3030";
+    }
+    let port = /http.*:\/\/.*:(\d+)/.exec(window.origin)?.[1];
+    if (port == "3031") {
+      return window.origin.replace("3031", "3030");
+    }
+    return "";
+  })() + API_PATH;
 
 const makeRequest = async (
   method: string,
   path: string,
   data?: any,
-  isJson?: boolean,
+  isJson?: boolean
 ): Promise<any> => {
-  console.log(method, path);
+  console.log(method, API_PATH + path);
   const url = apiUrl + path;
   let options: RequestInit = {
     method,
@@ -127,7 +136,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
       {
         only_files: files,
       },
-      true,
+      true
     );
   },
 
@@ -153,7 +162,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
-    filename?: string | null,
+    filename?: string | null
   ) => {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {

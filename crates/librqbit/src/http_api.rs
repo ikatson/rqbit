@@ -7,8 +7,7 @@ use axum::routing::{get, post};
 use base64::Engine;
 use bencode::AsDisplay;
 use buffers::ByteBuf;
-use futures::future::BoxFuture;
-use futures::{FutureExt, TryStreamExt};
+use futures::TryStreamExt;
 use http::{HeaderMap, HeaderValue, StatusCode};
 use itertools::Itertools;
 
@@ -681,59 +680,70 @@ impl HttpApi {
         if api_base.is_empty() {
             app = api_router;
         } else {
-            app = app.nest(api_base, api_router);
+            app = app.nest(&format!("{api_base}/"), api_router);
         }
 
         #[cfg(feature = "webui")]
         {
             use axum::response::Redirect;
 
-            let webui_router = Router::new()
-                .route(
-                    "/",
-                    get(|| async {
-                        (
-                            [("Content-Type", "text/html")],
-                            include_str!("../webui/dist/index.html"),
-                        )
-                    }),
+            let index_html: Bytes = {
+                let html = include_str!("../webui/dist/index.html");
+                html.replace(
+                    "// __REPLACE_ME_RQBIT_JS_SETUP__",
+                    &format!(
+                        "
+                    window.RQBIT_API_PATH = \"{api_base}\";
+                "
+                    ),
                 )
-                .route(
-                    "/assets/index.js",
-                    get(|| async {
-                        (
-                            [("Content-Type", "application/javascript")],
-                            include_str!("../webui/dist/assets/index.js"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/index.css",
-                    get(|| async {
-                        (
-                            [("Content-Type", "text/css")],
-                            include_str!("../webui/dist/assets/index.css"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/logo.svg",
-                    get(|| async {
-                        (
-                            [("Content-Type", "image/svg+xml")],
-                            include_str!("../webui/dist/assets/logo.svg"),
-                        )
-                    }),
-                );
+                .into()
+            };
+
+            let webui_router =
+                Router::new()
+                    .route(
+                        "/",
+                        get(move || async move {
+                            ([("Content-Type", "text/html")], index_html.clone())
+                        }),
+                    )
+                    .route(
+                        "/assets/index.js",
+                        get(|| async {
+                            (
+                                [("Content-Type", "application/javascript")],
+                                include_str!("../webui/dist/assets/index.js"),
+                            )
+                        }),
+                    )
+                    .route(
+                        "/assets/index.css",
+                        get(|| async {
+                            (
+                                [("Content-Type", "text/css")],
+                                include_str!("../webui/dist/assets/index.css"),
+                            )
+                        }),
+                    )
+                    .route(
+                        "/assets/logo.svg",
+                        get(|| async {
+                            (
+                                [("Content-Type", "image/svg+xml")],
+                                include_str!("../webui/dist/assets/logo.svg"),
+                            )
+                        }),
+                    );
 
             if webui_base.is_empty() {
                 app = app.merge(webui_router)
             } else {
-                app = app.nest(webui_base, webui_router);
-                let redir = format!("{webui_base}/");
+                let slashed = format!("{webui_base}/");
+                app = app.nest(&slashed, webui_router);
                 app = app.route(
                     webui_base,
-                    get(move || async move { Redirect::permanent(&redir) }),
+                    get(move || async move { Redirect::permanent(&slashed) }),
                 )
             }
         }

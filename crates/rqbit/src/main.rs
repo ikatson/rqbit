@@ -100,7 +100,7 @@ struct Opts {
 
     /// The HTTP path prefix under which to assume HTTP API is.
     #[arg(
-        long = "http-api-path",
+        long = "http-webui-path",
         env = "RQBIT_HTTP_WEBUI_PATH",
         default_value = "/web/"
     )]
