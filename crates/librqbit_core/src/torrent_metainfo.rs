@@ -50,6 +50,10 @@ pub fn torrent_from_bytes<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
     torrent_from_bytes_ext(buf).map(|r| r.meta)
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A parsed .torrent file.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TorrentMetaV1<BufType> {
@@ -117,6 +121,9 @@ pub struct TorrentMetaV1Info<BufType> {
     // Multi-file mode
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentMetaV1File<BufType>>>,
+
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub private: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -377,6 +384,7 @@ where
             attr: self.attr.clone_to_owned(within_buffer),
             sha1: self.sha1.clone_to_owned(within_buffer),
             symlink_path: self.symlink_path.clone_to_owned(within_buffer),
+            private: self.private,
         }
     }
 }

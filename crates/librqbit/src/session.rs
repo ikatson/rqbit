@@ -1008,6 +1008,8 @@ impl Session {
             name,
         } = add_res;
 
+        let private = metadata.as_ref().map_or(false, |m| m.info.private);
+
         let make_peer_rx = || {
             self.make_peer_rx(
                 info_hash,
@@ -1015,6 +1017,7 @@ impl Session {
                 !opts.paused && !opts.list_only,
                 opts.force_tracker_interval,
                 opts.initial_peers.clone().unwrap_or_default(),
+                private,
             )
             .context("error creating peer stream")
         };
@@ -1284,12 +1287,14 @@ impl Session {
         t: &Arc<ManagedTorrent>,
         announce: bool,
     ) -> anyhow::Result<PeerStream> {
+        let is_private = t.with_metadata(|m| m.info.private).unwrap_or(false);
         self.make_peer_rx(
             t.info_hash(),
             t.shared().trackers.iter().cloned().collect(),
             announce,
             t.shared().options.force_tracker_interval,
             t.shared().options.initial_peers.clone(),
+            is_private,
         )?
         .context("no peer source")
     }
@@ -1298,17 +1303,26 @@ impl Session {
     fn make_peer_rx(
         self: &Arc<Self>,
         info_hash: Id20,
-        trackers: Vec<String>,
+        mut trackers: Vec<String>,
         announce: bool,
         force_tracker_interval: Option<Duration>,
         initial_peers: Vec<SocketAddr>,
+        is_private: bool,
     ) -> anyhow::Result<Option<PeerStream>> {
         let announce_port = if announce { self.tcp_listen_port } else { None };
-        let dht_rx = self
-            .dht
-            .as_ref()
-            .map(|dht| dht.get_peers(info_hash, announce_port))
-            .transpose()?;
+        let dht_rx = if is_private {
+            None
+        } else {
+            self.dht
+                .as_ref()
+                .map(|dht| dht.get_peers(info_hash, announce_port))
+                .transpose()?
+        };
+
+        if is_private && trackers.len() > 1 {
+            warn!("private trackers are not fully implemented, so using only the first tracker");
+            trackers.resize_with(1, Default::default);
+        }
 
         let tracker_rx_stats = PeerRxTorrentInfo {
             info_hash,

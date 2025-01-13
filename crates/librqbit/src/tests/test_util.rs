@@ -134,6 +134,7 @@ async fn debug_server() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn spawn_debug_server() -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(debug_server())
 }
