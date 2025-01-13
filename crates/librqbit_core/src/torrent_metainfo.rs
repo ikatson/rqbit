@@ -509,4 +509,11 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_private_real_torrent() {
+        let buf = include_bytes!("resources/test/private.torrent");
+        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(buf).unwrap();
+        assert!(torrent.info.private);
+    }
 }
