@@ -10,21 +10,26 @@ import {
 
 // Define API URL and base path
 const apiUrl = (() => {
-  if (window.origin === "null" || window.origin === "http://localhost:3031") {
+  if (window.origin === "null") {
     return "http://localhost:3030";
   }
-  let port = /http.*:\/\/.*:(\d+)/.exec(window.origin)?.[1];
-  if (port == "3031") {
-    return window.origin.replace("3031", "3030");
+  const url = new URL(window.location.href);
+
+  // assume Vite devserver
+  if (url.port == "3031") {
+    return `${url.protocol}//${url.hostname}:3030`;
   }
-  return "";
+
+  // Remove "/web" or "/web/" from the end and also ending slash.
+  const path = /(.*?)\/?(\/web\/?)?$/.exec(url.pathname)![1] ?? "";
+  return path;
 })();
 
 const makeRequest = async (
   method: string,
   path: string,
   data?: any,
-  isJson?: boolean,
+  isJson?: boolean
 ): Promise<any> => {
   console.log(method, path);
   const url = apiUrl + path;
@@ -127,7 +132,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
       {
         only_files: files,
       },
-      true,
+      true
     );
   },
 
@@ -153,7 +158,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
-    filename?: string | null,
+    filename?: string | null
   ) => {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {
