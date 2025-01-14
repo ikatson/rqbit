@@ -12,9 +12,10 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["default-tls"]
+default = ["default-tls", "http-api-client"]
 tokio-console = ["console-subscriber", "tokio/tracing"]
 http-api = ["axum", "tower-http"]
+http-api-client = []
 upnp-serve-adapter = ["upnp-serve"]
 webui = []
 timed_existence = []

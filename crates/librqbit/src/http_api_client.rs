@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     api::ApiAddTorrentResponse,
-    http_api::{InitialPeers, TorrentAddQueryParams},
+    http_api_types::{InitialPeers, TorrentAddQueryParams},
     session::{AddTorrent, AddTorrentOptions},
 };
 
