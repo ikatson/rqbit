@@ -144,26 +144,26 @@ mod timeout {
 
 use timeout::Timeout;
 
-async fn dht_stats(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+async fn h_dht_stats(State(state): State<ApiState>) -> Result<impl IntoResponse> {
     state.api.api_dht_stats().map(axum::Json)
 }
 
-async fn dht_table(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+async fn h_dht_table(State(state): State<ApiState>) -> Result<impl IntoResponse> {
     state.api.api_dht_table().map(axum::Json)
 }
 
-async fn session_stats(State(state): State<ApiState>) -> impl IntoResponse {
+async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
 }
 
-async fn torrents_list(
+async fn h_torrents_list(
     State(state): State<ApiState>,
     Query(opts): Query<ApiTorrentListOpts>,
 ) -> impl IntoResponse {
     axum::Json(state.api.api_torrent_list_ext(opts))
 }
 
-async fn torrents_post(
+async fn h_torrents_post(
     State(state): State<ApiState>,
     Query(params): Query<TorrentAddQueryParams>,
     Timeout(timeout): Timeout<600_000, 3_600_000>,
@@ -206,7 +206,7 @@ async fn torrents_post(
         .map(axum::Json)
 }
 
-async fn torrent_details(
+async fn h_torrent_details(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
@@ -274,7 +274,7 @@ fn build_playlist_content(
     )
 }
 
-async fn resolve_magnet(
+async fn h_resolve_magnet(
     State(state): State<ApiState>,
     Timeout(timeout): Timeout<600_000, 3_600_000>,
     inp_headers: HeaderMap,
@@ -341,7 +341,7 @@ async fn resolve_magnet(
     Ok((headers, content).into_response())
 }
 
-async fn torrent_playlist(
+async fn h_torrent_playlist(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Path(idx): Path<TorrentIdOrHash>,
@@ -356,7 +356,7 @@ async fn torrent_playlist(
     ))
 }
 
-async fn global_playlist(
+async fn h_global_playlist(
     State(state): State<ApiState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
@@ -378,28 +378,28 @@ async fn global_playlist(
     Ok(build_playlist_content(host, all_items))
 }
 
-async fn torrent_haves(
+async fn h_torrent_haves(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api.api_dump_haves(idx)
 }
 
-async fn torrent_stats_v0(
+async fn h_torrent_stats_v0(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api.api_stats_v0(idx).map(axum::Json)
 }
 
-async fn torrent_stats_v1(
+async fn h_torrent_stats_v1(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     state.api.api_stats_v1(idx).map(axum::Json)
 }
 
-async fn peer_stats(
+async fn h_peer_stats(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
     Query(filter): Query<PeerStatsFilter>,
@@ -415,7 +415,7 @@ struct StreamPathParams {
     _filename: Option<Arc<str>>,
 }
 
-async fn torrent_stream_file(
+async fn h_torrent_stream_file(
     State(state): State<ApiState>,
     Path(StreamPathParams { id, file_id, .. }): Path<StreamPathParams>,
     headers: http::HeaderMap,
@@ -499,7 +499,7 @@ async fn torrent_stream_file(
     Ok((status, (output_headers, axum::body::Body::from_stream(s))))
 }
 
-async fn torrent_action_pause(
+async fn h_torrent_action_pause(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
@@ -510,7 +510,7 @@ async fn torrent_action_pause(
         .map(axum::Json)
 }
 
-async fn torrent_action_start(
+async fn h_torrent_action_start(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
@@ -521,7 +521,7 @@ async fn torrent_action_start(
         .map(axum::Json)
 }
 
-async fn torrent_action_forget(
+async fn h_torrent_action_forget(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
@@ -532,7 +532,7 @@ async fn torrent_action_forget(
         .map(axum::Json)
 }
 
-async fn torrent_action_delete(
+async fn h_torrent_action_delete(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
@@ -548,7 +548,7 @@ struct UpdateOnlyFilesRequest {
     only_files: Vec<usize>,
 }
 
-async fn torrent_action_update_only_files(
+async fn h_torrent_action_update_only_files(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
     axum::Json(req): axum::Json<UpdateOnlyFilesRequest>,
@@ -560,14 +560,14 @@ async fn torrent_action_update_only_files(
         .map(axum::Json)
 }
 
-async fn set_rust_log(
+async fn h_set_rust_log(
     State(state): State<ApiState>,
     new_value: String,
 ) -> Result<impl IntoResponse> {
     state.api.api_set_rust_log(new_value).map(axum::Json)
 }
 
-async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
+async fn h_stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
     let s = state.api.api_log_lines_stream()?.map_err(|e| {
         debug!(error=%e, "stream_logs");
         e
@@ -575,7 +575,7 @@ async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse>
     Ok(axum::body::Body::from_stream(s))
 }
 
-async fn update_session_ratelimits(
+async fn h_update_session_ratelimits(
     State(state): State<ApiState>,
     Json(limits): Json<LimitsConfig>,
 ) -> Result<impl IntoResponse> {
@@ -592,7 +592,7 @@ async fn update_session_ratelimits(
     Ok(Json(EmptyJsonResponse {}))
 }
 
-async fn api_root(parts: Parts) -> impl IntoResponse {
+async fn h_api_root(parts: Parts) -> impl IntoResponse {
     // If browser, and webui enabled, redirect to web
     #[cfg(feature = "webui")]
     {
@@ -662,38 +662,41 @@ impl HttpApi {
         let state = Arc::new(self);
 
         let mut app = Router::new()
-            .route("/", get(api_root))
-            .route("/stream_logs", get(stream_logs))
-            .route("/rust_log", post(set_rust_log))
-            .route("/dht/stats", get(dht_stats))
-            .route("/dht/table", get(dht_table))
-            .route("/stats", get(session_stats))
-            .route("/torrents", get(torrents_list))
-            .route("/torrents/{id}", get(torrent_details))
-            .route("/torrents/{id}/haves", get(torrent_haves))
-            .route("/torrents/{id}/stats", get(torrent_stats_v0))
-            .route("/torrents/{id}/stats/v1", get(torrent_stats_v1))
-            .route("/torrents/{id}/peer_stats", get(peer_stats))
-            .route("/torrents/{id}/playlist", get(torrent_playlist))
-            .route("/torrents/playlist", get(global_playlist))
-            .route("/torrents/resolve_magnet", post(resolve_magnet))
-            .route("/torrents/{id}/stream/{file_id}", get(torrent_stream_file))
+            .route("/", get(h_api_root))
+            .route("/stream_logs", get(h_stream_logs))
+            .route("/rust_log", post(h_set_rust_log))
+            .route("/dht/stats", get(h_dht_stats))
+            .route("/dht/table", get(h_dht_table))
+            .route("/stats", get(h_session_stats))
+            .route("/torrents", get(h_torrents_list))
+            .route("/torrents/{id}", get(h_torrent_details))
+            .route("/torrents/{id}/haves", get(h_torrent_haves))
+            .route("/torrents/{id}/stats", get(h_torrent_stats_v0))
+            .route("/torrents/{id}/stats/v1", get(h_torrent_stats_v1))
+            .route("/torrents/{id}/peer_stats", get(h_peer_stats))
+            .route("/torrents/{id}/playlist", get(h_torrent_playlist))
+            .route("/torrents/playlist", get(h_global_playlist))
+            .route("/torrents/resolve_magnet", post(h_resolve_magnet))
+            .route(
+                "/torrents/{id}/stream/{file_id}",
+                get(h_torrent_stream_file),
+            )
             .route(
                 "/torrents/{id}/stream/{file_id}/{*filename}",
-                get(torrent_stream_file),
+                get(h_torrent_stream_file),
             );
 
         if !state.opts.read_only {
             app = app
-                .route("/torrents", post(torrents_post))
-                .route("/torrents/limits", post(update_session_ratelimits))
-                .route("/torrents/{id}/pause", post(torrent_action_pause))
-                .route("/torrents/{id}/start", post(torrent_action_start))
-                .route("/torrents/{id}/forget", post(torrent_action_forget))
-                .route("/torrents/{id}/delete", post(torrent_action_delete))
+                .route("/torrents", post(h_torrents_post))
+                .route("/torrents/limits", post(h_update_session_ratelimits))
+                .route("/torrents/{id}/pause", post(h_torrent_action_pause))
+                .route("/torrents/{id}/start", post(h_torrent_action_start))
+                .route("/torrents/{id}/forget", post(h_torrent_action_forget))
+                .route("/torrents/{id}/delete", post(h_torrent_action_delete))
                 .route(
                     "/torrents/{id}/update_only_files",
-                    post(torrent_action_update_only_files),
+                    post(h_torrent_action_update_only_files),
                 );
         }
 
