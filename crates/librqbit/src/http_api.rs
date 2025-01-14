@@ -592,6 +592,49 @@ async fn update_session_ratelimits(
     Ok(Json(EmptyJsonResponse {}))
 }
 
+async fn api_root(parts: Parts) -> impl IntoResponse {
+    // If browser, and webui enabled, redirect to web
+    #[cfg(feature = "webui")]
+    {
+        if parts.headers.get("Accept").map_or(false, |h| {
+            std::str::from_utf8(h.as_bytes()).map_or(false, |s| s.contains("text/html"))
+        }) {
+            return Redirect::temporary("./web/").into_response();
+        }
+    }
+
+    (
+        [("Content-Type", "application/json")],
+        axum::Json(serde_json::json!({
+            "apis": {
+                "GET /": "list all available APIs",
+                "GET /dht/stats": "DHT stats",
+                "GET /dht/table": "DHT routing table",
+                "GET /torrents": "List torrents",
+                "GET /torrents/playlist": "Generate M3U8 playlist for all files in all torrents",
+                "GET /stats": "Global session stats",
+                "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
+                "GET /torrents/{id_or_infohash}": "Torrent details",
+                "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+                "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
+                "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
+                "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+                "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
+                "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
+                "POST /torrents/{id_or_infohash}/start": "Resume torrent",
+                "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
+                "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
+                "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+                "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+                "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
+                "GET /web/": "Web UI",
+            },
+            "server": "rqbit",
+            "version": env!("CARGO_PKG_VERSION"),
+        })),
+    ).into_response()
+}
+
 impl HttpApi {
     pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
@@ -609,49 +652,6 @@ impl HttpApi {
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = Arc::new(self);
-
-        let api_root = move |parts: Parts| async move {
-            // If browser, and webui enabled, redirect to web
-            #[cfg(feature = "webui")]
-            {
-                if parts.headers.get("Accept").map_or(false, |h| {
-                    std::str::from_utf8(h.as_bytes()).map_or(false, |s| s.contains("text/html"))
-                }) {
-                    return Redirect::temporary("./web/").into_response();
-                }
-            }
-
-            (
-                [("Content-Type", "application/json")],
-                axum::Json(serde_json::json!({
-                    "apis": {
-                        "GET /": "list all available APIs",
-                        "GET /dht/stats": "DHT stats",
-                        "GET /dht/table": "DHT routing table",
-                        "GET /torrents": "List torrents",
-                        "GET /torrents/playlist": "Generate M3U8 playlist for all files in all torrents",
-                        "GET /stats": "Global session stats",
-                        "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
-                        "GET /torrents/{id_or_infohash}": "Torrent details",
-                        "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
-                        "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
-                        "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
-                        "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
-                        "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
-                        "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
-                        "POST /torrents/{id_or_infohash}/start": "Resume torrent",
-                        "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
-                        "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
-                        "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
-                        "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-                        "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
-                        "GET /web/": "Web UI",
-                    },
-                    "server": "rqbit",
-                    "version": env!("CARGO_PKG_VERSION"),
-                })),
-            ).into_response()
-        };
 
         let mut app = Router::new()
             .route("/", get(api_root))
