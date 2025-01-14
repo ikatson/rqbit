@@ -745,8 +745,7 @@ impl HttpApi {
     ) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = Arc::new(self);
 
-        let mut main_router = Router::new();
-        main_router = main_router.nest("/", make_api_router(state.clone()));
+        let mut main_router = make_api_router(state.clone());
 
         #[cfg(feature = "webui")]
         {
@@ -754,7 +753,7 @@ impl HttpApi {
 
             let webui_router = make_webui_router();
             main_router = main_router.nest("/web/", webui_router);
-            main_router = main_router.route("/web", get(|| async { Redirect::permanent("/web/") }))
+            main_router = main_router.route("/web", get(|| async { Redirect::permanent("./web/") }))
         }
 
         let cors_layer = {
