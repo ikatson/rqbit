@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::io::SeekFrom;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::io::AsyncSeekExt;
 use tokio::net::TcpListener;
@@ -596,16 +596,18 @@ async fn api_root(parts: Parts) -> impl IntoResponse {
     // If browser, and webui enabled, redirect to web
     #[cfg(feature = "webui")]
     {
-        if parts.headers.get("Accept").map_or(false, |h| {
-            std::str::from_utf8(h.as_bytes()).map_or(false, |s| s.contains("text/html"))
-        }) {
+        if parts
+            .headers
+            .get("Accept")
+            .and_then(|h| h.to_str().ok())
+            .map_or(false, |h| h.contains("text/html"))
+        {
             return Redirect::temporary("./web/").into_response();
         }
     }
 
-    (
-        [("Content-Type", "application/json")],
-        axum::Json(serde_json::json!({
+    static API_ROOT_JSON: LazyLock<Arc<serde_json::Value>> = LazyLock::new(|| {
+        Arc::new(serde_json::json!({
             "apis": {
                 "GET /": "list all available APIs",
                 "GET /dht/stats": "DHT stats",
@@ -631,8 +633,14 @@ async fn api_root(parts: Parts) -> impl IntoResponse {
             },
             "server": "rqbit",
             "version": env!("CARGO_PKG_VERSION"),
-        })),
-    ).into_response()
+        }))
+    });
+
+    (
+        [("Content-Type", "application/json")],
+        axum::Json(API_ROOT_JSON.clone()),
+    )
+        .into_response()
 }
 
 impl HttpApi {
