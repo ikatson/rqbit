@@ -643,6 +643,90 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
         .into_response()
 }
 
+fn make_api_router(state: ApiState) -> Router {
+    let mut api_router = Router::new()
+        .route("/", get(h_api_root))
+        .route("/stream_logs", get(h_stream_logs))
+        .route("/rust_log", post(h_set_rust_log))
+        .route("/dht/stats", get(h_dht_stats))
+        .route("/dht/table", get(h_dht_table))
+        .route("/stats", get(h_session_stats))
+        .route("/torrents", get(h_torrents_list))
+        .route("/torrents/{id}", get(h_torrent_details))
+        .route("/torrents/{id}/haves", get(h_torrent_haves))
+        .route("/torrents/{id}/stats", get(h_torrent_stats_v0))
+        .route("/torrents/{id}/stats/v1", get(h_torrent_stats_v1))
+        .route("/torrents/{id}/peer_stats", get(h_peer_stats))
+        .route("/torrents/{id}/playlist", get(h_torrent_playlist))
+        .route("/torrents/playlist", get(h_global_playlist))
+        .route("/torrents/resolve_magnet", post(h_resolve_magnet))
+        .route(
+            "/torrents/{id}/stream/{file_id}",
+            get(h_torrent_stream_file),
+        )
+        .route(
+            "/torrents/{id}/stream/{file_id}/{*filename}",
+            get(h_torrent_stream_file),
+        );
+
+    if !state.opts.read_only {
+        api_router = api_router
+            .route("/torrents", post(h_torrents_post))
+            .route("/torrents/limits", post(h_update_session_ratelimits))
+            .route("/torrents/{id}/pause", post(h_torrent_action_pause))
+            .route("/torrents/{id}/start", post(h_torrent_action_start))
+            .route("/torrents/{id}/forget", post(h_torrent_action_forget))
+            .route("/torrents/{id}/delete", post(h_torrent_action_delete))
+            .route(
+                "/torrents/{id}/update_only_files",
+                post(h_torrent_action_update_only_files),
+            );
+    }
+
+    api_router.with_state(state)
+}
+
+#[cfg(feature = "webui")]
+fn make_webui_router() -> Router {
+    Router::new()
+        .route(
+            "/",
+            get(|| async {
+                (
+                    [("Content-Type", "text/html")],
+                    include_str!("../webui/dist/index.html"),
+                )
+            }),
+        )
+        .route(
+            "/assets/index.js",
+            get(|| async {
+                (
+                    [("Content-Type", "application/javascript")],
+                    include_str!("../webui/dist/assets/index.js"),
+                )
+            }),
+        )
+        .route(
+            "/assets/index.css",
+            get(|| async {
+                (
+                    [("Content-Type", "text/css")],
+                    include_str!("../webui/dist/assets/index.css"),
+                )
+            }),
+        )
+        .route(
+            "/assets/logo.svg",
+            get(|| async {
+                (
+                    [("Content-Type", "image/svg+xml")],
+                    include_str!("../webui/dist/assets/logo.svg"),
+                )
+            }),
+        )
+}
+
 impl HttpApi {
     pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
@@ -661,89 +745,16 @@ impl HttpApi {
     ) -> BoxFuture<'static, anyhow::Result<()>> {
         let state = Arc::new(self);
 
-        let mut app = Router::new()
-            .route("/", get(h_api_root))
-            .route("/stream_logs", get(h_stream_logs))
-            .route("/rust_log", post(h_set_rust_log))
-            .route("/dht/stats", get(h_dht_stats))
-            .route("/dht/table", get(h_dht_table))
-            .route("/stats", get(h_session_stats))
-            .route("/torrents", get(h_torrents_list))
-            .route("/torrents/{id}", get(h_torrent_details))
-            .route("/torrents/{id}/haves", get(h_torrent_haves))
-            .route("/torrents/{id}/stats", get(h_torrent_stats_v0))
-            .route("/torrents/{id}/stats/v1", get(h_torrent_stats_v1))
-            .route("/torrents/{id}/peer_stats", get(h_peer_stats))
-            .route("/torrents/{id}/playlist", get(h_torrent_playlist))
-            .route("/torrents/playlist", get(h_global_playlist))
-            .route("/torrents/resolve_magnet", post(h_resolve_magnet))
-            .route(
-                "/torrents/{id}/stream/{file_id}",
-                get(h_torrent_stream_file),
-            )
-            .route(
-                "/torrents/{id}/stream/{file_id}/{*filename}",
-                get(h_torrent_stream_file),
-            );
-
-        if !state.opts.read_only {
-            app = app
-                .route("/torrents", post(h_torrents_post))
-                .route("/torrents/limits", post(h_update_session_ratelimits))
-                .route("/torrents/{id}/pause", post(h_torrent_action_pause))
-                .route("/torrents/{id}/start", post(h_torrent_action_start))
-                .route("/torrents/{id}/forget", post(h_torrent_action_forget))
-                .route("/torrents/{id}/delete", post(h_torrent_action_delete))
-                .route(
-                    "/torrents/{id}/update_only_files",
-                    post(h_torrent_action_update_only_files),
-                );
-        }
+        let mut main_router = Router::new();
+        main_router = main_router.nest("/", make_api_router(state.clone()));
 
         #[cfg(feature = "webui")]
         {
             use axum::response::Redirect;
 
-            let webui_router = Router::new()
-                .route(
-                    "/",
-                    get(|| async {
-                        (
-                            [("Content-Type", "text/html")],
-                            include_str!("../webui/dist/index.html"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/index.js",
-                    get(|| async {
-                        (
-                            [("Content-Type", "application/javascript")],
-                            include_str!("../webui/dist/assets/index.js"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/index.css",
-                    get(|| async {
-                        (
-                            [("Content-Type", "text/css")],
-                            include_str!("../webui/dist/assets/index.css"),
-                        )
-                    }),
-                )
-                .route(
-                    "/assets/logo.svg",
-                    get(|| async {
-                        (
-                            [("Content-Type", "image/svg+xml")],
-                            include_str!("../webui/dist/assets/logo.svg"),
-                        )
-                    }),
-                );
-
-            app = app.nest("/web/", webui_router);
-            app = app.route("/web", get(|| async { Redirect::permanent("/web/") }))
+            let webui_router = make_webui_router();
+            main_router = main_router.nest("/web/", webui_router);
+            main_router = main_router.route("/web", get(|| async { Redirect::permanent("/web/") }))
         }
 
         let cors_layer = {
@@ -774,26 +785,25 @@ impl HttpApi {
                 .allow_headers(AllowHeaders::any())
         };
 
-        let mut app = app.with_state(state.clone());
-
         // Simple one-user basic auth
         if let Some((user, pass)) = state.opts.basic_auth.clone() {
             info!("Enabling simple basic authentication in HTTP API");
-            app =
-                app.route_layer(axum::middleware::from_fn(move |headers, request, next| {
+            main_router = main_router.route_layer(axum::middleware::from_fn(
+                move |headers, request, next| {
                     let user = user.clone();
                     let pass = pass.clone();
                     async move {
                         simple_basic_auth(Some(&user), Some(&pass), headers, request, next).await
                     }
-                }));
+                },
+            ));
         }
 
         if let Some(upnp_router) = upnp_router {
-            app = app.nest("/upnp", upnp_router);
+            main_router = main_router.nest("/upnp", upnp_router);
         }
 
-        let app = app
+        let app = main_router
             .layer(cors_layer)
             .layer(
                 tower_http::trace::TraceLayer::new_for_http()
