@@ -33,14 +33,14 @@ use crate::peer_connection::PeerConnectionOptions;
 use crate::session::{AddTorrent, AddTorrentOptions, SUPPORTED_SCHEMES};
 use crate::torrent_state::peer::stats::snapshot::PeerStatsFilter;
 
-type ApiState = Api;
+type ApiState = Arc<HttpApi>;
 
 use crate::api::Result;
 use crate::{ApiError, ListOnlyResponse, ManagedTorrent};
 
 /// An HTTP server for the API.
 pub struct HttpApi {
-    inner: ApiState,
+    api: Api,
     opts: HttpApiOptions,
 }
 
@@ -145,22 +145,22 @@ mod timeout {
 use timeout::Timeout;
 
 async fn dht_stats(State(state): State<ApiState>) -> Result<impl IntoResponse> {
-    state.api_dht_stats().map(axum::Json)
+    state.api.api_dht_stats().map(axum::Json)
 }
 
 async fn dht_table(State(state): State<ApiState>) -> Result<impl IntoResponse> {
-    state.api_dht_table().map(axum::Json)
+    state.api.api_dht_table().map(axum::Json)
 }
 
 async fn session_stats(State(state): State<ApiState>) -> impl IntoResponse {
-    axum::Json(state.api_session_stats())
+    axum::Json(state.api.api_session_stats())
 }
 
 async fn torrents_list(
     State(state): State<ApiState>,
     Query(opts): Query<ApiTorrentListOpts>,
 ) -> impl IntoResponse {
-    axum::Json(state.api_torrent_list_ext(opts))
+    axum::Json(state.api.api_torrent_list_ext(opts))
 }
 
 async fn torrents_post(
@@ -200,7 +200,7 @@ async fn torrents_post(
         }
         _ => AddTorrent::TorrentFileBytes(data.into()),
     };
-    tokio::time::timeout(timeout, state.api_add_torrent(add, Some(opts)))
+    tokio::time::timeout(timeout, state.api.api_add_torrent(add, Some(opts)))
         .await
         .context("timeout")?
         .map(axum::Json)
@@ -210,7 +210,7 @@ async fn torrent_details(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_torrent_details(idx).map(axum::Json)
+    state.api.api_torrent_details(idx).map(axum::Json)
 }
 
 fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
@@ -282,7 +282,7 @@ async fn resolve_magnet(
 ) -> Result<impl IntoResponse> {
     let added = tokio::time::timeout(
         timeout,
-        state.session().add_torrent(
+        state.api.session().add_torrent(
             AddTorrent::from_url(&url),
             Some(AddTorrentOptions {
                 list_only: true,
@@ -347,7 +347,7 @@ async fn torrent_playlist(
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
     let host = get_host(&headers)?;
-    let playlist_items = torrent_playlist_items(&*state.mgr_handle(idx)?)?;
+    let playlist_items = torrent_playlist_items(&*state.api.mgr_handle(idx)?)?;
     Ok(build_playlist_content(
         host,
         playlist_items
@@ -361,7 +361,7 @@ async fn global_playlist(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
     let host = get_host(&headers)?;
-    let all_items = state.session().with_torrents(|torrents| {
+    let all_items = state.api.session().with_torrents(|torrents| {
         torrents
             .filter_map(|(torrent_idx, handle)| {
                 torrent_playlist_items(handle)
@@ -382,21 +382,21 @@ async fn torrent_haves(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_dump_haves(idx)
+    state.api.api_dump_haves(idx)
 }
 
 async fn torrent_stats_v0(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_stats_v0(idx).map(axum::Json)
+    state.api.api_stats_v0(idx).map(axum::Json)
 }
 
 async fn torrent_stats_v1(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_stats_v1(idx).map(axum::Json)
+    state.api.api_stats_v1(idx).map(axum::Json)
 }
 
 async fn peer_stats(
@@ -404,7 +404,7 @@ async fn peer_stats(
     Path(idx): Path<TorrentIdOrHash>,
     Query(filter): Query<PeerStatsFilter>,
 ) -> Result<impl IntoResponse> {
-    state.api_peer_stats(idx, filter).map(axum::Json)
+    state.api.api_peer_stats(idx, filter).map(axum::Json)
 }
 
 #[derive(Deserialize)]
@@ -420,7 +420,7 @@ async fn torrent_stream_file(
     Path(StreamPathParams { id, file_id, .. }): Path<StreamPathParams>,
     headers: http::HeaderMap,
 ) -> Result<impl IntoResponse> {
-    let mut stream = state.api_stream(id, file_id)?;
+    let mut stream = state.api.api_stream(id, file_id)?;
     let mut status = StatusCode::OK;
     let mut output_headers = HeaderMap::new();
     output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
@@ -448,7 +448,7 @@ async fn torrent_stream_file(
         );
     }
 
-    if let Ok(mime) = state.torrent_file_mime_type(id, file_id) {
+    if let Ok(mime) = state.api.torrent_file_mime_type(id, file_id) {
         output_headers.insert(
             http::header::CONTENT_TYPE,
             HeaderValue::from_str(mime).context("bug - invalid MIME")?,
@@ -503,28 +503,44 @@ async fn torrent_action_pause(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_torrent_action_pause(idx).await.map(axum::Json)
+    state
+        .api
+        .api_torrent_action_pause(idx)
+        .await
+        .map(axum::Json)
 }
 
 async fn torrent_action_start(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_torrent_action_start(idx).await.map(axum::Json)
+    state
+        .api
+        .api_torrent_action_start(idx)
+        .await
+        .map(axum::Json)
 }
 
 async fn torrent_action_forget(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_torrent_action_forget(idx).await.map(axum::Json)
+    state
+        .api
+        .api_torrent_action_forget(idx)
+        .await
+        .map(axum::Json)
 }
 
 async fn torrent_action_delete(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
 ) -> Result<impl IntoResponse> {
-    state.api_torrent_action_delete(idx).await.map(axum::Json)
+    state
+        .api
+        .api_torrent_action_delete(idx)
+        .await
+        .map(axum::Json)
 }
 
 #[derive(Deserialize)]
@@ -538,6 +554,7 @@ async fn torrent_action_update_only_files(
     axum::Json(req): axum::Json<UpdateOnlyFilesRequest>,
 ) -> Result<impl IntoResponse> {
     state
+        .api
         .api_torrent_action_update_only_files(idx, &req.only_files.into_iter().collect())
         .await
         .map(axum::Json)
@@ -547,11 +564,11 @@ async fn set_rust_log(
     State(state): State<ApiState>,
     new_value: String,
 ) -> Result<impl IntoResponse> {
-    state.api_set_rust_log(new_value).map(axum::Json)
+    state.api.api_set_rust_log(new_value).map(axum::Json)
 }
 
 async fn stream_logs(State(state): State<ApiState>) -> Result<impl IntoResponse> {
-    let s = state.api_log_lines_stream()?.map_err(|e| {
+    let s = state.api.api_log_lines_stream()?.map_err(|e| {
         debug!(error=%e, "stream_logs");
         e
     });
@@ -562,8 +579,13 @@ async fn update_session_ratelimits(
     State(state): State<ApiState>,
     Json(limits): Json<LimitsConfig>,
 ) -> Result<impl IntoResponse> {
-    state.session().ratelimits.set_upload_bps(limits.upload_bps);
     state
+        .api
+        .session()
+        .ratelimits
+        .set_upload_bps(limits.upload_bps);
+    state
+        .api
         .session()
         .ratelimits
         .set_download_bps(limits.download_bps);
@@ -573,7 +595,7 @@ async fn update_session_ratelimits(
 impl HttpApi {
     pub fn new(api: Api, opts: Option<HttpApiOptions>) -> Self {
         Self {
-            inner: api,
+            api,
             opts: opts.unwrap_or_default(),
         }
     }
@@ -582,11 +604,11 @@ impl HttpApi {
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
     pub fn make_http_api_and_run(
-        mut self,
+        self,
         listener: TcpListener,
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
-        let state = self.inner;
+        let state = Arc::new(self);
 
         let api_root = move |parts: Parts| async move {
             // If browser, and webui enabled, redirect to web
@@ -653,7 +675,7 @@ impl HttpApi {
                 get(torrent_stream_file),
             );
 
-        if !self.opts.read_only {
+        if !state.opts.read_only {
             app = app
                 .route("/torrents", post(torrents_post))
                 .route("/torrents/limits", post(update_session_ratelimits))
@@ -741,10 +763,10 @@ impl HttpApi {
                 .allow_headers(AllowHeaders::any())
         };
 
-        let mut app = app.with_state(state);
+        let mut app = app.with_state(state.clone());
 
         // Simple one-user basic auth
-        if let Some((user, pass)) = self.opts.basic_auth.take() {
+        if let Some((user, pass)) = state.opts.basic_auth.clone() {
             info!("Enabling simple basic authentication in HTTP API");
             app =
                 app.route_layer(axum::middleware::from_fn(move |headers, request, next| {
