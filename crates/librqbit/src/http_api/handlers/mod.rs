@@ -6,7 +6,7 @@ mod playlist;
 mod streaming;
 mod torrents;
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use axum::{
     response::{IntoResponse, Redirect},
@@ -32,41 +32,35 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
         }
     }
 
-    static API_ROOT_JSON: LazyLock<Arc<serde_json::Value>> = LazyLock::new(|| {
-        Arc::new(serde_json::json!({
-            "apis": {
-                "GET /": "list all available APIs",
-                "GET /dht/stats": "DHT stats",
-                "GET /dht/table": "DHT routing table",
-                "GET /torrents": "List torrents",
-                "GET /torrents/playlist": "Generate M3U8 playlist for all files in all torrents",
-                "GET /stats": "Global session stats",
-                "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
-                "GET /torrents/{id_or_infohash}": "Torrent details",
-                "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
-                "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
-                "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
-                "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
-                "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
-                "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
-                "POST /torrents/{id_or_infohash}/start": "Resume torrent",
-                "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
-                "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
-                "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
-                "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-                "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
-                "GET /web/": "Web UI",
-            },
-            "server": "rqbit",
-            "version": env!("CARGO_PKG_VERSION"),
-        }))
+    let json = serde_json::json!({
+        "apis": {
+            "GET /": "list all available APIs",
+            "GET /dht/stats": "DHT stats",
+            "GET /dht/table": "DHT routing table",
+            "GET /torrents": "List torrents",
+            "GET /torrents/playlist": "Generate M3U8 playlist for all files in all torrents",
+            "GET /stats": "Global session stats",
+            "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
+            "GET /torrents/{id_or_infohash}": "Torrent details",
+            "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+            "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
+            "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
+            "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+            "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
+            "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
+            "POST /torrents/{id_or_infohash}/start": "Resume torrent",
+            "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
+            "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
+            "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+            "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+            "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
+            "GET /web/": "Web UI",
+        },
+        "server": "rqbit",
+        "version": env!("CARGO_PKG_VERSION"),
     });
 
-    (
-        [("Content-Type", "application/json")],
-        axum::Json(API_ROOT_JSON.clone()),
-    )
-        .into_response()
+    ([("Content-Type", "application/json")], axum::Json(json)).into_response()
 }
 
 pub fn make_api_router(state: ApiState) -> Router {
