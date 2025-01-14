@@ -26,6 +26,7 @@ disable-upload = ["librqbit/disable-upload"]
 [dependencies]
 librqbit = { version = "8.0.0", path = "../librqbit", default-features = false, features = [
     "http-api",
+    "http-api-client",
     "tracing-subscriber-utils",
     "upnp-serve-adapter",
     "watch",
