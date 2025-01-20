@@ -146,6 +146,14 @@ struct Opts {
         env = "RQBIT_TCP_LISTEN_MAX_PORT"
     )]
     tcp_listen_max_port: u16,
+    
+    /// Configure the interface for rqbit to bind to..
+    /// Currently only usable on Linux, Android, and Fuscia
+    #[arg(
+        long = "interface-name",
+        env = "RQBIT_BIND_INTERFACE"
+    )]
+    interface_bind: Option<String>,
 
     /// If set, will try to publish the chosen port through upnp on your router.
     #[arg(
@@ -458,10 +466,15 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             ..Default::default()
         }),
         listen_port_range: if !opts.disable_tcp_listen {
-            Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
+            if opts.tcp_listen_min_port == opts.tcp_listen_max_port || opts.tcp_listen_min_port > opts.tcp_listen_max_port {
+                Some(opts.tcp_listen_min_port..opts.tcp_listen_min_port+1)
+            } else {
+                Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
+            }
         } else {
             None
         },
+        interface_bind: opts.interface_bind,
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
