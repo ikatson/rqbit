@@ -441,7 +441,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     })?;
 
     match librqbit::try_increase_nofile_limit() {
-        Ok(limit) => info!(limit = limit, "inreased open file limit"),
+        Ok(limit) => info!(limit = limit, "increased open file limit"),
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
     };
 
