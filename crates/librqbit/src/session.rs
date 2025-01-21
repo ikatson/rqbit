@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::Read,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
@@ -55,7 +55,7 @@ use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, TcpSocket},
     sync::Notify,
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -396,6 +396,9 @@ pub struct SessionOptions {
     pub peer_opts: Option<PeerConnectionOptions>,
 
     pub listen_port_range: Option<std::ops::Range<u16>>,
+    /// Configure the interface to bind to on linux and fuscia systems
+    pub interface_bind: Option<String>,
+
     pub enable_upnp_port_forwarding: bool,
 
     // If you set this to something, all writes to disk will happen in background and be
@@ -423,16 +426,55 @@ pub struct SessionOptions {
 
 async fn create_tcp_listener(
     port_range: std::ops::Range<u16>,
+    interface_bind: Option<String>,
 ) -> anyhow::Result<(TcpListener, u16)> {
-    for port in port_range.clone() {
-        match TcpListener::bind(("0.0.0.0", port)).await {
-            Ok(l) => return Ok((l, port)),
-            Err(e) => {
-                debug!("error listening on port {port}: {e:#}")
+    #[cfg(any(target_os = "linux", target_os = "fuchsia", target_os = "android"))]
+    {
+        match interface_bind {
+            Some(interface) => {
+                warn!("running on specific interface");
+                for port in port_range.clone() {
+                    let addr: SocketAddr = SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 35213
+                    );
+                    let socket = TcpSocket::new_v4()?;
+                    socket.bind_device(Some(interface.as_bytes()))?;
+                    socket.bind(addr)?;
+                    match socket.listen(1024) {
+                        Ok(l) => return Ok((l, port)),
+                        Err(e) => {
+                            error!("error listening on port {port}: {e:#}")
+                        }
+                    }
+                }
+                bail!("no free TCP ports in range {port_range:?}");
+            },
+            None => {
+                for port in port_range.clone() {
+                    match TcpListener::bind(("0.0.0.0", 35213)).await {
+                        Ok(l) => return Ok((l, port)),
+                        Err(e) => {
+                            debug!("error listening on port {port}: {e:#}")
+                        }
+                    }
+                }
+                bail!("no free TCP ports in range {port_range:?}");
             }
         }
     }
-    bail!("no free TCP ports in range {port_range:?}");
+    
+    #[cfg(not(any(target_os = "linux", target_os = "fuchsia", target_os = "android")))]
+    {
+        for port in port_range.clone() {
+            match TcpListener::bind(("0.0.0.0", port)).await {
+                Ok(l) => return Ok((l, port)),
+                Err(e) => {
+                    debug!("error listening on port {port}: {e:#}")
+                }
+            }
+        }
+        bail!("no free TCP ports in range {port_range:?}");
+    }
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[String]) -> anyhow::Result<Bytes> {
@@ -498,7 +540,7 @@ impl Session {
 
             let (tcp_listener, tcp_listen_port) =
                 if let Some(port_range) = opts.listen_port_range.clone() {
-                    let (l, p) = create_tcp_listener(port_range)
+                    let (l, p) = create_tcp_listener(port_range, opts.interface_bind.clone())
                         .await
                         .context("error listening on TCP")?;
                     info!("Listening on 0.0.0.0:{p} for incoming peer connections");
@@ -513,6 +555,7 @@ impl Session {
                 let dht = if opts.disable_dht_persistence {
                     DhtBuilder::with_config(DhtConfig {
                         cancellation_token: Some(token.child_token()),
+                        interface_name: opts.interface_bind.clone(),
                         ..Default::default()
                     })
                     .await
@@ -599,6 +642,12 @@ impl Session {
                         .context("error creating socks5 proxy for HTTP")?;
                     reqwest::Client::builder().proxy(proxy)
                 } else {
+                    #[cfg(any(target_os = "linux", target_os = "fuchsia", target_os = "android"))]
+                    match opts.interface_bind {
+                        Some(interface) => reqwest::Client::builder().interface(&interface),
+                        None => reqwest::Client::builder()
+                    }
+                    #[cfg(not(any(target_os = "linux", target_os = "fuchsia", target_os = "android")))]
                     reqwest::Client::builder()
                 };
 
@@ -1321,6 +1370,7 @@ impl Session {
             force_tracker_interval,
             announce_port,
             self.reqwest_client.clone(),
+            //interface_name
         );
 
         let initial_peers_rx = if initial_peers.is_empty() {
