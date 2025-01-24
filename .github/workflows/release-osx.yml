@@ -14,11 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: install Tauri
-        run: cargo install tauri-cli --profile dev
+        run: cargo binstall tauri-cli --no-confirm
+
       - name: npm install (desktop)
         working-directory: desktop
         run: npm install
+
       - name: npm install (librqbit/webui)
         working-directory: crates/librqbit/webui
         run: npm install
@@ -28,6 +33,7 @@ jobs:
         run:
           rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin &&
           cargo tauri build --target universal-apple-darwin --ci
+
       - uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
@@ -42,6 +48,7 @@ jobs:
           cargo build --profile release-github --target x86_64-apple-darwin &&
           cargo build --profile release-github --target aarch64-apple-darwin &&
           lipo ./target/x86_64-apple-darwin/release-github/rqbit ./target/aarch64-apple-darwin/release-github/rqbit -create -output ./target/artifacts/rqbit-osx-universal
+
       - uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
