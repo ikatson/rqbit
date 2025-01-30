@@ -263,8 +263,6 @@ impl LivePeerState {
     }
 
     pub fn has_full_torrent(&self, total_pieces: usize) -> bool {
-        self.bitfield
-            .get(0..total_pieces)
-            .map_or(false, |s| s.all())
+        self.bitfield.get(0..total_pieces).is_some_and(|s| s.all())
     }
 }

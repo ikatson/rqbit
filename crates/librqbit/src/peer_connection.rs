@@ -88,6 +88,16 @@ where
     }
 }
 
+struct ManagePeerArgs<R, W> {
+    handshake_supports_extended: bool,
+    read_buf: ReadBuf,
+    write_buf: Vec<u8>,
+    read: R,
+    write: W,
+    outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+    have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+}
+
 impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(
         addr: SocketAddr,
@@ -147,18 +157,21 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .context("error writing handshake")?;
         write_buf.clear();
 
-        let h_supports_extended = handshake.supports_extended();
+        let handshake_supports_extended = handshake.supports_extended();
 
         self.handler.on_handshake(handshake)?;
 
-        self.manage_peer(
-            h_supports_extended,
+        let (read, write) = conn.into_split();
+
+        self.manage_peer(ManagePeerArgs {
+            handshake_supports_extended,
             read_buf,
             write_buf,
-            conn,
+            read,
+            write,
             outgoing_chan,
             have_broadcast,
-        )
+        })
         .await
     }
 
@@ -179,26 +192,26 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         let now = Instant::now();
-        let conn = self.connector.connect(self.addr);
-        let mut conn = with_timeout(connect_timeout, conn)
-            .await
-            .context("error connecting")?;
+        let (mut read, mut write) =
+            with_timeout(connect_timeout, self.connector.connect(self.addr))
+                .await
+                .context("error connecting")?;
         self.handler.on_connected(now.elapsed());
 
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
         handshake.serialize(&mut write_buf);
-        with_timeout(rwtimeout, conn.write_all(&write_buf))
+        with_timeout(rwtimeout, write.write_all(&write_buf))
             .await
             .context("error writing handshake")?;
         write_buf.clear();
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf
-            .read_handshake(&mut conn, rwtimeout)
+            .read_handshake(&mut read, rwtimeout)
             .await
             .context("error reading handshake")?;
-        let h_supports_extended = h.supports_extended();
+        let handshake_supports_extended = h.supports_extended();
         trace!(
             peer_id=?Id20::new(h.peer_id),
             decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
@@ -214,26 +227,35 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         self.handler.on_handshake(h)?;
 
-        self.manage_peer(
-            h_supports_extended,
+        self.manage_peer(ManagePeerArgs {
+            handshake_supports_extended,
             read_buf,
             write_buf,
-            conn,
+            read,
+            write,
             outgoing_chan,
             have_broadcast,
-        )
+        })
         .await
     }
 
     async fn manage_peer(
         &self,
-        handshake_supports_extended: bool,
-        mut read_buf: ReadBuf,
-        mut write_buf: Vec<u8>,
-        mut conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-        mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
-        mut have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+        args: ManagePeerArgs<
+            impl tokio::io::AsyncRead + Send + Unpin,
+            impl tokio::io::AsyncWrite + Send + Unpin,
+        >,
     ) -> anyhow::Result<()> {
+        let ManagePeerArgs {
+            handshake_supports_extended,
+            mut read_buf,
+            mut write_buf,
+            mut read,
+            mut write,
+            mut outgoing_chan,
+            mut have_broadcast,
+        } = args;
+
         use tokio::io::AsyncWriteExt;
 
         let rwtimeout = self
@@ -256,13 +278,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             my_extended
                 .serialize(&mut write_buf, &Default::default)
                 .unwrap();
-            with_timeout(rwtimeout, conn.write_all(&write_buf))
+            with_timeout(rwtimeout, write.write_all(&write_buf))
                 .await
                 .context("error writing extended handshake")?;
             write_buf.clear();
         }
-
-        let (mut read_half, mut write_half) = tokio::io::split(conn);
 
         let writer = async move {
             let keep_alive_interval = self
@@ -274,14 +294,14 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let len = self
                     .handler
                     .serialize_bitfield_message_to_buf(&mut write_buf)?;
-                with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
+                with_timeout(rwtimeout, write.write_all(&write_buf[..len]))
                     .await
                     .context("error writing bitfield to peer")?;
                 trace!("sent bitfield");
             }
 
             let len = MessageOwned::Unchoke.serialize(&mut write_buf, &Default::default)?;
-            with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
+            with_timeout(rwtimeout, write.write_all(&write_buf[..len]))
                 .await
                 .context("error writing unchoke")?;
             trace!("sent unchoke");
@@ -378,7 +398,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     }
                 };
 
-                with_timeout(rwtimeout, write_half.write_all(&write_buf[..len]))
+                with_timeout(rwtimeout, write.write_all(&write_buf[..len]))
                     .await
                     .context("error writing the message to peer")?;
 
@@ -395,7 +415,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let reader = async move {
             loop {
                 let message = read_buf
-                    .read_message(&mut read_half, rwtimeout)
+                    .read_message(&mut read, rwtimeout)
                     .await
                     .context("error reading message")?;
                 trace!("received: {:?}", &message);
