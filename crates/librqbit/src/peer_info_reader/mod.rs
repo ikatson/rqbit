@@ -254,6 +254,7 @@ mod tests {
     use librqbit_core::peer_id::generate_peer_id;
 
     use crate::spawn_utils::BlockingSpawner;
+    use crate::stream_connect::StreamConnector;
 
     use super::read_metainfo_from_peer;
 
@@ -281,7 +282,7 @@ mod tests {
                 info_hash,
                 None,
                 BlockingSpawner::new(true),
-                Arc::new(Default::default())
+                Arc::new(StreamConnector::new(Default::default()).await.unwrap())
             )
             .await
             .unwrap()

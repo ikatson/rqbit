@@ -311,7 +311,7 @@ impl TorrentStateLive {
                         state
                             .up_speed_estimator
                             .add_snapshot(stats.uploaded_bytes, None, now);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             },
@@ -1190,37 +1190,38 @@ impl PeerHandler {
         // Prevent deadlocks.
         drop(pe);
 
+        // if let Some(dur) = backoff {
         if let Some(dur) = backoff {
-            self.state.clone().spawn(
-                error_span!(
-                    parent: self.state.shared.span.clone(),
-                    "wait_for_peer",
-                    peer = handle.to_string(),
-                    duration = format!("{dur:?}")
-                ),
-                async move {
-                    trace!("waiting to reconnect again");
-                    tokio::time::sleep(dur).await;
-                    trace!("finished waiting");
-                    self.state
-                        .peers
-                        .with_peer_mut(handle, "dead_to_queued", |peer| {
-                            match peer.get_state() {
-                                PeerState::Dead => {
-                                    peer.set_state(PeerState::Queued, &self.state.peers)
-                                }
-                                other => bail!(
-                                    "peer is in unexpected state: {}. Expected dead",
-                                    other.name()
-                                ),
-                            };
-                            Ok(())
-                        })
-                        .context("bug: peer disappeared")??;
-                    self.state.peer_queue_tx.send(handle)?;
-                    Ok::<_, anyhow::Error>(())
-                },
-            );
+            // self.state.clone().spawn(
+            //     error_span!(
+            //         parent: self.state.shared.span.clone(),
+            //         "wait_for_peer",
+            //         peer = handle.to_string(),
+            //         duration = format!("{dur:?}")
+            //     ),
+            //     async move {
+            //         trace!("waiting to reconnect again");
+            //         tokio::time::sleep(dur).await;
+            //         trace!("finished waiting");
+            //         self.state
+            //             .peers
+            //             .with_peer_mut(handle, "dead_to_queued", |peer| {
+            //                 match peer.get_state() {
+            //                     PeerState::Dead => {
+            //                         peer.set_state(PeerState::Queued, &self.state.peers)
+            //                     }
+            //                     other => bail!(
+            //                         "peer is in unexpected state: {}. Expected dead",
+            //                         other.name()
+            //                     ),
+            //                 };
+            //                 Ok(())
+            //             })
+            //             .context("bug: peer disappeared")??;
+            //         self.state.peer_queue_tx.send(handle)?;
+            //         Ok::<_, anyhow::Error>(())
+            //     },
+            // );
         } else {
             debug!("dropping peer, backoff exhausted");
             self.state.peers.drop_peer(handle);
