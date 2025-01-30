@@ -30,10 +30,13 @@ impl SocksProxyConfig {
     async fn connect(
         &self,
         addr: SocketAddr,
-    ) -> anyhow::Result<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> {
+    ) -> anyhow::Result<(
+        impl tokio::io::AsyncRead + Unpin,
+        impl tokio::io::AsyncWrite + Unpin,
+    )> {
         let proxy_addr = (self.host.as_str(), self.port);
 
-        if let Some((username, password)) = self.username_password.as_ref() {
+        let stream = if let Some((username, password)) = self.username_password.as_ref() {
             tokio_socks::tcp::Socks5Stream::connect_with_password(
                 proxy_addr,
                 addr,
@@ -41,12 +44,14 @@ impl SocksProxyConfig {
                 password.as_str(),
             )
             .await
-            .context("error connecting to proxy")
+            .context("error connecting to proxy")?
         } else {
             tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr)
                 .await
-                .context("error connecting to proxy")
-        }
+                .context("error connecting to proxy")?
+        };
+
+        Ok(tokio::io::split(stream))
     }
 }
 
@@ -61,22 +66,23 @@ impl From<Option<SocksProxyConfig>> for StreamConnector {
     }
 }
 
-pub(crate) trait AsyncReadWrite:
-    tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin
-{
-}
-
-impl<T> AsyncReadWrite for T where T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin {}
-
 impl StreamConnector {
-    pub async fn connect(&self, addr: SocketAddr) -> anyhow::Result<Box<dyn AsyncReadWrite>> {
+    pub async fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> anyhow::Result<(
+        Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
+    )> {
         if let Some(proxy) = self.proxy_config.as_ref() {
-            return Ok(Box::new(proxy.connect(addr).await?));
+            let (r, w) = proxy.connect(addr).await?;
+            return Ok((Box::new(r), Box::new(w)));
         }
-        Ok(Box::new(
-            tokio::net::TcpStream::connect(addr)
-                .await
-                .context("error connecting")?,
-        ))
+
+        let (r, w) = tokio::net::TcpStream::connect(addr)
+            .await
+            .context("error connecting")?
+            .into_split();
+        Ok((Box::new(r), Box::new(w)))
     }
 }
