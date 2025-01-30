@@ -88,6 +88,16 @@ where
     }
 }
 
+struct ManagePeerArgs<R, W> {
+    handshake_supports_extended: bool,
+    read_buf: ReadBuf,
+    write_buf: Vec<u8>,
+    read: R,
+    write: W,
+    outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
+    have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+}
+
 impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(
         addr: SocketAddr,
@@ -147,21 +157,21 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .context("error writing handshake")?;
         write_buf.clear();
 
-        let h_supports_extended = handshake.supports_extended();
+        let handshake_supports_extended = handshake.supports_extended();
 
         self.handler.on_handshake(handshake)?;
 
         let (read, write) = conn.into_split();
 
-        self.manage_peer(
-            h_supports_extended,
+        self.manage_peer(ManagePeerArgs {
+            handshake_supports_extended,
             read_buf,
             write_buf,
             read,
             write,
             outgoing_chan,
             have_broadcast,
-        )
+        })
         .await
     }
 
@@ -201,7 +211,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_handshake(&mut read, rwtimeout)
             .await
             .context("error reading handshake")?;
-        let h_supports_extended = h.supports_extended();
+        let handshake_supports_extended = h.supports_extended();
         trace!(
             peer_id=?Id20::new(h.peer_id),
             decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
@@ -217,28 +227,35 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         self.handler.on_handshake(h)?;
 
-        self.manage_peer(
-            h_supports_extended,
+        self.manage_peer(ManagePeerArgs {
+            handshake_supports_extended,
             read_buf,
             write_buf,
             read,
             write,
             outgoing_chan,
             have_broadcast,
-        )
+        })
         .await
     }
 
     async fn manage_peer(
         &self,
-        handshake_supports_extended: bool,
-        mut read_buf: ReadBuf,
-        mut write_buf: Vec<u8>,
-        mut read: impl tokio::io::AsyncRead + Unpin + Send,
-        mut write: impl tokio::io::AsyncWrite + Unpin + Send,
-        mut outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
-        mut have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
+        args: ManagePeerArgs<
+            impl tokio::io::AsyncRead + Send + Unpin,
+            impl tokio::io::AsyncWrite + Send + Unpin,
+        >,
     ) -> anyhow::Result<()> {
+        let ManagePeerArgs {
+            handshake_supports_extended,
+            mut read_buf,
+            mut write_buf,
+            mut read,
+            mut write,
+            mut outgoing_chan,
+            mut have_broadcast,
+        } = args;
+
         use tokio::io::AsyncWriteExt;
 
         let rwtimeout = self

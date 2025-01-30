@@ -26,7 +26,7 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             .headers
             .get("Accept")
             .and_then(|h| h.to_str().ok())
-            .map_or(false, |h| h.contains("text/html"))
+            .is_some_and(|h| h.contains("text/html"))
         {
             return Redirect::temporary("./web/").into_response();
         }

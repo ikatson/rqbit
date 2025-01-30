@@ -996,7 +996,7 @@ impl Session {
             name,
         } = add_res;
 
-        let private = metadata.as_ref().map_or(false, |m| m.info.private);
+        let private = metadata.as_ref().is_some_and(|m| m.info.private);
 
         let make_peer_rx = || {
             self.make_peer_rx(

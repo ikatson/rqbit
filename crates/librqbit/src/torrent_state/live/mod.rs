@@ -1253,10 +1253,7 @@ impl PeerHandler {
     ///
     /// If this returns, an existing in-flight piece was marked to be ours.
     fn try_steal_old_slow_piece(&self, threshold: f64) -> Option<ValidPieceIndex> {
-        let my_avg_time = match self.counters.average_piece_download_time() {
-            Some(t) => t,
-            None => return None,
-        };
+        let my_avg_time = self.counters.average_piece_download_time()?;
 
         let (stolen_idx, from_peer) = {
             let mut g = self.state.lock_write("try_steal_old_slow_piece");
