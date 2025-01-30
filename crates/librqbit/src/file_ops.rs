@@ -236,7 +236,12 @@ impl<'a> FileOps<'a> {
                 Ok(true)
             }
             Some(false) => {
-                warn!("the piece={} hash does not match", piece_index);
+                let piece_length = self.lengths.piece_length(piece_index);
+                let absolute_offset = self.lengths.piece_offset(piece_index);
+                warn!(
+                    piece_length,
+                    absolute_offset, "the piece={} hash does not match", piece_index
+                );
                 Ok(false)
             }
             None => {

@@ -117,6 +117,7 @@ async-backtrace = { version = "0.2", optional = true }
 notify = { version = "7", optional = true }
 walkdir = "2.5.0"
 arc-swap = "1.7.1"
+librqbit-utp = { path = "../../../librqbit-utp" }
 
 [build-dependencies]
 anyhow = "1"

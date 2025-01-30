@@ -336,6 +336,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     };
                 };
 
+                tokio::task::yield_now().await;
+
                 let mut uploaded_add = None;
 
                 trace!("about to send: {:?}", &req);
@@ -420,6 +422,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     .context("error reading message")?;
                 trace!("received: {:?}", &message);
 
+                tokio::task::yield_now().await;
+
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
                     *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
                     self.handler.on_extended_handshake(h)?;
@@ -438,11 +442,19 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         tokio::select! {
             r = reader => {
-                trace!(result=?r, "reader is done, exiting");
+                if let Err(e) = r.as_ref() {
+                    trace!("reader finished with error: {e:#}");
+                } else {
+                    trace!("reader finished without error");
+                }
                 r
             }
             r = writer => {
-                trace!(result=?r, "writer is done, exiting");
+                if let Err(e) = r.as_ref() {
+                    trace!("writer finished with error: {e:#}");
+                } else {
+                    trace!("writer finished without error");
+                }
                 r
             }
         }

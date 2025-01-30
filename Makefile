@@ -15,17 +15,22 @@ export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= [::]:3030
 export RQBIT_FASTRESUME = true
+
+# Don't expose devserver
+export RQBIT_UPNP_PORT_FORWARD_DISABLE = true
+export RQBIT_TCP_LISTEN_DISABLE = true
+
 CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
 RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit
 
-@PHONY: devserver-release
+@PHONY: devserver-profile
 devserver-profile:
 	cargo run --release $(CARGO_RUN_FLAGS) -- server start $(RQBIT_OUTPUT_FOLDER)
 
 # DEV variables (that's why defined after devserver-profile)
 export RQBIT_LOG_FILE ?= /tmp/rqbit-log
-export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace
+export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace,librqbit_utp=debug
 export CORS_ALLOW_REGEXP ?= '.*'
 
 @PHONY: devserver

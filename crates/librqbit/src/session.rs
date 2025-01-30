@@ -22,7 +22,7 @@ use crate::{
     storage::{
         filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
     },
-    stream_connect::{SocksProxyConfig, StreamConnector},
+    stream_connect::{SocksProxyConfig, StreamConnector, StreamConnectorConfig},
     torrent_state::{
         initializing::TorrentStateInitializing, ManagedTorrentHandle, ManagedTorrentLocked,
         ManagedTorrentOptions, ManagedTorrentState, TorrentMetadata, TorrentStateLive,
@@ -605,7 +605,13 @@ impl Session {
                 builder.build().context("error building HTTP(S) client")?
             };
 
-            let stream_connector = Arc::new(StreamConnector::from(proxy_config));
+            let stream_connector = Arc::new(
+                StreamConnector::new(StreamConnectorConfig {
+                    socks_proxy_config: proxy_config,
+                })
+                .await
+                .context("error creating stream connector")?,
+            );
 
             let session = Arc::new(Self {
                 persistence,

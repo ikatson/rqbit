@@ -138,7 +138,7 @@ mod tests {
             Vec::new(),
             peer_rx,
             None,
-            Arc::new(Default::default()),
+            Arc::new(StreamConnector::new(Default::default()).await.unwrap()),
         )
         .await
         {
