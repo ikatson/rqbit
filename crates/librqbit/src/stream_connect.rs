@@ -72,7 +72,7 @@ impl StreamConnector {
         let opts = librqbit_utp::SocketOpts {
             congestion: librqbit_utp::CongestionConfig {
                 kind: Default::default(),
-                tracing: cfg!(debug_assertions),
+                tracing: true,
             },
             ..Default::default()
         };
@@ -107,6 +107,7 @@ impl StreamConnector {
             .await
             .context("error connecting over uTP")?
             .split();
+
         return Ok((Box::new(r), Box::new(w)));
 
         let (r, w) = tokio::net::TcpStream::connect(addr)
