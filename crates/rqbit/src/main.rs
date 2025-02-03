@@ -13,11 +13,9 @@ use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
-    AddTorrent, AddTorrent, AddTorrentOptions, AddTorrentOptions, AddTorrentResponse,
-    AddTorrentResponse, Api, Api, ConnectionOptions, ListOnlyResponse, ListOnlyResponse,
-    ListenerMode, ListenerOptions, PeerConnectionOptions, PeerConnectionOptions, Session, Session,
-    SessionOptions, SessionOptions, SessionPersistenceConfig, SessionPersistenceConfig,
-    TorrentStatsState, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, ListOnlyResponse,
+    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
+    SessionPersistenceConfig, TorrentStatsState,
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
