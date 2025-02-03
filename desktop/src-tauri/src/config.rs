@@ -4,7 +4,11 @@ use std::{
     time::Duration,
 };
 
-use librqbit::{dht::PersistentDht, limits::LimitsConfig};
+use librqbit::{
+    dht::PersistentDht,
+    limits::LimitsConfig,
+    listen::{ListenerMode, ListenerOptions},
+};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -28,19 +32,37 @@ impl Default for RqbitDesktopConfigDht {
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-pub struct RqbitDesktopConfigTcpListen {
-    pub disable: bool,
-    pub min_port: u16,
-    pub max_port: u16,
+pub struct RqbitDesktopConfigListen {
+    pub enable_tcp: bool,
+    pub enable_utp: bool,
+    pub enable_upnp_port_forward: bool,
+    pub port: u16,
 }
 
-impl Default for RqbitDesktopConfigTcpListen {
+impl RqbitDesktopConfigListen {
+    pub fn as_listener_opts(&self) -> Option<ListenerOptions> {
+        let mode = match (self.enable_tcp, self.enable_utp) {
+            (true, true) => ListenerMode::TcpAndUtp,
+            (true, false) => ListenerMode::TcpOnly,
+            (false, true) => ListenerMode::UtpOnly,
+            (false, false) => return None,
+        };
+        Some(ListenerOptions {
+            mode,
+            listen_addr: (Ipv4Addr::UNSPECIFIED, self.port).into(),
+            enable_upnp_port_forwarding: self.enable_upnp_port_forward,
+            ..Default::default()
+        })
+    }
+}
+
+impl Default for RqbitDesktopConfigListen {
     fn default() -> Self {
         Self {
-            disable: false,
-            // TODO: use consts from librqbit
-            min_port: 4240,
-            max_port: 4260,
+            enable_tcp: true,
+            enable_utp: false,
+            enable_upnp_port_forward: true,
+            port: 4240,
         }
     }
 }
@@ -128,10 +150,6 @@ impl Default for RqbitDesktopConfigHttpApi {
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(default)]
 pub struct RqbitDesktopConfigUpnp {
-    // rename for backwards compat
-    #[serde(rename = "disable")]
-    pub disable_tcp_port_forward: bool,
-
     #[serde(default)]
     pub enable_server: bool,
 
@@ -149,7 +167,8 @@ pub struct RqbitDesktopConfig {
     pub disable_upload: bool,
 
     pub dht: RqbitDesktopConfigDht,
-    pub tcp_listen: RqbitDesktopConfigTcpListen,
+    #[serde(default)]
+    pub listen: RqbitDesktopConfigListen,
     pub upnp: RqbitDesktopConfigUpnp,
     pub persistence: RqbitDesktopConfigPersistence,
     pub peer_opts: RqbitDesktopConfigPeerOpts,
@@ -170,7 +189,7 @@ impl Default for RqbitDesktopConfig {
         Self {
             default_download_location: download_folder,
             dht: Default::default(),
-            tcp_listen: Default::default(),
+            listen: Default::default(),
             upnp: Default::default(),
             persistence: Default::default(),
             peer_opts: Default::default(),

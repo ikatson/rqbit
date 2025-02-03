@@ -1,12 +1,11 @@
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
 
 use bytes::Bytes;
 use tracing::info;
 
-use crate::{tests::test_util::setup_test_logging, AddTorrentOptions, Session};
+use crate::{
+    listen::ListenerOptions, tests::test_util::setup_test_logging, AddTorrentOptions, Session,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_utp_with_another_client() {
@@ -33,8 +32,11 @@ async fn test_utp_with_another_client() {
         crate::SessionOptions {
             disable_dht: true,
             persistence: None,
-            listen_port_range: None,
-            enable_upnp_port_forwarding: false,
+            listen: Some(ListenerOptions {
+                mode: crate::listen::ListenerMode::UtpOnly,
+                listen_addr: (Ipv4Addr::LOCALHOST, 57318).into(),
+                ..Default::default()
+            }),
             ..Default::default()
         },
     )

@@ -1,7 +1,8 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::Context;
-use tracing::info;
+use anyhow::{bail, Context};
+use librqbit_utp::UtpSocketUdp;
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SocksProxyConfig {
@@ -10,9 +11,10 @@ pub(crate) struct SocksProxyConfig {
     pub username_password: Option<(String, String)>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default, Debug, Clone)]
 pub(crate) struct StreamConnectorConfig {
     pub socks_proxy_config: Option<SocksProxyConfig>,
+    pub utp_socket: Option<Arc<UtpSocketUdp>>,
 }
 
 impl SocksProxyConfig {
@@ -64,28 +66,14 @@ impl SocksProxyConfig {
 #[derive(Debug)]
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
-    utp_socket: Arc<librqbit_utp::UtpSocketUdp>,
+    utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
 }
 
 impl StreamConnector {
     pub async fn new(config: StreamConnectorConfig) -> anyhow::Result<Self> {
-        let opts = librqbit_utp::SocketOpts {
-            congestion: librqbit_utp::CongestionConfig {
-                kind: Default::default(),
-                tracing: true,
-            },
-            ..Default::default()
-        };
-        let utp_socket =
-            librqbit_utp::UtpSocketUdp::new_udp_with_opts("0.0.0.0:58226".parse().unwrap(), opts)
-                .await
-                .context("error creating uTP socket")?;
-
-        info!(addr = ?utp_socket.bind_addr(), "started uTP socket");
-
         Ok(Self {
             proxy_config: config.socks_proxy_config,
-            utp_socket,
+            utp_socket: config.utp_socket,
         })
     }
 
@@ -101,19 +89,62 @@ impl StreamConnector {
             return Ok((Box::new(r), Box::new(w)));
         }
 
-        let (r, w) = self
-            .utp_socket
-            .connect(addr)
-            .await
-            .context("error connecting over uTP")?
-            .split();
+        // Try to connect over TCP first. If in 1 second we haven't connected, try uTP also (if configured).
+        // Whoever connects first wins.
 
-        return Ok((Box::new(r), Box::new(w)));
+        let tcp_connect = async {
+            tokio::net::TcpStream::connect(addr)
+                .await
+                .context("error connecting over TCP")
+        };
 
-        let (r, w) = tokio::net::TcpStream::connect(addr)
-            .await
-            .context("error connecting")?
-            .into_split();
-        Ok((Box::new(r), Box::new(w)))
+        let utp_connect = async {
+            let sock = match self.utp_socket.as_ref() {
+                Some(sock) => sock,
+                None => bail!("uTP disabled"),
+            };
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            sock.connect(addr)
+                .await
+                .context("error connecting over uTP")
+        };
+
+        tokio::pin!(tcp_connect);
+        tokio::pin!(utp_connect);
+
+        let mut tcp_failed = false;
+        let mut utp_failed = false;
+
+        while !tcp_failed || !utp_failed {
+            tokio::select! {
+                tcp_res = &mut tcp_connect, if !tcp_failed => {
+                    match tcp_res {
+                        Ok(stream) => {
+                            let (r, w) = stream.into_split();
+                            return Ok((Box::new(r), Box::new(w)));
+                        },
+                        Err(e) => {
+                            debug!(addr=?addr, "error connecting over TCP: {e:#}");
+                            tcp_failed = true;
+                        }
+                    }
+                },
+                utp_res = &mut utp_connect, if !utp_failed => {
+                    match utp_res {
+                        Ok(stream) => {
+                            let (r, w) = stream.split();
+                            return Ok((Box::new(r), Box::new(w)));
+                        },
+                        Err(e) => {
+                            debug!(addr=?addr, "error connecting over uTP: {e:#}");
+                            utp_failed = true;
+                        }
+                    }
+                },
+            };
+        }
+
+        bail!("can't connect to {addr}")
     }
 }

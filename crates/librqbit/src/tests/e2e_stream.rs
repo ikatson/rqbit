@@ -1,4 +1,7 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use anyhow::Context;
 use tempfile::TempDir;
@@ -32,8 +35,10 @@ async fn e2e_stream() -> anyhow::Result<()> {
             disable_dht: true,
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             persistence: None,
-            listen_port_range: Some(16001..16100),
-            enable_upnp_port_forwarding: false,
+            listen: Some(crate::listen::ListenerOptions {
+                listen_addr: (Ipv4Addr::LOCALHOST, 16001).into(),
+                ..Default::default()
+            }),
             ..Default::default()
         },
     )
@@ -77,8 +82,6 @@ async fn e2e_stream() -> anyhow::Result<()> {
             disable_dht: true,
             persistence: None,
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
-            listen_port_range: None,
-            enable_upnp_port_forwarding: false,
             ..Default::default()
         },
     )
