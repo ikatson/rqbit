@@ -833,8 +833,11 @@ impl Session {
                             );
                         }
                         Err(e) => {
-                            error!("error accepting: {e:#}");
-                            continue;
+                            warn!("error accepting: {e:#}");
+                            // Whatever is the reason, ensure we are not stuck trying to
+                            // accept indefinitely.
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            continue
                         }
                     }
                 },
