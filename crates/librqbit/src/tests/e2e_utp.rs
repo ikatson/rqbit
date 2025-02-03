@@ -8,7 +8,13 @@ use crate::{
     ConnectionOptions, Session,
 };
 
+// A test to download a canary file from another torrent client on 127.0.0.1:27312.
+// Disabled, uncomment if developing / testing uTP.
+//
+// The canary file is created from librqbit_utp, then served from the other torrent client:
+// cargo run --release --example create_canary_file /tmp/canary_4096m 4096
 #[tokio::test(flavor = "multi_thread")]
+#[ignore]
 async fn test_utp_with_another_client() {
     if cfg!(all(test, not(debug_assertions))) {
         let test_filename = {
