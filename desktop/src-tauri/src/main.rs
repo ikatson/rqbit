@@ -83,6 +83,7 @@ async fn api_from_config(
             },
         })
     };
+
     let session = Session::new_with_opts(
         config.default_download_location.clone(),
         SessionOptions {
@@ -98,12 +99,7 @@ async fn api_from_config(
                 read_write_timeout: Some(config.peer_opts.read_write_timeout),
                 ..Default::default()
             }),
-            listen_port_range: if !config.tcp_listen.disable {
-                Some(config.tcp_listen.min_port..config.tcp_listen.max_port)
-            } else {
-                None
-            },
-            enable_upnp_port_forwarding: !config.upnp.disable_tcp_port_forward,
+            listen: config.listen.as_listener_opts(),
             fastresume: config.persistence.fastresume,
             ratelimits: config.ratelimits,
             #[cfg(feature = "disable-upload")]

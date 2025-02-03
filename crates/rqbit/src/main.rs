@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -19,6 +19,7 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     limits::LimitsConfig,
+    listen::{ListenerMode, ListenerOptions},
     storage::{
         StorageFactory, StorageFactoryExt,
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
@@ -132,21 +133,20 @@ struct Opts {
     #[arg(long = "disable-tcp-listen", env = "RQBIT_TCP_LISTEN_DISABLE")]
     disable_tcp_listen: bool,
 
-    /// The minimal port to listen for incoming connections.
+    // Enable to listen and connect over uTP
     #[arg(
-        long = "tcp-min-port",
-        default_value = "4240",
-        env = "RQBIT_TCP_LISTEN_MIN_PORT"
+        long = "experimental-enable-utp-listen",
+        env = "RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE"
     )]
-    tcp_listen_min_port: u16,
+    enable_utp_listen: bool,
 
-    /// The maximal port to listen for incoming connections.
+    /// The port to listen for incoming connections (applies to both TCP and uTP).
     #[arg(
-        long = "tcp-max-port",
-        default_value = "4260",
-        env = "RQBIT_TCP_LISTEN_MAX_PORT"
+        long = "listen-port",
+        default_value = "4240",
+        env = "RQBIT_LISTEN_PORT"
     )]
-    tcp_listen_max_port: u16,
+    listen_port: u16,
 
     /// If set, will try to publish the chosen port through upnp on your router.
     #[arg(
@@ -482,6 +482,19 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         Default::default()
     };
 
+    let listen_mode = match (!opts.disable_tcp_listen, opts.enable_utp_listen) {
+        (true, false) => Some(ListenerMode::TcpOnly),
+        (false, true) => Some(ListenerMode::UtpOnly),
+        (true, true) => Some(ListenerMode::TcpAndUtp),
+        (false, false) => None,
+    };
+    let listen = listen_mode.map(|mode| ListenerOptions {
+        mode,
+        listen_addr: (Ipv4Addr::UNSPECIFIED, opts.listen_port).into(),
+        enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
+        ..Default::default()
+    });
+
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
@@ -494,12 +507,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             read_write_timeout: Some(opts.peer_read_write_timeout),
             ..Default::default()
         }),
-        listen_port_range: if !opts.disable_tcp_listen {
-            Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
-        } else {
-            None
-        },
-        enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
+        listen,
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {

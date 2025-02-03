@@ -15,6 +15,7 @@ use crate::{
     blocklist,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
     limits::{Limits, LimitsConfig},
+    listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
@@ -57,11 +58,11 @@ use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    net::{TcpListener, TcpStream},
+    io::{AsyncRead, AsyncWrite},
     sync::Notify,
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
-use tracing::{Instrument, Span, debug, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, error, error_span, info, trace, warn};
 use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -107,7 +108,7 @@ pub struct Session {
 
     // Network
     peer_id: Id20,
-    tcp_listen_port: Option<u16>,
+    announce_port: Option<u16>,
     dht: Option<Dht>,
     pub(crate) connector: Arc<StreamConnector>,
     reqwest_client: reqwest::Client,
@@ -133,7 +134,7 @@ pub struct Session {
 
     // Monitoring / tracing / logging
     pub(crate) stats: SessionStats,
-    root_span: Option<Span>,
+    root_span: Option<tracing::Span>,
 
     // Feature flags
     #[cfg(feature = "disable-upload")]
@@ -401,8 +402,7 @@ pub struct SessionOptions {
     /// Configure default peer connection options. Can be overriden per torrent.
     pub peer_opts: Option<PeerConnectionOptions>,
 
-    pub listen_port_range: Option<std::ops::Range<u16>>,
-    pub enable_upnp_port_forwarding: bool,
+    pub listen: Option<ListenerOptions>,
 
     // If you set this to something, all writes to disk will happen in background and be
     // buffered in memory up to approximately the given number of megabytes.
@@ -419,7 +419,7 @@ pub struct SessionOptions {
     pub concurrent_init_limit: Option<usize>,
 
     // the root span to use. If not set will be None.
-    pub root_span: Option<Span>,
+    pub root_span: Option<tracing::Span>,
 
     pub ratelimits: LimitsConfig,
 
@@ -430,20 +430,6 @@ pub struct SessionOptions {
 
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
-}
-
-async fn create_tcp_listener(
-    port_range: std::ops::Range<u16>,
-) -> anyhow::Result<(TcpListener, u16)> {
-    for port in port_range.clone() {
-        match TcpListener::bind(("0.0.0.0", port)).await {
-            Ok(l) => return Ok((l, port)),
-            Err(e) => {
-                debug!("error listening on port {port}: {e:#}")
-            }
-        }
-    }
-    bail!("no free TCP ports in range {port_range:?}");
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -467,7 +453,8 @@ fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> any
 
 pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
-    pub stream: tokio::net::TcpStream,
+    pub reader: Box<dyn AsyncRead + Send + Sync + Unpin + 'static>,
+    pub writer: Box<dyn AsyncWrite + Send + Sync + Unpin + 'static>,
     pub read_buf: ReadBuf,
     pub handshake: Handshake<ByteBufOwned>,
 }
@@ -509,16 +496,19 @@ impl Session {
                 warn!("uploading disabled");
             }
 
-            let (tcp_listener, tcp_listen_port) =
-                if let Some(port_range) = opts.listen_port_range.clone() {
-                    let (l, p) = create_tcp_listener(port_range)
+            let listen_result = if let Some(listen_opts) = opts.listen.take() {
+                Some(
+                    listen_opts
+                        .start(
+                            opts.root_span.as_ref().and_then(|s| s.id()),
+                            token.child_token(),
+                        )
                         .await
-                        .context("error listening on TCP")?;
-                    info!("Listening on 0.0.0.0:{p} for incoming peer connections");
-                    (Some(l), Some(p))
-                } else {
-                    (None, None)
-                };
+                        .context("error starting listeners")?,
+                )
+            } else {
+                None
+            };
 
             let dht = if opts.disable_dht {
                 None
@@ -621,6 +611,7 @@ impl Session {
             let stream_connector = Arc::new(
                 StreamConnector::new(StreamConnectorConfig {
                     socks_proxy_config: proxy_config,
+                    utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                 })
                 .await
                 .context("error creating stream connector")?,
@@ -651,7 +642,7 @@ impl Session {
                 db: RwLock::new(Default::default()),
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
                 cancellation_token: token,
-                tcp_listen_port,
+                announce_port: listen_result.as_ref().and_then(|l| l.announce_port),
                 disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
                 reqwest_client,
@@ -682,19 +673,32 @@ impl Session {
                 );
             }
 
-            if let Some(tcp_listener) = tcp_listener {
-                session.spawn(
-                    error_span!(parent: session.rs(), "tcp_listen", port = tcp_listen_port),
-                    session.clone().task_tcp_listener(tcp_listener),
-                );
-            }
-
-            if let Some(listen_port) = tcp_listen_port {
-                if opts.enable_upnp_port_forwarding {
+            if let Some(mut listen) = listen_result {
+                if let Some(tcp) = listen.tcp_socket.take() {
                     session.spawn(
-                        error_span!(parent: session.rs(), "upnp_forward", port = listen_port),
-                        Self::task_upnp_port_forwarder(listen_port),
+                        error_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
+                        {
+                            let this = session.clone();
+                            async move { this.task_listener(tcp).await }
+                        },
                     );
+                }
+                if let Some(utp) = listen.utp_socket.take() {
+                    session.spawn(
+                        error_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
+                        {
+                            let this = session.clone();
+                            async move { this.task_listener(utp).await }
+                        },
+                    );
+                }
+                if let Some(announce_port) = listen.announce_port {
+                    if listen.enable_upnp_port_forwarding {
+                        session.spawn(
+                            error_span!(parent: session.rs(), "upnp_forward", port = announce_port),
+                            Self::task_upnp_port_forwarder(announce_port),
+                        );
+                    }
                 }
             }
 
@@ -744,7 +748,8 @@ impl Session {
     async fn check_incoming_connection(
         self: Arc<Self>,
         addr: SocketAddr,
-        mut stream: TcpStream,
+        mut reader: Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
+        writer: Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
         let rwtimeout = self
             .peer_opts
@@ -758,7 +763,7 @@ impl Session {
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf
-            .read_handshake(&mut stream, rwtimeout)
+            .read_handshake(&mut reader, rwtimeout)
             .await
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
@@ -785,7 +790,8 @@ impl Session {
                 live,
                 CheckedIncomingConnection {
                     addr,
-                    stream,
+                    reader,
+                    writer,
                     handshake,
                     read_buf,
                 },
@@ -798,7 +804,7 @@ impl Session {
         )
     }
 
-    async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
+    async fn task_listener(self: Arc<Self>, l: impl Accept) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
@@ -807,12 +813,12 @@ impl Session {
             tokio::select! {
                 r = l.accept() => {
                     match r {
-                        Ok((stream, addr)) => {
+                        Ok((addr, (read, write))) => {
                             trace!("accepted connection from {addr}");
                             let session = session.upgrade().context("session is dead")?;
                             let span = error_span!(parent: session.rs(), "incoming", addr=%addr);
                             futs.push(
-                                session.check_incoming_connection(addr, stream)
+                                session.check_incoming_connection(addr, Box::new(read), Box::new(write))
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
@@ -1345,7 +1351,7 @@ impl Session {
         initial_peers: Vec<SocketAddr>,
         is_private: bool,
     ) -> Option<PeerStream> {
-        let announce_port = if announce { self.tcp_listen_port } else { None };
+        let announce_port = if announce { self.announce_port } else { None };
         let dht_rx = if is_private {
             None
         } else {
@@ -1419,7 +1425,7 @@ impl Session {
     }
 
     pub fn tcp_listen_port(&self) -> Option<u16> {
-        self.tcp_listen_port
+        self.announce_port
     }
 
     async fn resolve_magnet(

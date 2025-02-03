@@ -15,6 +15,7 @@ use tracing::{Instrument, error, error_span, info};
 use crate::{
     AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
     create_torrent,
+    listen::ListenerOptions,
     tests::test_util::{
         DropChecks, TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging,
         wait_until_i_am_the_last_task,
@@ -90,9 +91,7 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     max_random_sleep_ms: rand::rng().random_range(0u8..16),
                 }
                 .as_peer_id();
-                let listen_range_start = 15100u16 + i as u16;
-                let listen_range_end = listen_range_start + 1;
-                let listen_range = listen_range_start..listen_range_end;
+                let listen_port = 15100u16 + i as u16;
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
@@ -101,8 +100,12 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                         dht_config: None,
                         peer_id: Some(peer_id),
                         peer_opts: None,
-                        listen_port_range: Some(listen_range),
-                        enable_upnp_port_forwarding: false,
+                        listen: Some(ListenerOptions {
+                            mode: crate::listen::ListenerMode::TcpOnly,
+                            listen_addr: (Ipv4Addr::LOCALHOST, listen_port).into(),
+                            enable_upnp_port_forwarding: false,
+                            ..Default::default()
+                        }),
                         default_storage_factory: None,
                         defer_writes_up_to: None,
                         root_span: Some(error_span!(parent: None, "server", id = i)),
@@ -211,8 +214,6 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     folder: Some(session_persistence),
                 }),
                 fastresume: true,
-                listen_port_range: None,
-                enable_upnp_port_forwarding: false,
                 root_span: Some(error_span!("client")),
                 ..Default::default()
             },
