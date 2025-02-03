@@ -1,7 +1,4 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::{bail, Context};
 use librqbit_core::magnet::Magnet;
@@ -19,11 +16,21 @@ use crate::{
         create_default_random_dir_with_torrents, setup_test_logging, wait_until_i_am_the_last_task,
         DropChecks, TestPeerMetadata,
     },
-    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
+    AddTorrentOptions, AddTorrentResponse, ConnectionOptions, ListenerMode, Session,
+    SessionOptions, SessionPersistenceConfig,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
-async fn test_e2e_download() {
+async fn test_e2e_download_tcp() {
+    _test_e2e_download_timeout_and_cleanups(ListenerMode::TcpOnly).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 64)]
+async fn test_e2e_download_utp() {
+    _test_e2e_download_timeout_and_cleanups(ListenerMode::UtpOnly).await
+}
+
+async fn _test_e2e_download_timeout_and_cleanups(mode: ListenerMode) {
     let timeout = std::env::var("E2E_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -32,7 +39,7 @@ async fn test_e2e_download() {
     let drop_checks = DropChecks::default();
     tokio::time::timeout(
         Duration::from_secs(timeout),
-        _test_e2e_download(&drop_checks),
+        _test_e2e_download(mode, &drop_checks),
     )
     .await
     .context("test_e2e_download timed out")
@@ -44,7 +51,7 @@ async fn test_e2e_download() {
     drop_checks.check().unwrap();
 }
 
-async fn _test_e2e_download(drop_checks: &DropChecks) {
+async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
     setup_test_logging();
     match crate::try_increase_nofile_limit() {
         Ok(limit) => info!(limit, "increased ulimit"),
@@ -96,17 +103,12 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
                         disable_dht: true,
-                        disable_dht_persistence: true,
-                        dht_config: None,
                         peer_id: Some(peer_id),
                         listen: Some(ListenerOptions {
-                            mode: crate::listen::ListenerMode::TcpOnly,
+                            mode,
                             listen_addr: (Ipv4Addr::LOCALHOST, listen_port).into(),
-                            enable_upnp_port_forwarding: false,
                             ..Default::default()
                         }),
-                        default_storage_factory: None,
-                        defer_writes_up_to: None,
                         root_span: Some(error_span!(parent: None, "server", id = i)),
                         ..Default::default()
                     },
@@ -156,12 +158,9 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     }
                 }
                 info!("torrent is live");
-                let addr = SocketAddr::new(
-                    std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    session
-                        .tcp_listen_port()
-                        .context("expected session.tcp_listen_port() to be set")?,
-                );
+                let addr = session
+                    .listen_addr()
+                    .context("expected listen_addr to be set")?;
                 Ok::<_, anyhow::Error>((session, addr))
             }
             .instrument(error_span!("server", id = i)),
@@ -211,6 +210,10 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                 dht_config: None,
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
+                }),
+                connect: Some(ConnectionOptions {
+                    enable_tcp: mode.tcp_enabled(),
+                    ..Default::default()
                 }),
                 fastresume: true,
                 root_span: Some(error_span!("client")),

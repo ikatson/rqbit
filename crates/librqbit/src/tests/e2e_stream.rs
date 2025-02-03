@@ -1,7 +1,4 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::Context;
 use tempfile::TempDir;
@@ -69,10 +66,9 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
     info!("server torrent was completed");
 
-    let peer = SocketAddr::new(
-        "127.0.0.1".parse().unwrap(),
-        server_session.tcp_listen_port().unwrap(),
-    );
+    let peer = server_session
+        .listen_addr()
+        .context("expected listen_addr to be set")?;
 
     let client_dir = TempDir::with_prefix("test_e2e_stream_client")?;
 
