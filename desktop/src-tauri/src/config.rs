@@ -4,7 +4,10 @@ use std::{
     time::Duration,
 };
 
-use librqbit::{dht::PersistentDht, limits::LimitsConfig, ListenerMode, ListenerOptions};
+use librqbit::{
+    dht::PersistentDht, limits::LimitsConfig, ConnectionOptions, ListenerMode, ListenerOptions,
+    PeerConnectionOptions,
+};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -26,39 +29,65 @@ impl Default for RqbitDesktopConfigDht {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde_as]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-pub struct RqbitDesktopConfigListen {
-    pub enable_tcp: bool,
+pub struct RqbitDesktopConfigConnections {
+    pub enable_tcp_listen: bool,
+    pub enable_tcp_outgoing: bool,
     pub enable_utp: bool,
     pub enable_upnp_port_forward: bool,
-    pub port: u16,
+    pub socks_proxy: String,
+    pub listen_port: u16,
+
+    #[serde_as(as = "serde_with::DurationSeconds")]
+    pub peer_connect_timeout: Duration,
+    #[serde_as(as = "serde_with::DurationSeconds")]
+    pub peer_read_write_timeout: Duration,
 }
 
-impl RqbitDesktopConfigListen {
-    pub fn as_listener_opts(&self) -> Option<ListenerOptions> {
-        let mode = match (self.enable_tcp, self.enable_utp) {
-            (true, true) => ListenerMode::TcpAndUtp,
-            (true, false) => ListenerMode::TcpOnly,
-            (false, true) => ListenerMode::UtpOnly,
-            (false, false) => return None,
+impl RqbitDesktopConfigConnections {
+    pub fn as_listener_and_connect_opts(&self) -> (Option<ListenerOptions>, ConnectionOptions) {
+        let mode = match (self.enable_tcp_listen, self.enable_utp) {
+            (true, true) => Some(ListenerMode::TcpAndUtp),
+            (true, false) => Some(ListenerMode::TcpOnly),
+            (false, true) => Some(ListenerMode::UtpOnly),
+            (false, false) => None,
         };
-        Some(ListenerOptions {
+        let listener_opts = mode.map(|mode| ListenerOptions {
             mode,
-            listen_addr: (Ipv4Addr::UNSPECIFIED, self.port).into(),
+            listen_addr: (Ipv4Addr::UNSPECIFIED, self.listen_port).into(),
             enable_upnp_port_forwarding: self.enable_upnp_port_forward,
             ..Default::default()
-        })
+        });
+        let connect_opts = ConnectionOptions {
+            proxy_url: if self.socks_proxy.is_empty() {
+                None
+            } else {
+                Some(self.socks_proxy.clone())
+            },
+            enable_tcp: self.enable_tcp_outgoing,
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(self.peer_connect_timeout),
+                read_write_timeout: Some(self.peer_read_write_timeout),
+                ..Default::default()
+            }),
+        };
+        (listener_opts, connect_opts)
     }
 }
 
-impl Default for RqbitDesktopConfigListen {
+impl Default for RqbitDesktopConfigConnections {
     fn default() -> Self {
         Self {
-            enable_tcp: true,
+            enable_tcp_listen: true,
+            enable_tcp_outgoing: true,
             enable_utp: false,
             enable_upnp_port_forward: true,
-            port: 4240,
+            listen_port: 4240,
+            socks_proxy: String::new(),
+            peer_connect_timeout: Duration::from_secs(2),
+            peer_read_write_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -105,26 +134,6 @@ impl Default for RqbitDesktopConfigPersistence {
 }
 
 #[serde_as]
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct RqbitDesktopConfigPeerOpts {
-    #[serde_as(as = "serde_with::DurationSeconds")]
-    pub connect_timeout: Duration,
-
-    #[serde_as(as = "serde_with::DurationSeconds")]
-    pub read_write_timeout: Duration,
-}
-
-impl Default for RqbitDesktopConfigPeerOpts {
-    fn default() -> Self {
-        Self {
-            connect_timeout: Duration::from_secs(2),
-            read_write_timeout: Duration::from_secs(10),
-        }
-    }
-}
-
-#[serde_as]
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RqbitDesktopConfigHttpApi {
@@ -163,11 +172,9 @@ pub struct RqbitDesktopConfig {
     pub disable_upload: bool,
 
     pub dht: RqbitDesktopConfigDht,
-    #[serde(default)]
-    pub listen: RqbitDesktopConfigListen,
+    pub connections: RqbitDesktopConfigConnections,
     pub upnp: RqbitDesktopConfigUpnp,
     pub persistence: RqbitDesktopConfigPersistence,
-    pub peer_opts: RqbitDesktopConfigPeerOpts,
     pub http_api: RqbitDesktopConfigHttpApi,
 
     #[serde(default)]
@@ -185,10 +192,9 @@ impl Default for RqbitDesktopConfig {
         Self {
             default_download_location: download_folder,
             dht: Default::default(),
-            listen: Default::default(),
+            connections: Default::default(),
             upnp: Default::default(),
             persistence: Default::default(),
-            peer_opts: Default::default(),
             http_api: Default::default(),
             ratelimits: Default::default(),
             #[cfg(feature = "disable-upload")]
