@@ -10,7 +10,7 @@ pub fn spawn(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct BlockingSpawner {
+pub struct BlockingSpawner {
     allow_tokio_block_in_place: bool,
 }
 

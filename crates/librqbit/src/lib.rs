@@ -55,7 +55,7 @@ pub mod http_api_client;
 pub mod http_api_types;
 pub mod limits;
 mod merge_streams;
-mod peer_connection;
+pub mod peer_connection;
 mod peer_info_reader;
 mod read_buf;
 mod session;
@@ -63,7 +63,7 @@ mod session_persistence;
 pub mod session_stats;
 mod spawn_utils;
 pub mod storage;
-mod stream_connect;
+pub mod stream_connect;
 mod torrent_state;
 #[cfg(feature = "tracing-subscriber-utils")]
 pub mod tracing_subscriber_config_utils;
