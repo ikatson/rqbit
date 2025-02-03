@@ -1,22 +1,18 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use tracing::info;
 
 #[derive(Debug, Clone)]
-pub struct SocksProxyConfig {
+pub(crate) struct SocksProxyConfig {
     pub host: String,
     pub port: u16,
     pub username_password: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct StreamConnectorConfig {
+pub(crate) struct StreamConnectorConfig {
     pub socks_proxy_config: Option<SocksProxyConfig>,
-    pub utp_listen_addr: Option<SocketAddr>,
 }
 
 impl SocksProxyConfig {
@@ -66,7 +62,7 @@ impl SocksProxyConfig {
 }
 
 #[derive(Debug)]
-pub struct StreamConnector {
+pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     utp_socket: Arc<librqbit_utp::UtpSocketUdp>,
 }
@@ -80,12 +76,10 @@ impl StreamConnector {
             },
             ..Default::default()
         };
-        let utp_listen_addr = config
-            .utp_listen_addr
-            .unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into());
-        let utp_socket = librqbit_utp::UtpSocketUdp::new_udp_with_opts(utp_listen_addr, opts)
-            .await
-            .context("error creating uTP socket")?;
+        let utp_socket =
+            librqbit_utp::UtpSocketUdp::new_udp_with_opts("0.0.0.0:58226".parse().unwrap(), opts)
+                .await
+                .context("error creating uTP socket")?;
 
         info!(addr = ?utp_socket.bind_addr(), "started uTP socket");
 

@@ -608,8 +608,6 @@ impl Session {
             let stream_connector = Arc::new(
                 StreamConnector::new(StreamConnectorConfig {
                     socks_proxy_config: proxy_config,
-                    // TODO
-                    utp_listen_addr: None,
                 })
                 .await
                 .context("error creating stream connector")?,
