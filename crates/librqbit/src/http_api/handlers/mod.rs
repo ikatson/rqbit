@@ -117,7 +117,8 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/{id}/update_only_files",
                 post(torrents::h_torrent_action_update_only_files),
-            );
+            )
+            .route("/torrents/{id}/add_peers", post(torrents::h_add_peers));
     }
 
     api_router.with_state(state)
