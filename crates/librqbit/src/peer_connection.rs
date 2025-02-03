@@ -57,7 +57,7 @@ pub enum WriterRequest {
 }
 
 #[serde_as]
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct PeerConnectionOptions {
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub connect_timeout: Option<Duration>,

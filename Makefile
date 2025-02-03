@@ -14,11 +14,11 @@ webui-dev: webui-deps
 export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= [::]:3030
+export RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE ?= true
 export RQBIT_FASTRESUME = true
 
 # Don't expose devserver
-export RQBIT_UPNP_PORT_FORWARD_DISABLE = true
-export RQBIT_TCP_LISTEN_DISABLE = true
+export RQBIT_LISTEN_IP = 127.0.0.1
 
 CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch

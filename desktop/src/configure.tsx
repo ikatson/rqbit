@@ -58,17 +58,15 @@ type TAB =
   | "Home"
   | "DHT"
   | "Session"
-  | "Peer options"
   | "HTTP API"
-  | "TCP Listen"
+  | "Connection"
   | "UPnP Server";
 
 const TABS: readonly TAB[] = [
   "Home",
   "DHT",
   "Session",
-  "TCP Listen",
-  "Peer options",
+  "Connection",
   "HTTP API",
   "UPnP Server",
 ] as const;
@@ -133,7 +131,7 @@ export const ConfigModal: React.FC<{
   };
 
   const handleToggleChange: React.ChangeEventHandler<HTMLInputElement> = (
-    e
+    e,
   ) => {
     const name: string = e.target.name;
     const [mainField, subField] = name.split(".", 2);
@@ -169,7 +167,7 @@ export const ConfigModal: React.FC<{
           text: "Error saving configuration",
           details: e,
         });
-      }
+      },
     );
   };
 
@@ -257,42 +255,78 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
           </Fieldset>
         </Tab>
 
-        <Tab name="TCP Listen" currentTab={tab}>
+        <Tab name="Connection" currentTab={tab}>
           <Fieldset>
             <FormCheck
               label="Listen on TCP"
-              name="tcp_listen.disable"
-              checked={!config.tcp_listen.disable}
+              name="connections.enable_tcp_listen"
+              checked={config.connections.enable_tcp_listen}
               onChange={handleToggleChange}
               help="Listen for torrent requests on TCP. Required for peers to be able to connect to you, mainly for uploading."
             />
 
             <FormCheck
-              label="Advertise TCP port over UPnP"
-              name="tcp_listen.disable"
-              checked={!config.tcp_listen.disable}
+              label="Listen on uTP (over UDP)"
+              name="connections.enable_utp"
+              checked={config.connections.enable_utp}
+              onChange={handleToggleChange}
+              help="Listen for torrent requests on uTP over UDP. Required for uTP support in general, both outgoing and incoming."
+            />
+
+            <FormCheck
+              label="Advertise port over UPnP"
+              name="connections.enable_upnp_port_forward"
+              checked={config.connections.enable_upnp_port_forward}
               onChange={handleToggleChange}
               help="Advertise your port over UPnP to your router(s). This is required for peers to be able to connect to you from the internet. Will only work if your router has a static IP."
             />
 
+            <FormCheck
+              label="[ADVANCED] Disable outgoing connections over TCP"
+              name="connections.enable_tcp_outgoing"
+              checked={!config.connections.enable_tcp_outgoing}
+              onChange={handleToggleChange}
+              help="WARNING: leave this unchecked unless you know what you are doing."
+            />
+
             <FormInput
-              inputType="number"
-              label="Min port"
-              name="tcp_listen.min_port"
-              value={config.tcp_listen.min_port}
-              disabled={config.tcp_listen.disable}
+              inputType="text"
+              label="Socks proxy"
+              name="connections.socks_proxy"
+              value={config.connections.socks_proxy}
               onChange={handleInputChange}
-              help="The min port to try to listen on. First successful is taken."
+              help="Socks5 proxy for outgoing connections. Format: socks5://[username:password@]host:port"
             />
 
             <FormInput
               inputType="number"
-              label="Max port"
-              name="tcp_listen.max_port"
-              value={config.tcp_listen.max_port}
-              disabled={config.tcp_listen.disable}
+              label="Port"
+              name="connections.listen_port"
+              value={config.connections.listen_port}
+              disabled={
+                !config.connections.enable_tcp_listen &&
+                !config.connections.enable_utp
+              }
               onChange={handleInputChange}
-              help="The max port to try to listen on."
+              help="The port to listen on for both TCP and UDP (if enabled)."
+            />
+
+            <FormInput
+              label="Peer connect timeout (seconds)"
+              inputType="number"
+              name="connections.peer_connect_timeout"
+              value={config.connections.peer_connect_timeout}
+              onChange={handleInputChange}
+              help="How much to wait for outgoing connections to connect. Default is low to prefer faster peers."
+            />
+
+            <FormInput
+              label="Peer read/write timeout (seconds)"
+              inputType="number"
+              name="connections.peer_read_write_timeout"
+              value={config.connections.peer_read_write_timeout}
+              onChange={handleInputChange}
+              help="Peer socket read/write timeout."
             />
           </Fieldset>
         </Tab>
@@ -374,28 +408,6 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
                     " per second"
                   : "currently disabled"
               })`}
-            />
-          </Fieldset>
-        </Tab>
-
-        <Tab name="Peer options" currentTab={tab}>
-          <Fieldset>
-            <FormInput
-              label="Connect timeout (seconds)"
-              inputType="number"
-              name="peer_opts.connect_timeout"
-              value={config.peer_opts.connect_timeout}
-              onChange={handleInputChange}
-              help="How much to wait for outgoing connections to connect. Default is low to prefer faster peers."
-            />
-
-            <FormInput
-              label="Read/write timeout (seconds)"
-              inputType="number"
-              name="peer_opts.read_write_timeout"
-              value={config.peer_opts.read_write_timeout}
-              onChange={handleInputChange}
-              help="Peer socket read/write timeout."
             />
           </Fieldset>
         </Tab>

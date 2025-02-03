@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -133,6 +133,10 @@ struct Opts {
     #[arg(long = "disable-tcp-listen", env = "RQBIT_TCP_LISTEN_DISABLE")]
     disable_tcp_listen: bool,
 
+    // Disable connecting over TCP. Only uTP will be used (if enabled).
+    #[arg(long = "disable-tcp-connect", env = "RQBIT_TCP_CONNECT_DISABLE")]
+    disable_tcp_connect: bool,
+
     // Enable to listen and connect over uTP
     #[arg(
         long = "experimental-enable-utp-listen",
@@ -148,15 +152,19 @@ struct Opts {
     )]
     listen_port: u16,
 
+    /// What's the IP to listen on. Default is to listen on all interfaces.
+    #[arg(long = "listen-ip", default_value = "0.0.0.0", env = "RQBIT_LISTEN_IP")]
+    listen_ip: IpAddr,
+
     /// If set, will try to publish the chosen port through upnp on your router.
+    /// If the listen-ip is localhost, this will not be used.
     #[arg(
         long = "disable-upnp-port-forward",
         env = "RQBIT_UPNP_PORT_FORWARD_DISABLE"
     )]
     disable_upnp_port_forward: bool,
 
-    /// If set, will run a UPNP Media server and stream all the torrents through it.
-    /// Should be set to your hostname/IP as seen by your LAN neighbors.
+    /// If set, will run a UPNP Media server on RQBIT_HTTP_API_LISTEN_ADDR.
     #[arg(long = "enable-upnp-server", env = "RQBIT_UPNP_SERVER_ENABLE")]
     enable_upnp_server: bool,
 
@@ -490,7 +498,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     };
     let listen = listen_mode.map(|mode| ListenerOptions {
         mode,
-        listen_addr: (Ipv4Addr::UNSPECIFIED, opts.listen_port).into(),
+        listen_addr: (opts.listen_ip, opts.listen_port).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         ..Default::default()
     });
@@ -505,7 +513,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         listen,
         connect: Some(ConnectionOptions {
             proxy_url: opts.socks_url,
-            enable_tcp: true,
+            enable_tcp: !opts.disable_tcp_connect,
             peer_opts: Some(PeerConnectionOptions {
                 connect_timeout: Some(opts.peer_connect_timeout),
                 read_write_timeout: Some(opts.peer_read_write_timeout),

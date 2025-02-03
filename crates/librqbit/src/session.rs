@@ -700,6 +700,7 @@ impl Session {
                 }
                 if let Some(announce_port) = listen.announce_port {
                     if listen.enable_upnp_port_forwarding {
+                        info!(port = announce_port, "starting UPnP port forwarder");
                         session.spawn(
                             error_span!(parent: session.rs(), "upnp_forward", port = announce_port),
                             Self::task_upnp_port_forwarder(announce_port),

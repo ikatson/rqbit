@@ -96,11 +96,14 @@ impl ListenerOptions {
             if !self.mode.utp_enabled() {
                 return Ok::<_, anyhow::Error>(None);
             }
-            Ok(Some(
-                UtpSocketUdp::new_udp_with_opts(self.listen_addr, utp_opts)
-                    .await
-                    .context("error starting uTP listener")?,
-            ))
+            let socket = UtpSocketUdp::new_udp_with_opts(self.listen_addr, utp_opts)
+                .await
+                .context("error starting uTP listener")?;
+            info!(
+                "Listening on UDP {:?} for incoming uTP peer connections",
+                self.listen_addr
+            );
+            Ok(Some(socket))
         };
 
         let announce_port = if self.listen_addr.ip().is_loopback() {

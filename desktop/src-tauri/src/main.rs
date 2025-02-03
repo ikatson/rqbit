@@ -84,6 +84,8 @@ async fn api_from_config(
         })
     };
 
+    let (listen, connect) = config.connections.as_listener_and_connect_opts();
+
     let session = Session::new_with_opts(
         config.default_download_location.clone(),
         SessionOptions {
@@ -94,16 +96,8 @@ async fn api_from_config(
                 ..Default::default()
             }),
             persistence,
-            connect: Some(librqbit::ConnectionOptions {
-                enable_tcp: true,
-                peer_opts: Some(PeerConnectionOptions {
-                    connect_timeout: Some(config.peer_opts.connect_timeout),
-                    read_write_timeout: Some(config.peer_opts.read_write_timeout),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            listen: config.listen.as_listener_opts(),
+            connect: Some(connect),
+            listen,
             fastresume: config.persistence.fastresume,
             ratelimits: config.ratelimits,
             #[cfg(feature = "disable-upload")]
