@@ -13,6 +13,7 @@ readme = "README.md"
 
 [features]
 default = ["default-tls", "http-api-client"]
+
 tokio-console = ["console-subscriber", "tokio/tracing"]
 http-api = ["axum", "tower-http"]
 http-api-client = []
@@ -39,6 +40,9 @@ postgres = ["sqlx", "home"]
 async-bt = ["async-backtrace"]
 watch = ["notify"]
 disable-upload = []
+
+# This is absolutely useless for people
+_disable_disk_write_net_benchmark = []
 
 [dependencies]
 # sqlx and home are pinned so that we can compile on older Rusts
