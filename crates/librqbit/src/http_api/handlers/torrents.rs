@@ -1,11 +1,14 @@
+use std::net::SocketAddr;
+
 use anyhow::Context;
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
 use bytes::Bytes;
+use http::StatusCode;
 use librqbit_core::magnet::Magnet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::ApiState;
 use crate::{
@@ -189,4 +192,41 @@ pub async fn h_metadata(
         )],
         bytes,
     ))
+}
+
+#[derive(Serialize)]
+struct AddPeersResult {
+    added: usize,
+}
+
+pub async fn h_add_peers(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    body: Bytes,
+) -> Result<impl IntoResponse> {
+    let handle = state.api.mgr_handle(idx)?;
+    let live = handle
+        .live()
+        .context("torrent is not live")
+        .map_err(ApiError::from)?;
+
+    let addrs = body
+        .split(|c| *c == b'\n')
+        .map(|l| {
+            std::str::from_utf8(l)
+                .context("invalid UTF-8")
+                .and_then(|l| l.parse().context("cant parse SocketAddr"))
+        })
+        .collect::<anyhow::Result<Vec<SocketAddr>>>()
+        .context("invalid input")
+        .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
+
+    let mut count = 0;
+    for addr in addrs {
+        if live.add_peer_if_not_seen(addr).map_err(ApiError::from)? {
+            count += 1;
+        }
+    }
+
+    Ok(axum::Json(AddPeersResult { added: count }))
 }
