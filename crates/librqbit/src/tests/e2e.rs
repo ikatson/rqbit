@@ -211,6 +211,15 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
                 }),
+                listen: if mode.utp_enabled() {
+                    Some(ListenerOptions {
+                        mode: ListenerMode::UtpOnly,
+                        listen_addr: ([127, 0, 0, 1], 15099).into(),
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                },
                 connect: Some(ConnectionOptions {
                     enable_tcp: mode.tcp_enabled(),
                     ..Default::default()
