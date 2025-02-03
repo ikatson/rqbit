@@ -4,11 +4,7 @@ use std::{
     time::Duration,
 };
 
-use librqbit::{
-    dht::PersistentDht,
-    limits::LimitsConfig,
-    listen::{ListenerMode, ListenerOptions},
-};
+use librqbit::{dht::PersistentDht, limits::LimitsConfig, ListenerMode, ListenerOptions};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 

@@ -1783,7 +1783,7 @@ impl PeerHandler {
                     counters.on_piece_completed(piece_len, full_piece_download_time);
                     state.peers.reset_peer_backoff(addr);
 
-                    debug!("piece={} successfully downloaded and verified", index);
+                    trace!(piece = index, "successfully downloaded and verified");
 
                     state.on_piece_completed(chunk_info.piece_index)?;
 

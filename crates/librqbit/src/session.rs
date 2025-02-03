@@ -25,7 +25,7 @@ use crate::{
     storage::{
         BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
-    stream_connect::{SocksProxyConfig, StreamConnector, StreamConnectorConfig},
+    stream_connect::{ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs},
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
@@ -399,19 +399,17 @@ pub struct SessionOptions {
 
     /// The peer ID to use. If not specified, a random one will be generated.
     pub peer_id: Option<Id20>,
-    /// Configure default peer connection options. Can be overriden per torrent.
-    pub peer_opts: Option<PeerConnectionOptions>,
 
+    /// Options for listening on TCP and/or uTP for incoming connections.
     pub listen: Option<ListenerOptions>,
+    /// Options for connecting to peers (for outgiong connections).
+    pub connect: Option<ConnectionOptions>,
 
     // If you set this to something, all writes to disk will happen in background and be
     // buffered in memory up to approximately the given number of megabytes.
     pub defer_writes_up_to: Option<usize>,
 
     pub default_storage_factory: Option<BoxStorageFactory>,
-
-    // socks5://[username:password@]host:port
-    pub socks_proxy_url: Option<String>,
 
     pub cancellation_token: Option<CancellationToken>,
 
@@ -529,7 +527,11 @@ impl Session {
 
                 Some(dht)
             };
-            let peer_opts = opts.peer_opts.unwrap_or_default();
+            let peer_opts = opts
+                .connect
+                .as_ref()
+                .and_then(|p| p.peer_opts)
+                .unwrap_or_default();
 
             async fn persistence_factory(
                 opts: &SessionOptions,
@@ -588,7 +590,8 @@ impl Session {
                 })
                 .unwrap_or_default();
 
-            let proxy_config = match opts.socks_proxy_url.as_ref() {
+            let proxy_url = opts.connect.as_ref().and_then(|s| s.proxy_url.as_ref());
+            let proxy_config = match proxy_url {
                 Some(pu) => Some(
                     SocksProxyConfig::parse(pu)
                         .with_context(|| format!("error parsing proxy url {}", pu))?,
@@ -597,7 +600,7 @@ impl Session {
             };
 
             let reqwest_client = {
-                let builder = if let Some(proxy_url) = opts.socks_proxy_url.as_ref() {
+                let builder = if let Some(proxy_url) = proxy_url {
                     let proxy = reqwest::Proxy::all(proxy_url)
                         .context("error creating socks5 proxy for HTTP")?;
                     reqwest::Client::builder().proxy(proxy)
@@ -609,7 +612,8 @@ impl Session {
             };
 
             let stream_connector = Arc::new(
-                StreamConnector::new(StreamConnectorConfig {
+                StreamConnector::new(StreamConnectorArgs {
+                    enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
                     socks_proxy_config: proxy_config,
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                 })

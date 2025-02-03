@@ -13,13 +13,15 @@ use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
-    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    AddTorrent, AddTorrent, AddTorrentOptions, AddTorrentOptions, AddTorrentResponse,
+    AddTorrentResponse, Api, Api, ConnectionOptions, ListOnlyResponse, ListOnlyResponse,
+    ListenerMode, ListenerOptions, PeerConnectionOptions, PeerConnectionOptions, Session, Session,
+    SessionOptions, SessionOptions, SessionPersistenceConfig, SessionPersistenceConfig,
+    TorrentStatsState, TorrentStatsState,
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     limits::LimitsConfig,
-    listen::{ListenerMode, ListenerOptions},
     storage::{
         StorageFactory, StorageFactoryExt,
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
@@ -502,12 +504,16 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         // This will be overriden by "server start" below if needed.
         persistence: None,
         peer_id: None,
-        peer_opts: Some(PeerConnectionOptions {
-            connect_timeout: Some(opts.peer_connect_timeout),
-            read_write_timeout: Some(opts.peer_read_write_timeout),
-            ..Default::default()
-        }),
         listen,
+        connect: Some(ConnectionOptions {
+            proxy_url: opts.socks_url,
+            enable_tcp: true,
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(opts.peer_connect_timeout),
+                read_write_timeout: Some(opts.peer_read_write_timeout),
+                ..Default::default()
+            }),
+        }),
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
@@ -528,7 +534,6 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
-        socks_proxy_url: opts.socks_url,
         concurrent_init_limit: Some(opts.concurrent_init_limit),
         root_span: None,
         fastresume: false,

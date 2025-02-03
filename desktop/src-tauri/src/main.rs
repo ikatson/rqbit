@@ -94,9 +94,13 @@ async fn api_from_config(
                 ..Default::default()
             }),
             persistence,
-            peer_opts: Some(PeerConnectionOptions {
-                connect_timeout: Some(config.peer_opts.connect_timeout),
-                read_write_timeout: Some(config.peer_opts.read_write_timeout),
+            connect: Some(librqbit::ConnectionOptions {
+                enable_tcp: true,
+                peer_opts: Some(PeerConnectionOptions {
+                    connect_timeout: Some(config.peer_opts.connect_timeout),
+                    read_write_timeout: Some(config.peer_opts.read_write_timeout),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
             listen: config.listen.as_listener_opts(),
