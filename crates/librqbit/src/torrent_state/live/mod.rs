@@ -1691,13 +1691,17 @@ impl PeerHandler {
             // While we hold per piece lock, noone can steal it.
             // So we can proceed writing knowing that the piece is ours now and will still be by the time
             // the write is finished.
-            match state.file_ops().write_chunk(addr, piece, chunk_info) {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("FATAL: error writing chunk to disk: {e:#}");
-                    return state.on_fatal_error(e);
-                }
-            };
+            //
+
+            if !cfg!(feature = "_disable_disk_write_net_benchmark") {
+                match state.file_ops().write_chunk(addr, piece, chunk_info) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("FATAL: error writing chunk to disk: {e:#}");
+                        return state.on_fatal_error(e);
+                    }
+                };
+            }
 
             let full_piece_download_time = {
                 let mut g = state.lock_write("mark_chunk_downloaded");

@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use tracing::info;
@@ -8,10 +11,14 @@ use crate::{tests::test_util::setup_test_logging, AddTorrentOptions, Session};
 #[tokio::test(flavor = "multi_thread")]
 async fn test_utp_with_another_client() {
     if cfg!(all(test, not(debug_assertions))) {
-        let test_filename = std::env::args().next().unwrap();
-        if !std::fs::exists("/tmp/rtest").unwrap() {
-            std::os::unix::fs::symlink(test_filename, "/tmp/rtest").unwrap();
+        let test_filename = {
+            let f = PathBuf::from(std::env::args().next().unwrap());
+            f.read_link().unwrap_or(f)
+        };
+        if std::fs::exists("/tmp/rtest").unwrap() {
+            std::fs::remove_file("/tmp/rtest").unwrap();
         }
+        std::os::unix::fs::symlink(test_filename, "/tmp/rtest").unwrap();
     }
 
     setup_test_logging();
