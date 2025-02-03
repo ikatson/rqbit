@@ -36,7 +36,7 @@ console-subscriber = { version = "0.4", optional = true }
 anyhow = "1"
 clap = { version = "4.5", features = ["derive", "deprecated", "env"] }
 clap_complete = "4.5"
-tracing = { version = "0.1", features = ["release_max_level_info"] }
+tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
 futures = "0.3"
