@@ -16,14 +16,14 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     limits::LimitsConfig,
-    listen::{ListenerMode, ListenerOptions},
     storage::{
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
-    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, ListOnlyResponse,
+    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
+    SessionPersistenceConfig, TorrentStatsState,
 };
 use size_format::SizeFormatterBinary as SF;
 use tokio::net::TcpListener;
@@ -465,12 +465,16 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         // This will be overriden by "server start" below if needed.
         persistence: None,
         peer_id: None,
-        peer_opts: Some(PeerConnectionOptions {
-            connect_timeout: Some(opts.peer_connect_timeout),
-            read_write_timeout: Some(opts.peer_read_write_timeout),
-            ..Default::default()
-        }),
         listen,
+        connect: Some(ConnectionOptions {
+            proxy_url: opts.socks_url,
+            enable_tcp: true,
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(opts.peer_connect_timeout),
+                read_write_timeout: Some(opts.peer_read_write_timeout),
+                ..Default::default()
+            }),
+        }),
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
@@ -491,7 +495,6 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
-        socks_proxy_url: opts.socks_url,
         concurrent_init_limit: Some(opts.concurrent_init_limit),
         root_span: None,
         fastresume: false,

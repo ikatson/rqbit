@@ -99,7 +99,6 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                         disable_dht_persistence: true,
                         dht_config: None,
                         peer_id: Some(peer_id),
-                        peer_opts: None,
                         listen: Some(ListenerOptions {
                             mode: crate::listen::ListenerMode::TcpOnly,
                             listen_addr: (Ipv4Addr::LOCALHOST, listen_port).into(),

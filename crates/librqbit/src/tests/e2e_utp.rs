@@ -4,7 +4,8 @@ use bytes::Bytes;
 use tracing::info;
 
 use crate::{
-    listen::ListenerOptions, tests::test_util::setup_test_logging, AddTorrentOptions, Session,
+    listen::ListenerOptions, tests::test_util::setup_test_logging, AddTorrentOptions,
+    ConnectionOptions, Session,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -22,9 +23,6 @@ async fn test_utp_with_another_client() {
 
     setup_test_logging();
 
-    // let t = include_bytes!("/tmp/canary_16m.torrent");
-    // let t = include_bytes!("/tmp/canary_128m.torrent");
-    // let t = include_bytes!("/tmp/canary_512m.torrent");
     let t = std::fs::read("/tmp/canary_4096m.torrent").unwrap();
 
     let session = Session::new_with_opts(
@@ -35,6 +33,10 @@ async fn test_utp_with_another_client() {
             listen: Some(ListenerOptions {
                 mode: crate::listen::ListenerMode::UtpOnly,
                 listen_addr: (Ipv4Addr::LOCALHOST, 57318).into(),
+                ..Default::default()
+            }),
+            connect: Some(ConnectionOptions {
+                enable_tcp: false,
                 ..Default::default()
             }),
             ..Default::default()
