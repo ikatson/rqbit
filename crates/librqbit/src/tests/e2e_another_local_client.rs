@@ -1,4 +1,8 @@
-use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    time::Duration,
+};
 
 use bytes::Bytes;
 use tracing::info;
@@ -8,6 +12,22 @@ use crate::{
     ConnectionOptions, Session, SessionOptions,
 };
 
+// Create this from librqbit_utp: cargo run --release --example create_canary_file /tmp/canary_4096m 4096
+const TORRENT_FILENAME: &str = "/tmp/canary_4096m.torrent";
+
+// Where to download
+const OUTPUT_FOLDER: &str = "/tmp/utptest";
+
+// It's hard to find the binary in target/.../deps/librqbit*, so symlink itself
+// here for easy profiling.
+const BINARY_SYMLINK: &str = "/tmp/rtest";
+
+const LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 57318);
+
+// Serve the above file from the other client.
+const OTHER_CLIENT_ADDR: SocketAddr =
+    SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 27312);
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn test_utp_with_another_client() {
@@ -16,7 +36,7 @@ async fn test_utp_with_another_client() {
         persistence: None,
         listen: Some(ListenerOptions {
             mode: crate::listen::ListenerMode::UtpOnly,
-            listen_addr: (Ipv4Addr::LOCALHOST, 57318).into(),
+            listen_addr: LISTEN_ADDR,
             ..Default::default()
         }),
         connect: Some(ConnectionOptions {
@@ -54,16 +74,19 @@ async fn test_with_another_client(sopts: SessionOptions) {
         let f = PathBuf::from(std::env::args().next().unwrap());
         f.read_link().unwrap_or(f)
     };
-    if std::fs::exists("/tmp/rtest").unwrap() {
-        std::fs::remove_file("/tmp/rtest").unwrap();
+
+    if cfg!(unix) {
+        if std::fs::exists(BINARY_SYMLINK).unwrap() {
+            std::fs::remove_file(BINARY_SYMLINK).unwrap();
+        }
+        std::os::unix::fs::symlink(test_filename, BINARY_SYMLINK).unwrap();
     }
-    std::os::unix::fs::symlink(test_filename, "/tmp/rtest").unwrap();
 
     setup_test_logging();
 
-    let t = std::fs::read("/tmp/canary_4096m.torrent").unwrap();
+    let t = std::fs::read(TORRENT_FILENAME).unwrap();
 
-    let session = Session::new_with_opts("/tmp/utptest".into(), sopts)
+    let session = Session::new_with_opts(OUTPUT_FOLDER.into(), sopts)
         .await
         .unwrap();
 
@@ -72,7 +95,7 @@ async fn test_with_another_client(sopts: SessionOptions) {
             crate::AddTorrent::TorrentFileBytes(Bytes::from(t)),
             Some(AddTorrentOptions {
                 overwrite: true,
-                initial_peers: Some(vec!["127.0.0.1:27312".parse().unwrap()]),
+                initial_peers: Some(vec![OTHER_CLIENT_ADDR]),
                 ..Default::default()
             }),
         )
