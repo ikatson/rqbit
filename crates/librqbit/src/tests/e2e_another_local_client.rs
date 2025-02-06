@@ -13,7 +13,7 @@ use crate::{
 };
 
 // Create this from librqbit_utp: cargo run --release --example create_canary_file /tmp/canary_4096m 4096
-const TORRENT_FILENAME: &str = "/tmp/canary_4096m.torrent";
+const TORRENT_FILENAME: &str = "/tmp/canary.torrent";
 
 // Where to download
 const OUTPUT_FOLDER: &str = "/tmp/utptest";
@@ -117,4 +117,7 @@ async fn test_with_another_client(sopts: SessionOptions) {
     });
 
     handle.wait_until_completed().await.unwrap();
+
+    // wait for all final FIN-ACKs to be sent
+    tokio::time::sleep(Duration::from_millis(100)).await;
 }
