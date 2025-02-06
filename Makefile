@@ -17,9 +17,6 @@ export RQBIT_HTTP_API_LISTEN_ADDR ?= [::]:3030
 export RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE ?= true
 export RQBIT_FASTRESUME = true
 
-# Don't expose devserver
-export RQBIT_LISTEN_IP = 127.0.0.1
-
 CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
 RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit

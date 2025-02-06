@@ -274,7 +274,7 @@ impl TorrentStateLive {
                 ..Default::default()
             },
             lengths,
-            peer_semaphore: Arc::new(Semaphore::new(128)),
+            peer_semaphore: Arc::new(Semaphore::new(32)),
             new_pieces_notify: Notify::new(),
             peer_queue_tx,
             finished_notify: Notify::new(),
@@ -1191,8 +1191,10 @@ impl PeerHandler {
         // Prevent deadlocks.
         drop(pe);
 
-        // if let Some(dur) = backoff {
         if let Some(dur) = backoff {
+            if cfg!(feature = "_disable_reconnect_test") {
+                return Ok(());
+            }
             self.state.clone().spawn(
                 error_span!(
                     parent: self.state.shared.span.clone(),
