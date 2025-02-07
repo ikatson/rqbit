@@ -35,6 +35,8 @@ pub struct HttpApi {
 pub struct HttpApiOptions {
     pub read_only: bool,
     pub basic_auth: Option<(String, String)>,
+    #[cfg(feature = "prometheus")]
+    pub prometheus_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
 }
 
 async fn simple_basic_auth(
@@ -83,10 +85,13 @@ impl HttpApi {
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
     pub fn make_http_api_and_run(
-        self,
+        mut self,
         listener: TcpListener,
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
+        #[cfg(feature = "prometheus")]
+        let mut prometheus_handle = self.opts.prometheus_handle.take();
+
         let state = Arc::new(self);
 
         let mut main_router = handlers::make_api_router(state.clone());
@@ -98,6 +103,12 @@ impl HttpApi {
             let webui_router = webui::make_webui_router();
             main_router = main_router.nest("/web/", webui_router);
             main_router = main_router.route("/web", get(|| async { Redirect::permanent("./web/") }))
+        }
+
+        #[cfg(feature = "prometheus")]
+        if let Some(handle) = prometheus_handle.take() {
+            main_router =
+                main_router.route("/metrics", get(move || async move { handle.render() }));
         }
 
         let cors_layer = {

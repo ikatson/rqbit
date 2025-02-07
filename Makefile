@@ -14,6 +14,7 @@ webui-dev: webui-deps
 export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= [::]:3030
+export RQBIT_ENABLE_PROMETHEUS_EXPORTER ?= true
 export RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE ?= true
 export RQBIT_FASTRESUME = true
 

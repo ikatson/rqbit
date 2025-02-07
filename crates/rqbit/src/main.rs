@@ -272,6 +272,14 @@ struct ServerStartOptions {
     #[arg(long = "fastresume", env = "RQBIT_FASTRESUME")]
     fastresume: bool,
 
+    /// Enable prometheus exporter endpoint at HTTP_API_LISTEN_ADDR:3030/metrics
+    #[cfg(feature = "prometheus")]
+    #[arg(
+        long = "enable-prometheus-exporter",
+        env = "RQBIT_ENABLE_PROMETHEUS_EXPORTER"
+    )]
+    enable_prometheus_exporter: bool,
+
     /// The folder to watch for added .torrent files. All files in this folder will be automatically added
     /// to the session.
     #[arg(long = "watch-folder", env = "RQBIT_WATCH_FOLDER")]
@@ -641,6 +649,24 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     }
                 }
 
+                let mut http_api_opts = HttpApiOptions {
+                    read_only: false,
+                    basic_auth: http_api_basic_auth,
+                    ..Default::default()
+                };
+
+                // We need to install prometheus recorder early before we registered any metrics.
+                if cfg!(feature = "prometheus") && start_opts.enable_prometheus_exporter {
+                    match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
+                        Ok(handle) => {
+                            http_api_opts.prometheus_handle = Some(handle);
+                        }
+                        Err(e) => {
+                            warn!("error installting prometheus recorder: {e:#}");
+                        }
+                    }
+                }
+
                 sopts.fastresume = start_opts.fastresume;
 
                 let session =
@@ -684,13 +710,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.rust_log_reload_tx),
                     Some(log_config.line_broadcast),
                 );
-                let http_api = HttpApi::new(
-                    api,
-                    Some(HttpApiOptions {
-                        read_only: false,
-                        basic_auth: http_api_basic_auth,
-                    }),
-                );
+                let http_api = HttpApi::new(api, Some(http_api_opts));
                 let http_api_listen_addr = opts.http_api_listen_addr;
 
                 info!("starting HTTP API at http://{http_api_listen_addr}");
@@ -821,6 +841,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(HttpApiOptions {
                         read_only: true,
                         basic_auth: http_api_basic_auth,
+                        ..Default::default()
                     }),
                 );
                 let http_api_listen_addr = opts.http_api_listen_addr;

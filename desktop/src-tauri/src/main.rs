@@ -154,6 +154,7 @@ async fn api_from_config(
                 Some(librqbit::http_api::HttpApiOptions {
                     read_only,
                     basic_auth: None,
+                    ..Default::default()
                 }),
             )
             .make_http_api_and_run(listener, upnp_router)

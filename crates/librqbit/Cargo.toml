@@ -26,6 +26,7 @@ default-tls = [
     "bencode/sha1-crypto-hash",
     "librqbit-core/sha1-crypto-hash",
 ]
+prometheus = ["metrics-exporter-prometheus"]
 rust-tls = [
     "reqwest/rustls-tls",
     "sha1w/sha1-ring",
@@ -113,6 +114,7 @@ dashmap = "6"
 base64 = "0.22"
 serde_with = "3.4.0"
 tokio-util = { version = "0.7.10", features = ["io"] }
+metrics-exporter-prometheus = { version = "0.16", optional = true, default-features = false }
 bytes = "1.5.0"
 rlimit = "0.10.1"
 async-stream = "0.3.5"
