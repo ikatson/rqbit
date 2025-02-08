@@ -77,6 +77,7 @@ impl ListenerOptions {
         let mut utp_opts = self.utp_opts.take().unwrap_or_default();
         utp_opts.cancellation_token = cancellation_token;
         utp_opts.parent_span = parent_span;
+        utp_opts.dont_wait_for_lastack = true;
 
         let tcp = async {
             if !self.mode.tcp_enabled() {
