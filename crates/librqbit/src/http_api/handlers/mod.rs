@@ -79,6 +79,10 @@ pub fn make_api_router(state: ApiState) -> Router {
         .route("/torrents/{id}/stats", get(torrents::h_torrent_stats_v0))
         .route("/torrents/{id}/stats/v1", get(torrents::h_torrent_stats_v1))
         .route("/torrents/{id}/peer_stats", get(torrents::h_peer_stats))
+        .route(
+            "/torrents/{id}/peer_stats/prometheus",
+            get(torrents::h_peer_stats_prometheus),
+        )
         .route("/torrents/{id}/playlist", get(playlist::h_torrent_playlist))
         .route("/torrents/playlist", get(playlist::h_global_playlist))
         .route("/torrents/resolve_magnet", post(other::h_resolve_magnet))

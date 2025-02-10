@@ -16,7 +16,7 @@ use crate::{
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     http_api::timeout::Timeout,
     http_api_types::TorrentAddQueryParams,
-    torrent_state::peer::stats::snapshot::PeerStatsFilter,
+    torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsFilterState},
 };
 
 pub async fn h_torrents_list(
@@ -168,6 +168,42 @@ pub async fn h_torrent_action_update_only_files(
 
 pub async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
+}
+
+pub async fn h_peer_stats_prometheus(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    let handle = state.api.mgr_handle(idx)?;
+
+    let live = handle.live().ok_or_else(|| {
+        ApiError::new_from_text(StatusCode::PRECONDITION_FAILED, "torrent not live")
+    })?;
+
+    let peer_stats = live.per_peer_stats_snapshot(PeerStatsFilter {
+        state: PeerStatsFilterState::Live,
+    });
+
+    let mut buf = String::new();
+
+    const NAME: &str = "rqbit_peer_fetched_bytes";
+
+    use core::fmt::Write;
+    writeln!(&mut buf, "# TYPE {} counter", NAME).unwrap();
+    for (addr, stats) in peer_stats.peers.iter() {
+        // Filter out useless peers that never sent us much.
+        const THRESHOLD: u64 = 1024 * 1024;
+        if stats.counters.fetched_bytes >= THRESHOLD {
+            writeln!(
+                &mut buf,
+                "{NAME}{{addr=\"{addr}\"}} {}",
+                stats.counters.fetched_bytes - THRESHOLD
+            )
+            .unwrap();
+        }
+    }
+
+    Ok(buf)
 }
 
 pub async fn h_metadata(
