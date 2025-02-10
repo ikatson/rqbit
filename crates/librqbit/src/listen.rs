@@ -79,6 +79,9 @@ impl ListenerOptions {
         utp_opts.parent_span = parent_span;
         utp_opts.dont_wait_for_lastack = true;
 
+        // TODO: play with this value and/or make this configurable.
+        utp_opts.udp_socket_rx_bufsize_bytes = Some(32 * 1024 * 1024);
+
         let tcp = async {
             if !self.mode.tcp_enabled() {
                 return Ok::<_, anyhow::Error>(None);
