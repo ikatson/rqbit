@@ -123,7 +123,7 @@ pub struct Session {
 
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
-    pub(crate) ratelimits: Limits,
+    pub ratelimits: Limits,
 
     // Monitoring / tracing / logging
     pub(crate) stats: SessionStats,
