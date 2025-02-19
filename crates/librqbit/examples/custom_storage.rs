@@ -80,8 +80,6 @@ async fn main() -> anyhow::Result<()> {
         SessionOptions {
             disable_dht_persistence: true,
             persistence: None,
-            listen_port_range: None,
-            enable_upnp_port_forwarding: false,
             ..Default::default()
         },
     )

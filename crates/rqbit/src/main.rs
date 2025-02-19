@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -21,8 +21,9 @@ use librqbit::{
         StorageFactory, StorageFactoryExt,
     },
     tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
-    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, ListOnlyResponse,
+    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
+    SessionPersistenceConfig, TorrentStatsState,
 };
 use size_format::SizeFormatterBinary as SF;
 use tokio::net::TcpListener;
@@ -131,31 +132,38 @@ struct Opts {
     #[arg(long = "disable-tcp-listen", env = "RQBIT_TCP_LISTEN_DISABLE")]
     disable_tcp_listen: bool,
 
-    /// The minimal port to listen for incoming connections.
-    #[arg(
-        long = "tcp-min-port",
-        default_value = "4240",
-        env = "RQBIT_TCP_LISTEN_MIN_PORT"
-    )]
-    tcp_listen_min_port: u16,
+    // Disable connecting over TCP. Only uTP will be used (if enabled).
+    #[arg(long = "disable-tcp-connect", env = "RQBIT_TCP_CONNECT_DISABLE")]
+    disable_tcp_connect: bool,
 
-    /// The maximal port to listen for incoming connections.
+    // Enable to listen and connect over uTP
     #[arg(
-        long = "tcp-max-port",
-        default_value = "4260",
-        env = "RQBIT_TCP_LISTEN_MAX_PORT"
+        long = "experimental-enable-utp-listen",
+        env = "RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE"
     )]
-    tcp_listen_max_port: u16,
+    enable_utp_listen: bool,
+
+    /// The port to listen for incoming connections (applies to both TCP and uTP).
+    #[arg(
+        long = "listen-port",
+        default_value = "4240",
+        env = "RQBIT_LISTEN_PORT"
+    )]
+    listen_port: u16,
+
+    /// What's the IP to listen on. Default is to listen on all interfaces.
+    #[arg(long = "listen-ip", default_value = "0.0.0.0", env = "RQBIT_LISTEN_IP")]
+    listen_ip: IpAddr,
 
     /// If set, will try to publish the chosen port through upnp on your router.
+    /// If the listen-ip is localhost, this will not be used.
     #[arg(
         long = "disable-upnp-port-forward",
         env = "RQBIT_UPNP_PORT_FORWARD_DISABLE"
     )]
     disable_upnp_port_forward: bool,
 
-    /// If set, will run a UPNP Media server and stream all the torrents through it.
-    /// Should be set to your hostname/IP as seen by your LAN neighbors.
+    /// If set, will run a UPNP Media server on RQBIT_HTTP_API_LISTEN_ADDR.
     #[arg(long = "enable-upnp-server", env = "RQBIT_UPNP_SERVER_ENABLE")]
     enable_upnp_server: bool,
 
@@ -445,6 +453,19 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
     };
 
+    let listen_mode = match (!opts.disable_tcp_listen, opts.enable_utp_listen) {
+        (true, false) => Some(ListenerMode::TcpOnly),
+        (false, true) => Some(ListenerMode::UtpOnly),
+        (true, true) => Some(ListenerMode::TcpAndUtp),
+        (false, false) => None,
+    };
+    let listen = listen_mode.map(|mode| ListenerOptions {
+        mode,
+        listen_addr: (opts.listen_ip, opts.listen_port).into(),
+        enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
+        ..Default::default()
+    });
+
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
@@ -452,17 +473,16 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         // This will be overriden by "server start" below if needed.
         persistence: None,
         peer_id: None,
-        peer_opts: Some(PeerConnectionOptions {
-            connect_timeout: Some(opts.peer_connect_timeout),
-            read_write_timeout: Some(opts.peer_read_write_timeout),
-            ..Default::default()
+        listen,
+        connect: Some(ConnectionOptions {
+            proxy_url: opts.socks_url,
+            enable_tcp: !opts.disable_tcp_connect,
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(opts.peer_connect_timeout),
+                read_write_timeout: Some(opts.peer_read_write_timeout),
+                ..Default::default()
+            }),
         }),
-        listen_port_range: if !opts.disable_tcp_listen {
-            Some(opts.tcp_listen_min_port..opts.tcp_listen_max_port)
-        } else {
-            None
-        },
-        enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
@@ -483,7 +503,6 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 wrap(FilesystemStorageFactory::default()).boxed()
             }
         }),
-        socks_proxy_url: opts.socks_url,
         concurrent_init_limit: Some(opts.concurrent_init_limit),
         root_span: None,
         fastresume: false,

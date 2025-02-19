@@ -2656,6 +2656,7 @@ dependencies = [
  "librqbit-tracker-comms",
  "librqbit-upnp",
  "librqbit-upnp-serve",
+ "librqbit-utp",
  "lru",
  "memmap2",
  "mime_guess",
@@ -2861,6 +2862,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "librqbit-utp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitvec",
+ "futures",
+ "mtu",
+ "parking_lot",
+ "rand 0.8.5",
+ "rustc-hash 2.1.0",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3036,6 +3053,19 @@ dependencies = [
  "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "mtu"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "649391c1b28fdca95b1b735b65fe186b658adbab88845d325f135f37b16b9c96"
+dependencies = [
+ "bindgen",
+ "cfg_aliases",
+ "libc",
+ "static_assertions",
+ "windows 0.58.0",
 ]
 
 [[package]]
