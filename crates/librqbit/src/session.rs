@@ -11,6 +11,7 @@ use std::{
 use crate::{
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
+    blocklist,
     dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
     limits::{Limits, LimitsConfig},
     merge_streams::merge_streams,
@@ -124,6 +125,8 @@ pub struct Session {
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
     pub ratelimits: Limits,
+
+    pub blocklist: blocklist::Blocklist,
 
     // Monitoring / tracing / logging
     pub(crate) stats: SessionStats,
@@ -417,6 +420,8 @@ pub struct SessionOptions {
 
     pub ratelimits: LimitsConfig,
 
+    pub blocklist_url: Option<String>,
+
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 }
@@ -607,6 +612,14 @@ impl Session {
 
             let stream_connector = Arc::new(StreamConnector::from(proxy_config));
 
+            let blocklist: blocklist::Blocklist = if let Some(blocklist_url) = opts.blocklist_url {
+                blocklist::Blocklist::load_from_url(&blocklist_url)
+                    .await
+                    .unwrap()
+            } else {
+                blocklist::Blocklist::empty()
+            };
+
             let session = Arc::new(Self {
                 persistence,
                 bitv_factory,
@@ -632,6 +645,7 @@ impl Session {
                 ratelimits: Limits::new(opts.ratelimits),
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
+                blocklist,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -715,6 +729,11 @@ impl Session {
             .peer_opts
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
+
+        let incoming_ip = addr.ip();
+        if self.blocklist.is_blocked(&incoming_ip) {
+            bail!("Incoming ip {incoming_ip} is in blocklist");
+        }
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf

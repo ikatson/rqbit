@@ -10,13 +10,20 @@ use tokio::{io::AsyncBufReadExt, io::BufReader};
 use tokio_util::io::StreamReader;
 use tracing::{debug, info, trace};
 
-struct Blocklist {
+pub struct Blocklist {
     // Separate trees for IPv4 and IPv6 since they have different numeric ranges
     ipv4_ranges: IntervalTree<u32, ()>,
     ipv6_ranges: IntervalTree<u128, ()>,
 }
 
 impl Blocklist {
+    pub fn empty() -> Self {
+        return Self::new(
+            &Vec::<std::ops::Range<u32>>::new(),
+            &Vec::<std::ops::Range<u128>>::new(),
+        );
+    }
+
     pub fn new(
         ipv4_ranges: &Vec<std::ops::Range<u32>>,
         ipv6_ranges: &Vec<std::ops::Range<u128>>,
@@ -24,13 +31,6 @@ impl Blocklist {
         Self {
             ipv4_ranges: IntervalTree::from_iter(ipv4_ranges.iter().map(|r| (r.clone(), ()))),
             ipv6_ranges: IntervalTree::from_iter(ipv6_ranges.iter().map(|r| (r.clone(), ()))),
-        }
-    }
-
-    fn ip_to_num(ip: &IpAddr) -> u128 {
-        match ip {
-            IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()) as u128,
-            IpAddr::V6(ip) => u128::from_be_bytes(ip.octets()),
         }
     }
 
@@ -74,7 +74,8 @@ impl Blocklist {
         let mut peek_bytes = [0u8; 2];
         let mut reader = tokio::io::BufReader::new(reader);
 
-        let buffer = reader.fill_buf().await?; // Get a reference to the buffer
+        // Peek the first bytes by filling buffer
+        let buffer = reader.fill_buf().await?;
         if buffer.len() >= 2 {
             peek_bytes.copy_from_slice(&buffer[0..2]);
         } else {
@@ -210,7 +211,6 @@ mod tests {
 
             let (server, mut mock, url) = rx.recv().unwrap();
 
-            // Add response body and headers
             mock = mock.with_body(content);
             for &(key, value) in headers {
                 mock = mock.with_header(key, value);
@@ -305,10 +305,7 @@ mod tests {
 
     #[test]
     fn test_blocklist_empty() {
-        let blocklist = Blocklist::new(
-            &Vec::<std::ops::Range<u32>>::new(),
-            &Vec::<std::ops::Range<u128>>::new(),
-        );
+        let blocklist = Blocklist::empty();
         assert!(!blocklist.is_blocked(&"127.0.0.1".parse().unwrap()));
         assert!(!blocklist.is_blocked(&"::1".parse().unwrap()));
     }
