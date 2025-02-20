@@ -2,9 +2,7 @@ name: Run tests
 
 on:
   push:
-    branches: [main, dev]
   pull_request:
-    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,13 +17,19 @@ jobs:
       - name: rustup toolchain install ${{ matrix.rust_version }}
         run: |
           rustup toolchain install ${{ matrix.rust_version }}
+
       - uses: actions/checkout@v4
+
       - run: rustup override set ${{ matrix.rust_version }}
+
       - run: rustup component add rustfmt
+
       - name: cargo check
         run: cargo check
+
       - name: cargo fmt --check
         run: cargo fmt --check
+
   test:
     strategy:
       matrix:
@@ -33,13 +37,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
       - run: rustup toolchain install stable --profile minimal
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1
+
       - name: Run tests (whole workspace, including desktop)
         if: ${{ matrix.os != 'ubuntu-latest' }}
         run: cargo test --workspace
+
       - name: Run tests
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: cargo test
