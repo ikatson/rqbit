@@ -334,6 +334,7 @@ pub async fn discover_once(
     tx: &UnboundedSender<UpnpDiscoverResponse>,
     kind: &str,
     timeout: Duration,
+    interface_name: Option<String>,
 ) -> anyhow::Result<()> {
     let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
         .await
@@ -343,6 +344,9 @@ pub async fn discover_once(
         .send_to(message.as_bytes(), SSDP_MULTICAST_IP)
         .await
         .context("failed to send SSDP search request")?;
+        if let Some(iname) =  interface_name {
+            socket.bind_device(Some(iname.as_bytes()))?;
+        }
 
     let mut buffer = [0; 2048];
 
@@ -378,6 +382,7 @@ pub struct UpnpPortForwarderOptions {
     pub lease_duration: Duration,
     pub discover_interval: Duration,
     pub discover_timeout: Duration,
+    pub interface_name: Option<String>,
 }
 
 impl Default for UpnpPortForwarderOptions {
@@ -386,6 +391,7 @@ impl Default for UpnpPortForwarderOptions {
             discover_interval: Duration::from_secs(60),
             discover_timeout: Duration::from_secs(10),
             lease_duration: Duration::from_secs(60),
+            interface_name: None,
         }
     }
 }
@@ -425,6 +431,7 @@ impl UpnpPortForwarder {
             tx,
             SSDP_SEARCH_WAN_IPCONNECTION_ST,
             self.opts.discover_timeout,
+            self.opts.interface_name.clone(),
         )
         .await
     }

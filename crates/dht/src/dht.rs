@@ -1138,6 +1138,7 @@ pub struct DhtConfig {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
+    pub interface_name: Option<String>,
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
 }
@@ -1153,14 +1154,26 @@ impl DhtState {
     #[inline(never)]
     pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
-            let socket = match config.listen_addr {
-                Some(addr) => UdpSocket::bind(addr)
+            let socket: UdpSocket = match config.listen_addr {
+                Some(addr) => {
+                    let sock = UdpSocket::bind(addr)
                     .await
-                    .with_context(|| format!("error binding socket, address {addr}")),
-                None => UdpSocket::bind("0.0.0.0:0")
-                    .await
-                    .context("error binding socket, address 0.0.0.0:0"),
-            }?;
+                    .with_context(|| format!("error binding socket, address {addr}"))?;
+                    if let Some(iname) = config.interface_name {
+                        sock.bind_device(Some(iname.as_bytes()))?;
+                    }
+                    sock
+                },
+                None => {
+                    let sock = UdpSocket::bind("0.0.0.0:0")
+                        .await
+                        .context("error binding socket, address 0.0.0.0:0")?;
+                    if let Some(iname) = config.interface_name {
+                        sock.bind_device(Some(iname.as_bytes()))?;
+                    }
+                    sock
+                },
+            };
 
             let listen_addr = socket
                 .local_addr()

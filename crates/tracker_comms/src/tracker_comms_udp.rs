@@ -184,11 +184,13 @@ impl UdpTrackerRequester {
     pub async fn new(addr: impl ToSocketAddrs) -> anyhow::Result<Self> {
         let sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
             .await
-            .context("error binding UDP socket")?;
+            .context("error binding UDP socket for tracker")?;
+
+        //TODO: Figure out how to set this nicely
+        //sock.bind_device(Some(b"INTERFACE-NAME")).context("error setting UDP socket to interface")?;
         sock.connect(addr)
             .await
-            .context("error connecting UDP socket")?;
-
+            .context("error connecting UDP socket for tracker")?;
         let tid = new_transaction_id();
         let mut write_buf = Vec::new();
         let mut read_buf = vec![0u8; 4096];
