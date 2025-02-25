@@ -572,6 +572,17 @@ impl TorrentStateLive {
                 continue;
             }
 
+            let outgoing_ip = addr.ip();
+            let is_blocked_ip = state.shared.session.upgrade().map_or_else(
+                || false,
+                |session| session.blocklist.is_blocked(outgoing_ip),
+            );
+
+            if is_blocked_ip {
+                info!("Outgoing ip {outgoing_ip} for peer is in blocklist skipping");
+                continue;
+            }
+
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
                 error_span!(parent: state.shared.span.clone(), "manage_peer", peer = addr.to_string()),

@@ -228,6 +228,10 @@ struct Opts {
     /// Limit upload to bytes-per-second.
     #[arg(long = "ratelimit-upload", env = "RQBIT_RATELIMIT_UPLOAD")]
     ratelimit_upload_bps: Option<NonZeroU32>,
+
+    /// Downloads a p2p blocklist from this url and blocks peers from it
+    #[arg(long, env = "RQBIT_BLOCKLIST_URL")]
+    blocklist_url: Option<String>,
 }
 
 #[derive(Parser)]
@@ -494,6 +498,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             upload_bps: opts.ratelimit_upload_bps,
             download_bps: opts.ratelimit_download_bps,
         },
+        blocklist_url: opts.blocklist_url,
     };
 
     let http_api_basic_auth = if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {

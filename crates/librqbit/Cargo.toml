@@ -81,6 +81,7 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "socks",
+    "stream",
 ] }
 urlencoding = "2"
 byteorder = "1"
@@ -117,6 +118,8 @@ async-backtrace = { version = "0.2", optional = true }
 notify = { version = "7", optional = true }
 walkdir = "2.5.0"
 arc-swap = "1.7.1"
+intervaltree = "0.2.7"
+async-compression = {version="0.4.18", features= ["tokio", "gzip"] }
 
 [build-dependencies]
 anyhow = "1"

@@ -172,6 +172,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-compression"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df895a515f70646414f4b45c0b79082783b80552b373a68283012928df56f522"
+dependencies = [
+ "flate2",
+ "futures-core",
+ "memchr",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2339,6 +2352,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "intervaltree"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "270bc34e57047cab801a8c871c124d9dc7132f6473c6401f645524f4e6edd111"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2629,6 +2651,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-backtrace",
+ "async-compression",
  "async-stream",
  "async-trait",
  "axum 0.8.1",
@@ -2645,6 +2668,7 @@ dependencies = [
  "hex 0.4.3",
  "home",
  "http",
+ "intervaltree",
  "itertools 0.14.0",
  "librqbit-bencode",
  "librqbit-buffers",
