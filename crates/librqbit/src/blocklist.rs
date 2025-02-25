@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_compression::tokio::bufread::GzipDecoder;
 use futures::TryStreamExt;
 use intervaltree::IntervalTree;
@@ -28,12 +28,11 @@ impl Blocklist {
     }
 
     pub async fn load_from_url(url: &str) -> Result<Self> {
-        let response = reqwest::get(url).await.map_err(|e| anyhow::anyhow!(e))?;
+        let response = reqwest::get(url)
+            .await
+            .context("Failed to send request for blocklist")?;
         if response.status() != 200 {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch blocklist: HTTP {}",
-                response.status()
-            ));
+            anyhow::bail!("Failed to fetch blocklist: HTTP {}", response.status());
         }
 
         let content_length = response
@@ -41,9 +40,7 @@ impl Blocklist {
             .ok_or_else(|| anyhow::anyhow!("Failed to get content length"))?;
 
         if content_length < 2 {
-            return Err(anyhow::anyhow!(
-                "Content too short: not enough data to determine compression"
-            ));
+            anyhow::bail!("Content too short: not enough data to determine compression");
         }
 
         let reader = StreamReader::new(
@@ -72,9 +69,7 @@ impl Blocklist {
         if buffer.len() >= 2 {
             peek_bytes.copy_from_slice(&buffer[0..2]);
         } else {
-            return Err(anyhow::anyhow!(
-                "Content too short: not enough data to determine compression"
-            ));
+            anyhow::bail!("Content too short: not enough data to determine compression");
         }
 
         // Check for Gzip magic bytes (1F 8B)
