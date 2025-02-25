@@ -164,53 +164,12 @@ fn parse_ip_range(line: &str) -> Option<(IpAddr, IpAddr)> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
     use async_compression::tokio::write::GzipEncoder;
-    use mockito::{Server, ServerGuard};
-    use std::thread::{self, JoinHandle};
+    use futures::stream::once;
     use tokio::io::AsyncWriteExt;
-
-    struct TestServer {
-        server: ServerGuard,
-        mock: mockito::Mock,
-        url: String,
-        _thread: JoinHandle<()>,
-    }
-
-    impl TestServer {
-        fn new(content: &[u8], headers: &[(&str, &str)]) -> Self {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let server_thread = thread::spawn(move || {
-                let mut server = Server::new();
-                let url = server.url();
-                let mock = server.mock("GET", "/").with_status(200);
-
-                tx.send((server, mock, url)).unwrap();
-                thread::park();
-            });
-
-            let (server, mut mock, url) = rx.recv().unwrap();
-
-            mock = mock.with_body(content);
-            for &(key, value) in headers {
-                mock = mock.with_header(key, value);
-            }
-            let mock = mock.create();
-
-            TestServer {
-                server,
-                mock,
-                url,
-                _thread: server_thread,
-            }
-        }
-    }
-
-    impl Drop for TestServer {
-        fn drop(&mut self) {
-            self._thread.thread().unpark();
-        }
-    }
 
     #[tokio::test]
     async fn test_blocklist_gzipped() -> Result<()> {
@@ -227,13 +186,13 @@ mod tests {
             encoder.shutdown().await.unwrap();
         }
 
-        let server = TestServer::new(&gzipped_blocklist, &[("Content-Encoding", "gzip")]);
-
-        let blocklist = Blocklist::load_from_url(&server.url).await?;
+        let stream = StreamReader::new(Box::pin(once(async {
+            Ok::<_, std::io::Error>(Cursor::new(gzipped_blocklist))
+        })));
+        let blocklist = Blocklist::create_from_stream(stream).await?;
         assert!(blocklist.is_blocked(&"192.168.1.1".parse().unwrap()));
         assert!(!blocklist.is_blocked(&"8.8.8.8".parse().unwrap()));
 
-        server.mock.assert();
         Ok(())
     }
 
@@ -245,13 +204,13 @@ mod tests {
         localv6:2001:db8::1-2001:db8::ffff
         "#;
 
-        let server = TestServer::new(blocklist.as_bytes(), &[]);
-
-        let blocklist = Blocklist::load_from_url(&server.url).await?;
+        let stream = StreamReader::new(Box::pin(once(async {
+            Ok::<_, std::io::Error>(Cursor::new(blocklist.as_bytes().to_vec()))
+        })));
+        let blocklist = Blocklist::create_from_stream(stream).await?;
         assert!(blocklist.is_blocked(&"192.168.1.1".parse().unwrap()));
         assert!(!blocklist.is_blocked(&"8.8.8.8".parse().unwrap()));
 
-        server.mock.assert();
         Ok(())
     }
 
