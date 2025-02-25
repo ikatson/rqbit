@@ -732,7 +732,7 @@ impl Session {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         let incoming_ip = addr.ip();
-        if self.blocklist.is_blocked(&incoming_ip) {
+        if self.blocklist.is_blocked(incoming_ip) {
             bail!("Incoming ip {incoming_ip} is in blocklist");
         }
 
