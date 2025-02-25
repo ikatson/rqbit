@@ -9,6 +9,7 @@ use tokio::io::AsyncRead;
 use tokio::{io::AsyncBufReadExt, io::BufReader};
 use tokio_util::io::StreamReader;
 use tracing::{debug, info, trace};
+use url::Url;
 
 pub struct Blocklist {
     // ipv4 and ipv6 do not overlap
@@ -28,7 +29,16 @@ impl Blocklist {
     }
 
     pub async fn load_from_url(url: &str) -> Result<Self> {
-        let response = reqwest::get(url)
+        let parsed_url = Url::parse(url).context("Failed to parse URL")?;
+
+        if parsed_url.scheme() == "file" {
+            let path = parsed_url
+                .to_file_path()
+                .map_err(|_| anyhow::anyhow!("Failed to convert file URL to path"))?;
+            return Self::load_from_file(path.to_str().unwrap()).await;
+        }
+
+        let response = reqwest::get(parsed_url)
             .await
             .context("Failed to send request for blocklist")?;
         if response.status() != 200 {
