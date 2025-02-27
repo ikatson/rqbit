@@ -60,9 +60,11 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
 
-    let piece_length: u32 = 16384 * 2; // TODO: figure out if this should be multiple of chunk size or not
-    let file_length: usize = 1000 * 1000;
-    let num_files: usize = 64;
+    let piece_length: u32 = 16384 * 2;
+    let file_length: usize = 8 * 1000 * 1000; // uneven files will make pieces cross file boundaries
+
+    // Not setting this too high as 64 causes too many open files on osx on github runners.
+    let num_files: usize = 8;
 
     let tempdir =
         create_default_random_dir_with_torrents(num_files, file_length, Some("rqbit_e2e"));
