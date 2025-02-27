@@ -20,13 +20,15 @@ use peer_binary_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    time::timeout,
-};
+use tokio::time::timeout;
 use tracing::{debug, trace};
 
-use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner, stream_connect::StreamConnector};
+use crate::{
+    read_buf::ReadBuf,
+    spawn_utils::BlockingSpawner,
+    stream_connect::StreamConnector,
+    type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+};
 
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
@@ -130,8 +132,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         read_buf: ReadBuf,
         handshake: Handshake<ByteBufOwned>,
-        read: Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
-        mut write: Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
+        read: BoxAsyncRead,
+        mut write: BoxAsyncWrite,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;

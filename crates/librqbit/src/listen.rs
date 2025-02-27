@@ -132,8 +132,8 @@ pub(crate) trait Accept {
     ) -> anyhow::Result<(
         SocketAddr,
         (
-            impl AsyncRead + Unpin + Send + Sync + 'static,
-            (impl AsyncWrite + Unpin + Send + Sync + 'static),
+            impl AsyncRead + Unpin + Send + 'static,
+            (impl AsyncWrite + Unpin + Send + 'static),
         ),
     )>;
 }
@@ -144,8 +144,8 @@ impl Accept for TcpListener {
     ) -> anyhow::Result<(
         SocketAddr,
         (
-            impl AsyncRead + Send + Sync + 'static,
-            (impl AsyncWrite + Send + Sync + 'static),
+            impl AsyncRead + Send + 'static,
+            (impl AsyncWrite + Send + 'static),
         ),
     )> {
         let (stream, addr) = self.accept().await.context("error accepting TCP")?;
@@ -160,8 +160,8 @@ impl Accept for Arc<UtpSocketUdp> {
     ) -> anyhow::Result<(
         SocketAddr,
         (
-            impl AsyncRead + Unpin + Send + Sync + 'static,
-            impl AsyncWrite + Unpin + Send + Sync + 'static,
+            impl AsyncRead + Unpin + Send + 'static,
+            impl AsyncWrite + Unpin + Send + 'static,
         ),
     )> {
         let stream = self.accept().await.context("error accepting uTP")?;

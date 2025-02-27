@@ -66,7 +66,7 @@ impl TestPeerMetadata {
     }
 
     pub fn as_peer_id(&self) -> Id20 {
-        let mut peer_id = generate_peer_id("rQ");
+        let mut peer_id = generate_peer_id(b"rQ");
         peer_id.0[15..19].copy_from_slice(b"test");
         rng().fill(&mut peer_id.0);
         peer_id.0[14] = self.server_id;
@@ -130,9 +130,6 @@ async fn debug_server() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("error binding to {addr}"))?;
     axum::serve(listener, app).await?;
-    Ok(())
-}
-async fn debug_server() -> anyhow::Result<()> {
     Ok(())
 }
 

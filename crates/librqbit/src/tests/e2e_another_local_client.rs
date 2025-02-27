@@ -8,8 +8,8 @@ use bytes::Bytes;
 use tracing::info;
 
 use crate::{
-    listen::ListenerOptions, tests::test_util::setup_test_logging, AddTorrentOptions,
-    ConnectionOptions, Session, SessionOptions,
+    AddTorrentOptions, ConnectionOptions, Session, SessionOptions, listen::ListenerOptions,
+    tests::test_util::setup_test_logging,
 };
 
 // Create this from librqbit_utp: cargo run --release --example create_canary_file /tmp/canary_4096m 4096
