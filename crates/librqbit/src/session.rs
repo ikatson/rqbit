@@ -121,6 +121,7 @@ pub struct Session {
     default_storage_factory: Option<BoxStorageFactory>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
     disk_write_tx: Option<DiskWorkQueueSender>,
+    trackers: HashSet<url::Url>,
 
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
@@ -647,6 +648,7 @@ impl Session {
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
                 ratelimits: Limits::new(opts.ratelimits),
+                trackers: opts.trackers,
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
@@ -1337,6 +1339,8 @@ impl Session {
         if is_private && trackers.len() > 1 {
             warn!("private trackers are not fully implemented, so using only the first tracker");
             trackers.truncate(1);
+        } else {
+            trackers.extend(self.trackers.iter().cloned());
         }
 
         let tracker_rx_stats = PeerRxTorrentInfo {

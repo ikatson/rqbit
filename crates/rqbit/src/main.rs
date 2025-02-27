@@ -440,7 +440,7 @@ async fn parse_trackers_file(filename: &str) -> anyhow::Result<HashSet<url::Url>
     let content = tokio::fs::read_to_string(filename)
         .await
         .with_context(|| format!("error opening {filename}"))?;
-    Ok(content
+    let trackers = content
         .lines()
         .filter_map(|s| {
             let s = s.trim();
@@ -449,7 +449,9 @@ async fn parse_trackers_file(filename: &str) -> anyhow::Result<HashSet<url::Url>
             }
             url::Url::parse(s).ok()
         })
-        .collect())
+        .collect::<HashSet<url::Url>>();
+    info!(filename, count = trackers.len(), "parsed trackers");
+    Ok(trackers)
 }
 
 async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()> {
@@ -471,7 +473,9 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     };
 
     let trackers = if let Some(f) = opts.trackers_filename {
-        parse_trackers_file(&f).await?
+        parse_trackers_file(&f)
+            .await
+            .context("error reading trackers file")?
     } else {
         Default::default()
     };
