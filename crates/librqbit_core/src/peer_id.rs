@@ -59,7 +59,7 @@ pub fn generate_peer_id() -> Id20 {
     let u = uuid::Uuid::new_v4();
     peer_id[4..20].copy_from_slice(&u.as_bytes()[..]);
 
-    peer_id[..8].copy_from_slice(b"-rQ7000-");
+    peer_id[..8].copy_from_slice(b"-rQ9000-");
 
     Id20::new(peer_id)
 }

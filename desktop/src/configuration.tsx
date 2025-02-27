@@ -8,21 +8,21 @@ interface RqbitDesktopConfigDht {
   persistence_filename: PathLike;
 }
 
-interface RqbitDesktopConfigTcpListen {
-  disable: boolean;
-  min_port: number;
-  max_port: number;
+interface RqbitDesktopConfigConnections {
+  enable_tcp_listen: boolean;
+  enable_tcp_outgoing: boolean;
+  enable_utp: boolean;
+  enable_upnp_port_forward: boolean;
+  socks_proxy: string;
+  listen_port: number;
+  peer_connect_timeout: Duration;
+  peer_read_write_timeout: Duration;
 }
 
 interface RqbitDesktopConfigPersistence {
   disable: boolean;
   folder: PathLike;
   fastresume: boolean;
-}
-
-interface RqbitDesktopConfigPeerOpts {
-  connect_timeout: Duration;
-  read_write_timeout: Duration;
 }
 
 interface RqbitDesktopConfigHttpApi {
@@ -48,10 +48,9 @@ export interface RqbitDesktopConfig {
   default_download_location: PathLike;
   disable_upload?: boolean;
   dht: RqbitDesktopConfigDht;
-  tcp_listen: RqbitDesktopConfigTcpListen;
+  connections: RqbitDesktopConfigConnections;
   upnp: RqbitDesktopConfigUpnp;
   persistence: RqbitDesktopConfigPersistence;
-  peer_opts: RqbitDesktopConfigPeerOpts;
   http_api: RqbitDesktopConfigHttpApi;
   ratelimits: LimitsConfig;
 }

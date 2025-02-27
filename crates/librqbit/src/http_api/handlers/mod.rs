@@ -42,6 +42,7 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "GET /stats": "Global session stats",
             "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
             "GET /torrents/{id_or_infohash}": "Torrent details",
+            "GET /torrents/{id_or_infohash}/metadata": "Download the corresponding torrent file",
             "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
             "GET /torrents/{id_or_infohash}/playlist": "Generate M3U8 playlist for this torrent",
             "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
@@ -74,9 +75,14 @@ pub fn make_api_router(state: ApiState) -> Router {
         .route("/torrents", get(torrents::h_torrents_list))
         .route("/torrents/{id}", get(torrents::h_torrent_details))
         .route("/torrents/{id}/haves", get(torrents::h_torrent_haves))
+        .route("/torrents/{id}/metadata", get(torrents::h_metadata))
         .route("/torrents/{id}/stats", get(torrents::h_torrent_stats_v0))
         .route("/torrents/{id}/stats/v1", get(torrents::h_torrent_stats_v1))
         .route("/torrents/{id}/peer_stats", get(torrents::h_peer_stats))
+        .route(
+            "/torrents/{id}/peer_stats/prometheus",
+            get(torrents::h_peer_stats_prometheus),
+        )
         .route("/torrents/{id}/playlist", get(playlist::h_torrent_playlist))
         .route("/torrents/playlist", get(playlist::h_global_playlist))
         .route("/torrents/resolve_magnet", post(other::h_resolve_magnet))
@@ -115,7 +121,8 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/{id}/update_only_files",
                 post(torrents::h_torrent_action_update_only_files),
-            );
+            )
+            .route("/torrents/{id}/add_peers", post(torrents::h_add_peers));
     }
 
     api_router.with_state(state)

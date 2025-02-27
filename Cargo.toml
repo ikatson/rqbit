@@ -32,9 +32,13 @@ default-members = [
     "crates/upnp-serve",
 ]
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 panic = "abort"
 debug = true
+overflow-checks = true
 lto = "thin"
 
 [profile.release-github]
