@@ -942,7 +942,7 @@ struct PeerHandler {
     first_message_received: AtomicBool,
 }
 
-impl<'a> PeerConnectionHandler for &'a PeerHandler {
+impl PeerConnectionHandler for &PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
             .outgoing_connections

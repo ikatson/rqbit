@@ -3,6 +3,7 @@ use async_compression::tokio::bufread::GzipDecoder;
 use futures::TryStreamExt;
 use intervaltree::IntervalTree;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
 use tokio::io::{AsyncBufRead, AsyncRead};
@@ -19,7 +20,7 @@ pub struct Blocklist {
 
 impl Blocklist {
     pub fn empty() -> Self {
-        return Self::new(std::iter::empty());
+        Self::new(std::iter::empty())
     }
 
     pub fn new(ip_ranges: impl IntoIterator<Item = std::ops::Range<IpAddr>>) -> Self {
@@ -34,23 +35,16 @@ impl Blocklist {
         if parsed_url.scheme() == "file" {
             let path = parsed_url
                 .to_file_path()
-                .map_err(|_| anyhow::anyhow!("Failed to convert file URL to path"))?;
-            return Self::load_from_file(path.to_str().unwrap()).await;
+                .ok()
+                .context("failed to convert file URL to path")?;
+            return Self::load_from_file(path).await;
         }
 
         let response = reqwest::get(parsed_url)
             .await
             .context("Failed to send request for blocklist")?;
-        if response.status() != 200 {
+        if !response.status().is_success() {
             anyhow::bail!("Failed to fetch blocklist: HTTP {}", response.status());
-        }
-
-        let content_length = response
-            .content_length()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get content length"))?;
-
-        if content_length < 2 {
-            anyhow::bail!("Content too short: not enough data to determine compression");
         }
 
         let reader = StreamReader::new(
@@ -61,7 +55,7 @@ impl Blocklist {
         Self::create_from_stream(reader).await
     }
 
-    pub async fn load_from_file(path: &str) -> Result<Self> {
+    pub async fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = tokio::fs::File::open(path).await?;
         let reader = tokio::io::BufReader::new(file);
         Self::create_from_stream(reader).await
@@ -97,7 +91,7 @@ impl Blocklist {
         let mut ip_ranges: Vec<std::ops::Range<IpAddr>> = Vec::new();
         while reader.read_line(&mut line).await? > 0 {
             if let Some((start_ip, end_ip)) = parse_ip_range(&line) {
-                let range = start_ip..(increment_ip(end_ip));
+                let range = start_ip..increment_ip(end_ip);
                 ip_ranges.push(range);
             }
             line.clear();
