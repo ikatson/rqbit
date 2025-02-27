@@ -37,9 +37,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1
-      - name: Run tests (whole workspace, including desktop)
-        if: ${{ matrix.os != 'ubuntu-latest' }}
+      - name: Run tests
+        if: ${{ matrix.os == 'windows-latest' }}
         run: cargo test --workspace
+      - name: Run tests
+        if: ${{ matrix.os == 'macos-latest' }}
+        run: ulimit -n unlimited && cargo test --workspace
       - name: Run tests
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: cargo test
