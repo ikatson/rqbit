@@ -28,7 +28,7 @@ devserver-profile:
 
 # DEV variables (that's why defined after devserver-profile)
 export RQBIT_LOG_FILE ?= /tmp/rqbit-log
-export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace,librqbit_utp=trace
+export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace,librqbit_utp=debug
 export CORS_ALLOW_REGEXP ?= '.*'
 
 @PHONY: devserver
