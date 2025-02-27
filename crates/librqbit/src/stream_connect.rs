@@ -124,6 +124,7 @@ impl StreamConnector {
     )> {
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = proxy.connect(addr).await?;
+            debug!(?addr, "connected through SOCKS5");
             return Ok((Box::new(r), Box::new(w)));
         }
 
@@ -134,9 +135,11 @@ impl StreamConnector {
             if !self.enable_tcp {
                 bail!("TCP outgoing connections disabled");
             }
-            tokio::net::TcpStream::connect(addr)
+            let conn = tokio::net::TcpStream::connect(addr)
                 .await
-                .context("error connecting over TCP")
+                .context("error connecting over TCP");
+            debug!(?addr, "connected over TCP");
+            conn
         };
 
         let utp_connect = async {
@@ -145,14 +148,18 @@ impl StreamConnector {
                 None => bail!("uTP disabled"),
             };
 
-            // Give TCP priority as it's more mature, faster and simpler.
+            // Give TCP priority as it's more mature and simpler.
             if self.enable_tcp {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
 
-            sock.connect(addr)
+            let conn = sock
+                .connect(addr)
                 .await
-                .context("error connecting over uTP")
+                .context("error connecting over uTP");
+
+            debug!(?addr, "connected over uTP");
+            conn
         };
 
         tokio::pin!(tcp_connect);
