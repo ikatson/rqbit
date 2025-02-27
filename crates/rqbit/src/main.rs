@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     io,
     net::SocketAddr,
     num::NonZeroU32,
@@ -232,6 +233,10 @@ struct Opts {
     /// Downloads a p2p blocklist from this url and blocks peers from it
     #[arg(long, env = "RQBIT_BLOCKLIST_URL")]
     blocklist_url: Option<String>,
+
+    /// The filename with tracker URLs to always use for each torrent.
+    #[arg(long, env = "RQBIT_TRACKERS_FILENAME")]
+    trackers_filename: Option<String>,
 }
 
 #[derive(Parser)]
@@ -431,6 +436,22 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+async fn parse_trackers_file(filename: &str) -> anyhow::Result<HashSet<url::Url>> {
+    let content = tokio::fs::read_to_string(filename)
+        .await
+        .with_context(|| format!("error opening {filename}"))?;
+    Ok(content
+        .lines()
+        .filter_map(|s| {
+            let s = s.trim();
+            if s.is_empty() {
+                return None;
+            }
+            url::Url::parse(s).ok()
+        })
+        .collect())
+}
+
 async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()> {
     let log_config = init_logging(InitLoggingOptions {
         default_rust_log_value: Some(match opts.log_level.unwrap_or(LogLevel::Info) {
@@ -447,6 +468,12 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     match librqbit::try_increase_nofile_limit() {
         Ok(limit) => info!(limit = limit, "increased open file limit"),
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
+    };
+
+    let trackers = if let Some(f) = opts.trackers_filename {
+        parse_trackers_file(&f).await?
+    } else {
+        Default::default()
     };
 
     let mut sopts = SessionOptions {
@@ -499,6 +526,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             download_bps: opts.ratelimit_download_bps,
         },
         blocklist_url: opts.blocklist_url,
+        trackers,
     };
 
     let http_api_basic_auth = if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {

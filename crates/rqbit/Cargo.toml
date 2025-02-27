@@ -52,6 +52,7 @@ libc = "0.2.158"
 signal-hook = "0.3.17"
 tokio-util = "0.7.11"
 gethostname = "0.5.0"
+url = "2"
 
 [dev-dependencies]
 futures = { version = "0.3" }

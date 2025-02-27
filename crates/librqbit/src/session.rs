@@ -422,6 +422,9 @@ pub struct SessionOptions {
 
     pub blocklist_url: Option<String>,
 
+    // The list of tracker URLs to always use for each torrent.
+    pub trackers: HashSet<url::Url>,
+
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 }
