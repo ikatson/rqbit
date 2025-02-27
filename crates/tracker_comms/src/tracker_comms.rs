@@ -187,7 +187,7 @@ impl TrackerComms {
 
     async fn task_single_tracker_monitor_http(&self, mut tracker_url: Url) -> anyhow::Result<()> {
         let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
-        trace!(url=?tracker_url, "starting monitor");
+        trace!(url=%tracker_url, "starting monitor");
         loop {
             let stats = self.stats.get();
             let request = tracker_comms_http::TrackerRequest {
@@ -231,7 +231,7 @@ impl TrackerComms {
     }
 
     async fn tracker_one_request_http(&self, tracker_url: Url) -> anyhow::Result<u64> {
-        debug!(url = ?tracker_url, "calling tracker over http");
+        debug!(url = %tracker_url, "calling tracker over http");
         let response: reqwest::Response = self.reqwest_client.get(tracker_url).send().await?;
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());
@@ -310,7 +310,7 @@ impl TrackerComms {
                     sleep_interval = Some(self.force_tracker_interval.unwrap_or(new_interval));
                 }
                 Err(e) => {
-                    debug!(url = ?url, "error reading announce response: {e:#}");
+                    debug!(url = %url, "error reading announce response: {e:#}");
                     if sleep_interval.is_none() {
                         sleep_interval = Some(
                             self.force_tracker_interval
