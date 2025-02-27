@@ -188,7 +188,7 @@ pub struct ManagedTorrentShared {
     pub id: TorrentId,
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
-    pub trackers: HashSet<String>,
+    pub trackers: HashSet<url::Url>,
     pub peer_id: Id20,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,

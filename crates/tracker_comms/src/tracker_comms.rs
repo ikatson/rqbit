@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -91,7 +92,7 @@ impl TrackerComms {
     pub fn start(
         info_hash: Id20,
         peer_id: Id20,
-        trackers: Vec<String>,
+        trackers: HashSet<Url>,
         stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
         tcp_listen_port: Option<u16>,
@@ -99,17 +100,11 @@ impl TrackerComms {
     ) -> Option<BoxStream<'static, SocketAddr>> {
         let trackers = trackers
             .into_iter()
-            .filter_map(|t| match Url::parse(&t) {
-                Ok(parsed) => match parsed.scheme() {
-                    "http" | "https" => Some(SupportedTracker::Http(parsed)),
-                    "udp" => Some(SupportedTracker::Udp(parsed)),
-                    _ => {
-                        debug!("unsuppoted tracker URL: {}", t);
-                        None
-                    }
-                },
-                Err(e) => {
-                    debug!("error parsing tracker URL {}: {}", t, e);
+            .filter_map(|t| match t.scheme() {
+                "http" | "https" => Some(SupportedTracker::Http(t)),
+                "udp" => Some(SupportedTracker::Udp(t)),
+                _ => {
+                    debug!("unsuppoted tracker URL: {}", t);
                     None
                 }
             })
