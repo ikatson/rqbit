@@ -121,6 +121,7 @@ pub struct Session {
     default_storage_factory: Option<BoxStorageFactory>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
     disk_write_tx: Option<DiskWorkQueueSender>,
+    trackers: HashSet<url::Url>,
 
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
@@ -422,6 +423,9 @@ pub struct SessionOptions {
 
     pub blocklist_url: Option<String>,
 
+    // The list of tracker URLs to always use for each torrent.
+    pub trackers: HashSet<url::Url>,
+
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 }
@@ -440,12 +444,12 @@ async fn create_tcp_listener(
     bail!("no free TCP ports in range {port_range:?}");
 }
 
-fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[String]) -> anyhow::Result<Bytes> {
+fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
     #[derive(Serialize)]
     struct Tmp<'a> {
         announce: &'a str,
         #[serde(rename = "announce-list")]
-        announce_list: &'a [&'a [String]],
+        announce_list: &'a [&'a [url::Url]],
         info: bencode::raw_value::RawValue<&'a [u8]>,
     }
 
@@ -469,7 +473,7 @@ pub(crate) struct CheckedIncomingConnection {
 struct InternalAddResult {
     info_hash: Id20,
     metadata: Option<TorrentMetadata>,
-    trackers: Vec<String>,
+    trackers: Vec<url::Url>,
     name: Option<String>,
 }
 
@@ -644,6 +648,7 @@ impl Session {
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
                 ratelimits: Limits::new(opts.ratelimits),
+                trackers: opts.trackers,
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
@@ -906,7 +911,11 @@ impl Session {
 
                     InternalAddResult {
                         info_hash,
-                        trackers: magnet.trackers,
+                        trackers: magnet
+                            .trackers
+                            .into_iter()
+                            .filter_map(|t| url::Url::parse(&t).ok())
+                            .collect(),
                         metadata: None,
                         name: magnet.name,
                     }
@@ -952,7 +961,10 @@ impl Session {
                             torrent.torrent_bytes,
                             torrent.info_bytes,
                         )?),
-                        trackers,
+                        trackers: trackers
+                            .iter()
+                            .filter_map(|t| url::Url::parse(t).ok())
+                            .collect(),
                         name: None,
                     }
                 }
@@ -1309,7 +1321,7 @@ impl Session {
     fn make_peer_rx(
         self: &Arc<Self>,
         info_hash: Id20,
-        mut trackers: Vec<String>,
+        mut trackers: Vec<url::Url>,
         announce: bool,
         force_tracker_interval: Option<Duration>,
         initial_peers: Vec<SocketAddr>,
@@ -1326,7 +1338,9 @@ impl Session {
 
         if is_private && trackers.len() > 1 {
             warn!("private trackers are not fully implemented, so using only the first tracker");
-            trackers.resize_with(1, Default::default);
+            trackers.truncate(1);
+        } else {
+            trackers.extend(self.trackers.iter().cloned());
         }
 
         let tracker_rx_stats = PeerRxTorrentInfo {
@@ -1336,7 +1350,7 @@ impl Session {
         let tracker_rx = TrackerComms::start(
             info_hash,
             self.peer_id,
-            trackers,
+            trackers.into_iter().collect(),
             Box::new(tracker_rx_stats),
             force_tracker_interval,
             announce_port,
@@ -1393,7 +1407,7 @@ impl Session {
         self: &Arc<Self>,
         info_hash: Id20,
         peer_rx: PeerStream,
-        trackers: &[String],
+        trackers: &[url::Url],
         peer_opts: Option<PeerConnectionOptions>,
     ) -> anyhow::Result<ResolveMagnetResult> {
         match read_metainfo_from_peer_receiver(
@@ -1525,9 +1539,10 @@ mod tests {
 
     #[test]
     fn test_torrent_file_from_info_and_bytes() {
-        fn get_trackers(info: &TorrentMetaV1<ByteBuf>) -> Vec<String> {
+        fn get_trackers(info: &TorrentMetaV1<ByteBuf>) -> Vec<url::Url> {
             info.iter_announce()
                 .filter_map(|t| std::str::from_utf8(t.as_ref()).ok().map(|t| t.to_owned()))
+                .filter_map(|t| t.parse().ok())
                 .collect_vec()
         }
 
