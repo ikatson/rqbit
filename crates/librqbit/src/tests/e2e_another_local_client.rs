@@ -91,7 +91,8 @@ async fn test_with_another_client(sopts: SessionOptions, addr: SocketAddr) {
         f.read_link().unwrap_or(f)
     };
 
-    if cfg!(unix) {
+    #[cfg(unix)]
+    {
         if std::fs::exists(BINARY_SYMLINK).unwrap() {
             std::fs::remove_file(BINARY_SYMLINK).unwrap();
         }
