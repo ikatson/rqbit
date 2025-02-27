@@ -61,7 +61,7 @@ use tokio::{
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument, Span};
-use tracker_comms::TrackerComms;
+use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -110,6 +110,7 @@ pub struct Session {
     dht: Option<Dht>,
     pub(crate) connector: Arc<StreamConnector>,
     reqwest_client: reqwest::Client,
+    udp_tracker_client: UdpTrackerClient,
 
     // Lifecycle management
     cancellation_token: CancellationToken,
@@ -625,6 +626,10 @@ impl Session {
                 blocklist::Blocklist::empty()
             };
 
+            let udp_tracker_client = UdpTrackerClient::new(token.clone())
+                .await
+                .context("error creating UDP tracker client")?;
+
             let session = Arc::new(Self {
                 persistence,
                 bitv_factory,
@@ -647,6 +652,7 @@ impl Session {
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
+                udp_tracker_client,
                 ratelimits: Limits::new(opts.ratelimits),
                 trackers: opts.trackers,
                 #[cfg(feature = "disable-upload")]
@@ -1355,6 +1361,7 @@ impl Session {
             force_tracker_interval,
             announce_port,
             self.reqwest_client.clone(),
+            self.udp_tracker_client.clone(),
         );
 
         let initial_peers_rx = if initial_peers.is_empty() {

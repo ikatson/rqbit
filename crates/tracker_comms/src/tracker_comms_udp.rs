@@ -1,10 +1,16 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{bail, Context};
-use librqbit_core::hash_id::Id20;
+use librqbit_core::{hash_id::Id20, spawn_utils::spawn_with_cancel};
+use parking_lot::RwLock;
 use rand::Rng;
-use tokio::net::ToSocketAddrs;
-use tracing::trace;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error_span, trace, warn};
 
 const ACTION_CONNECT: u32 = 0;
 const ACTION_ANNOUNCE: u32 = 1;
@@ -172,87 +178,169 @@ impl Response {
     }
 }
 
-pub struct UdpTrackerRequester {
-    sock: tokio::net::UdpSocket,
-    connection_id: ConnectionId,
-    read_buf: Vec<u8>,
-    write_buf: Vec<u8>,
+pub type TrackerAddr = (String, u16);
+
+struct ConnectionIdMeta {
+    id: ConnectionId,
+    created: Instant,
 }
 
-impl UdpTrackerRequester {
-    // Addr is "host:port"
-    pub async fn new(addr: impl ToSocketAddrs) -> anyhow::Result<Self> {
+#[derive(Default)]
+struct ClientLocked {
+    connections: HashMap<TrackerAddr, ConnectionIdMeta>,
+    transactions: HashMap<TransactionId, tokio::sync::oneshot::Sender<Response>>,
+}
+
+struct ClientShared {
+    sock: tokio::net::UdpSocket,
+    locked: RwLock<ClientLocked>,
+}
+
+#[derive(Clone)]
+pub struct UdpTrackerClient {
+    state: Arc<ClientShared>,
+}
+
+struct TransactionIdGuard<'a> {
+    tid: TransactionId,
+    state: &'a ClientShared,
+}
+
+impl Drop for TransactionIdGuard<'_> {
+    fn drop(&mut self) {
+        let mut g = self.state.locked.write();
+        g.transactions.remove(&self.tid);
+    }
+}
+
+impl UdpTrackerClient {
+    pub async fn new(cancel_token: CancellationToken) -> anyhow::Result<Self> {
         let sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
             .await
-            .context("error binding UDP socket")?;
-        sock.connect(addr)
-            .await
-            .context("error connecting UDP socket")?;
-
-        let tid = new_transaction_id();
-        let mut write_buf = Vec::new();
-        let mut read_buf = vec![0u8; 4096];
-
-        trace!("sending connect request");
-        Request::Connect.serialize(tid, &mut write_buf);
-
-        sock.send(&write_buf)
-            .await
-            .context("error sending to socket")?;
-
-        let size = sock
-            .recv(&mut read_buf)
-            .await
-            .context("error receiving from socket")?;
-
-        let (rtid, response) =
-            Response::parse(&read_buf[..size]).context("error parsing response")?;
-        if tid != rtid {
-            bail!("expected transaction id {} == {}", tid, rtid);
-        }
-        trace!(response=?response, "received");
-
-        let connection_id = match response {
-            Response::Connect(connection_id) => connection_id,
-            other => bail!("unexpected response {other:?}"),
+            .context("error binding UDP for tracker")?;
+        let client = Self {
+            state: Arc::new(ClientShared {
+                sock,
+                locked: RwLock::new(Default::default()),
+            }),
         };
 
-        trace!(connection_id);
+        spawn_with_cancel(error_span!("udp_tracker"), cancel_token, {
+            let client = client.clone();
+            async move { client.run().await }
+        });
 
-        Ok(Self {
-            sock,
-            connection_id,
-            read_buf,
-            write_buf,
-        })
+        Ok(client)
     }
 
-    pub async fn announce(&mut self, fields: AnnounceFields) -> anyhow::Result<AnnounceResponse> {
-        let request = Request::Announce(self.connection_id, fields);
-        let response = self.request(request).await?;
+    async fn run(self) -> anyhow::Result<()> {
+        let mut buf = [0u8; 16384];
+        loop {
+            let (len, addr) = match self.state.sock.recv_from(&mut buf).await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("error in UdpSocket::recv_from: {e:#}");
+                    continue;
+                }
+            };
+
+            let (tid, response) = match Response::parse(&buf[..len]) {
+                Ok(r) => r,
+                Err(e) => {
+                    debug!(?addr, "error parsing UDP response: {e:#}");
+                    continue;
+                }
+            };
+
+            trace!(?tid, ?response, ?addr, "received");
+
+            let t = self.state.locked.write().transactions.remove(&tid);
+            match t {
+                Some(tx) => match tx.send(response) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        debug!(tid, "reader dead");
+                    }
+                },
+                None => {
+                    debug!(tid, "nowhere to send response");
+                }
+            };
+        }
+    }
+
+    async fn get_connection_id(&self, addr: &TrackerAddr) -> anyhow::Result<ConnectionId> {
+        if let Some(m) = self.state.locked.read().connections.get(addr) {
+            if m.created.elapsed() < Duration::from_secs(60) {
+                return Ok(m.id);
+            }
+        }
+
+        let response = self.request(addr, Request::Connect).await?;
+        match response {
+            Response::Connect(connection_id) => {
+                self.state.locked.write().connections.insert(
+                    addr.clone(),
+                    ConnectionIdMeta {
+                        id: connection_id,
+                        created: Instant::now(),
+                    },
+                );
+                Ok(connection_id)
+            }
+            _ => anyhow::bail!("expected connect response"),
+        }
+    }
+
+    async fn request(&self, addr: &TrackerAddr, request: Request) -> anyhow::Result<Response> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tid_g = self.reserve_transaction_id(tx)?;
+
+        // TODO: no allocs
+        let mut write_buf = Vec::new();
+        request.serialize(tid_g.tid, &mut write_buf);
+        self.state.sock.send_to(&write_buf, addr).await?;
+
+        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+            .await
+            .context("timeout connecting")?
+            .context("sender dead")?;
+        Ok(response)
+    }
+
+    fn reserve_transaction_id(
+        &self,
+        tx: tokio::sync::oneshot::Sender<Response>,
+    ) -> anyhow::Result<TransactionIdGuard<'_>> {
+        let mut g = self.state.locked.write();
+        for _ in 0..10 {
+            let t = new_transaction_id();
+            match g.transactions.entry(t) {
+                Entry::Occupied(_) => continue,
+                Entry::Vacant(vac) => {
+                    vac.insert(tx);
+                    return Ok(TransactionIdGuard {
+                        tid: t,
+                        state: &self.state,
+                    });
+                }
+            }
+        }
+        bail!("cant generate transaction id")
+    }
+
+    pub async fn announce(
+        &self,
+        tracker: &TrackerAddr,
+        fields: AnnounceFields,
+    ) -> anyhow::Result<AnnounceResponse> {
+        let connection_id = self.get_connection_id(tracker).await?;
+        let request = Request::Announce(connection_id, fields);
+        let response = self.request(tracker, request).await?;
         match response {
             Response::Announce(r) => Ok(r),
             other => bail!("unexpected response {other:?}, expected announce"),
         }
-    }
-
-    pub async fn request(&mut self, request: Request) -> anyhow::Result<Response> {
-        let tid = new_transaction_id();
-        self.write_buf.clear();
-        let size = request.serialize(tid, &mut self.write_buf);
-        trace!(request=?request, tid, "sending");
-        self.sock
-            .send(&self.write_buf[..size])
-            .await
-            .context("error sending")?;
-        let size = self.sock.recv(&mut self.read_buf).await?;
-
-        let (rtid, response) = Response::parse(&self.read_buf[..size])?;
-        trace!("received response");
-        if tid != rtid {
-            bail!("unexpected transaction id");
-        }
-        Ok(response)
     }
 }
 

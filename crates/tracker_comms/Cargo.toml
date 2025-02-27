@@ -32,3 +32,5 @@ tracing = "0.1.40"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
 url = { version = "2", default-features = false }
+parking_lot = "0.12.3"
+tokio-util = "0.7.13"

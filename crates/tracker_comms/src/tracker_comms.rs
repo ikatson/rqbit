@@ -18,6 +18,7 @@ use url::Url;
 
 use crate::tracker_comms_http;
 use crate::tracker_comms_udp;
+use crate::tracker_comms_udp::UdpTrackerClient;
 use librqbit_core::hash_id::Id20;
 
 pub struct TrackerComms {
@@ -89,6 +90,7 @@ impl std::fmt::Debug for SupportedTracker {
 }
 
 impl TrackerComms {
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         info_hash: Id20,
         peer_id: Id20,
@@ -97,6 +99,7 @@ impl TrackerComms {
         force_interval: Option<Duration>,
         tcp_listen_port: Option<u16>,
         reqwest_client: reqwest::Client,
+        udp_client: UdpTrackerClient,
     ) -> Option<BoxStream<'static, SocketAddr>> {
         let trackers = trackers
             .into_iter()
@@ -131,7 +134,7 @@ impl TrackerComms {
             });
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {
-                futures.push(comms.add_tracker(tracker))
+                futures.push(comms.add_tracker(tracker, &udp_client))
             }
             while !(futures.is_empty()) {
                 tokio::select! {
@@ -155,6 +158,7 @@ impl TrackerComms {
     fn add_tracker(
         &self,
         url: SupportedTracker,
+        client: &UdpTrackerClient,
     ) -> Either<
         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
@@ -163,7 +167,7 @@ impl TrackerComms {
         match url {
             SupportedTracker::Udp(url) => {
                 let span = error_span!(parent: None, "udp_tracker", tracker = %url, info_hash = ?info_hash);
-                self.task_single_tracker_monitor_udp(url)
+                self.task_single_tracker_monitor_udp(url, client.clone())
                     .instrument(span)
                     .right_future()
             }
@@ -247,19 +251,20 @@ impl TrackerComms {
         Ok(response.interval)
     }
 
-    async fn task_single_tracker_monitor_udp(&self, url: Url) -> anyhow::Result<()> {
+    async fn task_single_tracker_monitor_udp(
+        &self,
+        url: Url,
+        client: UdpTrackerClient,
+    ) -> anyhow::Result<()> {
         use tracker_comms_udp::*;
 
         if url.scheme() != "udp" {
             bail!("expected UDP scheme in {}", url);
         }
-        let hp: (&str, u16) = (
-            url.host_str().context("missing host")?,
+        let hp: (String, u16) = (
+            url.host_str().context("missing host")?.to_owned(),
             url.port().context("missing port")?,
         );
-        let mut requester = UdpTrackerRequester::new(hp)
-            .await
-            .context("error creating UDP tracker requester")?;
 
         let mut sleep_interval: Option<Duration> = None;
         loop {
@@ -291,7 +296,7 @@ impl TrackerComms {
                 port: self.tcp_listen_port.unwrap_or(0),
             };
 
-            match requester.announce(request).await {
+            match client.announce(&hp, request).await {
                 Ok(response) => {
                     trace!(len = response.addrs.len(), "received announce response");
                     for addr in response.addrs {
