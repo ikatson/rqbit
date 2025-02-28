@@ -208,7 +208,7 @@ pub async fn wait_until_i_am_the_last_task() -> anyhow::Result<()> {
             Ok(())
         },
         // This needs to be higher than the timeout the tasks print "still running"
-        Duration::from_secs(6),
+        Duration::from_secs(15),
     )
     .await
 }
