@@ -8,7 +8,7 @@ services:
     network_mode: host
     ports:
       - 3030:3030 # HTTP API port
-      - 4240:4240 # TCP BitTorrent port
+      - 4240:4240 # TCP/uTP BitTorrent port
     environment:
       # Replace this with your LAN hostname or IP, resolvable from other devices in your LAN
       RQBIT_UPNP_SERVER_ENABLE: "true"

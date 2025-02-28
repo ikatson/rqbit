@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::bail;
-use librqbit_core::Id20;
+use librqbit_core::{peer_id::generate_peer_id, Id20};
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
@@ -66,17 +66,21 @@ impl TestPeerMetadata {
     }
 
     pub fn as_peer_id(&self) -> Id20 {
-        let mut peer_id = Id20::default();
+        let mut peer_id = generate_peer_id();
+        peer_id.0[15..19].copy_from_slice(b"test");
         thread_rng().fill(&mut peer_id.0);
-        peer_id.0[0] = self.server_id;
-        peer_id.0[1] = self.max_random_sleep_ms;
+        peer_id.0[14] = self.server_id;
+        peer_id.0[13] = self.max_random_sleep_ms;
         peer_id
     }
 
     pub fn from_peer_id(peer_id: Id20) -> Self {
+        if &peer_id.0[15..19] != b"test" {
+            return Self::good();
+        }
         Self {
-            server_id: peer_id.0[0],
-            max_random_sleep_ms: peer_id.0[1],
+            server_id: peer_id.0[14],
+            max_random_sleep_ms: peer_id.0[13],
         }
     }
 
