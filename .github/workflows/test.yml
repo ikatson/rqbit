@@ -19,13 +19,19 @@ jobs:
       - name: rustup toolchain install ${{ matrix.rust_version }}
         run: |
           rustup toolchain install ${{ matrix.rust_version }}
+
       - uses: actions/checkout@v4
+
       - run: rustup override set ${{ matrix.rust_version }}
+
       - run: rustup component add rustfmt
+
       - name: cargo check
         run: cargo check
+
       - name: cargo fmt --check
         run: cargo fmt --check
+
   test:
     strategy:
       matrix:
@@ -33,16 +39,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
       - run: rustup toolchain install stable --profile minimal
+
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v1
+      
       - name: Run tests
         if: ${{ matrix.os == 'windows-latest' }}
         run: cargo test --workspace
+
       - name: Run tests
         if: ${{ matrix.os == 'macos-latest' }}
         run: ulimit -n unlimited && cargo test --workspace
+      
       - name: Run tests
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: cargo test
