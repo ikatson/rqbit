@@ -1,0 +1,12 @@
+[Unit]
+Description=RQbit
+After=network.target
+
+[Service]
+Type=simple
+Environment=RQBIT_HTTP_API_LISTEN_ADDR=0.0.0.0:3030
+Environment=RQBIT_DIR=/home/downloads/
+ExecStart=/usr/local/bin/rqbit server start ${RQBIT_DIR}
+
+[Install]
+WantedBy=default.target
