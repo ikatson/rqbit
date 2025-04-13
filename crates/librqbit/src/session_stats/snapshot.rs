@@ -8,12 +8,12 @@ use super::SessionStats;
 
 #[derive(Debug, Serialize)]
 pub struct SessionStatsSnapshot {
-    fetched_bytes: u64,
-    uploaded_bytes: u64,
-    download_speed: Speed,
-    upload_speed: Speed,
-    peers: AggregatePeerStats,
-    uptime_seconds: u64,
+    pub fetched_bytes: u64,
+    pub uploaded_bytes: u64,
+    pub download_speed: Speed,
+    pub upload_speed: Speed,
+    pub peers: AggregatePeerStats,
+    pub uptime_seconds: u64,
 }
 
 impl From<&SessionStats> for SessionStatsSnapshot {
