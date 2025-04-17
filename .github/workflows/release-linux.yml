@@ -8,6 +8,59 @@ on:
       - "v*.*.*"
 
 jobs:
+  release-linux:
+    runs-on: ${{ matrix.os }}
+    if: github.ref_type == 'tag'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tauri dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: install Tauri
+        run: cargo binstall tauri-cli --no-confirm
+
+      - name: npm install (desktop)
+        working-directory: desktop
+        run: npm install
+
+      - name: npm install (librqbit/webui)
+        working-directory: crates/librqbit/webui
+        run: npm install
+
+      - name: cargo tauri build
+        working-directory: desktop
+        run:
+          cargo tauri build --ci
+
+      - name: Move files
+        run: |
+          mkdir -p builds
+          find target/ -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) -print0 |
+          while IFS= read -r -d '' file; do
+              mv "$file" ${{ github.workspace }}/builds/
+          done
+          mv target/release/rqbit-desktop ${{ github.workspace }}/builds/rqbit-desktop-linux-${{ matrix.arch }}
+
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ github.workspace }}/builds/*
+
   build-docker-cross:
     runs-on: ubuntu-latest
     strategy:
