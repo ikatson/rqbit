@@ -990,11 +990,27 @@ impl PeerConnectionHandler for &PeerHandler {
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
-                self.send_metadata_piece(metadata_piece_id)
-                    .with_context(|| format!("error sending metadata piece {metadata_piece_id}"))?;
+                if self.state.metadata.info.private {
+                    warn!(
+                        "recieved noncompliant ut_metadata message from {}, ignoring",
+                        self.addr
+                    );
+                } else {
+                    self.send_metadata_piece(metadata_piece_id)
+                        .with_context(|| {
+                            format!("error sending metadata piece {metadata_piece_id}")
+                        })?;
+                }
             }
             Message::Extended(ExtendedMessage::UtPex(pex)) => {
-                self.on_pex_message(pex);
+                if self.state.metadata.info.private {
+                    warn!(
+                        "recieved noncompliant PEX message from {}, ignoring",
+                        self.addr
+                    );
+                } else {
+                    self.on_pex_message(pex);
+                }
             }
             message => {
                 warn!("received unsupported message {:?}, ignoring", message);
@@ -1032,7 +1048,7 @@ impl PeerConnectionHandler for &PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
-        if let Some(_peer_pex_msg_id) = hs.ut_pex() {
+        if !self.state.metadata.info.private && hs.ut_pex().is_some() {
             self.state.clone().spawn(
                 error_span!(
                     parent: self.state.shared.span.clone(),
