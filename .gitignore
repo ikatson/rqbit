@@ -1,3 +1,4 @@
+.bacon-locations
 /target
 /desktop/src-tauri/gen/
 .DS_Store
