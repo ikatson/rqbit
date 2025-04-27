@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Weak},
 };
 
+use crate::Magnet;
 use anyhow::{bail, Context};
 use buffers::ByteBuf;
 use librqbit_core::torrent_metainfo::torrent_from_bytes;
@@ -86,6 +87,17 @@ fn watch_thread(
     tx: UnboundedSender<(AddTorrent<'static>, PathBuf)>,
     cancel_event: &ThreadCancelEvent,
 ) -> anyhow::Result<()> {
+    fn read_and_validate_magnet(path: &Path) -> anyhow::Result<AddTorrent<'static>> {
+        let mut url = String::new();
+        std::fs::File::open(path)
+            .context("error opening")?
+            .read_to_string(&mut url)
+            .context("error reading")?;
+        warn!("validating {url}");
+        Magnet::parse(&url)?;
+        Ok(AddTorrent::Url(url.into()))
+    }
+
     fn read_and_validate_torrent(path: &Path) -> anyhow::Result<AddTorrent<'static>> {
         let mut buf = Vec::new();
         std::fs::File::open(path)
@@ -109,23 +121,35 @@ fn watch_thread(
                 return Ok(());
             }
         }
-        for path in ev.paths {
-            if path.extension().and_then(|e| e.to_str()) != Some("torrent") {
-                trace!(?path, "ignoring path");
-                continue;
-            }
-            let add = match read_and_validate_torrent(&path) {
-                Ok(add) => add,
-                Err(e) => {
-                    warn!(?path, "error validating torrent: {e:#}");
-                    continue;
-                }
-            };
 
-            if tx.send((add, path.to_owned())).is_err() {
-                return Ok(());
-            }
-        }
+        ev.paths
+            .iter()
+            .filter_map(|path| match path.extension().and_then(|e| e.to_str())? {
+                "torrent" => match read_and_validate_torrent(path) {
+                    Ok(add_torrent) => Some((add_torrent, path)),
+                    Err(e) => {
+                        warn!(?path, "torrent file invalid: {e:#}");
+                        None
+                    }
+                },
+                "magnet" => match read_and_validate_magnet(path) {
+                    Ok(add_torrent) => Some((add_torrent, path)),
+                    Err(e) => {
+                        warn!(?path, "magnet file invalid: {e:#}");
+                        None
+                    }
+                },
+                _ => {
+                    trace!(?path, "ignoring path");
+                    None
+                }
+            })
+            .for_each(|(add_torrent, path)| {
+                if let Err(e) = tx.send((add_torrent, path.to_owned())) {
+                    error!("watch thread couldn't send message: {e:#}");
+                }
+            });
+
         Ok(())
     }
 
