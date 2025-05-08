@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::Read,
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
@@ -994,8 +994,12 @@ impl Session {
         if files.len() < 2 {
             return Ok(None);
         }
-        fn check_valid(name: &str) -> anyhow::Result<()> {
-            if name.contains("/") || name.contains("\\") || name.contains("..") {
+
+        fn check_valid(pb: &PathBuf) -> anyhow::Result<()> {
+            if pb.components().into_iter().any(|x| match x {
+                Component::Normal(_) => false,
+                _ => true,
+            }) {
                 bail!("path traversal in torrent name detected")
             }
             Ok(())
@@ -1004,12 +1008,14 @@ impl Session {
         if let Some(name) = &info.name {
             let s =
                 std::str::from_utf8(name.as_slice()).context("invalid UTF-8 in torrent name")?;
-            check_valid(s)?;
-            return Ok(Some(PathBuf::from(s)));
+            let pb = PathBuf::from(s);
+            check_valid(&pb)?;
+            return Ok(Some(pb));
         };
         if let Some(name) = magnet_name {
-            check_valid(name)?;
-            return Ok(Some(PathBuf::from(name)));
+            let pb = PathBuf::from(name);
+            check_valid(&pb)?;
+            return Ok(Some(pb));
         }
         // Let the subfolder name be the longest filename
         let longest = files
