@@ -98,7 +98,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ], optional = true }
 uuid = { version = "1.2", features = ["v4"] }
 futures = "0.3"
-url = { version = "=2.5.2", default-features = false, features = [
+url = { version = "^2.5.2", default-features = false, features = [
     "serde",
 ] } # can't upgrade yet until min version is Rust 1.81, see https://github.com/servo/rust-url/issues/992
 
