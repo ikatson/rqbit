@@ -62,10 +62,11 @@ impl TorrentStorage for FilesystemStorage {
         {
             use std::os::unix::fs::FileExt;
             Ok(of
-                .file
+                .file_handle
                 .read()
                 .as_ref()
                 .context("file is None")?
+                .file
                 .read_exact_at(buf, offset)?)
         }
         #[cfg(target_family = "windows")]
@@ -93,18 +94,19 @@ impl TorrentStorage for FilesystemStorage {
         {
             use std::os::unix::fs::FileExt;
             Ok(of
-                .file
+                .file_handle
                 .read()
                 .as_ref()
                 .context("file is None")?
+                .file
                 .write_all_at(buf, offset)?)
         }
         #[cfg(target_family = "windows")]
         {
             use std::os::windows::fs::FileExt;
             let mut remaining = buf.len();
-            let g = of.file.read();
-            let f = g.as_ref().context("file is None")?;
+            let g = of.file_handle.read();
+            let f = g.as_ref().context("file is None")?.file;
             while remaining > 0 {
                 remaining -= f.seek_write(buf, offset)?;
             }
@@ -113,8 +115,8 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(not(any(target_family = "unix", target_family = "windows")))]
         {
             use std::io::{Read, Seek, SeekFrom, Write};
-            let mut g = of.file.write();
-            let mut f = g.as_ref().context("file is None")?;
+            let mut g = of.file_handle.write();
+            let mut f = g.as_ref().context("file is None")?.file;
             f.seek(SeekFrom::Start(offset))?;
             Ok(f.write_all(buf)?)
         }
@@ -126,10 +128,11 @@ impl TorrentStorage for FilesystemStorage {
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
         Ok(self.opened_files[file_id]
-            .file
+            .file_handle
             .write()
             .as_ref()
             .context("file is None")?
+            .file
             .set_len(len)?)
     }
 
