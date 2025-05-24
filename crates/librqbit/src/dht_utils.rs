@@ -131,7 +131,7 @@ mod tests {
         let dht = DhtBuilder::new().await.unwrap();
 
         let peer_rx = dht.get_peers(info_hash, None);
-        let peer_id = generate_peer_id();
+        let peer_id = generate_peer_id(b"-xx1234-");
         match read_metainfo_from_peer_receiver(
             peer_id,
             info_hash,

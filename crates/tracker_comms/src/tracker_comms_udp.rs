@@ -447,7 +447,7 @@ mod tests {
             connection_id,
             AnnounceFields {
                 info_hash: hash,
-                peer_id: generate_peer_id(),
+                peer_id: generate_peer_id(b"-xx1234-"),
                 downloaded: 0,
                 left: 0,
                 uploaded: 0,
