@@ -270,7 +270,7 @@ mod tests {
         init_logging();
 
         let addr = SocketAddr::from_str("127.0.0.1:27311").unwrap();
-        let peer_id = generate_peer_id();
+        let peer_id = generate_peer_id(b"-xx1234-");
         let info_hash = Id20::from_str("9905f844e5d8787ecd5e08fb46b2eb0a42c131d7").unwrap();
         dbg!(read_metainfo_from_peer(
             addr,

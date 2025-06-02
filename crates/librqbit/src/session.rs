@@ -46,9 +46,10 @@ use futures::{
 use itertools::Itertools;
 use librqbit_core::{
     constants::CHUNK_SIZE,
+    crate_version,
     directories::get_configuration_directory,
     magnet::Magnet,
-    peer_id::generate_peer_id,
+    peer_id::generate_azereus_style,
     spawn_utils::spawn_with_cancel,
     torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
 };
@@ -498,7 +499,9 @@ impl Session {
         mut opts: SessionOptions,
     ) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
-            let peer_id = opts.peer_id.unwrap_or_else(generate_peer_id);
+            let peer_id = opts
+                .peer_id
+                .unwrap_or_else(|| generate_azereus_style(*b"rQ", crate_version!()));
             let token = opts.cancellation_token.take().unwrap_or_default();
 
             #[cfg(feature = "disable-upload")]

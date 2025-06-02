@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-core"
-version = "4.1.0"
+version = "5.0.0"
 edition = "2021"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
@@ -20,7 +20,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 hex = "0.4"
 anyhow = "1"
 url = { version = "2", default-features = false }
-uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }

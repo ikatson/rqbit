@@ -29,8 +29,9 @@ use futures::{
 
 use leaky_bucket::RateLimiter;
 use librqbit_core::{
+    crate_version,
     hash_id::Id20,
-    peer_id::generate_peer_id,
+    peer_id::generate_azereus_style,
     spawn_utils::{spawn, spawn_with_cancel},
 };
 use parking_lot::RwLock;
@@ -1167,7 +1168,9 @@ impl DhtState {
                 .context("cannot determine UDP listen addr")?;
             info!("DHT listening on {:?}", listen_addr);
 
-            let peer_id = config.peer_id.unwrap_or_else(generate_peer_id);
+            let peer_id = config
+                .peer_id
+                .unwrap_or_else(|| (generate_azereus_style(*b"rQ", crate_version!())));
             info!("starting up DHT with peer id {:?}", peer_id);
             let bootstrap_addrs = config
                 .bootstrap_addrs
