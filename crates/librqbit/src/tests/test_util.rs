@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::bail;
-use librqbit_core::{Id20, peer_id::generate_peer_id};
+use librqbit_core::{Id20, crate_version, peer_id::generate_azereus_style};
 use parking_lot::RwLock;
 use rand::{Rng, RngCore, SeedableRng, rng};
 use tempfile::TempDir;
@@ -66,7 +66,7 @@ impl TestPeerMetadata {
     }
 
     pub fn as_peer_id(&self) -> Id20 {
-        let mut peer_id = generate_peer_id(b"rQ");
+        let mut peer_id = generate_azereus_style(*b"rQ", crate_version!());
         peer_id.0[15..19].copy_from_slice(b"test");
         rng().fill(&mut peer_id.0);
         peer_id.0[14] = self.server_id;
