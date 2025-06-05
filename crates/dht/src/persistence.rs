@@ -122,7 +122,8 @@ impl PersistentDht {
                 Err(e) => match e.kind() {
                     std::io::ErrorKind::NotFound => None,
                     _ => {
-                        return Err(e).with_context(|| format!("error reading {config_filename:?}"));
+                        return Err(e)
+                            .with_context(|| format!("error reading {config_filename:?}"));
                     }
                 },
             };
