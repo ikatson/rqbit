@@ -1163,20 +1163,11 @@ dependencies = [
 
 [[package]]
 name = "directories"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a49173b84e034382284f27f1af4dcbbd231ffa358c0fe316541a7337f376a35"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "directories"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
 dependencies = [
- "dirs-sys 0.5.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -1185,19 +1176,7 @@ version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.4.6",
- "windows-sys 0.48.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -1208,7 +1187,7 @@ checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users 0.5.0",
+ "redox_users",
  "windows-sys 0.59.0",
 ]
 
@@ -1781,16 +1760,6 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
-]
-
-[[package]]
-name = "gethostname"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc3655aa6818d65bc620d6911f05aa7b6aeb596291e1e9f79e52df85583d1e30"
-dependencies = [
- "rustix 0.38.44",
- "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -2897,7 +2866,7 @@ dependencies = [
  "assert_cfg",
  "bytes",
  "data-encoding",
- "directories 6.0.0",
+ "directories",
  "hex 0.4.3",
  "itertools 0.14.0",
  "librqbit-bencode",
@@ -3015,7 +2984,7 @@ dependencies = [
  "axum 0.8.4",
  "bstr",
  "futures",
- "gethostname 1.0.2",
+ "gethostname",
  "http",
  "httparse",
  "librqbit-core",
@@ -4472,17 +4441,6 @@ dependencies = [
 
 [[package]]
 name = "redox_users"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
-dependencies = [
- "getrandom 0.2.16",
- "libredox",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "redox_users"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd6f9d3d47bdd2ad6945c5015a226ec6155d0bcdfd8f7cd29f86b71f8de99d2b"
@@ -4617,7 +4575,7 @@ dependencies = [
  "clap_complete",
  "console-subscriber",
  "futures",
- "gethostname 1.0.2",
+ "gethostname",
  "libc",
  "librqbit",
  "librqbit-upnp-serve",
@@ -4642,8 +4600,8 @@ version = "8.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "directories 5.0.1",
- "gethostname 0.5.0",
+ "directories",
+ "gethostname",
  "http",
  "librqbit",
  "parking_lot",
