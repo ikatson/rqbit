@@ -31,8 +31,8 @@ impl SocksProxyConfig {
         &self,
         addr: SocketAddr,
     ) -> anyhow::Result<(
-        impl tokio::io::AsyncRead + Unpin,
-        impl tokio::io::AsyncWrite + Unpin,
+        impl tokio::io::AsyncRead + Unpin + 'static,
+        impl tokio::io::AsyncWrite + Unpin + 'static,
     )> {
         let proxy_addr = (self.host.as_str(), self.port);
 
@@ -71,8 +71,8 @@ impl StreamConnector {
         &self,
         addr: SocketAddr,
     ) -> anyhow::Result<(
-        Box<dyn tokio::io::AsyncRead + Send + Unpin>,
-        Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
+        Box<dyn tokio::io::AsyncRead + Send + Unpin + 'static>,
+        Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'static>,
     )> {
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = proxy.connect(addr).await?;

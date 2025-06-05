@@ -147,7 +147,7 @@ impl Lengths {
         index.0 as u64 * self.piece_length as u64
     }
 
-    pub fn iter_piece_infos(&self) -> impl Iterator<Item = PieceInfo> {
+    pub fn iter_piece_infos(&self) -> impl Iterator<Item = PieceInfo> + 'static {
         let last_id = self.last_piece_id;
         let last_len = self.last_piece_length;
         let pl = self.piece_length;

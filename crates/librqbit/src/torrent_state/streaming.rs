@@ -2,8 +2,8 @@ use std::{
     collections::VecDeque,
     io::SeekFrom,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Poll, Waker},
 };
@@ -16,7 +16,7 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{debug, trace};
 
 use crate::{
-    file_info::FileInfo, spawn_utils::BlockingSpawner, storage::TorrentStorage, ManagedTorrent,
+    ManagedTorrent, file_info::FileInfo, spawn_utils::BlockingSpawner, storage::TorrentStorage,
 };
 
 use super::{ManagedTorrentHandle, TorrentMetadata};
@@ -39,7 +39,7 @@ impl StreamState {
         lengths.compute_current_piece(self.position, self.file_abs_offset)
     }
 
-    fn queue<'a>(&self, lengths: &'a Lengths) -> impl Iterator<Item = ValidPieceIndex> + 'a {
+    fn queue<'a>(&self, lengths: &'a Lengths) -> impl Iterator<Item = ValidPieceIndex> + use<'a> {
         let start = self.file_abs_offset + self.position;
         let end = (start + PER_STREAM_BUF_DEFAULT).min(self.file_abs_offset + self.file_len);
         let dpl = lengths.default_piece_length();
@@ -178,11 +178,12 @@ impl AsyncRead for FileStream {
             return Poll::Ready(Ok(()));
         }
 
-        let current = poll_try_io!(self
-            .metadata
-            .lengths
-            .compute_current_piece(self.position, self.file_torrent_abs_offset)
-            .context("invalid position"));
+        let current = poll_try_io!(
+            self.metadata
+                .lengths
+                .compute_current_piece(self.position, self.file_torrent_abs_offset)
+                .context("invalid position")
+        );
 
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
@@ -202,10 +203,12 @@ impl AsyncRead for FileStream {
         // actually stream the piece
         let buf = tbuf.initialize_unfilled();
         let file_remaining = self.file_len - self.position;
-        let bytes_to_read: usize = poll_try_io!((buf.len() as u64)
-            .min(current.piece_remaining as u64)
-            .min(file_remaining)
-            .try_into());
+        let bytes_to_read: usize = poll_try_io!(
+            (buf.len() as u64)
+                .min(current.piece_remaining as u64)
+                .min(file_remaining)
+                .try_into()
+        );
 
         let buf = &mut buf[..bytes_to_read];
         trace!(

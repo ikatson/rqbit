@@ -1,12 +1,12 @@
 use std::{
     collections::{
-        hash_map::Entry::{Occupied, Vacant},
         HashMap,
+        hash_map::Entry::{Occupied, Vacant},
     },
     sync::Arc,
 };
 
-use crate::{session::TorrentId, torrent_state::TorrentMetadata, ManagedTorrentShared, Session};
+use crate::{ManagedTorrentShared, Session, session::TorrentId, torrent_state::TorrentMetadata};
 
 #[derive(Clone)]
 pub struct UpnpServerSessionAdapter {
@@ -20,11 +20,11 @@ use itertools::Itertools;
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use tracing::{debug, trace, warn};
 use upnp_serve::{
-    services::content_directory::{
-        browse::response::{Container, Item, ItemOrContainer},
-        ContentDirectoryBrowseProvider,
-    },
     UpnpServer, UpnpServerOptions,
+    services::content_directory::{
+        ContentDirectoryBrowseProvider,
+        browse::response::{Container, Item, ItemOrContainer},
+    },
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -110,7 +110,7 @@ fn is_single_file_at_root(info: &TorrentMetaV1Info<ByteBufOwned>) -> bool {
     info.iter_file_details()
         .into_iter()
         .flatten()
-        .flat_map(|fd| fd.filename.iter_components())
+        .flat_map(move |fd| fd.filename.iter_components())
         .nth(1)
         .is_none()
 }
@@ -393,16 +393,16 @@ mod tests {
     };
     use tempfile::TempDir;
     use upnp_serve::services::content_directory::{
-        browse::response::{Container, Item, ItemOrContainer},
         ContentDirectoryBrowseProvider,
+        browse::response::{Container, Item, ItemOrContainer},
     };
 
     use crate::{
+        AddTorrent, AddTorrentOptions, Session, SessionOptions,
         tests::test_util::setup_test_logging,
         upnp_server_adapter::{
-            decode_id, encode_id, TorrentFileTree, TorrentFileTreeNode, UpnpServerSessionAdapter,
+            TorrentFileTree, TorrentFileTreeNode, UpnpServerSessionAdapter, decode_id, encode_id,
         },
-        AddTorrent, AddTorrentOptions, Session, SessionOptions,
     };
 
     fn create_torrent(name: Option<&str>, files: &[&str]) -> TorrentMetaV1Owned {

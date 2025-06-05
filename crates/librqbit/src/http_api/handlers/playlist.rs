@@ -8,8 +8,8 @@ use itertools::Itertools;
 
 use super::ApiState;
 use crate::{
-    api::{Result, TorrentIdOrHash},
     ApiError, ManagedTorrent,
+    api::{Result, TorrentIdOrHash},
 };
 
 fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
@@ -50,10 +50,10 @@ fn get_host(headers: &HeaderMap) -> Result<&str> {
         .context("hostname is not string")?)
 }
 
-fn build_playlist_content(
+fn build_playlist_content<I: IntoIterator<Item = (TorrentIdOrHash, usize, String)>>(
     host: &str,
-    it: impl IntoIterator<Item = (TorrentIdOrHash, usize, String)>,
-) -> impl IntoResponse {
+    it: I,
+) -> impl IntoResponse + use<I> {
     let body = it
         .into_iter()
         .map(|(torrent_idx, file_idx, filename)| {
