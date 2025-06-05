@@ -18,7 +18,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Output logs to console.
     match std::env::var("RUST_LOG") {
         Ok(_) => {}
-        Err(_) => std::env::set_var("RUST_LOG", "info"),
+        Err(_) => unsafe { std::env::set_var("RUST_LOG", "info") },
     }
     tracing_subscriber::fmt::init();
 

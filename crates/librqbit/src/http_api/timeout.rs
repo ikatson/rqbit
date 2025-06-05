@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use axum::{extract::Query, RequestPartsExt};
+use axum::{RequestPartsExt, extract::Query};
 use http::request::Parts;
 use serde::Deserialize;
 

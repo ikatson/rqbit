@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{ser::Impossible, Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::Impossible};
 
 use buffers::ByteBufOwned;
 

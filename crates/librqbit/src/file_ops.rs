@@ -16,7 +16,7 @@ use tracing::{debug, trace, warn};
 use crate::{
     file_info::FileInfo,
     storage::TorrentStorage,
-    type_aliases::{FileInfos, PeerHandle, BF},
+    type_aliases::{BF, FileInfos, PeerHandle},
 };
 
 pub fn update_hash_from_file<Sha1: ISha1>(
@@ -201,9 +201,7 @@ impl<'a> FileOps<'a> {
                 std::cmp::min(file_remaining_len, piece_remaining_bytes as u64).try_into()?;
             trace!(
                 "piece={}, file_idx={}, seeking to {}",
-                piece_index,
-                file_idx,
-                absolute_offset,
+                piece_index, file_idx, absolute_offset,
             );
             update_hash_from_file(
                 file_idx,
@@ -270,11 +268,7 @@ impl<'a> FileOps<'a> {
 
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
-                chunk_info.piece_index,
-                who_sent,
-                file_idx,
-                absolute_offset,
-                &chunk_info
+                chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
             );
             if file_info.attrs.padding {
                 buf[..to_read_in_file].fill(0);

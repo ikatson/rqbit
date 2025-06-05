@@ -1,12 +1,12 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     ffi::CStr,
     net::{Ipv4Addr, SocketAddrV4},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use librqbit_core::{hash_id::Id20, spawn_utils::spawn_with_cancel};
 use parking_lot::RwLock;
 use rand::Rng;
@@ -405,7 +405,7 @@ mod tests {
     use librqbit_core::{hash_id::Id20, peer_id::generate_peer_id};
 
     use crate::tracker_comms_udp::{
-        new_transaction_id, AnnounceFields, Request, Response, EVENT_NONE,
+        AnnounceFields, EVENT_NONE, Request, Response, new_transaction_id,
     };
 
     #[test]

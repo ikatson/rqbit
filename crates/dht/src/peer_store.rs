@@ -11,8 +11,8 @@ use librqbit_core::hash_id::Id20;
 use parking_lot::RwLock;
 use rand::RngCore;
 use serde::{
-    ser::{SerializeMap, SerializeStruct},
     Deserialize, Serialize,
+    ser::{SerializeMap, SerializeStruct},
 };
 use tracing::trace;
 

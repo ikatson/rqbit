@@ -1,4 +1,4 @@
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 
 pub fn make_webui_router() -> Router {
     Router::new()

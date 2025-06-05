@@ -4,21 +4,21 @@ use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use base64::Engine;
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use http::{HeaderMap, StatusCode};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
-use tracing::{debug, error_span, info, Span};
+use tracing::{Span, debug, error_span, info};
 
 use axum::Router;
 
 use crate::api::Api;
 
-use crate::api::Result;
 use crate::ApiError;
+use crate::api::Result;
 
 mod handlers;
 mod timeout;
@@ -61,7 +61,7 @@ async fn simple_basic_auth(
                 StatusCode::UNAUTHORIZED,
                 [("WWW-Authenticate", "Basic realm=\"API\"")],
             )
-                .into_response())
+                .into_response());
         }
     };
     // TODO: constant time compare

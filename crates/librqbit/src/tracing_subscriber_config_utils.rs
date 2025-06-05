@@ -75,7 +75,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
     let (stderr_filter, reload_stderr_filter) =
         tracing_subscriber::reload::Layer::new(stderr_filter);
 
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let (line_sub, line_broadcast) = Subscriber::new();
 

@@ -5,7 +5,7 @@ use crate::{
     torrent_state::ManagedTorrentHandle, type_aliases::BF,
 };
 use anyhow::Context;
-use futures::{stream::BoxStream, StreamExt};
+use futures::{StreamExt, stream::BoxStream};
 use librqbit_core::Id20;
 use sqlx::{Pool, Postgres};
 use tracing::error_span;

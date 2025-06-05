@@ -2,7 +2,7 @@
 name = "librqbit-upnp"
 version = "1.0.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
-edition = "2021"
+edition = "2024"
 description = "Library used by rqbit torrent client to lease port forwards on the router."
 license = "Apache-2.0"
 documentation = "https://docs.rs/librqbit-upnp"

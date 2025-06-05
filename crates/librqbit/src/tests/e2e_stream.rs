@@ -6,9 +6,8 @@ use tokio::{io::AsyncReadExt, time::timeout};
 use tracing::info;
 
 use crate::{
-    create_torrent,
-    tests::test_util::{setup_test_logging, TestPeerMetadata},
-    AddTorrent, CreateTorrentOptions, Session,
+    AddTorrent, CreateTorrentOptions, Session, create_torrent,
+    tests::test_util::{TestPeerMetadata, setup_test_logging},
 };
 
 use super::test_util::create_default_random_dir_with_torrents;

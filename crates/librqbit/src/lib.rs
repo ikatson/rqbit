@@ -76,12 +76,12 @@ pub mod watch;
 
 pub use api::Api;
 pub use api_error::ApiError;
-pub use create_torrent_file::{create_torrent, CreateTorrentOptions};
+pub use create_torrent_file::{CreateTorrentOptions, create_torrent};
 pub use dht;
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, SessionOptions,
-    SessionPersistenceConfig, SUPPORTED_SCHEMES,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, SUPPORTED_SCHEMES,
+    Session, SessionOptions, SessionPersistenceConfig,
 };
 pub use spawn_utils::spawn as librqbit_spawn;
 pub use torrent_state::{

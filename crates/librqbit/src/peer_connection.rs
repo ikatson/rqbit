@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
@@ -14,8 +14,9 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    extended::{handshake::ExtendedHandshake, ExtendedMessage, PeerIP},
-    serialize_piece_preamble, Handshake, Message, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
+    Handshake, Message, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
+    extended::{ExtendedMessage, PeerIP, handshake::ExtendedHandshake},
+    serialize_piece_preamble,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -369,7 +370,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
 
                             if rand::rng().random_bool(tpm.bad_data_probability()) {
-                                warn!("will NOT actually read the data to simulate a malicious peer that sends garbage");
+                                warn!(
+                                    "will NOT actually read the data to simulate a malicious peer that sends garbage"
+                                );
                                 write_buf.fill(0);
                                 skip_reading_for_e2e_tests = true;
                             }

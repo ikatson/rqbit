@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use axum::{body::Bytes, extract::State, response::IntoResponse};
 use browse::response::ItemOrContainer;
 use bstr::BStr;
-use http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use tracing::{debug, trace};
 
 use crate::{
@@ -198,11 +198,11 @@ pub mod get_system_update_id {
 
     pub(crate) fn render_response(update_id: u64) -> String {
         format!(
-                include_str!(
-                    "../resources/templates/content_directory/control/get_system_update_id/response.tmpl.xml"
-                ),
-                id = update_id
-            )
+            include_str!(
+                "../resources/templates/content_directory/control/get_system_update_id/response.tmpl.xml"
+            ),
+            id = update_id
+        )
     }
 }
 
@@ -338,7 +338,7 @@ pub(crate) async fn http_handler(
 
 pub trait ContentDirectoryBrowseProvider: Send + Sync {
     fn browse_direct_children(&self, parent_id: usize, http_hostname: &str)
-        -> Vec<ItemOrContainer>;
+    -> Vec<ItemOrContainer>;
     fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer>;
 }
 

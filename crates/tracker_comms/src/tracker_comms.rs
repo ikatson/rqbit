@@ -3,17 +3,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
+use futures::FutureExt;
+use futures::StreamExt;
 use futures::future::Either;
 use futures::stream::BoxStream;
 use futures::stream::FuturesUnordered;
-use futures::FutureExt;
-use futures::StreamExt;
+use tracing::Instrument;
 use tracing::debug;
 use tracing::error_span;
 use tracing::trace;
-use tracing::Instrument;
 use url::Url;
 
 use crate::tracker_comms_http;

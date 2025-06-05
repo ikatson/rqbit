@@ -6,11 +6,11 @@ use librqbit_core::spawn_utils::spawn_with_cancel;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
-    sync::{atomic::Ordering, Arc},
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
-use tokio::sync::{broadcast::error::RecvError, Notify};
-use tracing::{debug, error_span, trace, warn, Instrument};
+use tokio::sync::{Notify, broadcast::error::RecvError};
+use tracing::{Instrument, debug, error_span, trace, warn};
 
 pub struct Subscription {
     #[allow(dead_code)]

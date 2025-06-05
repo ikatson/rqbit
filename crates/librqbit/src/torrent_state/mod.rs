@@ -8,18 +8,18 @@ pub mod utils;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use anyhow::bail;
 use anyhow::Context;
+use anyhow::bail;
 use arc_swap::ArcSwapOption;
 use buffers::ByteBufOwned;
 use bytes::Bytes;
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
 
@@ -37,6 +37,7 @@ use tracing::error_span;
 use tracing::trace;
 use tracing::warn;
 
+use crate::Session;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
@@ -48,7 +49,6 @@ use crate::torrent_state::stats::LiveStats;
 use crate::type_aliases::DiskWorkQueueSender;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
-use crate::Session;
 
 use initializing::TorrentStateInitializing;
 
@@ -287,7 +287,10 @@ impl ManagedTorrent {
                 }
             }
             ManagedTorrentState::Error(e) => {
-                warn!("bug: torrent already was in error state when trying to stop it. Previous error was: {:?}", e);
+                warn!(
+                    "bug: torrent already was in error state when trying to stop it. Previous error was: {:?}",
+                    e
+                );
             }
             ManagedTorrentState::None => {
                 warn!("bug: torrent encountered in None state during fatal error handling")
@@ -343,7 +346,9 @@ impl ManagedTorrent {
                                     let mut g = t.locked.write();
                                     if let ManagedTorrentState::Initializing(_) = &g.state {
                                     } else {
-                                        debug!("no need to start torrent anymore, as it switched state from initilizing");
+                                        debug!(
+                                            "no need to start torrent anymore, as it switched state from initilizing"
+                                        );
                                         return Ok(());
                                     }
 

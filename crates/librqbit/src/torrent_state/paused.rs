@@ -5,7 +5,7 @@ use crate::{
     type_aliases::FileStorage,
 };
 
-use super::{streaming::TorrentStreams, ManagedTorrentShared, TorrentMetadata};
+use super::{ManagedTorrentShared, TorrentMetadata, streaming::TorrentStreams};
 
 pub struct TorrentStatePaused {
     pub(crate) shared: Arc<ManagedTorrentShared>,

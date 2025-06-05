@@ -4,34 +4,34 @@ use std::{
     io::Read,
     net::SocketAddr,
     path::{Component, Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
 use crate::{
+    FileInfos, ManagedTorrent, ManagedTorrentShared,
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     blocklist,
-    dht_utils::{read_metainfo_from_peer_receiver, ReadMetainfoResult},
+    dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
     limits::{Limits, LimitsConfig},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
-    session_persistence::{json::JsonSessionPersistenceStore, SessionPersistenceStore},
+    session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
     session_stats::SessionStats,
     spawn_utils::BlockingSpawner,
     storage::{
-        filesystem::FilesystemStorageFactory, BoxStorageFactory, StorageFactoryExt, TorrentStorage,
+        BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
     stream_connect::{SocksProxyConfig, StreamConnector},
     torrent_state::{
-        initializing::TorrentStateInitializing, ManagedTorrentHandle, ManagedTorrentLocked,
-        ManagedTorrentOptions, ManagedTorrentState, TorrentMetadata, TorrentStateLive,
+        ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
+        TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
     type_aliases::{DiskWorkQueueSender, PeerStream},
-    FileInfos, ManagedTorrent, ManagedTorrentShared,
 };
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
 use bencode::bencode_serialize_to_writer;
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
@@ -39,9 +39,9 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
 use futures::{
+    FutureExt, Stream, StreamExt, TryFutureExt,
     future::BoxFuture,
     stream::{BoxStream, FuturesUnordered},
-    FutureExt, Stream, StreamExt, TryFutureExt,
 };
 use itertools::Itertools;
 use librqbit_core::{
@@ -61,7 +61,7 @@ use tokio::{
     sync::Notify,
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
-use tracing::{debug, error, error_span, info, trace, warn, Instrument, Span};
+use tracing::{Instrument, Span, debug, error, error_span, info, trace, warn};
 use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -1546,7 +1546,7 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
 mod tests {
     use buffers::ByteBuf;
     use itertools::Itertools;
-    use librqbit_core::torrent_metainfo::{torrent_from_bytes_ext, TorrentMetaV1};
+    use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes_ext};
 
     use super::torrent_file_from_info_bytes;
 

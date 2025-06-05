@@ -8,13 +8,13 @@ use std::{
 use anyhow::bail;
 use librqbit_core::Id20;
 use parking_lot::RwLock;
-use rand::{rng, Rng, RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng, rng};
 use tempfile::TempDir;
 use tracing::{info, trace};
 
 pub fn setup_test_logging() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "debug,librqbit_core=trace");
+        unsafe { std::env::set_var("RUST_LOG", "debug,librqbit_core=trace") };
     }
     let _ = tracing_subscriber::fmt::try_init();
 }
@@ -98,7 +98,7 @@ impl TestPeerMetadata {
 #[cfg(feature = "http-api")]
 async fn debug_server() -> anyhow::Result<()> {
     use anyhow::Context;
-    use axum::{response::IntoResponse, routing::get, Router};
+    use axum::{Router, response::IntoResponse, routing::get};
     async fn backtraces() -> impl IntoResponse {
         #[cfg(feature = "async-bt")]
         {

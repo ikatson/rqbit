@@ -173,7 +173,9 @@ where
         }
         Ok(buf)
     }
-    pub fn iter_components(&self) -> impl Iterator<Item = anyhow::Result<&'a str>> {
+    pub fn iter_components(
+        &self,
+    ) -> impl Iterator<Item = anyhow::Result<&'a str>> + use<'a, BufType> {
         let it = match self {
             FileIteratorName::Single(None) => return Either::Left(once(Ok("torrent-content"))),
             FileIteratorName::Single(Some(name)) => Either::Left(once((*name).as_ref())),

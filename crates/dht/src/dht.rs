@@ -3,28 +3,28 @@ use std::{
     net::SocketAddr,
     str::FromStr,
     sync::{
-        atomic::{AtomicU16, Ordering},
         Arc,
+        atomic::{AtomicU16, Ordering},
     },
     task::Poll,
     time::{Duration, Instant},
 };
 
 use crate::{
+    INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bprotocol::{
         self, AnnouncePeer, CompactNodeInfo, ErrorDescription, FindNodeRequest, GetPeersRequest,
         Message, MessageKind, Node, PingRequest, Response,
     },
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
-    INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
 };
-use anyhow::{bail, Context};
-use backoff::{backoff::Backoff, ExponentialBackoffBuilder};
+use anyhow::{Context, bail};
+use backoff::{ExponentialBackoffBuilder, backoff::Backoff};
 use bencode::ByteBufOwned;
 use dashmap::DashMap;
 use futures::{
-    future::BoxFuture, stream::FuturesUnordered, FutureExt, Stream, StreamExt, TryFutureExt,
+    FutureExt, Stream, StreamExt, TryFutureExt, future::BoxFuture, stream::FuturesUnordered,
 };
 
 use leaky_bucket::RateLimiter;
@@ -39,11 +39,11 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use tokio::{
     net::UdpSocket,
-    sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender},
+    sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel},
 };
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, error_span, info, trace, warn, Instrument};
+use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, warn};
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
@@ -133,8 +133,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
         if req.info_hash.distance(&target_node) > self.min_distance_to_announce {
             trace!(
                 "not announcing, {:?} is too far from {:?}",
-                target_node,
-                req.info_hash
+                target_node, req.info_hash
             );
             return;
         }
@@ -435,11 +434,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
                 let should_request = self.should_request_node(node.id, addr, depth);
                 trace!(
                     "should_request={}, id={:?}, addr={}, depth={}/{}",
-                    should_request,
-                    node.id,
-                    addr,
-                    depth,
-                    self.max_depth
+                    should_request, node.id, addr, depth, self.max_depth
                 );
                 if should_request {
                     self.node_tx.send((Some(node.id), addr, depth + 1))?;

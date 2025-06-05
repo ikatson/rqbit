@@ -1,6 +1,6 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use bstr::BStr;
-use futures::{stream::FuturesUnordered, StreamExt, TryFutureExt};
+use futures::{StreamExt, TryFutureExt, stream::FuturesUnordered};
 use network_interface::NetworkInterfaceConfig;
 use reqwest::Client;
 use serde::Deserialize;
@@ -9,8 +9,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tracing::{debug, error_span, trace, warn, Instrument, Span};
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tracing::{Instrument, Span, debug, error_span, trace, warn};
 use url::Url;
 
 const SERVICE_TYPE_WAN_IP_CONNECTION: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
@@ -68,7 +68,7 @@ pub fn get_local_ip_relative_to(local_dest: SocketAddr) -> anyhow::Result<IpAddr
                 (SocketAddr::V4(l), IpAddr::V4(a), Some(IpAddr::V4(m)))
                     if masked_v4(*l.ip(), m) == masked_v4(a, m) =>
                 {
-                    return Ok(addr.ip())
+                    return Ok(addr.ip());
                 }
                 // Return IPv6 link-local addresses when source is link-local address and there's a scope_id set.
                 (SocketAddr::V6(l), IpAddr::V6(a), _)
@@ -82,7 +82,7 @@ pub fn get_local_ip_relative_to(local_dest: SocketAddr) -> anyhow::Result<IpAddr
                 (SocketAddr::V6(l), IpAddr::V6(a), Some(IpAddr::V6(m)))
                     if masked_v6(*l.ip(), m) == masked_v6(a, m) =>
                 {
-                    return Ok(addr.ip())
+                    return Ok(addr.ip());
                 }
                 // For IPv6 fallback to returning a random (first encountered) IPv6 address.
                 (SocketAddr::V6(_), IpAddr::V6(_), None) => return Ok(addr.ip()),

@@ -6,11 +6,11 @@ use std::{
 use anyhow::Context;
 use axum::routing::get;
 use librqbit_upnp_serve::{
-    services::content_directory::{
-        browse::response::{Item, ItemOrContainer},
-        ContentDirectoryBrowseProvider,
-    },
     UpnpServer, UpnpServerOptions,
+    services::content_directory::{
+        ContentDirectoryBrowseProvider,
+        browse::response::{Item, ItemOrContainer},
+    },
 };
 use mime_guess::Mime;
 use tracing::{error, info};
@@ -31,7 +31,7 @@ impl ContentDirectoryBrowseProvider for VecWrap {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "trace");
+        unsafe { std::env::set_var("RUST_LOG", "trace") };
     }
 
     tracing_subscriber::fmt::init();

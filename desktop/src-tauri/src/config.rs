@@ -189,7 +189,9 @@ impl RqbitDesktopConfig {
                 anyhow::bail!("if UPnP server is enabled, you need to enable the HTTP API also.")
             }
             if self.http_api.listen_addr.ip().is_loopback() {
-                anyhow::bail!("if UPnP server is enabled, you need to set HTTP API IP to 0.0.0.0 or at least non-localhost address.")
+                anyhow::bail!(
+                    "if UPnP server is enabled, you need to set HTTP API IP to 0.0.0.0 or at least non-localhost address."
+                )
             }
         }
         Ok(())

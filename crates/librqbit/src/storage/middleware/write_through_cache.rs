@@ -13,9 +13,9 @@ use lru::LruCache;
 use parking_lot::RwLock;
 
 use crate::{
+    FileInfos, ManagedTorrentShared,
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
     torrent_state::TorrentMetadata,
-    FileInfos, ManagedTorrentShared,
 };
 
 #[derive(Clone, Copy)]

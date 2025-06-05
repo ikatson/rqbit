@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::ChunkInfo;
 
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::debug;
 
 use crate::peer_connection::WriterRequest;

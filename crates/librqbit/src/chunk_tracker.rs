@@ -8,7 +8,7 @@ use tracing::{debug, trace};
 use crate::{
     bitv::{BitV, BoxBitV},
     file_info::FileInfo,
-    type_aliases::{FileInfos, FilePriorities, BF, BS},
+    type_aliases::{BF, BS, FileInfos, FilePriorities},
 };
 
 pub struct ChunkTracker {
@@ -294,9 +294,7 @@ impl ChunkTracker {
         chunk_range.set(chunk_info.chunk_index as usize, true);
         trace!(
             "piece={}, chunk_info={:?}, bits={:?}",
-            piece.index,
-            chunk_info,
-            chunk_range,
+            piece.index, chunk_info, chunk_range,
         );
 
         if chunk_range.all() {
@@ -431,7 +429,7 @@ mod tests {
 
     use crate::{bitv::BitV, chunk_tracker::HaveNeededSelected, type_aliases::BF};
 
-    use super::{compute_chunk_have_status, ChunkTracker};
+    use super::{ChunkTracker, compute_chunk_have_status};
 
     #[test]
     fn test_compute_chunk_status() {

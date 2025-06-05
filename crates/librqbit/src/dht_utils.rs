@@ -2,9 +2,9 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
 use buffers::ByteBufOwned;
-use futures::{stream::FuturesUnordered, Stream, StreamExt};
+use futures::{Stream, StreamExt, stream::FuturesUnordered};
 use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
-use tracing::{debug, error_span, Instrument};
+use tracing::{Instrument, debug, error_span};
 
 use crate::{
     peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,

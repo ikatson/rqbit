@@ -9,9 +9,9 @@ mod torrents;
 use std::sync::Arc;
 
 use axum::{
+    Router,
     response::{IntoResponse, Redirect},
     routing::{get, post},
-    Router,
 };
 use http::request::Parts;
 
