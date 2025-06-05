@@ -9,11 +9,11 @@ use serde::Deserialize;
 
 use super::ApiState;
 use crate::{
+    AddTorrent, SUPPORTED_SCHEMES,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     http_api::timeout::Timeout,
     http_api_types::TorrentAddQueryParams,
     torrent_state::peer::stats::snapshot::PeerStatsFilter,
-    AddTorrent, SUPPORTED_SCHEMES,
 };
 
 pub async fn h_torrents_list(

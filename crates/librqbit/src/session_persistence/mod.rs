@@ -8,13 +8,13 @@ use anyhow::Context;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::BoxStream;
-use librqbit_core::magnet::Magnet;
 use librqbit_core::Id20;
+use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    bitv_factory::BitVFactory, session::TorrentId, torrent_state::ManagedTorrentHandle, AddTorrent,
-    AddTorrentOptions,
+    AddTorrent, AddTorrentOptions, bitv_factory::BitVFactory, session::TorrentId,
+    torrent_state::ManagedTorrentHandle,
 };
 
 #[derive(Serialize, Deserialize, Clone)]

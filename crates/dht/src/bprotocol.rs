@@ -10,8 +10,8 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use librqbit_core::hash_id::Id20;
 use serde::{
-    de::{IgnoredAny, Unexpected},
     Deserialize, Deserializer, Serialize,
+    de::{IgnoredAny, Unexpected},
 };
 
 #[derive(Debug)]
@@ -517,13 +517,14 @@ where
                         transaction_id: de.transaction_id,
                         version: de.version,
                         ip: de.ip.map(|c| c.addr),
-                        kind: MessageKind::AnnouncePeer(de.arguments.unwrap())
+                        kind: MessageKind::AnnouncePeer(de.arguments.unwrap()),
                     })
                 }
                 other => anyhow::bail!("unsupported method {:?}", ByteBuf(other)),
             },
             _ => anyhow::bail!(
-                "cannot deserialize message as request, expected exactly \"a\" and \"q\" to be set. Message: {:?}", de
+                "cannot deserialize message as request, expected exactly \"a\" and \"q\" to be set. Message: {:?}",
+                de
             ),
         },
         MessageType::Response => match (&de.arguments, &de.method_name, &de.response, &de.error) {
@@ -538,7 +539,8 @@ where
                 })
             }
             _ => anyhow::bail!(
-                "cannot deserialize message as response, expected exactly \"r\" to be set. Message: {:?}", de
+                "cannot deserialize message as response, expected exactly \"r\" to be set. Message: {:?}",
+                de
             ),
         },
         MessageType::Error => match (&de.arguments, &de.method_name, &de.response, &de.error) {
@@ -553,7 +555,8 @@ where
                 })
             }
             _ => anyhow::bail!(
-                "cannot deserialize message as error, expected exactly \"e\" to be set. Message: {:?}", de
+                "cannot deserialize message as error, expected exactly \"e\" to be set. Message: {:?}",
+                de
             ),
         },
     }

@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::Magnet;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use buffers::ByteBuf;
 use librqbit_core::torrent_metainfo::torrent_from_bytes;
 use notify::Watcher;

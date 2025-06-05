@@ -1,7 +1,7 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use librqbit_core::directories::get_configuration_directory;
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use serde::{Deserialize, Serialize};
@@ -62,7 +62,7 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
         Err(e) => {
             return Err(e).with_context(|| {
                 format!("error serializing DHT routing table to {tempfile_name:?}")
-            })
+            });
         }
     }
 
@@ -122,7 +122,7 @@ impl PersistentDht {
                 Err(e) => match e.kind() {
                     std::io::ErrorKind::NotFound => None,
                     _ => {
-                        return Err(e).with_context(|| format!("error reading {config_filename:?}"))
+                        return Err(e).with_context(|| format!("error reading {config_filename:?}"));
                     }
                 },
             };

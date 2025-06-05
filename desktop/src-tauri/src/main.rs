@@ -14,15 +14,15 @@ use anyhow::Context;
 use config::RqbitDesktopConfig;
 use http::StatusCode;
 use librqbit::{
+    AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
+    SessionPersistenceConfig,
     api::{
         ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentIdOrHash,
         TorrentListResponse, TorrentStats,
     },
     dht::PersistentDhtConfig,
     session_stats::snapshot::SessionStatsSnapshot,
-    tracing_subscriber_config_utils::{init_logging, InitLoggingOptions, InitLoggingResult},
-    AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
-    SessionPersistenceConfig,
+    tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
 };
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -298,7 +298,7 @@ async fn torrent_create_from_base64_file(
     contents: String,
     opts: Option<AddTorrentOptions>,
 ) -> Result<ApiAddTorrentResponse, ApiError> {
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
     let bytes = general_purpose::STANDARD
         .decode(&contents)
         .context("invalid base64")

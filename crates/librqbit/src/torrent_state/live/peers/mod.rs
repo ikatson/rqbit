@@ -10,8 +10,8 @@ use peer_binary_protocol::{Message, Request};
 use crate::{
     peer_connection::WriterRequest,
     session_stats::atomic::AtomicSessionStats,
-    torrent_state::utils::{atomic_inc, TimedExistence},
-    type_aliases::{PeerHandle, BF},
+    torrent_state::utils::{TimedExistence, atomic_inc},
+    type_aliases::{BF, PeerHandle},
 };
 
 use self::stats::{atomic::AggregatePeerStatsAtomic, snapshot::AggregatePeerStats};

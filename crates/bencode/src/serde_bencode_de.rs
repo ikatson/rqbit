@@ -341,7 +341,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
                 return Err(Error::custom_with_de(
                     "expected bencode string, got EOF",
                     self,
-                ))
+                ));
             }
         };
         match first {

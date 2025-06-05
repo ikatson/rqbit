@@ -1,6 +1,6 @@
 use axum::{body::Bytes, extract::State, response::IntoResponse};
 use bstr::BStr;
-use http::{header::CONTENT_TYPE, HeaderMap, StatusCode};
+use http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
 use tracing::{debug, trace};
 
 use crate::{

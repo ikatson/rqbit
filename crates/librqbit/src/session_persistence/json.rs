@@ -9,9 +9,9 @@ use crate::{
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
 };
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use async_trait::async_trait;
-use futures::{stream::BoxStream, StreamExt};
+use futures::{StreamExt, stream::BoxStream};
 use itertools::Itertools;
 use librqbit_core::Id20;
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ impl JsonSessionPersistenceStore {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(e) => {
-                return Err(e).context(format!("error opening session file {:?}", db_filename))
+                return Err(e).context(format!("error opening session file {:?}", db_filename));
             }
         };
 

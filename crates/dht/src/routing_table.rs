@@ -2,7 +2,7 @@ use std::{net::SocketAddr, time::Instant};
 
 use librqbit_core::hash_id::Id20;
 use rand::RngCore;
-use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use tracing::{debug, trace};
 
 use crate::INACTIVITY_TIMEOUT;
@@ -588,7 +588,7 @@ mod tests {
 
     use crate::routing_table::compute_split_start_end;
 
-    use super::{generate_random_id, RoutingTable};
+    use super::{RoutingTable, generate_random_id};
 
     #[test]
     fn compute_split_start_end_root() {

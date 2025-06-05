@@ -3,9 +3,9 @@ A storage middleware that logs the time underlying storage operations took.
 */
 
 use crate::{
+    ManagedTorrentShared,
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
     torrent_state::TorrentMetadata,
-    ManagedTorrentShared,
 };
 
 #[derive(Clone)]

@@ -1,7 +1,7 @@
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -15,16 +15,16 @@ use size_format::SizeFormatterBinary as SF;
 use tracing::{info, trace, warn};
 
 use crate::{
+    FileInfos,
     api::TorrentIdOrHash,
     bitv::BitV,
     bitv_factory::BitVFactory,
     chunk_tracker::ChunkTracker,
     file_ops::FileOps,
-    type_aliases::{FileStorage, BF},
-    FileInfos,
+    type_aliases::{BF, FileStorage},
 };
 
-use super::{paused::TorrentStatePaused, ManagedTorrentShared, TorrentMetadata};
+use super::{ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,

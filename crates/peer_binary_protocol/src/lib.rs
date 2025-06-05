@@ -6,7 +6,7 @@ pub mod extended;
 
 use bincode::Options;
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
-use byteorder::{ByteOrder, BE};
+use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use extended::PeerExtendedMessageIds;
@@ -668,7 +668,9 @@ mod tests {
                     .unwrap();
                 f.write_all(&write_buf).unwrap();
             }
-            panic!("resources/test/extended-handshake.bin did not serialize exactly the same. Dumped to /tmp/test_deserialize_serialize_extended_is_same, you can compare with resources/test/extended-handshake.bin")
+            panic!(
+                "resources/test/extended-handshake.bin did not serialize exactly the same. Dumped to /tmp/test_deserialize_serialize_extended_is_same, you can compare with resources/test/extended-handshake.bin"
+            )
         }
     }
 }

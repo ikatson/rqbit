@@ -7,8 +7,8 @@ use anyhow::Context;
 use bencode::bencode_serialize_to_writer;
 use buffers::ByteBufOwned;
 use bytes::Bytes;
-use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use librqbit_core::Id20;
+use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use sha1w::{ISha1, Sha1};
 
 use crate::spawn_utils::BlockingSpawner;

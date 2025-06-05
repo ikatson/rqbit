@@ -3,22 +3,22 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use librqbit_core::magnet::Magnet;
 use rand::Rng;
 use tokio::{
     spawn,
     time::{interval, timeout},
 };
-use tracing::{error, error_span, info, Instrument};
+use tracing::{Instrument, error, error_span, info};
 
 use crate::{
+    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
     create_torrent,
     tests::test_util::{
-        create_default_random_dir_with_torrents, setup_test_logging, wait_until_i_am_the_last_task,
-        DropChecks, TestPeerMetadata,
+        DropChecks, TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging,
+        wait_until_i_am_the_last_task,
     },
-    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]

@@ -15,9 +15,9 @@ use std::{
 use parking_lot::Mutex;
 
 use crate::{
+    ManagedTorrentShared,
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
     torrent_state::TorrentMetadata,
-    ManagedTorrentShared,
 };
 
 #[derive(Clone)]

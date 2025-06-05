@@ -9,21 +9,21 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
+    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
     api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
     http_api_client, librqbit_spawn,
     limits::LimitsConfig,
     storage::{
-        filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
         StorageFactory, StorageFactoryExt,
+        filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
     },
-    tracing_subscriber_config_utils::{init_logging, InitLoggingOptions},
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ListOnlyResponse,
-    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
 };
 use size_format::SizeFormatterBinary as SF;
 use tokio::net::TcpListener;
@@ -359,22 +359,24 @@ fn _start_deadlock_detector_thread() {
     use std::thread;
 
     // Create a background thread which checks for deadlocks every 10s
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(10));
-        let deadlocks = deadlock::check_deadlock();
-        if deadlocks.is_empty() {
-            continue;
-        }
-
-        println!("{} deadlocks detected", deadlocks.len());
-        for (i, threads) in deadlocks.iter().enumerate() {
-            println!("Deadlock #{}", i);
-            for t in threads {
-                println!("Thread Id {:#?}", t.thread_id());
-                println!("{:#?}", t.backtrace());
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(10));
+            let deadlocks = deadlock::check_deadlock();
+            if deadlocks.is_empty() {
+                continue;
             }
+
+            println!("{} deadlocks detected", deadlocks.len());
+            for (i, threads) in deadlocks.iter().enumerate() {
+                println!("Deadlock #{}", i);
+                for t in threads {
+                    println!("Thread Id {:#?}", t.thread_id());
+                    println!("{:#?}", t.backtrace());
+                }
+            }
+            std::process::exit(42);
         }
-        std::process::exit(42);
     });
 }
 
@@ -636,7 +638,9 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     match opts.enable_upnp_server {
                         true => {
                             if opts.http_api_listen_addr.ip().is_loopback() {
-                                bail!("cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0");
+                                bail!(
+                                    "cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0"
+                                );
                             }
                             let server = session
                                 .make_upnp_adapter(
@@ -726,7 +730,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             };
             let connect_to_existing = match client.validate_rqbit_server().await {
                 Ok(_) => {
-                    info!("Connected to HTTP API at {}, will call it instead of downloading within this process", client.base_url());
+                    info!(
+                        "Connected to HTTP API at {}, will call it instead of downloading within this process",
+                        client.base_url()
+                    );
                     true
                 }
                 Err(err) => {
@@ -748,7 +755,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     {
                         Ok(ApiAddTorrentResponse { id, details, .. }) => {
                             if let Some(id) = id {
-                                info!("{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details", details.info_hash, id, http_api_url, id)
+                                info!(
+                                    "{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details",
+                                    details.info_hash, id, http_api_url, id
+                                )
                             }
                             for file in details.files.into_iter().flat_map(|i| i.into_iter()) {
                                 info!(

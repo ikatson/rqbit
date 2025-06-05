@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use buffers::ByteBufOwned;
-use byteorder::{ByteOrder, BE};
+use byteorder::{BE, ByteOrder};
 use bytes::{Bytes, BytesMut};
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};

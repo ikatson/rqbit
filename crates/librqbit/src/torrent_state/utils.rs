@@ -108,4 +108,4 @@ mod timed_existence {
     }
 }
 
-pub use timed_existence::{timeit, TimedExistence};
+pub use timed_existence::{TimedExistence, timeit};

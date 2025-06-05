@@ -1,6 +1,6 @@
+use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
-use bencode::BencodeValue;
 use buffers::ByteBufT;
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;

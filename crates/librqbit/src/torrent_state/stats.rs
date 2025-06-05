@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use super::{live::stats::snapshot::StatsSnapshot, TorrentStateLive};
+use super::{TorrentStateLive, live::stats::snapshot::StatsSnapshot};
 use size_format::SizeFormatterBinary as SF;
 
 #[derive(Serialize, Default, Debug)]

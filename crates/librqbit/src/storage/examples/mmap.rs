@@ -3,8 +3,8 @@ use memmap2::{MmapMut, MmapOptions};
 use parking_lot::RwLock;
 
 use crate::{
-    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
     FileInfos, ManagedTorrentShared,
+    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
 };
 
 #[derive(Default, Clone)]
