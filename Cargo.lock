@@ -3043,17 +3043,16 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.3.0-beta.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8c6eb6c50f041e1672b77792cf2f0f70caae2b1f69a7d3bf2df411c1b2719d0"
+version = "0.3.0-beta.4"
 dependencies = [
  "anyhow",
  "bitvec",
  "dontfrag",
  "lazy_static",
  "libc",
+ "metrics",
  "parking_lot",
- "rand 0.8.5",
+ "rand 0.9.1",
  "ringbuf",
  "rustc-hash 2.1.1",
  "socket2",
