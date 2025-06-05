@@ -29,7 +29,7 @@ const CONNECTION_ID_MAGIC: ConnectionId = 0x41727101980;
 pub type TransactionId = u32;
 
 pub fn new_transaction_id() -> TransactionId {
-    rand::thread_rng().gen()
+    rand::rng().random()
 }
 
 #[derive(Debug)]

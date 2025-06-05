@@ -8,7 +8,7 @@ use std::{
 use anyhow::bail;
 use librqbit_core::Id20;
 use parking_lot::RwLock;
-use rand::{thread_rng, Rng, RngCore, SeedableRng};
+use rand::{rng, Rng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tracing::{info, trace};
 
@@ -29,7 +29,7 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     trace!(?path, "creating temp file");
 
     const BUF_SIZE: usize = 8192 * 16;
-    let mut rng = rand::rngs::SmallRng::from_entropy();
+    let mut rng = rand::rngs::SmallRng::from_os_rng();
     let mut write_buf = [0; BUF_SIZE];
     while size > 0 {
         rng.fill_bytes(&mut write_buf[..]);
@@ -67,7 +67,7 @@ impl TestPeerMetadata {
 
     pub fn as_peer_id(&self) -> Id20 {
         let mut peer_id = Id20::default();
-        thread_rng().fill(&mut peer_id.0);
+        rng().fill(&mut peer_id.0);
         peer_id.0[0] = self.server_id;
         peer_id.0[1] = self.max_random_sleep_ms;
         peer_id

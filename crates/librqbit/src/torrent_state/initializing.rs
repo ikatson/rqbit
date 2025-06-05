@@ -127,10 +127,10 @@ impl TorrentStateInitializing {
 
             // For all the remaining pieces we claim we have, validate them with decreasing probability.
             let mut queue = queue.iter_ones().collect_vec();
-            queue.shuffle(&mut rand::thread_rng());
+            queue.shuffle(&mut rand::rng());
             for (tmp_id, piece_id) in queue.into_iter().enumerate() {
                 let denom: u32 = (tmp_id + 1).min(50).try_into().unwrap();
-                if rand::thread_rng().gen_ratio(1, denom) {
+                if rand::rng().random_ratio(1, denom) {
                     to_validate.set(piece_id, true);
                 }
             }

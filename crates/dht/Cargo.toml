@@ -34,7 +34,7 @@ parking_lot = "0.12"
 tracing = "0.1"
 backoff = "0.4.0"
 futures = "0.3"
-rand = "0.8"
+rand = "0.9"
 indexmap = "2"
 dashmap = { version = "6", features = ["serde"] }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }

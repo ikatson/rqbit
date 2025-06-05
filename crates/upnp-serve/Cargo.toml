@@ -19,7 +19,7 @@ sha1-ring = ["librqbit-sha1-wrapper/sha1-ring", "librqbit-core/sha1-ring"]
 [dependencies]
 anyhow = "1.0.86"
 axum = { version = "0.8", features = ["tokio"] }
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 tracing = "0.1.40"
 bstr = "1.10.0"
 serde = { version = "1", features = ["derive"] }
@@ -27,7 +27,7 @@ http = "1.1.0"
 httparse = "1.9.4"
 uuid = { version = "1.10.0", features = ["v4"] }
 librqbit-upnp = { version = "1", path = "../upnp", default-features = false }
-gethostname = "0.5.0"
+gethostname = "1"
 librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }
 librqbit-core = { version = "5", path = "../librqbit_core", default-features = false }
 mime_guess = "2.0.5"

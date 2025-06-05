@@ -13,6 +13,7 @@ use crate::{
 use librqbit_core::hash_id::Id20;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ReadMetainfoResult<Rx> {
     Found {
         info: TorrentMetaV1Info<ByteBufOwned>,

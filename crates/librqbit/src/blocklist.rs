@@ -47,11 +47,7 @@ impl Blocklist {
             anyhow::bail!("Failed to fetch blocklist: HTTP {}", response.status());
         }
 
-        let reader = StreamReader::new(
-            response
-                .bytes_stream()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
-        );
+        let reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
         Self::create_from_stream(reader).await
     }
 

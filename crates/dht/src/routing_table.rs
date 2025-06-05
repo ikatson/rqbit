@@ -131,7 +131,7 @@ impl<'a> Iterator for BucketTreeIterator<'a> {
 
 pub fn generate_random_id(start: &Id20, bits: u8) -> Id20 {
     let mut data = [0u8; 20];
-    rand::thread_rng().fill_bytes(&mut data);
+    rand::rng().fill_bytes(&mut data);
     let mut data = Id20::new(data);
     let remaining_bits = 160 - bits;
     for bit in 0..remaining_bits {
@@ -649,13 +649,13 @@ mod tests {
 
     fn random_id_20() -> Id20 {
         let mut id20 = [0u8; 20];
-        rand::thread_rng().fill(&mut id20);
+        rand::rng().fill(&mut id20);
         Id20::new(id20)
     }
 
     fn generate_socket_addr() -> SocketAddr {
         let mut ipv4_addr = [0u8; 6];
-        rand::thread_rng().fill(&mut ipv4_addr);
+        rand::rng().fill(&mut ipv4_addr);
         let ip = Ipv4Addr::new(ipv4_addr[0], ipv4_addr[1], ipv4_addr[2], ipv4_addr[3]);
         let port = ((ipv4_addr[4] as u16) << 8) + (ipv4_addr[5] as u16);
         SocketAddrV4::new(ip, port).into()

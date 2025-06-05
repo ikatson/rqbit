@@ -20,14 +20,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 hex = "0.4"
 anyhow = "1"
 url = { version = "2", default-features = false }
-rand = "0.8"
+rand = "0.9"
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.0.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 itertools = "0.14"
-directories = "5"
+directories = "6"
 tokio-util = "0.7.10"
 data-encoding = "2.6.0"
 bytes = "1.7.1"
