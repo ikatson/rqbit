@@ -1,7 +1,6 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use anyhow::Context;
-use backoff::backoff::Backoff;
 use dashmap::DashMap;
 use librqbit_core::lengths::ValidPieceIndex;
 use parking_lot::RwLock;
@@ -126,7 +125,7 @@ impl PeerStates {
 
     pub fn reset_peer_backoff(&self, handle: PeerHandle) {
         self.with_peer_mut(handle, "reset_peer_backoff", |p| {
-            p.stats.backoff.reset();
+            p.stats.reset_backoff();
         });
     }
 
