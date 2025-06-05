@@ -94,7 +94,7 @@ impl TorrentStreams {
 
         // Shuffle to decrease determinism and make queueing fairer.
         use rand::seq::SliceRandom;
-        all.shuffle(&mut rand::thread_rng());
+        all.shuffle(&mut rand::rng());
 
         Interleave { all: all.into() }
     }

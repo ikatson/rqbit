@@ -998,11 +998,8 @@ impl Session {
             return Ok(None);
         }
 
-        fn check_valid(pb: &PathBuf) -> anyhow::Result<()> {
-            if pb.components().into_iter().any(|x| match x {
-                Component::Normal(_) => false,
-                _ => true,
-            }) {
+        fn check_valid(pb: &Path) -> anyhow::Result<()> {
+            if pb.components().any(|x| !matches!(x, Component::Normal(_))) {
                 bail!("path traversal in torrent name detected")
             }
             Ok(())

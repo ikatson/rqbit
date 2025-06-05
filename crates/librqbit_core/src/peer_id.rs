@@ -102,7 +102,7 @@ pub fn generate_peer_id(fingerprint: &[u8]) -> Id20 {
     let mut peer_id = [0u8; 20];
 
     peer_id[..8].copy_from_slice(fingerprint);
-    rand::thread_rng().fill_bytes(&mut peer_id[8..]);
+    rand::rng().fill_bytes(&mut peer_id[8..]);
 
     Id20::new(peer_id)
 }

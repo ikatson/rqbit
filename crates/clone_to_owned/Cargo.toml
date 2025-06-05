@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-clone-to-owned"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2021"
 description = "Util traits to represent something that can be made owned and change type at the same time."
 license = "Apache-2.0"
@@ -10,4 +10,4 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bytes = "1.7.1"
+bytes = "1.10"

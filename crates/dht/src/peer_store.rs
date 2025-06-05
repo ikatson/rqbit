@@ -121,7 +121,7 @@ impl PeerStore {
 
     pub fn gen_token_for(&self, node_id: Id20, addr: SocketAddr) -> [u8; 4] {
         let mut token = [0u8; 4];
-        rand::thread_rng().fill_bytes(&mut token);
+        rand::rng().fill_bytes(&mut token);
         let mut tokens = self.tokens.write();
         tokens.push_back(StoredToken {
             token,

@@ -105,6 +105,7 @@ impl SubscribeRequest {
 }
 
 impl SubscribeRequest {
+    #[allow(clippy::result_large_err)]
     pub fn parse(
         request: axum::extract::Request,
     ) -> Result<SubscribeRequest, axum::response::Response> {

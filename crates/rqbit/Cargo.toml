@@ -1,6 +1,6 @@
 [package]
 name = "rqbit"
-version = "8.0.0"
+version = "8.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "A bittorrent command line client and server."
@@ -51,7 +51,7 @@ upnp-serve = { path = "../upnp-serve", default-features = false, version = "1", 
 libc = "0.2.158"
 signal-hook = "0.3.17"
 tokio-util = "0.7.11"
-gethostname = "0.5.0"
+gethostname = "1"
 url = "2"
 
 [dev-dependencies]

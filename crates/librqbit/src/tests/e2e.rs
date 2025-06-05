@@ -87,7 +87,7 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
             async move {
                 let peer_id = TestPeerMetadata {
                     server_id: i,
-                    max_random_sleep_ms: rand::thread_rng().gen_range(0u8..16),
+                    max_random_sleep_ms: rand::rng().random_range(0u8..16),
                 }
                 .as_peer_id();
                 let listen_range_start = 15100u16 + i as u16;

@@ -358,17 +358,17 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             use crate::tests::test_util::TestPeerMetadata;
                             let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
                             use rand::Rng;
-                            if rand::thread_rng().gen_bool(tpm.disconnect_probability()) {
+                            if rand::rng().random_bool(tpm.disconnect_probability()) {
                                 bail!("disconnecting, to simulate failure in tests");
                             }
 
                             #[allow(clippy::cast_possible_truncation)]
-                            let sleep_ms = (rand::thread_rng().gen::<f64>()
+                            let sleep_ms = (rand::rng().random::<f64>()
                                 * (tpm.max_random_sleep_ms as f64))
                                 as u64;
                             tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
 
-                            if rand::thread_rng().gen_bool(tpm.bad_data_probability()) {
+                            if rand::rng().random_bool(tpm.bad_data_probability()) {
                                 warn!("will NOT actually read the data to simulate a malicious peer that sends garbage");
                                 write_buf.fill(0);
                                 skip_reading_for_e2e_tests = true;
