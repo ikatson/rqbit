@@ -20,7 +20,7 @@ use crate::{
     routing_table::{InsertResult, NodeStatus, RoutingTable},
 };
 use anyhow::{Context, bail};
-use backoff::{ExponentialBackoffBuilder, backoff::Backoff};
+use backon::{ExponentialBuilder, Retryable};
 use bencode::ByteBufOwned;
 use dashmap::DashMap;
 use futures::{
@@ -862,31 +862,20 @@ impl DhtWorker {
     }
 
     async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> anyhow::Result<()> {
-        let mut backoff = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_secs(10))
-            .with_multiplier(1.5)
-            .with_max_interval(Duration::from_secs(60))
-            .with_max_elapsed_time(Some(Duration::from_secs(86400)))
-            .build();
+        let backoff = ExponentialBuilder::new()
+            .with_max_delay(Duration::from_secs(60))
+            .with_jitter()
+            .with_total_delay(Some(Duration::from_secs(86400)))
+            .without_max_times();
 
-        loop {
-            let backoff = match self
-                .bootstrap_hostname(addr)
-                .instrument(error_span!("bootstrap", hostname = addr))
-                .await
-            {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    warn!("error: {}", e);
-                    backoff.next_backoff()
-                }
-            };
-            if let Some(backoff) = backoff {
-                tokio::time::sleep(backoff).await;
-                continue;
-            }
-            bail!("bootstrap failed")
-        }
+        (|| self.bootstrap_hostname(addr))
+            .retry(backoff)
+            .notify(|error, retry_in| {
+                warn!(?retry_in, "error in bootstrap: {error:#}");
+            })
+            .instrument(error_span!("bootstrap", hostname = addr))
+            .await
+            .context("bootstrap failed")
     }
 
     async fn bootstrap(&self, bootstrap_addrs: &[String]) -> anyhow::Result<()> {

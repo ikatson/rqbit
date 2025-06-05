@@ -32,7 +32,7 @@ bencode = { path = "../bencode", default-features = false, package = "librqbit-b
 anyhow = "1"
 parking_lot = "0.12"
 tracing = "0.1"
-backoff = "0.4.0"
+backon = { version = "1.5", features = ["tokio-sleep"] }
 futures = "0.3"
 rand = "0.9"
 indexmap = "2"

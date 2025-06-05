@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 
 #[derive(Default, Debug)]
 pub(crate) struct PeerCountersAtomic {
@@ -48,6 +48,17 @@ impl PeerCountersAtomic {
     }
 }
 
+fn backoff() -> ExponentialBackoff {
+    ExponentialBuilder::new()
+        .with_min_delay(Duration::from_secs(10))
+        .with_factor(6.)
+        .with_jitter()
+        .with_max_delay(Duration::from_secs(3600))
+        .with_total_delay(Some(Duration::from_secs(86400)))
+        .without_max_times()
+        .build()
+}
+
 #[derive(Debug)]
 pub(crate) struct PeerStats {
     pub counters: Arc<PeerCountersAtomic>,
@@ -58,12 +69,13 @@ impl Default for PeerStats {
     fn default() -> Self {
         Self {
             counters: Arc::new(Default::default()),
-            backoff: ExponentialBackoffBuilder::new()
-                .with_initial_interval(Duration::from_secs(10))
-                .with_multiplier(6.)
-                .with_max_interval(Duration::from_secs(3600))
-                .with_max_elapsed_time(Some(Duration::from_secs(86400)))
-                .build(),
+            backoff: backoff(),
         }
+    }
+}
+
+impl PeerStats {
+    pub fn reset_backoff(&mut self) {
+        self.backoff = backoff();
     }
 }

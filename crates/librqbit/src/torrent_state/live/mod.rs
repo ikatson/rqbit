@@ -55,7 +55,6 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use backoff::backoff::Backoff;
 use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
@@ -1186,7 +1185,7 @@ impl PeerHandler {
             return Ok(());
         }
 
-        let backoff = pe.value_mut().stats.backoff.next_backoff();
+        let backoff = pe.value_mut().stats.backoff.next();
 
         // Prevent deadlocks.
         drop(pe);
