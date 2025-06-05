@@ -863,18 +863,16 @@ impl DhtWorker {
 
     async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> anyhow::Result<()> {
         let backoff = ExponentialBuilder::new()
-            .with_min_delay(Duration::from_secs(10))
-            .with_factor(1.5)
             .with_max_delay(Duration::from_secs(60))
+            .with_jitter()
             .with_total_delay(Some(Duration::from_secs(86400)))
             .without_max_times();
 
-        let cb = async || {
-            self.bootstrap_hostname(addr)
-                .await
-                .inspect_err(|e| warn!("error: {}", e))
-        };
-        cb.retry(backoff)
+        (|| self.bootstrap_hostname(addr))
+            .retry(backoff)
+            .notify(|error, retry_in| {
+                warn!(?retry_in, "error in bootstrap: {error:#}");
+            })
             .instrument(error_span!("bootstrap", hostname = addr))
             .await
             .context("bootstrap failed")
