@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "8.0.0"
+version = "8.1.0"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2021"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."
@@ -49,14 +49,14 @@ sqlx = { version = "0.8", features = [
 ], default-features = false, optional = true }
 home = { version = "0.5", optional = true }
 
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
-tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "2.1" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
+tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "3" }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 librqbit-core = { path = "../librqbit_core", default-features = false, version = "5" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.2" }
+peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.3" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
-dht = { path = "../dht", package = "librqbit-dht", default-features = false, version = "5.2.0" }
+dht = { path = "../dht", package = "librqbit-dht", default-features = false, version = "5.3.0" }
 librqbit-upnp = { path = "../upnp", version = "1" }
 upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "1", optional = true }
 

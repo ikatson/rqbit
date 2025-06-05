@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2860,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "3.0.2"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2881,7 +2881,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-clone-to-owned"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "bytes",
 ]
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "5.2.0"
+version = "5.3.0"
 dependencies = [
  "anyhow",
  "backoff",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "4.2.0"
+version = "4.3.0"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -2966,7 +2966,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-tracker-comms"
-version = "2.1.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-upnp-serve"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -4606,7 +4606,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4635,7 +4635,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

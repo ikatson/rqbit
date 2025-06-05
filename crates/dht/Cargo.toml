@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-dht"
-version = "5.2.0"
+version = "5.3.0"
 edition = "2021"
 description = "DHT implementation, used in rqbit torrent client."
 license = "Apache-2.0"
@@ -28,7 +28,7 @@ serde = { version = "1", features = ["derive"] }
 leaky-bucket = "1.1"
 serde_json = "1"
 hex = "0.4"
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
 anyhow = "1"
 parking_lot = "0.12"
 tracing = "0.1"

@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-tracker-comms"
-version = "2.1.0"
+version = "3.0.0"
 edition = "2018"
 description = "Common interface around various sha1 implementations used in rqbit torrent client."
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ urlencoding = "2"
 rand = "0.9"
 tracing = "0.1.40"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3" }
+bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
 url = { version = "2", default-features = false }
 parking_lot = "0.12.3"
 tokio-util = "0.7.13"
