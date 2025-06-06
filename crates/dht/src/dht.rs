@@ -971,9 +971,10 @@ impl DhtWorker {
             loop {
                 interval.tick().await;
                 let mut found = 0;
+                let now = Instant::now();
                 for node in self.dht.routing_table.read().iter() {
                     if matches!(
-                        node.status(),
+                        node.status(now),
                         NodeStatus::Questionable | NodeStatus::Unknown
                     ) {
                         found += 1;

@@ -286,10 +286,11 @@ impl BucketTree {
             };
 
             // Try replace a bad node
+            let now = Instant::now();
             if let Some(bad_node) = nodes
                 .nodes
                 .iter_mut()
-                .find(|r| matches!(r.status(), NodeStatus::Bad))
+                .find(|r| matches!(r.status(now), NodeStatus::Bad))
             {
                 std::mem::swap(bad_node, &mut new_node);
                 nodes.nodes.sort_by_key(|n| n.id);
@@ -395,7 +396,7 @@ impl Serialize for RoutingTableNode {
         let mut s = serializer.serialize_struct("RoutingTableNode", 3)?;
         s.serialize_field("id", &self.id.as_string())?;
         s.serialize_field("addr", &self.addr)?;
-        s.serialize_field("status", &self.status())?;
+        s.serialize_field("status", &self.status(Instant::now()))?;
         if let Some(l) = self.last_request {
             s.serialize_field("last_request_ago", &l.elapsed())?;
         }
@@ -425,7 +426,7 @@ impl RoutingTableNode {
     pub fn addr(&self) -> SocketAddr {
         self.addr
     }
-    pub fn status(&self) -> NodeStatus {
+    pub fn status(&self, now: Instant) -> NodeStatus {
         match (self.last_request, self.last_response, self.last_query) {
             // Nodes become bad when they fail to respond to multiple queries in a row.
             (Some(_), _, _) if self.errors_in_a_row >= 2 => NodeStatus::Bad,
@@ -434,7 +435,7 @@ impl RoutingTableNode {
             // A node is also good if it has ever responded to one of our queries and has sent
             // us a query within the last 15 minutes.
             (Some(_), Some(last_incoming), _) | (Some(_), Some(_), Some(last_incoming))
-                if last_incoming.elapsed() < INACTIVITY_TIMEOUT =>
+                if now - last_incoming < INACTIVITY_TIMEOUT =>
             {
                 NodeStatus::Good
             }
@@ -442,9 +443,9 @@ impl RoutingTableNode {
             // After 15 minutes of inactivity, a node becomes questionable.
             // The moment we send a request to it, it stops becoming questionable and becomes Unknown / Bad.
             (last_outgoing, _, Some(last_incoming)) | (last_outgoing, Some(last_incoming), _)
-                if last_incoming.elapsed() > INACTIVITY_TIMEOUT
+                if now - last_incoming > INACTIVITY_TIMEOUT
                     && last_outgoing
-                        .map(|e| e.elapsed() > INACTIVITY_TIMEOUT)
+                        .map(|e| now - e > INACTIVITY_TIMEOUT)
                         .unwrap_or(true) =>
             {
                 NodeStatus::Questionable
@@ -504,11 +505,12 @@ impl RoutingTable {
         for node in self.buckets.iter() {
             result.push(node);
         }
+        let now = Instant::now();
         result.sort_by_key(|n| {
             // Query decent nodes first.
-            let status = match n.status() {
+            let status = match n.status(now) {
                 NodeStatus::Good => 0,
-                NodeStatus::Questionable => 0,
+                NodeStatus::Questionable => 1,
                 NodeStatus::Unknown => 2,
                 NodeStatus::Bad => 3,
             };
