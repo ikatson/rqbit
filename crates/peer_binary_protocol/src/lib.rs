@@ -80,11 +80,20 @@ pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize 
     PIECE_MESSAGE_PREAMBLE_LEN
 }
 
-#[derive(Debug)]
 pub struct Piece<B> {
     pub index: u32,
     pub begin: u32,
     pub block: B,
+}
+
+impl<B: AsRef<[u8]>> std::fmt::Debug for Piece<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Piece")
+            .field("index", &self.index)
+            .field("begin", &self.begin)
+            .field("len", &self.block.as_ref().len())
+            .finish()
+    }
 }
 
 impl<B: CloneToOwned> CloneToOwned for Piece<B> {
@@ -459,15 +468,17 @@ where
                 }
             }
             MSGID_PIECE => {
-                if len_prefix <= 9 {
+                const MIN_PAYLOAD: usize = 1;
+                const MIN_LENGTH: usize = MSGID_LEN + INTEGER_LEN * 2 + MIN_PAYLOAD;
+                if (len_prefix as usize) < MIN_LENGTH {
                     return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        expected: 10,
+                        expected: MIN_LENGTH as u32,
                         received: len_prefix,
                         msg_id,
                     });
                 }
                 // <len=0009+X> is for "9", "8" is for 2 integer fields in the piece.
-                let expected_len = len_prefix as usize - 9 + 8;
+                let expected_len = len_prefix as usize - MSGID_LEN;
                 match rest.get(..expected_len) {
                     Some(b) => Ok((
                         Message::Piece(Piece::deserialize(b)),

@@ -1,12 +1,11 @@
 [package]
 name = "rqbit-desktop"
+edition = "2024"
 version = "8.1.0"
 description = "rqbit torrent client"
-authors = ["you"]
+authors = ["Igor Katson igor.katson@gmail.com"]
 license = ""
 repository = ""
-edition = "2024"
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]

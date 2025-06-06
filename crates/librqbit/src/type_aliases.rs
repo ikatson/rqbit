@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use futures::stream::BoxStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{file_info::FileInfo, storage::TorrentStorage};
 
@@ -17,3 +18,6 @@ pub(crate) type FilePriorities = Vec<usize>;
 
 pub(crate) type DiskWorkQueueItem = Box<dyn FnOnce() + Send + Sync>;
 pub(crate) type DiskWorkQueueSender = tokio::sync::mpsc::Sender<DiskWorkQueueItem>;
+
+pub(crate) type BoxAsyncRead = Box<dyn AsyncRead + Unpin + Send + 'static>;
+pub(crate) type BoxAsyncWrite = Box<dyn AsyncWrite + Unpin + Send + 'static>;

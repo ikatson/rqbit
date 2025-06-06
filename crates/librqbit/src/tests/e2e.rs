@@ -1,7 +1,4 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::{Context, bail};
 use librqbit_core::magnet::Magnet;
@@ -13,8 +10,9 @@ use tokio::{
 use tracing::{Instrument, error, error_span, info};
 
 use crate::{
-    AddTorrentOptions, AddTorrentResponse, Session, SessionOptions, SessionPersistenceConfig,
-    create_torrent,
+    AddTorrentOptions, AddTorrentResponse, ConnectionOptions, ListenerMode, Session,
+    SessionOptions, SessionPersistenceConfig, create_torrent,
+    listen::ListenerOptions,
     tests::test_util::{
         DropChecks, TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging,
         wait_until_i_am_the_last_task,
@@ -22,7 +20,16 @@ use crate::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 64)]
-async fn test_e2e_download() {
+async fn test_e2e_download_tcp() {
+    _test_e2e_download_timeout_and_cleanups(ListenerMode::TcpOnly).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 64)]
+async fn test_e2e_download_utp() {
+    _test_e2e_download_timeout_and_cleanups(ListenerMode::UtpOnly).await
+}
+
+async fn _test_e2e_download_timeout_and_cleanups(mode: ListenerMode) {
     let timeout = std::env::var("E2E_TIMEOUT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -31,7 +38,7 @@ async fn test_e2e_download() {
     let drop_checks = DropChecks::default();
     tokio::time::timeout(
         Duration::from_secs(timeout),
-        _test_e2e_download(&drop_checks),
+        _test_e2e_download(mode, &drop_checks),
     )
     .await
     .context("test_e2e_download timed out")
@@ -43,7 +50,7 @@ async fn test_e2e_download() {
     drop_checks.check().unwrap();
 }
 
-async fn _test_e2e_download(drop_checks: &DropChecks) {
+async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
     setup_test_logging();
     match crate::try_increase_nofile_limit() {
         Ok(limit) => info!(limit, "increased ulimit"),
@@ -53,9 +60,11 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
     // 1. Create a torrent
     // Ideally (for a more complicated test) with N files, and at least N pieces that span 2 files.
 
-    let piece_length: u32 = 16384 * 2; // TODO: figure out if this should be multiple of chunk size or not
-    let file_length: usize = 1000 * 1000;
-    let num_files: usize = 64;
+    let piece_length: u32 = 16384 * 2;
+    let file_length: usize = 8 * 1000 * 1000; // uneven files will make pieces cross file boundaries
+
+    // Not setting this too high as 64 causes too many open files on osx on github runners.
+    let num_files: usize = 8;
 
     let tempdir =
         create_default_random_dir_with_torrents(num_files, file_length, Some("rqbit_e2e"));
@@ -90,21 +99,17 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     max_random_sleep_ms: rand::rng().random_range(0u8..16),
                 }
                 .as_peer_id();
-                let listen_range_start = 15100u16 + i as u16;
-                let listen_range_end = listen_range_start + 1;
-                let listen_range = listen_range_start..listen_range_end;
+                let listen_port = 15100u16 + i as u16;
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
                         disable_dht: true,
-                        disable_dht_persistence: true,
-                        dht_config: None,
                         peer_id: Some(peer_id),
-                        peer_opts: None,
-                        listen_port_range: Some(listen_range),
-                        enable_upnp_port_forwarding: false,
-                        default_storage_factory: None,
-                        defer_writes_up_to: None,
+                        listen: Some(ListenerOptions {
+                            mode,
+                            listen_addr: (Ipv4Addr::LOCALHOST, listen_port).into(),
+                            ..Default::default()
+                        }),
                         root_span: Some(error_span!(parent: None, "server", id = i)),
                         ..Default::default()
                     },
@@ -154,12 +159,9 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                     }
                 }
                 info!("torrent is live");
-                let addr = SocketAddr::new(
-                    std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                    session
-                        .tcp_listen_port()
-                        .context("expected session.tcp_listen_port() to be set")?,
-                );
+                let addr = session
+                    .listen_addr()
+                    .context("expected listen_addr to be set")?;
                 Ok::<_, anyhow::Error>((session, addr))
             }
             .instrument(error_span!("server", id = i)),
@@ -210,9 +212,20 @@ async fn _test_e2e_download(drop_checks: &DropChecks) {
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
                 }),
+                listen: if mode.utp_enabled() {
+                    Some(ListenerOptions {
+                        mode: ListenerMode::UtpOnly,
+                        listen_addr: ([127, 0, 0, 1], 15099).into(),
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                },
+                connect: Some(ConnectionOptions {
+                    enable_tcp: mode.tcp_enabled(),
+                    ..Default::default()
+                }),
                 fastresume: true,
-                listen_port_range: None,
-                enable_upnp_port_forwarding: false,
                 root_span: Some(error_span!("client")),
                 ..Default::default()
             },

@@ -14,18 +14,21 @@ webui-dev: webui-deps
 export RQBIT_UPNP_SERVER_ENABLE ?= true
 export RQBIT_UPNP_SERVER_FRIENDLY_NAME ?= rqbit-dev
 export RQBIT_HTTP_API_LISTEN_ADDR ?= [::]:3030
+export RQBIT_ENABLE_PROMETHEUS_EXPORTER ?= true
+export RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE ?= true
 export RQBIT_FASTRESUME = true
+
 CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
 RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit
 
-@PHONY: devserver-release
+@PHONY: devserver-profile
 devserver-profile:
 	cargo run --release $(CARGO_RUN_FLAGS) -- server start $(RQBIT_OUTPUT_FOLDER)
 
 # DEV variables (that's why defined after devserver-profile)
 export RQBIT_LOG_FILE ?= /tmp/rqbit-log
-export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace
+export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace,librqbit_utp=debug
 export CORS_ALLOW_REGEXP ?= '.*'
 
 @PHONY: devserver
@@ -71,7 +74,7 @@ release-linux-current-target:
 	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
 	AR_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-ar \
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
-	cargo build  --profile $(CARGO_RELEASE_PROFILE) --target=$(TARGET) --features=openssl-vendored
+	cargo build  --profile $(CARGO_RELEASE_PROFILE) --target=$(TARGET) --features=openssl-vendored,prometheus
 
 @PHONY: debug-linux-docker-x86_64
 debug-linux-docker-x86_64:

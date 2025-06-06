@@ -15,6 +15,7 @@ use crate::{
     blocklist,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
     limits::{Limits, LimitsConfig},
+    listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
@@ -24,12 +25,12 @@ use crate::{
     storage::{
         BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
-    stream_connect::{SocksProxyConfig, StreamConnector},
+    stream_connect::{ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs},
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
-    type_aliases::{DiskWorkQueueSender, PeerStream},
+    type_aliases::{BoxAsyncRead, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -56,12 +57,9 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::Notify,
-};
+use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
-use tracing::{Instrument, Span, debug, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, error, error_span, info, trace, warn};
 use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -107,7 +105,8 @@ pub struct Session {
 
     // Network
     peer_id: Id20,
-    tcp_listen_port: Option<u16>,
+    announce_port: Option<u16>,
+    listen_addr: Option<SocketAddr>,
     dht: Option<Dht>,
     pub(crate) connector: Arc<StreamConnector>,
     reqwest_client: reqwest::Client,
@@ -133,7 +132,7 @@ pub struct Session {
 
     // Monitoring / tracing / logging
     pub(crate) stats: SessionStats,
-    root_span: Option<Span>,
+    root_span: Option<tracing::Span>,
 
     // Feature flags
     #[cfg(feature = "disable-upload")]
@@ -398,11 +397,11 @@ pub struct SessionOptions {
 
     /// The peer ID to use. If not specified, a random one will be generated.
     pub peer_id: Option<Id20>,
-    /// Configure default peer connection options. Can be overriden per torrent.
-    pub peer_opts: Option<PeerConnectionOptions>,
 
-    pub listen_port_range: Option<std::ops::Range<u16>>,
-    pub enable_upnp_port_forwarding: bool,
+    /// Options for listening on TCP and/or uTP for incoming connections.
+    pub listen: Option<ListenerOptions>,
+    /// Options for connecting to peers (for outgiong connections).
+    pub connect: Option<ConnectionOptions>,
 
     // If you set this to something, all writes to disk will happen in background and be
     // buffered in memory up to approximately the given number of megabytes.
@@ -410,16 +409,13 @@ pub struct SessionOptions {
 
     pub default_storage_factory: Option<BoxStorageFactory>,
 
-    // socks5://[username:password@]host:port
-    pub socks_proxy_url: Option<String>,
-
     pub cancellation_token: Option<CancellationToken>,
 
     // how many concurrent torrent initializations can happen
     pub concurrent_init_limit: Option<usize>,
 
     // the root span to use. If not set will be None.
-    pub root_span: Option<Span>,
+    pub root_span: Option<tracing::Span>,
 
     pub ratelimits: LimitsConfig,
 
@@ -430,20 +426,6 @@ pub struct SessionOptions {
 
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
-}
-
-async fn create_tcp_listener(
-    port_range: std::ops::Range<u16>,
-) -> anyhow::Result<(TcpListener, u16)> {
-    for port in port_range.clone() {
-        match TcpListener::bind(("0.0.0.0", port)).await {
-            Ok(l) => return Ok((l, port)),
-            Err(e) => {
-                debug!("error listening on port {port}: {e:#}")
-            }
-        }
-    }
-    bail!("no free TCP ports in range {port_range:?}");
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -467,7 +449,8 @@ fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> any
 
 pub(crate) struct CheckedIncomingConnection {
     pub addr: SocketAddr,
-    pub stream: tokio::net::TcpStream,
+    pub reader: BoxAsyncRead,
+    pub writer: BoxAsyncWrite,
     pub read_buf: ReadBuf,
     pub handshake: Handshake<ByteBufOwned>,
 }
@@ -509,16 +492,19 @@ impl Session {
                 warn!("uploading disabled");
             }
 
-            let (tcp_listener, tcp_listen_port) =
-                if let Some(port_range) = opts.listen_port_range.clone() {
-                    let (l, p) = create_tcp_listener(port_range)
+            let listen_result = if let Some(listen_opts) = opts.listen.take() {
+                Some(
+                    listen_opts
+                        .start(
+                            opts.root_span.as_ref().and_then(|s| s.id()),
+                            token.child_token(),
+                        )
                         .await
-                        .context("error listening on TCP")?;
-                    info!("Listening on 0.0.0.0:{p} for incoming peer connections");
-                    (Some(l), Some(p))
-                } else {
-                    (None, None)
-                };
+                        .context("error starting listeners")?,
+                )
+            } else {
+                None
+            };
 
             let dht = if opts.disable_dht {
                 None
@@ -539,7 +525,11 @@ impl Session {
 
                 Some(dht)
             };
-            let peer_opts = opts.peer_opts.unwrap_or_default();
+            let peer_opts = opts
+                .connect
+                .as_ref()
+                .and_then(|p| p.peer_opts)
+                .unwrap_or_default();
 
             async fn persistence_factory(
                 opts: &SessionOptions,
@@ -598,7 +588,8 @@ impl Session {
                 })
                 .unwrap_or_default();
 
-            let proxy_config = match opts.socks_proxy_url.as_ref() {
+            let proxy_url = opts.connect.as_ref().and_then(|s| s.proxy_url.as_ref());
+            let proxy_config = match proxy_url {
                 Some(pu) => Some(
                     SocksProxyConfig::parse(pu)
                         .with_context(|| format!("error parsing proxy url {}", pu))?,
@@ -607,7 +598,7 @@ impl Session {
             };
 
             let reqwest_client = {
-                let builder = if let Some(proxy_url) = opts.socks_proxy_url.as_ref() {
+                let builder = if let Some(proxy_url) = proxy_url {
                     let proxy = reqwest::Proxy::all(proxy_url)
                         .context("error creating socks5 proxy for HTTP")?;
                     reqwest::Client::builder().proxy(proxy)
@@ -618,7 +609,15 @@ impl Session {
                 builder.build().context("error building HTTP(S) client")?
             };
 
-            let stream_connector = Arc::new(StreamConnector::from(proxy_config));
+            let stream_connector = Arc::new(
+                StreamConnector::new(StreamConnectorArgs {
+                    enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
+                    socks_proxy_config: proxy_config,
+                    utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
+                })
+                .await
+                .context("error creating stream connector")?,
+            );
 
             let blocklist: blocklist::Blocklist = if let Some(blocklist_url) = opts.blocklist_url {
                 blocklist::Blocklist::load_from_url(&blocklist_url)
@@ -645,7 +644,8 @@ impl Session {
                 db: RwLock::new(Default::default()),
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
                 cancellation_token: token,
-                tcp_listen_port,
+                announce_port: listen_result.as_ref().and_then(|l| l.announce_port),
+                listen_addr: listen_result.as_ref().map(|l| l.addr),
                 disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
                 reqwest_client,
@@ -676,19 +676,33 @@ impl Session {
                 );
             }
 
-            if let Some(tcp_listener) = tcp_listener {
-                session.spawn(
-                    error_span!(parent: session.rs(), "tcp_listen", port = tcp_listen_port),
-                    session.clone().task_tcp_listener(tcp_listener),
-                );
-            }
-
-            if let Some(listen_port) = tcp_listen_port {
-                if opts.enable_upnp_port_forwarding {
+            if let Some(mut listen) = listen_result {
+                if let Some(tcp) = listen.tcp_socket.take() {
                     session.spawn(
-                        error_span!(parent: session.rs(), "upnp_forward", port = listen_port),
-                        Self::task_upnp_port_forwarder(listen_port),
+                        error_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
+                        {
+                            let this = session.clone();
+                            async move { this.task_listener(tcp).await }
+                        },
                     );
+                }
+                if let Some(utp) = listen.utp_socket.take() {
+                    session.spawn(
+                        error_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
+                        {
+                            let this = session.clone();
+                            async move { this.task_listener(utp).await }
+                        },
+                    );
+                }
+                if let Some(announce_port) = listen.announce_port {
+                    if listen.enable_upnp_port_forwarding {
+                        info!(port = announce_port, "starting UPnP port forwarder");
+                        session.spawn(
+                            error_span!(parent: session.rs(), "upnp_forward", port = announce_port),
+                            Self::task_upnp_port_forwarder(announce_port),
+                        );
+                    }
                 }
             }
 
@@ -738,7 +752,8 @@ impl Session {
     async fn check_incoming_connection(
         self: Arc<Self>,
         addr: SocketAddr,
-        mut stream: TcpStream,
+        mut reader: BoxAsyncRead,
+        writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
         let rwtimeout = self
             .peer_opts
@@ -752,7 +767,7 @@ impl Session {
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf
-            .read_handshake(&mut stream, rwtimeout)
+            .read_handshake(&mut reader, rwtimeout)
             .await
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
@@ -779,7 +794,8 @@ impl Session {
                 live,
                 CheckedIncomingConnection {
                     addr,
-                    stream,
+                    reader,
+                    writer,
                     handshake,
                     read_buf,
                 },
@@ -792,7 +808,7 @@ impl Session {
         )
     }
 
-    async fn task_tcp_listener(self: Arc<Self>, l: TcpListener) -> anyhow::Result<()> {
+    async fn task_listener(self: Arc<Self>, l: impl Accept) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
@@ -801,12 +817,12 @@ impl Session {
             tokio::select! {
                 r = l.accept() => {
                     match r {
-                        Ok((stream, addr)) => {
+                        Ok((addr, (read, write))) => {
                             trace!("accepted connection from {addr}");
                             let session = session.upgrade().context("session is dead")?;
                             let span = error_span!(parent: session.rs(), "incoming", addr=%addr);
                             futs.push(
-                                session.check_incoming_connection(addr, stream)
+                                session.check_incoming_connection(addr, Box::new(read), Box::new(write))
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
@@ -815,8 +831,11 @@ impl Session {
                             );
                         }
                         Err(e) => {
-                            error!("error accepting: {e:#}");
-                            continue;
+                            warn!("error accepting: {e:#}");
+                            // Whatever is the reason, ensure we are not stuck trying to
+                            // accept indefinitely.
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                            continue
                         }
                     }
                 },
@@ -1339,7 +1358,7 @@ impl Session {
         initial_peers: Vec<SocketAddr>,
         is_private: bool,
     ) -> Option<PeerStream> {
-        let announce_port = if announce { self.tcp_listen_port } else { None };
+        let announce_port = if announce { self.announce_port } else { None };
         let dht_rx = if is_private {
             None
         } else {
@@ -1412,8 +1431,12 @@ impl Session {
         Ok(())
     }
 
-    pub fn tcp_listen_port(&self) -> Option<u16> {
-        self.tcp_listen_port
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
+        self.listen_addr
+    }
+
+    pub fn announce_port(&self) -> Option<u16> {
+        self.announce_port
     }
 
     async fn resolve_magnet(

@@ -23,7 +23,12 @@ use serde_with::serde_as;
 use tokio::time::timeout;
 use tracing::{debug, trace};
 
-use crate::{read_buf::ReadBuf, spawn_utils::BlockingSpawner, stream_connect::StreamConnector};
+use crate::{
+    read_buf::ReadBuf,
+    spawn_utils::BlockingSpawner,
+    stream_connect::StreamConnector,
+    type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+};
 
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
@@ -54,7 +59,7 @@ pub enum WriterRequest {
 }
 
 #[serde_as]
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct PeerConnectionOptions {
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub connect_timeout: Option<Duration>,
@@ -127,7 +132,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         read_buf: ReadBuf,
         handshake: Handshake<ByteBufOwned>,
-        mut conn: tokio::net::TcpStream,
+        read: BoxAsyncRead,
+        mut write: BoxAsyncWrite,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
@@ -153,7 +159,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
         handshake.serialize(&mut write_buf);
-        with_timeout(rwtimeout, conn.write_all(&write_buf))
+        with_timeout(rwtimeout, write.write_all(&write_buf))
             .await
             .context("error writing handshake")?;
         write_buf.clear();
@@ -161,8 +167,6 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let handshake_supports_extended = handshake.supports_extended();
 
         self.handler.on_handshake(handshake)?;
-
-        let (read, write) = conn.into_split();
 
         self.manage_peer(ManagePeerArgs {
             handshake_supports_extended,
@@ -337,6 +341,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     };
                 };
 
+                tokio::task::yield_now().await;
+
                 let mut uploaded_add = None;
 
                 trace!("about to send: {:?}", &req);
@@ -423,6 +429,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     .context("error reading message")?;
                 trace!("received: {:?}", &message);
 
+                tokio::task::yield_now().await;
+
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
                     *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
                     self.handler.on_extended_handshake(h)?;
@@ -441,11 +449,19 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         tokio::select! {
             r = reader => {
-                trace!(result=?r, "reader is done, exiting");
+                if let Err(e) = r.as_ref() {
+                    trace!("reader finished with error: {e:#}");
+                } else {
+                    trace!("reader finished without error");
+                }
                 r
             }
             r = writer => {
-                trace!(result=?r, "writer is done, exiting");
+                if let Err(e) = r.as_ref() {
+                    trace!("writer finished with error: {e:#}");
+                } else {
+                    trace!("writer finished without error");
+                }
                 r
             }
         }

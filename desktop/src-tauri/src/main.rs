@@ -14,7 +14,7 @@ use anyhow::Context;
 use config::RqbitDesktopConfig;
 use http::StatusCode;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
     SessionPersistenceConfig,
     api::{
         ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentIdOrHash,
@@ -83,6 +83,9 @@ async fn api_from_config(
             },
         })
     };
+
+    let (listen, connect) = config.connections.as_listener_and_connect_opts();
+
     let session = Session::new_with_opts(
         config.default_download_location.clone(),
         SessionOptions {
@@ -93,17 +96,8 @@ async fn api_from_config(
                 ..Default::default()
             }),
             persistence,
-            peer_opts: Some(PeerConnectionOptions {
-                connect_timeout: Some(config.peer_opts.connect_timeout),
-                read_write_timeout: Some(config.peer_opts.read_write_timeout),
-                ..Default::default()
-            }),
-            listen_port_range: if !config.tcp_listen.disable {
-                Some(config.tcp_listen.min_port..config.tcp_listen.max_port)
-            } else {
-                None
-            },
-            enable_upnp_port_forwarding: !config.upnp.disable_tcp_port_forward,
+            connect: Some(connect),
+            listen,
             fastresume: config.persistence.fastresume,
             ratelimits: config.ratelimits,
             #[cfg(feature = "disable-upload")]
@@ -160,6 +154,7 @@ async fn api_from_config(
                 Some(librqbit::http_api::HttpApiOptions {
                     read_only,
                     basic_auth: None,
+                    ..Default::default()
                 }),
             )
             .make_http_api_and_run(listener, upnp_router)

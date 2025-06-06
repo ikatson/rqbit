@@ -1,19 +1,22 @@
+use std::net::SocketAddr;
+
 use anyhow::Context;
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
 use bytes::Bytes;
+use http::StatusCode;
 use librqbit_core::magnet::Magnet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::ApiState;
 use crate::{
-    AddTorrent, SUPPORTED_SCHEMES,
+    AddTorrent, ApiError, SUPPORTED_SCHEMES,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     http_api::timeout::Timeout,
     http_api_types::TorrentAddQueryParams,
-    torrent_state::peer::stats::snapshot::PeerStatsFilter,
+    torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsFilterState},
 };
 
 pub async fn h_torrents_list(
@@ -165,4 +168,101 @@ pub async fn h_torrent_action_update_only_files(
 
 pub async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
+}
+
+pub async fn h_peer_stats_prometheus(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    let handle = state.api.mgr_handle(idx)?;
+
+    let live = handle.live().ok_or_else(|| {
+        ApiError::new_from_text(StatusCode::PRECONDITION_FAILED, "torrent not live")
+    })?;
+
+    let peer_stats = live.per_peer_stats_snapshot(PeerStatsFilter {
+        state: PeerStatsFilterState::Live,
+    });
+
+    let mut buf = String::new();
+
+    const NAME: &str = "rqbit_peer_fetched_bytes";
+
+    use core::fmt::Write;
+    writeln!(&mut buf, "# TYPE {} counter", NAME).unwrap();
+    for (addr, stats) in peer_stats.peers.iter() {
+        // Filter out useless peers that never sent us much.
+        const THRESHOLD: u64 = 1024 * 1024;
+        if stats.counters.fetched_bytes >= THRESHOLD {
+            writeln!(
+                &mut buf,
+                "{NAME}{{addr=\"{addr}\"}} {}",
+                stats.counters.fetched_bytes - THRESHOLD
+            )
+            .unwrap();
+        }
+    }
+
+    Ok(buf)
+}
+
+pub async fn h_metadata(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    let handle = state.api.mgr_handle(idx)?;
+
+    let (filename, bytes) = handle
+        .with_metadata(|meta| {
+            (
+                meta.name.clone().unwrap_or_else(|| format!("{}", idx)),
+                meta.torrent_bytes.clone(),
+            )
+        })
+        .map_err(ApiError::from)?;
+
+    Ok((
+        [(
+            http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}.torrent\""),
+        )],
+        bytes,
+    ))
+}
+
+#[derive(Serialize)]
+struct AddPeersResult {
+    added: usize,
+}
+
+pub async fn h_add_peers(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    body: Bytes,
+) -> Result<impl IntoResponse> {
+    let handle = state.api.mgr_handle(idx)?;
+    let live = handle
+        .live()
+        .context("torrent is not live")
+        .map_err(ApiError::from)?;
+
+    let addrs = body
+        .split(|c| *c == b'\n')
+        .map(|l| {
+            std::str::from_utf8(l)
+                .context("invalid UTF-8")
+                .and_then(|l| l.parse().context("cant parse SocketAddr"))
+        })
+        .collect::<anyhow::Result<Vec<SocketAddr>>>()
+        .context("invalid input")
+        .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
+
+    let mut count = 0;
+    for addr in addrs {
+        if live.add_peer_if_not_seen(addr).map_err(ApiError::from)? {
+            count += 1;
+        }
+    }
+
+    Ok(axum::Json(AddPeersResult { added: count }))
 }

@@ -311,7 +311,7 @@ impl TorrentStateLive {
                         state
                             .up_speed_estimator
                             .add_snapshot(stats.uploaded_bytes, None, now);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
             },
@@ -472,7 +472,8 @@ impl TorrentStateLive {
                 rx,
                 checked_peer.read_buf,
                 checked_peer.handshake,
-                checked_peer.stream,
+                checked_peer.reader,
+                checked_peer.writer,
                 self.have_broadcast_tx.subscribe()
             ) => {r}
         };
@@ -1191,6 +1192,9 @@ impl PeerHandler {
         drop(pe);
 
         if let Some(dur) = backoff {
+            if cfg!(feature = "_disable_reconnect_test") {
+                return Ok(());
+            }
             self.state.clone().spawn(
                 error_span!(
                     parent: self.state.shared.span.clone(),
@@ -1690,13 +1694,17 @@ impl PeerHandler {
             // While we hold per piece lock, noone can steal it.
             // So we can proceed writing knowing that the piece is ours now and will still be by the time
             // the write is finished.
-            match state.file_ops().write_chunk(addr, piece, chunk_info) {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("FATAL: error writing chunk to disk: {e:#}");
-                    return state.on_fatal_error(e);
-                }
-            };
+            //
+
+            if !cfg!(feature = "_disable_disk_write_net_benchmark") {
+                match state.file_ops().write_chunk(addr, piece, chunk_info) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("FATAL: error writing chunk to disk: {e:#}");
+                        return state.on_fatal_error(e);
+                    }
+                };
+            }
 
             let full_piece_download_time = {
                 let mut g = state.lock_write("mark_chunk_downloaded");
@@ -1777,7 +1785,7 @@ impl PeerHandler {
                     counters.on_piece_completed(piece_len, full_piece_download_time);
                     state.peers.reset_peer_backoff(addr);
 
-                    debug!("piece={} successfully downloaded and verified", index);
+                    trace!(piece = index, "successfully downloaded and verified");
 
                     state.on_piece_completed(chunk_info.piece_index)?;
 

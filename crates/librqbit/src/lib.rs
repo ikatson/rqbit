@@ -55,6 +55,7 @@ pub mod http_api_client;
 #[cfg(any(feature = "http-api", feature = "http-api-client"))]
 pub mod http_api_types;
 pub mod limits;
+mod listen;
 mod merge_streams;
 mod peer_connection;
 mod peer_info_reader;
@@ -78,12 +79,14 @@ pub use api::Api;
 pub use api_error::ApiError;
 pub use create_torrent_file::{CreateTorrentOptions, create_torrent};
 pub use dht;
+pub use listen::{ListenerMode, ListenerOptions};
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, SUPPORTED_SCHEMES,
     Session, SessionOptions, SessionPersistenceConfig,
 };
 pub use spawn_utils::spawn as librqbit_spawn;
+pub use stream_connect::ConnectionOptions;
 pub use torrent_state::{
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentMetadata, TorrentStats,
     TorrentStatsState,
