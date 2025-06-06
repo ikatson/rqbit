@@ -33,6 +33,7 @@ serde_with = "3.4.0"
 parking_lot = "0.12.1"
 gethostname = "1"
 tauri-plugin-shell = "2"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

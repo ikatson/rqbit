@@ -4731,6 +4731,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
+ "metrics-exporter-prometheus",
  "parking_lot",
  "serde",
  "serde_json",
