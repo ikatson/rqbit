@@ -14,7 +14,7 @@ use anyhow::Context;
 use config::RqbitDesktopConfig;
 use http::StatusCode;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, Api, ApiError, PeerConnectionOptions, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
     SessionPersistenceConfig,
     api::{
         ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentIdOrHash,
