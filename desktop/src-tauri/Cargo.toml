@@ -1,7 +1,7 @@
 [package]
 name = "rqbit-desktop"
 edition = "2024"
-version = "8.1.0"
+version = "9.0.0-beta.0"
 description = "rqbit torrent client"
 authors = ["Igor Katson igor.katson@gmail.com"]
 license = ""
@@ -20,6 +20,7 @@ librqbit = { path = "../../crates/librqbit", features = [
     "http-api",
     "webui",
     "upnp-serve-adapter",
+    "prometheus",
 ] }
 tokio = { version = "1.34.0", features = ["rt-multi-thread"] }
 anyhow = "1.0.75"
