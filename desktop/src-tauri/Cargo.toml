@@ -1,7 +1,7 @@
 [package]
 name = "rqbit-desktop"
 edition = "2024"
-version = "9.0.0-beta.0"
+version = "9.0.0"
 description = "rqbit torrent client"
 authors = ["Igor Katson igor.katson@gmail.com"]
 license = ""
