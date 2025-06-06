@@ -2799,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "8.1.0"
+version = "9.0.0-beta.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4693,7 +4693,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "8.1.0"
+version = "9.0.0-beta.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4723,7 +4723,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "8.1.0"
+version = "9.0.0-beta.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4731,6 +4731,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
+ "metrics-exporter-prometheus",
  "parking_lot",
  "serde",
  "serde_json",
