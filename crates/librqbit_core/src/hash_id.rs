@@ -1,8 +1,8 @@
 use data_encoding::BASE32;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{cmp::Ordering, str::FromStr};
+use std::str::FromStr;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Id<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> Id<N> {
@@ -163,25 +163,6 @@ impl<'de, const N: usize> Deserialize<'de> for Id<N> {
         }
 
         deserializer.deserialize_any(IdVisitor {})
-    }
-}
-
-impl<const N: usize> PartialOrd<Id<N>> for Id<N> {
-    fn partial_cmp(&self, other: &Id<N>) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<const N: usize> Ord for Id<N> {
-    fn cmp(&self, other: &Id<N>) -> Ordering {
-        for (s, o) in self.0.iter().copied().zip(other.0.iter().copied()) {
-            match s.cmp(&o) {
-                Ordering::Less => return Ordering::Less,
-                Ordering::Equal => continue,
-                Ordering::Greater => return Ordering::Greater,
-            }
-        }
-        Ordering::Equal
     }
 }
 
