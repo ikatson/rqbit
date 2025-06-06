@@ -37,11 +37,10 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
-debug = true
+debug = false
 overflow-checks = true
 lto = "thin"
 
 [profile.release-github]
 inherits = "release"
-debug = false
 lto = false
