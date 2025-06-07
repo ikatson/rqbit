@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     ffi::CStr,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -261,9 +261,21 @@ impl Drop for TransactionIdGuard<'_> {
 
 impl UdpTrackerClient {
     pub async fn new(cancel_token: CancellationToken) -> anyhow::Result<Self> {
-        let sock = tokio::net::UdpSocket::bind("0.0.0.0:0")
-            .await
-            .context("error binding UDP for tracker")?;
+        let sock = socket2::Socket::new(
+            socket2::Domain::IPV6,
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )
+        .context("error creating UDP socket")?;
+        sock.set_only_v6(false)
+            .context("error setting only_v6 for UDP socket")?;
+        sock.set_nonblocking(true)
+            .context("error setting UDP socket non-blocking")?;
+        sock.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)).into())
+            .context("error binding UDP socket to ::0")?;
+        let sock = tokio::net::UdpSocket::from_std(sock.into())
+            .context("error converting socket2 socket to tokio")?;
+
         let client = Self {
             state: Arc::new(ClientShared {
                 sock,
@@ -421,7 +433,7 @@ impl UdpTrackerClient {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, str::FromStr};
+    use std::{io::Write, net::Ipv6Addr, str::FromStr};
 
     use librqbit_core::{hash_id::Id20, peer_id::generate_peer_id};
 
