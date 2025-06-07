@@ -300,10 +300,7 @@ impl TrackerComms {
                 Ok(response) => {
                     trace!(len = response.addrs.len(), "received announce response");
                     for addr in response.addrs {
-                        self.tx
-                            .send(SocketAddr::V4(addr))
-                            .await
-                            .context("rx closed")?;
+                        self.tx.send(addr).await.context("rx closed")?;
                     }
                     let new_interval = response.interval.max(5);
                     let new_interval = Duration::from_secs(new_interval as u64);

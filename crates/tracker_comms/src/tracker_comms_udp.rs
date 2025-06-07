@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     ffi::CStr,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -106,7 +106,7 @@ pub struct AnnounceResponse {
     pub leechers: u32,
     #[allow(dead_code)]
     pub seeders: u32,
-    pub addrs: Vec<SocketAddrV4>,
+    pub addrs: Vec<SocketAddr>,
 }
 
 #[derive(Debug)]
@@ -150,17 +150,18 @@ macro_rules! parse_impl {
 
 parse_impl!(u32, 4);
 parse_impl!(u64, 8);
+parse_impl!(u128, 16);
 parse_impl!(u16, 2);
 parse_impl!(i32, 4);
 parse_impl!(i64, 8);
 parse_impl!(i16, 2);
 
 impl Response {
-    pub fn parse(buf: &[u8]) -> anyhow::Result<(TransactionId, Self)> {
+    pub fn parse(buf: &[u8], is_ipv6: bool) -> anyhow::Result<(TransactionId, Self)> {
         let (action, buf) = u32::parse_num(buf).context("can't parse action")?;
         let (tid, buf) = u32::parse_num(buf).context("can't parse transaction id")?;
 
-        let response = match Self::parse_response(action, buf) {
+        let response = match Self::parse_response(action, is_ipv6, buf) {
             Ok(r) => r,
             Err(e) => {
                 debug!("error parsing: {e:#}");
@@ -171,7 +172,7 @@ impl Response {
         Ok((tid, response))
     }
 
-    fn parse_response(action: u32, mut buf: &[u8]) -> anyhow::Result<Self> {
+    fn parse_response(action: u32, is_ipv6: bool, mut buf: &[u8]) -> anyhow::Result<Self> {
         let response = match action {
             ACTION_CONNECT => {
                 let (connection_id, b) =
@@ -185,13 +186,18 @@ impl Response {
                 let (seeders, mut b) = u32::parse_num(b).context("can't parse seeders")?;
                 let mut addrs = Vec::new();
                 while !b.is_empty() {
-                    let (ip, b2) = u32::parse_num(b)?;
-                    let ip = Ipv4Addr::from(ip);
+                    let (addr, b2) = if is_ipv6 {
+                        let (ip, b2) = u128::parse_num(b)?;
+                        (IpAddr::V6(Ipv6Addr::from(ip)), b2)
+                    } else {
+                        let (ip, b2) = u32::parse_num(b)?;
+                        (IpAddr::V4(Ipv4Addr::from(ip)), b2)
+                    };
                     b = b2;
 
                     let (port, b2) = u16::parse_num(b)?;
                     b = b2;
-                    addrs.push(SocketAddrV4::new(ip, port));
+                    addrs.push(SocketAddr::new(addr, port));
                 }
                 buf = b;
                 Response::Announce(AnnounceResponse {
@@ -302,7 +308,7 @@ impl UdpTrackerClient {
                 }
             };
 
-            let (tid, response) = match Response::parse(&buf[..len]) {
+            let (tid, response) = match Response::parse(&buf[..len], addr.is_ipv6()) {
                 Ok(r) => r,
                 Err(e) => {
                     debug!(?addr, "error parsing UDP response: {e:#}");
@@ -433,7 +439,7 @@ impl UdpTrackerClient {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, net::Ipv6Addr, str::FromStr};
+    use std::{io::Write, str::FromStr};
 
     use librqbit_core::{hash_id::Id20, peer_id::generate_peer_id};
 
@@ -444,7 +450,7 @@ mod tests {
     #[test]
     fn test_parse_announce() {
         let b = include_bytes!("../resources/test/udp-tracker-announce-response.bin");
-        let (tid, response) = Response::parse(b).unwrap();
+        let (tid, response) = Response::parse(b, false).unwrap();
         dbg!(tid, response);
     }
 
@@ -464,7 +470,7 @@ mod tests {
 
         let size = sock.recv(&mut read_buf).await.unwrap();
 
-        let (rtid, response) = Response::parse(&read_buf[..size]).unwrap();
+        let (rtid, response) = Response::parse(&read_buf[..size], false).unwrap();
         assert_eq!(tid, rtid);
         let connection_id = match response {
             Response::Connect(connection_id) => {
@@ -505,7 +511,7 @@ mod tests {
         }
 
         dbg!(&read_buf[..size]);
-        let (rtid, response) = Response::parse(&read_buf[..size]).unwrap();
+        let (rtid, response) = Response::parse(&read_buf[..size], false).unwrap();
         assert_eq!(tid, rtid);
         match response {
             Response::Announce(r) => {
