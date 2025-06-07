@@ -127,6 +127,25 @@ fn compute_queued_pieces(have_pieces: &BS, selected_pieces: &BS) -> anyhow::Resu
     ))
 }
 
+pub(crate) fn compute_selected_pieces(
+    lengths: &Lengths,
+    only_files_is_empty_or_contains: impl Fn(usize) -> bool,
+    file_infos: &FileInfos,
+) -> BF {
+    let mut bf = BF::from_boxed_slice(vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice());
+    for (_, fi) in file_infos
+        .iter()
+        .enumerate()
+        .filter(|(_, fi)| !fi.attrs.padding)
+        .filter(|(id, _)| only_files_is_empty_or_contains(*id))
+    {
+        if let Some(r) = bf.get_mut(fi.piece_range_usize()) {
+            r.fill(true);
+        }
+    }
+    bf
+}
+
 #[derive(Debug)]
 pub enum ChunkMarkingResult {
     PreviouslyCompleted,
@@ -303,86 +322,50 @@ impl ChunkTracker {
         Some(ChunkMarkingResult::NotCompleted)
     }
 
-    // NOTE: this doesn't validate new_only_files.
-    // E.g. if there are indices there that don't make
-    // sense, they will be ignored.
     pub fn update_only_files(
         &mut self,
-        file_lengths_iterator: impl IntoIterator<Item = u64>,
-        // TODO: maybe make this a BF
+        file_infos: &FileInfos,
         new_only_files: &HashSet<usize>,
     ) -> anyhow::Result<HaveNeededSelected> {
-        let mut piece_it = self.lengths.iter_piece_infos();
-        let mut current_piece = piece_it
-            .next()
-            .context("bug: iter_piece_infos() returned empty iterator")?;
-        let mut current_piece_selected = false;
-        let mut current_piece_remaining = current_piece.len;
-        let mut have_bytes = 0u64;
-        let mut selected_bytes = 0u64;
-        let mut needed_bytes = 0u64;
+        let selected = compute_selected_pieces(
+            &self.lengths,
+            |idx| new_only_files.contains(&idx),
+            file_infos,
+        );
+        let prev_selected = std::mem::replace(&mut self.selected, selected);
 
-        for (idx, len) in file_lengths_iterator.into_iter().enumerate() {
-            let file_required = new_only_files.contains(&idx);
+        // prev_selected=false and selected=true and have=false: requeue the piece
+        {
+            let mut b = BF::from_boxed_slice(
+                vec![0u8; self.lengths.piece_bitfield_bytes()].into_boxed_slice(),
+            );
+            for idx in self
+                .selected
+                .iter_ones()
+                .filter(|idx| !prev_selected[*idx] && !self.have.as_slice()[*idx])
+            {
+                b.set(idx, true);
+            }
 
-            let mut remaining_file_len = len;
-
-            while remaining_file_len > 0 {
-                current_piece_selected |= len > 0 && file_required;
-                let shift = std::cmp::min(current_piece_remaining as u64, remaining_file_len);
-                if shift == 0 {
-                    anyhow::bail!("bug: shift = 0, this shouldn't have happened")
-                }
-                remaining_file_len -= shift;
-                current_piece_remaining -= TryInto::<u32>::try_into(shift)?;
-
-                if current_piece_remaining == 0 {
-                    let current_piece_have =
-                        self.have.as_slice()[current_piece.piece_index.get() as usize];
-                    if current_piece_have {
-                        have_bytes += current_piece.len as u64;
-                    }
-                    if current_piece_selected {
-                        selected_bytes += current_piece.len as u64;
-                    }
-                    if current_piece_selected && !current_piece_have {
-                        needed_bytes += current_piece.len as u64;
-                    }
-                    self.selected.set(
-                        current_piece.piece_index.get() as usize,
-                        current_piece_selected,
-                    );
-                    match (current_piece_selected, current_piece_have) {
-                        (true, true) => {}
-                        (true, false) => {
-                            self.mark_piece_broken_if_not_have(current_piece.piece_index)
-                        }
-                        (false, true) => {}
-                        (false, false) => {
-                            // don't need the piece, and don't have it - cancel downloading it
-                            self.queue_pieces
-                                .set(current_piece.piece_index.get() as usize, false);
-                        }
-                    }
-
-                    if current_piece.piece_index != self.lengths.last_piece_id() {
-                        current_piece = piece_it.next().context(
-                            "bug: iter_piece_infos() pieces ended earlier than expected",
-                        )?;
-                        current_piece_selected = false;
-                        current_piece_remaining = current_piece.len;
-                    }
+            for idx in b.iter_ones() {
+                #[allow(clippy::cast_possible_truncation)]
+                if let Some(idx) = self.lengths.validate_piece_index(idx as u32) {
+                    self.mark_piece_broken_if_not_have(idx);
                 }
             }
         }
 
-        let res = HaveNeededSelected {
-            have_bytes,
-            needed_bytes,
-            selected_bytes,
-        };
-        self.hns = res;
-        Ok(res)
+        // selected=false, have=false: don't need the piece, and don't have it - cancel downloading it
+        {
+            // TODO: is there a better way to write this?
+            // self.queue_pieces &= self.have | self.selected;
+            let mut have_or_selected: BF = self.selected.clone();
+            have_or_selected |= self.have.as_slice();
+            self.queue_pieces &= have_or_selected;
+        }
+
+        self.hns = self.calc_hns();
+        Ok(self.hns)
     }
 
     pub(crate) fn get_selected_pieces(&self) -> &BF {
@@ -427,7 +410,9 @@ mod tests {
     use librqbit_core::{constants::CHUNK_SIZE, lengths::Lengths};
     use std::collections::HashSet;
 
-    use crate::{bitv::BitV, chunk_tracker::HaveNeededSelected, type_aliases::BF};
+    use crate::{
+        bitv::BitV, chunk_tracker::HaveNeededSelected, file_info::FileInfo, type_aliases::BF,
+    };
 
     use super::{ChunkTracker, compute_chunk_have_status};
 
@@ -537,16 +522,44 @@ mod tests {
         assert_eq!(l.total_pieces(), 3);
         assert_eq!(l.total_chunks(), 7);
 
-        let all_files = [
-            piece_len as u64, // piece 0 and boundary
-            1,                // piece 1
-            0,                // piece 1 (or none)
-            piece_len as u64, // piece 1 and 2
+        let all_files = vec![
+            FileInfo {
+                relative_filename: "0".into(),
+                offset_in_torrent: 0,
+                piece_range: 0..1,
+                len: piece_len as u64,
+                attrs: Default::default(),
+            },
+            FileInfo {
+                relative_filename: "1".into(),
+                offset_in_torrent: piece_len as u64,
+                piece_range: 1..2,
+                len: 1,
+                attrs: Default::default(),
+            },
+            FileInfo {
+                relative_filename: "2".into(),
+                offset_in_torrent: piece_len as u64 + 1,
+                piece_range: 1..1,
+                len: 0,
+                attrs: Default::default(),
+            },
+            FileInfo {
+                relative_filename: "3".into(),
+                offset_in_torrent: piece_len as u64 + 1,
+                piece_range: 1..3,
+                len: piece_len as u64,
+                attrs: Default::default(),
+            },
         ];
 
         let bf_len = l.piece_bitfield_bytes();
         let initial_have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
-        let initial_selected = BF::from_boxed_slice(vec![u8::MAX; bf_len].into_boxed_slice());
+        let initial_selected = {
+            let mut bf = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+            bf.get_mut(0..3).unwrap().fill(true);
+            bf
+        };
 
         // Initially, we need all files and all pieces.
         let mut ct = ChunkTracker::new(
@@ -559,7 +572,7 @@ mod tests {
 
         // Select all file, no changes.
         assert_eq!(
-            ct.update_only_files(all_files.into_iter(), &HashSet::from_iter([0, 1, 2, 3]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([0, 1, 2, 3]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
@@ -573,12 +586,12 @@ mod tests {
         // Select only the first file.
         println!("Select only the first file.");
         assert_eq!(
-            ct.update_only_files(all_files, &HashSet::from_iter([0]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([0]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
-                selected_bytes: all_files[0],
-                needed_bytes: all_files[0],
+                selected_bytes: all_files[0].len,
+                needed_bytes: all_files[0].len,
             }
         );
         assert!(ct.queue_pieces[0]);
@@ -587,7 +600,7 @@ mod tests {
 
         // Select only the second file.
         assert_eq!(
-            ct.update_only_files(all_files, &HashSet::from_iter([1]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([1]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
@@ -601,7 +614,7 @@ mod tests {
 
         // Select only the third file (zero sized one!).
         assert_eq!(
-            ct.update_only_files(all_files, &HashSet::from_iter([2]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([2]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
@@ -615,7 +628,7 @@ mod tests {
 
         // Select only the fourth file.
         assert_eq!(
-            ct.update_only_files(all_files, &HashSet::from_iter([3]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([3]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
@@ -629,12 +642,12 @@ mod tests {
 
         // Select first and last file
         assert_eq!(
-            ct.update_only_files(all_files, &HashSet::from_iter([0, 3]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([0, 3]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
-                selected_bytes: all_files[0] + all_files[3] + 1,
-                needed_bytes: all_files[0] + all_files[3] + 1,
+                selected_bytes: all_files[0].len + all_files[3].len + 1,
+                needed_bytes: all_files[0].len + all_files[3].len + 1,
             }
         );
         assert!(ct.queue_pieces[0]);
@@ -643,7 +656,7 @@ mod tests {
 
         // Select all files
         assert_eq!(
-            ct.update_only_files(all_files, &HashSet::from_iter([0, 1, 2, 3]))
+            ct.update_only_files(&all_files, &HashSet::from_iter([0, 1, 2, 3]))
                 .unwrap(),
             HaveNeededSelected {
                 have_bytes: 0,
