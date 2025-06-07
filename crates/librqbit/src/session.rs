@@ -628,9 +628,10 @@ impl Session {
                 blocklist::Blocklist::empty()
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone())
-                .await
-                .context("error creating UDP tracker client")?;
+            let udp_tracker_client =
+                UdpTrackerClient::new(opts.listen.unwrap_or_default().listen_addr, token.clone())
+                    .await
+                    .context("error creating UDP tracker client")?;
 
             let session = Arc::new(Self {
                 persistence,
