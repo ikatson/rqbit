@@ -27,7 +27,8 @@ pub struct TrackerComms {
     stats: Box<dyn TorrentStatsProvider>,
     force_tracker_interval: Option<Duration>,
     tx: Sender,
-    tcp_listen_port: Option<u16>,
+    // This MUST be set as trackers don't work with 0 port.
+    announce_port: u16,
     reqwest_client: reqwest::Client,
 }
 
@@ -97,7 +98,7 @@ impl TrackerComms {
         trackers: HashSet<Url>,
         stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
-        tcp_listen_port: Option<u16>,
+        announce_port: u16,
         reqwest_client: reqwest::Client,
         udp_client: UdpTrackerClient,
     ) -> Option<BoxStream<'static, SocketAddr>> {
@@ -129,7 +130,7 @@ impl TrackerComms {
                 stats,
                 force_tracker_interval: force_interval,
                 tx,
-                tcp_listen_port,
+                announce_port,
                 reqwest_client
             });
             let mut futures = FuturesUnordered::new();
@@ -193,7 +194,7 @@ impl TrackerComms {
             let request = tracker_comms_http::TrackerRequest {
                 info_hash: self.info_hash,
                 peer_id: self.peer_id,
-                port: self.tcp_listen_port.unwrap_or(0),
+                port: self.announce_port,
                 uploaded: stats.uploaded_bytes,
                 downloaded: stats.downloaded_bytes,
                 left: stats.get_left_to_download_bytes(),
@@ -293,7 +294,7 @@ impl TrackerComms {
                     }
                 },
                 key: 0, // whatever that is?
-                port: self.tcp_listen_port.unwrap_or(0),
+                port: self.announce_port,
             };
 
             match client.announce(&hp, request).await {
