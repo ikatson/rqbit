@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     ffi::CStr,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -260,11 +260,8 @@ impl Drop for TransactionIdGuard<'_> {
 }
 
 impl UdpTrackerClient {
-    pub async fn new(
-        address: core::net::SocketAddr,
-        cancel_token: CancellationToken,
-    ) -> anyhow::Result<Self> {
-        let sock = tokio::net::UdpSocket::bind(address)
+    pub async fn new(addr: SocketAddr, cancel_token: CancellationToken) -> anyhow::Result<Self> {
+        let sock = tokio::net::UdpSocket::bind(addr)
             .await
             .context("error binding UDP for tracker")?;
         let client = Self {
