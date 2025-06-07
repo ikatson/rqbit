@@ -260,8 +260,11 @@ impl Drop for TransactionIdGuard<'_> {
 }
 
 impl UdpTrackerClient {
-    pub async fn new(addr: SocketAddr, cancel_token: CancellationToken) -> anyhow::Result<Self> {
-        let sock = tokio::net::UdpSocket::bind(addr)
+    pub async fn new(
+        addr: Option<SocketAddr>,
+        cancel_token: CancellationToken,
+    ) -> anyhow::Result<Self> {
+        let sock = tokio::net::UdpSocket::bind(addr.unwrap_or((Ipv4Addr::UNSPECIFIED, 0).into()))
             .await
             .context("error binding UDP for tracker")?;
         let client = Self {

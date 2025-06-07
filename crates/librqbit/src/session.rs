@@ -628,14 +628,10 @@ impl Session {
                 blocklist::Blocklist::empty()
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(
-                listen_result
-                    .as_ref()
-                    .map_or((std::net::Ipv4Addr::LOCALHOST, 0).into(), |l| l.addr),
-                token.clone(),
-            )
-            .await
-            .context("error creating UDP tracker client")?;
+            let udp_tracker_client =
+                UdpTrackerClient::new(listen_result.as_ref().map(|l| l.addr), token.clone())
+                    .await
+                    .context("error creating UDP tracker client")?;
 
             let session = Arc::new(Self {
                 persistence,
