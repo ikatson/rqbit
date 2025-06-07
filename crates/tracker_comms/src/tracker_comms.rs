@@ -261,8 +261,8 @@ impl TrackerComms {
         if url.scheme() != "udp" {
             bail!("expected UDP scheme in {}", url);
         }
-        let hp: (String, u16) = (
-            url.host_str().context("missing host")?.to_owned(),
+        let hp: (url::Host, u16) = (
+            url.host().context("missing host")?.to_owned(),
             url.port().context("missing port")?,
         );
 

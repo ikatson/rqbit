@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     ffi::CStr,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddrV4},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -224,7 +224,7 @@ impl Response {
     }
 }
 
-pub type TrackerAddr = (String, u16);
+pub type TrackerAddr = (url::Host, u16);
 
 struct ConnectionIdMeta {
     id: ConnectionId,
@@ -344,7 +344,28 @@ impl UdpTrackerClient {
 
         let mut write_buf = [0u8; 1024];
         let len = request.serialize(tid_g.tid, &mut write_buf)?;
-        self.state.sock.send_to(&write_buf[..len], addr).await?;
+        let (addr, port) = addr;
+        let send_res = match addr {
+            url::Host::Domain(s) => {
+                self.state
+                    .sock
+                    .send_to(&write_buf[..len], (s.as_str(), *port))
+                    .await
+            }
+            url::Host::Ipv4(ipv4_addr) => {
+                self.state
+                    .sock
+                    .send_to(&write_buf[..len], (*ipv4_addr, *port))
+                    .await
+            }
+            url::Host::Ipv6(ipv6_addr) => {
+                self.state
+                    .sock
+                    .send_to(&write_buf[..len], (*ipv6_addr, *port))
+                    .await
+            }
+        };
+        send_res.with_context(|| format!("error sending to {addr:?}"))?;
 
         let response = tokio::time::timeout(Duration::from_secs(10), rx)
             .await
