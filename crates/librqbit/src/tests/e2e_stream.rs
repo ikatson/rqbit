@@ -20,6 +20,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
         CreateTorrentOptions {
             name: None,
             piece_length: Some(1024),
+            ..Default::default()
         },
     )
     .await?;
