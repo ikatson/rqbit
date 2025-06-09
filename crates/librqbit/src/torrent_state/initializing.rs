@@ -9,17 +9,15 @@ use std::{
 use anyhow::Context;
 
 use itertools::Itertools;
-use librqbit_core::lengths::Lengths;
 use rand::Rng;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{info, trace, warn};
 
 use crate::{
-    FileInfos,
     api::TorrentIdOrHash,
     bitv::BitV,
     bitv_factory::BitVFactory,
-    chunk_tracker::ChunkTracker,
+    chunk_tracker::{ChunkTracker, compute_selected_pieces},
     file_ops::FileOps,
     type_aliases::{BF, FileStorage},
 };
@@ -33,24 +31,6 @@ pub struct TorrentStateInitializing {
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
     previously_errored: bool,
-}
-
-fn compute_selected_pieces(
-    lengths: &Lengths,
-    only_files: Option<&[usize]>,
-    file_infos: &FileInfos,
-) -> BF {
-    let mut bf = BF::from_boxed_slice(vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice());
-    for (_, fi) in file_infos
-        .iter()
-        .enumerate()
-        .filter(|(id, _)| only_files.map(|of| of.contains(id)).unwrap_or(true))
-    {
-        if let Some(r) = bf.get_mut(fi.piece_range_usize()) {
-            r.fill(true);
-        }
-    }
-    bf
 }
 
 impl TorrentStateInitializing {
@@ -217,7 +197,12 @@ impl TorrentStateInitializing {
 
         let selected_pieces = compute_selected_pieces(
             &self.metadata.lengths,
-            self.only_files.as_deref(),
+            |idx| {
+                self.only_files
+                    .as_ref()
+                    .map(|o| o.contains(&idx))
+                    .unwrap_or(true)
+            },
             &self.metadata.file_infos,
         );
 

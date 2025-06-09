@@ -745,8 +745,7 @@ impl TorrentStateLive {
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
         let mut g = self.lock_write("update_only_files");
         let ct = g.get_chunks_mut()?;
-        let hns =
-            ct.update_only_files(self.metadata.file_infos.iter().map(|f| f.len), only_files)?;
+        let hns = ct.update_only_files(&self.metadata.file_infos, only_files)?;
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
