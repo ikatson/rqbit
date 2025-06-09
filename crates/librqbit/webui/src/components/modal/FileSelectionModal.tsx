@@ -39,7 +39,15 @@ export const FileSelectionModal = (props: {
 
   useEffect(() => {
     setSelectedFiles(
-      new Set(listTorrentResponse?.details.files.map((_, i) => i)),
+      new Set(
+        listTorrentResponse?.details.files.flatMap((file, idx) => {
+          if (file.attributes.padding) {
+            return [];
+          } else {
+            return [idx];
+          }
+        })
+      )
     );
     setOutputFolder(listTorrentResponse?.output_folder || "");
   }, [listTorrentResponse]);
@@ -79,7 +87,7 @@ export const FileSelectionModal = (props: {
         },
         (e) => {
           setUploadError({ text: "Error starting torrent", details: e });
-        },
+        }
       )
       .finally(() => setUploading(false));
   };
