@@ -109,11 +109,11 @@ impl TorrentStorage for MmapFilesystemStorage {
         self.fs.init(shared, metadata)?;
         let mut mmaps = Vec::new();
         for (idx, file) in self.fs.opened_files.iter().enumerate() {
-            let fg = file.file.write();
-            let fg = fg.as_ref().context("file is None")?;
-            fg.set_len(metadata.file_infos[idx].len)
+            let mut fh = file.file_handle.write();
+            let file = &fh.as_mut().context("file is None")?.file;
+            file.set_len(metadata.file_infos[idx].len)
                 .context("mmap storage: error setting length")?;
-            let mmap = unsafe { MmapOptions::new().map_mut(fg) }.context("error mapping file")?;
+            let mmap = unsafe { MmapOptions::new().map_mut(file) }.context("error mapping file")?;
             mmaps.push(RwLock::new(mmap));
         }
 
