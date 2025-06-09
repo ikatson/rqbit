@@ -293,6 +293,13 @@ pub async fn h_create_torrent(
     axum_extra::extract::Query(opts): axum_extra::extract::Query<HttpCreateTorrentOptions>,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
+    if !state.opts.allow_create {
+        return Err(ApiError::new_from_text(
+            StatusCode::FORBIDDEN,
+            "creating torrents not allowed. Enable through CLI options",
+        ));
+    }
+
     let path = std::path::Path::new(
         std::str::from_utf8(body.as_ref())
             .map_err(|_| ApiError::new_from_text(StatusCode::BAD_REQUEST, "invalid utf-8"))?,
