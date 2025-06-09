@@ -35,6 +35,8 @@ pub struct HttpApi {
 pub struct HttpApiOptions {
     pub read_only: bool,
     pub basic_auth: Option<(String, String)>,
+    // Allow creating torrents via API.
+    pub allow_create: bool,
     #[cfg(feature = "prometheus")]
     pub prometheus_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
 }

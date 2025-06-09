@@ -1,13 +1,14 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::{BufWriter, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use bencode::bencode_serialize_to_writer;
 use buffers::ByteBufOwned;
 use bytes::Bytes;
 use librqbit_core::Id20;
+use librqbit_core::magnet::Magnet;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
 use sha1w::{ISha1, Sha1};
 
@@ -16,6 +17,7 @@ use crate::spawn_utils::BlockingSpawner;
 #[derive(Debug, Clone, Default)]
 pub struct CreateTorrentOptions<'a> {
     pub name: Option<&'a str>,
+    pub trackers: Vec<String>,
     pub piece_length: Option<u32>,
 }
 
@@ -62,10 +64,15 @@ fn osstr_to_bytes(o: &OsStr) -> Vec<u8> {
     o.to_str().unwrap().to_owned().into_bytes()
 }
 
+struct CreateTorrentRawResult {
+    info: TorrentMetaV1Info<ByteBufOwned>,
+    output_folder: PathBuf,
+}
+
 async fn create_torrent_raw<'a>(
     path: &'a Path,
     options: CreateTorrentOptions<'a>,
-) -> anyhow::Result<TorrentMetaV1Info<ByteBufOwned>> {
+) -> anyhow::Result<CreateTorrentRawResult> {
     path.try_exists()
         .with_context(|| format!("path {:?} doesn't exist", path))?;
     let basename = path
@@ -77,12 +84,19 @@ async fn create_torrent_raw<'a>(
         Some(name) => name.as_bytes().into(),
         None => osstr_to_bytes(basename).into(),
     };
+    let output_folder: PathBuf;
 
     let mut input_files: Vec<Cow<'a, Path>> = Default::default();
     if is_dir {
+        output_folder = path.to_owned();
         walk_dir_find_paths(path, &mut input_files)
             .with_context(|| format!("error walking {:?}", path))?;
     } else {
+        output_folder = path
+            .canonicalize()?
+            .parent()
+            .context("single file has no parent")?
+            .to_path_buf();
         input_files.push(Cow::Borrowed(path));
     }
 
@@ -149,27 +163,31 @@ async fn create_torrent_raw<'a>(
     if remaining_piece_length > 0 && length > 0 {
         piece_hashes.extend_from_slice(&piece_checksum.finish());
     }
-    Ok(TorrentMetaV1Info {
-        name: Some(name),
-        pieces: piece_hashes.into(),
-        piece_length,
-        length: if single_file_mode { Some(length) } else { None },
-        md5sum: None,
-        files: if single_file_mode {
-            None
-        } else {
-            Some(output_files)
+    Ok(CreateTorrentRawResult {
+        info: TorrentMetaV1Info {
+            name: Some(name),
+            pieces: piece_hashes.into(),
+            piece_length,
+            length: if single_file_mode { Some(length) } else { None },
+            md5sum: None,
+            files: if single_file_mode {
+                None
+            } else {
+                Some(output_files)
+            },
+            attr: None,
+            sha1: None,
+            symlink_path: None,
+            private: false,
         },
-        attr: None,
-        sha1: None,
-        symlink_path: None,
-        private: false,
+        output_folder,
     })
 }
 
 #[derive(Debug)]
 pub struct CreateTorrentResult {
-    meta: TorrentMetaV1Owned,
+    pub meta: TorrentMetaV1Owned,
+    pub output_folder: PathBuf,
 }
 
 impl CreateTorrentResult {
@@ -179,6 +197,15 @@ impl CreateTorrentResult {
 
     pub fn info_hash(&self) -> Id20 {
         self.meta.info_hash
+    }
+
+    pub fn as_magnet(&self) -> Magnet {
+        let trackers = self
+            .meta
+            .iter_announce()
+            .map(|i| std::str::from_utf8(i).unwrap().to_owned())
+            .collect();
+        Magnet::from_id20(self.info_hash(), trackers, None)
     }
 
     pub fn as_bytes(&self) -> anyhow::Result<Bytes> {
@@ -192,13 +219,18 @@ pub async fn create_torrent<'a>(
     path: &'a Path,
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentResult> {
-    let info = create_torrent_raw(path, options).await?;
-    let info_hash = compute_info_hash(&info).context("error computing info hash")?;
+    let trackers = options
+        .trackers
+        .iter()
+        .map(|t| ByteBufOwned::from(t.as_bytes()))
+        .collect();
+    let res = create_torrent_raw(path, options).await?;
+    let info_hash = compute_info_hash(&res.info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,
-            announce_list: Vec::new(),
-            info,
+            announce_list: vec![trackers],
+            info: res.info,
             comment: None,
             created_by: None,
             encoding: Some(b"utf-8"[..].into()),
@@ -207,6 +239,7 @@ pub async fn create_torrent<'a>(
             creation_date: None,
             info_hash,
         },
+        output_folder: res.output_folder,
     })
 }
 

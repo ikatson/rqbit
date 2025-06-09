@@ -9,10 +9,11 @@ use std::{
 };
 
 use crate::{
-    FileInfos, ManagedTorrent, ManagedTorrentShared,
+    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
     api::TorrentIdOrHash,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
-    blocklist,
+    blocklist, create_torrent,
+    create_torrent_file::CreateTorrentResult,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
     limits::{Limits, LimitsConfig},
     listen::{Accept, ListenerOptions},
@@ -44,6 +45,7 @@ use futures::{
     future::BoxFuture,
     stream::{BoxStream, FuturesUnordered},
 };
+use http::StatusCode;
 use itertools::Itertools;
 use librqbit_core::{
     constants::CHUNK_SIZE,
@@ -1483,6 +1485,47 @@ impl Session {
                 bail!("input address stream exhausted, no way to discover torrent metainfo")
             }
         }
+    }
+
+    pub async fn create_and_serve_torrent(
+        self: &Arc<Self>,
+        path: &Path,
+        opts: CreateTorrentOptions<'_>,
+    ) -> Result<(CreateTorrentResult, ManagedTorrentHandle), ApiError> {
+        if !path.exists() {
+            return Err(ApiError::new_from_text(
+                StatusCode::BAD_REQUEST,
+                "path doesn't exist",
+            ));
+        }
+
+        let torrent = create_torrent(path, opts)
+            .await
+            .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
+
+        let bytes = torrent.as_bytes()?;
+
+        let handle = self
+            .add_torrent(
+                AddTorrent::TorrentFileBytes(bytes.clone()),
+                Some(AddTorrentOptions {
+                    paused: false,
+                    overwrite: true,
+                    output_folder: Some(
+                        torrent
+                            .output_folder
+                            .to_str()
+                            .context("invalid utf-8")?
+                            .to_owned(),
+                    ),
+                    ..Default::default()
+                }),
+            )
+            .await?
+            .into_handle()
+            .context("error adding to session")?;
+
+        Ok((torrent, handle))
     }
 }
 

@@ -6,13 +6,16 @@ use axum::{
     response::IntoResponse,
 };
 use bytes::Bytes;
-use http::StatusCode;
+use http::{
+    HeaderMap, HeaderValue, StatusCode,
+    header::{CONTENT_DISPOSITION, CONTENT_TYPE},
+};
 use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Serialize};
 
 use super::ApiState;
 use crate::{
-    AddTorrent, ApiError, SUPPORTED_SCHEMES,
+    AddTorrent, ApiError, CreateTorrentOptions, SUPPORTED_SCHEMES,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     http_api::timeout::Timeout,
     http_api_types::TorrentAddQueryParams,
@@ -265,4 +268,89 @@ pub async fn h_add_peers(
     }
 
     Ok(axum::Json(AddPeersResult { added: count }))
+}
+
+#[derive(Default, Deserialize, Debug)]
+enum CreateTorrentOutput {
+    #[default]
+    #[serde(rename = "magnet")]
+    Magnet,
+    #[serde(rename = "torrent")]
+    Torrent,
+}
+
+#[derive(Default, Deserialize, Debug)]
+pub struct HttpCreateTorrentOptions {
+    #[serde(default)]
+    output: CreateTorrentOutput,
+    #[serde(default)]
+    trackers: Vec<String>,
+    name: Option<String>,
+}
+
+pub async fn h_create_torrent(
+    State(state): State<ApiState>,
+    axum_extra::extract::Query(opts): axum_extra::extract::Query<HttpCreateTorrentOptions>,
+    body: Bytes,
+) -> Result<impl IntoResponse> {
+    if !state.opts.allow_create {
+        return Err(ApiError::new_from_text(
+            StatusCode::FORBIDDEN,
+            "creating torrents not allowed. Enable through CLI options",
+        ));
+    }
+
+    let path = std::path::Path::new(
+        std::str::from_utf8(body.as_ref())
+            .map_err(|_| ApiError::new_from_text(StatusCode::BAD_REQUEST, "invalid utf-8"))?,
+    );
+
+    let create_opts = CreateTorrentOptions {
+        name: opts.name.as_deref(),
+        trackers: opts.trackers,
+        piece_length: None,
+    };
+
+    let (torrent, handle) = state
+        .api
+        .session()
+        .create_and_serve_torrent(path, create_opts)
+        .await?;
+
+    let mut headers = HeaderMap::new();
+    if let Ok(v) = HeaderValue::from_str(&handle.id().to_string()) {
+        headers.insert("torrent-id", v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&torrent.info_hash().as_string()) {
+        headers.insert("torrent-info-hash", v);
+    }
+
+    match opts.output {
+        CreateTorrentOutput::Magnet => {
+            let magnet = torrent.as_magnet();
+            Ok(magnet.to_string().into_response())
+        }
+        CreateTorrentOutput::Torrent => {
+            let name = torrent
+                .as_info()
+                .info
+                .name
+                .as_ref()
+                .and_then(|b| std::str::from_utf8(b.as_ref()).ok())
+                .unwrap_or("torrent");
+
+            headers.insert(
+                CONTENT_TYPE,
+                HeaderValue::from_static("application/x-bittorrent"),
+            );
+
+            if let Ok(h) =
+                HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
+            {
+                headers.insert(CONTENT_DISPOSITION, h);
+            }
+
+            Ok((headers, torrent.as_bytes()?).into_response())
+        }
+    }
 }

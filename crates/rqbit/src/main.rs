@@ -99,6 +99,10 @@ struct Opts {
     )]
     http_api_listen_addr: SocketAddr,
 
+    /// Allow creating torrents via HTTP API
+    #[arg(long = "http-api-allow-create", env = "RQBIT_HTTP_API_ALLOW_CREATE")]
+    http_api_allow_create: bool,
+
     /// Set this flag if you want to use tokio's single threaded runtime.
     /// It MAY perform better, but the main purpose is easier debugging, as time
     /// profilers work better with this one.
@@ -841,6 +845,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(HttpApiOptions {
                         read_only: true,
                         basic_auth: http_api_basic_auth,
+                        allow_create: opts.http_api_allow_create,
                         ..Default::default()
                     }),
                 );
