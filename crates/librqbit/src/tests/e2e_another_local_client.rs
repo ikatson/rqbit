@@ -1,6 +1,5 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
     time::Duration,
 };
 
@@ -86,13 +85,12 @@ async fn test_tcp_with_another_client() {
 // The canary file is created from librqbit_utp, then served from the other torrent client:
 // cargo run --release --example create_canary_file /tmp/canary_4096m 4096
 async fn test_with_another_client(sopts: SessionOptions, addr: SocketAddr) {
-    let test_filename = {
-        let f = PathBuf::from(std::env::args().next().unwrap());
-        f.read_link().unwrap_or(f)
-    };
-
     #[cfg(unix)]
     {
+        let test_filename = {
+            let f = std::path::PathBuf::from(std::env::args().next().unwrap());
+            f.read_link().unwrap_or(f)
+        };
         if std::fs::exists(BINARY_SYMLINK).unwrap() {
             std::fs::remove_file(BINARY_SYMLINK).unwrap();
         }
