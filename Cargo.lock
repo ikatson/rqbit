@@ -2889,6 +2889,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "windows 0.61.1",
 ]
 
 [[package]]

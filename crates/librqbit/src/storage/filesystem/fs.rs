@@ -57,64 +57,17 @@ impl FilesystemStorage {
 
 impl TorrentStorage for FilesystemStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(target_family = "unix")]
-        {
-            use std::os::unix::fs::FileExt;
-            Ok(of
-                .lock_read()
-                .as_ref()
-                .context("file is None")?
-                .read_exact_at(buf, offset)?)
-        }
-        #[cfg(target_family = "windows")]
-        {
-            use std::os::windows::fs::FileExt;
-            let g = of.lock_read();
-            let f = g.as_ref().context("file is None")?;
-            f.seek_read(buf, offset)?;
-            Ok(())
-        }
-        #[cfg(not(any(target_family = "unix", target_family = "windows")))]
-        {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut g = of.lock_write();
-            let mut f = g.as_ref().context("file is None")?;
-            f.seek(SeekFrom::Start(offset))?;
-            Ok(f.read_exact(buf)?)
-        }
+        self.opened_files
+            .get(file_id)
+            .context("no such file")?
+            .pread_exact(offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(target_family = "unix")]
-        {
-            use std::os::unix::fs::FileExt;
-            Ok(of
-                .lock_read()
-                .as_ref()
-                .context("file is None")?
-                .write_all_at(buf, offset)?)
-        }
-        #[cfg(target_family = "windows")]
-        {
-            use std::os::windows::fs::FileExt;
-            let mut remaining = buf.len();
-            let g = of.lock_read();
-            let f = g.as_ref().context("file is None")?;
-            while remaining > 0 {
-                remaining -= f.seek_write(buf, offset)?;
-            }
-            Ok(())
-        }
-        #[cfg(not(any(target_family = "unix", target_family = "windows")))]
-        {
-            use std::io::{Read, Seek, SeekFrom, Write};
-            let mut g = of.lock_write();
-            let mut f = g.as_ref().context("file is None")?;
-            f.seek(SeekFrom::Start(offset))?;
-            Ok(f.write_all(buf)?)
-        }
+        self.opened_files
+            .get(file_id)
+            .context("no such file")?
+            .pwrite_all(offset, buf)
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
@@ -122,8 +75,10 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
-        Ok(self.opened_files[file_id]
-            .lock_read()
+        let f = &self.opened_files[file_id];
+        #[cfg(windows)]
+        f.try_mark_sparse()?;
+        Ok(f.lock_read()
             .as_ref()
             .context("file is None")?
             .set_len(len)?)

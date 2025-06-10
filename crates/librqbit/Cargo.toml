@@ -132,6 +132,14 @@ async-compression = { version = "0.4.18", features = ["tokio", "gzip"] }
 librqbit-utp = { version = "0.3.0", features = ["export-metrics"] }
 axum-extra = { version = "0.10.1", features = ["query"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.1", features = [
+    "Win32",
+    "Win32_System",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+] }
+
 [build-dependencies]
 anyhow = "1"
 
