@@ -62,8 +62,7 @@ impl TorrentStorage for FilesystemStorage {
         {
             use std::os::unix::fs::FileExt;
             Ok(of
-                .file
-                .read()
+                .lock_read()
                 .as_ref()
                 .context("file is None")?
                 .read_exact_at(buf, offset)?)
@@ -71,7 +70,7 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(target_family = "windows")]
         {
             use std::os::windows::fs::FileExt;
-            let g = of.file.read();
+            let g = of.lock_read();
             let f = g.as_ref().context("file is None")?;
             f.seek_read(buf, offset)?;
             Ok(())
@@ -79,7 +78,7 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(not(any(target_family = "unix", target_family = "windows")))]
         {
             use std::io::{Read, Seek, SeekFrom};
-            let mut g = of.file.write();
+            let mut g = of.lock_write();
             let mut f = g.as_ref().context("file is None")?;
             f.seek(SeekFrom::Start(offset))?;
             Ok(f.read_exact(buf)?)
@@ -92,8 +91,7 @@ impl TorrentStorage for FilesystemStorage {
         {
             use std::os::unix::fs::FileExt;
             Ok(of
-                .file
-                .read()
+                .lock_read()
                 .as_ref()
                 .context("file is None")?
                 .write_all_at(buf, offset)?)
@@ -102,7 +100,7 @@ impl TorrentStorage for FilesystemStorage {
         {
             use std::os::windows::fs::FileExt;
             let mut remaining = buf.len();
-            let g = of.file.read();
+            let g = of.lock_read();
             let f = g.as_ref().context("file is None")?;
             while remaining > 0 {
                 remaining -= f.seek_write(buf, offset)?;
@@ -112,7 +110,7 @@ impl TorrentStorage for FilesystemStorage {
         #[cfg(not(any(target_family = "unix", target_family = "windows")))]
         {
             use std::io::{Read, Seek, SeekFrom, Write};
-            let mut g = of.file.write();
+            let mut g = of.lock_write();
             let mut f = g.as_ref().context("file is None")?;
             f.seek(SeekFrom::Start(offset))?;
             Ok(f.write_all(buf)?)
@@ -125,8 +123,7 @@ impl TorrentStorage for FilesystemStorage {
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
         Ok(self.opened_files[file_id]
-            .file
-            .write()
+            .lock_read()
             .as_ref()
             .context("file is None")?
             .set_len(len)?)
@@ -194,7 +191,7 @@ impl TorrentStorage for FilesystemStorage {
                     })?;
                 OpenOptions::new().read(true).write(true).open(&full_path)?
             };
-            files.push(OpenedFile::new(f));
+            files.push(OpenedFile::new(full_path.clone(), f));
         }
 
         self.opened_files = files;
