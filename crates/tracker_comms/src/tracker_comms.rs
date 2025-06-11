@@ -34,6 +34,7 @@ pub struct TrackerComms {
     // This MUST be set as trackers don't work with 0 port.
     announce_port: u16,
     reqwest_client: reqwest::Client,
+    key: u32,
 }
 
 #[derive(Default)]
@@ -174,7 +175,8 @@ impl TrackerComms {
                 force_tracker_interval: force_interval,
                 tx,
                 announce_port,
-                reqwest_client
+                reqwest_client,
+                key: rand::random()
             });
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {
@@ -246,7 +248,7 @@ impl TrackerComms {
                 event,
                 ip: None,
                 numwant: None,
-                key: None,
+                key: Some(self.key.to_string()),
                 trackerid: None,
             };
 
@@ -390,7 +392,7 @@ impl TrackerComms {
                     }
                 }
             },
-            key: 0, // whatever that is?
+            key: self.key,
             port: self.announce_port,
         };
 
