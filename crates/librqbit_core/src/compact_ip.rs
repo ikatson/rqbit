@@ -9,17 +9,22 @@ use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
 
 mod small_slice {
-    pub struct SmallSlice {
-        // enough to hold IPv6 + port
-        data: [u8; 18],
+    pub struct SmallSlice<const N: usize> {
+        data: [u8; N],
         len: usize,
     }
 
-    impl SmallSlice {
+    impl<const N: usize> AsRef<[u8]> for SmallSlice<N> {
+        fn as_ref(&self) -> &[u8] {
+            self.as_slice()
+        }
+    }
+
+    impl<const N: usize> SmallSlice<N> {
         #[allow(clippy::new_without_default)]
         pub fn new() -> Self {
             Self {
-                data: [0u8; 18],
+                data: [0u8; N],
                 len: 0,
             }
         }
@@ -65,8 +70,10 @@ pub type CompactSocketAddr6 = Compact<SocketAddrV6>;
 pub type CompactSocketAddr = Compact<SocketAddr>;
 
 pub trait CompactSerialize: Sized {
+    type Slice: AsRef<[u8]>;
+
     fn expecting() -> &'static str;
-    fn as_slice(&self) -> SmallSlice;
+    fn as_slice(&self) -> Self::Slice;
     fn from_slice_unchecked(buf: &[u8]) -> Self {
         Self::from_slice(buf).unwrap()
     }
@@ -78,8 +85,10 @@ pub trait CompactSerializeFixedLen {
 }
 
 impl CompactSerialize for Ipv4Addr {
-    fn as_slice(&self) -> SmallSlice {
-        SmallSlice::new_from_buf(&self.octets())
+    type Slice = [u8; 4];
+
+    fn as_slice(&self) -> Self::Slice {
+        self.octets()
     }
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
@@ -100,8 +109,10 @@ impl CompactSerializeFixedLen for Ipv4Addr {
 }
 
 impl CompactSerialize for Ipv6Addr {
-    fn as_slice(&self) -> SmallSlice {
-        SmallSlice::new_from_buf(&self.octets())
+    type Slice = [u8; 16];
+
+    fn as_slice(&self) -> Self::Slice {
+        self.octets()
     }
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
@@ -122,10 +133,12 @@ impl CompactSerializeFixedLen for Ipv6Addr {
 }
 
 impl CompactSerialize for IpAddr {
-    fn as_slice(&self) -> SmallSlice {
+    type Slice = SmallSlice<16>;
+
+    fn as_slice(&self) -> Self::Slice {
         match self {
-            IpAddr::V4(a) => a.as_slice(),
-            IpAddr::V6(a) => a.as_slice(),
+            IpAddr::V4(a) => SmallSlice::new_from_buf(&a.as_slice()),
+            IpAddr::V6(a) => SmallSlice::new_from_buf(&a.as_slice()),
         }
     }
 
@@ -143,10 +156,13 @@ impl CompactSerialize for IpAddr {
 }
 
 impl CompactSerialize for SocketAddrV4 {
-    fn as_slice(&self) -> SmallSlice {
-        let mut s = self.ip().as_slice();
-        s.extend(&self.port().to_be_bytes());
-        s
+    type Slice = [u8; 6];
+
+    fn as_slice(&self) -> Self::Slice {
+        let mut data = [0u8; 6];
+        data[..4].copy_from_slice(&self.ip().octets());
+        data[4..6].copy_from_slice(&self.port().to_be_bytes());
+        data
     }
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
@@ -170,10 +186,13 @@ impl CompactSerializeFixedLen for SocketAddrV4 {
 }
 
 impl CompactSerialize for SocketAddrV6 {
-    fn as_slice(&self) -> SmallSlice {
-        let mut s = self.ip().as_slice();
-        s.extend(&self.port().to_be_bytes());
-        s
+    type Slice = [u8; 18];
+
+    fn as_slice(&self) -> Self::Slice {
+        let mut data = [0u8; 18];
+        data[..16].copy_from_slice(&self.ip().octets());
+        data[16..18].copy_from_slice(&self.port().to_be_bytes());
+        data
     }
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
@@ -197,8 +216,10 @@ impl CompactSerializeFixedLen for SocketAddrV6 {
 }
 
 impl CompactSerialize for SocketAddr {
-    fn as_slice(&self) -> SmallSlice {
-        let mut s = self.ip().as_slice();
+    type Slice = SmallSlice<18>;
+
+    fn as_slice(&self) -> Self::Slice {
+        let mut s = SmallSlice::new_from_buf(self.ip().as_slice().as_ref());
         s.extend(&self.port().to_be_bytes());
         s
     }
@@ -221,7 +242,7 @@ impl<T: CompactSerialize> Serialize for Compact<T> {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.0.as_slice().as_slice())
+        serializer.serialize_bytes(self.0.as_slice().as_ref())
     }
 }
 
@@ -270,7 +291,7 @@ where
     pub fn new_from_iter(it: impl Iterator<Item = T>) -> Self {
         let mut b = BytesMut::new();
         for item in it {
-            b.extend_from_slice(item.as_slice().as_slice());
+            b.extend_from_slice(item.as_slice().as_ref());
         }
         Self {
             buf: b.freeze().into(),

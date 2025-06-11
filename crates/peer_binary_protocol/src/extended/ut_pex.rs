@@ -5,7 +5,6 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use librqbit_core::compact_ip::{
     CompactListInBuffer, CompactListInBufferOwned, CompactSerialize, CompactSerializeFixedLen,
-    SmallSlice,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,12 +26,14 @@ impl core::fmt::Debug for PexPeerInfo {
 struct Flags(u8);
 
 impl CompactSerialize for Flags {
+    type Slice = [u8; 1];
+
     fn expecting() -> &'static str {
         "1 byte"
     }
 
-    fn as_slice(&self) -> SmallSlice {
-        SmallSlice::new_from_buf(&[self.0])
+    fn as_slice(&self) -> [u8; 1] {
+        [self.0]
     }
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
