@@ -465,7 +465,17 @@ impl Api {
 
     pub fn api_dht_table(&self) -> Result<impl Serialize + use<>> {
         let dht = self.session.get_dht().ok_or(ApiError::dht_disabled())?;
-        Ok(dht.with_routing_table(|r| r.clone()))
+        Ok(dht.with_routing_tables(|v4, v6| {
+            #[derive(Serialize)]
+            struct Tables<T> {
+                v4: T,
+                v6: T,
+            }
+            Tables {
+                v4: v4.clone(),
+                v6: v6.clone(),
+            }
+        }))
     }
 
     pub fn api_stats_v0(&self, idx: TorrentIdOrHash) -> Result<LiveStats> {

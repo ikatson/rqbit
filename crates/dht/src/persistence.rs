@@ -29,6 +29,8 @@ pub struct PersistentDhtConfig {
 struct DhtSerialize<Table, PeerStore> {
     addr: SocketAddr,
     table: Table,
+    // option for backwards compat
+    table_v6: Option<Table>,
     peer_store: Option<PeerStore>,
 }
 
@@ -46,12 +48,13 @@ fn dump_dht(dht: &Dht, filename: &Path, tempfile_name: &Path) -> anyhow::Result<
     let mut file = BufWriter::new(file);
 
     let addr = dht.listen_addr();
-    match dht.with_routing_table(|r| {
+    match dht.with_routing_tables(|v4, v6| {
         serde_json::to_writer(
             &mut file,
             &DhtSerialize {
                 addr,
-                table: r,
+                table: v4,
+                table_v6: Some(v6),
                 peer_store: Some(&dht.peer_store),
             },
         )

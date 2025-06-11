@@ -1,9 +1,4 @@
-use std::{
-    collections::VecDeque,
-    net::{SocketAddr, SocketAddrV4},
-    str::FromStr,
-    sync::atomic::AtomicU32,
-};
+use std::{collections::VecDeque, net::SocketAddr, str::FromStr, sync::atomic::AtomicU32};
 
 use bencode::ByteBufOwned;
 use chrono::{DateTime, Utc};
@@ -16,7 +11,7 @@ use serde::{
 };
 use tracing::trace;
 
-use crate::bprotocol::{AnnouncePeer, CompactPeerInfo};
+use crate::bprotocol::{AnnouncePeer, CompactPeerInfo, Want};
 
 #[derive(Serialize, Deserialize)]
 struct StoredToken {
@@ -28,7 +23,7 @@ struct StoredToken {
 
 #[derive(Serialize, Deserialize)]
 struct StoredPeer {
-    addr: SocketAddrV4,
+    addr: SocketAddr,
     time: DateTime<Utc>,
 }
 
@@ -134,27 +129,17 @@ impl PeerStore {
         token
     }
 
-    pub fn store_peer(&self, announce: &AnnouncePeer<ByteBufOwned>, addr: SocketAddr) -> bool {
+    pub fn store_peer(&self, announce: &AnnouncePeer<ByteBufOwned>, mut addr: SocketAddr) -> bool {
         // If the info_hash in announce is too far away from us, don't store it.
         // If the token doesn't match, don't store it.
         // If we are out of capacity, don't store it.
         // Otherwise, store it.
-        let mut addr = match addr {
-            SocketAddr::V4(addr) => addr,
-            SocketAddr::V6(_) => {
-                trace!("peer store: IPv6 not supported");
-                return false;
-            }
-        };
-
         if announce.info_hash.distance(&self.self_id) > self.max_distance {
             trace!("peer store: info_hash too far to store");
             return false;
         }
         if !self.tokens.read().iter().any(|t| {
-            t.token[..] == announce.token[..]
-                && t.addr == std::net::SocketAddr::V4(addr)
-                && t.node_id == announce.id
+            t.token[..] == announce.token[..] && t.addr == addr && t.node_id == announce.id
         }) {
             trace!("peer store: can't find this token / addr combination");
             return false;
@@ -199,10 +184,17 @@ impl PeerStore {
         true
     }
 
-    pub fn get_for_info_hash(&self, info_hash: Id20) -> Vec<CompactPeerInfo> {
+    pub fn get_for_info_hash(&self, info_hash: Id20, want: Want) -> Vec<CompactPeerInfo> {
         if let Some(stored_peers) = self.peers.get(&info_hash) {
             return stored_peers
                 .iter()
+                .filter(|p| {
+                    matches!(
+                        (p.addr, want),
+                        (SocketAddr::V6(..), Want::V6 | Want::Both)
+                            | (SocketAddr::V4(..), Want::V4 | Want::Both)
+                    )
+                })
                 .map(|p| CompactPeerInfo { addr: p.addr })
                 .collect();
         }
