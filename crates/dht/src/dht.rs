@@ -429,17 +429,20 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             }
         }
 
-        if let Some(nodes) = response.nodes {
-            for node in nodes.nodes {
-                let addr = SocketAddr::V4(node.addr);
-                let should_request = self.should_request_node(node.id, addr, depth);
-                trace!(
-                    "should_request={}, id={:?}, addr={}, depth={}/{}",
-                    should_request, node.id, addr, depth, self.max_depth
-                );
-                if should_request {
-                    self.node_tx.send((Some(node.id), addr, depth + 1))?;
-                }
+        let node_it = response
+            .nodes
+            .iter()
+            .flat_map(|n| n.iter_addrs())
+            .chain(response.nodes6.iter().flat_map(|n| n.iter_addrs()));
+
+        for (node_id, addr) in node_it {
+            let should_request = self.should_request_node(node_id, addr, depth);
+            trace!(
+                "should_request={}, id={:?}, addr={}, depth={}/{}",
+                should_request, node_id, addr, depth, self.max_depth
+            );
+            if should_request {
+                self.node_tx.send((Some(node_id), addr, depth + 1))?;
             }
         }
         Ok(())

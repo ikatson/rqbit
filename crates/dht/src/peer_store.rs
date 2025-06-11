@@ -191,7 +191,8 @@ impl PeerStore {
                 .filter(|p| {
                     matches!(
                         (p.addr, want),
-                        (SocketAddr::V6(..), Want::V6) | (SocketAddr::V4(..), Want::V4)
+                        (SocketAddr::V6(..), Want::V6 | Want::Both)
+                            | (SocketAddr::V4(..), Want::V4 | Want::Both)
                     )
                 })
                 .map(|p| CompactPeerInfo { addr: p.addr })

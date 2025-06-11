@@ -179,6 +179,15 @@ pub struct CompactNodeInfo<const IP_LEN: usize, A> {
     pub nodes: Vec<Node<A>>,
 }
 
+impl<const IP_LEN: usize, A> CompactNodeInfo<IP_LEN, A>
+where
+    A: Into<SocketAddr> + Copy,
+{
+    pub fn iter_addrs(&self) -> impl Iterator<Item = (Id20, SocketAddr)> {
+        self.nodes.iter().map(|n| (n.id, n.addr.into()))
+    }
+}
+
 pub trait AddrInfo<const IP_LEN: usize>: Sized {
     fn octets(&self) -> [u8; IP_LEN];
     fn port(&self) -> u16;
