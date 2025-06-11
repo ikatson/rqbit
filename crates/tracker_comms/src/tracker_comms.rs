@@ -312,9 +312,6 @@ impl TrackerComms {
             url.port().context("missing port")?,
         );
 
-        // Sequence:
-        // resolve once. for each resolved addr, spawn
-
         let mut sleep_interval: Option<Duration> = None;
         let mut prev_addrs: Option<UdpTrackerResolveResult> = None;
         loop {
