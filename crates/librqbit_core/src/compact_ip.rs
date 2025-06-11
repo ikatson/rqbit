@@ -3,6 +3,9 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
+use buffers::ByteBufOwned;
+use bytes::BytesMut;
+use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
 
 mod small_slice {
@@ -48,8 +51,6 @@ impl<T> From<T> for Compact<T> {
     }
 }
 
-pub struct CompactList<T>(Vec<T>);
-
 impl<T: core::fmt::Debug> core::fmt::Debug for Compact<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -64,13 +65,16 @@ pub type CompactSocketAddr6 = Compact<SocketAddrV6>;
 pub type CompactSocketAddr = Compact<SocketAddr>;
 
 pub trait CompactSerialize: Sized {
-    fn fixed_len() -> Option<usize>;
     fn expecting() -> &'static str;
     fn as_slice(&self) -> SmallSlice;
     fn from_slice_unchecked(buf: &[u8]) -> Self {
         Self::from_slice(buf).unwrap()
     }
     fn from_slice(buf: &[u8]) -> Option<Self>;
+}
+
+pub trait CompactSerializeFixedLen {
+    fn fixed_len() -> usize;
 }
 
 impl CompactSerialize for Ipv4Addr {
@@ -87,9 +91,11 @@ impl CompactSerialize for Ipv4Addr {
     fn expecting() -> &'static str {
         "4 bytes for IPv4"
     }
+}
 
-    fn fixed_len() -> Option<usize> {
-        Some(4)
+impl CompactSerializeFixedLen for Ipv4Addr {
+    fn fixed_len() -> usize {
+        4
     }
 }
 
@@ -107,9 +113,11 @@ impl CompactSerialize for Ipv6Addr {
     fn expecting() -> &'static str {
         "16 bytes for IPv6"
     }
+}
 
-    fn fixed_len() -> Option<usize> {
-        Some(16)
+impl CompactSerializeFixedLen for Ipv6Addr {
+    fn fixed_len() -> usize {
+        16
     }
 }
 
@@ -132,10 +140,6 @@ impl CompactSerialize for IpAddr {
     fn expecting() -> &'static str {
         "16 bytes for IPv6 or 4 bytes for IPv4"
     }
-
-    fn fixed_len() -> Option<usize> {
-        None
-    }
 }
 
 impl CompactSerialize for SocketAddrV4 {
@@ -157,9 +161,11 @@ impl CompactSerialize for SocketAddrV4 {
     fn expecting() -> &'static str {
         "6 bytes for SocketAddrV4"
     }
+}
 
-    fn fixed_len() -> Option<usize> {
-        Some(6)
+impl CompactSerializeFixedLen for SocketAddrV4 {
+    fn fixed_len() -> usize {
+        6
     }
 }
 
@@ -182,9 +188,11 @@ impl CompactSerialize for SocketAddrV6 {
     fn expecting() -> &'static str {
         "18 bytes for SocketAddrV6"
     }
+}
 
-    fn fixed_len() -> Option<usize> {
-        Some(18)
+impl CompactSerializeFixedLen for SocketAddrV6 {
+    fn fixed_len() -> usize {
+        18
     }
 }
 
@@ -205,10 +213,6 @@ impl CompactSerialize for SocketAddr {
 
     fn expecting() -> &'static str {
         "18 bytes for SocketAddrV6 or 6 bytes for SocketAddrV4"
-    }
-
-    fn fixed_len() -> Option<usize> {
-        None
     }
 }
 
@@ -247,6 +251,89 @@ impl<'de, T: CompactSerialize> Deserialize<'de> for Compact<T> {
             }
         }
         deserializer.deserialize_bytes(Visitor {
+            _phantom: Default::default(),
+        })
+    }
+}
+
+pub struct CompactListInBuffer<Buf, T> {
+    buf: Buf,
+    _phantom: PhantomData<T>,
+}
+
+pub type CompactListInBufferOwned<T> = CompactListInBuffer<ByteBufOwned, T>;
+
+impl<T> CompactListInBufferOwned<T>
+where
+    T: CompactSerialize + CompactSerializeFixedLen,
+{
+    pub fn new_from_iter(it: impl Iterator<Item = T>) -> Self {
+        let mut b = BytesMut::new();
+        for item in it {
+            b.extend_from_slice(item.as_slice().as_slice());
+        }
+        Self {
+            buf: b.freeze().into(),
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<Buf, T> CompactListInBuffer<Buf, T>
+where
+    Buf: AsRef<[u8]>,
+    T: CompactSerialize + CompactSerializeFixedLen,
+{
+    pub fn iter(&self) -> anyhow::Result<impl Iterator<Item = T>> {
+        Ok(self
+            .buf
+            .as_ref()
+            .chunks_exact(T::fixed_len())
+            .map_while(|chunk| T::from_slice(chunk)))
+    }
+}
+
+impl<Buf, T> Serialize for CompactListInBuffer<Buf, T>
+where
+    Buf: AsRef<[u8]>,
+    T: CompactSerialize + CompactSerializeFixedLen,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.buf.as_ref())
+    }
+}
+
+impl<Buf, T> CloneToOwned for CompactListInBuffer<Buf, T>
+where
+    Buf: CloneToOwned,
+{
+    type Target = CompactListInBuffer<Buf::Target, T>;
+
+    fn clone_to_owned(&self, within_buffer: Option<&bytes::Bytes>) -> Self::Target {
+        CompactListInBuffer {
+            buf: self.buf.clone_to_owned(within_buffer),
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<'de, Buf, T> Deserialize<'de> for CompactListInBuffer<Buf, T>
+where
+    Buf: Deserialize<'de> + AsRef<[u8]>,
+    T: CompactSerialize + CompactSerializeFixedLen,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let buf = Buf::deserialize(deserializer)?;
+        // TODO: we could check the len here is the exact multiple, but I don't know
+        // how to return the error without creating a custom visitor
+        Ok(Self {
+            buf,
             _phantom: Default::default(),
         })
     }
