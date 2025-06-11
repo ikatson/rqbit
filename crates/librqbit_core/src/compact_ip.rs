@@ -37,6 +37,7 @@ mod small_slice {
 
         pub fn extend(&mut self, buf: &[u8]) {
             self.data[self.len..self.len + buf.len()].copy_from_slice(buf);
+            self.len += buf.len();
         }
 
         pub fn as_slice(&self) -> &[u8] {
@@ -47,7 +48,7 @@ mod small_slice {
 
 pub use small_slice::SmallSlice;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Compact<T>(pub T);
 
 impl<T> From<T> for Compact<T> {
@@ -387,5 +388,67 @@ where
             buf,
             _phantom: Default::default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fmt::Debug,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    };
+
+    use bencode::bencode_serialize_to_writer;
+    use buffers::ByteBuf;
+
+    use crate::compact_ip::{
+        Compact, CompactListInBuffer, CompactListInBufferOwned, CompactSerialize,
+        CompactSerializeFixedLen,
+    };
+
+    fn test_same_impl<T: CompactSerialize + Copy + Debug + PartialEq + Eq>(input: T) {
+        println!("{input:?}");
+        let input = Compact(input);
+        let mut w = Vec::new();
+        bencode_serialize_to_writer(input, &mut w).unwrap();
+        println!("input={input:?}, serialized={w:?}");
+        let deserialized: Compact<T> = bencode::from_bytes(&w).unwrap();
+        assert_eq!(deserialized, input);
+    }
+
+    fn test_same_list_impl<
+        T: CompactSerialize + CompactSerializeFixedLen + Copy + Debug + PartialEq + Eq,
+        const N: usize,
+    >(
+        input: [T; N],
+    ) {
+        let l = CompactListInBufferOwned::new_from_iter(input.into_iter());
+        let mut w = Vec::new();
+        bencode_serialize_to_writer(&l, &mut w).unwrap();
+        let deserialized: CompactListInBuffer<ByteBuf, T> = bencode::from_bytes(&w).unwrap();
+        assert_eq!(deserialized.iter().collect::<Vec<_>>(), input);
+    }
+
+    #[test]
+    fn test_same() {
+        test_same_list_impl([Ipv4Addr::LOCALHOST, Ipv4Addr::BROADCAST]);
+        test_same_list_impl([Ipv6Addr::LOCALHOST, Ipv6Addr::UNSPECIFIED]);
+        test_same_list_impl([
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 10),
+            SocketAddrV4::new(Ipv4Addr::BROADCAST, 11),
+        ]);
+        test_same_list_impl([
+            SocketAddrV6::new(Ipv6Addr::LOCALHOST, 10, 0, 0),
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 11, 0, 0),
+        ]);
+
+        test_same_impl(Ipv4Addr::LOCALHOST);
+        test_same_impl(Ipv6Addr::LOCALHOST);
+        test_same_impl(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        test_same_impl(IpAddr::V6(Ipv6Addr::LOCALHOST));
+        test_same_impl(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 100));
+        test_same_impl(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 100, 0, 0));
+        test_same_impl(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 100));
+        test_same_impl(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 100));
     }
 }
