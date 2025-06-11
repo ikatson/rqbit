@@ -49,6 +49,7 @@ pub struct DhtStats {
     pub id: Id20,
     pub outstanding_requests: usize,
     pub routing_table_size: usize,
+    pub routing_table_size_v6: usize,
 }
 
 struct OutstandingRequest {
@@ -155,7 +156,11 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
 struct RecursiveRequestCallbacksFindNodes {}
 impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
     fn on_request_start(&self, req: &RecursiveRequest<Self>, target_node: Id20, addr: SocketAddr) {
-        let mut rt = req.dht.routing_table.write();
+        let mut rt = if addr.is_ipv4() {
+            req.dht.routing_table_v4.write()
+        } else {
+            req.dht.routing_table_v6.write()
+        };
         match rt.add_node(target_node, addr) {
             InsertResult::WasExisting | InsertResult::ReplacedBad(_) | InsertResult::Added => {
                 rt.mark_outgoing_request(&target_node);
@@ -168,10 +173,14 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
         &self,
         req: &RecursiveRequest<Self>,
         target_node: Id20,
-        _addr: SocketAddr,
+        addr: SocketAddr,
         resp: &anyhow::Result<ResponseOrError>,
     ) {
-        let mut table = req.dht.routing_table.write();
+        let mut table = if addr.is_ipv4() {
+            req.dht.routing_table_v4.write()
+        } else {
+            req.dht.routing_table_v6.write()
+        };
         if resp.is_ok() {
             table.mark_response(&target_node);
         } else {
@@ -376,18 +385,19 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
 
     fn get_peers_root(&self) -> anyhow::Result<usize> {
         let mut count = 0;
-        for (id, addr) in self
-            .dht
-            .routing_table
-            .read()
-            .sorted_by_distance_from(self.info_hash)
-            .iter()
-            .map(|n| (n.id(), n.addr()))
-            .take(8)
-        {
-            count += 1;
-            self.node_tx.send((Some(id), addr, 0))?;
+        for table in [&self.dht.routing_table_v4, &self.dht.routing_table_v6] {
+            for (id, addr) in table
+                .read()
+                .sorted_by_distance_from(self.info_hash)
+                .iter()
+                .map(|n| (n.id(), n.addr()))
+                .take(8)
+            {
+                count += 1;
+                self.node_tx.send((Some(id), addr, 0))?;
+            }
         }
+
         Ok(count)
     }
 }
@@ -538,7 +548,8 @@ pub struct DhtState {
     // If we get a response, it gets removed from here.
     inflight_by_transaction_id: DashMap<(u16, SocketAddr), OutstandingRequest>,
 
-    routing_table: RwLock<RoutingTable>,
+    routing_table_v4: RwLock<RoutingTable>,
+    routing_table_v6: RwLock<RoutingTable>,
     listen_addr: SocketAddr,
 
     // Sending requests to the worker.
@@ -555,17 +566,20 @@ impl DhtState {
     fn new_internal(
         id: Id20,
         sender: UnboundedSender<WorkerSendRequest>,
-        routing_table: Option<RoutingTable>,
+        routing_table_v4: Option<RoutingTable>,
+        routing_table_v6: Option<RoutingTable>,
         listen_addr: SocketAddr,
         peer_store: PeerStore,
         cancellation_token: CancellationToken,
     ) -> Self {
-        let routing_table = routing_table.unwrap_or_else(|| RoutingTable::new(id, None));
+        let routing_table_v4 = routing_table_v4.unwrap_or_else(|| RoutingTable::new(id, None));
+        let routing_table_v6 = routing_table_v6.unwrap_or_else(|| RoutingTable::new(id, None));
         Self {
             id,
             next_transaction_id: AtomicU16::new(0),
             inflight_by_transaction_id: Default::default(),
-            routing_table: RwLock::new(routing_table),
+            routing_table_v4: RwLock::new(routing_table_v4),
+            routing_table_v6: RwLock::new(routing_table_v6),
             worker_sender: sender,
             listen_addr,
             rate_limiter: make_rate_limiter(),
@@ -676,26 +690,39 @@ impl DhtState {
         Option<CompactNodeInfo<16, SocketAddrV6>>,
     ) {
         match want {
-            Want::V4 => (Some(self.generate_compact_nodes(target)), None),
-            Want::V6 => (None, Some(self.generate_compact_nodes(target))),
+            Want::V4 => (
+                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read())),
+                None,
+            ),
+            Want::V6 => (
+                None,
+                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read())),
+            ),
             Want::Both => (
-                Some(self.generate_compact_nodes(target)),
-                Some(self.generate_compact_nodes(target)),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read())),
             ),
             Want::None => (None, None),
+        }
+    }
+
+    fn get_table_for_addr(&self, addr: SocketAddr) -> &RwLock<RoutingTable> {
+        if addr.is_ipv4() {
+            &self.routing_table_v4
+        } else {
+            &self.routing_table_v6
         }
     }
 
     fn generate_compact_nodes<const IP_LEN: usize, A>(
         &self,
         target: Id20,
+        table: &RoutingTable,
     ) -> CompactNodeInfo<IP_LEN, A>
     where
         A: AddrInfo<IP_LEN>,
     {
-        let nodes = self
-            .routing_table
-            .read()
+        let nodes = table
             .sorted_by_distance_from(target)
             .into_iter()
             .filter_map(|r| {
@@ -763,7 +790,9 @@ impl DhtState {
                         ..Default::default()
                     }),
                 };
-                self.routing_table.write().mark_last_query(&req.id);
+                self.get_table_for_addr(addr)
+                    .write()
+                    .mark_last_query(&req.id);
                 self.worker_sender.send(WorkerSendRequest {
                     our_tid: None,
                     message,
@@ -772,7 +801,9 @@ impl DhtState {
                 Ok(())
             }
             MessageKind::AnnouncePeer(ann) => {
-                self.routing_table.write().mark_last_query(&ann.id);
+                self.get_table_for_addr(addr)
+                    .write()
+                    .mark_last_query(&ann.id);
                 let added = self.peer_store.store_peer(ann, addr);
                 trace!("{addr}: added_peer={added}, announce={ann:?}");
                 let message = Message {
@@ -797,7 +828,9 @@ impl DhtState {
                     .unwrap_or(if addr.is_ipv6() { Want::V6 } else { Want::V4 });
                 let (nodes, nodes6) = self.generate_compact_nodes_both(req.info_hash, want);
                 let compact_peer_info = self.peer_store.get_for_info_hash(req.info_hash, want);
-                self.routing_table.write().mark_last_query(&req.id);
+                self.get_table_for_addr(addr)
+                    .write()
+                    .mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -824,7 +857,9 @@ impl DhtState {
                     .want
                     .unwrap_or(if addr.is_ipv6() { Want::V6 } else { Want::V4 });
                 let (nodes, nodes6) = self.generate_compact_nodes_both(req.target, want);
-                self.routing_table.write().mark_last_query(&req.id);
+                self.get_table_for_addr(addr)
+                    .write()
+                    .mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -851,7 +886,8 @@ impl DhtState {
         DhtStats {
             id: self.id,
             outstanding_requests: self.inflight_by_transaction_id.len(),
-            routing_table_size: self.routing_table.read().len(),
+            routing_table_size: self.routing_table_v4.read().len(),
+            routing_table_size_v6: self.routing_table_v6.read().len(),
         }
     }
 }
@@ -938,8 +974,14 @@ impl DhtWorker {
         Ok(())
     }
 
-    async fn bucket_refresher(&self) -> anyhow::Result<()> {
+    async fn bucket_refresher(&self, is_v4: bool) -> anyhow::Result<()> {
         let (tx, mut rx) = unbounded_channel();
+
+        let table = if is_v4 {
+            &self.dht.routing_table_v4
+        } else {
+            &self.dht.routing_table_v6
+        };
 
         let mut futs = FuturesUnordered::new();
         let filler = async {
@@ -949,7 +991,8 @@ impl DhtWorker {
             loop {
                 interval.tick().await;
                 let mut found = 0;
-                for bucket in self.dht.routing_table.read().iter_buckets() {
+
+                for bucket in table.read().iter_buckets() {
                     if bucket.leaf.last_refreshed.elapsed() < INACTIVITY_TIMEOUT {
                         continue;
                     }
@@ -969,9 +1012,7 @@ impl DhtWorker {
                 _ = &mut filler => {},
                 random_id = rx.recv() => {
                     let random_id = random_id.unwrap();
-                    let addrs = self
-                        .dht
-                        .routing_table
+                    let addrs = table
                         .read()
                         .sorted_by_distance_from(random_id)
                         .iter()
@@ -988,7 +1029,12 @@ impl DhtWorker {
         }
     }
 
-    async fn pinger(&self) -> anyhow::Result<()> {
+    async fn pinger(&self, is_v4: bool) -> anyhow::Result<()> {
+        let table = if is_v4 {
+            &self.dht.routing_table_v4
+        } else {
+            &self.dht.routing_table_v6
+        };
         let mut futs = FuturesUnordered::new();
         let mut interval = tokio::time::interval(INACTIVITY_TIMEOUT / 4);
         let (tx, mut rx) = unbounded_channel();
@@ -998,7 +1044,7 @@ impl DhtWorker {
                 interval.tick().await;
                 let mut found = 0;
                 let now = Instant::now();
-                for node in self.dht.routing_table.read().iter() {
+                for node in table.read().iter() {
                     if matches!(
                         node.status(now),
                         NodeStatus::Questionable | NodeStatus::Unknown
@@ -1020,13 +1066,13 @@ impl DhtWorker {
                 r = rx.recv() => {
                     let (id, addr) = r.unwrap();
                     futs.push(async move {
-                        self.dht.routing_table.write().mark_outgoing_request(&id);
+                        table.write().mark_outgoing_request(&id);
                         match self.dht.request(Request::Ping, addr).await {
                             Ok(_) => {
-                                self.dht.routing_table.write().mark_response(&id);
+                                table.write().mark_response(&id);
                             },
                             Err(e) => {
-                                self.dht.routing_table.write().mark_error(&id);
+                                table.write().mark_error(&id);
                                 debug!("error: {e:#}");
                             }
                         }
@@ -1128,16 +1174,23 @@ impl DhtWorker {
         }
         .instrument(debug_span!("dht_responese_reader"));
 
-        let pinger = self.pinger().instrument(error_span!("pinger"));
-        let bucket_refresher = self
-            .bucket_refresher()
-            .instrument(error_span!("bucket_refresher"));
+        let pinger_v4 = self.pinger(true).instrument(error_span!("pinger_v4"));
+        let bucket_refresher_v4 = self
+            .bucket_refresher(true)
+            .instrument(error_span!("bucket_refresher_v4"));
+
+        let pinger_v6 = self.pinger(false).instrument(error_span!("pinger_v6"));
+        let bucket_refresher_v6 = self
+            .bucket_refresher(false)
+            .instrument(error_span!("bucket_refresher_v6"));
 
         tokio::pin!(framer);
         tokio::pin!(bootstrap);
         tokio::pin!(response_reader);
-        tokio::pin!(pinger);
-        tokio::pin!(bucket_refresher);
+        tokio::pin!(pinger_v4);
+        tokio::pin!(bucket_refresher_v4);
+        tokio::pin!(pinger_v6);
+        tokio::pin!(bucket_refresher_v6);
 
         loop {
             tokio::select! {
@@ -1148,11 +1201,17 @@ impl DhtWorker {
                     bootstrap_done = true;
                     result?;
                 },
-                err = &mut pinger => {
-                    anyhow::bail!("pinger quit: {:?}", err)
+                err = &mut pinger_v4 => {
+                    anyhow::bail!("pinger_v4 quit: {:?}", err)
                 },
-                err = &mut bucket_refresher => {
-                    anyhow::bail!("bucket_refresher quit: {:?}", err)
+                err = &mut bucket_refresher_v4 => {
+                    anyhow::bail!("bucket_refresher_v4 quit: {:?}", err)
+                },
+                err = &mut pinger_v6 => {
+                    anyhow::bail!("pinger_v6 quit: {:?}", err)
+                },
+                err = &mut bucket_refresher_v6 => {
+                    anyhow::bail!("bucket_refresher_v6 quit: {:?}", err)
                 },
                 err = &mut response_reader => {anyhow::bail!("response reader quit: {:?}", err)}
             }
@@ -1165,6 +1224,7 @@ pub struct DhtConfig {
     pub peer_id: Option<Id20>,
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
+    pub routing_table_v6: Option<RoutingTable>,
     pub listen_addr: Option<SocketAddr>,
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
@@ -1204,6 +1264,7 @@ impl DhtState {
                 peer_id,
                 in_tx,
                 config.routing_table,
+                config.routing_table_v6,
                 listen_addr,
                 config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
                 token,
@@ -1237,11 +1298,11 @@ impl DhtState {
         self.get_stats()
     }
 
-    pub fn with_routing_table<R, F: FnOnce(&RoutingTable) -> R>(&self, f: F) -> R {
-        f(&self.routing_table.read())
+    pub fn with_routing_tables<R, F: FnOnce(&RoutingTable, &RoutingTable) -> R>(&self, f: F) -> R {
+        f(&self.routing_table_v4.read(), &self.routing_table_v6.read())
     }
 
-    pub fn clone_routing_table(&self) -> RoutingTable {
-        self.routing_table.read().clone()
-    }
+    // pub fn clone_routing_table(&self) -> RoutingTable {
+    //     self.routing_table.read().clone()
+    // }
 }
