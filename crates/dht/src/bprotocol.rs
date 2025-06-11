@@ -296,10 +296,19 @@ impl<'de> Deserialize<'de> for CompactPeerInfo {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Want {
+    #[serde(rename = "v4")]
+    V4,
+    #[serde(rename = "v6")]
+    V6,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FindNodeRequest {
     pub id: Id20,
     pub target: Id20,
+    pub want: Option<Want>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -317,6 +326,7 @@ pub struct Response<BufT> {
 pub struct GetPeersRequest {
     pub id: Id20,
     pub info_hash: Id20,
+    pub want: Option<Want>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

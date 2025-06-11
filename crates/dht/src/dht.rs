@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    net::SocketAddr,
+    net::{Ipv6Addr, SocketAddr},
     str::FromStr,
     sync::{
         Arc,
@@ -14,7 +14,7 @@ use crate::{
     INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bprotocol::{
         self, AnnouncePeer, CompactNodeInfo, ErrorDescription, FindNodeRequest, GetPeersRequest,
-        Message, MessageKind, Node, PingRequest, Response,
+        Message, MessageKind, Node, PingRequest, Response, Want,
     },
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
@@ -34,13 +34,11 @@ use librqbit_core::{
     peer_id::generate_azereus_style,
     spawn_utils::{spawn, spawn_with_cancel},
 };
+use librqbit_dualstack_sockets::UdpSocket;
 use parking_lot::RwLock;
 
 use serde::Serialize;
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel},
-};
+use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, warn};
@@ -137,11 +135,14 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
             );
             return;
         }
-        let (tid, message) = req.dht.create_request(Request::Announce {
-            info_hash: req.info_hash,
-            token: token.clone(),
-            port: announce_port,
-        });
+        let (tid, message) = req.dht.create_request(
+            Request::Announce {
+                info_hash: req.info_hash,
+                token: token.clone(),
+                port: announce_port,
+            },
+            addr,
+        );
 
         let _ = req.dht.worker_sender.send(WorkerSendRequest {
             our_tid: Some(tid),
@@ -572,7 +573,7 @@ impl DhtState {
 
     async fn request(&self, request: Request, addr: SocketAddr) -> anyhow::Result<ResponseOrError> {
         self.rate_limiter.acquire_one().await;
-        let (tid, message) = self.create_request(request);
+        let (tid, message) = self.create_request(request, addr);
         let key = (tid, addr);
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inflight_by_transaction_id
@@ -606,9 +607,15 @@ impl DhtState {
         }
     }
 
-    fn create_request(&self, request: Request) -> (u16, Message<ByteBufOwned>) {
+    fn create_request(&self, request: Request, addr: SocketAddr) -> (u16, Message<ByteBufOwned>) {
         let transaction_id = self.next_transaction_id.fetch_add(1, Ordering::Relaxed);
         let transaction_id_buf = [(transaction_id >> 8) as u8, (transaction_id & 0xff) as u8];
+
+        let want = if addr.is_ipv6() {
+            Some(Want::V6)
+        } else {
+            Some(Want::V4)
+        };
 
         let message = match request {
             Request::GetPeers(info_hash) => Message {
@@ -618,6 +625,7 @@ impl DhtState {
                 kind: MessageKind::GetPeersRequest(GetPeersRequest {
                     id: self.id,
                     info_hash,
+                    want,
                 }),
             },
             Request::FindNode(target) => Message {
@@ -627,6 +635,7 @@ impl DhtState {
                 kind: MessageKind::FindNodeRequest(FindNodeRequest {
                     id: self.id,
                     target,
+                    want,
                 }),
             },
             Request::Ping => Message {
@@ -1139,18 +1148,12 @@ impl DhtState {
     #[inline(never)]
     pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
         async move {
-            let socket = match config.listen_addr {
-                Some(addr) => UdpSocket::bind(addr)
-                    .await
-                    .with_context(|| format!("error binding socket, address {addr}")),
-                None => UdpSocket::bind("0.0.0.0:0")
-                    .await
-                    .context("error binding socket, address 0.0.0.0:0"),
-            }?;
+            let addr = config
+                .listen_addr
+                .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into());
+            let socket = UdpSocket::bind_udp(addr, true).context("error binding UDP socket")?;
 
-            let listen_addr = socket
-                .local_addr()
-                .context("cannot determine UDP listen addr")?;
+            let listen_addr = socket.bind_addr();
             info!("DHT listening on {:?}", listen_addr);
 
             let peer_id = config

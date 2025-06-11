@@ -2962,6 +2962,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-clone-to-owned",
  "librqbit-core",
+ "librqbit-dualstack-sockets",
  "parking_lot",
  "rand 0.9.1",
  "serde",
