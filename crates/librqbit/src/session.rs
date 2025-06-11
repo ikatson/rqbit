@@ -1360,13 +1360,12 @@ impl Session {
         initial_peers: Vec<SocketAddr>,
         is_private: bool,
     ) -> Option<PeerStream> {
-        let announce_port = if announce { self.announce_port } else { None };
         let dht_rx = if is_private {
             None
         } else {
-            self.dht
-                .as_ref()
-                .map(|dht| dht.get_peers(info_hash, announce_port))
+            self.dht.as_ref().map(|dht| {
+                dht.get_peers(info_hash, if announce { self.announce_port } else { None })
+            })
         };
 
         if is_private && trackers.len() > 1 {
@@ -1386,7 +1385,7 @@ impl Session {
             trackers.into_iter().collect(),
             Box::new(tracker_rx_stats),
             force_tracker_interval,
-            announce_port,
+            self.announce_port().unwrap_or(4240),
             self.reqwest_client.clone(),
             self.udp_tracker_client.clone(),
         );
