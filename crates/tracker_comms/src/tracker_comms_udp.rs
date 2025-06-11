@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use librqbit_core::{hash_id::Id20, spawn_utils::spawn_with_cancel};
+use librqbit_dualstack_sockets::UdpSocket;
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
@@ -230,8 +231,6 @@ impl Response {
     }
 }
 
-pub type TrackerAddr = (url::Host, u16);
-
 struct ConnectionIdMeta {
     id: ConnectionId,
     created: Instant,
@@ -239,12 +238,12 @@ struct ConnectionIdMeta {
 
 #[derive(Default)]
 struct ClientLocked {
-    connections: HashMap<TrackerAddr, ConnectionIdMeta>,
+    connections: HashMap<SocketAddr, ConnectionIdMeta>,
     transactions: HashMap<TransactionId, tokio::sync::oneshot::Sender<Response>>,
 }
 
 struct ClientShared {
-    sock: tokio::net::UdpSocket,
+    sock: UdpSocket,
     locked: RwLock<ClientLocked>,
 }
 
@@ -267,20 +266,9 @@ impl Drop for TransactionIdGuard<'_> {
 
 impl UdpTrackerClient {
     pub async fn new(cancel_token: CancellationToken) -> anyhow::Result<Self> {
-        let sock = socket2::Socket::new(
-            socket2::Domain::IPV6,
-            socket2::Type::DGRAM,
-            Some(socket2::Protocol::UDP),
-        )
-        .context("error creating UDP socket")?;
-        sock.set_only_v6(false)
-            .context("error setting only_v6 for UDP socket")?;
-        sock.set_nonblocking(true)
-            .context("error setting UDP socket non-blocking")?;
-        sock.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)).into())
-            .context("error binding UDP socket to ::0")?;
-        let sock = tokio::net::UdpSocket::from_std(sock.into())
-            .context("error converting socket2 socket to tokio")?;
+        let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+        let sock = UdpSocket::bind_udp(addr, true)
+            .with_context(|| format!("error creating UDP socket at {addr}"))?;
 
         let client = Self {
             state: Arc::new(ClientShared {
@@ -333,8 +321,8 @@ impl UdpTrackerClient {
         }
     }
 
-    async fn get_connection_id(&self, addr: &TrackerAddr) -> anyhow::Result<ConnectionId> {
-        if let Some(m) = self.state.locked.read().connections.get(addr) {
+    async fn get_connection_id(&self, addr: SocketAddr) -> anyhow::Result<ConnectionId> {
+        if let Some(m) = self.state.locked.read().connections.get(&addr) {
             if m.created.elapsed() < Duration::from_secs(60) {
                 return Ok(m.id);
             }
@@ -344,7 +332,7 @@ impl UdpTrackerClient {
         match response {
             Response::Connect(connection_id) => {
                 self.state.locked.write().connections.insert(
-                    addr.clone(),
+                    addr,
                     ConnectionIdMeta {
                         id: connection_id,
                         created: Instant::now(),
@@ -356,34 +344,17 @@ impl UdpTrackerClient {
         }
     }
 
-    async fn request(&self, addr: &TrackerAddr, request: Request) -> anyhow::Result<Response> {
+    async fn request(&self, addr: SocketAddr, request: Request) -> anyhow::Result<Response> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tid_g = self.reserve_transaction_id(tx)?;
 
         let mut write_buf = [0u8; 1024];
         let len = request.serialize(tid_g.tid, &mut write_buf)?;
-        let (addr, port) = addr;
-        let send_res = match addr {
-            url::Host::Domain(s) => {
-                self.state
-                    .sock
-                    .send_to(&write_buf[..len], (s.as_str(), *port))
-                    .await
-            }
-            url::Host::Ipv4(ipv4_addr) => {
-                self.state
-                    .sock
-                    .send_to(&write_buf[..len], (*ipv4_addr, *port))
-                    .await
-            }
-            url::Host::Ipv6(ipv6_addr) => {
-                self.state
-                    .sock
-                    .send_to(&write_buf[..len], (*ipv6_addr, *port))
-                    .await
-            }
-        };
-        send_res.with_context(|| format!("error sending to {addr:?}"))?;
+        self.state
+            .sock
+            .send_to(&write_buf[..len], addr)
+            .await
+            .with_context(|| format!("error sending to {addr:?}"))?;
 
         let response = tokio::time::timeout(Duration::from_secs(10), rx)
             .await
@@ -424,7 +395,7 @@ impl UdpTrackerClient {
 
     pub async fn announce(
         &self,
-        tracker: &TrackerAddr,
+        tracker: SocketAddr,
         fields: AnnounceFields,
     ) -> anyhow::Result<AnnounceResponse> {
         let connection_id = self.get_connection_id(tracker).await?;

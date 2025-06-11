@@ -34,4 +34,5 @@ bencode = { path = "../bencode", default-features = false, package = "librqbit-b
 url = { version = "2", default-features = false }
 parking_lot = "0.12.3"
 tokio-util = "0.7.13"
-socket2 = "0.5.1"
+librqbit-dualstack-sockets = { version = "0.1.0" }
+backon = "1.5.1"
