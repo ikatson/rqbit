@@ -156,11 +156,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
 struct RecursiveRequestCallbacksFindNodes {}
 impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
     fn on_request_start(&self, req: &RecursiveRequest<Self>, target_node: Id20, addr: SocketAddr) {
-        let mut rt = if addr.is_ipv4() {
-            req.dht.routing_table_v4.write()
-        } else {
-            req.dht.routing_table_v6.write()
-        };
+        let mut rt = req.dht.get_table_for_addr(addr).write();
         match rt.add_node(target_node, addr) {
             InsertResult::WasExisting | InsertResult::ReplacedBad(_) | InsertResult::Added => {
                 rt.mark_outgoing_request(&target_node);
@@ -176,11 +172,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
         addr: SocketAddr,
         resp: &anyhow::Result<ResponseOrError>,
     ) {
-        let mut table = if addr.is_ipv4() {
-            req.dht.routing_table_v4.write()
-        } else {
-            req.dht.routing_table_v6.write()
-        };
+        let mut table = req.dht.get_table_for_addr(addr).write();
         if resp.is_ok() {
             table.mark_response(&target_node);
         } else {
@@ -443,7 +435,8 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .nodes
             .iter()
             .flat_map(|n| n.iter_addrs())
-            .chain(response.nodes6.iter().flat_map(|n| n.iter_addrs()));
+            .chain(response.nodes6.iter().flat_map(|n| n.iter_addrs()))
+            .filter(|(_, naddr)| addr.is_ipv4() == naddr.is_ipv4());
 
         for (node_id, addr) in node_it {
             let should_request = self.should_request_node(node_id, addr, depth);
@@ -935,8 +928,24 @@ impl DhtWorker {
     async fn bootstrap_hostname(&self, hostname: &str) -> anyhow::Result<()> {
         let addrs = tokio::net::lookup_host(hostname)
             .await
-            .with_context(|| format!("error looking up {}", hostname))?;
-        RecursiveRequest::find_node_for_routing_table(self.dht.clone(), self.dht.id, addrs).await
+            .with_context(|| format!("error looking up {}", hostname))?
+            .collect::<Vec<_>>();
+        let v4 = RecursiveRequest::find_node_for_routing_table(
+            self.dht.clone(),
+            self.dht.id,
+            addrs.iter().copied().filter(|a| a.is_ipv4()),
+        )
+        .instrument(error_span!("v4"));
+
+        let v6 = RecursiveRequest::find_node_for_routing_table(
+            self.dht.clone(),
+            self.dht.id,
+            addrs.iter().copied().filter(|a| a.is_ipv6()),
+        )
+        .instrument(error_span!("v6"));
+
+        let (v4, v6) = tokio::join!(v4, v6);
+        v4.or(v6)
     }
 
     async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> anyhow::Result<()> {
