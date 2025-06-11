@@ -1,10 +1,12 @@
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
-use byteorder::{BE, ByteOrder};
-use bytes::{Bytes, BytesMut};
+use buffers::{ByteBufOwned, ByteBufT};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use librqbit_core::compact_ip::{CompactListInBuffer, CompactSerialize, CompactSerializeFixedLen};
+use librqbit_core::compact_ip::{
+    CompactListInBuffer, CompactListInBufferOwned, CompactSerialize, CompactSerializeFixedLen,
+    SmallSlice,
+};
 use serde::{Deserialize, Serialize};
 
 pub struct PexPeerInfo {
@@ -26,15 +28,15 @@ struct Flags(u8);
 
 impl CompactSerialize for Flags {
     fn expecting() -> &'static str {
-        todo!()
+        "1 byte"
     }
 
     fn as_slice(&self) -> SmallSlice {
-        todo!()
+        SmallSlice::new_from_buf(&[self.0])
     }
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
-        todo!()
+        Some(Flags(*buf.first()?))
     }
 }
 
@@ -62,8 +64,31 @@ pub struct UtPex<B: ByteBufT> {
     dropped6: Option<CompactListInBuffer<B, SocketAddrV6>>,
 }
 
-impl CloneToOwned for UtPex<ByteBuf<'_>> {
-    type Target = UtPex<ByteBufOwned>;
+impl<B: ByteBufT> core::fmt::Debug for UtPex<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        struct IterDebug<I>(I);
+        impl<I> core::fmt::Debug for IterDebug<I>
+        where
+            I: Iterator<Item = PexPeerInfo> + Clone,
+        {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_list().entries(self.0.clone()).finish()
+            }
+        }
+        f.debug_struct("UtPex")
+            .field("added", &IterDebug(self.added_peers()))
+            .field("dropped", &IterDebug(self.dropped_peers()))
+            .finish()
+    }
+}
+
+impl<B> CloneToOwned for UtPex<B>
+where
+    B: ByteBufT + CloneToOwned,
+    B::Target: ByteBufT,
+{
+    type Target = UtPex<B::Target>;
+
     fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         UtPex {
             added: self.added.clone_to_owned(within_buffer),
@@ -77,7 +102,7 @@ impl CloneToOwned for UtPex<ByteBuf<'_>> {
 }
 
 impl<B: ByteBufT> UtPex<B> {
-    fn added_peers_inner<'a, T: CompactSerialize + CompactSerializeFixedLen + Into<SocketAddr>>(
+    fn added_peers_inner<T: CompactSerialize + CompactSerializeFixedLen + Into<SocketAddr>>(
         &self,
         buf: &Option<CompactListInBuffer<B, T>>,
         flags: &Option<CompactListInBuffer<B, Flags>>,
@@ -94,55 +119,50 @@ impl<B: ByteBufT> UtPex<B> {
             })
     }
 
-    pub fn added_peers(&self) -> impl Iterator<Item = PexPeerInfo> {
+    pub fn added_peers(&self) -> impl Iterator<Item = PexPeerInfo> + Clone {
         self.added_peers_inner(&self.added, &self.added_f)
             .chain(self.added_peers_inner(&self.added6, &self.added6_f))
     }
 
-    pub fn dropped_peers(&self) -> impl Iterator<Item = PexPeerInfo> {
+    pub fn dropped_peers(&self) -> impl Iterator<Item = PexPeerInfo> + Clone {
         self.added_peers_inner(&self.dropped, &None)
             .chain(self.added_peers_inner(&self.dropped6, &None))
     }
 }
 
 impl UtPex<ByteBufOwned> {
-    pub fn from_addrs<'a, I, J>(addrs_live: I, addrs_closed: J) -> Self
-    where
-        I: IntoIterator<Item = &'a SocketAddr>,
-        J: IntoIterator<Item = &'a SocketAddr>,
-    {
-        fn addrs_to_bytes<'a, I>(addrs: I) -> (Option<ByteBufOwned>, Option<ByteBufOwned>)
-        where
-            I: IntoIterator<Item = &'a SocketAddr>,
-        {
-            let mut ipv4_addrs = BytesMut::new();
-            let mut ipv6_addrs = BytesMut::new();
-            for addr in addrs {
-                match addr {
-                    SocketAddr::V4(v4) => {
-                        ipv4_addrs.extend_from_slice(&v4.ip().octets());
-                        ipv4_addrs.extend_from_slice(&v4.port().to_be_bytes());
-                    }
-                    SocketAddr::V6(v6) => {
-                        ipv6_addrs.extend_from_slice(&v6.ip().octets());
-                        ipv6_addrs.extend_from_slice(&v6.port().to_be_bytes());
-                    }
-                }
-            }
-
-            let freeze = |buf: BytesMut| -> Option<ByteBufOwned> {
-                if !buf.is_empty() {
-                    Some(buf.freeze().into())
-                } else {
-                    None
-                }
-            };
-
-            (freeze(ipv4_addrs), freeze(ipv6_addrs))
+    pub fn from_addrs(
+        addrs_live: impl Iterator<Item = SocketAddr> + Clone,
+        addrs_closed: impl Iterator<Item = SocketAddr> + Clone,
+    ) -> Self {
+        fn split(
+            addrs: impl Iterator<Item = SocketAddr> + Clone,
+        ) -> (
+            Option<CompactListInBufferOwned<SocketAddrV4>>,
+            Option<CompactListInBufferOwned<SocketAddrV6>>,
+        ) {
+            let v4 =
+                CompactListInBufferOwned::new_from_iter(addrs.clone().filter_map(
+                    |addr| match addr {
+                        SocketAddr::V4(a) => Some(a),
+                        _ => None,
+                    },
+                ));
+            let v6 =
+                CompactListInBufferOwned::new_from_iter(addrs.clone().filter_map(
+                    |addr| match addr {
+                        SocketAddr::V6(a) => Some(a),
+                        _ => None,
+                    },
+                ));
+            (
+                if v4.is_empty() { None } else { Some(v4) },
+                if v6.is_empty() { None } else { Some(v6) },
+            )
         }
 
-        let (added, added6) = addrs_to_bytes(addrs_live);
-        let (dropped, dropped6) = addrs_to_bytes(addrs_closed);
+        let (added, added6) = split(addrs_live);
+        let (dropped, dropped6) = split(addrs_closed);
 
         Self {
             added,
@@ -200,8 +220,8 @@ mod tests {
             .parse::<SocketAddr>()
             .unwrap();
 
-        let addrs = vec![a1, aa1, a2, aa2];
-        let pex = UtPex::from_addrs(&addrs, &addrs);
+        let addrs = [a1, aa1, a2, aa2];
+        let pex = UtPex::from_addrs(addrs.iter().copied(), addrs.iter().copied());
         let mut bytes = Vec::new();
         bencode_serialize_to_writer(&pex, &mut bytes).unwrap();
         let pex2 = from_bytes::<UtPex<ByteBuf>>(&bytes).unwrap();

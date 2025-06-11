@@ -40,7 +40,7 @@ mod small_slice {
     }
 }
 
-use small_slice::SmallSlice;
+pub use small_slice::SmallSlice;
 
 #[derive(Clone, Copy)]
 pub struct Compact<T>(pub T);
@@ -284,6 +284,10 @@ where
     Buf: AsRef<[u8]>,
     T: CompactSerialize + CompactSerializeFixedLen,
 {
+    pub fn is_empty(&self) -> bool {
+        self.buf.as_ref().is_empty()
+    }
+
     pub fn iter(&self) -> anyhow::Result<impl Iterator<Item = T> + Clone> {
         Ok(self
             .buf
