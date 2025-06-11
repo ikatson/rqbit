@@ -149,6 +149,7 @@ pub struct TrackerResponse<'a> {
     #[serde(rename = "warning message", borrow)]
     pub warning_message: Option<ByteBuf<'a>>,
     #[allow(dead_code)]
+    #[serde(default)]
     pub complete: u64,
     pub interval: u64,
     #[allow(dead_code)]
@@ -157,6 +158,7 @@ pub struct TrackerResponse<'a> {
     #[allow(dead_code)]
     pub tracker_id: Option<ByteBuf<'a>>,
     #[allow(dead_code)]
+    #[serde(default)]
     pub incomplete: u64,
     pub peers: Peers<false>,
     #[serde(default)]
@@ -243,5 +245,33 @@ mod tests {
             trackerid: None,
         };
         dbg!(request.as_querystring());
+    }
+
+    #[test]
+    fn test_parse_tracker_response() {
+        let data = b"d8:intervali1800e5:peers6:iiiipp6:peers618:iiiiiiiiiiiiiiiippe";
+        let response = bencode::from_bytes::<TrackerResponse>(data).unwrap();
+        assert_eq!(
+            response.peers.addrs,
+            vec!["105.105.105.105:28784".parse().unwrap()]
+        );
+        assert_eq!(
+            response.peers6.addrs,
+            vec![
+                "[6969:6969:6969:6969:6969:6969:6969:6969]:28784"
+                    .parse()
+                    .unwrap()
+            ]
+        );
+        assert_eq!(
+            response.iter_peers().collect::<Vec<_>>(),
+            vec![
+                "105.105.105.105:28784".parse().unwrap(),
+                "[6969:6969:6969:6969:6969:6969:6969:6969]:28784"
+                    .parse()
+                    .unwrap()
+            ]
+        );
+        dbg!(response);
     }
 }
