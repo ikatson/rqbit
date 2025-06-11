@@ -757,7 +757,7 @@ impl DhtState {
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
-                    ip: None,
+                    ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
                         ..Default::default()
@@ -778,7 +778,7 @@ impl DhtState {
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
-                    ip: None,
+                    ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
                         ..Default::default()
@@ -801,7 +801,7 @@ impl DhtState {
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
-                    ip: None,
+                    ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
                         nodes,
@@ -828,7 +828,7 @@ impl DhtState {
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
-                    ip: None,
+                    ip: Some(addr),
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
                         nodes,
