@@ -7,7 +7,7 @@ use librqbit_core::spawn_utils::spawn_with_cancel;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -108,8 +108,15 @@ impl PersistentDht {
                     match serde_json::from_reader::<_, DhtSerialize<RoutingTable, PeerStore>>(
                         reader,
                     ) {
-                        Ok(r) => {
+                        Ok(mut r) => {
                             info!(filename=?config_filename, "loaded DHT routing table from");
+                            if r.addr.ip() == Ipv4Addr::UNSPECIFIED {
+                                warn!(
+                                    "patching DHT listen IP address for rqbit 9 upgrade: 0.0.0.0 -> [::]"
+                                );
+                                r.addr.set_ip(Ipv6Addr::UNSPECIFIED.into());
+                            }
+
                             Some(r)
                         }
                         Err(e) => {
