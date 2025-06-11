@@ -1,10 +1,8 @@
 use buffers::ByteBuf;
-use byteorder::ByteOrder;
 use serde::{Deserialize, Deserializer};
 use std::{
-    fmt::Write,
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, SocketAddr},
     str::FromStr,
 };
 
@@ -58,27 +56,21 @@ impl DictPeer<'_> {
     }
 }
 
-#[derive(Debug)]
-pub struct Peers {
+#[derive(Debug, Default)]
+pub struct Peers<const IPV6: bool> {
     addrs: Vec<SocketAddr>,
 }
 
-impl Peers {
-    pub fn iter_sockaddrs(&self) -> impl Iterator<Item = std::net::SocketAddr> + '_ {
-        self.addrs.iter().copied()
-    }
-}
-
-impl<'de> serde::de::Deserialize<'de> for Peers {
+impl<'de, const IPV6: bool> serde::de::Deserialize<'de> for Peers<IPV6> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct Visitor<'de> {
+        struct Visitor<'de, const IPV6: bool> {
             phantom: std::marker::PhantomData<&'de ()>,
         }
-        impl<'de> serde::de::Visitor<'de> for Visitor<'de> {
-            type Value = Peers;
+        impl<'de, const IPV6: bool> serde::de::Visitor<'de> for Visitor<'de, IPV6> {
+            type Value = Peers<IPV6>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a list of peers in dict or binary format")
@@ -100,10 +92,7 @@ impl<'de> serde::de::Deserialize<'de> for Peers {
                 E: serde::de::Error,
             {
                 Ok(Peers {
-                    addrs: parse_compact_peers(v)
-                        .into_iter()
-                        .map(|v| v.into())
-                        .collect(),
+                    addrs: parse_compact_peers::<IPV6>(v),
                 })
             }
         }
@@ -135,14 +124,21 @@ where
     de.deserialize_str(Visitor {})
 }
 
-fn parse_compact_peers(b: &[u8]) -> Vec<SocketAddrV4> {
+fn parse_compact_peers<const IPV6: bool>(b: &[u8]) -> Vec<SocketAddr> {
     let mut ips = Vec::new();
-    for chunk in b.chunks_exact(6) {
-        let ip_chunk = &chunk[..4];
-        let port_chunk = &chunk[4..6];
-        let ipaddr = Ipv4Addr::new(ip_chunk[0], ip_chunk[1], ip_chunk[2], ip_chunk[3]);
-        let port = byteorder::BigEndian::read_u16(port_chunk);
-        ips.push(SocketAddrV4::new(ipaddr, port));
+    const PORT_LEN: usize = 2;
+    let ip_len: usize = if IPV6 { 16 } else { 4 };
+    for chunk in b.chunks_exact(ip_len + PORT_LEN) {
+        let addr = if IPV6 {
+            let ip = IpAddr::from(TryInto::<[u8; 16]>::try_into(&chunk[..16]).unwrap());
+            let port = u16::from_be_bytes(chunk[16..18].try_into().unwrap());
+            SocketAddr::new(ip, port)
+        } else {
+            let ip = IpAddr::from(TryInto::<[u8; 4]>::try_into(&chunk[..4]).unwrap());
+            let port = u16::from_be_bytes(chunk[4..6].try_into().unwrap());
+            SocketAddr::new(ip, port)
+        };
+        ips.push(addr);
     }
     ips
 }
@@ -153,6 +149,7 @@ pub struct TrackerResponse<'a> {
     #[serde(rename = "warning message", borrow)]
     pub warning_message: Option<ByteBuf<'a>>,
     #[allow(dead_code)]
+    #[serde(default)]
     pub complete: u64,
     pub interval: u64,
     #[allow(dead_code)]
@@ -161,12 +158,26 @@ pub struct TrackerResponse<'a> {
     #[allow(dead_code)]
     pub tracker_id: Option<ByteBuf<'a>>,
     #[allow(dead_code)]
+    #[serde(default)]
     pub incomplete: u64,
-    pub peers: Peers,
+    pub peers: Peers<false>,
+    #[serde(default)]
+    pub peers6: Peers<true>,
+}
+
+impl TrackerResponse<'_> {
+    pub fn iter_peers(&self) -> impl Iterator<Item = SocketAddr> {
+        self.peers
+            .addrs
+            .iter()
+            .copied()
+            .chain(self.peers6.addrs.iter().copied())
+    }
 }
 
 impl TrackerRequest {
     pub fn as_querystring(&self) -> String {
+        use std::fmt::Write;
         use urlencoding as u;
         let mut s = String::new();
         s.push_str("info_hash=");
@@ -234,5 +245,33 @@ mod tests {
             trackerid: None,
         };
         dbg!(request.as_querystring());
+    }
+
+    #[test]
+    fn test_parse_tracker_response() {
+        let data = b"d8:intervali1800e5:peers6:iiiipp6:peers618:iiiiiiiiiiiiiiiippe";
+        let response = bencode::from_bytes::<TrackerResponse>(data).unwrap();
+        assert_eq!(
+            response.peers.addrs,
+            vec!["105.105.105.105:28784".parse().unwrap()]
+        );
+        assert_eq!(
+            response.peers6.addrs,
+            vec![
+                "[6969:6969:6969:6969:6969:6969:6969:6969]:28784"
+                    .parse()
+                    .unwrap()
+            ]
+        );
+        assert_eq!(
+            response.iter_peers().collect::<Vec<_>>(),
+            vec![
+                "105.105.105.105:28784".parse().unwrap(),
+                "[6969:6969:6969:6969:6969:6969:6969:6969]:28784"
+                    .parse()
+                    .unwrap()
+            ]
+        );
+        dbg!(response);
     }
 }

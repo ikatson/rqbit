@@ -245,7 +245,7 @@ impl TrackerComms {
         };
         let response = bencode::from_bytes::<tracker_comms_http::TrackerResponse>(&bytes)?;
 
-        for peer in response.peers.iter_sockaddrs() {
+        for peer in response.iter_peers() {
             self.tx.send(peer).await?;
         }
         Ok(response.interval)
