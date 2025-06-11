@@ -121,12 +121,14 @@ async fn udp_tracker_to_socket_addrs(
                     _ => continue,
                 }
             }
-            match (v4, v6) {
+            let res = match (v4, v6) {
                 (Some(v4), Some(v6)) => UdpTrackerResolveResult::Two(v4, v6),
                 (Some(v4), None) => UdpTrackerResolveResult::One(v4.into()),
                 (None, Some(v6)) => UdpTrackerResolveResult::One(v6.into()),
                 _ => anyhow::bail!("zero addresses returned looking up {name}"),
-            }
+            };
+            trace!(?res, "resolved");
+            res
         }
         url::Host::Ipv4(addr) => UdpTrackerResolveResult::One((addr, port).into()),
         url::Host::Ipv6(addr) => UdpTrackerResolveResult::One((addr, port).into()),
@@ -324,6 +326,7 @@ impl TrackerComms {
             // This should retry forever until the addrs are resolved.
             let addrs = (async || {
                 udp_tracker_to_socket_addrs(host.clone(), port)
+                    .instrument(error_span!("resolve", ?host))
                     .await
                     .or_else(|err| prev_addrs.ok_or(err))
             })
@@ -341,7 +344,11 @@ impl TrackerComms {
 
             match addrs {
                 UdpTrackerResolveResult::One(addr) => {
-                    match self.tracker_one_request_udp(addr, &client).await {
+                    match self
+                        .tracker_one_request_udp(addr, &client)
+                        .instrument(error_span!("udp request", ?addr))
+                        .await
+                    {
                         Ok(sleep) => sleep_interval = Some(sleep),
                         Err(_) => {
                             sleep_interval = Some(sleep_interval.unwrap_or(Duration::from_secs(60)))
