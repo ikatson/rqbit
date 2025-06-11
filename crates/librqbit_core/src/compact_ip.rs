@@ -39,18 +39,33 @@ mod small_slice {
 
 use small_slice::SmallSlice;
 
+#[derive(Clone, Copy)]
 pub struct Compact<T>(pub T);
+
+impl<T> From<T> for Compact<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+
 pub struct CompactList<T>(Vec<T>);
+
+impl<T: core::fmt::Debug> core::fmt::Debug for Compact<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 pub type CompactIpV4 = Compact<Ipv4Addr>;
 pub type CompactIpV6 = Compact<Ipv6Addr>;
+pub type CompactIpAddr = Compact<IpAddr>;
 pub type CompactSocketAddr4 = Compact<SocketAddrV4>;
 pub type CompactSocketAddr6 = Compact<SocketAddrV6>;
 pub type CompactSocketAddr = Compact<SocketAddr>;
 
 pub trait CompactSerialize: Sized {
     fn fixed_len() -> Option<usize>;
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result;
+    fn expecting() -> &'static str;
     fn as_slice(&self) -> SmallSlice;
     fn from_slice_unchecked(buf: &[u8]) -> Self {
         Self::from_slice(buf).unwrap()
@@ -69,8 +84,8 @@ impl CompactSerialize for Ipv4Addr {
         ))
     }
 
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "4 bytes for IPv4")
+    fn expecting() -> &'static str {
+        "4 bytes for IPv4"
     }
 
     fn fixed_len() -> Option<usize> {
@@ -89,8 +104,8 @@ impl CompactSerialize for Ipv6Addr {
         ))
     }
 
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "16 bytes for IPv6")
+    fn expecting() -> &'static str {
+        "16 bytes for IPv6"
     }
 
     fn fixed_len() -> Option<usize> {
@@ -114,8 +129,8 @@ impl CompactSerialize for IpAddr {
         }
     }
 
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "16 bytes for IPv6 or 4 bytes for IPv4")
+    fn expecting() -> &'static str {
+        "16 bytes for IPv6 or 4 bytes for IPv4"
     }
 
     fn fixed_len() -> Option<usize> {
@@ -139,8 +154,8 @@ impl CompactSerialize for SocketAddrV4 {
         Some(SocketAddrV4::new(ip, port))
     }
 
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "6 bytes for SocketAddrV4")
+    fn expecting() -> &'static str {
+        "6 bytes for SocketAddrV4"
     }
 
     fn fixed_len() -> Option<usize> {
@@ -164,8 +179,8 @@ impl CompactSerialize for SocketAddrV6 {
         Some(SocketAddrV6::new(ip, port, 0, 0))
     }
 
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "18 bytes for SocketAddrV6")
+    fn expecting() -> &'static str {
+        "18 bytes for SocketAddrV6"
     }
 
     fn fixed_len() -> Option<usize> {
@@ -188,8 +203,8 @@ impl CompactSerialize for SocketAddr {
         }
     }
 
-    fn expecting(f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "18 bytes for SocketAddrV6 or 6 bytes for SocketAddrV4")
+    fn expecting() -> &'static str {
+        "18 bytes for SocketAddrV6 or 6 bytes for SocketAddrV4"
     }
 
     fn fixed_len() -> Option<usize> {
@@ -218,7 +233,7 @@ impl<'de, T: CompactSerialize> Deserialize<'de> for Compact<T> {
             type Value = Compact<T>;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                T::expecting(f)
+                f.write_str(T::expecting())
             }
 
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
@@ -227,10 +242,7 @@ impl<'de, T: CompactSerialize> Deserialize<'de> for Compact<T> {
             {
                 match T::from_slice(v) {
                     Some(v) => Ok(Compact(v)),
-                    None => {
-                        // TODO: better error
-                        Err(E::custom("invalid length"))
-                    }
+                    None => Err(E::custom(T::expecting())),
                 }
             }
         }

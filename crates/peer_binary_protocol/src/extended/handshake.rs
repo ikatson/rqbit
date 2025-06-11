@@ -3,13 +3,14 @@ use std::{collections::HashMap, net::IpAddr};
 use buffers::{ByteBuf, ByteBufT};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
+use librqbit_core::compact_ip::{CompactIpAddr, CompactIpV4, CompactIpV6};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     EXTENDED_UT_METADATA_KEY, EXTENDED_UT_PEX_KEY, MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX,
 };
 
-use super::{PeerExtendedMessageIds, PeerIP4, PeerIP6, PeerIPAny};
+use super::PeerExtendedMessageIds;
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
@@ -20,11 +21,11 @@ pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v: Option<ByteBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub yourip: Option<PeerIPAny>,
+    pub yourip: Option<CompactIpAddr>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv6: Option<PeerIP6>,
+    pub ipv6: Option<CompactIpV6>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ipv4: Option<PeerIP4>,
+    pub ipv4: Option<CompactIpV4>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reqq: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
