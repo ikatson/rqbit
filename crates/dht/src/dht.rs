@@ -195,41 +195,50 @@ struct RecursiveRequest<C: RecursiveRequestCallbacks> {
 
 pub struct RequestPeersStream {
     rx: tokio::sync::mpsc::UnboundedReceiver<SocketAddr>,
-    cancel_join_handle: tokio::task::JoinHandle<()>,
+    cancel_join_handle_v4: tokio::task::JoinHandle<()>,
+    cancel_join_handle_v6: tokio::task::JoinHandle<()>,
 }
 
 impl RequestPeersStream {
     fn new(dht: Arc<DhtState>, info_hash: Id20, announce_port: Option<u16>) -> Self {
         let (peer_tx, peer_rx) = unbounded_channel();
-        let (node_tx, node_rx) = unbounded_channel();
-        let rp = Arc::new(RecursiveRequest {
-            max_depth: 4,
-            info_hash,
-            useful_nodes_limit: 256,
-            request: Request::GetPeers(info_hash),
-            dht,
-            useful_nodes: RwLock::new(Vec::new()),
-            peer_tx,
-            node_tx,
-            callbacks: RecursiveRequestCallbacksGetPeers {
-                min_distance_to_announce: Id20::from_str(
-                    "0000ffffffffffffffffffffffffffffffffffff",
-                )
-                .unwrap(),
-                announce_port,
-            },
-        });
-        let join_handle = rp.request_peers_forever(node_rx);
+        let make = |is_v4: bool, dht: Arc<DhtState>, peer_tx: UnboundedSender<SocketAddr>| {
+            let (node_tx, node_rx) = unbounded_channel();
+            let rp = Arc::new(RecursiveRequest {
+                max_depth: 4,
+                info_hash,
+                useful_nodes_limit: 256,
+                request: Request::GetPeers(info_hash),
+                dht,
+                useful_nodes: RwLock::new(Vec::new()),
+                peer_tx,
+                node_tx,
+                callbacks: RecursiveRequestCallbacksGetPeers {
+                    min_distance_to_announce: Id20::from_str(
+                        "0000ffffffffffffffffffffffffffffffffffff",
+                    )
+                    .unwrap(),
+                    announce_port,
+                },
+            });
+            rp.request_peers_forever(node_rx, is_v4)
+        };
+
+        let v4 = make(true, dht.clone(), peer_tx.clone());
+        let v6 = make(false, dht, peer_tx);
+
         Self {
             rx: peer_rx,
-            cancel_join_handle: join_handle,
+            cancel_join_handle_v4: v4,
+            cancel_join_handle_v6: v6,
         }
     }
 }
 
 impl Drop for RequestPeersStream {
     fn drop(&mut self) {
-        self.cancel_join_handle.abort();
+        self.cancel_join_handle_v4.abort();
+        self.cancel_join_handle_v6.abort();
     }
 }
 
@@ -326,10 +335,11 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
     fn request_peers_forever(
         self: &Arc<Self>,
         mut node_rx: tokio::sync::mpsc::UnboundedReceiver<(Option<Id20>, SocketAddr, usize)>,
+        is_v4: bool,
     ) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
         spawn(
-            error_span!(parent: None, "get_peers", info_hash = format!("{:?}", self.info_hash)),
+            error_span!(parent: None, "get_peers", is_v4, info_hash = format!("{:?}", self.info_hash)),
             async move {
                 let this = &this;
                 // Looper adds root nodes to the queue every 60 seconds.
@@ -338,7 +348,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                         let mut iteration = 0;
                         loop {
                             trace!("iteration {}", iteration);
-                            let sleep = match this.get_peers_root() {
+                            let sleep = match this.get_peers_root(is_v4) {
                                 Ok(0) => Duration::from_secs(1),
                                 Ok(n) if n < 8 => REQUERY_INTERVAL / 8 * (n as u32),
                                 Ok(_) => REQUERY_INTERVAL,
@@ -375,19 +385,22 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         )
     }
 
-    fn get_peers_root(&self) -> anyhow::Result<usize> {
+    fn get_peers_root(&self, is_v4: bool) -> anyhow::Result<usize> {
         let mut count = 0;
-        for table in [&self.dht.routing_table_v4, &self.dht.routing_table_v6] {
-            for (id, addr) in table
-                .read()
-                .sorted_by_distance_from(self.info_hash)
-                .iter()
-                .map(|n| (n.id(), n.addr()))
-                .take(8)
-            {
-                count += 1;
-                self.node_tx.send((Some(id), addr, 0))?;
-            }
+        let table = if is_v4 {
+            &self.dht.routing_table_v4
+        } else {
+            &self.dht.routing_table_v6
+        };
+        for (id, addr) in table
+            .read()
+            .sorted_by_distance_from(self.info_hash)
+            .iter()
+            .map(|n| (n.id(), n.addr()))
+            .take(8)
+        {
+            count += 1;
+            self.node_tx.send((Some(id), addr, 0))?;
         }
 
         Ok(count)
