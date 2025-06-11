@@ -233,54 +233,57 @@ impl TrackerComms {
         }
     }
 
-    async fn task_single_tracker_monitor_http(&self, mut tracker_url: Url) -> anyhow::Result<()> {
-        let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
+    async fn task_single_tracker_monitor_http(&self, tracker_url: Url) -> anyhow::Result<()> {
         trace!(url=%tracker_url, "starting monitor");
+        let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
+
         loop {
-            let stats = self.stats.get();
-            let request = tracker_comms_http::TrackerRequest {
-                info_hash: self.info_hash,
-                peer_id: self.peer_id,
-                port: self.announce_port,
-                uploaded: stats.uploaded_bytes,
-                downloaded: stats.downloaded_bytes,
-                left: stats.get_left_to_download_bytes(),
-                compact: true,
-                no_peer_id: false,
-                event,
-                ip: None,
-                numwant: None,
-                key: Some(self.key.to_string()),
-                trackerid: None,
-            };
+            let interval = (|| self.tracker_one_request_http(&tracker_url, event))
+                .retry(
+                    ExponentialBuilder::new()
+                        .without_max_times()
+                        .with_jitter()
+                        .with_factor(2.)
+                        .with_min_delay(Duration::from_secs(10))
+                        .with_max_delay(Duration::from_secs(600)),
+                )
+                .notify(|err, retry_in| debug!(?retry_in, "error calling tracker: {err:#}"))
+                .await
+                .context("this shouldnt fail")?;
 
-            let request_query = request.as_querystring();
-            tracker_url.set_query(Some(&request_query));
-
-            match self.tracker_one_request_http(tracker_url.clone()).await {
-                Ok(interval) => {
-                    event = None;
-                    let interval = self
-                        .force_tracker_interval
-                        .unwrap_or_else(|| Duration::from_secs(interval));
-                    debug!(
-                        "sleeping for {:?} after calling tracker {}",
-                        interval,
-                        tracker_url.host().unwrap()
-                    );
-                    tokio::time::sleep(interval).await;
-                }
-                Err(e) => {
-                    debug!("error calling the tracker {}: {:#}", tracker_url, e);
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-                }
-            };
+            event = None;
+            let interval = self.force_tracker_interval.unwrap_or(interval);
+            debug!("sleeping for {:?} after calling tracker", interval);
+            tokio::time::sleep(interval).await;
         }
     }
 
-    async fn tracker_one_request_http(&self, tracker_url: Url) -> anyhow::Result<u64> {
-        debug!(url = %tracker_url, "calling tracker over http");
-        let response: reqwest::Response = self.reqwest_client.get(tracker_url).send().await?;
+    async fn tracker_one_request_http(
+        &self,
+        tracker_url: &Url,
+        event: Option<tracker_comms_http::TrackerRequestEvent>,
+    ) -> anyhow::Result<Duration> {
+        let stats = self.stats.get();
+        let request = tracker_comms_http::TrackerRequest {
+            info_hash: self.info_hash,
+            peer_id: self.peer_id,
+            port: self.announce_port,
+            uploaded: stats.uploaded_bytes,
+            downloaded: stats.downloaded_bytes,
+            left: stats.get_left_to_download_bytes(),
+            compact: true,
+            no_peer_id: false,
+            event,
+            ip: None,
+            numwant: None,
+            key: Some(self.key.to_string()),
+            trackerid: None,
+        };
+
+        let mut url = tracker_url.clone();
+        url.set_query(Some(&request.as_querystring()));
+
+        let response: reqwest::Response = self.reqwest_client.get(url).send().await?;
         if !response.status().is_success() {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
@@ -296,7 +299,9 @@ impl TrackerComms {
         for peer in response.iter_peers() {
             self.tx.send(peer).await?;
         }
-        Ok(response.interval)
+        Ok(Duration::from_secs(
+            response.min_interval.unwrap_or(response.interval),
+        ))
     }
 
     async fn task_single_tracker_monitor_udp(
