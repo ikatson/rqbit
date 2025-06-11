@@ -132,11 +132,9 @@ impl StreamConnector {
             if !self.enable_tcp {
                 bail!("TCP outgoing connections disabled");
             }
-            let conn = tokio::net::TcpStream::connect(addr)
-                .await
-                .context("error connecting over TCP");
+            let conn = tokio::net::TcpStream::connect(addr).await?;
             debug!(?addr, "connected over TCP");
-            conn
+            Ok(conn)
         };
 
         let utp_connect = async {
@@ -150,13 +148,10 @@ impl StreamConnector {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
 
-            let conn = sock
-                .connect(addr)
-                .await
-                .context("error connecting over uTP");
+            let conn = sock.connect(addr).await?;
 
             debug!(?addr, "connected over uTP");
-            conn
+            Ok(conn)
         };
 
         tokio::pin!(tcp_connect);
