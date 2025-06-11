@@ -395,12 +395,12 @@ impl Serialize for Want {
         S: serde::Serializer,
     {
         match self {
-            Want::V4 => ["n4"].serialize(serializer),
-            Want::V6 => ["n6"].serialize(serializer),
-            Want::Both => ["n4", "n6"].serialize(serializer),
+            Want::V4 => ["n4"][..].serialize(serializer),
+            Want::V6 => ["n6"][..].serialize(serializer),
+            Want::Both => ["n4", "n6"][..].serialize(serializer),
             Want::None => {
                 const EMPTY: [&str; 0] = [];
-                EMPTY.serialize(serializer)
+                EMPTY[..].serialize(serializer)
             }
         }
     }
@@ -448,6 +448,7 @@ impl<'de> Deserialize<'de> for Want {
 pub struct FindNodeRequest {
     pub id: Id20,
     pub target: Id20,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub want: Option<Want>,
 }
 
@@ -468,6 +469,7 @@ pub struct Response<BufT> {
 pub struct GetPeersRequest {
     pub id: Id20,
     pub info_hash: Id20,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub want: Option<Want>,
 }
 
@@ -721,7 +723,7 @@ mod tests {
     use std::io::Write;
 
     use crate::bprotocol::{self, Want};
-    use bencode::ByteBuf;
+    use bencode::{ByteBuf, bencode_serialize_to_writer};
 
     // Dumped with wireshark.
     const FIND_NODE_REQUEST: &[u8] = b"64313a6164323a696432303abd7b477cfbcd10f30b705da20201e7101d8df155363a74617267657432303abd7b477cfbcd10f30b705da20201e7101d8df15565313a71393a66696e645f6e6f6465313a74323a0005313a79313a7165";
@@ -878,5 +880,24 @@ mod tests {
             bencode::from_bytes::<Want>(b"l2:aa2:bbe").unwrap(),
             Want::None
         );
+    }
+
+    #[test]
+    fn serde_want_serialize() {
+        let mut w = Vec::new();
+        bencode_serialize_to_writer(Want::V6, &mut w).unwrap();
+        assert_eq!(&w, b"l2:n6e");
+
+        let mut w = Vec::new();
+        bencode_serialize_to_writer(Want::V4, &mut w).unwrap();
+        assert_eq!(&w, b"l2:n4e");
+
+        let mut w = Vec::new();
+        bencode_serialize_to_writer(Want::Both, &mut w).unwrap();
+        assert_eq!(&w, b"l2:n42:n6e");
+
+        let mut w = Vec::new();
+        bencode_serialize_to_writer(Want::None, &mut w).unwrap();
+        assert_eq!(&w, b"le")
     }
 }
