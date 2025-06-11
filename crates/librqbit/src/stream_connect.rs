@@ -137,6 +137,8 @@ impl StreamConnector {
             Ok(conn)
         };
 
+        let tcp_failed_notify = tokio::sync::Notify::new();
+
         let utp_connect = async {
             let sock = match self.utp_socket.as_ref() {
                 Some(sock) => sock,
@@ -145,7 +147,11 @@ impl StreamConnector {
 
             // Give TCP priority as it's more mature and simpler.
             if self.enable_tcp {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                // wait until either 1 second has passed or TCP failed.
+                tokio::select! {
+                    _ = tcp_failed_notify.notified() => {},
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
             }
 
             let conn = sock.connect(addr).await?;
@@ -171,6 +177,7 @@ impl StreamConnector {
                         Err(e) => {
                             debug!(addr=?addr, "error connecting over TCP: {e:#}");
                             tcp_failed = true;
+                            tcp_failed_notify.notify_waiters();
                         }
                     }
                 },
