@@ -1,7 +1,7 @@
+pub mod compact_ip;
 pub mod constants;
 pub mod directories;
 pub mod hash_id;
-
 pub mod lengths;
 pub mod magnet;
 pub mod peer_id;
