@@ -284,12 +284,19 @@ where
     Buf: AsRef<[u8]>,
     T: CompactSerialize + CompactSerializeFixedLen,
 {
-    pub fn iter(&self) -> anyhow::Result<impl Iterator<Item = T>> {
+    pub fn iter(&self) -> anyhow::Result<impl Iterator<Item = T> + Clone> {
         Ok(self
             .buf
             .as_ref()
             .chunks_exact(T::fixed_len())
             .map_while(|chunk| T::from_slice(chunk)))
+    }
+
+    pub fn get(&self, idx: usize) -> Option<T> {
+        let offset = idx * T::fixed_len();
+        let end = offset + T::fixed_len();
+        let b = self.buf.as_ref().get(offset..end)?;
+        T::from_slice(b)
     }
 }
 
