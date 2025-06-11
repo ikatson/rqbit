@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    net::{Ipv6Addr, SocketAddr},
+    net::{Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
     sync::{
         Arc,
@@ -13,8 +13,8 @@ use std::{
 use crate::{
     INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bprotocol::{
-        self, AnnouncePeer, CompactNodeInfo, ErrorDescription, FindNodeRequest, GetPeersRequest,
-        Message, MessageKind, Node, PingRequest, Response, Want,
+        self, AddrInfo, AnnouncePeer, CompactNodeInfo, ErrorDescription, FindNodeRequest,
+        GetPeersRequest, Message, MessageKind, Node, PingRequest, Response, Want,
     },
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
@@ -664,31 +664,48 @@ impl DhtState {
         (transaction_id, message)
     }
 
+    fn generate_compact_nodes_both(
+        &self,
+        target: Id20,
+        want: Want,
+    ) -> (
+        Option<CompactNodeInfo<4, SocketAddrV4>>,
+        Option<CompactNodeInfo<16, SocketAddrV6>>,
+    ) {
+        match want {
+            Want::V4 => (Some(self.generate_compact_nodes(target)), None),
+            Want::V6 => (None, Some(self.generate_compact_nodes(target))),
+        }
+    }
+
+    fn generate_compact_nodes<const IP_LEN: usize, A>(
+        &self,
+        target: Id20,
+    ) -> CompactNodeInfo<IP_LEN, A>
+    where
+        A: AddrInfo<IP_LEN>,
+    {
+        let nodes = self
+            .routing_table
+            .read()
+            .sorted_by_distance_from(target)
+            .into_iter()
+            .filter_map(|r| {
+                Some(Node {
+                    id: r.id(),
+                    addr: A::from_socket_addr(r.addr())?,
+                })
+            })
+            .take(8)
+            .collect::<Vec<_>>();
+        CompactNodeInfo { nodes }
+    }
+
     fn on_received_message(
         self: &Arc<Self>,
         msg: Message<ByteBufOwned>,
         addr: SocketAddr,
     ) -> anyhow::Result<()> {
-        let generate_compact_nodes = |target| {
-            let nodes = self
-                .routing_table
-                .read()
-                .sorted_by_distance_from(target)
-                .into_iter()
-                .filter_map(|r| {
-                    Some(Node {
-                        id: r.id(),
-                        addr: match r.addr() {
-                            SocketAddr::V4(v4) => v4,
-                            SocketAddr::V6(_) => return None,
-                        },
-                    })
-                })
-                .take(8)
-                .collect::<Vec<_>>();
-            CompactNodeInfo { nodes }
-        };
-
         match &msg.kind {
             // If it's a response to a request we made, find the request task, notify it with the response,
             // and let it handle it.
@@ -767,8 +784,11 @@ impl DhtState {
                 Ok(())
             }
             MessageKind::GetPeersRequest(req) => {
-                let compact_node_info = generate_compact_nodes(req.info_hash);
-                let compact_peer_info = self.peer_store.get_for_info_hash(req.info_hash);
+                let want = req
+                    .want
+                    .unwrap_or(if addr.is_ipv6() { Want::V6 } else { Want::V4 });
+                let (nodes, nodes6) = self.generate_compact_nodes_both(req.info_hash, want);
+                let compact_peer_info = self.peer_store.get_for_info_hash(req.info_hash, want);
                 self.routing_table.write().mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
@@ -776,7 +796,8 @@ impl DhtState {
                     ip: None,
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
-                        nodes: Some(compact_node_info),
+                        nodes,
+                        nodes6,
                         values: Some(compact_peer_info),
                         token: Some(ByteBufOwned::from(
                             &self.peer_store.gen_token_for(req.id, addr)[..],
@@ -791,7 +812,10 @@ impl DhtState {
                 Ok(())
             }
             MessageKind::FindNodeRequest(req) => {
-                let compact_node_info = generate_compact_nodes(req.target);
+                let want = req
+                    .want
+                    .unwrap_or(if addr.is_ipv6() { Want::V6 } else { Want::V4 });
+                let (nodes, nodes6) = self.generate_compact_nodes_both(req.target, want);
                 self.routing_table.write().mark_last_query(&req.id);
                 let message = Message {
                     transaction_id: msg.transaction_id,
@@ -799,7 +823,8 @@ impl DhtState {
                     ip: None,
                     kind: MessageKind::Response(bprotocol::Response {
                         id: self.id,
-                        nodes: Some(compact_node_info),
+                        nodes,
+                        nodes6,
                         ..Default::default()
                     }),
                 };

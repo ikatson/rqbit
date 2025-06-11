@@ -11,7 +11,7 @@ use serde::{
 };
 use tracing::trace;
 
-use crate::bprotocol::{AnnouncePeer, CompactPeerInfo};
+use crate::bprotocol::{AnnouncePeer, CompactPeerInfo, Want};
 
 #[derive(Serialize, Deserialize)]
 struct StoredToken {
@@ -184,10 +184,16 @@ impl PeerStore {
         true
     }
 
-    pub fn get_for_info_hash(&self, info_hash: Id20) -> Vec<CompactPeerInfo> {
+    pub fn get_for_info_hash(&self, info_hash: Id20, want: Want) -> Vec<CompactPeerInfo> {
         if let Some(stored_peers) = self.peers.get(&info_hash) {
             return stored_peers
                 .iter()
+                .filter(|p| {
+                    matches!(
+                        (p.addr, want),
+                        (SocketAddr::V6(..), Want::V6) | (SocketAddr::V4(..), Want::V4)
+                    )
+                })
                 .map(|p| CompactPeerInfo { addr: p.addr })
                 .collect();
         }

@@ -2951,7 +2951,6 @@ version = "5.3.0"
 dependencies = [
  "anyhow",
  "backon",
- "byteorder",
  "bytes",
  "chrono",
  "dashmap 6.1.0",
