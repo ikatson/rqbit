@@ -381,12 +381,67 @@ impl<'de> Deserialize<'de> for CompactPeerInfo {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Want {
-    #[serde(rename = "v4")]
     V4,
-    #[serde(rename = "v6")]
     V6,
+    Both,
+    None,
+}
+
+impl Serialize for Want {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Want::V4 => ["n4"].serialize(serializer),
+            Want::V6 => ["n6"].serialize(serializer),
+            Want::Both => ["n4", "n6"].serialize(serializer),
+            Want::None => {
+                const EMPTY: [&str; 0] = [];
+                EMPTY.serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Want {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Want;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, r#"a list with "n4", "n6" or both"#)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut want_v4 = false;
+                let mut want_v6 = false;
+                while let Some(item) = seq.next_element::<&[u8]>()? {
+                    match item {
+                        b"n4" => want_v4 = true,
+                        b"n6" => want_v6 = true,
+                        _ => continue,
+                    }
+                }
+                match (want_v4, want_v6) {
+                    (true, true) => Ok(Want::Both),
+                    (true, false) => Ok(Want::V4),
+                    (false, true) => Ok(Want::V6),
+                    (false, false) => Ok(Want::None),
+                }
+            }
+        }
+        deserializer.deserialize_seq(V)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -665,7 +720,7 @@ where
 mod tests {
     use std::io::Write;
 
-    use crate::bprotocol;
+    use crate::bprotocol::{self, Want};
     use bencode::ByteBuf;
 
     // Dumped with wireshark.
@@ -809,5 +864,19 @@ mod tests {
         debug_hex_bencode("resp from some random IP", FIND_NODE_RESPONSE_2);
         debug_hex_bencode("another resp from some random IP", FIND_NODE_RESPONSE_3);
         debug_hex_bencode("req to another node", WHAT_IS_THAT);
+    }
+
+    #[test]
+    fn serde_want_deserialize() {
+        assert_eq!(bencode::from_bytes::<Want>(b"l2:n4e").unwrap(), Want::V4);
+        assert_eq!(bencode::from_bytes::<Want>(b"l2:n6e").unwrap(), Want::V6);
+        assert_eq!(
+            bencode::from_bytes::<Want>(b"l2:n42:n6e").unwrap(),
+            Want::Both
+        );
+        assert_eq!(
+            bencode::from_bytes::<Want>(b"l2:aa2:bbe").unwrap(),
+            Want::None
+        );
     }
 }

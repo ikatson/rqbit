@@ -675,6 +675,11 @@ impl DhtState {
         match want {
             Want::V4 => (Some(self.generate_compact_nodes(target)), None),
             Want::V6 => (None, Some(self.generate_compact_nodes(target))),
+            Want::Both => (
+                Some(self.generate_compact_nodes(target)),
+                Some(self.generate_compact_nodes(target)),
+            ),
+            Want::None => (None, None),
         }
     }
 
