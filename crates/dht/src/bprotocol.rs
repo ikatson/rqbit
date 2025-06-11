@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     marker::PhantomData,
-    net::{Ipv4Addr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
 };
 
 use bencode::{ByteBuf, ByteBufOwned};
@@ -240,8 +240,9 @@ impl<'de> Deserialize<'de> for CompactNodeInfo {
     }
 }
 
+// Serializes / deserializes to from SocketAddr based on number of bytes and IP kind
 pub struct CompactPeerInfo {
-    pub addr: SocketAddrV4,
+    pub addr: SocketAddr,
 }
 
 impl core::fmt::Debug for CompactPeerInfo {
@@ -255,13 +256,19 @@ impl Serialize for CompactPeerInfo {
     where
         S: serde::Serializer,
     {
-        let octets = self.addr.ip().octets();
-        let port = self.addr.port();
-        let mut buf = [0u8; 6];
-        buf[..4].copy_from_slice(&octets);
-        BigEndian::write_u16(&mut buf[4..], port);
-
-        serializer.serialize_bytes(&buf)
+        let mut buf = [0u8; 18];
+        match self.addr {
+            SocketAddr::V4(a) => {
+                buf[0..4].copy_from_slice(&a.ip().octets());
+                buf[4..6].copy_from_slice(&a.port().to_be_bytes());
+                serializer.serialize_bytes(&buf[..6])
+            }
+            SocketAddr::V6(a) => {
+                buf[0..16].copy_from_slice(&a.ip().octets());
+                buf[16..18].copy_from_slice(&a.port().to_be_bytes());
+                serializer.serialize_bytes(&buf[..18])
+            }
+        }
     }
 }
 
@@ -275,21 +282,26 @@ impl<'de> Deserialize<'de> for CompactPeerInfo {
             type Value = CompactPeerInfo;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "6 bytes of peer info")
+                write!(formatter, "6 or 18 bytes of peer info")
             }
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                if v.len() != 6 {
-                    return Err(E::invalid_length(v.len(), &self));
-                }
-                let ip = Ipv4Addr::new(v[0], v[1], v[2], v[3]);
-                let port = BigEndian::read_u16(&v[4..6]); // Read the port number as big-endian from the last 2 bytes
-
-                Ok(CompactPeerInfo {
-                    addr: SocketAddrV4::new(ip, port),
-                })
+                let addr: SocketAddr = match v.len() {
+                    6 => (
+                        IpAddr::from(TryInto::<[u8; 4]>::try_into(&v[..4]).unwrap()),
+                        u16::from_be_bytes([v[4], v[5]]),
+                    )
+                        .into(),
+                    18 => (
+                        IpAddr::from(TryInto::<[u8; 16]>::try_into(&v[..16]).unwrap()),
+                        u16::from_be_bytes([v[16], v[17]]),
+                    )
+                        .into(),
+                    _ => return Err(E::invalid_length(v.len(), &self)),
+                };
+                Ok(CompactPeerInfo { addr })
             }
         }
         deserializer.deserialize_bytes(Visitor {})
@@ -360,7 +372,7 @@ pub struct Message<BufT> {
     pub kind: MessageKind<BufT>,
     pub transaction_id: BufT,
     pub version: Option<BufT>,
-    pub ip: Option<SocketAddrV4>,
+    pub ip: Option<SocketAddr>,
 }
 
 impl Message<ByteBufOwned> {
@@ -400,7 +412,7 @@ pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(
     writer: &mut W,
     transaction_id: BufT,
     version: Option<BufT>,
-    ip: Option<SocketAddrV4>,
+    ip: Option<SocketAddr>,
     kind: MessageKind<BufT>,
 ) -> anyhow::Result<()> {
     let ip = ip.map(|ip| CompactPeerInfo { addr: ip });

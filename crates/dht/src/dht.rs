@@ -425,7 +425,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         if let Some(peers) = response.values {
             for peer in peers {
-                self.peer_tx.send(SocketAddr::V4(peer.addr))?;
+                self.peer_tx.send(peer.addr)?;
             }
         }
 
