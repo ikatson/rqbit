@@ -2854,6 +2854,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dht",
+ "librqbit-dualstack-sockets",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
  "librqbit-tracker-comms",
@@ -2973,6 +2974,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "librqbit-dualstack-sockets"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b4f7cfae6a4b17a1d2cedaf5dad3314caa2c2a386d8544ff92696dd78089261"
+dependencies = [
+ "anyhow",
+ "socket2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "librqbit-peer-protocol"
 version = "4.3.0"
 dependencies = [
@@ -3070,15 +3083,16 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfa52ae8343c358d4570542617eedebc0a133dd87c4aa45f9fa7613faf6e9666"
+checksum = "285c11847100e07908dadb148db48541165891c3e8cbde60e251873db3025615"
 dependencies = [
  "anyhow",
  "bitvec",
  "dontfrag",
  "lazy_static",
  "libc",
+ "librqbit-dualstack-sockets",
  "metrics",
  "parking_lot",
  "rand 0.9.1",

@@ -156,8 +156,8 @@ struct Opts {
     )]
     listen_port: u16,
 
-    /// What's the IP to listen on. Default is to listen on all interfaces.
-    #[arg(long = "listen-ip", default_value = "0.0.0.0", env = "RQBIT_LISTEN_IP")]
+    /// What's the IP to listen on. Default is to listen on all interfaces on IPv4 and IPv6.
+    #[arg(long = "listen-ip", default_value = "::", env = "RQBIT_LISTEN_IP")]
     listen_ip: IpAddr,
 
     /// If set, will try to publish the chosen port through upnp on your router.
