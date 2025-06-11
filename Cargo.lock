@@ -2959,6 +2959,7 @@ dependencies = [
  "indexmap 2.9.0",
  "leaky-bucket",
  "librqbit-bencode",
+ "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dualstack-sockets",

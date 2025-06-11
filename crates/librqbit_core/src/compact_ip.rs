@@ -282,6 +282,26 @@ pub struct CompactListInBuffer<Buf, T> {
     _phantom: PhantomData<T>,
 }
 
+impl<Buf, T> core::fmt::Debug for CompactListInBuffer<Buf, T>
+where
+    Buf: AsRef<[u8]>,
+    T: core::fmt::Debug + CompactSerialize + CompactSerializeFixedLen,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        struct IterDebug<I>(I);
+        impl<I> core::fmt::Debug for IterDebug<I>
+        where
+            I: Iterator + Clone,
+            I::Item: core::fmt::Debug,
+        {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_list().entries(self.0.clone()).finish()
+            }
+        }
+        write!(f, "{:?}", IterDebug(self.iter()))
+    }
+}
+
 pub type CompactListInBufferOwned<T> = CompactListInBuffer<ByteBufOwned, T>;
 
 impl<T> CompactListInBufferOwned<T>
@@ -309,12 +329,11 @@ where
         self.buf.as_ref().is_empty()
     }
 
-    pub fn iter(&self) -> anyhow::Result<impl Iterator<Item = T> + Clone> {
-        Ok(self
-            .buf
+    pub fn iter(&self) -> impl Iterator<Item = T> + Clone {
+        self.buf
             .as_ref()
             .chunks_exact(T::fixed_len())
-            .map_while(|chunk| T::from_slice(chunk)))
+            .map_while(|chunk| T::from_slice(chunk))
     }
 
     pub fn get(&self, idx: usize) -> Option<T> {

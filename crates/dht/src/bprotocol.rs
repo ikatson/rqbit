@@ -1,13 +1,19 @@
 use std::{
     io::Write,
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
 use bencode::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use librqbit_core::hash_id::Id20;
+use librqbit_buffers::ByteBufT;
+use librqbit_core::{
+    compact_ip::{
+        Compact, CompactListInBuffer, CompactSerialize, CompactSerializeFixedLen, CompactSocketAddr,
+    },
+    hash_id::Id20,
+};
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{IgnoredAny, Unexpected},
@@ -161,7 +167,7 @@ struct RawMessage<BufT, Args = IgnoredAny, Resp = IgnoredAny> {
     #[serde(rename = "v", skip_serializing_if = "Option::is_none")]
     version: Option<BufT>,
     #[serde(rename = "ip", skip_serializing_if = "Option::is_none")]
-    ip: Option<CompactPeerInfo>,
+    ip: Option<CompactSocketAddr>,
 }
 
 pub struct Node<A> {
@@ -169,224 +175,77 @@ pub struct Node<A> {
     pub addr: A,
 }
 
-impl<A: core::fmt::Debug> core::fmt::Debug for Node<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}={:?}", self.addr, self.id)
-    }
-}
-
-pub struct CompactNodeInfo<const IP_LEN: usize, A> {
-    pub nodes: Vec<Node<A>>,
-}
-
-impl<const IP_LEN: usize, A> CompactNodeInfo<IP_LEN, A>
-where
-    A: Into<SocketAddr> + Copy,
-{
-    pub fn iter_addrs(&self) -> impl Iterator<Item = (Id20, SocketAddr)> {
-        self.nodes.iter().map(|n| (n.id, n.addr.into()))
-    }
-}
-
-pub trait AddrInfo<const IP_LEN: usize>: Sized {
-    fn octets(&self) -> [u8; IP_LEN];
-    fn port(&self) -> u16;
-    fn from_bytes(buf: &[u8]) -> Self;
-    fn from_socket_addr(addr: SocketAddr) -> Option<Self>;
-}
-
-impl AddrInfo<4> for SocketAddrV4 {
-    fn octets(&self) -> [u8; 4] {
-        self.ip().octets()
-    }
-
-    fn port(&self) -> u16 {
-        self.port()
-    }
-
-    fn from_bytes(buf: &[u8]) -> Self {
-        assert_eq!(buf.len(), 6);
-        SocketAddrV4::new(
-            Ipv4Addr::from(TryInto::<[u8; 4]>::try_into(&buf[..4]).unwrap()),
-            u16::from_be_bytes([buf[4], buf[5]]),
-        )
-    }
-
-    fn from_socket_addr(addr: SocketAddr) -> Option<Self> {
-        match addr {
-            SocketAddr::V4(addr) => Some(addr),
-            _ => None,
+impl<A: Into<SocketAddr> + Copy> Node<A> {
+    pub fn as_socketaddr(&self) -> Node<SocketAddr> {
+        Node {
+            id: self.id,
+            addr: self.addr.into(),
         }
     }
 }
 
-impl AddrInfo<16> for SocketAddrV6 {
-    fn octets(&self) -> [u8; 16] {
-        self.ip().octets()
+pub type CompactNodeInfo<Buf, A> = CompactListInBuffer<Buf, Node<A>>;
+pub type CompactNodeInfoOwned<A> = CompactNodeInfo<ByteBufOwned, A>;
+
+impl CompactSerialize for Node<SocketAddrV4> {
+    type Slice = [u8; 26];
+
+    fn expecting() -> &'static str {
+        "26 bytes"
     }
 
-    fn port(&self) -> u16 {
-        self.port()
+    fn as_slice(&self) -> Self::Slice {
+        let mut data = [0u8; 26];
+        data[..20].copy_from_slice(&self.id.0);
+        data[20..26].copy_from_slice(self.addr.as_slice().as_ref());
+        data
     }
 
-    fn from_bytes(buf: &[u8]) -> Self {
-        assert_eq!(buf.len(), 18);
-        SocketAddrV6::new(
-            Ipv6Addr::from(TryInto::<[u8; 16]>::try_into(&buf[..16]).unwrap()),
-            u16::from_be_bytes([buf[16], buf[17]]),
-            0,
-            0,
-        )
-    }
-
-    fn from_socket_addr(addr: SocketAddr) -> Option<Self> {
-        match addr {
-            SocketAddr::V6(addr) => Some(addr),
-            _ => None,
+    fn from_slice(buf: &[u8]) -> Option<Self> {
+        if buf.len() != 26 {
+            return None;
         }
-    }
-}
-
-impl<const IP_LEN: usize, A: core::fmt::Debug> core::fmt::Debug for CompactNodeInfo<IP_LEN, A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.nodes)
-    }
-}
-
-impl<const IP_LEN: usize, A> Serialize for CompactNodeInfo<IP_LEN, A>
-where
-    A: AddrInfo<IP_LEN>,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut buf = Vec::<u8>::with_capacity(self.nodes.len() * (20 + IP_LEN));
-        for node in self.nodes.iter() {
-            buf.extend_from_slice(&node.id.0);
-            let ip_octets = node.addr.octets();
-            let port = node.addr.port();
-            buf.extend_from_slice(&ip_octets);
-            buf.extend_from_slice(&port.to_be_bytes());
-        }
-        serializer.serialize_bytes(&buf)
-    }
-}
-
-impl<'de, const IP_LEN: usize, A> Deserialize<'de> for CompactNodeInfo<IP_LEN, A>
-where
-    A: AddrInfo<IP_LEN>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct Visitor<const IP_LEN: usize, A> {
-            _phantom: PhantomData<A>,
-        }
-
-        impl<'de, const IP_LEN: usize, A> serde::de::Visitor<'de> for Visitor<IP_LEN, A>
-        where
-            A: AddrInfo<IP_LEN>,
-        {
-            type Value = CompactNodeInfo<IP_LEN, A>;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "compact node info with length multiple of 26")
-            }
-            fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                const ID_LEN: usize = 20;
-                const PORT_LEN: usize = 2;
-                let item_len: usize = ID_LEN + IP_LEN + PORT_LEN;
-                if v.len() % item_len != 0 {
-                    return Err(E::invalid_length(v.len(), &self));
-                }
-                let mut buf = Vec::<Node<A>>::with_capacity(v.len() / item_len);
-                for chunk in v.chunks_exact(item_len) {
-                    let mut node_id = [0u8; ID_LEN];
-                    node_id.copy_from_slice(&chunk[..ID_LEN]);
-                    buf.push(Node {
-                        id: Id20::new(node_id),
-                        addr: A::from_bytes(&chunk[ID_LEN..]),
-                    })
-                }
-                Ok(CompactNodeInfo { nodes: buf })
-            }
-        }
-        deserializer.deserialize_bytes(Visitor {
-            _phantom: Default::default(),
+        Some(Node {
+            id: Id20::from_bytes(&buf[..20]).unwrap(),
+            addr: SocketAddrV4::from_slice_unchecked(&buf[20..26]),
         })
     }
 }
 
-// Serializes / deserializes to from SocketAddr based on number of bytes and IP kind
-pub struct CompactPeerInfo {
-    pub addr: SocketAddr,
+impl<A: CompactSerializeFixedLen> CompactSerializeFixedLen for Node<A> {
+    fn fixed_len() -> usize {
+        20 + A::fixed_len()
+    }
 }
 
-impl core::fmt::Debug for CompactPeerInfo {
+impl CompactSerialize for Node<SocketAddrV6> {
+    type Slice = [u8; 38];
+
+    fn expecting() -> &'static str {
+        "38 bytes"
+    }
+
+    fn as_slice(&self) -> Self::Slice {
+        let mut data = [0u8; 38];
+        data[..20].copy_from_slice(&self.id.0);
+        data[20..38].copy_from_slice(self.addr.as_slice().as_ref());
+        data
+    }
+
+    fn from_slice(buf: &[u8]) -> Option<Self> {
+        if buf.len() != 38 {
+            return None;
+        }
+        Some(Node {
+            id: Id20::from_bytes(&buf[..20]).unwrap(),
+            addr: SocketAddrV6::from_slice_unchecked(&buf[20..38]),
+        })
+    }
+}
+
+impl<A: core::fmt::Debug> core::fmt::Debug for Node<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.addr)
-    }
-}
-
-impl Serialize for CompactPeerInfo {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut buf = [0u8; 18];
-        match self.addr {
-            SocketAddr::V4(a) => {
-                buf[0..4].copy_from_slice(&a.ip().octets());
-                buf[4..6].copy_from_slice(&a.port().to_be_bytes());
-                serializer.serialize_bytes(&buf[..6])
-            }
-            SocketAddr::V6(a) => {
-                buf[0..16].copy_from_slice(&a.ip().octets());
-                buf[16..18].copy_from_slice(&a.port().to_be_bytes());
-                serializer.serialize_bytes(&buf[..18])
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for CompactPeerInfo {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct Visitor;
-        impl serde::de::Visitor<'_> for Visitor {
-            type Value = CompactPeerInfo;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(formatter, "6 or 18 bytes of peer info")
-            }
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                let addr: SocketAddr = match v.len() {
-                    6 => (
-                        IpAddr::from(TryInto::<[u8; 4]>::try_into(&v[..4]).unwrap()),
-                        u16::from_be_bytes([v[4], v[5]]),
-                    )
-                        .into(),
-                    18 => (
-                        IpAddr::from(TryInto::<[u8; 16]>::try_into(&v[..16]).unwrap()),
-                        u16::from_be_bytes([v[16], v[17]]),
-                    )
-                        .into(),
-                    _ => return Err(E::invalid_length(v.len(), &self)),
-                };
-                Ok(CompactPeerInfo { addr })
-            }
-        }
-        deserializer.deserialize_bytes(Visitor {})
+        write!(f, "{:?}={:?}", self.addr, self.id)
     }
 }
 
@@ -462,14 +321,14 @@ pub struct FindNodeRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-pub struct Response<BufT> {
+pub struct Response<BufT: ByteBufT> {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub values: Option<Vec<CompactPeerInfo>>,
+    pub values: Option<Vec<CompactSocketAddr>>,
     pub id: Id20,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nodes: Option<CompactNodeInfo<4, SocketAddrV4>>,
+    pub nodes: Option<CompactNodeInfo<BufT, SocketAddrV4>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nodes6: Option<CompactNodeInfo<16, SocketAddrV6>>,
+    pub nodes6: Option<CompactNodeInfo<BufT, SocketAddrV6>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<BufT>,
 }
@@ -497,21 +356,19 @@ pub struct AnnouncePeer<BufT> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(bound(serialize = "BufT: AsRef<[u8]> + Serialize"))]
-#[serde(bound(deserialize = "BufT: From<&'de [u8]> + Deserialize<'de>"))]
-pub struct GetPeersResponse<BufT> {
+pub struct GetPeersResponse<BufT: ByteBufT> {
     pub id: Id20,
     pub token: BufT,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub values: Option<Vec<CompactPeerInfo>>,
+    pub values: Option<Vec<CompactSocketAddr>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nodes: Option<CompactNodeInfo<4, SocketAddrV4>>,
+    pub nodes: Option<CompactNodeInfo<BufT, SocketAddrV4>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nodes6: Option<CompactNodeInfo<16, SocketAddrV6>>,
+    pub nodes6: Option<CompactNodeInfo<BufT, SocketAddrV6>>,
 }
 
 #[derive(Debug)]
-pub struct Message<BufT> {
+pub struct Message<BufT: ByteBufT> {
     pub kind: MessageKind<BufT>,
     pub transaction_id: BufT,
     pub version: Option<BufT>,
@@ -529,7 +386,7 @@ impl Message<ByteBufOwned> {
     }
 }
 
-pub enum MessageKind<BufT> {
+pub enum MessageKind<BufT: ByteBufT> {
     Error(ErrorDescription<BufT>),
     GetPeersRequest(GetPeersRequest),
     FindNodeRequest(FindNodeRequest),
@@ -538,7 +395,7 @@ pub enum MessageKind<BufT> {
     AnnouncePeer(AnnouncePeer<BufT>),
 }
 
-impl<BufT: core::fmt::Debug> core::fmt::Debug for MessageKind<BufT> {
+impl<BufT: ByteBufT> core::fmt::Debug for MessageKind<BufT> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Error(e) => write!(f, "{e:?}"),
@@ -551,14 +408,14 @@ impl<BufT: core::fmt::Debug> core::fmt::Debug for MessageKind<BufT> {
     }
 }
 
-pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(
+pub fn serialize_message<'a, W: Write, BufT: ByteBufT + From<&'a [u8]>>(
     writer: &mut W,
     transaction_id: BufT,
     version: Option<BufT>,
     ip: Option<SocketAddr>,
     kind: MessageKind<BufT>,
 ) -> anyhow::Result<()> {
-    let ip = ip.map(|ip| CompactPeerInfo { addr: ip });
+    let ip = ip.map(Compact);
     match kind {
         MessageKind::Error(e) => {
             let msg: RawMessage<BufT, (), ()> = RawMessage {
@@ -643,7 +500,7 @@ pub fn serialize_message<'a, W: Write, BufT: Serialize + From<&'a [u8]>>(
 
 pub fn deserialize_message<'de, BufT>(buf: &'de [u8]) -> anyhow::Result<Message<BufT>>
 where
-    BufT: Deserialize<'de> + AsRef<[u8]>,
+    BufT: ByteBufT + Deserialize<'de>,
 {
     let de: RawMessage<ByteBuf> = bencode::from_bytes(buf)?;
     match de.message_type {
@@ -654,7 +511,7 @@ where
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
-                        ip: de.ip.map(|c| c.addr),
+                        ip: de.ip.map(|c| c.0),
                         kind: MessageKind::FindNodeRequest(de.arguments.unwrap()),
                     })
                 }
@@ -663,7 +520,7 @@ where
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
-                        ip: de.ip.map(|c| c.addr),
+                        ip: de.ip.map(|c| c.0),
                         kind: MessageKind::GetPeersRequest(de.arguments.unwrap()),
                     })
                 }
@@ -672,7 +529,7 @@ where
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
-                        ip: de.ip.map(|c| c.addr),
+                        ip: de.ip.map(|c| c.0),
                         kind: MessageKind::PingRequest(de.arguments.unwrap()),
                     })
                 }
@@ -681,7 +538,7 @@ where
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
-                        ip: de.ip.map(|c| c.addr),
+                        ip: de.ip.map(|c| c.0),
                         kind: MessageKind::AnnouncePeer(de.arguments.unwrap()),
                     })
                 }
@@ -699,7 +556,7 @@ where
                 Ok(Message {
                     transaction_id: de.transaction_id,
                     version: de.version,
-                    ip: de.ip.map(|c| c.addr),
+                    ip: de.ip.map(|c| c.0),
                     kind: MessageKind::Response(de.response.unwrap()),
                 })
             }
@@ -715,7 +572,7 @@ where
                 Ok(Message {
                     transaction_id: de.transaction_id,
                     version: de.version,
-                    ip: de.ip.map(|c| c.addr),
+                    ip: de.ip.map(|c| c.0),
                     kind: MessageKind::Error(de.error.unwrap()),
                 })
             }

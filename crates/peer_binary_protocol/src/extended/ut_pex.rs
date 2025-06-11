@@ -109,7 +109,7 @@ impl<B: ByteBufT> UtPex<B> {
         flags: &Option<CompactListInBuffer<B, Flags>>,
     ) -> impl Iterator<Item = PexPeerInfo> + Clone {
         buf.iter()
-            .flat_map(|l| l.iter().ok().into_iter().flatten())
+            .flat_map(|l| l.iter())
             .enumerate()
             .map(|(idx, ip)| PexPeerInfo {
                 flags: flags

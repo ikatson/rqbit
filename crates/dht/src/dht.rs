@@ -13,8 +13,8 @@ use std::{
 use crate::{
     INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bprotocol::{
-        self, AddrInfo, AnnouncePeer, CompactNodeInfo, ErrorDescription, FindNodeRequest,
-        GetPeersRequest, Message, MessageKind, Node, PingRequest, Response, Want,
+        self, AnnouncePeer, CompactNodeInfo, CompactNodeInfoOwned, ErrorDescription,
+        FindNodeRequest, GetPeersRequest, Message, MessageKind, Node, PingRequest, Response, Want,
     },
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
@@ -29,6 +29,7 @@ use futures::{
 
 use leaky_bucket::RateLimiter;
 use librqbit_core::{
+    compact_ip::{CompactSerialize, CompactSerializeFixedLen},
     crate_version,
     hash_id::Id20,
     peer_id::generate_azereus_style,
@@ -440,25 +441,30 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         if let Some(peers) = response.values {
             for peer in peers {
-                self.peer_tx.send(peer.addr)?;
+                self.peer_tx.send(peer.0)?;
             }
         }
 
         let node_it = response
             .nodes
             .iter()
-            .flat_map(|n| n.iter_addrs())
-            .chain(response.nodes6.iter().flat_map(|n| n.iter_addrs()))
-            .filter(|(_, naddr)| addr.is_ipv4() == naddr.is_ipv4());
+            .flat_map(|n| n.iter().map(|n| n.as_socketaddr()))
+            .chain(
+                response
+                    .nodes6
+                    .iter()
+                    .flat_map(|n| n.iter().map(|n| n.as_socketaddr())),
+            )
+            .filter(|node| addr.is_ipv4() == node.addr.is_ipv4());
 
-        for (node_id, addr) in node_it {
-            let should_request = self.should_request_node(node_id, addr, depth);
+        for node in node_it {
+            let should_request = self.should_request_node(node.id, node.addr, depth);
             trace!(
                 "should_request={}, id={:?}, addr={}, depth={}/{}",
-                should_request, node_id, addr, depth, self.max_depth
+                should_request, node.id, node.addr, depth, self.max_depth
             );
             if should_request {
-                self.node_tx.send((Some(node_id), addr, depth + 1))?;
+                self.node_tx.send((Some(node.id), node.addr, depth + 1))?;
             }
         }
         Ok(())
@@ -692,8 +698,8 @@ impl DhtState {
         target: Id20,
         want: Want,
     ) -> (
-        Option<CompactNodeInfo<4, SocketAddrV4>>,
-        Option<CompactNodeInfo<16, SocketAddrV6>>,
+        Option<CompactNodeInfoOwned<SocketAddrV4>>,
+        Option<CompactNodeInfoOwned<SocketAddrV6>>,
     ) {
         match want {
             Want::V4 => (
@@ -720,15 +726,16 @@ impl DhtState {
         }
     }
 
-    fn generate_compact_nodes<const IP_LEN: usize, A>(
+    fn generate_compact_nodes<A>(
         &self,
         target: Id20,
         table: &RoutingTable,
-    ) -> CompactNodeInfo<IP_LEN, A>
+    ) -> CompactNodeInfo<ByteBufOwned, A>
     where
-        A: AddrInfo<IP_LEN>,
+        A: CompactSerialize + CompactSerializeFixedLen + FromSocketAddr,
+        Node<A>: CompactSerialize + CompactSerializeFixedLen,
     {
-        let nodes = table
+        let it = table
             .sorted_by_distance_from(target)
             .into_iter()
             .filter_map(|r| {
@@ -737,9 +744,8 @@ impl DhtState {
                     addr: A::from_socket_addr(r.addr())?,
                 })
             })
-            .take(8)
-            .collect::<Vec<_>>();
-        CompactNodeInfo { nodes }
+            .take(8);
+        CompactNodeInfo::new_from_iter(it)
     }
 
     fn on_received_message(
@@ -1327,4 +1333,26 @@ impl DhtState {
     // pub fn clone_routing_table(&self) -> RoutingTable {
     //     self.routing_table.read().clone()
     // }
+}
+
+trait FromSocketAddr: Sized {
+    fn from_socket_addr(addr: SocketAddr) -> Option<Self>;
+}
+
+impl FromSocketAddr for SocketAddrV4 {
+    fn from_socket_addr(addr: SocketAddr) -> Option<Self> {
+        match addr {
+            SocketAddr::V4(a) => Some(a),
+            _ => None,
+        }
+    }
+}
+
+impl FromSocketAddr for SocketAddrV6 {
+    fn from_socket_addr(addr: SocketAddr) -> Option<Self> {
+        match addr {
+            SocketAddr::V6(a) => Some(a),
+            _ => None,
+        }
+    }
 }
