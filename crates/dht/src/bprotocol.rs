@@ -205,10 +205,14 @@ impl CompactSerialize for Node<SocketAddrV4> {
         if buf.len() != 26 {
             return None;
         }
-        Some(Node {
+        Some(Self::from_slice_unchecked_len(buf))
+    }
+
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
+        Node {
             id: Id20::from_bytes(&buf[..20]).unwrap(),
-            addr: SocketAddrV4::from_slice_unchecked(&buf[20..26]),
-        })
+            addr: SocketAddrV4::from_slice_unchecked_len(&buf[20..26]),
+        }
     }
 }
 
@@ -236,10 +240,14 @@ impl CompactSerialize for Node<SocketAddrV6> {
         if buf.len() != 38 {
             return None;
         }
-        Some(Node {
+        Some(Self::from_slice_unchecked_len(buf))
+    }
+
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
+        Node {
             id: Id20::from_bytes(&buf[..20]).unwrap(),
-            addr: SocketAddrV6::from_slice_unchecked(&buf[20..38]),
-        })
+            addr: SocketAddrV6::from_slice_unchecked_len(&buf[20..38]),
+        }
     }
 }
 
