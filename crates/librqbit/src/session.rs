@@ -1027,11 +1027,12 @@ impl Session {
         }
 
         if let Some(name) = &info.name {
-            let s =
-                std::str::from_utf8(name.as_slice()).context("invalid UTF-8 in torrent name")?;
-            let pb = PathBuf::from(s);
-            check_valid(&pb)?;
-            return Ok(Some(pb));
+            let s = String::from_utf8_lossy(name.as_slice());
+            if !s.is_empty() {
+                let pb = PathBuf::from(s.as_ref());
+                check_valid(&pb)?;
+                return Ok(Some(pb));
+            }
         };
         if let Some(name) = magnet_name {
             let pb = PathBuf::from(name);
