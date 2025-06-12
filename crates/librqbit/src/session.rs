@@ -1473,6 +1473,9 @@ pub(crate) struct ResolveMagnetResult {
 fn remove_files_and_dirs(infos: &FileInfos, files: &dyn TorrentStorage) {
     let mut all_dirs = HashSet::new();
     for (id, fi) in infos.iter().enumerate() {
+        if fi.attrs.padding {
+            continue;
+        }
         let mut fname = &*fi.relative_filename;
         if let Err(e) = files.remove_file(id, fname) {
             warn!(?fi.relative_filename, error=?e, "could not delete file");
