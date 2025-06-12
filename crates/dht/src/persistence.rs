@@ -158,7 +158,7 @@ impl PersistentDht {
                     let dht = dht.clone();
                     let dump_interval = config
                         .dump_interval
-                        .unwrap_or_else(|| Duration::from_secs(3));
+                        .unwrap_or_else(|| Duration::from_secs(60));
                     async move {
                         let tempfile_name = {
                             let file_name = format!("dht.json.tmp.{}", std::process::id());
