@@ -2,7 +2,7 @@ use std::{collections::VecDeque, net::SocketAddr, str::FromStr, sync::atomic::At
 
 use bencode::ByteBufOwned;
 use chrono::{DateTime, Utc};
-use librqbit_core::hash_id::Id20;
+use librqbit_core::{compact_ip::CompactSocketAddr, hash_id::Id20};
 use parking_lot::RwLock;
 use rand::RngCore;
 use serde::{
@@ -11,7 +11,7 @@ use serde::{
 };
 use tracing::trace;
 
-use crate::bprotocol::{AnnouncePeer, CompactPeerInfo, Want};
+use crate::bprotocol::{AnnouncePeer, Want};
 
 #[derive(Serialize, Deserialize)]
 struct StoredToken {
@@ -184,7 +184,7 @@ impl PeerStore {
         true
     }
 
-    pub fn get_for_info_hash(&self, info_hash: Id20, want: Want) -> Vec<CompactPeerInfo> {
+    pub fn get_for_info_hash(&self, info_hash: Id20, want: Want) -> Vec<CompactSocketAddr> {
         if let Some(stored_peers) = self.peers.get(&info_hash) {
             return stored_peers
                 .iter()
@@ -195,7 +195,7 @@ impl PeerStore {
                             | (SocketAddr::V4(..), Want::V4 | Want::Both)
                     )
                 })
-                .map(|p| CompactPeerInfo { addr: p.addr })
+                .map(|p| p.addr.into())
                 .collect();
         }
         Vec::new()

@@ -55,7 +55,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
     constants::CHUNK_SIZE,
@@ -895,7 +895,10 @@ impl TorrentStateLive {
             // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
 
             if !connected.is_empty() || !dropped.is_empty() {
-                let pex_msg = extended::ut_pex::UtPex::from_addrs(&connected, &dropped);
+                let pex_msg = extended::ut_pex::UtPex::from_addrs(
+                    connected.iter().copied(),
+                    dropped.iter().copied(),
+                );
                 let ext_msg = extended::ExtendedMessage::UtPex(pex_msg);
                 if tx
                     .send(WriterRequest::Message(Message::Extended(ext_msg)))
@@ -1868,7 +1871,7 @@ impl PeerHandler {
 
     fn on_pex_message<B>(&self, msg: UtPex<B>)
     where
-        B: AsRef<[u8]> + std::fmt::Debug,
+        B: ByteBufT,
     {
         // TODO: this is just first attempt at pex - will need more sophistication on adding peers - BEP 40,  check number of live, seen peers ...
         msg.dropped_peers()
