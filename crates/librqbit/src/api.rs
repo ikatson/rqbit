@@ -576,9 +576,13 @@ fn make_torrent_details(
     Ok(TorrentDetailsResponse {
         id,
         info_hash: info_hash.as_string(),
-        name: name
-            .map(|s| s.to_owned())
-            .or_else(|| info.and_then(|i| i.name.as_ref().map(|b| b.to_string()))),
+        name: name.map(|s| s.to_owned()).or_else(|| {
+            info.and_then(|i| {
+                i.name
+                    .as_ref()
+                    .map(|b| String::from_utf8_lossy(b.as_ref()).into())
+            })
+        }),
         files: Some(files),
         output_folder,
         stats: None,
