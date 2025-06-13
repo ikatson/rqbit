@@ -27,7 +27,6 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 leaky-bucket = "1.1"
 serde_json = "1"
-hex = "0.4"
 librqbit-buffers = { path = "../buffers", version = "4.2.0" }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
 anyhow = "1"
