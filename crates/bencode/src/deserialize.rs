@@ -5,6 +5,7 @@ use memchr::memchr;
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
     field_context: ArrayVec<ByteBuf<'de>, 6>,
+    field_context_did_not_fit: usize,
     parsing_key: bool,
 
     // This is a f**ing hack
@@ -18,6 +19,7 @@ impl<'de> BencodeDeserializer<'de> {
         Self {
             buf,
             field_context: Default::default(),
+            field_context_did_not_fit: 0,
             parsing_key: false,
             is_torrent_info: false,
             torrent_info_digest: None,
@@ -70,8 +72,8 @@ impl<'de> BencodeDeserializer<'de> {
             None => return Err(Error::new_str("invalist list: unexpected eof").set_context(self)),
         };
         let b = self.parse_bytes()?;
-        if self.parsing_key {
-            self.field_context.push(ByteBuf(b));
+        if self.parsing_key && self.field_context.try_push(ByteBuf(b)).is_err() {
+            self.field_context_did_not_fit += 1;
         }
         Ok(b)
     }
@@ -511,7 +513,11 @@ impl<'de> serde::de::MapAccess<'de> for MapAccess<'_, 'de> {
                 self.de.torrent_info_bytes = Some(torrent_info_bytes);
             }
         }
-        self.de.field_context.pop();
+        if self.de.field_context_did_not_fit > 0 {
+            self.de.field_context_did_not_fit -= 1;
+        } else {
+            self.de.field_context.pop();
+        }
         Ok(value)
     }
 }
