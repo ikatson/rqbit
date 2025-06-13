@@ -3010,6 +3010,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "serde",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

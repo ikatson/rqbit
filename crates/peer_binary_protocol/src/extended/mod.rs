@@ -1,4 +1,3 @@
-use anyhow::Context;
 use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
@@ -99,25 +98,19 @@ impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
     where
         ByteBuf: Deserialize<'a> + From<&'a [u8]>,
     {
-        let emsg_id = buf.first().copied().ok_or_else(|| {
-            MessageDeserializeError::Other(anyhow::anyhow!(
-                "cannot deserialize extended message: can't read first byte"
-            ))
-        })?;
+        let emsg_id = buf.first().copied().ok_or(MessageDeserializeError::Text(
+            "cannot deserialize extended message: can't read first byte",
+        ))?;
 
-        buf = buf.get(1..).ok_or_else(|| {
-            MessageDeserializeError::Other(anyhow::anyhow!(
-                "cannot deserialize extended message: buffer empty"
-            ))
-        })?;
+        buf = buf.get(1..).ok_or(MessageDeserializeError::Text(
+            "cannot deserialize extended message: buffer empty",
+        ))?;
 
         match emsg_id {
-            0 => Ok(ExtendedMessage::Handshake(
-                from_bytes(buf).context("handshake")?,
-            )),
-            MY_EXTENDED_UT_METADATA => Ok(ExtendedMessage::UtMetadata(
-                UtMetadata::deserialize(buf).context("UtMetadata")?,
-            )),
+            0 => Ok(ExtendedMessage::Handshake(from_bytes(buf)?)),
+            MY_EXTENDED_UT_METADATA => {
+                Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(buf)?))
+            }
             MY_EXTENDED_UT_PEX => Ok(ExtendedMessage::UtPex(from_bytes(buf)?)),
             _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(buf)?)),
         }

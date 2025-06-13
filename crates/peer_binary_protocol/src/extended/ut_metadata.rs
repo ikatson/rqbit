@@ -97,27 +97,24 @@ impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
             total_size: Option<u32>,
         }
 
-        let message =
-            Message::deserialize(&mut de).map_err(|e| MessageDeserializeError::Other(e.into()))?;
+        let message = Message::deserialize(&mut de)?;
         let remaining = de.into_remaining();
 
         match message.msg_type {
             // request
             0 => {
                 if !remaining.is_empty() {
-                    return Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                        "trailing bytes when decoding UtMetadata"
-                    )));
+                    return Err(MessageDeserializeError::Text(
+                        "trailing bytes when decoding UtMetadata",
+                    ));
                 }
                 Ok(UtMetadata::Request(message.piece))
             }
             // data
             1 => {
-                let total_size = message.total_size.ok_or_else(|| {
-                    MessageDeserializeError::Other(anyhow::anyhow!(
-                        "expected key total_size to be present in UtMetadata \"data\" message"
-                    ))
-                })?;
+                let total_size = message.total_size.ok_or(MessageDeserializeError::Text(
+                    "expected key total_size to be present in UtMetadata \"data\" message",
+                ))?;
                 Ok(UtMetadata::Data {
                     piece: message.piece,
                     total_size,
@@ -127,16 +124,13 @@ impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
             // reject
             2 => {
                 if !remaining.is_empty() {
-                    return Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                        "trailing bytes when decoding UtMetadata"
-                    )));
+                    return Err(MessageDeserializeError::Text(
+                        "trailing bytes when decoding UtMetadata",
+                    ));
                 }
                 Ok(UtMetadata::Reject(message.piece))
             }
-            other => Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                "unrecognized ut_metadata message type {}",
-                other
-            ))),
+            other => Err(MessageDeserializeError::UnrecognizedUtMetadata(other)),
         }
     }
 }
