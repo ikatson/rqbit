@@ -35,7 +35,7 @@ pub(crate) async fn read_metainfo_from_peer(
     connector: Arc<StreamConnector>,
 ) -> anyhow::Result<TorrentAndInfoBytes> {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
-        Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned), bencode::Error>,
+        Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned), bencode::DeserializeError>,
     >();
     let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
     let handler = Handler {
@@ -143,8 +143,11 @@ struct Handler {
     addr: SocketAddr,
     info_hash: Id20,
     writer_tx: UnboundedSender<WriterRequest>,
-    result_tx:
-        Mutex<Option<tokio::sync::oneshot::Sender<Result<TorrentAndInfoBytes, bencode::Error>>>>,
+    result_tx: Mutex<
+        Option<
+            tokio::sync::oneshot::Sender<Result<TorrentAndInfoBytes, bencode::DeserializeError>>,
+        >,
+    >,
     locked: RwLock<Option<HandlerLocked>>,
 }
 

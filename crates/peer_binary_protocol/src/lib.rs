@@ -55,7 +55,7 @@ pub const MY_EXTENDED_UT_PEX: u8 = 1;
 pub enum MessageDeserializeError {
     NotEnoughData(usize, &'static str),
     UnsupportedMessageId(u8),
-    Deserialize(bencode::Error),
+    Deserialize(bencode::DeserializeError),
     IncorrectLenPrefix {
         received: u32,
         expected: u32,
@@ -70,8 +70,8 @@ pub enum MessageDeserializeError {
     Other(anyhow::Error),
 }
 
-impl From<bencode::Error> for MessageDeserializeError {
-    fn from(value: bencode::Error) -> Self {
+impl From<bencode::DeserializeError> for MessageDeserializeError {
+    fn from(value: bencode::DeserializeError) -> Self {
         Self::Deserialize(value)
     }
 }
