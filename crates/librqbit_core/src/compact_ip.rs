@@ -476,6 +476,64 @@ mod tests {
         )
     }
 
+    fn test_compact_one<A: CompactSerialize + Copy + PartialEq + Debug>(addr: A, data: &[u8]) {
+        let v = bencode::from_bytes::<Compact<A>>(data).unwrap();
+        assert_eq!(addr, v.0);
+    }
+
+    #[test]
+    fn test_compact() {
+        test_compact_one(Ipv4Addr::new(1, 2, 3, 4), b"4:\x01\x02\x03\x04");
+        test_compact_one(
+            Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8),
+            b"16:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08",
+        );
+        test_compact_one(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), b"4:\x01\x02\x03\x04");
+        test_compact_one(
+            IpAddr::V6(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8)),
+            b"16:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08",
+        );
+
+        test_compact_one(
+            SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 1),
+            b"6:\x01\x02\x03\x04\x00\x01",
+        );
+        test_compact_one(
+            SocketAddrV6::new(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8), 1, 0, 0),
+            b"18:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08\x00\x01",
+        );
+        test_compact_one(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 1)),
+            b"6:\x01\x02\x03\x04\x00\x01",
+        );
+        test_compact_one(
+            SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8),
+                1,
+                0,
+                0,
+            )),
+            b"18:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08\x00\x01",
+        );
+    }
+
+    #[test]
+    fn test_compact_list() {
+        let addrs = bencode::from_bytes::<CompactListInBuffer<ByteBuf, SocketAddrV4>>(
+            b"12:\x00\x00\x00\x00\x00\xff\x01\x02\x03\x04\xaa\xaa",
+        )
+        .unwrap();
+        const FIRST: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 255);
+        const SECOND: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 43690);
+        assert_eq!(addrs.get(0), Some(FIRST));
+        assert_eq!(addrs.get(1), Some(SECOND));
+        assert_eq!(addrs.get(2), None);
+
+        assert_eq!(addrs.iter().next(), Some(FIRST));
+        assert_eq!(addrs.iter().nth(1), Some(SECOND));
+        assert_eq!(addrs.iter().nth(2), None);
+    }
+
     #[test]
     fn test_same() {
         test_same_list_impl([Ipv4Addr::LOCALHOST, Ipv4Addr::BROADCAST]);
