@@ -2903,7 +2903,6 @@ dependencies = [
 name = "librqbit-bencode"
 version = "3.1.0"
 dependencies = [
- "anyhow",
  "arrayvec",
  "atoi",
  "bytes",

@@ -149,10 +149,6 @@ impl Error {
         Self::new(ErrorKind::StaticStr(msg))
     }
 
-    fn new_str_with_de(msg: &'static str, de: &BencodeDeserializer<'_>) -> Self {
-        Self::new_str(msg).set_context(de)
-    }
-
     fn set_context(mut self, de: &BencodeDeserializer<'_>) -> Self {
         self.context = ErrorContext {
             field_stack: de.field_context.iter().map(|s| format!("{s}")).collect(),
@@ -294,15 +290,12 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         let first = match self.buf.first().copied() {
             Some(first) => first,
             None => {
-                return Err(Error::new_str_with_de(
-                    "expected bencode string, got EOF",
-                    self,
-                ));
+                return Err(Error::new_str("expected bencode string, got EOF").set_context(self));
             }
         };
         match first {
             b'0'..=b'9' => {}
-            _ => return Err(Error::new_str_with_de("expected bencode string", self)),
+            _ => return Err(Error::new_str("expected bencode string").set_context(self)),
         }
         let b = self.parse_bytes()?;
         let s = std::str::from_utf8(b)
