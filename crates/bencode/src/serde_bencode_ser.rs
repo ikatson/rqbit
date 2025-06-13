@@ -4,39 +4,14 @@ use serde::{Serialize, Serializer, ser::Impossible};
 
 use buffers::ByteBufOwned;
 
-#[derive(Debug)]
-pub enum SerErrorKind {
-    Other(anyhow::Error),
-}
-
-impl std::fmt::Display for SerErrorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SerErrorKind::Other(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct SerError {
-    kind: SerErrorKind,
-}
-
-impl SerError {
-    fn custom_with_ser<T: std::fmt::Display, W: std::io::Write>(
-        msg: T,
-        _ser: &BencodeSerializer<W>,
-    ) -> Self {
-        serde::ser::Error::custom(msg)
-    }
-    fn from_err_with_ser<E: std::error::Error + Send + Sync + 'static, W: std::io::Write>(
-        err: E,
-        _ser: &BencodeSerializer<W>,
-    ) -> Self {
-        Self {
-            kind: SerErrorKind::Other(err.into()),
-        }
-    }
+#[derive(thiserror::Error, Debug)]
+pub enum SerError {
+    #[error(transparent)]
+    Io(std::io::Error),
+    #[error("{0}")]
+    Custom(String),
+    #[error("{0}")]
+    Text(&'static str),
 }
 
 impl serde::ser::Error for SerError {
@@ -44,17 +19,7 @@ impl serde::ser::Error for SerError {
     where
         T: std::fmt::Display,
     {
-        Self {
-            kind: SerErrorKind::Other(anyhow::anyhow!("{}", msg)),
-        }
-    }
-}
-
-impl std::error::Error for SerError {}
-
-impl std::fmt::Display for SerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.kind)
+        SerError::Custom(msg.to_string())
     }
 }
 
@@ -71,14 +36,10 @@ impl<W: std::io::Write> BencodeSerializer<W> {
         }
     }
     fn write_raw(&mut self, buf: &[u8]) -> Result<(), SerError> {
-        self.writer
-            .write_all(buf)
-            .map_err(|e| SerError::from_err_with_ser(e, self))
+        self.writer.write_all(buf).map_err(SerError::Io)
     }
     fn write_fmt(&mut self, fmt: core::fmt::Arguments<'_>) -> Result<(), SerError> {
-        self.writer
-            .write_fmt(fmt)
-            .map_err(|e| SerError::from_err_with_ser(e, self))
+        self.writer.write_fmt(fmt).map_err(SerError::Io)
     }
     fn write_byte(&mut self, byte: u8) -> Result<(), SerError> {
         self.write_raw(&[byte])
@@ -255,24 +216,15 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     }
 
     fn serialize_f32(self, _: f32) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support f32",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support f32"))
     }
 
     fn serialize_f64(self, _: f64) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support f32",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support f32"))
     }
 
     fn serialize_char(self, _: char) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support chars",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support chars"))
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
@@ -284,10 +236,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support None",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support None"))
     }
 
     fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
@@ -298,17 +247,11 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support Rust unit ()",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support Rust unit ()"))
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support unit structs",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support unit structs"))
     }
 
     fn serialize_unit_variant(
@@ -317,10 +260,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _variant_index: u32,
         _variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support unit variants",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support unit variants"))
     }
 
     fn serialize_newtype_struct<T>(
@@ -337,10 +277,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
             self.hack_no_bytestring_prefix = false;
             return Ok(());
         }
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support newtype structs",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support newtype structs"))
     }
 
     fn serialize_newtype_variant<T>(
@@ -353,10 +290,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     where
         T: ?Sized + serde::Serialize,
     {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support newtype variants",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support newtype variants"))
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -365,10 +299,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support tuples",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support tuples"))
     }
 
     fn serialize_tuple_struct(
@@ -376,10 +307,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support tuple structs",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support tuple structs"))
     }
 
     fn serialize_tuple_variant(
@@ -389,10 +317,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support tuple variants",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support tuple variants"))
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
@@ -423,10 +348,7 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Err(SerError::custom_with_ser(
-            "bencode doesn't support struct variants",
-            self,
-        ))
+        Err(SerError::Text("bencode doesn't support struct variants"))
     }
 }
 
