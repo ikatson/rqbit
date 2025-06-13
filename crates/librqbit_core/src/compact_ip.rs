@@ -75,7 +75,7 @@ pub trait CompactSerialize: Sized {
 
     fn expecting() -> &'static str;
     fn as_slice(&self) -> Self::Slice;
-    fn from_slice_unchecked(buf: &[u8]) -> Self {
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
         Self::from_slice(buf).unwrap()
     }
     fn from_slice(buf: &[u8]) -> Option<Self>;
@@ -96,6 +96,10 @@ impl CompactSerialize for Ipv4Addr {
         Some(Self::from(
             TryInto::<[u8; 4]>::try_into(buf.get(..4)?).unwrap(),
         ))
+    }
+
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
+        Self::from(TryInto::<[u8; 4]>::try_into(buf).unwrap())
     }
 
     fn expecting() -> &'static str {
@@ -122,6 +126,10 @@ impl CompactSerialize for Ipv6Addr {
         ))
     }
 
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
+        Self::from(TryInto::<[u8; 16]>::try_into(buf).unwrap())
+    }
+
     fn expecting() -> &'static str {
         "16 bytes for IPv6"
     }
@@ -145,8 +153,8 @@ impl CompactSerialize for IpAddr {
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
         match buf.len() {
-            4 => Some(Ipv4Addr::from_slice_unchecked(buf).into()),
-            16 => Some(Ipv6Addr::from_slice_unchecked(buf).into()),
+            4 => Some(Ipv4Addr::from_slice_unchecked_len(buf).into()),
+            16 => Some(Ipv6Addr::from_slice_unchecked_len(buf).into()),
             _ => None,
         }
     }
@@ -170,9 +178,13 @@ impl CompactSerialize for SocketAddrV4 {
         if buf.len() != 6 {
             return None;
         }
-        let ip = Ipv4Addr::from_slice_unchecked(&buf[..4]);
+        Some(Self::from_slice_unchecked_len(buf))
+    }
+
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
+        let ip = Ipv4Addr::from_slice_unchecked_len(&buf[..4]);
         let port = u16::from_be_bytes([buf[4], buf[5]]);
-        Some(SocketAddrV4::new(ip, port))
+        SocketAddrV4::new(ip, port)
     }
 
     fn expecting() -> &'static str {
@@ -200,9 +212,13 @@ impl CompactSerialize for SocketAddrV6 {
         if buf.len() != 18 {
             return None;
         }
-        let ip = Ipv6Addr::from_slice_unchecked(&buf[..16]);
+        Some(Self::from_slice_unchecked_len(buf))
+    }
+
+    fn from_slice_unchecked_len(buf: &[u8]) -> Self {
+        let ip = Ipv6Addr::from_slice_unchecked_len(&buf[..16]);
         let port = u16::from_be_bytes([buf[16], buf[17]]);
-        Some(SocketAddrV6::new(ip, port, 0, 0))
+        SocketAddrV6::new(ip, port, 0, 0)
     }
 
     fn expecting() -> &'static str {
@@ -227,8 +243,8 @@ impl CompactSerialize for SocketAddr {
 
     fn from_slice(buf: &[u8]) -> Option<Self> {
         match buf.len() {
-            6 => Some(SocketAddrV4::from_slice_unchecked(buf).into()),
-            18 => Some(SocketAddrV6::from_slice_unchecked(buf).into()),
+            6 => Some(SocketAddrV4::from_slice_unchecked_len(buf).into()),
+            18 => Some(SocketAddrV6::from_slice_unchecked_len(buf).into()),
             _ => None,
         }
     }
@@ -334,14 +350,14 @@ where
         self.buf
             .as_ref()
             .chunks_exact(T::fixed_len())
-            .map_while(|chunk| T::from_slice(chunk))
+            .map(|chunk| T::from_slice_unchecked_len(chunk))
     }
 
     pub fn get(&self, idx: usize) -> Option<T> {
         let offset = idx * T::fixed_len();
         let end = offset + T::fixed_len();
         let b = self.buf.as_ref().get(offset..end)?;
-        T::from_slice(b)
+        Some(T::from_slice_unchecked_len(b))
     }
 }
 
