@@ -18,6 +18,9 @@ sha1-ring = ["sha1w/sha1-ring"]
 serde = { version = "1", features = ["derive"] }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-anyhow = "1"
 sha1w = { path = "../sha1w", default-features = false, optional = true, package = "librqbit-sha1-wrapper", version = "4.1" }
 bytes = "1.7.1"
+memchr = "2.7.5"
+atoi = "2.0.0"
+thiserror = "2.0.12"
+arrayvec = "0.7.6"

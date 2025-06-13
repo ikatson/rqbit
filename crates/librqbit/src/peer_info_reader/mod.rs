@@ -35,7 +35,7 @@ pub(crate) async fn read_metainfo_from_peer(
     connector: Arc<StreamConnector>,
 ) -> anyhow::Result<TorrentAndInfoBytes> {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
-        anyhow::Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned)>,
+        Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned), bencode::DeserializeError>,
     >();
     let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
     let handler = Handler {
@@ -55,12 +55,12 @@ pub(crate) async fn read_metainfo_from_peer(
         connector,
     );
 
-    let result_reader = async move { result_rx.await? };
+    let result_reader = result_rx;
     let (_, brx) = tokio::sync::broadcast::channel(1);
     let connection_runner = async move { connection.manage_peer_outgoing(writer_rx, brx).await };
 
     tokio::select! {
-        result = result_reader => result,
+        result = result_reader => Ok(result??),
         whatever = connection_runner => match whatever {
             Ok(_) => anyhow::bail!("connection runner completed first"),
             Err(e) => Err(e)
@@ -143,7 +143,11 @@ struct Handler {
     addr: SocketAddr,
     info_hash: Id20,
     writer_tx: UnboundedSender<WriterRequest>,
-    result_tx: Mutex<Option<tokio::sync::oneshot::Sender<anyhow::Result<TorrentAndInfoBytes>>>>,
+    result_tx: Mutex<
+        Option<
+            tokio::sync::oneshot::Sender<Result<TorrentAndInfoBytes, bencode::DeserializeError>>,
+        >,
+    >,
     locked: RwLock<Option<HandlerLocked>>,
 }
 

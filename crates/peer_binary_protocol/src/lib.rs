@@ -51,22 +51,36 @@ pub const MY_EXTENDED_UT_METADATA: u8 = 3;
 pub const EXTENDED_UT_PEX_KEY: &[u8] = b"ut_pex";
 pub const MY_EXTENDED_UT_PEX: u8 = 1;
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum MessageDeserializeError {
+    #[error("not enough data to deserialize {1}: expected at least {0} more bytes")]
     NotEnoughData(usize, &'static str),
+    #[error("unsupported message id {0}")]
     UnsupportedMessageId(u8),
+    #[error(transparent)]
+    Bencode(#[from] bencode::DeserializeError),
+    #[error(transparent)]
+    Bincode(#[from] bincode::Error),
+    #[error("error deserializing {name}: {error:#}")]
+    BincodeWithName {
+        #[source]
+        error: bincode::Error,
+        name: &'static str,
+    },
+    #[error(
+        "incorrect len prefix for message id {msg_id}, expected {expected}, received {received}"
+    )]
     IncorrectLenPrefix {
         received: u32,
         expected: u32,
         msg_id: u8,
     },
-    OtherBincode {
-        error: bincode::Error,
-        msg_id: u8,
-        len_prefix: u32,
-        name: &'static str,
-    },
-    Other(anyhow::Error),
+    #[error("{0}")]
+    Text(&'static str),
+    #[error("unrecognized ut_metadata message type: {0}")]
+    UnrecognizedUtMetadata(u32),
+    #[error("pstr should be 19 bytes long but got {0}")]
+    InvalidPstr(u8),
 }
 
 pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize {
@@ -142,55 +156,6 @@ where
             begin,
             block,
         }
-    }
-}
-
-impl std::fmt::Display for MessageDeserializeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MessageDeserializeError::NotEnoughData(b, name) => {
-                write!(
-                    f,
-                    "not enough data to deserialize {name}: expected at least {b} more bytes"
-                )
-            }
-            MessageDeserializeError::UnsupportedMessageId(msg_id) => {
-                write!(f, "unsupported message id {msg_id}")
-            }
-            MessageDeserializeError::IncorrectLenPrefix {
-                received,
-                expected,
-                msg_id,
-            } => write!(
-                f,
-                "incorrect len prefix for message id {msg_id}, expected {expected}, received {received}"
-            ),
-            MessageDeserializeError::OtherBincode {
-                error,
-                msg_id,
-                name,
-                len_prefix,
-            } => write!(
-                f,
-                "error deserializing {name} (msg_id={msg_id}, len_prefix={len_prefix}): {error:#}"
-            ),
-            MessageDeserializeError::Other(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for MessageDeserializeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            MessageDeserializeError::OtherBincode { error, .. } => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<anyhow::Error> for MessageDeserializeError {
-    fn from(e: anyhow::Error) -> Self {
-        MessageDeserializeError::Other(e)
     }
 }
 
@@ -446,7 +411,12 @@ where
                 let expected_len = 12;
                 match rest.get(..expected_len) {
                     Some(b) => {
-                        let request = decoder_config.deserialize::<Request>(b).unwrap();
+                        let request = decoder_config.deserialize::<Request>(b).map_err(|e| {
+                            MessageDeserializeError::BincodeWithName {
+                                error: e,
+                                name: "MSGID_REQUEST",
+                            }
+                        })?;
                         let req = if msg_id == MSGID_REQUEST {
                             Message::Request(request)
                         } else {
@@ -555,11 +525,7 @@ impl Handshake<ByteBuf<'static>> {
             .first()
             .ok_or(MessageDeserializeError::NotEnoughData(1, "handshake"))?;
         if pstr_len as usize != PSTR_BT1.len() {
-            return Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                "pstr should be {} bytes long, but received {}",
-                PSTR_BT1.len(),
-                pstr_len
-            )));
+            return Err(MessageDeserializeError::InvalidPstr(pstr_len));
         }
         let expected_len = 1usize + pstr_len as usize + 48;
         let hbuf = b
@@ -568,13 +534,11 @@ impl Handshake<ByteBuf<'static>> {
                 expected_len,
                 "handshake",
             ))?;
-        let h = Self::bopts()
-            .deserialize::<Handshake<ByteBuf<'_>>>(hbuf)
-            .map_err(|e| MessageDeserializeError::Other(e.into()))?;
+        let h = Self::bopts().deserialize::<Handshake<ByteBuf<'_>>>(hbuf)?;
         if h.pstr.0 != PSTR_BT1.as_bytes() {
-            return Err(MessageDeserializeError::Other(anyhow::anyhow!(
-                "pstr doesn't match bittorrent V1"
-            )));
+            return Err(MessageDeserializeError::Text(
+                "pstr doesn't match bittorrent V1",
+            ));
         }
         Ok((h, expected_len))
     }

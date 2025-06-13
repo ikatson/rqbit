@@ -5,9 +5,11 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::serde_bencode_de::from_bytes;
+use crate::deserialize::from_bytes;
 
-pub fn dyn_from_bytes<'de, BufT>(buf: &'de [u8]) -> anyhow::Result<BencodeValue<BufT>>
+pub fn dyn_from_bytes<'de, BufT>(
+    buf: &'de [u8],
+) -> Result<BencodeValue<BufT>, crate::deserialize::Error>
 where
     BufT: From<&'de [u8]> + std::hash::Hash + Eq,
 {
@@ -176,7 +178,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::serde_bencode_ser::bencode_serialize_to_writer;
+    use crate::serialize::bencode_serialize_to_writer;
 
     use super::*;
     use serde::Serialize;

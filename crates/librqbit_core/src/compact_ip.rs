@@ -342,6 +342,12 @@ where
     Buf: AsRef<[u8]>,
     T: CompactSerialize + CompactSerializeFixedLen,
 {
+    pub fn new_from_buf(buf: Buf) -> Self {
+        Self {
+            buf,
+            _phantom: Default::default(),
+        }
+    }
     pub fn is_empty(&self) -> bool {
         self.buf.as_ref().is_empty()
     }
@@ -398,8 +404,19 @@ where
         D: serde::Deserializer<'de>,
     {
         let buf = Buf::deserialize(deserializer)?;
-        // TODO: we could check the len here is the exact multiple, but I don't know
-        // how to return the error without creating a custom visitor
+        let len = buf.as_ref().len();
+        if len % T::fixed_len() != 0 {
+            struct Exp(&'static str);
+            impl serde::de::Expected for Exp {
+                fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    write!(f, "an exact multiple of [{}]", self.0)
+                }
+            }
+            return Err(<D::Error as serde::de::Error>::invalid_length(
+                len,
+                &Exp(T::expecting()),
+            ));
+        }
         Ok(Self {
             buf,
             _phantom: Default::default(),
@@ -443,6 +460,78 @@ mod tests {
         bencode_serialize_to_writer(&l, &mut w).unwrap();
         let deserialized: CompactListInBuffer<ByteBuf, T> = bencode::from_bytes(&w).unwrap();
         assert_eq!(deserialized.iter().collect::<Vec<_>>(), input);
+    }
+
+    #[test]
+    fn test_invalid_compact_list() {
+        let err = bencode::from_bytes::<CompactListInBuffer<ByteBuf, SocketAddrV4>>(b"5:aaaaa")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(
+                "invalid length 5, expected an exact multiple of [6 bytes for SocketAddrV4]"
+            ),
+            "{}",
+            err
+        )
+    }
+
+    fn test_compact_one<A: CompactSerialize + Copy + PartialEq + Debug>(addr: A, data: &[u8]) {
+        let v = bencode::from_bytes::<Compact<A>>(data).unwrap();
+        assert_eq!(addr, v.0);
+    }
+
+    #[test]
+    fn test_compact() {
+        test_compact_one(Ipv4Addr::new(1, 2, 3, 4), b"4:\x01\x02\x03\x04");
+        test_compact_one(
+            Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8),
+            b"16:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08",
+        );
+        test_compact_one(IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4)), b"4:\x01\x02\x03\x04");
+        test_compact_one(
+            IpAddr::V6(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8)),
+            b"16:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08",
+        );
+
+        test_compact_one(
+            SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 1),
+            b"6:\x01\x02\x03\x04\x00\x01",
+        );
+        test_compact_one(
+            SocketAddrV6::new(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8), 1, 0, 0),
+            b"18:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08\x00\x01",
+        );
+        test_compact_one(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 1)),
+            b"6:\x01\x02\x03\x04\x00\x01",
+        );
+        test_compact_one(
+            SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8),
+                1,
+                0,
+                0,
+            )),
+            b"18:\x00\x01\x00\x02\x00\x03\x00\x04\x00\x05\x00\x06\x00\x07\x00\x08\x00\x01",
+        );
+    }
+
+    #[test]
+    fn test_compact_list() {
+        let addrs = bencode::from_bytes::<CompactListInBuffer<ByteBuf, SocketAddrV4>>(
+            b"12:\x00\x00\x00\x00\x00\xff\x01\x02\x03\x04\xaa\xaa",
+        )
+        .unwrap();
+        const FIRST: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 255);
+        const SECOND: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 43690);
+        assert_eq!(addrs.get(0), Some(FIRST));
+        assert_eq!(addrs.get(1), Some(SECOND));
+        assert_eq!(addrs.get(2), None);
+
+        assert_eq!(addrs.iter().next(), Some(FIRST));
+        assert_eq!(addrs.iter().nth(1), Some(SECOND));
+        assert_eq!(addrs.iter().nth(2), None);
     }
 
     #[test]
