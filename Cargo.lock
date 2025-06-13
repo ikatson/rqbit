@@ -2955,7 +2955,6 @@ dependencies = [
  "chrono",
  "dashmap 6.1.0",
  "futures",
- "hex 0.4.3",
  "indexmap 2.9.0",
  "leaky-bucket",
  "librqbit-bencode",

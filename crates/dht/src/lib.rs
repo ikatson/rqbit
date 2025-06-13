@@ -16,7 +16,7 @@ pub use persistence::{PersistentDht, PersistentDhtConfig};
 pub type Dht = Arc<DhtState>;
 
 // How long do we wait for a response from a DHT node.
-pub(crate) const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 // TODO: Not sure if we should re-query tbh.
 pub(crate) const REQUERY_INTERVAL: Duration = Duration::from_secs(60);
 // After how long we consider a routing table node questionable.
