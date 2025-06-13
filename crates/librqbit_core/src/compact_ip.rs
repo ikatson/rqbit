@@ -3,7 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
-use buffers::{ByteBuf, ByteBufOwned};
+use buffers::ByteBufOwned;
 use bytes::BytesMut;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
@@ -404,19 +404,24 @@ where
         D: serde::Deserializer<'de>,
     {
         let buf = Buf::deserialize(deserializer)?;
-        // TODO: we could check the len here is the exact multiple, but I don't know
-        // how to return the error without creating a custom visitor
+        let len = buf.as_ref().len();
+        if len % T::fixed_len() != 0 {
+            struct Exp(&'static str);
+            impl serde::de::Expected for Exp {
+                fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    write!(f, "an exact multiple of [{}]", self.0)
+                }
+            }
+            return Err(<D::Error as serde::de::Error>::invalid_length(
+                len,
+                &Exp(T::expecting()),
+            ));
+        }
         Ok(Self {
             buf,
             _phantom: Default::default(),
         })
     }
-}
-
-pub fn test_asm(buf: &[u8]) -> SocketAddrV6 {
-    let v: CompactListInBuffer<ByteBuf, SocketAddrV6> =
-        unsafe { bencode::from_bytes(buf).unwrap_unchecked() };
-    unsafe { v.get(3).unwrap_unchecked() }
 }
 
 #[cfg(test)]
@@ -455,6 +460,20 @@ mod tests {
         bencode_serialize_to_writer(&l, &mut w).unwrap();
         let deserialized: CompactListInBuffer<ByteBuf, T> = bencode::from_bytes(&w).unwrap();
         assert_eq!(deserialized.iter().collect::<Vec<_>>(), input);
+    }
+
+    #[test]
+    fn test_invalid_compact_list() {
+        let err = bencode::from_bytes::<CompactListInBuffer<ByteBuf, SocketAddrV4>>(b"5:aaaaa")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(
+                "invalid length 5, expected an exact multiple of [6 bytes for SocketAddrV4]"
+            ),
+            "{}",
+            err
+        )
     }
 
     #[test]
