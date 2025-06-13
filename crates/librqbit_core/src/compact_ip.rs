@@ -3,7 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
-use buffers::ByteBufOwned;
+use buffers::{ByteBuf, ByteBufOwned};
 use bytes::BytesMut;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
@@ -411,6 +411,12 @@ where
             _phantom: Default::default(),
         })
     }
+}
+
+pub fn test_asm(buf: &[u8]) -> SocketAddrV6 {
+    let v: CompactListInBuffer<ByteBuf, SocketAddrV6> =
+        unsafe { bencode::from_bytes(buf).unwrap_unchecked() };
+    unsafe { v.get(3).unwrap_unchecked() }
 }
 
 #[cfg(test)]

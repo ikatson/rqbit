@@ -1,3 +1,4 @@
+use anyhow::Context;
 use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
@@ -111,10 +112,12 @@ impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
         })?;
 
         match emsg_id {
-            0 => Ok(ExtendedMessage::Handshake(from_bytes(buf)?)),
-            MY_EXTENDED_UT_METADATA => {
-                Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(buf)?))
-            }
+            0 => Ok(ExtendedMessage::Handshake(
+                from_bytes(buf).context("handshake")?,
+            )),
+            MY_EXTENDED_UT_METADATA => Ok(ExtendedMessage::UtMetadata(
+                UtMetadata::deserialize(buf).context("UtMetadata")?,
+            )),
             MY_EXTENDED_UT_PEX => Ok(ExtendedMessage::UtPex(from_bytes(buf)?)),
             _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(buf)?)),
         }

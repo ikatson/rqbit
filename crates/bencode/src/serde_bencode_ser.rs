@@ -115,7 +115,6 @@ impl<W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'_, W> {
         key.serialize(&mut ser)?;
         self.last_key.replace(ByteBufOwned::from(buf));
         Ok(())
-        // key.serialize(&mut *self.ser);
     }
 
     fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>

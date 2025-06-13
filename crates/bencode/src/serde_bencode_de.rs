@@ -77,17 +77,14 @@ impl<'de> BencodeDeserializer<'de> {
     }
 }
 
-pub fn from_bytes<'a, T>(buf: &'a [u8]) -> anyhow::Result<T>
+pub fn from_bytes<'a, T>(buf: &'a [u8]) -> Result<T, Error>
 where
     T: serde::de::Deserialize<'a>,
 {
     let mut de = BencodeDeserializer::new_from_buf(buf);
     let v = T::deserialize(&mut de)?;
     if !de.buf.is_empty() {
-        anyhow::bail!(
-            "deserialized successfully, but {} bytes remaining",
-            de.buf.len()
-        )
+        return Err(Error::new(ErrorKind::BytesRemaining(de.buf.len())));
     }
     Ok(v)
 }
@@ -102,6 +99,8 @@ enum ErrorKind {
     Custom(String),
     #[error("expected 0 or 1 for boolean, got {0}")]
     InvalidBool(i64),
+    #[error("deserialized successfully, but {0} bytes remaining")]
+    BytesRemaining(usize),
 }
 
 #[derive(Debug, Default)]
@@ -129,24 +128,6 @@ pub struct Error {
     kind: ErrorKind,
     context: ErrorContext,
 }
-
-// impl std::fmt::Display for ErrorKind {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             ErrorKind::Other(err) => err.fmt(f),
-//             ErrorKind::NotSupported(s) => write!(f, "{s} is not supported by bencode"),
-//             ErrorKind::InvalidListExpectedColon => {
-//                 write!(f, "invalid bencode list: expected colon")
-//             }
-//             ErrorKind::InvalidListExpectedInt => {
-//                 write!(f, "invalid bencode list: expected integer length")
-//             }
-//             ErrorKind::InvalidListNotEnoughData => {
-//                 write!(f, "invalid bencode list: not enough data")
-//             }
-//         }
-//     }
-// }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -7,7 +7,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::serde_bencode_de::from_bytes;
 
-pub fn dyn_from_bytes<'de, BufT>(buf: &'de [u8]) -> anyhow::Result<BencodeValue<BufT>>
+pub fn dyn_from_bytes<'de, BufT>(
+    buf: &'de [u8],
+) -> Result<BencodeValue<BufT>, crate::serde_bencode_de::Error>
 where
     BufT: From<&'de [u8]> + std::hash::Hash + Eq,
 {

@@ -55,6 +55,7 @@ pub const MY_EXTENDED_UT_PEX: u8 = 1;
 pub enum MessageDeserializeError {
     NotEnoughData(usize, &'static str),
     UnsupportedMessageId(u8),
+    Deserialize(bencode::Error),
     IncorrectLenPrefix {
         received: u32,
         expected: u32,
@@ -67,6 +68,12 @@ pub enum MessageDeserializeError {
         name: &'static str,
     },
     Other(anyhow::Error),
+}
+
+impl From<bencode::Error> for MessageDeserializeError {
+    fn from(value: bencode::Error) -> Self {
+        Self::Deserialize(value)
+    }
 }
 
 pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize {
@@ -175,6 +182,7 @@ impl std::fmt::Display for MessageDeserializeError {
                 "error deserializing {name} (msg_id={msg_id}, len_prefix={len_prefix}): {error:#}"
             ),
             MessageDeserializeError::Other(e) => write!(f, "{e}"),
+            MessageDeserializeError::Deserialize(e) => write!(f, "{e}"),
         }
     }
 }
