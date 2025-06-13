@@ -342,6 +342,12 @@ where
     Buf: AsRef<[u8]>,
     T: CompactSerialize + CompactSerializeFixedLen,
 {
+    pub fn new_from_buf(buf: Buf) -> Self {
+        Self {
+            buf,
+            _phantom: Default::default(),
+        }
+    }
     pub fn is_empty(&self) -> bool {
         self.buf.as_ref().is_empty()
     }
