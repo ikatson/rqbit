@@ -103,6 +103,10 @@ pub enum Error {
     InvalidBool(i64),
     #[error("deserialized successfully, but {0} bytes remaining")]
     BytesRemaining(usize),
+    #[error("invalid length: ")]
+    InvalidLength(usize),
+    #[error("invalid value")]
+    InvalidValue,
 }
 
 impl Error {
@@ -117,6 +121,14 @@ impl serde::de::Error for Error {
         T: std::fmt::Display,
     {
         Self::Custom(Box::new(msg.to_string().into_boxed_str()))
+    }
+
+    fn invalid_length(len: usize, _exp: &dyn serde::de::Expected) -> Self {
+        Self::InvalidLength(len)
+    }
+
+    fn invalid_value(_unexp: serde::de::Unexpected, _exp: &dyn serde::de::Expected) -> Self {
+        Self::InvalidValue
     }
 }
 

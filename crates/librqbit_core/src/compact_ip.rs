@@ -284,7 +284,8 @@ impl<'de, T: CompactSerialize> Deserialize<'de> for Compact<T> {
             {
                 match T::from_slice(v) {
                     Some(v) => Ok(Compact(v)),
-                    None => Err(E::custom(T::expecting())),
+                    // "custom" allocates, so call invalid_length which has an override
+                    None => Err(E::invalid_length(v.len(), &"invalid")),
                 }
             }
         }
