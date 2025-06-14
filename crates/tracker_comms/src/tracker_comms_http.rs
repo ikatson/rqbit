@@ -1,12 +1,17 @@
+use bencode::BencodeValue;
 use buffers::ByteBuf;
-use serde::{Deserialize, Deserializer};
+use itertools::Either;
+use serde::{Deserialize, Deserializer, de::Unexpected};
 use std::{
     marker::PhantomData,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
 };
 
-use librqbit_core::hash_id::Id20;
+use librqbit_core::{
+    compact_ip::{CompactListInBuffer, CompactSerialize, CompactSerializeFixedLen},
+    hash_id::Id20,
+};
 
 #[derive(Clone, Copy)]
 pub enum TrackerRequestEvent {
@@ -40,37 +45,66 @@ pub struct TrackerError<'a> {
     pub failure_reason: ByteBuf<'a>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct DictPeer<'a> {
-    #[serde(deserialize_with = "deserialize_ip_string")]
-    ip: IpAddr,
-    #[serde(borrow)]
-    #[allow(dead_code)]
-    peer_id: Option<ByteBuf<'a>>,
-    port: u16,
+pub enum Peers<'a, AddrType> {
+    DictPeers(Vec<SocketAddr>),
+    Compact(CompactListInBuffer<ByteBuf<'a>, AddrType>),
 }
 
-impl DictPeer<'_> {
-    fn as_sockaddr(&self) -> SocketAddr {
-        SocketAddr::new(self.ip, self.port)
+impl<'a, AddrType> std::fmt::Debug for Peers<'a, AddrType>
+where
+    AddrType:
+        std::fmt::Debug + CompactSerialize + CompactSerializeFixedLen + Copy + Into<SocketAddr>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Peers<const IPV6: bool> {
-    addrs: Vec<SocketAddr>,
+impl<'a, AddrType> Default for Peers<'a, AddrType> {
+    fn default() -> Self {
+        Self::DictPeers(Default::default())
+    }
 }
 
-impl<'de, const IPV6: bool> serde::de::Deserialize<'de> for Peers<IPV6> {
+impl<'a, AddrType> Peers<'a, AddrType>
+where
+    AddrType: CompactSerialize + CompactSerializeFixedLen + Copy + Into<SocketAddr>,
+{
+    fn iter(&self) -> impl Iterator<Item = SocketAddr> {
+        match self {
+            Peers::DictPeers(a) => Either::Left(a.iter().copied()),
+            Peers::Compact(l) => Either::Right(l.iter().map(Into::into)),
+        }
+    }
+}
+
+impl<'a, 'de, AddrType> serde::de::Deserialize<'de> for Peers<'a, AddrType>
+where
+    AddrType: CompactSerialize + CompactSerializeFixedLen + Into<SocketAddr> + 'static,
+    'de: 'a,
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        struct Visitor<'de, const IPV6: bool> {
-            phantom: std::marker::PhantomData<&'de ()>,
+        #[derive(Deserialize)]
+        struct DictPeer<'a> {
+            #[serde(borrow)]
+            ip: ByteBuf<'a>,
+            #[allow(dead_code)]
+            peer_id: Option<ByteBuf<'a>>,
+            port: u16,
         }
-        impl<'de, const IPV6: bool> serde::de::Visitor<'de> for Visitor<'de, IPV6> {
-            type Value = Peers<IPV6>;
+
+        struct Visitor<'a, 'de, AddrType> {
+            phantom: std::marker::PhantomData<&'de AddrType>,
+            phantom2: std::marker::PhantomData<&'a ()>,
+        }
+        impl<'a, 'de, AddrType> serde::de::Visitor<'de> for Visitor<'a, 'de, AddrType>
+        where
+            AddrType: CompactSerialize + CompactSerializeFixedLen + Into<SocketAddr>,
+        {
+            type Value = Peers<'de, AddrType>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a list of peers in dict or binary format")
@@ -80,67 +114,45 @@ impl<'de, const IPV6: bool> serde::de::Deserialize<'de> for Peers<IPV6> {
             where
                 A: serde::de::SeqAccess<'de>,
             {
-                let mut peers = Vec::new();
+                let mut addrs = Vec::new();
                 while let Some(peer) = seq.next_element::<DictPeer>()? {
-                    peers.push(peer.as_sockaddr())
+                    let ip = std::str::from_utf8(peer.ip.as_ref())
+                        .ok()
+                        .and_then(|s| IpAddr::from_str(s).ok())
+                        .ok_or_else(|| {
+                            <A::Error as serde::de::Error>::invalid_value(
+                                Unexpected::Bytes(peer.ip.as_ref()),
+                                &"ip",
+                            )
+                        })?;
+                    addrs.push(SocketAddr::from((ip, peer.port)))
                 }
-                Ok(Peers { addrs: peers })
+                Ok(Peers::DictPeers(addrs))
             }
 
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let (k, v) = map
+                    .next_entry::<BencodeValue<ByteBuf>, BencodeValue<ByteBuf>>()
+                    .unwrap()
+                    .unwrap();
+                panic!("key={k:?} value={v:?}")
+            }
+
+            fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                Ok(Peers {
-                    addrs: parse_compact_peers::<IPV6>(v),
-                })
+                Ok(Peers::Compact(CompactListInBuffer::new_from_buf(v.into())))
             }
         }
         deserializer.deserialize_any(Visitor {
             phantom: PhantomData,
+            phantom2: PhantomData,
         })
     }
-}
-
-fn deserialize_ip_string<'de, D>(de: D) -> Result<IpAddr, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct Visitor;
-    impl serde::de::Visitor<'_> for Visitor {
-        type Value = IpAddr;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("expecting an IPv4 address")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            IpAddr::from_str(v).map_err(|e| E::custom(format!("cannot parse ip: {e}")))
-        }
-    }
-    de.deserialize_str(Visitor {})
-}
-
-fn parse_compact_peers<const IPV6: bool>(b: &[u8]) -> Vec<SocketAddr> {
-    let mut ips = Vec::new();
-    const PORT_LEN: usize = 2;
-    let ip_len: usize = if IPV6 { 16 } else { 4 };
-    for chunk in b.chunks_exact(ip_len + PORT_LEN) {
-        let addr = if IPV6 {
-            let ip = IpAddr::from(TryInto::<[u8; 16]>::try_into(&chunk[..16]).unwrap());
-            let port = u16::from_be_bytes(chunk[16..18].try_into().unwrap());
-            SocketAddr::new(ip, port)
-        } else {
-            let ip = IpAddr::from(TryInto::<[u8; 4]>::try_into(&chunk[..4]).unwrap());
-            let port = u16::from_be_bytes(chunk[4..6].try_into().unwrap());
-            SocketAddr::new(ip, port)
-        };
-        ips.push(addr);
-    }
-    ips
 }
 
 #[derive(Deserialize, Debug)]
@@ -160,18 +172,15 @@ pub struct TrackerResponse<'a> {
     #[allow(dead_code)]
     #[serde(default)]
     pub incomplete: u64,
-    pub peers: Peers<false>,
-    #[serde(default)]
-    pub peers6: Peers<true>,
+    #[serde(borrow)]
+    pub peers: Peers<'a, SocketAddrV4>,
+    #[serde(default, borrow)]
+    pub peers6: Peers<'a, SocketAddrV6>,
 }
 
 impl TrackerResponse<'_> {
     pub fn iter_peers(&self) -> impl Iterator<Item = SocketAddr> {
-        self.peers
-            .addrs
-            .iter()
-            .copied()
-            .chain(self.peers6.addrs.iter().copied())
+        self.peers.iter().chain(self.peers6.iter())
     }
 }
 
@@ -248,21 +257,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_tracker_response() {
+    fn test_parse_tracker_response_compact() {
         let data = b"d8:intervali1800e5:peers6:iiiipp6:peers618:iiiiiiiiiiiiiiiippe";
         let response = bencode::from_bytes::<TrackerResponse>(data).unwrap();
-        assert_eq!(
-            response.peers.addrs,
-            vec!["105.105.105.105:28784".parse().unwrap()]
-        );
-        assert_eq!(
-            response.peers6.addrs,
-            vec![
-                "[6969:6969:6969:6969:6969:6969:6969:6969]:28784"
-                    .parse()
-                    .unwrap()
-            ]
-        );
         assert_eq!(
             response.iter_peers().collect::<Vec<_>>(),
             vec![
@@ -273,5 +270,21 @@ mod tests {
             ]
         );
         dbg!(response);
+    }
+
+    #[test]
+    fn parse_peers_dict() {
+        let buf = b"ld2:ip9:127.0.0.14:porti100eed2:ip39:6969:6969:6969:6969:6969:6969:6969:69694:porti101eee";
+        dbg!(bencode::dyn_from_bytes::<ByteBuf>(buf).unwrap());
+        let peers = bencode::from_bytes::<Peers<SocketAddrV4>>(buf).unwrap();
+        assert_eq!(
+            peers.iter().collect::<Vec<_>>(),
+            vec![
+                "127.0.0.1:100".parse().unwrap(),
+                "[6969:6969:6969:6969:6969:6969:6969:6969]:101"
+                    .parse()
+                    .unwrap()
+            ]
+        );
     }
 }

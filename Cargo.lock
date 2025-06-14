@@ -3044,6 +3044,7 @@ dependencies = [
  "backon",
  "byteorder",
  "futures",
+ "itertools 0.14.0",
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-core",
