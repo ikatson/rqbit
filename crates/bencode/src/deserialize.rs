@@ -34,12 +34,12 @@ impl<'de> BencodeDeserializer<'de> {
             Some(end) => {
                 let intbytes = &self.buf[1..end];
                 let value: i64 = atoi::atoi(intbytes)
-                    .ok_or_else(|| Error::new_str("invalid int").set_context(self))?;
+                    .ok_or_else(|| Error::new_str(&"invalid int").set_context(self))?;
                 let rem = self.buf.get(end + 1..).unwrap_or_default();
                 self.buf = rem;
                 Ok(value)
             }
-            None => Err(Error::new_str("error parsing integer: eof").set_context(self)),
+            None => Err(Error::new_str(&"error parsing integer: eof").set_context(self)),
         }
     }
 
@@ -48,18 +48,18 @@ impl<'de> BencodeDeserializer<'de> {
             Some(length_delim) => {
                 let lenbytes = &self.buf[..length_delim];
                 let length: usize = atoi::atoi(lenbytes).ok_or_else(|| {
-                    Error::new_str("invalid list: expected int length").set_context(self)
+                    Error::new_str(&"invalid list: expected int length").set_context(self)
                 })?;
                 let bytes_start = length_delim + 1;
                 let bytes_end = bytes_start + length;
                 let bytes = &self.buf.get(bytes_start..bytes_end).ok_or_else(|| {
-                    Error::new_str("invalid list: not enough data").set_context(self)
+                    Error::new_str(&"invalid list: not enough data").set_context(self)
                 })?;
                 let rem = self.buf.get(bytes_end..).unwrap_or_default();
                 self.buf = rem;
                 Ok(bytes)
             }
-            None => Err(Error::new_str("invalid list: expected colon").set_context(self)),
+            None => Err(Error::new_str(&"invalid list: expected colon").set_context(self)),
         }
     }
 
@@ -67,9 +67,9 @@ impl<'de> BencodeDeserializer<'de> {
         match self.buf.first().copied() {
             Some(b'0'..=b'9') => {}
             Some(_) => {
-                return Err(Error::new_str("invalid list: expected int").set_context(self));
+                return Err(Error::new_str(&"invalid list: expected int").set_context(self));
             }
-            None => return Err(Error::new_str("invalist list: unexpected eof").set_context(self)),
+            None => return Err(Error::new_str(&"invalist list: unexpected eof").set_context(self)),
         };
         let b = self.parse_bytes()?;
         if self.parsing_key && self.field_context.try_push(ByteBuf(b)).is_err() {
@@ -94,11 +94,11 @@ where
 #[derive(thiserror::Error, Debug)]
 enum ErrorKind {
     #[error("{0} is not supported by bencode")]
-    NotSupported(&'static str),
+    NotSupported(&'static &'static str),
     #[error("{0}")]
-    StaticStr(&'static str),
+    StaticStr(&'static &'static str),
     #[error("{0}")]
-    Custom(String),
+    Custom(Box<Box<str>>), // double box to reduce size
     #[error("expected 0 or 1 for boolean, got {0}")]
     InvalidBool(i64),
     #[error("deserialized successfully, but {0} bytes remaining")]
@@ -147,7 +147,7 @@ impl Error {
         }
     }
 
-    fn new_str(msg: &'static str) -> Self {
+    fn new_str(msg: &'static &'static str) -> Self {
         Self::new(ErrorKind::StaticStr(msg))
     }
 
@@ -165,7 +165,7 @@ impl serde::de::Error for Error {
         T: std::fmt::Display,
     {
         Self {
-            kind: ErrorKind::Custom(msg.to_string()),
+            kind: ErrorKind::Custom(Box::new(msg.to_string().into_boxed_str())),
             context: Default::default(),
         }
     }
@@ -183,7 +183,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
             Some(b'i') => self.deserialize_u64(visitor),
             Some(b'l') => self.deserialize_seq(visitor),
             Some(_) => self.deserialize_bytes(visitor),
-            None => Err(Error::new_str("empty input").set_context(self)),
+            None => Err(Error::new_str(&"empty input").set_context(self)),
         }
     }
 
@@ -192,7 +192,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         if !self.buf.starts_with(b"i") {
-            return Err(Error::new_str("expected bencode int to represent bool").set_context(self));
+            return Err(Error::new_str(&"expected bencode int to represent bool").set_context(self));
         }
         let value = self.parse_integer()?;
         if value > 1 {
@@ -229,7 +229,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         if !self.buf.starts_with(b"i") {
-            return Err(Error::new_str("expected bencode int").set_context(self));
+            return Err(Error::new_str(&"expected bencode int").set_context(self));
         }
         visitor
             .visit_i64(self.parse_integer()?)
@@ -268,21 +268,27 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::new(ErrorKind::NotSupported("bencode doesn't support floats")).set_context(self))
+        Err(
+            Error::new(ErrorKind::NotSupported(&"bencode doesn't support floats"))
+                .set_context(self),
+        )
     }
 
     fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::new(ErrorKind::NotSupported("bencode doesn't support floats")).set_context(self))
+        Err(
+            Error::new(ErrorKind::NotSupported(&"bencode doesn't support floats"))
+                .set_context(self),
+        )
     }
 
     fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::new(ErrorKind::NotSupported("bencode doesn't support chars")).set_context(self))
+        Err(Error::new(ErrorKind::NotSupported(&"bencode doesn't support chars")).set_context(self))
     }
 
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -292,16 +298,16 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         let first = match self.buf.first().copied() {
             Some(first) => first,
             None => {
-                return Err(Error::new_str("expected bencode string, got EOF").set_context(self));
+                return Err(Error::new_str(&"expected bencode string, got EOF").set_context(self));
             }
         };
         match first {
             b'0'..=b'9' => {}
-            _ => return Err(Error::new_str("expected bencode string").set_context(self)),
+            _ => return Err(Error::new_str(&"expected bencode string").set_context(self)),
         }
         let b = self.parse_bytes()?;
         let s = std::str::from_utf8(b)
-            .map_err(|_| Error::new_str("invalid utf-8").set_context(self))?;
+            .map_err(|_| Error::new_str(&"invalid utf-8").set_context(self))?;
         visitor
             .visit_borrowed_str(s)
             .map_err(|e: Self::Error| e.set_context(self))
@@ -345,7 +351,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         Err(Error::new(ErrorKind::NotSupported(
-            "bencode doesn't support unit types",
+            &"bencode doesn't support unit types",
         ))
         .set_context(self))
     }
@@ -359,7 +365,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         Err(Error::new(ErrorKind::NotSupported(
-            "bencode doesn't support unit structs",
+            &"bencode doesn't support unit structs",
         ))
         .set_context(self))
     }
@@ -373,7 +379,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         Err(
-            Error::new(ErrorKind::NotSupported("bencode doesn't newtype structs"))
+            Error::new(ErrorKind::NotSupported(&"bencode doesn't newtype structs"))
                 .set_context(self),
         )
     }
@@ -383,7 +389,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         if !self.buf.starts_with(b"l") {
-            return Err(Error::new_str("expected \"l\" as start of list").set_context(self));
+            return Err(Error::new_str(&"expected \"l\" as start of list").set_context(self));
         }
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor
@@ -415,7 +421,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
         V: serde::de::Visitor<'de>,
     {
         if !self.buf.starts_with(b"d") {
-            return Err(Error::new_str("expected bencode dict"));
+            return Err(Error::new_str(&"expected bencode dict"));
         }
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor
@@ -444,10 +450,10 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(
-            Error::new(ErrorKind::NotSupported("deserializing enums not supported"))
-                .set_context(self),
-        )
+        Err(Error::new(ErrorKind::NotSupported(
+            &"deserializing enums not supported",
+        ))
+        .set_context(self))
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
