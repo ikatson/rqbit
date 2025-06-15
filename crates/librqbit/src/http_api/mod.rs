@@ -8,7 +8,6 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use http::{HeaderMap, StatusCode};
 use librqbit_dualstack_sockets::TcpListener;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
 use tracing::{Span, debug, error_span, info};
@@ -166,11 +165,11 @@ impl HttpApi {
                     .make_span_with(|req: &Request| {
                         let method = req.method();
                         let uri = req.uri();
-                        if let Some(ConnectInfo(addr)) =
-                            req.extensions().get::<ConnectInfo<SocketAddr>>()
+                        if let Some(ConnectInfo(addr)) = req
+                            .extensions()
+                            .get::<ConnectInfo<librqbit_dualstack_sockets::WrappedSocketAddr>>()
                         {
-                            let addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
-                            error_span!("request", %method, %uri, %addr)
+                            error_span!("request", %method, %uri, addr=%addr.0)
                         } else {
                             error_span!("request", %method, %uri)
                         }
@@ -191,7 +190,7 @@ impl HttpApi {
                         }
                     }),
             )
-            .into_make_service_with_connect_info::<SocketAddr>();
+            .into_make_service_with_connect_info::<librqbit_dualstack_sockets::WrappedSocketAddr>();
 
         async move {
             axum::serve(listener, app)

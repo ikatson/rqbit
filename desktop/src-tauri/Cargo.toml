@@ -34,6 +34,7 @@ parking_lot = "0.12.1"
 gethostname = "1"
 tauri-plugin-shell = "2"
 metrics-exporter-prometheus = { version = "0.16", default-features = false }
+librqbit-dualstack-sockets = "0.3.1"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

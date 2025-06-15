@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -94,11 +94,7 @@ struct Opts {
     ///
     /// If unspecisifed, "rqbit server" will listen on [::1]:3030, and "rqbit download" will listen
     /// on an ephemeral port that it will print.
-    #[arg(
-        long = "http-api-listen-addr",
-        default_value = "127.0.0.1:3030",
-        env = "RQBIT_HTTP_API_LISTEN_ADDR"
-    )]
+    #[arg(long = "http-api-listen-addr", env = "RQBIT_HTTP_API_LISTEN_ADDR")]
     http_api_listen_addr: Option<SocketAddr>,
 
     /// Allow creating torrents via HTTP API
@@ -811,13 +807,12 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         ..Default::default()
                     }),
                 );
-                let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
-                let listener = tokio::net::TcpListener::bind(http_api_listen_addr)
-                    .await
-                    .with_context(|| {
+                let http_api_listen_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 0);
+                let listener =
+                    TcpListener::bind_tcp(http_api_listen_addr, true).with_context(|| {
                         format!("error binding HTTP server to {http_api_listen_addr}")
                     })?;
-                let http_api_listen_addr = listener.local_addr()?;
+                let http_api_listen_addr = listener.bind_addr();
                 info!("started HTTP API at http://{http_api_listen_addr}");
                 librqbit_spawn(
                     "http_api",
