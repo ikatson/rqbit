@@ -265,8 +265,8 @@ impl TrackerComms {
     ) -> anyhow::Result<Duration> {
         let stats = self.stats.get();
         let request = tracker_comms_http::TrackerRequest {
-            info_hash: self.info_hash,
-            peer_id: self.peer_id,
+            info_hash: &self.info_hash,
+            peer_id: &self.peer_id,
             port: self.announce_port,
             uploaded: stats.uploaded_bytes,
             downloaded: stats.downloaded_bytes,
@@ -276,7 +276,7 @@ impl TrackerComms {
             event,
             ip: None,
             numwant: None,
-            key: Some(self.key.to_string()),
+            key: Some(self.key),
             trackerid: None,
         };
 

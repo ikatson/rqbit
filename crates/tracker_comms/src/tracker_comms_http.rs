@@ -21,9 +21,9 @@ pub enum TrackerRequestEvent {
     Completed,
 }
 
-pub struct TrackerRequest {
-    pub info_hash: Id20,
-    pub peer_id: Id20,
+pub struct TrackerRequest<'a> {
+    pub info_hash: &'a Id20,
+    pub peer_id: &'a Id20,
     pub event: Option<TrackerRequestEvent>,
     pub port: u16,
     pub uploaded: u64,
@@ -34,8 +34,8 @@ pub struct TrackerRequest {
 
     pub ip: Option<IpAddr>,
     pub numwant: Option<usize>,
-    pub key: Option<String>,
-    pub trackerid: Option<String>,
+    pub key: Option<u32>,
+    pub trackerid: Option<&'a str>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -160,7 +160,7 @@ impl TrackerResponse<'_> {
     }
 }
 
-impl TrackerRequest {
+impl TrackerRequest<'_> {
     pub fn as_querystring(&self) -> String {
         use std::fmt::Write;
         use urlencoding as u;
@@ -211,12 +211,10 @@ mod tests {
         let info_hash = Id20::new([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
-        let peer_id = Id20::new([
-            1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        ]);
+        let peer_id = info_hash;
         let request = TrackerRequest {
-            info_hash,
-            peer_id,
+            info_hash: &info_hash,
+            peer_id: &peer_id,
             port: 6881,
             uploaded: 0,
             downloaded: 0,
