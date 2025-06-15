@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -92,7 +92,7 @@ struct Opts {
 
     /// The listen address for HTTP API.
     ///
-    /// If unspecisifed, "rqbit server" will listen on [::1]:3030, and "rqbit download" will listen
+    /// If unspecisifed, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download" will listen
     /// on an ephemeral port that it will print.
     #[arg(long = "http-api-listen-addr", env = "RQBIT_HTTP_API_LISTEN_ADDR")]
     http_api_listen_addr: Option<SocketAddr>,
@@ -631,7 +631,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             ServerSubcommand::Start(start_opts) => {
                 let http_api_listen_addr = opts
                     .http_api_listen_addr
-                    .unwrap_or(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 3030));
+                    .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3030));
 
                 if !start_opts.disable_persistence {
                     if let Some(p) = start_opts.persistence_location.as_ref() {
@@ -808,7 +808,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         ..Default::default()
                     }),
                 );
-                let http_api_listen_addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 0);
+                let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
                 let listener =
                     TcpListener::bind_tcp(http_api_listen_addr, true).with_context(|| {
                         format!("error binding HTTP server to {http_api_listen_addr}")
