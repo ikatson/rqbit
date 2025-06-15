@@ -147,12 +147,10 @@ struct Opts {
     enable_utp_listen: bool,
 
     /// The port to listen for incoming connections (applies to both TCP and uTP).
-    #[arg(
-        long = "listen-port",
-        default_value = "4240",
-        env = "RQBIT_LISTEN_PORT"
-    )]
-    listen_port: u16,
+    ///
+    /// Defaults to 4240 for the server, and for ephemeral for "rqbit download".
+    #[arg(long = "listen-port", env = "RQBIT_LISTEN_PORT")]
+    listen_port: Option<u16>,
 
     /// What's the IP to listen on. Default is to listen on all interfaces on IPv4 and IPv6.
     #[arg(long = "listen-ip", default_value = "::", env = "RQBIT_LISTEN_IP")]
@@ -511,7 +509,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     };
     let listen = listen_mode.map(|mode| ListenerOptions {
         mode,
-        listen_addr: (opts.listen_ip, opts.listen_port).into(),
+        listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(4240)).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         ..Default::default()
     });
@@ -762,15 +760,18 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 // We are creating ephemeral ports, no point in port forwarding.
                 listen.enable_upnp_port_forwarding = false;
 
-                // Find a free random port. It needs to be the same for TCP and UDP, as we announce that port
+                // If the user hasn't specified a specific port, find a free random port.
+                // It needs to be the same for TCP and UDP, as we announce that port
                 // to trackers and DHT.
-                let mut addr = listen.listen_addr;
-                addr.set_port(0);
-                let ephemeral_port = std::net::TcpListener::bind(addr)
-                    .and_then(|l| l.local_addr())
-                    .context("failed finding an ephemeral TCP/UDP listen port to use")?
-                    .port();
-                listen.listen_addr.set_port(ephemeral_port);
+                if opts.listen_port.is_none() {
+                    let mut addr = listen.listen_addr;
+                    addr.set_port(0);
+                    let ephemeral_port = std::net::TcpListener::bind(addr)
+                        .and_then(|l| l.local_addr())
+                        .context("failed finding an ephemeral TCP/UDP listen port to use")?
+                        .port();
+                    listen.listen_addr.set_port(ephemeral_port);
+                }
             }
 
             let torrent_opts = || AddTorrentOptions {
