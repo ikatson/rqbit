@@ -89,6 +89,10 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
                 .event_format(fmt::format().with_ansi(false).json())
                 .with_writer(line_sub)
+                .with_filter(tracing_subscriber::filter::filter_fn({
+                    let line_broadcast = line_broadcast.clone();
+                    move |_| line_broadcast.receiver_count() > 0
+                }))
                 .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
         );
 

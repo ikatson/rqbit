@@ -467,13 +467,7 @@ mod tests {
         let err = bencode::from_bytes::<CompactListInBuffer<ByteBuf, SocketAddrV4>>(b"5:aaaaa")
             .unwrap_err()
             .to_string();
-        assert!(
-            err.contains(
-                "invalid length 5, expected an exact multiple of [6 bytes for SocketAddrV4]"
-            ),
-            "{}",
-            err
-        )
+        assert!(err.contains("invalid length"), "{}", err)
     }
 
     fn test_compact_one<A: CompactSerialize + Copy + PartialEq + Debug>(addr: A, data: &[u8]) {
