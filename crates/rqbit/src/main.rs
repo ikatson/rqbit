@@ -272,14 +272,6 @@ struct ServerStartOptions {
     #[arg(long = "fastresume", env = "RQBIT_FASTRESUME")]
     fastresume: bool,
 
-    /// Enable prometheus exporter endpoint at HTTP_API_LISTEN_ADDR:3030/metrics
-    #[cfg(feature = "prometheus")]
-    #[arg(
-        long = "enable-prometheus-exporter",
-        env = "RQBIT_ENABLE_PROMETHEUS_EXPORTER"
-    )]
-    enable_prometheus_exporter: bool,
-
     /// The folder to watch for added .torrent files. All files in this folder will be automatically added
     /// to the session.
     #[arg(long = "watch-folder", env = "RQBIT_WATCH_FOLDER")]
@@ -663,7 +655,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 };
 
                 // We need to install prometheus recorder early before we registered any metrics.
-                if cfg!(feature = "prometheus") && start_opts.enable_prometheus_exporter {
+                if cfg!(feature = "prometheus") {
                     match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
                         Ok(handle) => {
                             http_api_opts.prometheus_handle = Some(handle);
