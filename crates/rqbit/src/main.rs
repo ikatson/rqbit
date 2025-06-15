@@ -753,18 +753,22 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 anyhow::bail!("you must provide at least one URL to download")
             }
 
-            // TODO: probably move options irrelevant for "download" to server start
+            // "rqbit download" is ephemeral, so disable all persistence.
             sopts.disable_dht_persistence = true;
             sopts.persistence = None;
+
             if let Some(listen) = sopts.listen.as_mut() {
                 // We are creating ephemeral ports, no point in port forwarding.
                 listen.enable_upnp_port_forwarding = false;
 
-                // Find a free random port. It needs to be the same for TCP and UDP, and the session
-                // doesn't accept "0"
+                // Find a free random port. It needs to be the same for TCP and UDP, as we announce that port
+                // to trackers and DHT.
                 let mut addr = listen.listen_addr;
                 addr.set_port(0);
-                let ephemeral_port = std::net::TcpListener::bind(addr)?.local_addr()?.port();
+                let ephemeral_port = std::net::TcpListener::bind(addr)
+                    .and_then(|l| l.local_addr())
+                    .context("failed finding an ephemeral TCP/UDP listen port to use")?
+                    .port();
                 listen.listen_addr.set_port(ephemeral_port);
             }
 
