@@ -1,6 +1,6 @@
 [package]
 name = "librqbit"
-version = "9.0.0-beta.0"
+version = "9.0.0-beta.1"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2024"
 description = "The main library used by rqbit torrent client. The binary is just a small wrapper on top of it."

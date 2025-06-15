@@ -1,6 +1,6 @@
 [package]
 name = "rqbit"
-version = "9.0.0-beta.0"
+version = "9.0.0-beta.1"
 authors = ["Igor Katson <igor.katson@gmail.com>"]
 edition = "2024"
 description = "A bittorrent command line client and server."
@@ -25,7 +25,7 @@ postgres = ["librqbit/postgres"]
 disable-upload = ["librqbit/disable-upload"]
 
 [dependencies]
-librqbit = { version = "9.0.0-beta.0", path = "../librqbit", default-features = false, features = [
+librqbit = { version = "9.0.0-beta.1", path = "../librqbit", default-features = false, features = [
     "http-api",
     "http-api-client",
     "tracing-subscriber-utils",

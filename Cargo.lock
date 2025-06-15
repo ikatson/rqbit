@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "9.0.0-beta.0"
+version = "9.0.0-beta.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4782,7 +4782,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit"
-version = "9.0.0-beta.0"
+version = "9.0.0-beta.1"
 dependencies = [
  "anyhow",
  "bytes",
