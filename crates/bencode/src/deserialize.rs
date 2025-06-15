@@ -98,7 +98,7 @@ pub enum Error {
     #[error("{0}")]
     StaticStr(&'static &'static str),
     #[error("{0}")]
-    Custom(Box<Box<str>>), // double box to reduce size
+    Custom(Box<String>), // box to reduce size
     #[error("expected 0 or 1 for boolean, got {0}")]
     InvalidBool(i64),
     #[error("deserialized successfully, but {0} bytes remaining")]
@@ -120,15 +120,7 @@ impl serde::de::Error for Error {
     where
         T: std::fmt::Display,
     {
-        Self::Custom(Box::new(msg.to_string().into_boxed_str()))
-    }
-
-    fn invalid_length(len: usize, _exp: &dyn serde::de::Expected) -> Self {
-        Self::InvalidLength(len)
-    }
-
-    fn invalid_value(_unexp: serde::de::Unexpected, _exp: &dyn serde::de::Expected) -> Self {
-        Self::InvalidValue
+        Self::Custom(Box::new(msg.to_string()))
     }
 }
 

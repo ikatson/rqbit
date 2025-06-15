@@ -1,11 +1,10 @@
-use bencode::BencodeValue;
 use buffers::ByteBuf;
 use itertools::Either;
-use serde::{Deserialize, Deserializer, de::Unexpected};
+use serde::{Deserialize, Deserializer};
+use serde_with::serde_as;
 use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    str::FromStr,
 };
 
 use librqbit_core::{
@@ -33,7 +32,7 @@ pub struct TrackerRequest {
     pub compact: bool,
     pub no_peer_id: bool,
 
-    pub ip: Option<std::net::IpAddr>,
+    pub ip: Option<IpAddr>,
     pub numwant: Option<usize>,
     pub key: Option<String>,
     pub trackerid: Option<String>,
@@ -87,18 +86,16 @@ where
     where
         D: Deserializer<'de>,
     {
+        #[serde_as]
         #[derive(Deserialize)]
-        struct DictPeer<'a> {
-            #[serde(borrow)]
-            ip: ByteBuf<'a>,
-            #[allow(dead_code)]
-            peer_id: Option<ByteBuf<'a>>,
+        struct DictPeer {
+            #[serde_as(as = "serde_with::DisplayFromStr")]
+            ip: IpAddr,
             port: u16,
         }
 
         struct Visitor<'a, 'de, AddrType> {
-            phantom: std::marker::PhantomData<&'de AddrType>,
-            phantom2: std::marker::PhantomData<&'a ()>,
+            phantom: std::marker::PhantomData<&'de &'a AddrType>,
         }
         impl<'a, 'de, AddrType> serde::de::Visitor<'de> for Visitor<'a, 'de, AddrType>
         where
@@ -107,7 +104,7 @@ where
             type Value = Peers<'de, AddrType>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a list of peers in dict or binary format")
+                formatter.write_str("a list of peers in dict or compact format")
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -116,29 +113,9 @@ where
             {
                 let mut addrs = Vec::new();
                 while let Some(peer) = seq.next_element::<DictPeer>()? {
-                    let ip = std::str::from_utf8(peer.ip.as_ref())
-                        .ok()
-                        .and_then(|s| IpAddr::from_str(s).ok())
-                        .ok_or_else(|| {
-                            <A::Error as serde::de::Error>::invalid_value(
-                                Unexpected::Bytes(peer.ip.as_ref()),
-                                &"ip",
-                            )
-                        })?;
-                    addrs.push(SocketAddr::from((ip, peer.port)))
+                    addrs.push(SocketAddr::from((peer.ip, peer.port)))
                 }
                 Ok(Peers::DictPeers(addrs))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::MapAccess<'de>,
-            {
-                let (k, v) = map
-                    .next_entry::<BencodeValue<ByteBuf>, BencodeValue<ByteBuf>>()
-                    .unwrap()
-                    .unwrap();
-                panic!("key={k:?} value={v:?}")
             }
 
             fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
@@ -150,7 +127,6 @@ where
         }
         deserializer.deserialize_any(Visitor {
             phantom: PhantomData,
-            phantom2: PhantomData,
         })
     }
 }
