@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -25,8 +25,8 @@ use librqbit::{
     },
     tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
 };
+use librqbit_dualstack_sockets::TcpListener;
 use size_format::SizeFormatterBinary as SF;
-use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, error_span, info, trace_span, warn};
 
@@ -90,13 +90,16 @@ struct Opts {
     #[arg(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse, env="RQBIT_TRACKER_REFRESH_INTERVAL")]
     force_tracker_interval: Option<Duration>,
 
-    /// The listen address for HTTP API
+    /// The listen address for HTTP API.
+    ///
+    /// If unspecisifed, "rqbit server" will listen on [::1]:3030, and "rqbit download" will listen
+    /// on an ephemeral port that it will print.
     #[arg(
         long = "http-api-listen-addr",
         default_value = "127.0.0.1:3030",
         env = "RQBIT_HTTP_API_LISTEN_ADDR"
     )]
-    http_api_listen_addr: SocketAddr,
+    http_api_listen_addr: Option<SocketAddr>,
 
     /// Allow creating torrents via HTTP API
     #[arg(long = "http-api-allow-create", env = "RQBIT_HTTP_API_ALLOW_CREATE")]
@@ -632,6 +635,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
+                let http_api_listen_addr = opts
+                    .http_api_listen_addr
+                    .unwrap_or(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 3030));
+
                 if !start_opts.disable_persistence {
                     if let Some(p) = start_opts.persistence_location.as_ref() {
                         if p.starts_with("postgres://") {
@@ -688,7 +695,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 let mut upnp_server = {
                     match opts.enable_upnp_server {
                         true => {
-                            if opts.http_api_listen_addr.ip().is_loopback() {
+                            if http_api_listen_addr.ip().is_loopback() {
                                 bail!(
                                     "cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0"
                                 );
@@ -701,7 +708,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                                             gethostname::gethostname().to_string_lossy()
                                         )
                                     }),
-                                    opts.http_api_listen_addr.port(),
+                                    http_api_listen_addr.port(),
                                 )
                                 .await
                                 .context("error starting UPNP server")?;
@@ -717,12 +724,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.line_broadcast),
                 );
                 let http_api = HttpApi::new(api, Some(http_api_opts));
-                let http_api_listen_addr = opts.http_api_listen_addr;
-
-                info!("starting HTTP API at http://{http_api_listen_addr}");
-                let tcp_listener = TcpListener::bind(http_api_listen_addr)
-                    .await
+                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, true)
                     .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
+                let http_api_listen_addr = tcp_listener.bind_addr();
+                info!("starting HTTP API at http://{http_api_listen_addr}");
 
                 let upnp_router = upnp_server.as_mut().and_then(|s| s.take_router().ok());
                 let http_api_fut = http_api.make_http_api_and_run(tcp_listener, upnp_router);

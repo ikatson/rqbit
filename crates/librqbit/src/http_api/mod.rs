@@ -7,9 +7,9 @@ use base64::Engine;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use http::{HeaderMap, StatusCode};
+use librqbit_dualstack_sockets::TcpListener;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
 use tracing::{Span, debug, error_span, info};
 
