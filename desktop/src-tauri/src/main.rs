@@ -24,6 +24,7 @@ use librqbit::{
     session_stats::snapshot::SessionStatsSnapshot,
     tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
 };
+use librqbit_dualstack_sockets::TcpListener;
 use parking_lot::RwLock;
 use serde::Serialize;
 use tracing::{error, error_span, info, warn};
@@ -163,8 +164,7 @@ async fn api_from_config(
             None
         };
         let http_api_task = async move {
-            let listener = tokio::net::TcpListener::bind(listen_addr)
-                .await
+            let listener = TcpListener::bind_tcp(listen_addr, true)
                 .with_context(|| format!("error listening on {}", listen_addr))?;
             librqbit::http_api::HttpApi::new(api.clone(), Some(http_api_opts))
                 .make_http_api_and_run(listener, upnp_router)

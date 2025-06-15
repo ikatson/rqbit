@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -16,9 +16,8 @@ use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, ListOnlyResponse,
     ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
     SessionPersistenceConfig, TorrentStatsState,
-    api::ApiAddTorrentResponse,
     http_api::{HttpApi, HttpApiOptions},
-    http_api_client, librqbit_spawn,
+    librqbit_spawn,
     limits::LimitsConfig,
     storage::{
         StorageFactory, StorageFactoryExt,
@@ -26,8 +25,8 @@ use librqbit::{
     },
     tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
 };
+use librqbit_dualstack_sockets::TcpListener;
 use size_format::SizeFormatterBinary as SF;
-use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, error_span, info, trace_span, warn};
 
@@ -91,13 +90,12 @@ struct Opts {
     #[arg(short = 'i', long = "tracker-refresh-interval", value_parser = parse_duration::parse, env="RQBIT_TRACKER_REFRESH_INTERVAL")]
     force_tracker_interval: Option<Duration>,
 
-    /// The listen address for HTTP API
-    #[arg(
-        long = "http-api-listen-addr",
-        default_value = "127.0.0.1:3030",
-        env = "RQBIT_HTTP_API_LISTEN_ADDR"
-    )]
-    http_api_listen_addr: SocketAddr,
+    /// The listen address for HTTP API.
+    ///
+    /// If unspecisifed, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download" will listen
+    /// on an ephemeral port that it will print.
+    #[arg(long = "http-api-listen-addr", env = "RQBIT_HTTP_API_LISTEN_ADDR")]
+    http_api_listen_addr: Option<SocketAddr>,
 
     /// Allow creating torrents via HTTP API
     #[arg(long = "http-api-allow-create", env = "RQBIT_HTTP_API_ALLOW_CREATE")]
@@ -149,12 +147,10 @@ struct Opts {
     enable_utp_listen: bool,
 
     /// The port to listen for incoming connections (applies to both TCP and uTP).
-    #[arg(
-        long = "listen-port",
-        default_value = "4240",
-        env = "RQBIT_LISTEN_PORT"
-    )]
-    listen_port: u16,
+    ///
+    /// Defaults to 4240 for the server, and for ephemeral for "rqbit download".
+    #[arg(long = "listen-port", env = "RQBIT_LISTEN_PORT")]
+    listen_port: Option<u16>,
 
     /// What's the IP to listen on. Default is to listen on all interfaces on IPv4 and IPv6.
     #[arg(long = "listen-ip", default_value = "::", env = "RQBIT_LISTEN_IP")]
@@ -310,7 +306,7 @@ struct DownloadOpts {
     /// If not specified, would use the server's output folder. If there's no server
     /// running, this is required.
     #[arg(short = 'o', long)]
-    output_folder: Option<String>,
+    output_folder: String,
 
     /// The sub folder within output folder to write to. Useful when you have
     /// a server running with output_folder configured, and don't want to specify
@@ -335,14 +331,17 @@ struct DownloadOpts {
     #[arg(short = 'e', long)]
     exit_on_finish: bool,
 
+    /// Disable trackers (for debugging DHT and --initial-peers)
     #[arg(long = "disable-trackers")]
     disable_trackers: bool,
 
+    /// A comma-separated list of initial peers
     #[arg(long = "initial-peers")]
     initial_peers: Option<InitialPeers>,
 
-    #[arg(long = "server-url")]
-    server_url: Option<String>,
+    /// Disable HTTP API entirely.
+    #[arg(long = "disable-http-api")]
+    disable_http_api: bool,
 }
 
 #[derive(Clone)]
@@ -510,7 +509,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     };
     let listen = listen_mode.map(|mode| ListenerOptions {
         mode,
-        listen_addr: (opts.listen_ip, opts.listen_port).into(),
+        listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(4240)).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         ..Default::default()
     });
@@ -630,6 +629,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
+                let http_api_listen_addr = opts
+                    .http_api_listen_addr
+                    .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3030));
+
                 if !start_opts.disable_persistence {
                     if let Some(p) = start_opts.persistence_location.as_ref() {
                         if p.starts_with("postgres://") {
@@ -686,7 +689,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 let mut upnp_server = {
                     match opts.enable_upnp_server {
                         true => {
-                            if opts.http_api_listen_addr.ip().is_loopback() {
+                            if http_api_listen_addr.ip().is_loopback() {
                                 bail!(
                                     "cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0"
                                 );
@@ -699,7 +702,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                                             gethostname::gethostname().to_string_lossy()
                                         )
                                     }),
-                                    opts.http_api_listen_addr.port(),
+                                    http_api_listen_addr.port(),
                                 )
                                 .await
                                 .context("error starting UPNP server")?;
@@ -715,12 +718,10 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.line_broadcast),
                 );
                 let http_api = HttpApi::new(api, Some(http_api_opts));
-                let http_api_listen_addr = opts.http_api_listen_addr;
-
-                info!("starting HTTP API at http://{http_api_listen_addr}");
-                let tcp_listener = TcpListener::bind(http_api_listen_addr)
-                    .await
+                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, true)
                     .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
+                let http_api_listen_addr = tcp_listener.bind_addr();
+                info!("starting HTTP API at http://{http_api_listen_addr}");
 
                 let upnp_router = upnp_server.as_mut().and_then(|s| s.take_router().ok());
                 let http_api_fut = http_api.make_http_api_and_run(tcp_listener, upnp_router);
@@ -750,91 +751,50 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             if download_opts.torrent_path.is_empty() {
                 anyhow::bail!("you must provide at least one URL to download")
             }
-            let http_api_url = download_opts
-                .server_url
-                .clone()
-                .unwrap_or_else(|| format!("http://{}", opts.http_api_listen_addr));
-            let client = http_api_client::HttpApiClient::new(&http_api_url)?;
 
-            let torrent_opts = |with_output_folder: bool| AddTorrentOptions {
+            // "rqbit download" is ephemeral, so disable all persistence.
+            sopts.disable_dht_persistence = true;
+            sopts.persistence = None;
+
+            if let Some(listen) = sopts.listen.as_mut() {
+                // We are creating ephemeral ports, no point in port forwarding.
+                listen.enable_upnp_port_forwarding = false;
+
+                // If the user hasn't specified a specific port, find a free random port.
+                // It needs to be the same for TCP and UDP, as we announce that port
+                // to trackers and DHT.
+                if opts.listen_port.is_none() {
+                    let mut addr = listen.listen_addr;
+                    addr.set_port(0);
+                    let ephemeral_port = std::net::TcpListener::bind(addr)
+                        .and_then(|l| l.local_addr())
+                        .context("failed finding an ephemeral TCP/UDP listen port to use")?
+                        .port();
+                    listen.listen_addr.set_port(ephemeral_port);
+                }
+            }
+
+            let torrent_opts = || AddTorrentOptions {
                 only_files_regex: download_opts.only_files_matching_regex.clone(),
                 overwrite: download_opts.overwrite,
                 list_only: download_opts.list,
                 force_tracker_interval: opts.force_tracker_interval,
-                output_folder: if with_output_folder {
-                    download_opts.output_folder.clone()
-                } else {
-                    None
-                },
                 sub_folder: download_opts.sub_folder.clone(),
                 initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
                 disable_trackers: download_opts.disable_trackers,
                 ..Default::default()
             };
-            let connect_to_existing = match client.validate_rqbit_server().await {
-                Ok(_) => {
-                    info!(
-                        "Connected to HTTP API at {}, will call it instead of downloading within this process",
-                        client.base_url()
-                    );
-                    true
-                }
-                Err(err) => {
-                    warn!("Error checking HTTP API at {}: {:}", client.base_url(), err);
-                    false
-                }
-            };
-            if !connect_to_existing && download_opts.server_url.is_some() {
-                anyhow::bail!("cannot connect to server at {}", client.base_url());
-            }
-            if connect_to_existing {
-                for torrent_url in &download_opts.torrent_path {
-                    match client
-                        .add_torrent(
-                            AddTorrent::from_cli_argument(torrent_url)?,
-                            Some(torrent_opts(true)),
-                        )
-                        .await
-                    {
-                        Ok(ApiAddTorrentResponse { id, details, .. }) => {
-                            if let Some(id) = id {
-                                info!(
-                                    "{} added to the server with index {}. Query {}/torrents/{}/(stats/haves) for details",
-                                    details.info_hash, id, http_api_url, id
-                                )
-                            }
-                            for file in details.files.into_iter().flat_map(|i| i.into_iter()) {
-                                info!(
-                                    "file {:?}, size {}{}",
-                                    file.name,
-                                    SF::new(file.length),
-                                    if file.included { "" } else { ", will skip" }
-                                )
-                            }
-                        }
-                        Err(err) => warn!("error adding {}: {:?}", torrent_url, err),
-                    }
-                }
-                Ok(())
-            } else {
-                let session = Session::new_with_opts(
-                    download_opts
-                        .output_folder
-                        .as_ref()
-                        .map(PathBuf::from)
-                        .context(
-                            "output_folder is required if can't connect to an existing server",
-                        )?,
-                    sopts,
-                )
+            let session = Session::new_with_opts(download_opts.output_folder.clone().into(), sopts)
                 .await
                 .context("error initializing rqbit session")?;
 
-                librqbit_spawn(
-                    "stats_printer",
-                    trace_span!("stats_printer"),
-                    stats_printer(session.clone()),
-                );
+            librqbit_spawn(
+                "stats_printer",
+                trace_span!("stats_printer"),
+                stats_printer(session.clone()),
+            );
+
+            if !download_opts.disable_http_api {
                 let api = Api::new(
                     session.clone(),
                     Some(log_config.rust_log_reload_tx),
@@ -845,104 +805,98 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(HttpApiOptions {
                         read_only: true,
                         basic_auth: http_api_basic_auth,
-                        allow_create: opts.http_api_allow_create,
                         ..Default::default()
                     }),
                 );
-                let http_api_listen_addr = opts.http_api_listen_addr;
-
-                info!("starting HTTP API at http://{http_api_listen_addr}");
-                let listener = tokio::net::TcpListener::bind(opts.http_api_listen_addr)
-                    .await
-                    .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
-
+                let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
+                let listener =
+                    TcpListener::bind_tcp(http_api_listen_addr, true).with_context(|| {
+                        format!("error binding HTTP server to {http_api_listen_addr}")
+                    })?;
+                let http_api_listen_addr = listener.bind_addr();
+                info!("started HTTP API at http://{http_api_listen_addr}");
                 librqbit_spawn(
                     "http_api",
                     error_span!("http_api"),
                     http_api.make_http_api_and_run(listener, None),
                 );
+            }
 
-                let mut added = false;
+            let mut added = false;
+            let mut handles = Vec::new();
 
-                let mut handles = Vec::new();
-
-                for path in &download_opts.torrent_path {
-                    let handle = match session
-                        .add_torrent(
-                            AddTorrent::from_cli_argument(path)?,
-                            Some(torrent_opts(false)),
-                        )
-                        .await
-                    {
-                        Ok(v) => match v {
-                            AddTorrentResponse::AlreadyManaged(id, handle) => {
-                                info!(
-                                    "torrent {:?} is already managed, id={}",
-                                    handle.info_hash(),
-                                    id,
-                                );
-                                continue;
-                            }
-                            AddTorrentResponse::ListOnly(ListOnlyResponse {
-                                info_hash: _,
-                                info,
-                                only_files,
-                                ..
-                            }) => {
-                                for (idx, fd) in info.iter_file_details()?.enumerate() {
-                                    let included = match &only_files {
-                                        Some(files) => files.contains(&idx),
-                                        None => true,
-                                    };
-                                    info!(
-                                        "File {:?}, size {}{}",
-                                        fd.filename,
-                                        SF::new(fd.len),
-                                        if included { "" } else { ", will skip" }
-                                    )
-                                }
-                                continue;
-                            }
-                            AddTorrentResponse::Added(_, handle) => {
-                                added = true;
-                                handle
-                            }
-                        },
-                        Err(err) => {
-                            error!("error adding {:?}: {:?}", &path, err);
+            for path in &download_opts.torrent_path {
+                let handle = match session
+                    .add_torrent(AddTorrent::from_cli_argument(path)?, Some(torrent_opts()))
+                    .await
+                {
+                    Ok(v) => match v {
+                        AddTorrentResponse::AlreadyManaged(id, handle) => {
+                            info!(
+                                "torrent {:?} is already managed, id={}",
+                                handle.info_hash(),
+                                id,
+                            );
                             continue;
                         }
-                    };
-
-                    handles.push(handle);
-                }
-
-                if download_opts.list {
-                    Ok(())
-                } else if added {
-                    if download_opts.exit_on_finish {
-                        let results = futures::future::join_all(
-                            handles.iter().map(|h| h.wait_until_completed()),
-                        );
-                        let results = tokio::select! {
-                            _ = cancel.cancelled() => {
-                                bail!("cancelled");
-                            },
-                            r = results => r
-                        };
-                        if results.iter().any(|r| r.is_err()) {
-                            anyhow::bail!("some downloads failed")
+                        AddTorrentResponse::ListOnly(ListOnlyResponse {
+                            info_hash: _,
+                            info,
+                            only_files,
+                            ..
+                        }) => {
+                            for (idx, fd) in info.iter_file_details()?.enumerate() {
+                                let included = match &only_files {
+                                    Some(files) => files.contains(&idx),
+                                    None => true,
+                                };
+                                info!(
+                                    "File {:?}, size {}{}",
+                                    fd.filename,
+                                    SF::new(fd.len),
+                                    if included { "" } else { ", will skip" }
+                                )
+                            }
+                            continue;
                         }
-                        info!("All downloads completed, exiting");
-                        Ok(())
-                    } else {
-                        // Sleep forever.
-                        cancel.cancelled().await;
-                        bail!("cancelled");
+                        AddTorrentResponse::Added(_, handle) => {
+                            added = true;
+                            handle
+                        }
+                    },
+                    Err(err) => {
+                        error!("error adding {:?}: {:?}", &path, err);
+                        continue;
                     }
+                };
+
+                handles.push(handle);
+            }
+
+            if download_opts.list {
+                Ok(())
+            } else if added {
+                if download_opts.exit_on_finish {
+                    let results =
+                        futures::future::join_all(handles.iter().map(|h| h.wait_until_completed()));
+                    let results = tokio::select! {
+                        _ = cancel.cancelled() => {
+                            bail!("cancelled");
+                        },
+                        r = results => r
+                    };
+                    if results.iter().any(|r| r.is_err()) {
+                        anyhow::bail!("some downloads failed")
+                    }
+                    info!("All downloads completed, exiting");
+                    Ok(())
                 } else {
-                    anyhow::bail!("no torrents were added")
+                    // Sleep forever.
+                    cancel.cancelled().await;
+                    bail!("cancelled");
                 }
+            } else {
+                anyhow::bail!("no torrents were added")
             }
         }
         SubCommand::Completions(completions_opts) => {
