@@ -394,6 +394,16 @@ fn _start_deadlock_detector_thread() {
 fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
+    if let SubCommand::Completions(completions_opts) = &opts.subcommand {
+        clap_complete::generate(
+            completions_opts.shell,
+            &mut Opts::command(),
+            "rqbit",
+            &mut io::stdout(),
+        );
+        return Ok(());
+    }
+
     #[cfg(not(target_os = "windows"))]
     if let Some(umask) = opts.umask {
         unsafe { libc::umask(umask) };
@@ -891,15 +901,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 anyhow::bail!("no torrents were added")
             }
         }
-        SubCommand::Completions(completions_opts) => {
-            clap_complete::generate(
-                completions_opts.shell,
-                &mut Opts::command(),
-                "rqbit",
-                &mut io::stdout(),
-            );
-            Ok(())
-        }
+        SubCommand::Completions(completions_opts) => unreachable!(),
     }
 }
 
