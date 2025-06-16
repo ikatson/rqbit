@@ -3009,6 +3009,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "librqbit-lsd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "librqbit-core",
+ "librqbit-dualstack-sockets 0.3.1",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "librqbit-peer-protocol"
 version = "4.3.0"
 dependencies = [
