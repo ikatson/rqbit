@@ -744,7 +744,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 res.context("error running server")
             }
         },
-        SubCommand::Download(download_opts) => {
+        SubCommand::Download(mut download_opts) => {
             if download_opts.torrent_path.is_empty() {
                 anyhow::bail!("you must provide at least one URL to download")
             }
@@ -752,6 +752,11 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             // "rqbit download" is ephemeral, so disable all persistence.
             sopts.disable_dht_persistence = true;
             sopts.persistence = None;
+
+            if download_opts.list {
+                sopts.listen = None;
+                download_opts.disable_http_api = true;
+            }
 
             if let Some(listen) = sopts.listen.as_mut() {
                 // We are creating ephemeral ports, no point in port forwarding.
