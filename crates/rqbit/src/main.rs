@@ -448,12 +448,21 @@ fn main() -> anyhow::Result<()> {
         use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
         let mut signals = Signals::new([SIGINT, SIGTERM])?;
         thread::spawn(move || {
-            if let Some(sig) = signals.forever().next() {
-                warn!("received signal {:?}, shutting down", sig);
+            let mut cancel_triggered = false;
+            while let Some(sig) = signals.forever().next() {
+                if cancel_triggered {
+                    warn!("received signal {:?}, forcing shutdown", sig);
+                    std::process::exit(1)
+                }
+                warn!("received signal {:?}, trying to shut down gracefully", sig);
                 token.cancel();
-                std::thread::sleep(Duration::from_secs(5));
-                warn!("could not shutdown in time, killing myself");
-                std::process::exit(1)
+                cancel_triggered = true;
+
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_secs(5));
+                    warn!("could not shutdown in time, killing myself");
+                    std::process::exit(1)
+                });
             }
         });
     }
