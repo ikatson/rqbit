@@ -13,9 +13,9 @@ use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, ListOnlyResponse,
-    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
-    SessionPersistenceConfig, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
+    CreateTorrentOptions, ListOnlyResponse, ListenerMode, ListenerOptions, PeerConnectionOptions,
+    Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
     http_api::{HttpApi, HttpApiOptions},
     librqbit_spawn,
     limits::LimitsConfig,
@@ -23,7 +23,7 @@ use librqbit::{
         StorageFactory, StorageFactoryExt,
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
     },
-    tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
+    tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
 };
 use librqbit_dualstack_sockets::TcpListener;
 use size_format::SizeFormatterBinary as SF;
@@ -354,8 +354,23 @@ struct CompletionsOpts {
 }
 
 #[derive(Parser)]
+struct ShareOpts {
+    /// The path to create and share a torrent from
+    path: String,
+
+    /// Optional torrent name to use in the torrent file and magnet.
+    #[arg(short = 'n', long)]
+    name: Option<String>,
+
+    /// Tracker URLs to share to (comma separated). Will append these to trackers from RQBIT_TRACKERS_FILENAME.
+    #[arg(value_delimiter = ',', num_args = 0..32)]
+    trackers: Vec<url::Url>,
+}
+
+#[derive(Parser)]
 enum SubCommand {
     Server(ServerOpts),
+    Share(ShareOpts),
     Download(DownloadOpts),
     Completions(CompletionsOpts),
 }
@@ -433,12 +448,21 @@ fn main() -> anyhow::Result<()> {
         use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
         let mut signals = Signals::new([SIGINT, SIGTERM])?;
         thread::spawn(move || {
-            if let Some(sig) = signals.forever().next() {
-                warn!("received signal {:?}, shutting down", sig);
+            let mut cancel_triggered = false;
+            while let Some(sig) = signals.forever().next() {
+                if cancel_triggered {
+                    warn!("received signal {:?}, forcing shutdown", sig);
+                    std::process::exit(1)
+                }
+                warn!("received signal {:?}, trying to shut down gracefully", sig);
                 token.cancel();
-                std::thread::sleep(Duration::from_secs(5));
-                warn!("could not shutdown in time, killing myself");
-                std::process::exit(1)
+                cancel_triggered = true;
+
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_secs(5));
+                    warn!("could not shutdown in time, killing myself");
+                    std::process::exit(1)
+                });
             }
         });
     }
@@ -761,19 +785,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             if let Some(listen) = sopts.listen.as_mut() {
                 // We are creating ephemeral ports, no point in port forwarding.
                 listen.enable_upnp_port_forwarding = false;
-
-                // If the user hasn't specified a specific port, find a free random port.
-                // It needs to be the same for TCP and UDP, as we announce that port
-                // to trackers and DHT.
-                if opts.listen_port.is_none() {
-                    let mut addr = listen.listen_addr;
-                    addr.set_port(0);
-                    let ephemeral_port = std::net::TcpListener::bind(addr)
-                        .and_then(|l| l.local_addr())
-                        .context("failed finding an ephemeral TCP/UDP listen port to use")?
-                        .port();
-                    listen.listen_addr.set_port(ephemeral_port);
-                }
+                maybe_set_ephemeral_port(&opts.listen_port, listen)?;
             }
 
             let torrent_opts = || AddTorrentOptions {
@@ -804,31 +816,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             );
 
             if !download_opts.disable_http_api {
-                let api = Api::new(
-                    session.clone(),
-                    Some(log_config.rust_log_reload_tx),
-                    Some(log_config.line_broadcast),
-                );
-                let http_api = HttpApi::new(
-                    api,
-                    Some(HttpApiOptions {
-                        read_only: true,
-                        basic_auth: http_api_basic_auth,
-                        ..Default::default()
-                    }),
-                );
-                let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
-                let listener =
-                    TcpListener::bind_tcp(http_api_listen_addr, true).with_context(|| {
-                        format!("error binding HTTP server to {http_api_listen_addr}")
-                    })?;
-                let http_api_listen_addr = listener.bind_addr();
-                info!("started HTTP API at http://{http_api_listen_addr}");
-                librqbit_spawn(
-                    "http_api",
-                    error_span!("http_api"),
-                    http_api.make_http_api_and_run(listener, None),
-                );
+                start_ephemeral_http_api(session.clone(), http_api_basic_auth, log_config)?;
             }
 
             let mut added = false;
@@ -908,8 +896,113 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 anyhow::bail!("no torrents were added")
             }
         }
+        SubCommand::Share(share_opts) => {
+            if share_opts.path.is_empty() {
+                anyhow::bail!("you must provide a path to share")
+            }
+
+            let path = PathBuf::from(share_opts.path);
+            if !path.exists() {
+                anyhow::bail!("{path:?} does not exist")
+            }
+
+            // "rqbit share" is ephemeral, so disable all persistence.
+            sopts.disable_dht_persistence = true;
+            sopts.persistence = None;
+
+            if let Some(listen) = sopts.listen.as_mut() {
+                maybe_set_ephemeral_port(&opts.listen_port, listen)?;
+            } else {
+                anyhow::bail!("you disabled all listeners, can't share");
+            }
+
+            let trackers = sopts
+                .trackers
+                .iter()
+                .cloned()
+                .chain(share_opts.trackers.into_iter())
+                .map(|t| t.to_string())
+                .collect();
+
+            let session = Session::new_with_opts(PathBuf::new(), sopts)
+                .await
+                .context("error initializing rqbit session")?;
+
+            start_ephemeral_http_api(session.clone(), http_api_basic_auth, log_config)?;
+
+            let (create_result, _) = session
+                .create_and_serve_torrent(
+                    &path,
+                    CreateTorrentOptions {
+                        name: share_opts.name.as_deref(),
+                        trackers,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .context("error creating and sharing torrent")?;
+
+            tracing::warn!(
+                "WARNING: torrents are public, anyone can download it, even if they don't have the magnet link"
+            );
+            println!("share this magnet link: {}", create_result.as_magnet());
+
+            loop {
+                tokio::time::sleep(Duration::from_secs(1000)).await;
+            }
+        }
         SubCommand::Completions(_) => unreachable!(),
     }
+}
+
+fn maybe_set_ephemeral_port(
+    forced_listen_port: &Option<u16>,
+    listen: &mut ListenerOptions,
+) -> anyhow::Result<()> {
+    // If the user hasn't specified a specific port, find a free random port.
+    // It needs to be the same for TCP and UDP, as we announce that port
+    // to trackers and DHT.
+    if forced_listen_port.is_none() {
+        let mut addr = listen.listen_addr;
+        addr.set_port(0);
+        let ephemeral_port = std::net::TcpListener::bind(addr)
+            .and_then(|l| l.local_addr())
+            .context("failed finding an ephemeral TCP/UDP listen port to use")?
+            .port();
+        listen.listen_addr.set_port(ephemeral_port);
+    }
+    Ok(())
+}
+
+fn start_ephemeral_http_api(
+    session: Arc<Session>,
+    basic_auth: Option<(String, String)>,
+    log_config: InitLoggingResult,
+) -> anyhow::Result<()> {
+    let api = Api::new(
+        session,
+        Some(log_config.rust_log_reload_tx),
+        Some(log_config.line_broadcast),
+    );
+    let http_api = HttpApi::new(
+        api,
+        Some(HttpApiOptions {
+            read_only: true,
+            basic_auth,
+            ..Default::default()
+        }),
+    );
+    let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
+    let listener = TcpListener::bind_tcp(http_api_listen_addr, true)
+        .with_context(|| format!("error binding HTTP server to {http_api_listen_addr}"))?;
+    let http_api_listen_addr = listener.bind_addr();
+    info!("started HTTP API at http://{http_api_listen_addr}");
+    librqbit_spawn(
+        "http_api",
+        error_span!("http_api"),
+        http_api.make_http_api_and_run(listener, None),
+    );
+    Ok(())
 }
 
 #[cfg(test)]
