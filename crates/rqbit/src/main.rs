@@ -23,7 +23,7 @@ use librqbit::{
         StorageFactory, StorageFactoryExt,
         filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
     },
-    tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
+    tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
 };
 use librqbit_dualstack_sockets::TcpListener;
 use size_format::SizeFormatterBinary as SF;
@@ -816,31 +816,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             );
 
             if !download_opts.disable_http_api {
-                let api = Api::new(
-                    session.clone(),
-                    Some(log_config.rust_log_reload_tx),
-                    Some(log_config.line_broadcast),
-                );
-                let http_api = HttpApi::new(
-                    api,
-                    Some(HttpApiOptions {
-                        read_only: true,
-                        basic_auth: http_api_basic_auth,
-                        ..Default::default()
-                    }),
-                );
-                let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
-                let listener =
-                    TcpListener::bind_tcp(http_api_listen_addr, true).with_context(|| {
-                        format!("error binding HTTP server to {http_api_listen_addr}")
-                    })?;
-                let http_api_listen_addr = listener.bind_addr();
-                info!("started HTTP API at http://{http_api_listen_addr}");
-                librqbit_spawn(
-                    "http_api",
-                    error_span!("http_api"),
-                    http_api.make_http_api_and_run(listener, None),
-                );
+                start_ephemeral_http_api(session.clone(), http_api_basic_auth, log_config)?;
             }
 
             let mut added = false;
@@ -952,6 +928,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 .await
                 .context("error initializing rqbit session")?;
 
+            start_ephemeral_http_api(session.clone(), http_api_basic_auth, log_config)?;
+
             let (create_result, _) = session
                 .create_and_serve_torrent(
                     &path,
@@ -967,7 +945,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             tracing::warn!(
                 "WARNING: torrents are public, anyone can download it, even if they don't have the magnet link"
             );
-            println!("sharing this magnet link: {}", create_result.as_magnet());
+            println!("share this magnet link: {}", create_result.as_magnet());
 
             loop {
                 tokio::time::sleep(Duration::from_secs(1000)).await;
@@ -993,6 +971,37 @@ fn maybe_set_ephemeral_port(
             .port();
         listen.listen_addr.set_port(ephemeral_port);
     }
+    Ok(())
+}
+
+fn start_ephemeral_http_api(
+    session: Arc<Session>,
+    basic_auth: Option<(String, String)>,
+    log_config: InitLoggingResult,
+) -> anyhow::Result<()> {
+    let api = Api::new(
+        session,
+        Some(log_config.rust_log_reload_tx),
+        Some(log_config.line_broadcast),
+    );
+    let http_api = HttpApi::new(
+        api,
+        Some(HttpApiOptions {
+            read_only: true,
+            basic_auth,
+            ..Default::default()
+        }),
+    );
+    let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
+    let listener = TcpListener::bind_tcp(http_api_listen_addr, true)
+        .with_context(|| format!("error binding HTTP server to {http_api_listen_addr}"))?;
+    let http_api_listen_addr = listener.bind_addr();
+    info!("started HTTP API at http://{http_api_listen_addr}");
+    librqbit_spawn(
+        "http_api",
+        error_span!("http_api"),
+        http_api.make_http_api_and_run(listener, None),
+    );
     Ok(())
 }
 
