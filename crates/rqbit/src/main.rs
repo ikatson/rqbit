@@ -13,9 +13,9 @@ use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, ListOnlyResponse,
-    ListenerMode, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
-    SessionPersistenceConfig, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
+    CreateTorrentOptions, ListOnlyResponse, ListenerMode, ListenerOptions, PeerConnectionOptions,
+    Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
     http_api::{HttpApi, HttpApiOptions},
     librqbit_spawn,
     limits::LimitsConfig,
@@ -354,8 +354,23 @@ struct CompletionsOpts {
 }
 
 #[derive(Parser)]
+struct ShareOpts {
+    /// The path to create and share a torrent from
+    path: String,
+
+    /// Optional torrent name to use in the torrent file and magnet.
+    #[arg(short = 'n', long)]
+    name: Option<String>,
+
+    /// Tracker URLs to share to (comma separated). Will append these to trackers from RQBIT_TRACKERS_FILENAME.
+    #[arg(value_delimiter = ',', num_args = 0..32)]
+    trackers: Vec<url::Url>,
+}
+
+#[derive(Parser)]
 enum SubCommand {
     Server(ServerOpts),
+    Share(ShareOpts),
     Download(DownloadOpts),
     Completions(CompletionsOpts),
 }
@@ -906,6 +921,70 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 }
             } else {
                 anyhow::bail!("no torrents were added")
+            }
+        }
+        SubCommand::Share(share_opts) => {
+            if share_opts.path.is_empty() {
+                anyhow::bail!("you must provide a path to share")
+            }
+
+            let path = PathBuf::from(share_opts.path);
+            if !path.exists() {
+                anyhow::bail!("{path:?} does not exist")
+            }
+
+            // "rqbit share" is ephemeral, so disable all persistence.
+            sopts.disable_dht_persistence = true;
+            sopts.persistence = None;
+
+            // If the user hasn't specified a specific port, find a free random port.
+            // It needs to be the same for TCP and UDP, as we announce that port
+            // to trackers and DHT.
+            if let Some(listen) = sopts.listen.as_mut() {
+                if opts.listen_port.is_none() {
+                    let mut addr = listen.listen_addr;
+                    addr.set_port(0);
+                    let ephemeral_port = std::net::TcpListener::bind(addr)
+                        .and_then(|l| l.local_addr())
+                        .context("failed finding an ephemeral TCP/UDP listen port to use")?
+                        .port();
+                    listen.listen_addr.set_port(ephemeral_port);
+                }
+            } else {
+                anyhow::bail!("you disabled all listeners, can't share");
+            }
+
+            let trackers = sopts
+                .trackers
+                .iter()
+                .cloned()
+                .chain(share_opts.trackers.into_iter())
+                .map(|t| t.to_string())
+                .collect();
+
+            let session = Session::new_with_opts(PathBuf::new(), sopts)
+                .await
+                .context("error initializing rqbit session")?;
+
+            let (create_result, _) = session
+                .create_and_serve_torrent(
+                    &path,
+                    CreateTorrentOptions {
+                        name: share_opts.name.as_deref(),
+                        trackers,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .context("error creating and sharing torrent")?;
+
+            tracing::warn!(
+                "WARNING: torrents are public, anyone can download it, even if they don't have the magnet link"
+            );
+            println!("sharing this magnet link: {}", create_result.as_magnet());
+
+            loop {
+                tokio::time::sleep(Duration::from_secs(1000)).await;
             }
         }
         SubCommand::Completions(_) => unreachable!(),
