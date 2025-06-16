@@ -18,13 +18,13 @@ Assuming you are downloading to ~/Downloads.
 
 ### Download torrents
 
-Assuming you are downloading to ~/Downloads. If the server is already started, `-o ~/Downloads` can be omitted.
+Assuming you are downloading to ~/Downloads. By default it'll download to current directory.
 
-    rqbit download -o ~/Downloads 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
+    rqbit download [-o ~/Downloads] 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
 
 ## Web UI
 
-Access with http://localhost:3030/web/. It looks similar to Desktop app, see screenshot below.
+Access with http://localhost:3030/web/. It looks similar to the Desktop app, see screenshot below.
 
 ## Desktop app
 
@@ -53,13 +53,37 @@ Usage from CLI
 rqbit --enable-upnp-server server start ...
 ```
 
+## IPv6
+
+rqbit supports IPv6. By default it listens on all interfaces in dualstack mode. It can work even if there's no IPv6 enabled.
+
+## Shell completions
+
+Assuming bash, add this to your `~/.bashrc`. Modify for your shell of choice.
+
+```
+eval "$(rqbit completion bash)"
+```
+
+## Socks proxy support
+
+```
+rqbit --socks-url socks5://[username:password]@host:port ...
+```
+
+## Watching a directory for .torrents
+
+```
+rqbit server start --watch-folder [path] /download/path
+```
+
 ## Performance
 
 Anecdotally from a few reports, rqbit is faster than other clients they've tried, at least with their default settings.
 
 Memory usage for the server is usually within a few tens of megabytes, which makes it great for e.g. RaspberryPI.
 
-CPU is spent mostly on SHA1 checksumming.
+I've got a report that rqbit can saturate a 20Gbps link, although I don't have the hardware to confirm.
 
 ## Installation
 
@@ -86,7 +110,9 @@ Just a regular Rust binary build process.
 
 The "webui" feature requires npm installed.
 
-## Useful options
+## Some useful options
+
+Run ```rqbit --help``` to see all available CLI options.
 
 ### -v <log-level>
 
@@ -100,15 +126,29 @@ Will print the contents of the torrent file or the magnet link.
 
 If you want to resume downloading a file that already exists, you'll need to add this option.
 
-### --peer-connect-timeout=10s
-
-This will increase the default peer connect timeout. The default one is 2 seconds, and it's sometimes not enough.
-
 ### -r / --filename-re
 
 Use a regex here to select files by their names.
 
-## Features and missing features
+## Features (not exhaustive)
+
+### Supported BEPs
+
+- [BEP-3: The BitTorrent Protocol Specification](https://www.bittorrent.org/beps/bep_0003.html)
+- [BEP-5: DHT Protocol](https://www.bittorrent.org/beps/bep_0005.html)
+- [BEP-7: IPv6 Tracker Extension](https://www.bittorrent.org/beps/bep_0007.html)
+- [BEP-9: Extension for Peers to Send Metadata Files](https://www.bittorrent.org/beps/bep_0009.html)
+- [BEP-10: Extension Protocol](https://www.bittorrent.org/beps/bep_0010.html)
+- [BEP-11: Peer Exchange (PEX)](https://www.bittorrent.org/beps/bep_0011.html)
+- [BEP-12: Multitracker Metadata Extension](https://www.bittorrent.org/beps/bep_0012.html)
+- [BEP-15: UDP Tracker Protocol](https://www.bittorrent.org/beps/bep_0015.html)
+- [BEP-20: Peer ID Conventions](https://www.bittorrent.org/beps/bep_0020.html)
+- [BEP-23: Tracker Returns Compact Peer Lists](https://www.bittorrent.org/beps/bep_0023.html)
+- [BEP-27: Private Torrents](https://www.bittorrent.org/beps/bep_0027.html)
+- [BEP-29: uTorrent Transport Protocol](https://www.bittorrent.org/beps/bep_0029.html)
+- [BEP-32: IPv6 extension for DHT](https://www.bittorrent.org/beps/bep_0032.html)
+- [BEP-47: Padding files and extended file attributes](https://www.bittorrent.org/beps/bep_0047.html)
+- [BEP-53: Magnet URI extension - Select specific file indices for download](https://www.bittorrent.org/beps/bep_0053.html)
 
 ### Some supported features
 
@@ -124,34 +164,58 @@ Use a regex here to select files by their names.
 - UPNP port forwarding to your router
 - UPNP Media Server
 - Fastresume (no rehashing)
+- Download / upload rate limiting
+- Prometheus metrics at ```/metrics``` and ```/torrents/<id_or_infohash>/peer_stats/prometheus```
 
 ## HTTP API
 
 By default it listens on http://127.0.0.1:3030.
 
-    curl -s 'http://127.0.0.1:3030/'
+```
+curl -s 'http://127.0.0.1:3030/'
 
-    {
-        "apis": {
-            "GET /": "list all available APIs",
-            "GET /dht/stats": "DHT stats",
-            "GET /dht/table": "DHT routing table",
-            "GET /torrents": "List torrents (default torrent is 0)",
-            "GET /torrents/{id_or_infohash}": "Torrent details",
-            "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
-            "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
-            "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
-            "GET /web/": "Web UI",
-            "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
-            "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-            "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
-            "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
-            "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
-            "POST /torrents/{id_or_infohash}/start": "Resume torrent",
-            "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {"only_files": [0, 1, 2]}"
-        },
-        "server": "rqbit"
-    }
+{
+  "apis": {
+    "GET /": "list all available APIs",
+    "GET /dht/stats": "DHT stats",
+    "GET /dht/table": "DHT routing table",
+    "GET /metrics": "Prometheus metrics",
+    "GET /stats": "Global session stats",
+    "GET /stream_logs": "Continuously stream logs",
+    "GET /torrents": "List torrents",
+    "GET /torrents/playlist": "Playlist for supported players",
+    "GET /torrents/{id_or_infohash}": "Torrent details",
+    "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+    "GET /torrents/{id_or_infohash}/metadata": "Download the corresponding torrent file",
+    "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+    "GET /torrents/{id_or_infohash}/peer_stats/prometheus": "Per peer stats in prometheus format",
+    "GET /torrents/{id_or_infohash}/playlist": "Playlist for supported players",
+    "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
+    "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
+    "GET /web/": "Web UI",
+    "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
+    "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+    "POST /torrents/create": "Create a torrent and start seeding. Body should be a local folder",
+    "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
+    "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
+    "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
+    "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
+    "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
+    "POST /torrents/{id_or_infohash}/start": "Resume torrent",
+    "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}"
+  },
+  "server": "rqbit",
+  "version": "9.0.0-beta.1"
+}
+```
+
+### Basic auth
+
+For HTTP API basic authentication set RQBIT_HTTP_BASIC_AUTH_USERPASS environment variable.
+
+```
+RQBIT_HTTP_BASIC_AUTH_USERPASS=username:password rqbit server start ...
+```
 
 ### Add torrent through HTTP API
 
@@ -186,14 +250,12 @@ Supported query parameters, all optional:
 - crates/upnp - upnp port forwarding
 - crates/upnp_serve - upnp MediaServer
 - desktop - desktop app built with [Tauri](https://tauri.app/)
+- [librqbit-utp](https://github.com/ikatson/librqbit-utp/) - uTP protocol
+- [librqbit-dualstack-sockets](https://github.com/ikatson/librqbit-dualstack-sockets) - cross-platform IPv6+IPv4 listeners with canonical IPs
 
 ## Motivation
 
-First of all, I love Rust. This project began purely out of my enjoyment of writing code in Rust. I wasn’t satisfied with my regular BitTorrent client and wanted to see how much effort it would take to build one from scratch. Starting with the bencode protocol, then the peer protocol, it gradually evolved into what it is today.
-
-What really drives me to keep improving rqbit is seeing genuine interest from users. For example, my dad found the CLI too difficult, so I built a desktop app just for him. Later, he got into Docker Compose and now runs rqbit on his NAS, showing how user feedback and needs can inspire new features. You can find other examples of new features born from user requests in the issues/PRs.
-
-Hearing from people who use and appreciate rqbit keeps me motivated to continue adding new features and making it even better.
+This project began purely out of my enjoyment of writing code in Rust. I wasn’t satisfied with my regular BitTorrent client and wanted to see how much effort it would take to build one from scratch. Starting with the bencode protocol, then the peer protocol, it gradually evolved into what it is today.
 
 ## Donations and sponsorship
 

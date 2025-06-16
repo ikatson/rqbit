@@ -294,11 +294,9 @@ struct DownloadOpts {
     /// The filename or URL of the torrent. If URL, http/https/magnet are supported.
     torrent_path: Vec<String>,
 
-    /// The output folder to write to. If not exists, it will be created.
-    /// If not specified, would use the server's output folder. If there's no server
-    /// running, this is required.
+    /// The output folder to write to. Defaults to current folder.
     #[arg(short = 'o', long)]
-    output_folder: String,
+    output_folder: Option<String>,
 
     /// The sub folder within output folder to write to. Useful when you have
     /// a server running with output_folder configured, and don't want to specify
@@ -354,9 +352,6 @@ struct CompletionsOpts {
     /// The shell to generate completions for
     shell: Shell,
 }
-
-// server start
-// download [--connect-to-existing] --output-folder(required) [file1] [file2]
 
 #[derive(Parser)]
 enum SubCommand {
@@ -628,7 +623,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         }
     };
 
-    match &opts.subcommand {
+    match opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
                 let http_api_listen_addr = opts
@@ -749,7 +744,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 res.context("error running server")
             }
         },
-        SubCommand::Download(download_opts) => {
+        SubCommand::Download(mut download_opts) => {
             if download_opts.torrent_path.is_empty() {
                 anyhow::bail!("you must provide at least one URL to download")
             }
@@ -757,6 +752,11 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             // "rqbit download" is ephemeral, so disable all persistence.
             sopts.disable_dht_persistence = true;
             sopts.persistence = None;
+
+            if download_opts.list {
+                sopts.listen = None;
+                download_opts.disable_http_api = true;
+            }
 
             if let Some(listen) = sopts.listen.as_mut() {
                 // We are creating ephemeral ports, no point in port forwarding.
@@ -786,9 +786,16 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 disable_trackers: download_opts.disable_trackers,
                 ..Default::default()
             };
-            let session = Session::new_with_opts(download_opts.output_folder.clone().into(), sopts)
-                .await
-                .context("error initializing rqbit session")?;
+            let session = Session::new_with_opts(
+                download_opts
+                    .output_folder
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_default(),
+                sopts,
+            )
+            .await
+            .context("error initializing rqbit session")?;
 
             librqbit_spawn(
                 "stats_printer",
@@ -901,7 +908,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 anyhow::bail!("no torrents were added")
             }
         }
-        SubCommand::Completions(completions_opts) => unreachable!(),
+        SubCommand::Completions(_) => unreachable!(),
     }
 }
 
