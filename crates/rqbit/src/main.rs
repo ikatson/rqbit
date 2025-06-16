@@ -785,19 +785,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             if let Some(listen) = sopts.listen.as_mut() {
                 // We are creating ephemeral ports, no point in port forwarding.
                 listen.enable_upnp_port_forwarding = false;
-
-                // If the user hasn't specified a specific port, find a free random port.
-                // It needs to be the same for TCP and UDP, as we announce that port
-                // to trackers and DHT.
-                if opts.listen_port.is_none() {
-                    let mut addr = listen.listen_addr;
-                    addr.set_port(0);
-                    let ephemeral_port = std::net::TcpListener::bind(addr)
-                        .and_then(|l| l.local_addr())
-                        .context("failed finding an ephemeral TCP/UDP listen port to use")?
-                        .port();
-                    listen.listen_addr.set_port(ephemeral_port);
-                }
+                maybe_set_ephemeral_port(&opts.listen_port, listen)?;
             }
 
             let torrent_opts = || AddTorrentOptions {
@@ -946,19 +934,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             sopts.disable_dht_persistence = true;
             sopts.persistence = None;
 
-            // If the user hasn't specified a specific port, find a free random port.
-            // It needs to be the same for TCP and UDP, as we announce that port
-            // to trackers and DHT.
             if let Some(listen) = sopts.listen.as_mut() {
-                if opts.listen_port.is_none() {
-                    let mut addr = listen.listen_addr;
-                    addr.set_port(0);
-                    let ephemeral_port = std::net::TcpListener::bind(addr)
-                        .and_then(|l| l.local_addr())
-                        .context("failed finding an ephemeral TCP/UDP listen port to use")?
-                        .port();
-                    listen.listen_addr.set_port(ephemeral_port);
-                }
+                maybe_set_ephemeral_port(&opts.listen_port, listen)?;
             } else {
                 anyhow::bail!("you disabled all listeners, can't share");
             }
@@ -998,6 +975,25 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         }
         SubCommand::Completions(_) => unreachable!(),
     }
+}
+
+fn maybe_set_ephemeral_port(
+    forced_listen_port: &Option<u16>,
+    listen: &mut ListenerOptions,
+) -> anyhow::Result<()> {
+    // If the user hasn't specified a specific port, find a free random port.
+    // It needs to be the same for TCP and UDP, as we announce that port
+    // to trackers and DHT.
+    if forced_listen_port.is_none() {
+        let mut addr = listen.listen_addr;
+        addr.set_port(0);
+        let ephemeral_port = std::net::TcpListener::bind(addr)
+            .and_then(|l| l.local_addr())
+            .context("failed finding an ephemeral TCP/UDP listen port to use")?
+            .port();
+        listen.listen_addr.set_port(ephemeral_port);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
