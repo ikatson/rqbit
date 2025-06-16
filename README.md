@@ -171,29 +171,43 @@ Use a regex here to select files by their names.
 
 By default it listens on http://127.0.0.1:3030.
 
-    curl -s 'http://127.0.0.1:3030/'
+```
+curl -s 'http://127.0.0.1:3030/'
 
-    {
-        "apis": {
-            "GET /": "list all available APIs",
-            "GET /dht/stats": "DHT stats",
-            "GET /dht/table": "DHT routing table",
-            "GET /torrents": "List torrents (default torrent is 0)",
-            "GET /torrents/{id_or_infohash}": "Torrent details",
-            "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
-            "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
-            "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
-            "GET /web/": "Web UI",
-            "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
-            "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-            "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
-            "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
-            "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
-            "POST /torrents/{id_or_infohash}/start": "Resume torrent",
-            "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {"only_files": [0, 1, 2]}"
-        },
-        "server": "rqbit"
-    }
+{
+  "apis": {
+    "GET /": "list all available APIs",
+    "GET /dht/stats": "DHT stats",
+    "GET /dht/table": "DHT routing table",
+    "GET /metrics": "Prometheus metrics",
+    "GET /stats": "Global session stats",
+    "GET /stream_logs": "Continuously stream logs",
+    "GET /torrents": "List torrents",
+    "GET /torrents/playlist": "Playlist for supported players",
+    "GET /torrents/{id_or_infohash}": "Torrent details",
+    "GET /torrents/{id_or_infohash}/haves": "The bitfield of have pieces",
+    "GET /torrents/{id_or_infohash}/metadata": "Download the corresponding torrent file",
+    "GET /torrents/{id_or_infohash}/peer_stats": "Per peer stats",
+    "GET /torrents/{id_or_infohash}/peer_stats/prometheus": "Per peer stats in prometheus format",
+    "GET /torrents/{id_or_infohash}/playlist": "Playlist for supported players",
+    "GET /torrents/{id_or_infohash}/stats/v1": "Torrent stats",
+    "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
+    "GET /web/": "Web UI",
+    "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
+    "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
+    "POST /torrents/create": "Create a torrent and start seeding. Body should be a local folder",
+    "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
+    "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
+    "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
+    "POST /torrents/{id_or_infohash}/forget": "Forget about the torrent, keep the files",
+    "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
+    "POST /torrents/{id_or_infohash}/start": "Resume torrent",
+    "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}"
+  },
+  "server": "rqbit",
+  "version": "9.0.0-beta.1"
+}
+```
 
 ### Basic auth
 
