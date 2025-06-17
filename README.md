@@ -141,6 +141,7 @@ Use a regex here to select files by their names.
 - [BEP-10: Extension Protocol](https://www.bittorrent.org/beps/bep_0010.html)
 - [BEP-11: Peer Exchange (PEX)](https://www.bittorrent.org/beps/bep_0011.html)
 - [BEP-12: Multitracker Metadata Extension](https://www.bittorrent.org/beps/bep_0012.html)
+- [BEP-14: Local service discovery](https://www.bittorrent.org/beps/bep_0014.html)
 - [BEP-15: UDP Tracker Protocol](https://www.bittorrent.org/beps/bep_0015.html)
 - [BEP-20: Peer ID Conventions](https://www.bittorrent.org/beps/bep_0020.html)
 - [BEP-23: Tracker Returns Compact Peer Lists](https://www.bittorrent.org/beps/bep_0023.html)

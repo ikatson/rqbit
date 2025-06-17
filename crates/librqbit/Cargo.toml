@@ -59,6 +59,7 @@ bencode = { path = "../bencode", default-features = false, package = "librqbit-b
 tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "3" }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 librqbit-core = { path = "../librqbit_core", default-features = false, version = "5" }
+librqbit-lsd = { path = "../librqbit_lsd", default-features = false, package = "librqbit-lsd", version = "0.1.0" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.3" }
 sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
@@ -131,7 +132,7 @@ intervaltree = "0.2.7"
 async-compression = { version = "0.4.18", features = ["tokio", "gzip"] }
 librqbit-utp = { version = "0.4.0", features = ["export-metrics"] }
 axum-extra = { version = "0.10.1", features = ["query"] }
-librqbit-dualstack-sockets = { version = "0.3.1", features = ["axum"] }
+librqbit-dualstack-sockets = { version = "0.4.1", features = ["axum"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.1", features = [

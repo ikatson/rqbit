@@ -245,6 +245,10 @@ struct Opts {
     /// The filename with tracker URLs to always use for each torrent.
     #[arg(long, env = "RQBIT_TRACKERS_FILENAME")]
     trackers_filename: Option<String>,
+
+    /// Disable local peer discovery (LSD)
+    #[arg(long = "--disable-lsd", env = "RQBIT_LSD_DISABLE")]
+    disable_local_peer_discovery: bool,
 }
 
 #[derive(Parser)]
@@ -517,7 +521,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     let trackers = if let Some(f) = opts.trackers_filename {
         parse_trackers_file(&f)
             .await
-            .context("error reading trackers file")?
+            .inspect_err(|e| warn!("error reading trackers file: {e:#}"))
+            .unwrap_or_default()
     } else {
         Default::default()
     };
@@ -583,6 +588,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             download_bps: opts.ratelimit_download_bps,
         },
         blocklist_url: opts.blocklist_url,
+        disable_local_service_discovery: opts.disable_local_peer_discovery,
         trackers,
     };
 
@@ -739,7 +745,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.line_broadcast),
                 );
                 let http_api = HttpApi::new(api, Some(http_api_opts));
-                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, true)
+                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, Default::default())
                     .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
                 let http_api_listen_addr = tcp_listener.bind_addr();
                 info!("starting HTTP API at http://{http_api_listen_addr}");
@@ -993,7 +999,7 @@ fn start_ephemeral_http_api(
         }),
     );
     let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
-    let listener = TcpListener::bind_tcp(http_api_listen_addr, true)
+    let listener = TcpListener::bind_tcp(http_api_listen_addr, Default::default())
         .with_context(|| format!("error binding HTTP server to {http_api_listen_addr}"))?;
     let http_api_listen_addr = listener.bind_addr();
     info!("started HTTP API at http://{http_api_listen_addr}");

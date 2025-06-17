@@ -2860,7 +2860,8 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dht",
- "librqbit-dualstack-sockets 0.3.1",
+ "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-lsd",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
  "librqbit-tracker-comms",
@@ -2970,7 +2971,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.3.1",
+ "librqbit-dualstack-sockets 0.4.1",
  "parking_lot",
  "rand 0.9.1",
  "serde",
@@ -2996,16 +2997,39 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.3.1"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54ce85bbf64d294b0a0070e6bee854f2e125f0a617c2297a286bf2497d40eaf6"
+checksum = "ba11c98da8127fac9bdcc90e0349636a4c47b1aa39890a84982fbffefdae2264"
 dependencies = [
  "axum 0.8.4",
  "backon",
+ "bstr",
+ "futures",
+ "network-interface",
  "socket2",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "librqbit-lsd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "atoi",
+ "bstr",
+ "futures",
+ "httparse",
+ "librqbit-core",
+ "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-sha1-wrapper",
+ "parking_lot",
+ "rand 0.9.1",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3048,7 +3072,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.3.1",
+ "librqbit-dualstack-sockets 0.4.1",
  "parking_lot",
  "rand 0.9.1",
  "reqwest",
@@ -3091,6 +3115,7 @@ dependencies = [
  "http",
  "httparse",
  "librqbit-core",
+ "librqbit-dualstack-sockets 0.4.1",
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
@@ -3099,7 +3124,6 @@ dependencies = [
  "quick-xml 0.37.5",
  "reqwest",
  "serde",
- "socket2",
  "tokio",
  "tokio-util",
  "tower-http",
@@ -4793,7 +4817,7 @@ dependencies = [
  "gethostname",
  "libc",
  "librqbit",
- "librqbit-dualstack-sockets 0.3.1",
+ "librqbit-dualstack-sockets 0.4.1",
  "librqbit-upnp-serve",
  "metrics-exporter-prometheus",
  "openssl",
@@ -4821,7 +4845,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
- "librqbit-dualstack-sockets 0.3.1",
+ "librqbit-dualstack-sockets 0.4.1",
  "metrics-exporter-prometheus",
  "parking_lot",
  "serde",
