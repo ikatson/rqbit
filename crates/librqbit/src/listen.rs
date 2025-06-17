@@ -81,7 +81,7 @@ impl ListenerOptions {
             if !self.mode.tcp_enabled() {
                 return Ok::<_, anyhow::Error>(None);
             }
-            let listener = TcpListener::bind_tcp(self.listen_addr, true)
+            let listener = TcpListener::bind_tcp(self.listen_addr, Default::default())
                 .context("error starting TCP listener")?;
             info!(
                 "Listening on TCP {:?} for incoming peer connections",

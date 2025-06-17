@@ -164,7 +164,7 @@ async fn api_from_config(
             None
         };
         let http_api_task = async move {
-            let listener = TcpListener::bind_tcp(listen_addr, true)
+            let listener = TcpListener::bind_tcp(listen_addr, Default::default())
                 .with_context(|| format!("error listening on {}", listen_addr))?;
             librqbit::http_api::HttpApi::new(api.clone(), Some(http_api_opts))
                 .make_http_api_and_run(listener, upnp_router)

@@ -1272,7 +1272,8 @@ impl DhtState {
             let addr = config
                 .listen_addr
                 .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into());
-            let socket = UdpSocket::bind_udp(addr, true).context("error binding UDP socket")?;
+            let socket = UdpSocket::bind_udp(addr, Default::default())
+                .context("error binding UDP socket")?;
 
             let listen_addr = socket.bind_addr();
             info!("DHT listening on {:?}", listen_addr);

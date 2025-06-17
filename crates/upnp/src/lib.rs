@@ -1,7 +1,7 @@
 use anyhow::{Context, bail};
 use bstr::BStr;
 use futures::{StreamExt, TryFutureExt, stream::FuturesUnordered};
-use network_interface::NetworkInterfaceConfig;
+use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use reqwest::Client;
 use serde::Deserialize;
 use std::{
@@ -42,7 +42,10 @@ pub fn ipv6_is_link_local(ip: Ipv6Addr) -> bool {
     ip_bits_v6(ip) & ip_bits_v6(MASK) == ip_bits_v6(LL) & ip_bits_v6(MASK)
 }
 
-pub fn get_local_ip_relative_to(local_dest: SocketAddr) -> anyhow::Result<IpAddr> {
+pub fn get_local_ip_relative_to(
+    local_dest: SocketAddr,
+    interfaces: &[NetworkInterface],
+) -> anyhow::Result<IpAddr> {
     fn ip_bits_v4(addr: Ipv4Addr) -> u32 {
         u32::from_be_bytes(addr.octets())
     }
@@ -55,12 +58,8 @@ pub fn get_local_ip_relative_to(local_dest: SocketAddr) -> anyhow::Result<IpAddr
         ip_bits_v6(ip) & ip_bits_v6(mask)
     }
 
-    let interfaces =
-        network_interface::NetworkInterface::show().context("error listing network interfaces")?;
-
     for i in interfaces {
-        for addr in i.addr {
-            trace!(%local_dest, nic=i.index, ip=?addr.ip(), nm=?addr.netmask(), "dbg");
+        for addr in i.addr.iter() {
             match (local_dest, addr.ip(), addr.netmask()) {
                 // We are connecting to ourselves, return itself.
                 (l, a, _) if l.ip() == a => return Ok(addr.ip()),
@@ -233,6 +232,7 @@ impl Service {
 struct UpnpEndpoint {
     discover_response: UpnpDiscoverResponse,
     data: RootDesc,
+    nics: Vec<NetworkInterface>,
 }
 
 impl UpnpEndpoint {
@@ -254,7 +254,7 @@ impl UpnpEndpoint {
 
     fn my_local_ip(&self) -> anyhow::Result<IpAddr> {
         let received_from = self.discover_response.received_from;
-        let local_ip = get_local_ip_relative_to(received_from)
+        let local_ip = get_local_ip_relative_to(received_from, &self.nics)
             .with_context(|| format!("can't determine local IP relative to {received_from}"))?;
         Ok(local_ip)
     }
@@ -411,9 +411,12 @@ impl UpnpPortForwarder {
         discover_response: UpnpDiscoverResponse,
     ) -> anyhow::Result<UpnpEndpoint> {
         let services = discover_services(discover_response.location.clone()).await?;
+        let nics = network_interface::NetworkInterface::show()
+            .context("error listing network interfaces")?;
         Ok(UpnpEndpoint {
             discover_response,
             data: services,
+            nics,
         })
     }
 

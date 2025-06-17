@@ -739,7 +739,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     Some(log_config.line_broadcast),
                 );
                 let http_api = HttpApi::new(api, Some(http_api_opts));
-                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, true)
+                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, Default::default())
                     .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
                 let http_api_listen_addr = tcp_listener.bind_addr();
                 info!("starting HTTP API at http://{http_api_listen_addr}");
@@ -993,7 +993,7 @@ fn start_ephemeral_http_api(
         }),
     );
     let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
-    let listener = TcpListener::bind_tcp(http_api_listen_addr, true)
+    let listener = TcpListener::bind_tcp(http_api_listen_addr, Default::default())
         .with_context(|| format!("error binding HTTP server to {http_api_listen_addr}"))?;
     let http_api_listen_addr = listener.bind_addr();
     info!("started HTTP API at http://{http_api_listen_addr}");

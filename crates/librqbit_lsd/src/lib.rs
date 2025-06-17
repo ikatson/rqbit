@@ -84,6 +84,7 @@ cookie: {cookie}\r
             let buf = bstr::BStr::new(&buf[..sz]);
             match try_parse_bt_search(buf, &mut headers) {
                 Ok(bts) => {
+                    trace!(?addr, ?bts, "received");
                     if bts.our_cookie == Some(self.inner.cookie) {
                         trace!(?bts, "ignoring our own message");
                         continue;

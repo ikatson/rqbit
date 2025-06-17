@@ -267,7 +267,7 @@ impl Drop for TransactionIdGuard<'_> {
 impl UdpTrackerClient {
     pub async fn new(cancel_token: CancellationToken) -> anyhow::Result<Self> {
         let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
-        let sock = UdpSocket::bind_udp(addr, true)
+        let sock = UdpSocket::bind_udp(addr, Default::default())
             .with_context(|| format!("error creating UDP socket at {addr}"))?;
 
         let client = Self {

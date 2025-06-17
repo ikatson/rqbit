@@ -145,7 +145,7 @@ USN: {usn}::{device_kind}\r
         st: &str,
         addr: SocketAddr,
     ) -> anyhow::Result<String> {
-        let local_ip = ::librqbit_upnp::get_local_ip_relative_to(addr)?;
+        let local_ip = ::librqbit_upnp::get_local_ip_relative_to(addr, self.socket.nics())?;
         let location = {
             let mut loc = self.opts.description_http_location.clone();
             let _ = loc.set_ip_host(local_ip);
