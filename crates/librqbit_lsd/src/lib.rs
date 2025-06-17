@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::{FromStr, from_utf8},
     sync::Arc,
     time::Duration,
@@ -9,17 +9,26 @@ use std::{
 use anyhow::Context;
 use futures::Stream;
 use librqbit_core::{Id20, spawn_utils::spawn_with_cancel};
-use librqbit_dualstack_sockets::{MulticastOpts, MulticastUdpSocket};
+use librqbit_dualstack_sockets::MulticastUdpSocket;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
 use tracing::{error_span, trace};
 
+const LSD_PORT: u16 = 6771;
+const LSD_IPV4: Ipv4Addr = Ipv4Addr::new(239, 192, 152, 143);
+const LSD_IPV6: Ipv6Addr = Ipv6Addr::new(0xff15, 0, 0, 0, 0, 0, 0xefc0, 0x988f);
+
+struct Announce {
+    tx: UnboundedSender<SocketAddr>,
+    port: Option<u16>,
+}
+
 struct LocalServiceDiscoveryInner {
     socket: MulticastUdpSocket,
     cookie: u32,
     cancel_token: CancellationToken,
-    receivers: RwLock<HashMap<Id20, UnboundedSender<SocketAddr>>>,
+    receivers: RwLock<HashMap<Id20, Announce>>,
 }
 
 #[derive(Clone)]
@@ -35,10 +44,8 @@ pub struct LocalServiceDiscoveryOptions {
 
 impl LocalServiceDiscovery {
     pub fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
-        let ipv4: Ipv4Addr = "239.192.152.143".parse().unwrap();
-        let ipv6: Ipv6Addr = "ff15::efc0:988f".parse().unwrap();
-        let socket =
-            MulticastUdpSocket::new(6771, ipv4, ipv6, None).context("error binding LSD socket")?;
+        let socket = MulticastUdpSocket::new(LSD_PORT, LSD_IPV4, LSD_IPV6, None)
+            .context("error binding LSD socket")?;
         let cookie = opts.cookie.unwrap_or_else(rand::random);
         let lsd = Self {
             inner: Arc::new(LocalServiceDiscoveryInner {
@@ -58,8 +65,13 @@ impl LocalServiceDiscovery {
         Ok(lsd)
     }
 
-    fn gen_announce_msg(&self, info_hash: Id20, port: u16, mopts: &MulticastOpts) -> bstr::BString {
-        let host = mopts.mcast_addr();
+    fn gen_announce_msg(&self, info_hash: Id20, port: u16, is_v6: bool) -> bstr::BString {
+        let host: IpAddr = if is_v6 {
+            LSD_IPV6.into()
+        } else {
+            LSD_IPV4.into()
+        };
+        let host: SocketAddr = (host, LSD_PORT).into();
         let cookie = self.inner.cookie;
         let info_hash = info_hash.as_string();
         format!(
@@ -89,10 +101,25 @@ cookie: {cookie}\r
                         trace!(?bts, "ignoring our own message");
                         continue;
                     }
-                    if let Some(tx) = self.inner.receivers.read().get(&bts.hash) {
-                        let mut addr = addr;
-                        addr.set_port(bts.port);
-                        let _ = tx.send(addr);
+
+                    let reply_port =
+                        self.inner
+                            .receivers
+                            .read()
+                            .get(&bts.hash)
+                            .and_then(|announce| {
+                                let mut addr = addr;
+                                addr.set_port(bts.port);
+                                announce.tx.send(addr).ok().and(announce.port)
+                            });
+
+                    if let Some(port) = reply_port {
+                        let reply = self.gen_announce_msg(bts.hash, port, addr.is_ipv6());
+                        if let Err(e) = self.inner.socket.send_to(&reply, addr).await {
+                            trace!(?addr, ?reply, "error sending reply: {e:#}");
+                        } else {
+                            trace!(?addr, ?reply, "sent reply");
+                        }
                     }
                 }
                 Err(e) => {
@@ -109,7 +136,9 @@ cookie: {cookie}\r
 
             self.inner
                 .socket
-                .try_send_mcast_everywhere(&|mopts| self.gen_announce_msg(info_hash, port, mopts))
+                .try_send_mcast_everywhere(&|mopts| {
+                    self.gen_announce_msg(info_hash, port, mopts.mcast_addr().is_ipv6())
+                })
                 .await;
         }
     }
@@ -147,7 +176,13 @@ cookie: {cookie}\r
             }
         }
 
-        self.inner.receivers.write().insert(info_hash, tx);
+        self.inner.receivers.write().insert(
+            info_hash,
+            Announce {
+                tx,
+                port: announce_port,
+            },
+        );
 
         if let Some(announce_port) = announce_port {
             let cancel_token = self.inner.cancel_token.child_token();
