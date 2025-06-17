@@ -2998,6 +2998,8 @@ dependencies = [
 [[package]]
 name = "librqbit-dualstack-sockets"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3654d8fb88f7e84f17ae86c106b56142c655b4c538e1bd32f76d734592c4f1e2"
 dependencies = [
  "axum 0.8.4",
  "backon",
