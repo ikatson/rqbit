@@ -56,6 +56,7 @@ use librqbit_core::{
     spawn_utils::spawn_with_cancel,
     torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
 };
+use librqbit_lsd::{LocalServiceDiscovery, LocalServiceDiscoveryOptions};
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
@@ -125,6 +126,8 @@ pub struct Session {
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
     disk_write_tx: Option<DiskWorkQueueSender>,
     trackers: HashSet<url::Url>,
+
+    lsd: Option<LocalServiceDiscovery>,
 
     // Limits and throttling
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
@@ -413,10 +416,10 @@ pub struct SessionOptions {
 
     pub cancellation_token: Option<CancellationToken>,
 
-    // how many concurrent torrent initializations can happen
+    /// how many concurrent torrent initializations can happen
     pub concurrent_init_limit: Option<usize>,
 
-    // the root span to use. If not set will be None.
+    /// the root span to use. If not set will be None.
     pub root_span: Option<tracing::Span>,
 
     pub ratelimits: LimitsConfig,
@@ -428,6 +431,9 @@ pub struct SessionOptions {
 
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
+
+    /// Disable LSD multicast
+    pub disable_local_service_discovery: bool,
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -634,6 +640,19 @@ impl Session {
                 .await
                 .context("error creating UDP tracker client")?;
 
+            let lsd = {
+                if opts.disable_local_service_discovery {
+                    None
+                } else {
+                    LocalServiceDiscovery::new(LocalServiceDiscoveryOptions {
+                        cancel_token: token.clone(),
+                        ..Default::default()
+                    })
+                    .inspect_err(|e| warn!("error starting local service discovery: {e:#}"))
+                    .ok()
+                }
+            };
+
             let session = Arc::new(Self {
                 persistence,
                 bitv_factory,
@@ -663,6 +682,7 @@ impl Session {
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
+                lsd,
             });
 
             if let Some(mut disk_write_rx) = disk_write_rx {
@@ -1369,6 +1389,14 @@ impl Session {
             })
         };
 
+        let lsd_rx = if is_private {
+            None
+        } else {
+            self.lsd.as_ref().map(|lsd| {
+                lsd.announce(info_hash, if announce { self.announce_port } else { None })
+            })
+        };
+
         if is_private && trackers.len() > 1 {
             warn!("private trackers are not fully implemented, so using only the first tracker");
             trackers.truncate(1);
@@ -1397,8 +1425,11 @@ impl Session {
             Some(futures::stream::iter(initial_peers))
         };
         merge_two_optional_streams(
-            merge_two_optional_streams(dht_rx, tracker_rx),
-            initial_peers_rx,
+            merge_two_optional_streams(
+                merge_two_optional_streams(dht_rx, tracker_rx),
+                initial_peers_rx,
+            ),
+            lsd_rx,
         )
     }
 

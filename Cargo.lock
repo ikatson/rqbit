@@ -2861,6 +2861,7 @@ dependencies = [
  "librqbit-core",
  "librqbit-dht",
  "librqbit-dualstack-sockets 0.4.0",
+ "librqbit-lsd",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
  "librqbit-tracker-comms",

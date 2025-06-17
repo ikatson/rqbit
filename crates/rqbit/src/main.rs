@@ -245,6 +245,10 @@ struct Opts {
     /// The filename with tracker URLs to always use for each torrent.
     #[arg(long, env = "RQBIT_TRACKERS_FILENAME")]
     trackers_filename: Option<String>,
+
+    /// Disable local peer discovery (LSD)
+    #[arg(long, env = "RQBIT_LSD_DISABLE")]
+    disable_local_peer_discovery: bool,
 }
 
 #[derive(Parser)]
@@ -583,6 +587,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             download_bps: opts.ratelimit_download_bps,
         },
         blocklist_url: opts.blocklist_url,
+        disable_local_service_discovery: opts.disable_local_peer_discovery,
         trackers,
     };
 

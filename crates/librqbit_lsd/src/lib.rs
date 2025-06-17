@@ -38,8 +38,8 @@ pub struct LocalServiceDiscovery {
 
 #[derive(Default)]
 pub struct LocalServiceDiscoveryOptions {
-    cancel_token: CancellationToken,
-    cookie: Option<u32>,
+    pub cancel_token: CancellationToken,
+    pub cookie: Option<u32>,
 }
 
 impl LocalServiceDiscovery {
