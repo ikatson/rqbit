@@ -247,7 +247,7 @@ struct Opts {
     trackers_filename: Option<String>,
 
     /// Disable local peer discovery (LSD)
-    #[arg(long, env = "RQBIT_LSD_DISABLE")]
+    #[arg(long = "--disable-lsd", env = "RQBIT_LSD_DISABLE")]
     disable_local_peer_discovery: bool,
 }
 
