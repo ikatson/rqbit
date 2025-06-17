@@ -521,7 +521,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
     let trackers = if let Some(f) = opts.trackers_filename {
         parse_trackers_file(&f)
             .await
-            .context("error reading trackers file")?
+            .inspect_err(|e| warn!("error reading trackers file: {e:#}"))
+            .unwrap_or_default()
     } else {
         Default::default()
     };
