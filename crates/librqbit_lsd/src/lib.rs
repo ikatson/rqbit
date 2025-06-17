@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     str::{FromStr, from_utf8},
     sync::Arc,
     time::Duration,
@@ -16,8 +16,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error_span, trace};
 
 const LSD_PORT: u16 = 6771;
-const LSD_IPV4: Ipv4Addr = Ipv4Addr::new(239, 192, 152, 143);
-const LSD_IPV6: Ipv6Addr = Ipv6Addr::new(0xff15, 0, 0, 0, 0, 0, 0xefc0, 0x988f);
+const LSD_IPV4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 192, 152, 143), LSD_PORT);
+const LSD_IPV6: SocketAddrV6 = SocketAddrV6::new(
+    Ipv6Addr::new(0xff15, 0, 0, 0, 0, 0, 0xefc0, 0x988f),
+    LSD_PORT,
+    0,
+    0,
+);
 
 struct Announce {
     tx: UnboundedSender<SocketAddr>,
@@ -44,7 +49,7 @@ pub struct LocalServiceDiscoveryOptions {
 
 impl LocalServiceDiscovery {
     pub fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
-        let socket = MulticastUdpSocket::new(LSD_PORT, LSD_IPV4, LSD_IPV6, None)
+        let socket = MulticastUdpSocket::new(LSD_PORT, *LSD_IPV4.ip(), *LSD_IPV6.ip(), None)
             .context("error binding LSD socket")?;
         let cookie = opts.cookie.unwrap_or_else(rand::random);
         let lsd = Self {
@@ -66,12 +71,11 @@ impl LocalServiceDiscovery {
     }
 
     fn gen_announce_msg(&self, info_hash: Id20, port: u16, is_v6: bool) -> bstr::BString {
-        let host: IpAddr = if is_v6 {
+        let host: SocketAddr = if is_v6 {
             LSD_IPV6.into()
         } else {
             LSD_IPV4.into()
         };
-        let host: SocketAddr = (host, LSD_PORT).into();
         let cookie = self.inner.cookie;
         let info_hash = info_hash.as_string();
         format!(
@@ -115,6 +119,11 @@ cookie: {cookie}\r
 
                     if let Some(port) = reply_port {
                         let reply = self.gen_announce_msg(bts.hash, port, addr.is_ipv6());
+                        let addr = if addr.is_ipv6() {
+                            LSD_IPV6.into()
+                        } else {
+                            LSD_IPV4.into()
+                        };
                         if let Err(e) = self.inner.socket.send_to(&reply, addr).await {
                             trace!(?addr, ?reply, "error sending reply: {e:#}");
                         } else {
