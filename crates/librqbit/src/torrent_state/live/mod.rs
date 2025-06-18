@@ -890,6 +890,8 @@ impl TorrentStateLive {
                 );
             }
 
+            trace!(connected_len = connected.len(), dropped_len = dropped.len());
+
             // BEP 11 - Dont send closed if they are now in live
             // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent,
             // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
