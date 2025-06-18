@@ -13,7 +13,7 @@ use librqbit_dualstack_sockets::MulticastUdpSocket;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
-use tracing::{error_span, trace};
+use tracing::{debug, error_span, trace};
 
 const LSD_PORT: u16 = 6771;
 const LSD_IPV4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 192, 152, 143), LSD_PORT);
@@ -123,16 +123,22 @@ cookie: {cookie}\r
                             });
 
                     if let Some(port) = reply_port {
-                        let reply = self.gen_announce_msg(bts.hash, port, addr.is_ipv6());
-                        let addr = if addr.is_ipv6() {
-                            LSD_IPV6.into()
+                        if let Some(mopts) =
+                            self.inner.socket.find_mcast_opts_for_replying_to(&addr)
+                        {
+                            let reply = self.gen_announce_msg(bts.hash, port, addr.is_ipv6());
+                            if let Err(e) = self
+                                .inner
+                                .socket
+                                .send_multicast_msg(reply.as_bytes(), &mopts)
+                                .await
+                            {
+                                trace!(?addr, ?reply, ?mopts, "error sending reply: {e:#}");
+                            } else {
+                                trace!(?addr, ?reply, ?mopts, "sent reply");
+                            }
                         } else {
-                            LSD_IPV4.into()
-                        };
-                        if let Err(e) = self.inner.socket.send_to(reply.as_bytes(), addr).await {
-                            trace!(?addr, ?reply, "error sending reply: {e:#}");
-                        } else {
-                            trace!(?addr, ?reply, "sent reply");
+                            debug!(?addr, "couldn't find where to reply");
                         }
                     }
                 }
