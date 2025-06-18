@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     }
     tracing_subscriber::fmt::init();
 
-    let lsd = LocalServiceDiscovery::new(Default::default())?;
+    let lsd = LocalServiceDiscovery::new(Default::default()).await?;
     let args = std::env::args().collect::<Vec<_>>();
 
     match (args.get(1), args.get(2)) {

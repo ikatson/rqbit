@@ -648,6 +648,7 @@ impl Session {
                         cancel_token: token.clone(),
                         ..Default::default()
                     })
+                    .await
                     .inspect_err(|e| warn!("error starting local service discovery: {e:#}"))
                     .ok()
                 }

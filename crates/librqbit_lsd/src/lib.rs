@@ -48,9 +48,15 @@ pub struct LocalServiceDiscoveryOptions {
 }
 
 impl LocalServiceDiscovery {
-    pub fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
-        let socket = MulticastUdpSocket::new(LSD_PORT, *LSD_IPV4.ip(), *LSD_IPV6.ip(), None)
-            .context("error binding LSD socket")?;
+    pub async fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
+        let socket = MulticastUdpSocket::new(
+            (Ipv6Addr::UNSPECIFIED, LSD_PORT).into(),
+            LSD_IPV4,
+            LSD_IPV6,
+            None,
+        )
+        .await
+        .context("error binding LSD socket")?;
         let cookie = opts.cookie.unwrap_or_else(rand::random);
         let lsd = Self {
             inner: Arc::new(LocalServiceDiscoveryInner {
@@ -70,7 +76,7 @@ impl LocalServiceDiscovery {
         Ok(lsd)
     }
 
-    fn gen_announce_msg(&self, info_hash: Id20, port: u16, is_v6: bool) -> bstr::BString {
+    fn gen_announce_msg(&self, info_hash: Id20, port: u16, is_v6: bool) -> String {
         let host: SocketAddr = if is_v6 {
             LSD_IPV6.into()
         } else {
@@ -88,7 +94,6 @@ cookie: {cookie}\r
 \r
 "
         )
-        .into()
     }
 
     async fn task_monitor_recv(self) -> anyhow::Result<()> {
@@ -124,7 +129,7 @@ cookie: {cookie}\r
                         } else {
                             LSD_IPV4.into()
                         };
-                        if let Err(e) = self.inner.socket.send_to(&reply, addr).await {
+                        if let Err(e) = self.inner.socket.send_to(reply.as_bytes(), addr).await {
                             trace!(?addr, ?reply, "error sending reply: {e:#}");
                         } else {
                             trace!(?addr, ?reply, "sent reply");
@@ -146,7 +151,7 @@ cookie: {cookie}\r
             self.inner
                 .socket
                 .try_send_mcast_everywhere(&|mopts| {
-                    self.gen_announce_msg(info_hash, port, mopts.mcast_addr().is_ipv6())
+                    Some(self.gen_announce_msg(info_hash, port, mopts.mcast_addr().is_ipv6()))
                 })
                 .await;
         }
