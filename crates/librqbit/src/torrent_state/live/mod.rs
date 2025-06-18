@@ -449,6 +449,7 @@ impl TorrentStateLive {
             tx,
             counters,
             first_message_received: AtomicBool::new(false),
+            cancel_token: self.cancellation_token.child_token(),
         };
         let options = PeerConnectionOptions {
             connect_timeout: self.shared.options.peer_connect_timeout,
@@ -515,6 +516,7 @@ impl TorrentStateLive {
             tx,
             counters,
             first_message_received: AtomicBool::new(false),
+            cancel_token: state.cancellation_token.child_token(),
         };
         let options = PeerConnectionOptions {
             connect_timeout: state.shared.options.peer_connect_timeout,
@@ -949,6 +951,8 @@ struct PeerHandler {
     tx: PeerTx,
 
     first_message_received: AtomicBool,
+
+    cancel_token: CancellationToken,
 }
 
 impl PeerConnectionHandler for &PeerHandler {
@@ -1058,12 +1062,13 @@ impl PeerConnectionHandler for &PeerHandler {
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
         if !self.state.metadata.info.private && hs.ut_pex().is_some() {
-            self.state.clone().spawn(
+            spawn_with_cancel(
                 error_span!(
                     parent: self.state.shared.span.clone(),
                     "sending_pex_to_peer",
                     peer = self.addr.to_string()
                 ),
+                self.cancel_token.clone(),
                 self.state
                     .clone()
                     .task_send_pex_to_peer(self.addr, self.tx.clone()),
