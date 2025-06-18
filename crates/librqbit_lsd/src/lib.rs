@@ -13,7 +13,7 @@ use librqbit_dualstack_sockets::MulticastUdpSocket;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace};
+use tracing::{error_span, trace};
 
 const LSD_PORT: u16 = 6771;
 const LSD_IPV4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 192, 152, 143), LSD_PORT);
@@ -111,34 +111,21 @@ cookie: {cookie}\r
                         continue;
                     }
 
-                    let reply_port =
-                        self.inner
-                            .receivers
-                            .read()
-                            .get(&bts.hash)
-                            .and_then(|announce| {
-                                let mut addr = addr;
-                                addr.set_port(bts.port);
-                                announce.tx.send(addr).ok().and(announce.port)
-                            });
-
-                    if let Some(port) = reply_port {
-                        if let Some(mopts) =
-                            self.inner.socket.find_mcast_opts_for_replying_to(&addr)
-                        {
-                            let reply = self.gen_announce_msg(bts.hash, port, addr.is_ipv6());
-                            if let Err(e) = self
-                                .inner
-                                .socket
-                                .send_multicast_msg(reply.as_bytes(), &mopts)
-                                .await
-                            {
-                                trace!(?addr, ?reply, ?mopts, "error sending reply: {e:#}");
-                            } else {
-                                trace!(?addr, ?reply, ?mopts, "sent reply");
-                            }
+                    let recv_dead =
+                        if let Some(announce) = self.inner.receivers.read().get(&bts.hash) {
+                            let mut addr = addr;
+                            addr.set_port(bts.port);
+                            announce.tx.send(addr).is_err()
                         } else {
-                            debug!(?addr, "couldn't find where to reply");
+                            false
+                        };
+
+                    if recv_dead {
+                        let mut g = self.inner.receivers.write();
+                        if let Some(announce) = g.get(&bts.hash) {
+                            if announce.tx.is_closed() {
+                                g.remove(&bts.hash);
+                            }
                         }
                     }
                 }
