@@ -26,7 +26,6 @@ const LSD_IPV6: SocketAddrV6 = SocketAddrV6::new(
 
 struct Announce {
     tx: UnboundedSender<SocketAddr>,
-    port: Option<u16>,
 }
 
 struct LocalServiceDiscoveryInner {
@@ -183,13 +182,10 @@ cookie: {cookie}\r
             }
         }
 
-        self.inner.receivers.write().insert(
-            info_hash,
-            Announce {
-                tx,
-                port: announce_port,
-            },
-        );
+        self.inner
+            .receivers
+            .write()
+            .insert(info_hash, Announce { tx });
 
         if let Some(announce_port) = announce_port {
             let cancel_token = self.inner.cancel_token.child_token();
