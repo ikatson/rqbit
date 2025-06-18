@@ -13,7 +13,7 @@ sha1-ring = ["librqbit-sha1-wrapper/sha1-ring", "librqbit-core/sha1-ring"]
 
 [dependencies]
 anyhow = "1.0.98"
-librqbit-dualstack-sockets = { version = "0.4.1" }
+librqbit-dualstack-sockets = { version = "0.6.0" }
 tokio = { version = "1.45.1", features = ["time"] }
 tokio-util = "0.7.15"
 librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }
@@ -25,6 +25,7 @@ parking_lot = "0.12.4"
 httparse = "1.10.1"
 atoi = "2.0.0"
 tracing = "0.1.41"
+governor = "0.10.0"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.19"

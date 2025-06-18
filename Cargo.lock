@@ -2860,7 +2860,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dht",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "librqbit-lsd",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
@@ -2971,7 +2971,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "parking_lot",
  "rand 0.9.1",
  "serde",
@@ -2997,13 +2997,12 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.4.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba11c98da8127fac9bdcc90e0349636a4c47b1aa39890a84982fbffefdae2264"
+checksum = "a093c7d896792918cc9927e2307ef866dd0d2463fddbbb5add80188c9899ef87"
 dependencies = [
  "axum 0.8.4",
  "backon",
- "bstr",
  "futures",
  "network-interface",
  "socket2",
@@ -3020,9 +3019,10 @@ dependencies = [
  "atoi",
  "bstr",
  "futures",
+ "governor",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.1",
@@ -3072,7 +3072,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "parking_lot",
  "rand 0.9.1",
  "reqwest",
@@ -3115,7 +3115,7 @@ dependencies = [
  "http",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
@@ -4817,7 +4817,7 @@ dependencies = [
  "gethostname",
  "libc",
  "librqbit",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "librqbit-upnp-serve",
  "metrics-exporter-prometheus",
  "openssl",
@@ -4845,7 +4845,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
- "librqbit-dualstack-sockets 0.4.1",
+ "librqbit-dualstack-sockets 0.6.0",
  "metrics-exporter-prometheus",
  "parking_lot",
  "serde",

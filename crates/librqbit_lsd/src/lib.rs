@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    num::NonZero,
     str::{FromStr, from_utf8},
     sync::Arc,
     time::Duration,
@@ -8,12 +9,13 @@ use std::{
 
 use anyhow::Context;
 use futures::Stream;
+use governor::{DefaultDirectRateLimiter as RateLimiter, Quota};
 use librqbit_core::{Id20, spawn_utils::spawn_with_cancel};
 use librqbit_dualstack_sockets::MulticastUdpSocket;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
-use tracing::{error_span, trace};
+use tracing::{debug, error_span, trace};
 
 const LSD_PORT: u16 = 6771;
 const LSD_IPV4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 192, 152, 143), LSD_PORT);
@@ -27,6 +29,8 @@ const LSD_IPV6: SocketAddrV6 = SocketAddrV6::new(
 struct Announce {
     tx: UnboundedSender<SocketAddr>,
     port: Option<u16>,
+    reply_ratelimit_ipv4: RateLimiter,
+    reply_ratelimit_ipv6: RateLimiter,
 }
 
 struct LocalServiceDiscoveryInner {
@@ -48,9 +52,15 @@ pub struct LocalServiceDiscoveryOptions {
 }
 
 impl LocalServiceDiscovery {
-    pub fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
-        let socket = MulticastUdpSocket::new(LSD_PORT, *LSD_IPV4.ip(), *LSD_IPV6.ip(), None)
-            .context("error binding LSD socket")?;
+    pub async fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
+        let socket = MulticastUdpSocket::new(
+            (Ipv6Addr::UNSPECIFIED, LSD_PORT).into(),
+            LSD_IPV4,
+            LSD_IPV6,
+            None,
+        )
+        .await
+        .context("error binding LSD socket")?;
         let cookie = opts.cookie.unwrap_or_else(rand::random);
         let lsd = Self {
             inner: Arc::new(LocalServiceDiscoveryInner {
@@ -70,7 +80,7 @@ impl LocalServiceDiscovery {
         Ok(lsd)
     }
 
-    fn gen_announce_msg(&self, info_hash: Id20, port: u16, is_v6: bool) -> bstr::BString {
+    fn gen_announce_msg(&self, info_hash: Id20, port: u16, is_v6: bool) -> String {
         let host: SocketAddr = if is_v6 {
             LSD_IPV6.into()
         } else {
@@ -88,53 +98,91 @@ cookie: {cookie}\r
 \r
 "
         )
-        .into()
+    }
+
+    async fn recv_and_process_one(&self, buf: &mut [u8]) -> anyhow::Result<()> {
+        macro_rules! return_if_none {
+            ($e:expr) => {
+                return_if_none!($e, ())
+            };
+            ($e:expr, $if_err:expr) => {
+                match $e {
+                    Some(e) => e,
+                    None => {
+                        $if_err;
+                        return Ok(());
+                    }
+                }
+            };
+        }
+
+        let mut headers = [httparse::EMPTY_HEADER; 16];
+
+        let (sz, addr) = self.inner.socket.recv_from(buf).await?;
+        let buf = bstr::BStr::new(&buf[..sz]);
+
+        let bts = return_if_none!(
+            try_parse_bt_search(buf, &mut headers)
+                .inspect_err(|e| trace!(?buf, ?addr, "error parsing message: {e:#}"))
+                .ok()
+        );
+
+        trace!(?addr, ?bts, "received");
+
+        if bts.our_cookie == Some(self.inner.cookie) {
+            trace!(?bts, "ignoring our own message");
+            return Ok(());
+        }
+
+        let announce_port = {
+            let g = self.inner.receivers.read();
+            let announce = return_if_none!(g.get(&bts.hash));
+            let mut addr = addr;
+            addr.set_port(bts.port);
+
+            return_if_none!(announce.tx.send(addr).ok());
+
+            let announce_port = return_if_none!(announce.port);
+
+            let rl = if addr.is_ipv4() {
+                &announce.reply_ratelimit_ipv4
+            } else {
+                &announce.reply_ratelimit_ipv6
+            };
+
+            return_if_none!(
+                rl.check().ok(),
+                trace!(?addr, ?bts, "replying rate-limited")
+            );
+
+            announce_port
+        };
+
+        let mopts = return_if_none!(
+            self.inner.socket.find_mcast_opts_for_replying_to(&addr),
+            debug!(?addr, "couldn't find where to reply")
+        );
+
+        let reply = self.gen_announce_msg(bts.hash, announce_port, addr.is_ipv6());
+
+        if let Err(e) = self
+            .inner
+            .socket
+            .send_multicast_msg(reply.as_bytes(), &mopts)
+            .await
+        {
+            trace!(?addr, ?reply, ?mopts, "error sending reply: {e:#}");
+        } else {
+            trace!(?addr, ?reply, ?mopts, "sent reply");
+        }
+        Ok(())
     }
 
     async fn task_monitor_recv(self) -> anyhow::Result<()> {
         let mut buf = [0u8; 4096];
 
         loop {
-            let mut headers = [httparse::EMPTY_HEADER; 16];
-            let (sz, addr) = self.inner.socket.recv_from(&mut buf).await?;
-            let buf = bstr::BStr::new(&buf[..sz]);
-            match try_parse_bt_search(buf, &mut headers) {
-                Ok(bts) => {
-                    trace!(?addr, ?bts, "received");
-                    if bts.our_cookie == Some(self.inner.cookie) {
-                        trace!(?bts, "ignoring our own message");
-                        continue;
-                    }
-
-                    let reply_port =
-                        self.inner
-                            .receivers
-                            .read()
-                            .get(&bts.hash)
-                            .and_then(|announce| {
-                                let mut addr = addr;
-                                addr.set_port(bts.port);
-                                announce.tx.send(addr).ok().and(announce.port)
-                            });
-
-                    if let Some(port) = reply_port {
-                        let reply = self.gen_announce_msg(bts.hash, port, addr.is_ipv6());
-                        let addr = if addr.is_ipv6() {
-                            LSD_IPV6.into()
-                        } else {
-                            LSD_IPV4.into()
-                        };
-                        if let Err(e) = self.inner.socket.send_to(&reply, addr).await {
-                            trace!(?addr, ?reply, "error sending reply: {e:#}");
-                        } else {
-                            trace!(?addr, ?reply, "sent reply");
-                        }
-                    }
-                }
-                Err(e) => {
-                    trace!(?buf, ?addr, "error parsing message: {e:#}");
-                }
-            }
+            self.recv_and_process_one(&mut buf).await?;
         }
     }
 
@@ -146,7 +194,7 @@ cookie: {cookie}\r
             self.inner
                 .socket
                 .try_send_mcast_everywhere(&|mopts| {
-                    self.gen_announce_msg(info_hash, port, mopts.mcast_addr().is_ipv6())
+                    Some(self.gen_announce_msg(info_hash, port, mopts.mcast_addr().is_ipv6()))
                 })
                 .await;
         }
@@ -185,11 +233,15 @@ cookie: {cookie}\r
             }
         }
 
+        let rl = || RateLimiter::direct(Quota::per_second(NonZero::new(1).unwrap()));
+
         self.inner.receivers.write().insert(
             info_hash,
             Announce {
                 tx,
                 port: announce_port,
+                reply_ratelimit_ipv4: rl(),
+                reply_ratelimit_ipv6: rl(),
             },
         );
 

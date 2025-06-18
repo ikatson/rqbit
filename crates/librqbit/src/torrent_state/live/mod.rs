@@ -890,6 +890,8 @@ impl TorrentStateLive {
                 );
             }
 
+            trace!(connected_len = connected.len(), dropped_len = dropped.len());
+
             // BEP 11 - Dont send closed if they are now in live
             // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent,
             // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
@@ -1475,7 +1477,14 @@ impl PeerHandler {
             // However we might still need to seed them to the peer.
             if self.state.is_finished_and_no_active_streams() {
                 update_interest(self, false)?;
-                if !self.state.peers.is_peer_interested(self.addr) {
+                if self
+                    .state
+                    .peers
+                    .is_peer_not_interested_and_has_full_torrent(
+                        self.addr,
+                        self.state.lengths.total_pieces() as usize,
+                    )
+                {
                     debug!("nothing left to do, neither of us is interested, disconnecting peer");
                     self.tx.send(WriterRequest::Disconnect(Ok(())))?;
                     // wait until the receiver gets the message so that it doesn't finish with an error.

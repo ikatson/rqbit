@@ -114,6 +114,7 @@ pub struct Session {
     pub(crate) connector: Arc<StreamConnector>,
     reqwest_client: reqwest::Client,
     udp_tracker_client: UdpTrackerClient,
+    disable_trackers: bool,
 
     // Lifecycle management
     cancellation_token: CancellationToken,
@@ -393,6 +394,9 @@ pub struct SessionOptions {
     /// librqbit instances at a time.
     pub dht_config: Option<PersistentDhtConfig>,
 
+    /// Disable tracker communication
+    pub disable_trackers: bool,
+
     /// Enable fastresume, to restore state quickly after restart.
     pub fastresume: bool,
 
@@ -648,6 +652,7 @@ impl Session {
                         cancel_token: token.clone(),
                         ..Default::default()
                     })
+                    .await
                     .inspect_err(|e| warn!("error starting local service discovery: {e:#}"))
                     .ok()
                 }
@@ -679,6 +684,8 @@ impl Session {
                 udp_tracker_client,
                 ratelimits: Limits::new(opts.ratelimits),
                 trackers: opts.trackers,
+                disable_trackers: opts.disable_trackers,
+
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
@@ -1397,10 +1404,14 @@ impl Session {
             })
         };
 
+        if self.disable_trackers {
+            trackers.clear();
+        }
+
         if is_private && trackers.len() > 1 {
             warn!("private trackers are not fully implemented, so using only the first tracker");
             trackers.truncate(1);
-        } else {
+        } else if !self.disable_trackers {
             trackers.extend(self.trackers.iter().cloned());
         }
 

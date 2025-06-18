@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     time::Duration,
 };
 
@@ -12,9 +12,20 @@ use tracing::{debug, trace, warn};
 use crate::constants::{UPNP_DEVICE_MEDIASERVER, UPNP_DEVICE_ROOT};
 
 const SSDP_PORT: u16 = 1900;
-const SSDM_MCAST_IPV4: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
-const SSDP_MCAST_IPV6_LINK_LOCAL: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xc);
-const SSDP_MCAST_IPV6_SITE_LOCAL: Ipv6Addr = Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 0xc);
+const SSDP_MCAST_IPV4: SocketAddrV4 =
+    SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), SSDP_PORT);
+const SSDP_MCAST_IPV6_LINK_LOCAL: SocketAddrV6 = SocketAddrV6::new(
+    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xc),
+    SSDP_PORT,
+    0,
+    0,
+);
+const SSDP_MCAST_IPV6_SITE_LOCAL: SocketAddrV6 = SocketAddrV6::new(
+    Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 0xc),
+    SSDP_PORT,
+    0,
+    0,
+);
 
 const NTS_ALIVE: &str = "ssdp:alive";
 const NTS_BYEBYE: &str = "ssdp:byebye";
@@ -105,11 +116,12 @@ pub struct SsdpRunner {
 impl SsdpRunner {
     pub async fn new(opts: SsdpRunnerOptions) -> anyhow::Result<Self> {
         let socket = MulticastUdpSocket::new(
-            SSDP_PORT,
-            SSDM_MCAST_IPV4,
+            (Ipv6Addr::UNSPECIFIED, SSDP_PORT).into(),
+            SSDP_MCAST_IPV4,
             SSDP_MCAST_IPV6_SITE_LOCAL,
             Some(SSDP_MCAST_IPV6_LINK_LOCAL),
         )
+        .await
         .context("error creating SSDP socket")?;
 
         Ok(Self { opts, socket })
