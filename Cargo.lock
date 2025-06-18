@@ -2883,6 +2883,7 @@ dependencies = [
  "serde_urlencoded",
  "serde_with",
  "size_format",
+ "socket2",
  "sqlx",
  "tempfile",
  "tokio",

@@ -625,6 +625,10 @@ impl Session {
                 StreamConnector::new(StreamConnectorArgs {
                     enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
                     socks_proxy_config: proxy_config,
+                    tcp_source_port: listen_result
+                        .as_ref()
+                        .and_then(|l| l.announce_port)
+                        .or_else(|| opts.listen.as_ref().map(|l| l.listen_addr.port())),
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                 })
                 .await
