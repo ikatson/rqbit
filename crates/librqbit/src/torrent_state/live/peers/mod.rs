@@ -95,9 +95,15 @@ impl PeerStates {
         Some(p)
     }
 
-    pub fn is_peer_interested(&self, handle: PeerHandle) -> bool {
-        self.with_live(handle, |live| live.peer_interested)
-            .unwrap_or(false)
+    pub fn is_peer_not_interested_and_has_full_torrent(
+        &self,
+        handle: PeerHandle,
+        total_pieces: usize,
+    ) -> bool {
+        self.with_live(handle, |live| {
+            !live.peer_interested && live.has_full_torrent(total_pieces)
+        })
+        .unwrap_or(false)
     }
 
     pub fn mark_peer_interested(&self, handle: PeerHandle, is_interested: bool) -> Option<bool> {

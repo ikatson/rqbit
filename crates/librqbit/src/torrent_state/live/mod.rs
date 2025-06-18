@@ -999,9 +999,6 @@ impl PeerConnectionHandler for &PeerHandler {
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
-                // this is a hack not to disconnect the peer right away if the first thing they send
-                // is UtMetadata requests
-                self.on_peer_interested();
                 if self.state.metadata.info.private {
                     warn!(
                         "recieved noncompliant ut_metadata message from {}, ignoring",
@@ -1480,7 +1477,14 @@ impl PeerHandler {
             // However we might still need to seed them to the peer.
             if self.state.is_finished_and_no_active_streams() {
                 update_interest(self, false)?;
-                if !self.state.peers.is_peer_interested(self.addr) {
+                if self
+                    .state
+                    .peers
+                    .is_peer_not_interested_and_has_full_torrent(
+                        self.addr,
+                        self.state.lengths.total_pieces() as usize,
+                    )
+                {
                     debug!("nothing left to do, neither of us is interested, disconnecting peer");
                     self.tx.send(WriterRequest::Disconnect(Ok(())))?;
                     // wait until the receiver gets the message so that it doesn't finish with an error.
