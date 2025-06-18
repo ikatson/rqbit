@@ -1,7 +1,12 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, bail};
 use librqbit_utp::UtpSocketUdp;
+use socket2::SockRef;
 use tracing::debug;
 
 use crate::{
@@ -38,6 +43,7 @@ pub(crate) struct SocksProxyConfig {
 #[derive(Default, Debug, Clone)]
 pub(crate) struct StreamConnectorArgs {
     pub enable_tcp: bool,
+    pub tcp_source_port: Option<u16>,
     pub socks_proxy_config: Option<SocksProxyConfig>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
 }
@@ -92,6 +98,7 @@ impl SocksProxyConfig {
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     enable_tcp: bool,
+    tcp_source_port: Option<u16>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
 }
 
@@ -114,8 +121,32 @@ impl StreamConnector {
         Ok(Self {
             proxy_config: config.socks_proxy_config,
             enable_tcp: config.enable_tcp,
+            tcp_source_port: config.tcp_source_port,
             utp_socket: config.utp_socket,
         })
+    }
+
+    async fn tcp_connect(&self, addr: SocketAddr) -> std::io::Result<tokio::net::TcpStream> {
+        let (sock, bind_addr) = if addr.is_ipv6() {
+            (
+                tokio::net::TcpSocket::new_v6()?,
+                SocketAddr::from((Ipv6Addr::UNSPECIFIED, self.tcp_source_port.unwrap_or(0))),
+            )
+        } else {
+            (
+                tokio::net::TcpSocket::new_v4()?,
+                SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.tcp_source_port.unwrap_or(0))),
+            )
+        };
+        let sref = SockRef::from(&sock);
+
+        if bind_addr.port() > 0 {
+            sref.set_reuse_port(true)?;
+            sref.set_reuse_address(true)?;
+            sref.bind(&bind_addr.into())?;
+        }
+
+        sock.connect(addr).await
     }
 
     pub async fn connect(&self, addr: SocketAddr) -> anyhow::Result<(BoxAsyncRead, BoxAsyncWrite)> {
@@ -132,7 +163,7 @@ impl StreamConnector {
             if !self.enable_tcp {
                 bail!("TCP outgoing connections disabled");
             }
-            let conn = tokio::net::TcpStream::connect(addr).await?;
+            let conn = self.tcp_connect(addr).await?;
             debug!(?addr, "connected over TCP");
             Ok(conn)
         };

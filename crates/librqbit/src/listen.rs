@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use librqbit_dualstack_sockets::TcpListener;
+use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use librqbit_utp::UtpSocketUdp;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
@@ -81,8 +81,14 @@ impl ListenerOptions {
             if !self.mode.tcp_enabled() {
                 return Ok::<_, anyhow::Error>(None);
             }
-            let listener = TcpListener::bind_tcp(self.listen_addr, Default::default())
-                .context("error starting TCP listener")?;
+            let listener = TcpListener::bind_tcp(
+                self.listen_addr,
+                BindOpts {
+                    request_dualstack: true,
+                    reuseport: true,
+                },
+            )
+            .context("error starting TCP listener")?;
             info!(
                 "Listening on TCP {:?} for incoming peer connections",
                 self.listen_addr
