@@ -141,6 +141,7 @@ impl StreamConnector {
         let sref = SockRef::from(&sock);
 
         if bind_addr.port() > 0 {
+            #[cfg(not(windows))]
             sref.set_reuse_port(true)?;
             sref.set_reuse_address(true)?;
             sref.bind(&bind_addr.into())?;
