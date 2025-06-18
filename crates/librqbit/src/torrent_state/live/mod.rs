@@ -999,6 +999,9 @@ impl PeerConnectionHandler for &PeerHandler {
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
+                // this is a hack not to disconnect the peer right away if the first thing they send
+                // is UtMetadata requests
+                self.on_peer_interested();
                 if self.state.metadata.info.private {
                     warn!(
                         "recieved noncompliant ut_metadata message from {}, ignoring",
