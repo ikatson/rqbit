@@ -249,6 +249,10 @@ struct Opts {
     /// Disable local peer discovery (LSD)
     #[arg(long = "disable-lsd", env = "RQBIT_LSD_DISABLE")]
     disable_local_peer_discovery: bool,
+
+    /// Disable trackers (for debugging DHT, LSD and --initial-peers)
+    #[arg(long = "disable-trackers", env = "RQBIT_TRACKERS_DISABLE")]
+    disable_trackers: bool,
 }
 
 #[derive(Parser)]
@@ -324,10 +328,6 @@ struct DownloadOpts {
     /// Exit the program once the torrents complete download.
     #[arg(short = 'e', long)]
     exit_on_finish: bool,
-
-    /// Disable trackers (for debugging DHT and --initial-peers)
-    #[arg(long = "disable-trackers")]
-    disable_trackers: bool,
 
     /// A comma-separated list of initial peers
     #[arg(long = "initial-peers")]
@@ -589,6 +589,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         },
         blocklist_url: opts.blocklist_url,
         disable_local_service_discovery: opts.disable_local_peer_discovery,
+        disable_trackers: opts.disable_trackers,
         trackers,
     };
 
@@ -801,7 +802,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 force_tracker_interval: opts.force_tracker_interval,
                 sub_folder: download_opts.sub_folder.clone(),
                 initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
-                disable_trackers: download_opts.disable_trackers,
+                disable_trackers: opts.disable_trackers,
                 ..Default::default()
             };
             let session = Session::new_with_opts(
