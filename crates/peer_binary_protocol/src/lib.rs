@@ -464,7 +464,7 @@ where
                     MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece begin")
                 })?;
 
-                let block_len = len_prefix as usize - MSGID_LEN + INTEGER_LEN * 2;
+                let block_len = msg_len - INTEGER_LEN * 2;
 
                 let (block_0, block_1) = buf.consume_variable(block_len).map_err(|missing| {
                     MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece data")
@@ -672,6 +672,39 @@ mod tests {
             panic!(
                 "resources/test/extended-handshake.bin did not serialize exactly the same. Dumped to /tmp/test_deserialize_serialize_extended_is_same, you can compare with resources/test/extended-handshake.bin"
             )
+        }
+    }
+
+    #[test]
+    fn test_deserialize_piece() {
+        const LEN: usize = 100;
+        const EXTRA: usize = 100;
+        let mut buf = [0u8; LEN + EXTRA];
+
+        let block_len = LEN - PREAMBLE_LEN - INTEGER_LEN * 2;
+        let len_prefix: u32 = (block_len + INTEGER_LEN * 2 + MSGID_LEN) as u32;
+        let index: u32 = 42;
+        let begin: u32 = 43;
+
+        buf[0..4].copy_from_slice(&len_prefix.to_be_bytes());
+        buf[4] = MSGID_PIECE;
+        buf[5..9].copy_from_slice(&index.to_be_bytes());
+        buf[9..13].copy_from_slice(&begin.to_be_bytes());
+
+        for split_point in 0..buf.len() {
+            dbg!(split_point);
+            let (first, second) = buf.split_at(split_point);
+            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+
+            let piece = match msg {
+                Message::Piece(piece) => piece,
+                other => panic!("expected piece got {other:?}"),
+            };
+
+            assert_eq!(piece.len(), block_len);
+            assert_eq!(piece.index, index);
+            assert_eq!(piece.begin, begin);
+            assert_eq!(len, LEN);
         }
     }
 }
