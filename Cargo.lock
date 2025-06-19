@@ -2860,7 +2860,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dht",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "librqbit-lsd",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
@@ -2972,7 +2972,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "parking_lot",
  "rand 0.9.1",
  "serde",
@@ -2998,9 +2998,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a093c7d896792918cc9927e2307ef866dd0d2463fddbbb5add80188c9899ef87"
+checksum = "3ffe780c5c4600ba1eabafe48e738c75b500ee61ddae7048c6abcae7be93735c"
 dependencies = [
  "axum 0.8.4",
  "backon",
@@ -3023,7 +3023,7 @@ dependencies = [
  "governor",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.1",
@@ -3073,7 +3073,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "parking_lot",
  "rand 0.9.1",
  "reqwest",
@@ -3116,7 +3116,7 @@ dependencies = [
  "http",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
@@ -4818,7 +4818,7 @@ dependencies = [
  "gethostname",
  "libc",
  "librqbit",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "librqbit-upnp-serve",
  "metrics-exporter-prometheus",
  "openssl",
@@ -4846,7 +4846,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
- "librqbit-dualstack-sockets 0.6.0",
+ "librqbit-dualstack-sockets 0.6.2",
  "metrics-exporter-prometheus",
  "parking_lot",
  "serde",

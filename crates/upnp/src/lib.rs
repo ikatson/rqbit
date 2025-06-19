@@ -30,32 +30,16 @@ pub fn make_ssdp_search_request(kind: &str) -> String {
     )
 }
 
-// .to_bits() isn't yet available on min rust version we support (1.75 at the time of writing this)
-const fn ip_bits_v6(addr: Ipv6Addr) -> u128 {
-    u128::from_be_bytes(addr.octets())
-}
-
-pub fn ipv6_is_link_local(ip: Ipv6Addr) -> bool {
-    const LL: Ipv6Addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0);
-    const MASK: Ipv6Addr = Ipv6Addr::new(0xffff, 0xffff, 0xffff, 0xffff, 0, 0, 0, 0);
-
-    ip_bits_v6(ip) & ip_bits_v6(MASK) == ip_bits_v6(LL) & ip_bits_v6(MASK)
-}
-
 pub fn get_local_ip_relative_to(
     local_dest: SocketAddr,
     interfaces: &[NetworkInterface],
 ) -> anyhow::Result<IpAddr> {
-    fn ip_bits_v4(addr: Ipv4Addr) -> u32 {
-        u32::from_be_bytes(addr.octets())
-    }
-
     fn masked_v4(ip: Ipv4Addr, mask: Ipv4Addr) -> u32 {
-        ip_bits_v4(ip) & ip_bits_v4(mask)
+        ip.to_bits() & mask.to_bits()
     }
 
     fn masked_v6(ip: Ipv6Addr, mask: Ipv6Addr) -> u128 {
-        ip_bits_v6(ip) & ip_bits_v6(mask)
+        ip.to_bits() & mask.to_bits()
     }
 
     for i in interfaces {
@@ -71,9 +55,9 @@ pub fn get_local_ip_relative_to(
                 }
                 // Return IPv6 link-local addresses when source is link-local address and there's a scope_id set.
                 (SocketAddr::V6(l), IpAddr::V6(a), _)
-                    if ipv6_is_link_local(*l.ip()) && l.scope_id() > 0 =>
+                    if l.ip().is_unicast_link_local() && l.scope_id() > 0 =>
                 {
-                    if ipv6_is_link_local(a) && l.scope_id() == i.index {
+                    if a.is_unicast_link_local() && l.scope_id() == i.index {
                         return Ok(addr.ip());
                     }
                 }
