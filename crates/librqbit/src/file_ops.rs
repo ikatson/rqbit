@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use buffers::ByteBufOwned;
+use buffers::{ByteBufOwned, ByteBufT};
 use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
@@ -308,10 +308,11 @@ impl<'a> FileOps<'a> {
         chunk_info: &ChunkInfo,
     ) -> anyhow::Result<()>
     where
-        ByteBuf: AsRef<[u8]>,
+        ByteBuf: ByteBufT,
     {
-        let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
+        let mut data = data.as_ioslices();
+        let mut data = &mut data[..];
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {
             let file_len = file_info.len;
@@ -321,7 +322,7 @@ impl<'a> FileOps<'a> {
             }
 
             let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(buf.len() as u64, remaining_len).try_into()?;
+            let to_write = std::cmp::min(data.len() as u64, remaining_len).try_into()?;
 
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
@@ -335,7 +336,7 @@ impl<'a> FileOps<'a> {
             );
             if !file_info.attrs.padding {
                 self.files
-                    .pwrite_all(file_idx, absolute_offset, &buf[..to_write])
+                    .pwrite_all_vectored(file_idx, absolute_offset, &mut data, to_write)
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",
@@ -343,8 +344,7 @@ impl<'a> FileOps<'a> {
                         )
                     })?;
             }
-            buf = &buf[to_write..];
-            if buf.is_empty() {
+            if data.is_empty() {
                 break;
             }
 

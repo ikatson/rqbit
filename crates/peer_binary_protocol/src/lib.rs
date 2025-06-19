@@ -2,7 +2,10 @@
 //
 // Can be used outside of librqbit.
 
+mod double_buf;
 pub mod extended;
+
+use std::io::IoSlice;
 
 use bincode::Options;
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
@@ -12,6 +15,8 @@ use clone_to_owned::CloneToOwned;
 use extended::PeerExtendedMessageIds;
 use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
+
+use crate::double_buf::DoubleBufHelper;
 
 use self::extended::ExtendedMessage;
 
@@ -25,25 +30,27 @@ const NO_PAYLOAD_MSG_LEN: usize = PREAMBLE_LEN;
 
 const PSTR_BT1: &str = "BitTorrent protocol";
 
-const LEN_PREFIX_KEEPALIVE: u32 = 0;
-const LEN_PREFIX_CHOKE: u32 = 1;
-const LEN_PREFIX_UNCHOKE: u32 = 1;
-const LEN_PREFIX_INTERESTED: u32 = 1;
-const LEN_PREFIX_NOT_INTERESTED: u32 = 1;
-const LEN_PREFIX_HAVE: u32 = 5;
-const LEN_PREFIX_PIECE: u32 = 9;
-const LEN_PREFIX_REQUEST: u32 = 13;
+type MsgId = u8;
 
-const MSGID_CHOKE: u8 = 0;
-const MSGID_UNCHOKE: u8 = 1;
-const MSGID_INTERESTED: u8 = 2;
-const MSGID_NOT_INTERESTED: u8 = 3;
-const MSGID_HAVE: u8 = 4;
-const MSGID_BITFIELD: u8 = 5;
-const MSGID_REQUEST: u8 = 6;
-const MSGID_PIECE: u8 = 7;
-const MSGID_CANCEL: u8 = 8;
-const MSGID_EXTENDED: u8 = 20;
+const LEN_PREFIX_KEEPALIVE: u32 = 0;
+const LEN_PREFIX_CHOKE: u32 = MSGID_LEN as u32;
+const LEN_PREFIX_UNCHOKE: u32 = MSGID_LEN as u32;
+const LEN_PREFIX_INTERESTED: u32 = MSGID_LEN as u32;
+const LEN_PREFIX_NOT_INTERESTED: u32 = MSGID_LEN as u32;
+const LEN_PREFIX_HAVE: u32 = MSGID_LEN as u32 + INTEGER_LEN as u32;
+const LEN_PREFIX_PIECE: u32 = MSGID_LEN as u32 + INTEGER_LEN as u32 * 2;
+const LEN_PREFIX_REQUEST: u32 = MSGID_LEN as u32 + INTEGER_LEN as u32 * 3;
+
+const MSGID_CHOKE: MsgId = 0;
+const MSGID_UNCHOKE: MsgId = 1;
+const MSGID_INTERESTED: MsgId = 2;
+const MSGID_NOT_INTERESTED: MsgId = 3;
+const MSGID_HAVE: MsgId = 4;
+const MSGID_BITFIELD: MsgId = 5;
+const MSGID_REQUEST: MsgId = 6;
+const MSGID_PIECE: MsgId = 7;
+const MSGID_CANCEL: MsgId = 8;
+const MSGID_EXTENDED: MsgId = 20;
 
 pub const EXTENDED_UT_METADATA_KEY: &[u8] = b"ut_metadata";
 pub const MY_EXTENDED_UT_METADATA: u8 = 3;
@@ -53,8 +60,10 @@ pub const MY_EXTENDED_UT_PEX: u8 = 1;
 
 #[derive(thiserror::Error, Debug)]
 pub enum MessageDeserializeError {
-    #[error("not enough data to deserialize {1}: expected at least {0} more bytes")]
-    NotEnoughData(usize, &'static str),
+    #[error("not enough data to deserialize {2} (msgid={1:?}): expected at least {0} more bytes")]
+    NotEnoughData(usize, Option<MsgId>, &'static str),
+    #[error("need a contiguous input to deserialize")]
+    NeedContiguous,
     #[error("unsupported message id {0}")]
     UnsupportedMessageId(u8),
     #[error(transparent)]
@@ -97,7 +106,8 @@ pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize 
 pub struct Piece<B> {
     pub index: u32,
     pub begin: u32,
-    pub block: B,
+    block_0: B,
+    block_1: B,
 }
 
 impl<B: AsRef<[u8]>> std::fmt::Debug for Piece<B> {
@@ -105,7 +115,7 @@ impl<B: AsRef<[u8]>> std::fmt::Debug for Piece<B> {
         f.debug_struct("Piece")
             .field("index", &self.index)
             .field("begin", &self.begin)
-            .field("len", &self.block.as_ref().len())
+            .field("len", &self.block_0.as_ref().len())
             .finish()
     }
 }
@@ -117,45 +127,57 @@ impl<B: CloneToOwned> CloneToOwned for Piece<B> {
         Piece {
             index: self.index,
             begin: self.begin,
-            block: self.block.clone_to_owned(within_buffer),
+            block_0: self.block_0.clone_to_owned(within_buffer),
+            block_1: self.block_1.clone_to_owned(within_buffer),
         }
     }
 }
 
 impl<B> Piece<B>
 where
-    B: AsRef<[u8]>,
+    B: ByteBufT,
 {
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.block_0.as_ref().len() + self.block_1.as_ref().len()
+    }
+
     pub fn from_data<T>(index: u32, begin: u32, block: T) -> Piece<B>
     where
         B: From<T>,
+        T: Default,
     {
         Piece {
             index,
             begin,
-            block: B::from(block),
+            block_0: B::from(block),
+            block_1: B::from(T::default()),
         }
+    }
+
+    pub fn data(&self) -> (&[u8], &[u8]) {
+        (self.block_0.as_slice(), self.block_1.as_slice())
+    }
+
+    pub fn as_ioslices(&self) -> [IoSlice<'_>; 2] {
+        [
+            IoSlice::new(self.block_0.as_slice()),
+            IoSlice::new(self.block_0.as_slice()),
+        ]
     }
 
     pub fn serialize(&self, mut buf: &mut [u8]) -> usize {
         byteorder::BigEndian::write_u32(&mut buf[0..4], self.index);
         byteorder::BigEndian::write_u32(&mut buf[4..8], self.begin);
         buf = &mut buf[8..];
-        buf.copy_from_slice(self.block.as_ref());
-        self.block.as_ref().len() + 8
-    }
-    pub fn deserialize<'a>(buf: &'a [u8]) -> Piece<B>
-    where
-        B: From<&'a [u8]> + 'a,
-    {
-        let index = byteorder::BigEndian::read_u32(&buf[0..4]);
-        let begin = byteorder::BigEndian::read_u32(&buf[4..8]);
-        let block = B::from(&buf[8..]);
-        Piece {
-            index,
-            begin,
-            block,
-        }
+
+        let b0 = self.block_0.as_ref();
+        let b1 = self.block_0.as_ref();
+
+        buf[..b0.len()].copy_from_slice(b0);
+        buf = &mut buf[b0.len()..];
+        buf[..b1.len()].copy_from_slice(b1);
+        8 + b0.len() + b1.len()
     }
 }
 
@@ -199,11 +221,7 @@ where
             Message::Choke => Message::Choke,
             Message::Unchoke => Message::Unchoke,
             Message::Interested => Message::Interested,
-            Message::Piece(piece) => Message::Piece(Piece {
-                index: piece.index,
-                begin: piece.begin,
-                block: piece.block.clone_to_owned(within_buffer),
-            }),
+            Message::Piece(piece) => Message::Piece(piece.clone_to_owned(within_buffer)),
             Message::KeepAlive => Message::KeepAlive,
             Message::Have(v) => Message::Have(*v),
             Message::NotInterested => Message::NotInterested,
@@ -237,15 +255,12 @@ where
         match self {
             Message::Request(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
             Message::Cancel(_) => (LEN_PREFIX_REQUEST, MSGID_CANCEL),
-            Message::Bitfield(b) => (1 + b.as_ref().len() as u32, MSGID_BITFIELD),
+            Message::Bitfield(b) => (MSGID_LEN as u32 + b.as_ref().len() as u32, MSGID_BITFIELD),
             Message::Choke => (LEN_PREFIX_CHOKE, MSGID_CHOKE),
             Message::Unchoke => (LEN_PREFIX_UNCHOKE, MSGID_UNCHOKE),
             Message::Interested => (LEN_PREFIX_INTERESTED, MSGID_INTERESTED),
             Message::NotInterested => (LEN_PREFIX_NOT_INTERESTED, MSGID_NOT_INTERESTED),
-            Message::Piece(p) => (
-                LEN_PREFIX_PIECE + p.block.as_ref().len() as u32,
-                MSGID_PIECE,
-            ),
+            Message::Piece(p) => (LEN_PREFIX_PIECE + p.len() as u32, MSGID_PIECE),
             Message::KeepAlive => (LEN_PREFIX_KEEPALIVE, 0),
             Message::Have(_) => (LEN_PREFIX_HAVE, MSGID_HAVE),
             Message::Extended(_) => (0, MSGID_EXTENDED),
@@ -285,7 +300,7 @@ where
                 Ok(PREAMBLE_LEN)
             }
             Message::Piece(p) => {
-                let block_len = p.block.as_ref().len();
+                let block_len = p.len();
                 let payload_len = 8 + block_len;
                 let msg_len = PREAMBLE_LEN + payload_len;
                 out.resize(msg_len, 0);
@@ -313,28 +328,27 @@ where
             }
         }
     }
+
     pub fn deserialize<'a>(
         buf: &'a [u8],
+        buf2: &'a [u8],
     ) -> Result<(Message<ByteBuf>, usize), MessageDeserializeError>
     where
         ByteBuf: From<&'a [u8]> + 'a + Deserialize<'a>,
     {
-        let len_prefix = match buf.get(0..4) {
-            Some(bytes) => byteorder::BigEndian::read_u32(bytes),
-            None => return Err(MessageDeserializeError::NotEnoughData(4, "message")),
-        };
+        let mut buf = DoubleBufHelper::new(buf, buf2);
+        let len_prefix = buf.read_u32_be().map_err(|rem| {
+            MessageDeserializeError::NotEnoughData(rem, None, "message len_prefix")
+        })?;
         if len_prefix == 0 {
             return Ok((Message::KeepAlive, 4));
         }
 
-        let msg_id = match buf.get(4) {
-            Some(msg_id) => *msg_id,
-            None => return Err(MessageDeserializeError::NotEnoughData(1, "message")),
-        };
-        let rest = &buf[5..];
-        let decoder_config = bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .with_big_endian();
+        let msg_id = buf
+            .read_u8()
+            .map_err(|rem| MessageDeserializeError::NotEnoughData(rem, None, "message msg_id"))?;
+
+        let msg_len = len_prefix as usize - MSGID_LEN;
 
         match msg_id {
             MSGID_CHOKE => {
@@ -378,14 +392,10 @@ where
                 Ok((Message::NotInterested, NO_PAYLOAD_MSG_LEN))
             }
             MSGID_HAVE => {
-                let expected_len = 4;
-                match rest.get(..expected_len) {
-                    Some(h) => Ok((Message::Have(BE::read_u32(h)), PREAMBLE_LEN + expected_len)),
-                    None => {
-                        let missing = expected_len - rest.len();
-                        Err(MessageDeserializeError::NotEnoughData(missing, "have"))
-                    }
-                }
+                let have = buf
+                    .read_u32_be()
+                    .map_err(|e| MessageDeserializeError::NotEnoughData(e, Some(msg_id), "have"))?;
+                Ok((Message::Have(have), PREAMBLE_LEN + INTEGER_LEN))
             }
             MSGID_BITFIELD => {
                 if len_prefix <= 1 {
@@ -395,70 +405,80 @@ where
                         msg_id,
                     });
                 }
-                let expected_len = len_prefix as usize - 1;
-                match rest.get(..expected_len) {
-                    Some(bitfield) => Ok((
-                        Message::Bitfield(ByteBuf::from(bitfield)),
-                        PREAMBLE_LEN + expected_len,
-                    )),
-                    None => {
-                        let missing = expected_len - rest.len();
-                        Err(MessageDeserializeError::NotEnoughData(missing, "bitfield"))
-                    }
+                if buf.len() < msg_len {
+                    return Err(MessageDeserializeError::NotEnoughData(
+                        msg_len - buf.len(),
+                        Some(msg_id),
+                        "bitfield",
+                    ));
                 }
+                let data = buf
+                    .get_contiguous(msg_len)
+                    .ok_or(MessageDeserializeError::NeedContiguous)?;
+                Ok((
+                    Message::Bitfield(ByteBuf::from(data)),
+                    PREAMBLE_LEN + msg_len,
+                ))
             }
             MSGID_REQUEST | MSGID_CANCEL => {
-                let expected_len = 12;
-                match rest.get(..expected_len) {
-                    Some(b) => {
-                        let request = decoder_config.deserialize::<Request>(b).map_err(|e| {
-                            MessageDeserializeError::BincodeWithName {
-                                error: e,
-                                name: "MSGID_REQUEST",
-                            }
-                        })?;
-                        let req = if msg_id == MSGID_REQUEST {
-                            Message::Request(request)
+                const I32: usize = 4;
+                const I32_3: usize = I32 * 3;
+                let req = buf.consume::<I32_3>().map_err(|missing| {
+                    MessageDeserializeError::NotEnoughData(
+                        missing,
+                        Some(msg_id),
+                        if msg_id == MSGID_REQUEST {
+                            "request"
                         } else {
-                            Message::Cancel(request)
-                        };
-                        Ok((req, PREAMBLE_LEN + expected_len))
-                    }
-                    None => {
-                        let missing = expected_len - rest.len();
-                        Err(MessageDeserializeError::NotEnoughData(
-                            missing,
-                            if msg_id == MSGID_REQUEST {
-                                "request"
-                            } else {
-                                "cancel"
-                            },
-                        ))
-                    }
-                }
+                            "cancel"
+                        },
+                    )
+                })?;
+                let request = Request {
+                    index: BE::read_u32(&req[0..I32]),
+                    begin: BE::read_u32(&req[I32..I32 * 2]),
+                    length: BE::read_u32(&req[I32 * 2..I32 * 3]),
+                };
+                let req = if msg_id == MSGID_REQUEST {
+                    Message::Request(request)
+                } else {
+                    Message::Cancel(request)
+                };
+                Ok((req, PREAMBLE_LEN + I32_3))
             }
             MSGID_PIECE => {
                 const MIN_PAYLOAD: usize = 1;
-                const MIN_LENGTH: usize = MSGID_LEN + INTEGER_LEN * 2 + MIN_PAYLOAD;
-                if (len_prefix as usize) < MIN_LENGTH {
+                const MIN_LENGTH: usize = INTEGER_LEN * 2 + MIN_PAYLOAD;
+                if msg_len < MIN_LENGTH {
                     return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        expected: MIN_LENGTH as u32,
+                        expected: (MIN_LENGTH + MSGID_LEN) as u32,
                         received: len_prefix,
                         msg_id,
                     });
                 }
-                // <len=0009+X> is for "9", "8" is for 2 integer fields in the piece.
-                let expected_len = len_prefix as usize - MSGID_LEN;
-                match rest.get(..expected_len) {
-                    Some(b) => Ok((
-                        Message::Piece(Piece::deserialize(b)),
-                        PREAMBLE_LEN + expected_len,
-                    )),
-                    None => Err(MessageDeserializeError::NotEnoughData(
-                        expected_len - rest.len(),
-                        "piece",
-                    )),
-                }
+
+                let index = buf.read_u32_be().map_err(|missing| {
+                    MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece index")
+                })?;
+                let begin = buf.read_u32_be().map_err(|missing| {
+                    MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece begin")
+                })?;
+
+                let block_len = len_prefix as usize - MSGID_LEN + INTEGER_LEN * 2;
+
+                let (block_0, block_1) = buf.consume_variable(block_len).map_err(|missing| {
+                    MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece data")
+                })?;
+
+                Ok((
+                    Message::Piece(Piece {
+                        index,
+                        begin,
+                        block_0: block_0.into(),
+                        block_1: block_1.into(),
+                    }),
+                    PREAMBLE_LEN + len_prefix as usize - MSGID_LEN,
+                ))
             }
             MSGID_EXTENDED => {
                 if len_prefix <= 6 {
@@ -468,18 +488,23 @@ where
                         msg_id,
                     });
                 }
-                // TODO: NO clue why - 1 here. Empirically figured out.
-                let expected_len = len_prefix as usize - 1;
-                match rest.get(..expected_len) {
-                    Some(b) => Ok((
-                        Message::Extended(ExtendedMessage::deserialize(b)?),
-                        PREAMBLE_LEN + expected_len,
-                    )),
-                    None => Err(MessageDeserializeError::NotEnoughData(
-                        expected_len - rest.len(),
+
+                if buf.len() < msg_len {
+                    return Err(MessageDeserializeError::NotEnoughData(
+                        msg_len - buf.len(),
+                        Some(msg_id),
                         "extended",
-                    )),
+                    ));
                 }
+
+                let msg_data = buf
+                    .get_contiguous(msg_len)
+                    .ok_or(MessageDeserializeError::NeedContiguous)?;
+
+                Ok((
+                    Message::Extended(ExtendedMessage::deserialize(msg_data)?),
+                    PREAMBLE_LEN + msg_len,
+                ))
             }
             msg_id => Err(MessageDeserializeError::UnsupportedMessageId(msg_id)),
         }
@@ -521,9 +546,9 @@ impl Handshake<ByteBuf<'static>> {
     pub fn deserialize(
         b: &[u8],
     ) -> Result<(Handshake<ByteBuf<'_>>, usize), MessageDeserializeError> {
-        let pstr_len = *b
-            .first()
-            .ok_or(MessageDeserializeError::NotEnoughData(1, "handshake"))?;
+        let pstr_len =
+            *b.first()
+                .ok_or(MessageDeserializeError::NotEnoughData(1, None, "handshake"))?;
         if pstr_len as usize != PSTR_BT1.len() {
             return Err(MessageDeserializeError::InvalidPstr(pstr_len));
         }
@@ -532,6 +557,7 @@ impl Handshake<ByteBuf<'static>> {
             .get(..expected_len)
             .ok_or(MessageDeserializeError::NotEnoughData(
                 expected_len,
+                None,
                 "handshake",
             ))?;
         let h = Self::bopts().deserialize::<Handshake<ByteBuf<'_>>>(hbuf)?;
@@ -628,7 +654,7 @@ mod tests {
             .unwrap()
             .read_to_end(&mut buf)
             .unwrap();
-        let (msg, size) = MessageBorrowed::deserialize(&buf).unwrap();
+        let (msg, size) = MessageBorrowed::deserialize(&buf, &[]).unwrap();
         assert_eq!(size, buf.len());
         let mut write_buf = Vec::new();
         msg.serialize(&mut write_buf, &Default::default).unwrap();

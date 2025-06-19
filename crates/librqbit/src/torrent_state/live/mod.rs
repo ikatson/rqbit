@@ -1638,7 +1638,7 @@ impl PeerHandler {
         let chunk_info = match self.state.lengths.chunk_info_from_received_data(
             piece_index,
             piece.begin,
-            piece.block.len().try_into().context("bug")?,
+            piece.len().try_into().context("bug")?,
         ) {
             Some(i) => i,
             None => {
@@ -1651,7 +1651,7 @@ impl PeerHandler {
         // Peer chunk/byte counters.
         self.counters
             .fetched_bytes
-            .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
+            .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
 
         self.state
@@ -1672,17 +1672,17 @@ impl PeerHandler {
         self.state
             .stats
             .fetched_bytes
-            .fetch_add(piece.block.as_ref().len() as u64, Ordering::Relaxed);
+            .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.state
             .session_stats
             .fetched_bytes
-            .fetch_add(piece.block.len() as u64, Ordering::Relaxed);
+            .fetch_add(piece.len() as u64, Ordering::Relaxed);
 
         fn write_to_disk(
             state: &TorrentStateLive,
             addr: PeerHandle,
             counters: &AtomicPeerCounters,
-            piece: &Piece<impl AsRef<[u8]> + std::fmt::Debug>,
+            piece: &Piece<impl ByteBufT>,
             chunk_info: &ChunkInfo,
         ) -> anyhow::Result<()> {
             let index = piece.index;
