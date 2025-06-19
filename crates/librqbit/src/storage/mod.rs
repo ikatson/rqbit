@@ -12,7 +12,6 @@ use std::{
     path::Path,
 };
 
-use anyhow::Context;
 use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
@@ -114,13 +113,13 @@ pub trait TorrentStorage: Send + Sync {
         &self,
         file_id: usize,
         offset: u64,
-        bufs: &[IoSlice<'_>],
+        bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
         let mut offset = offset;
         let mut size = 0;
 
         for ioslice in bufs {
-            self.pwrite_all(file_id, offset, ioslice)?;
+            self.pwrite_all(file_id, offset, &ioslice)?;
             offset += ioslice.len() as u64;
             size += ioslice.len();
         }

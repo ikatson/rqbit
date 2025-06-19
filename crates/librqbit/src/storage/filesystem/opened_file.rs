@@ -17,14 +17,6 @@ pub(crate) struct OpenedFileLocked {
     tried_marking_sparse: bool,
 }
 
-impl OpenedFileLocked {
-    #[cfg(unix)]
-    pub fn pwrite_all_vectored(&self, offset: u64, bufs: &[IoSlice<'_>]) -> anyhow::Result<usize> {
-        let fd = self.fd.as_ref().context("empty file")?;
-        nix::sys::uio::pwritev(fd, bufs, offset.try_into()?).context("error calling pwritev")
-    }
-}
-
 impl Deref for OpenedFileLocked {
     type Target = Option<File>;
 
@@ -77,8 +69,44 @@ impl OpenedFile {
         self.file.write()
     }
 
-    pub fn pwrite_all_vectored(&self, offset: u64, bufs: &[IoSlice<'_>]) -> anyhow::Result<usize> {
-        self.file.read().pwrite_all_vectored(offset, bufs)
+    #[cfg(unix)]
+    pub fn pwrite_all_vectored(
+        &self,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        let g = self.file.read();
+        let fd = g.as_ref().context("empty file")?;
+        nix::sys::uio::pwritev(fd, &bufs, offset.try_into()?).context("error calling pwritev")
+    }
+
+    #[cfg(not(unix))]
+    pub fn pwrite_all_vectored(
+        &self,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        match (bufs[0].len(), bufs[1].len()) {
+            (len, 0) if len > 0 => {
+                self.pwrite_all(offset, &bufs[0])?;
+                Ok(len)
+            }
+            (0, len) if len > 0 => {
+                self.pwrite_all(offset, &bufs[1])?;
+                Ok(len)
+            }
+            (0, 0) => Ok(0),
+            (l0, l1) => {
+                // concatenate the buffers in memory so that we issue one write call instead of 2
+                use librqbit_core::constants::CHUNK_SIZE;
+                let mut buf = [0u8; CHUNK_SIZE as usize];
+
+                buf[..l0].copy_from_slice(&bufs[0]);
+                buf[l0..l0 + l1].copy_from_slice(&bufs[1]);
+                self.pwrite_all(offset, &buf)?;
+                Ok(l0 + l1)
+            }
+        }
     }
 
     pub fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {

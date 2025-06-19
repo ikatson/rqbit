@@ -75,10 +75,9 @@ impl TorrentStorage for FilesystemStorage {
         &self,
         file_id: usize,
         offset: u64,
-        bufs: &[IoSlice<'_>],
+        bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
-        let f = &self.opened_files[file_id];
-        Ok(f.pwrite_all_vectored(offset, bufs)?)
+        self.opened_files[file_id].pwrite_all_vectored(offset, bufs)
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
