@@ -155,24 +155,20 @@ where
         }
     }
 
-    pub fn data(&self) -> (&[u8], &[u8]) {
-        (self.block_0.as_slice(), self.block_1.as_slice())
-    }
-
     pub fn as_ioslices(&self) -> [IoSlice<'_>; 2] {
         [
             IoSlice::new(self.block_0.as_slice()),
-            IoSlice::new(self.block_0.as_slice()),
+            IoSlice::new(self.block_1.as_slice()),
         ]
     }
 
     pub fn serialize(&self, mut buf: &mut [u8]) -> usize {
-        byteorder::BigEndian::write_u32(&mut buf[0..4], self.index);
-        byteorder::BigEndian::write_u32(&mut buf[4..8], self.begin);
+        buf[0..4].copy_from_slice(&self.index.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
         buf = &mut buf[8..];
 
         let b0 = self.block_0.as_ref();
-        let b1 = self.block_0.as_ref();
+        let b1 = self.block_1.as_ref();
 
         buf[..b0.len()].copy_from_slice(b0);
         buf = &mut buf[b0.len()..];
@@ -623,6 +619,8 @@ impl Request {
 mod tests {
     use crate::extended::handshake::ExtendedHandshake;
 
+    const EXTENDED: &[u8] = include_bytes!("../../librqbit/resources/test/extended-handshake.bin");
+
     use super::*;
     #[test]
     fn test_handshake_serialize() {
@@ -647,18 +645,12 @@ mod tests {
 
     #[test]
     fn test_deserialize_serialize_extended_is_same() {
-        use std::fs::File;
-        use std::io::Read;
-        let mut buf = Vec::new();
-        File::open("../librqbit/resources/test/extended-handshake.bin")
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
-        let (msg, size) = MessageBorrowed::deserialize(&buf, &[]).unwrap();
+        let buf = EXTENDED;
+        let (msg, size) = MessageBorrowed::deserialize(buf, &[]).unwrap();
         assert_eq!(size, buf.len());
         let mut write_buf = Vec::new();
         msg.serialize(&mut write_buf, &Default::default).unwrap();
-        if buf != write_buf {
+        if buf[..] != write_buf {
             {
                 use std::io::Write;
                 let mut f = std::fs::OpenOptions::new()
@@ -676,10 +668,35 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_serialize_extended_non_contiguous() {
+        for split_point in 0..EXTENDED.len() {
+            let (first, second) = EXTENDED.split_at(split_point);
+            let res = MessageBorrowed::deserialize(first, second);
+            if split_point > PREAMBLE_LEN && split_point < EXTENDED.len() {
+                assert!(
+                    matches!(res, Err(MessageDeserializeError::NeedContiguous)),
+                    "expected NeedContiguous: {split_point}"
+                )
+            } else {
+                let (msg, len) = res
+                    .inspect_err(|e| panic!("split_point={split_point:?}; error: {e:#}"))
+                    .unwrap();
+                assert!(matches!(msg, Message::Extended(..)));
+                assert_eq!(len, EXTENDED.len());
+            }
+        }
+    }
+
+    #[test]
     fn test_deserialize_piece() {
         const LEN: usize = 100;
         const EXTRA: usize = 100;
         let mut buf = [0u8; LEN + EXTRA];
+
+        #[allow(clippy::needless_range_loop)]
+        for id in 0..buf.len() {
+            buf[id] = id as u8;
+        }
 
         let block_len = LEN - PREAMBLE_LEN - INTEGER_LEN * 2;
         let len_prefix: u32 = (block_len + INTEGER_LEN * 2 + MSGID_LEN) as u32;
@@ -696,7 +713,7 @@ mod tests {
             let (first, second) = buf.split_at(split_point);
             let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
 
-            let piece = match msg {
+            let piece = match &msg {
                 Message::Piece(piece) => piece,
                 other => panic!("expected piece got {other:?}"),
             };
@@ -705,6 +722,52 @@ mod tests {
             assert_eq!(piece.index, index);
             assert_eq!(piece.begin, begin);
             assert_eq!(len, LEN);
+
+            let mut tmp = Vec::new();
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(slen, len);
+            assert_eq!(buf[..len], tmp[..len]);
+
+            let [first, second] = piece.as_ioslices();
+
+            assert_eq!((*first).len() + (*second).len(), block_len);
+            assert_eq!(*first, buf[13..13 + first.len()]);
+            assert_eq!(
+                *second,
+                buf[13 + first.len()..13 + first.len() + second.len()]
+            );
+        }
+    }
+
+    #[test]
+    fn test_deserialize_request() {
+        let mut buf = [0u8; 100];
+
+        let len_prefix: u32 = (MSGID_LEN + INTEGER_LEN * 3) as u32;
+        let index: u32 = 42;
+        let begin: u32 = 43;
+        let length: u32 = 44;
+
+        buf[0..4].copy_from_slice(&len_prefix.to_be_bytes());
+        buf[4] = MSGID_REQUEST;
+        buf[5..9].copy_from_slice(&index.to_be_bytes());
+        buf[9..13].copy_from_slice(&begin.to_be_bytes());
+        buf[13..17].copy_from_slice(&length.to_be_bytes());
+
+        for split_point in 0..buf.len() {
+            dbg!(split_point);
+            let (first, second) = buf.split_at(split_point);
+            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+
+            let request = match msg {
+                Message::Request(req) => req,
+                other => panic!("expected request got {other:?}"),
+            };
+
+            assert_eq!(request.index, index);
+            assert_eq!(request.begin, begin);
+            assert_eq!(request.length, length);
+            assert_eq!(len, 17);
         }
     }
 }
