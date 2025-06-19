@@ -312,7 +312,6 @@ impl<'a> FileOps<'a> {
     {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
         let mut data = data.as_ioslices();
-        let mut data = &mut data[..];
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {
             let file_len = file_info.len;
@@ -322,7 +321,8 @@ impl<'a> FileOps<'a> {
             }
 
             let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(data.len() as u64, remaining_len).try_into()?;
+            let to_write =
+                std::cmp::min((data[0].len() + data[1].len()) as u64, remaining_len).try_into()?;
 
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
@@ -336,7 +336,7 @@ impl<'a> FileOps<'a> {
             );
             if !file_info.attrs.padding {
                 self.files
-                    .pwrite_all_vectored(file_idx, absolute_offset, &mut data, to_write)
+                    .pwrite_all_vectored(file_idx, absolute_offset, &mut &mut data[..], to_write)
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",
@@ -344,7 +344,7 @@ impl<'a> FileOps<'a> {
                         )
                     })?;
             }
-            if data.is_empty() {
+            if data[0].is_empty() && data[1].is_empty() {
                 break;
             }
 

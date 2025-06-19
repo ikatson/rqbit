@@ -12,6 +12,7 @@ use std::{
     path::Path,
 };
 
+use anyhow::Context;
 use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
@@ -120,11 +121,12 @@ pub trait TorrentStorage: Send + Sync {
         let mut offset = offset;
 
         // len must be <= bufs.combined_len()
-        while !bufs.is_empty() && remaining > 0 {
-            let chunk = &*bufs[0];
-            let l = chunk.len();
-            let chunk = &chunk[..l.min(remaining)];
-            self.pwrite_all(file_id, offset, chunk)?;
+        while remaining > 0 {
+            let chunk = bufs
+                .first()
+                .context("pwrite_all_vectored: ioslices empty")?;
+            let l = chunk.len().min(remaining);
+            self.pwrite_all(file_id, offset, &chunk[..l])?;
             IoSlice::advance_slices(bufs, l);
             remaining -= l;
             offset += l as u64;
