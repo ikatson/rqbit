@@ -45,7 +45,7 @@ pub mod stats;
 
 use std::{
     collections::{HashMap, HashSet},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     num::NonZeroU32,
     sync::{
         Arc,
@@ -852,7 +852,7 @@ impl TorrentStateLive {
 
     async fn task_send_pex_to_peer(
         self: Arc<Self>,
-        _peer_addr: SocketAddr,
+        this_peer_addr: SocketAddr,
         tx: PeerTx,
     ) -> anyhow::Result<()> {
         // As per BEP 11 we should not send more than 50 peers at once
@@ -894,6 +894,20 @@ impl TorrentStateLive {
 
             trace!(connected_len = connected.len(), dropped_len = dropped.len());
 
+            let peer_ip_non_local = match this_peer_addr.ip() {
+                IpAddr::V4(a) => !a.is_loopback() && !a.is_private(),
+                IpAddr::V6(a) => !a.is_loopback() && !a.is_unique_local(),
+            };
+
+            let other_ip_is_local = |addr: &IpAddr| match addr {
+                IpAddr::V4(a) => a.is_loopback() || a.is_private(),
+                IpAddr::V6(a) => {
+                    a.is_loopback() || a.is_unicast_link_local() || a.is_unique_local()
+                }
+            };
+
+            let filter = |addr: &SocketAddr| !(peer_ip_non_local && other_ip_is_local(&addr.ip()));
+
             // BEP 11 - Dont send closed if they are now in live
             // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent,
             // and addrs_closed_to_sent are only filtered addresses from sent_peers_live
@@ -914,7 +928,7 @@ impl TorrentStateLive {
                 for addr in &dropped {
                     peer_view_of_live_peers.remove(addr);
                 }
-                peer_view_of_live_peers.extend(connected.iter().copied());
+                peer_view_of_live_peers.extend(connected.iter().filter(|a| filter(a)).copied());
             }
         }
     }
