@@ -1,5 +1,6 @@
 use std::{
     fs::File,
+    io::IoSlice,
     ops::{Deref, DerefMut},
     path::PathBuf,
 };
@@ -14,6 +15,14 @@ pub(crate) struct OpenedFileLocked {
     fd: Option<File>,
     #[cfg(windows)]
     tried_marking_sparse: bool,
+}
+
+impl OpenedFileLocked {
+    #[cfg(unix)]
+    pub fn pwrite_all_vectored(&self, offset: u64, bufs: &[IoSlice<'_>]) -> anyhow::Result<usize> {
+        let fd = self.fd.as_ref().context("empty file")?;
+        nix::sys::uio::pwritev(fd, bufs, offset.try_into()?).context("error calling pwritev")
+    }
 }
 
 impl Deref for OpenedFileLocked {
@@ -66,6 +75,10 @@ impl OpenedFile {
 
     pub fn lock_write(&self) -> impl DerefMut<Target = impl DerefMut<Target = Option<File>>> {
         self.file.write()
+    }
+
+    pub fn pwrite_all_vectored(&self, offset: u64, bufs: &[IoSlice<'_>]) -> anyhow::Result<usize> {
+        self.file.read().pwrite_all_vectored(offset, bufs)
     }
 
     pub fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {

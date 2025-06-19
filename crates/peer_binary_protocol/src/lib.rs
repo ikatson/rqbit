@@ -5,8 +5,6 @@
 mod double_buf;
 pub mod extended;
 
-use std::io::IoSlice;
-
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
@@ -146,11 +144,8 @@ where
         }
     }
 
-    pub fn as_ioslices(&self) -> [IoSlice<'_>; 2] {
-        [
-            IoSlice::new(self.block_0.as_slice()),
-            IoSlice::new(self.block_1.as_slice()),
-        ]
+    pub fn data(&self) -> (&[u8], &[u8]) {
+        (self.block_0.as_slice(), self.block_1.as_slice())
     }
 
     pub fn serialize(&self, mut buf: &mut [u8]) -> usize {
@@ -702,13 +697,13 @@ mod tests {
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
 
-            let [first, second] = piece.as_ioslices();
+            let (first, second) = piece.data();
 
-            assert_eq!((*first).len() + (*second).len(), block_len);
-            assert_eq!(*first, buf[13..13 + first.len()]);
+            assert_eq!(first.len() + second.len(), block_len);
+            assert_eq!(first, &buf[13..13 + first.len()]);
             assert_eq!(
-                *second,
-                buf[13 + first.len()..13 + first.len() + second.len()]
+                second,
+                &buf[13 + first.len()..13 + first.len() + second.len()]
             );
         }
     }

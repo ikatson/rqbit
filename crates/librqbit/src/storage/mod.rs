@@ -114,25 +114,18 @@ pub trait TorrentStorage: Send + Sync {
         &self,
         file_id: usize,
         offset: u64,
-        bufs: &mut &mut [IoSlice<'_>],
-        len: usize,
-    ) -> anyhow::Result<()> {
-        let mut remaining = len;
+        bufs: &[IoSlice<'_>],
+    ) -> anyhow::Result<usize> {
         let mut offset = offset;
+        let mut size = 0;
 
-        // len must be <= bufs.combined_len()
-        while remaining > 0 {
-            let chunk = bufs
-                .first()
-                .context("pwrite_all_vectored: ioslices empty")?;
-            let l = chunk.len().min(remaining);
-            self.pwrite_all(file_id, offset, &chunk[..l])?;
-            IoSlice::advance_slices(bufs, l);
-            remaining -= l;
-            offset += l as u64;
+        for ioslice in bufs {
+            self.pwrite_all(file_id, offset, ioslice)?;
+            offset += ioslice.len() as u64;
+            size += ioslice.len();
         }
 
-        Ok(())
+        Ok(size)
     }
 
     /// Remove a file from the storage. If not supported, or it doesn't matter, just return Ok(())

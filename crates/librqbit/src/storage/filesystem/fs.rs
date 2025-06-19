@@ -1,5 +1,6 @@
 use std::{
     fs::OpenOptions,
+    io::IoSlice,
     path::{Path, PathBuf},
 };
 
@@ -68,6 +69,16 @@ impl TorrentStorage for FilesystemStorage {
             .get(file_id)
             .context("no such file")?
             .pwrite_all(offset, buf)
+    }
+
+    fn pwrite_all_vectored(
+        &self,
+        file_id: usize,
+        offset: u64,
+        bufs: &[IoSlice<'_>],
+    ) -> anyhow::Result<usize> {
+        let f = &self.opened_files[file_id];
+        Ok(f.pwrite_all_vectored(offset, bufs)?)
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {

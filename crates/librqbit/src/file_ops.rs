@@ -308,12 +308,7 @@ impl<'a> FileOps<'a> {
         ByteBuf: ByteBufT,
     {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
-        let mut data = data.as_ioslices();
-        let mut data = &mut data[..];
-
-        fn data_len(data: &[IoSlice<'_>]) -> u64 {
-            data.iter().map(|io| io.len() as u64).sum()
-        }
+        let mut data = IoSliceHelper::new(data.data());
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {
             let file_len = file_info.len;
@@ -323,7 +318,7 @@ impl<'a> FileOps<'a> {
             }
 
             let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(data_len(data), remaining_len).try_into()?;
+            let to_write = std::cmp::min(data.len() as u64, remaining_len).try_into()?;
 
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
@@ -335,17 +330,22 @@ impl<'a> FileOps<'a> {
                 to_write,
                 absolute_offset
             );
+            let slices = data.as_ioslices(to_write);
+            debug_assert_eq!(slices[0].len() + slices[1].len(), to_write);
             if !file_info.attrs.padding {
-                self.files
-                    .pwrite_all_vectored(file_idx, absolute_offset, &mut data, to_write)
+                let written = self
+                    .files
+                    .pwrite_all_vectored(file_idx, absolute_offset, &data.as_ioslices(to_write))
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",
                             file_info.relative_filename
                         )
                     })?;
+                debug_assert_eq!(written, to_write);
             }
-            if data_len(data) == 0 {
+            data.advance(to_write);
+            if data.is_empty() {
                 break;
             }
 
@@ -353,5 +353,39 @@ impl<'a> FileOps<'a> {
         }
 
         Ok(())
+    }
+}
+
+struct IoSliceHelper<'a> {
+    first: &'a [u8],
+    second: &'a [u8],
+}
+
+impl<'a> IoSliceHelper<'a> {
+    fn new((first, second): (&'a [u8], &'a [u8])) -> Self {
+        Self { first, second }
+    }
+    fn advance(&mut self, offset: usize) {
+        let first_adv = self.first.len().min(offset);
+        self.first = &self.first[first_adv..];
+        let second_adv = offset - first_adv;
+        self.second = &self.second[second_adv..];
+    }
+
+    fn as_ioslices(&self, len_limit: usize) -> [IoSlice<'a>; 2] {
+        let first_len = self.first.len().min(len_limit);
+        let second_len = (len_limit - first_len).min(self.second.len());
+        [
+            IoSlice::new(&self.first[..first_len]),
+            IoSlice::new(&self.second[..second_len]),
+        ]
+    }
+
+    fn len(&self) -> usize {
+        self.first.len() + self.second.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.first.len() == 0 && self.second.len() == 0
     }
 }
