@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use crate::peer_connection::with_timeout;
 use anyhow::Context;
-use buffers::ByteBuf;
 use peer_binary_protocol::{
     Handshake, MessageBorrowed, MessageDeserializeError, PIECE_MESSAGE_DEFAULT_LEN,
 };
@@ -11,7 +10,7 @@ use tokio::io::AsyncReadExt;
 const BUFLEN: usize = PIECE_MESSAGE_DEFAULT_LEN * 2;
 
 pub struct ReadBuf {
-    buf: [u8; BUFLEN],
+    buf: Box<[u8; BUFLEN]>,
     start: usize,
     len: usize,
 }
@@ -42,7 +41,7 @@ macro_rules! as_slices {
 impl ReadBuf {
     pub fn new() -> Self {
         Self {
-            buf: [0u8; BUFLEN],
+            buf: Box::new([0u8; BUFLEN]),
             start: 0,
             len: 0,
         }
@@ -54,8 +53,8 @@ impl ReadBuf {
         &mut self,
         mut conn: impl AsyncReadExt + Unpin,
         timeout: Duration,
-    ) -> anyhow::Result<Handshake<ByteBuf<'_>>> {
-        self.len = with_timeout("reading", timeout, conn.read(&mut self.buf))
+    ) -> anyhow::Result<Handshake> {
+        self.len = with_timeout("reading", timeout, conn.read(&mut *self.buf))
             .await
             .context("error reading handshake")?;
         if self.len == 0 {
@@ -72,7 +71,7 @@ impl ReadBuf {
         let (first, second) = as_slices!(self);
         new[..first.len()].copy_from_slice(first);
         new[first.len()..first.len() + second.len()].copy_from_slice(second);
-        self.buf = new;
+        *self.buf = new;
         self.start = 0;
     }
 
@@ -126,11 +125,24 @@ impl ReadBuf {
                 Err(e) => return Err(e.into()),
             };
             while need_additional_bytes > 0 {
-                let size = with_timeout("reading", timeout, conn.read(self.write_buf_for_read()))
+                let buf = self.write_buf_for_read();
+                if buf.is_empty() {
+                    anyhow::bail!(
+                        "bug: read_buf.write_buf_for_read() returned empty buffer, start={} len={}",
+                        self.start,
+                        self.len
+                    );
+                }
+                let buflen = buf.len();
+                let size = with_timeout("reading", timeout, conn.read(buf))
                     .await
                     .context("error reading from peer")?;
                 if size == 0 {
-                    anyhow::bail!("disconnected while reading, read so far: {}", self.len)
+                    anyhow::bail!(
+                        "disconnected while reading, read so far: {}, buflen: {}",
+                        self.len,
+                        buflen,
+                    )
                 }
                 self.len += size;
                 need_additional_bytes = need_additional_bytes.saturating_sub(size)

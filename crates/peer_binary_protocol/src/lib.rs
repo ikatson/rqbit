@@ -7,7 +7,6 @@ pub mod extended;
 
 use std::io::IoSlice;
 
-use bincode::Options;
 use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
@@ -68,14 +67,6 @@ pub enum MessageDeserializeError {
     UnsupportedMessageId(u8),
     #[error(transparent)]
     Bencode(#[from] bencode::DeserializeError),
-    #[error(transparent)]
-    Bincode(#[from] bincode::Error),
-    #[error("error deserializing {name}: {error:#}")]
-    BincodeWithName {
-        #[source]
-        error: bincode::Error,
-        name: &'static str,
-    },
     #[error(
         "incorrect len prefix for message id {msg_id}, expected {expected}, received {received}"
     )]
@@ -270,19 +261,15 @@ where
         let (lp, msg_id) = self.len_prefix_and_msg_id();
 
         out.resize(PREAMBLE_LEN, 0);
-
-        byteorder::BigEndian::write_u32(&mut out[..4], lp);
+        out[..4].copy_from_slice(&lp.to_be_bytes());
         out[4] = msg_id;
-
-        let ser = bopts();
 
         match self {
             Message::Request(request) | Message::Cancel(request) => {
                 const MSG_LEN: usize = PREAMBLE_LEN + 12;
                 out.resize(MSG_LEN, 0);
                 debug_assert_eq!(out[PREAMBLE_LEN..].len(), 12);
-                ser.serialize_into(&mut out[PREAMBLE_LEN..], request)
-                    .unwrap();
+                request.serialize(&mut out[PREAMBLE_LEN..]);
                 Ok(MSG_LEN)
             }
             Message::Bitfield(b) => {
@@ -507,94 +494,66 @@ where
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Handshake<ByteBuf> {
-    pub pstr: ByteBuf,
-    pub reserved: [u8; 8],
-    pub info_hash: [u8; 20],
-    pub peer_id: [u8; 20],
+#[derive(Debug, PartialEq, Eq)]
+pub struct Handshake {
+    pub reserved: u64,
+    pub info_hash: Id20,
+    pub peer_id: Id20,
 }
 
-fn bopts() -> impl bincode::Options {
-    bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .with_big_endian()
-}
-
-impl Handshake<ByteBuf<'static>> {
-    pub fn new(info_hash: Id20, peer_id: Id20) -> Handshake<ByteBuf<'static>> {
+impl Handshake {
+    pub fn new(info_hash: Id20, peer_id: Id20) -> Handshake {
         debug_assert_eq!(PSTR_BT1.len(), 19);
 
         let mut reserved: u64 = 0;
         // supports extended messaging
         reserved |= 1 << 20;
-        let mut reserved_arr = [0u8; 8];
-        BE::write_u64(&mut reserved_arr, reserved);
 
         Handshake {
-            pstr: ByteBuf(PSTR_BT1.as_bytes()),
-            reserved: reserved_arr,
-            info_hash: info_hash.0,
-            peer_id: peer_id.0,
+            reserved,
+            info_hash,
+            peer_id,
         }
     }
 
-    pub fn deserialize(
-        b: &[u8],
-    ) -> Result<(Handshake<ByteBuf<'_>>, usize), MessageDeserializeError> {
-        let pstr_len =
-            *b.first()
-                .ok_or(MessageDeserializeError::NotEnoughData(1, None, "handshake"))?;
-        if pstr_len as usize != PSTR_BT1.len() {
-            return Err(MessageDeserializeError::InvalidPstr(pstr_len));
-        }
-        let expected_len = 1usize + pstr_len as usize + 48;
-        let hbuf = b
-            .get(..expected_len)
-            .ok_or(MessageDeserializeError::NotEnoughData(
-                expected_len,
+    pub fn deserialize(b: &[u8]) -> Result<(Handshake, usize), MessageDeserializeError> {
+        const LEN: usize = 1 + PSTR_BT1.len() + 8 + 20 + 20;
+        if b.len() < LEN {
+            return Err(MessageDeserializeError::NotEnoughData(
+                LEN - b.len(),
                 None,
                 "handshake",
-            ))?;
-        let h = Self::bopts().deserialize::<Handshake<ByteBuf<'_>>>(hbuf)?;
-        if h.pstr.0 != PSTR_BT1.as_bytes() {
+            ));
+        }
+        if b[0] as usize != PSTR_BT1.len() {
+            return Err(MessageDeserializeError::InvalidPstr(b[0]));
+        }
+        if &b[1..20] != PSTR_BT1.as_bytes() {
             return Err(MessageDeserializeError::Text(
                 "pstr doesn't match bittorrent V1",
             ));
         }
-        Ok((h, expected_len))
-    }
-}
 
-impl<B> Handshake<B> {
+        let h = Handshake {
+            reserved: BE::read_u64(&b[20..28]),
+            info_hash: Id20::new(b[28..48].try_into().unwrap()),
+            peer_id: Id20::new(b[48..68].try_into().unwrap()),
+        };
+        Ok((h, LEN))
+    }
+
     pub fn supports_extended(&self) -> bool {
-        self.reserved[5] & 0x10 > 0
-    }
-    fn bopts() -> impl bincode::Options {
-        bincode::DefaultOptions::new()
+        self.reserved.to_be_bytes()[5] & 0x10 > 0
     }
 
-    pub fn serialize(&self, buf: &mut Vec<u8>)
-    where
-        B: Serialize,
-    {
-        Self::bopts().serialize_into(buf, &self).unwrap()
-    }
-}
-
-impl<B> CloneToOwned for Handshake<B>
-where
-    B: CloneToOwned,
-{
-    type Target = Handshake<<B as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
-        Handshake {
-            pstr: self.pstr.clone_to_owned(within_buffer),
-            reserved: self.reserved,
-            info_hash: self.info_hash,
-            peer_id: self.peer_id,
-        }
+    pub fn serialize(&self, buf: &mut Vec<u8>) {
+        buf.resize(68, 0);
+        debug_assert_eq!(PSTR_BT1.len(), 19);
+        buf[0] = 19;
+        buf[1..20].copy_from_slice(PSTR_BT1.as_bytes());
+        buf[20..28].copy_from_slice(&self.reserved.to_be_bytes());
+        buf[28..48].copy_from_slice(&self.info_hash.0);
+        buf[48..68].copy_from_slice(&self.peer_id.0);
     }
 }
 
@@ -612,6 +571,12 @@ impl Request {
             begin,
             length,
         }
+    }
+
+    pub fn serialize(&self, buf: &mut [u8]) {
+        buf[0..4].copy_from_slice(&self.index.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.length.to_be_bytes());
     }
 }
 
@@ -631,8 +596,17 @@ mod tests {
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
         let mut buf = Vec::new();
-        Handshake::new(info_hash, peer_id).serialize(&mut buf);
+        let se = Handshake::new(info_hash, peer_id);
+        se.serialize(&mut buf);
         assert_eq!(buf.len(), 20 + 20 + 8 + 19 + 1);
+        assert_eq!(buf[0], 19);
+        assert_eq!(&buf[1..20], PSTR_BT1.as_bytes());
+        assert_eq!(&buf[28..48], &info_hash.0);
+        assert_eq!(&buf[48..68], &peer_id.0);
+
+        let (de, len) = Handshake::deserialize(&buf).unwrap();
+        assert_eq!(len, buf.len());
+        assert_eq!(se, de);
     }
 
     #[test]
@@ -768,6 +742,11 @@ mod tests {
             assert_eq!(request.begin, begin);
             assert_eq!(request.length, length);
             assert_eq!(len, 17);
+
+            let mut tmp = Vec::new();
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(slen, len);
+            assert_eq!(buf[..len], tmp[..len]);
         }
     }
 }

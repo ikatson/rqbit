@@ -370,19 +370,15 @@ impl TorrentStateLive {
         let counters = match self.peers.states.entry(checked_peer.addr) {
             Entry::Occupied(mut occ) => {
                 let peer = occ.get_mut();
-                peer.incoming_connection(
-                    Id20::new(checked_peer.handshake.peer_id),
-                    tx.clone(),
-                    &self.peers,
-                )
-                .context("peer already existed")?;
+                peer.incoming_connection(checked_peer.handshake.peer_id, tx.clone(), &self.peers)
+                    .context("peer already existed")?;
                 peer.stats.counters.clone()
             }
             Entry::Vacant(vac) => {
                 atomic_inc(&self.peers.stats.seen);
                 let peer = Peer::new_live_for_incoming_connection(
                     *vac.key(),
-                    Id20::new(checked_peer.handshake.peer_id),
+                    checked_peer.handshake.peer_id,
                     tx.clone(),
                     &self.peers,
                 );
@@ -633,9 +629,9 @@ impl TorrentStateLive {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
-    fn set_peer_live<B>(&self, handle: PeerHandle, h: Handshake<B>) {
+    fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
-            p.connecting_to_live(Id20::new(h.peer_id), &self.peers);
+            p.connecting_to_live(h.peer_id, &self.peers);
         });
     }
 
@@ -1054,7 +1050,7 @@ impl PeerConnectionHandler for &PeerHandler {
         Ok(len)
     }
 
-    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()> {
+    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
         self.state.set_peer_live(self.addr, handshake);
         Ok(())
     }

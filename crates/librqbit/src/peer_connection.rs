@@ -34,7 +34,7 @@ pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn should_send_bitfield(&self) -> bool;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize>;
-    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()>;
+    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
@@ -132,7 +132,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         &self,
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         read_buf: ReadBuf,
-        handshake: Handshake<ByteBufOwned>,
+        handshake: Handshake,
         read: BoxAsyncRead,
         mut write: BoxAsyncWrite,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
@@ -144,17 +144,17 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        if handshake.info_hash != self.info_hash.0 {
+        if handshake.info_hash != self.info_hash {
             anyhow::bail!("wrong info hash");
         }
 
-        if handshake.peer_id == self.peer_id.0 {
+        if handshake.peer_id == self.peer_id {
             bail!("looks like we are connecting to ourselves");
         }
 
         trace!(
             "incoming connection: id={:?}",
-            try_decode_peer_id(Id20::new(handshake.peer_id))
+            try_decode_peer_id(handshake.peer_id)
         );
 
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
@@ -223,15 +223,15 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 .context("error reading handshake")?;
             let handshake_supports_extended = h.supports_extended();
             trace!(
-                peer_id=?Id20::new(h.peer_id),
-                decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
+                peer_id=?h.peer_id,
+                decoded_id=?try_decode_peer_id(h.peer_id),
                 "connected",
             );
-            if h.info_hash != self.info_hash.0 {
+            if h.info_hash != self.info_hash {
                 anyhow::bail!("info hash does not match");
             }
 
-            if h.peer_id == self.peer_id.0 {
+            if h.peer_id == self.peer_id {
                 bail!("looks like we are connecting to ourselves");
             }
 

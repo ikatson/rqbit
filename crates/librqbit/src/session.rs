@@ -464,7 +464,7 @@ pub(crate) struct CheckedIncomingConnection {
     pub reader: BoxAsyncRead,
     pub writer: BoxAsyncWrite,
     pub read_buf: ReadBuf,
-    pub handshake: Handshake<ByteBufOwned>,
+    pub handshake: Handshake,
 }
 
 struct InternalAddResult {
@@ -805,12 +805,12 @@ impl Session {
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
 
-        if h.peer_id == self.peer_id.0 {
+        if h.peer_id == self.peer_id {
             bail!("seems like we are connecting to ourselves, ignoring");
         }
 
         for (id, torrent) in self.db.read().torrents.iter() {
-            if torrent.info_hash().0 != h.info_hash {
+            if torrent.info_hash() != h.info_hash {
                 continue;
             }
 
@@ -821,24 +821,19 @@ impl Session {
                 }
             };
 
-            let handshake = h.clone_to_owned(None);
-
             return Ok((
                 live,
                 CheckedIncomingConnection {
                     addr,
                     reader,
                     writer,
-                    handshake,
+                    handshake: h,
                     read_buf,
                 },
             ));
         }
 
-        bail!(
-            "didn't find a matching torrent for {:?}",
-            Id20::new(h.info_hash)
-        )
+        bail!("didn't find a matching torrent for {:?}", h.info_hash)
     }
 
     async fn task_listener(self: Arc<Self>, l: impl Accept) -> anyhow::Result<()> {
