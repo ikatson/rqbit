@@ -389,7 +389,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             let sleep_ms = (rand::rng().random::<f64>()
                                 * (tpm.max_random_sleep_ms as f64))
                                 as u64;
-                            tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                            if sleep_ms > 0 {
+                                tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+                            }
 
                             if rand::rng().random_bool(tpm.bad_data_probability()) {
                                 warn!(

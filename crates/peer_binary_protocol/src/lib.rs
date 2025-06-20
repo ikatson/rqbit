@@ -31,8 +31,6 @@ pub const MAX_MSG_LEN: usize = PREAMBLE_LEN
     + CHUNK_SIZE as usize
     + MAX_MSG_LEN_LEN_JUST_IN_CASE_EXTRA;
 
-const NO_PAYLOAD_MSG_LEN: usize = PREAMBLE_LEN;
-
 const PSTR_BT1: &str = "BitTorrent protocol";
 
 type MsgId = u8;
@@ -63,23 +61,49 @@ pub const MY_EXTENDED_UT_METADATA: u8 = 3;
 pub const EXTENDED_UT_PEX_KEY: &[u8] = b"ut_pex";
 pub const MY_EXTENDED_UT_PEX: u8 = 1;
 
+pub struct MsgIdDebug(MsgId);
+impl MsgIdDebug {
+    const fn name(&self) -> Option<&'static str> {
+        let n = match self.0 {
+            MSGID_CHOKE => "choke",
+            MSGID_UNCHOKE => "unchoke",
+            MSGID_INTERESTED => "interested",
+            MSGID_NOT_INTERESTED => "not_interested",
+            MSGID_HAVE => "have",
+            MSGID_BITFIELD => "bitfield",
+            MSGID_REQUEST => "request",
+            MSGID_PIECE => "piece",
+            MSGID_CANCEL => "cancel",
+            MSGID_EXTENDED => "extended",
+            _ => return None,
+        };
+        Some(n)
+    }
+}
+impl core::fmt::Debug for MsgIdDebug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "<unknown msg_id {}>", self.0),
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum MessageDeserializeError {
-    #[error("not enough data to deserialize {2} (msgid={1:?}): expected at least {0} more bytes")]
-    NotEnoughData(usize, Option<MsgId>, &'static str),
+    #[error("not enough data (msgid={1:?}): expected at least {0} more bytes")]
+    NotEnoughData(usize, Option<MsgIdDebug>),
     #[error("need a contiguous input to deserialize")]
     NeedContiguous,
     #[error("unsupported message id {0}")]
     UnsupportedMessageId(u8),
     #[error(transparent)]
     Bencode(#[from] bencode::DeserializeError),
-    #[error(
-        "incorrect len prefix for message id {msg_id}, expected {expected}, received {received}"
-    )]
-    IncorrectLenPrefix {
+    #[error("incorrect message length msg_id={msg_id:?}, expected={expected}, received={received}")]
+    IncorrectMsgLen {
         received: u32,
         expected: u32,
-        msg_id: u8,
+        msg_id: MsgIdDebug,
     },
     #[error("{0}")]
     Text(&'static str),
@@ -323,103 +347,81 @@ where
         ByteBuf: From<&'a [u8]> + 'a + Deserialize<'a>,
     {
         let mut buf = DoubleBufHelper::new(buf, buf2);
-        let len_prefix = buf.read_u32_be().map_err(|rem| {
-            MessageDeserializeError::NotEnoughData(rem, None, "message len_prefix")
-        })?;
+        let len_prefix = buf
+            .read_u32_be()
+            .map_err(|rem| MessageDeserializeError::NotEnoughData(rem, None))?;
+        let total_len = len_prefix as usize + 4;
         if len_prefix == 0 {
-            return Ok((Message::KeepAlive, 4));
+            return Ok((Message::KeepAlive, total_len));
         }
 
         let msg_id = buf
             .read_u8()
-            .map_err(|rem| MessageDeserializeError::NotEnoughData(rem, None, "message msg_id"))?;
+            .map_err(|_| MessageDeserializeError::NotEnoughData(len_prefix as usize, None))?;
 
-        let msg_len = len_prefix as usize - MSGID_LEN;
+        let msg_len = len_prefix as usize - 1;
+        if buf.len() < msg_len {
+            return Err(MessageDeserializeError::NotEnoughData(
+                msg_len - buf.len(),
+                Some(MsgIdDebug(msg_id)),
+            ));
+        }
+
+        macro_rules! check_msg_len {
+            ($expected:expr) => {{
+                if msg_len != $expected {
+                    return Err(MessageDeserializeError::IncorrectMsgLen {
+                        received: len_prefix - 1,
+                        expected: $expected,
+                        msg_id: MsgIdDebug(msg_id),
+                    });
+                }
+            }};
+            (min $expected:expr) => {{
+                if msg_len < $expected {
+                    return Err(MessageDeserializeError::IncorrectMsgLen {
+                        received: len_prefix - 1,
+                        expected: $expected,
+                        msg_id: MsgIdDebug(msg_id),
+                    });
+                }
+            }};
+        }
 
         match msg_id {
             MSGID_CHOKE => {
-                if len_prefix != LEN_PREFIX_CHOKE {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        received: len_prefix,
-                        expected: LEN_PREFIX_CHOKE,
-                        msg_id,
-                    });
-                }
-                Ok((Message::Choke, NO_PAYLOAD_MSG_LEN))
+                check_msg_len!(0);
+                Ok((Message::Choke, total_len))
             }
             MSGID_UNCHOKE => {
-                if len_prefix != LEN_PREFIX_UNCHOKE {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        received: len_prefix,
-                        expected: LEN_PREFIX_UNCHOKE,
-                        msg_id,
-                    });
-                }
-                Ok((Message::Unchoke, NO_PAYLOAD_MSG_LEN))
+                check_msg_len!(0);
+                Ok((Message::Unchoke, total_len))
             }
             MSGID_INTERESTED => {
-                if len_prefix != LEN_PREFIX_INTERESTED {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        received: len_prefix,
-                        expected: LEN_PREFIX_INTERESTED,
-                        msg_id,
-                    });
-                }
-                Ok((Message::Interested, NO_PAYLOAD_MSG_LEN))
+                check_msg_len!(0);
+                Ok((Message::Interested, total_len))
             }
             MSGID_NOT_INTERESTED => {
-                if len_prefix != LEN_PREFIX_NOT_INTERESTED {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        received: len_prefix,
-                        expected: LEN_PREFIX_NOT_INTERESTED,
-                        msg_id,
-                    });
-                }
-                Ok((Message::NotInterested, NO_PAYLOAD_MSG_LEN))
+                check_msg_len!(0);
+                Ok((Message::NotInterested, total_len))
             }
             MSGID_HAVE => {
-                let have = buf
-                    .read_u32_be()
-                    .map_err(|e| MessageDeserializeError::NotEnoughData(e, Some(msg_id), "have"))?;
-                Ok((Message::Have(have), PREAMBLE_LEN + INTEGER_LEN))
+                check_msg_len!(4);
+                let have = buf.read_u32_be().unwrap();
+                Ok((Message::Have(have), total_len))
             }
             MSGID_BITFIELD => {
-                if len_prefix <= 1 {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        expected: 2,
-                        received: len_prefix,
-                        msg_id,
-                    });
-                }
-                if buf.len() < msg_len {
-                    return Err(MessageDeserializeError::NotEnoughData(
-                        msg_len - buf.len(),
-                        Some(msg_id),
-                        "bitfield",
-                    ));
-                }
+                check_msg_len!(min 1);
                 let data = buf
                     .get_contiguous(msg_len)
                     .ok_or(MessageDeserializeError::NeedContiguous)?;
-                Ok((
-                    Message::Bitfield(ByteBuf::from(data)),
-                    PREAMBLE_LEN + msg_len,
-                ))
+                Ok((Message::Bitfield(ByteBuf::from(data)), total_len))
             }
             MSGID_REQUEST | MSGID_CANCEL => {
+                check_msg_len!(12);
                 const I32: usize = 4;
                 const I32_3: usize = I32 * 3;
-                let req = buf.consume::<I32_3>().map_err(|missing| {
-                    MessageDeserializeError::NotEnoughData(
-                        missing,
-                        Some(msg_id),
-                        if msg_id == MSGID_REQUEST {
-                            "request"
-                        } else {
-                            "cancel"
-                        },
-                    )
-                })?;
+                let req = buf.consume::<I32_3>().unwrap();
                 let request = Request {
                     index: BE::read_u32(&req[0..I32]),
                     begin: BE::read_u32(&req[I32..I32 * 2]),
@@ -430,31 +432,24 @@ where
                 } else {
                     Message::Cancel(request)
                 };
-                Ok((req, PREAMBLE_LEN + I32_3))
+                Ok((req, total_len))
             }
             MSGID_PIECE => {
                 const MIN_PAYLOAD: usize = 1;
                 const MIN_LENGTH: usize = INTEGER_LEN * 2 + MIN_PAYLOAD;
                 if msg_len < MIN_LENGTH {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        expected: (MIN_LENGTH + MSGID_LEN) as u32,
-                        received: len_prefix,
-                        msg_id,
+                    return Err(MessageDeserializeError::IncorrectMsgLen {
+                        expected: MIN_LENGTH as u32,
+                        received: msg_len as u32,
+                        msg_id: MsgIdDebug(msg_id),
                     });
                 }
 
-                let index = buf.read_u32_be().map_err(|missing| {
-                    MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece index")
-                })?;
-                let begin = buf.read_u32_be().map_err(|missing| {
-                    MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece begin")
-                })?;
+                let index = buf.read_u32_be().unwrap();
+                let begin = buf.read_u32_be().unwrap();
 
                 let block_len = msg_len - INTEGER_LEN * 2;
-
-                let (block_0, block_1) = buf.consume_variable(block_len).map_err(|missing| {
-                    MessageDeserializeError::NotEnoughData(missing, Some(msg_id), "piece data")
-                })?;
+                let (block_0, block_1) = buf.consume_variable(block_len).unwrap();
 
                 Ok((
                     Message::Piece(Piece {
@@ -463,32 +458,17 @@ where
                         block_0: block_0.into(),
                         block_1: block_1.into(),
                     }),
-                    PREAMBLE_LEN + len_prefix as usize - MSGID_LEN,
+                    total_len,
                 ))
             }
             MSGID_EXTENDED => {
-                if len_prefix <= 6 {
-                    return Err(MessageDeserializeError::IncorrectLenPrefix {
-                        expected: 6,
-                        received: len_prefix,
-                        msg_id,
-                    });
-                }
-
-                if buf.len() < msg_len {
-                    return Err(MessageDeserializeError::NotEnoughData(
-                        msg_len - buf.len(),
-                        Some(msg_id),
-                        "extended",
-                    ));
-                }
-
+                check_msg_len!(min 3); // 1 byte for msg_id and 2 bytes for empty bencode dict "de"
                 let msg_data = buf
                     .get_contiguous(msg_len)
                     .ok_or(MessageDeserializeError::NeedContiguous)?;
 
                 Ok((
-                    Message::Extended(ExtendedMessage::deserialize(msg_data)?),
+                    Message::Extended(ExtendedMessage::deserialize_unchecked_len(msg_data)?),
                     PREAMBLE_LEN + msg_len,
                 ))
             }
@@ -522,11 +502,7 @@ impl Handshake {
     pub fn deserialize(b: &[u8]) -> Result<(Handshake, usize), MessageDeserializeError> {
         const LEN: usize = 1 + PSTR_BT1.len() + 8 + 20 + 20;
         if b.len() < LEN {
-            return Err(MessageDeserializeError::NotEnoughData(
-                LEN - b.len(),
-                None,
-                "handshake",
-            ));
+            return Err(MessageDeserializeError::NotEnoughData(LEN - b.len(), None));
         }
         if b[0] as usize != PSTR_BT1.len() {
             return Err(MessageDeserializeError::InvalidPstr(b[0]));
