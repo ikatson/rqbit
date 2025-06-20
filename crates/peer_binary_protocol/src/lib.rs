@@ -794,7 +794,7 @@ mod tests {
         for split_point in 0..buf.len() {
             let (first, second) = buf.split_at(split_point);
             let res = MessageBorrowed::deserialize(first, second);
-            if (6..=47).contains(&split_point) {
+            if (6..47).contains(&split_point) {
                 assert!(
                     matches!(res, Err(MessageDeserializeError::NeedContiguous)),
                     "expected NeedContiguous: split_point={split_point}"
@@ -815,6 +815,37 @@ mod tests {
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
+        }
+    }
+
+    #[test]
+    fn test_no_data_messages() {
+        let mut buf = [0u8; 100];
+
+        for msgid in [
+            MSGID_CHOKE,
+            MSGID_UNCHOKE,
+            MSGID_INTERESTED,
+            MSGID_NOT_INTERESTED,
+        ] {
+            buf[0..4].copy_from_slice(&1u32.to_be_bytes());
+            buf[4] = msgid;
+            for split_point in 0..buf.len() {
+                let (first, second) = buf.split_at(split_point);
+                let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+                match (msgid, &msg) {
+                    (MSGID_CHOKE, Message::Choke)
+                    | (MSGID_UNCHOKE, Message::Unchoke)
+                    | (MSGID_INTERESTED, Message::Interested)
+                    | (MSGID_NOT_INTERESTED, Message::NotInterested) => {}
+                    (msgid, msg) => panic!("msgid={msgid}, msg={msg:?}"),
+                }
+                assert_eq!(len, 5);
+                let mut tmp = Vec::new();
+                let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+                assert_eq!(slen, len);
+                assert_eq!(buf[..len], tmp[..len]);
+            }
         }
     }
 }
