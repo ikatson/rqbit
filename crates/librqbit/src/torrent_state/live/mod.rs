@@ -1422,10 +1422,10 @@ impl PeerHandler {
     }
 
     fn on_bitfield(&self, bitfield: ByteBufOwned) -> anyhow::Result<()> {
-        if bitfield.len() != self.state.lengths.piece_bitfield_bytes() {
+        if bitfield.as_ref().len() != self.state.lengths.piece_bitfield_bytes() {
             anyhow::bail!(
                 "dropping peer as its bitfield has unexpected size. Got {}, expected {}",
-                bitfield.len(),
+                bitfield.as_ref().len(),
                 self.state.lengths.piece_bitfield_bytes(),
             );
         }

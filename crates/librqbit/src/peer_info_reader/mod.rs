@@ -178,12 +178,11 @@ impl PeerConnectionHandler for Handler {
             data,
         })) = msg
         {
-            let piece_ready =
-                self.locked
-                    .write()
-                    .as_mut()
-                    .unwrap()
-                    .record_piece(piece, &data, self.info_hash)?;
+            let piece_ready = self.locked.write().as_mut().unwrap().record_piece(
+                piece,
+                data.as_ref(),
+                self.info_hash,
+            )?;
             if piece_ready {
                 let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
                 let info = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf)

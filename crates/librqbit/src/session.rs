@@ -36,7 +36,7 @@ use crate::{
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
 use bencode::bencode_serialize_to_writer;
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
@@ -1053,7 +1053,7 @@ impl Session {
         }
 
         if let Some(name) = &info.name {
-            let s = String::from_utf8_lossy(name.as_slice());
+            let s = String::from_utf8_lossy(name.as_ref());
             if !s.is_empty() {
                 let pb = PathBuf::from(s.as_ref());
                 check_valid(&pb)?;
@@ -1509,7 +1509,7 @@ impl Session {
                 Ok(ResolveMagnetResult {
                     metadata: TorrentMetadata::new(
                         info,
-                        torrent_file_from_info_bytes(&info_bytes, trackers)?,
+                        torrent_file_from_info_bytes(info_bytes.as_ref(), trackers)?,
                         info_bytes.0,
                     )?,
                     peer_rx: rx,

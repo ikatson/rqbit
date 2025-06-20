@@ -145,7 +145,7 @@ where
     }
 
     pub fn data(&self) -> (&[u8], &[u8]) {
-        (self.block_0.as_slice(), self.block_1.as_slice())
+        (self.block_0.as_ref(), self.block_1.as_ref())
     }
 
     pub fn serialize(&self, mut buf: &mut [u8]) -> usize {

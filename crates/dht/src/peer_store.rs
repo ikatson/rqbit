@@ -139,7 +139,7 @@ impl PeerStore {
             return false;
         }
         if !self.tokens.read().iter().any(|t| {
-            t.token[..] == announce.token[..] && t.addr == addr && t.node_id == announce.id
+            t.token[..] == announce.token.as_ref()[..] && t.addr == addr && t.node_id == announce.id
         }) {
             trace!("peer store: can't find this token / addr combination");
             return false;
