@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::peer_connection::with_timeout;
-use anyhow::Context;
+use anyhow::{Context, bail};
 use peer_binary_protocol::{
     Handshake, MessageBorrowed, MessageDeserializeError, PIECE_MESSAGE_DEFAULT_LEN,
 };
@@ -66,13 +66,29 @@ impl ReadBuf {
         Ok(h)
     }
 
-    fn make_contiguous(&mut self) {
+    fn is_contiguous(&self) -> bool {
+        self.start + self.len == (self.start + self.len) % BUFLEN
+    }
+
+    // In extremely rare cases, we might need to make the buffer contiguous, as the message
+    // parsing code won't work with a split ringbuffer.
+    fn make_contiguous(&mut self) -> anyhow::Result<()> {
+        if self.is_contiguous() {
+            bail!(
+                "bug: make_contiguous() called on a contiguous buffer; start={} len={}",
+                self.start,
+                self.len
+            );
+        }
+
+        // This should be so rare that it's not worth writing complex in-place code.
         let mut new = [0u8; BUFLEN];
         let (first, second) = as_slices!(self);
         new[..first.len()].copy_from_slice(first);
         new[first.len()..first.len() + second.len()].copy_from_slice(second);
         *self.buf = new;
         self.start = 0;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -80,7 +96,8 @@ impl ReadBuf {
         advance!(self, len);
     }
 
-    fn write_buf_for_read_range(&self) -> std::ops::Range<usize> {
+    /// Get a part of the buffer for reading into (as a range).
+    fn available_for_read_range(&self) -> std::ops::Range<usize> {
         if self.len == BUFLEN {
             return 0..0;
         }
@@ -94,12 +111,13 @@ impl ReadBuf {
         start..end
     }
 
-    fn write_buf_for_read(&mut self) -> &mut [u8] {
-        let range = self.write_buf_for_read_range();
+    /// Get a part of the buffer for reading into.
+    fn available_for_read(&mut self) -> &mut [u8] {
+        let range = self.available_for_read_range();
         &mut self.buf[range]
     }
 
-    // Read a message into the buffer, try to deserialize it and call the callback on it.
+    /// Read a message into the buffer, try to deserialize it and call the callback on it.
     pub async fn read_message(
         &mut self,
         mut conn: impl AsyncReadExt + Unpin,
@@ -110,7 +128,7 @@ impl ReadBuf {
             let mut need_additional_bytes = match MessageBorrowed::deserialize(first, second) {
                 Err(MessageDeserializeError::NotEnoughData(d, ..)) => d,
                 Err(MessageDeserializeError::NeedContiguous) => {
-                    self.make_contiguous();
+                    self.make_contiguous()?;
                     continue;
                 }
                 Ok((msg, size)) => {
@@ -125,7 +143,7 @@ impl ReadBuf {
                 Err(e) => return Err(e.into()),
             };
             while need_additional_bytes > 0 {
-                let buf = self.write_buf_for_read();
+                let buf = self.available_for_read();
                 if buf.is_empty() {
                     anyhow::bail!(
                         "bug: read_buf.write_buf_for_read() returned empty buffer, start={} len={}",
@@ -180,27 +198,27 @@ mod tests {
     #[test]
     fn test_ringbuf_write_range() {
         let mut b = ReadBuf::new();
-        assert_eq!(b.write_buf_for_read_range(), 0..BUFLEN);
+        assert_eq!(b.available_for_read_range(), 0..BUFLEN);
 
         b.start = 10;
         b.len = 10;
-        assert_eq!(b.write_buf_for_read_range(), 20..BUFLEN);
+        assert_eq!(b.available_for_read_range(), 20..BUFLEN);
 
         b.start = BUFLEN - 100;
         b.len = 100;
-        assert_eq!(b.write_buf_for_read_range(), 0..BUFLEN - 100);
+        assert_eq!(b.available_for_read_range(), 0..BUFLEN - 100);
 
         b.start = BUFLEN - 100;
         b.len = 120;
-        assert_eq!(b.write_buf_for_read_range(), 20..BUFLEN - 100);
+        assert_eq!(b.available_for_read_range(), 20..BUFLEN - 100);
 
         b.start = BUFLEN - 100;
         b.len = BUFLEN - 1;
-        assert_eq!(b.write_buf_for_read_range(), BUFLEN - 101..BUFLEN - 100);
+        assert_eq!(b.available_for_read_range(), BUFLEN - 101..BUFLEN - 100);
 
         b.start = BUFLEN - 100;
         b.len = BUFLEN;
-        assert_eq!(b.write_buf_for_read_range().len(), 0);
+        assert_eq!(b.available_for_read_range().len(), 0);
     }
 
     #[test]
@@ -218,5 +236,30 @@ mod tests {
         assert_eq!(as_slice_ranges!(b), (BUFLEN - 5..BUFLEN, 0..5));
         b.advance(5);
         assert_eq!(as_slice_ranges!(b), (0..5, 0..0));
+    }
+
+    #[test]
+    fn test_ringbuf_make_contiguous() {
+        let mut b = ReadBuf::new();
+        assert!(b.is_contiguous());
+        assert!(b.make_contiguous().is_err());
+
+        fn fill(buf: &mut [u8], value: u8) {
+            for b in buf.iter_mut() {
+                *b = value;
+            }
+        }
+
+        fill(&mut b.buf[BUFLEN - 100..], 42);
+        fill(&mut b.buf[..200], 43);
+        b.start = BUFLEN - 100;
+        b.len = 300;
+        assert!(!b.is_contiguous());
+        assert!(b.make_contiguous().is_ok());
+        assert_eq!(b.len, 300);
+        assert_eq!(b.start, 0);
+        assert_eq!(&b.buf[..100], &[42u8; 100]);
+        assert_eq!(&b.buf[100..300], &[43u8; 200]);
+        assert_eq!(&b.buf[300..], &[0u8; BUFLEN - 300]);
     }
 }
