@@ -577,6 +577,8 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Context;
+
     use crate::extended::handshake::ExtendedHandshake;
 
     const EXTENDED: &[u8] = include_bytes!("../../librqbit/resources/test/extended-handshake.bin");
@@ -738,6 +740,77 @@ mod tests {
             assert_eq!(request.length, length);
             assert_eq!(len, 17);
 
+            let mut tmp = Vec::new();
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(slen, len);
+            assert_eq!(buf[..len], tmp[..len]);
+        }
+    }
+
+    #[test]
+    fn test_keepalive() {
+        let buf = [0u8; 100];
+
+        for split_point in 0..buf.len() {
+            let (first, second) = buf.split_at(split_point);
+            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+            assert!(matches!(msg, Message::KeepAlive));
+            assert_eq!(len, 4);
+            let mut tmp = Vec::new();
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(slen, len);
+            assert_eq!(buf[..len], tmp[..len]);
+        }
+    }
+
+    #[test]
+    fn test_have() {
+        let mut buf = [0u8; 100];
+        buf[0..4].copy_from_slice(&5u32.to_be_bytes());
+        buf[4] = MSGID_HAVE;
+        buf[5..9].copy_from_slice(&42u32.to_be_bytes());
+
+        for split_point in 0..buf.len() {
+            let (first, second) = buf.split_at(split_point);
+            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+            assert!(matches!(msg, Message::Have(42)));
+            assert_eq!(len, 9);
+            let mut tmp = Vec::new();
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(slen, len);
+            assert_eq!(buf[..len], tmp[..len]);
+        }
+    }
+
+    #[test]
+    fn test_bitfield() {
+        let mut buf = [0u8; 100];
+        buf[0..4].copy_from_slice(&43u32.to_be_bytes());
+        buf[4] = MSGID_BITFIELD;
+        for byte in buf[5..47].iter_mut() {
+            *byte = 0b10101010;
+        }
+
+        for split_point in 0..buf.len() {
+            let (first, second) = buf.split_at(split_point);
+            let res = MessageBorrowed::deserialize(first, second);
+            if (6..=47).contains(&split_point) {
+                assert!(
+                    matches!(res, Err(MessageDeserializeError::NeedContiguous)),
+                    "expected NeedContiguous: split_point={split_point}"
+                );
+                continue;
+            }
+            let (msg, len) = res.context(split_point).unwrap();
+            let bf = match &msg {
+                Message::Bitfield(bf) => bf,
+                other => panic!("expected bitfield, got {other:?}"),
+            };
+            assert_eq!(len, 47);
+            assert_eq!(bf.as_ref().len(), 42);
+            for byte in bf.as_ref() {
+                assert_eq!(*byte, 0b10101010);
+            }
             let mut tmp = Vec::new();
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
