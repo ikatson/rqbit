@@ -14,7 +14,7 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    Handshake, Message, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
+    Handshake, Message, MessageBorrowed, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
     extended::{ExtendedMessage, handshake::ExtendedHandshake},
     serialize_piece_preamble,
 };
@@ -317,14 +317,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 trace!("sent bitfield");
             }
 
-            let len = MessageOwned::Unchoke.serialize(&mut write_buf, &Default::default)?;
-            with_timeout(
-                "writing unchoke",
-                rwtimeout,
-                write.write_all(&write_buf[..len]),
-            )
-            .await
-            .context("error writing unchoke")?;
+            let len = MessageBorrowed::Unchoke.serialize(&mut write_buf, &Default::default)?;
+            with_timeout("writing", rwtimeout, write.write_all(&write_buf[..len]))
+                .await
+                .context("error writing unchoke")?;
             trace!("sent unchoke");
 
             let mut broadcast_closed = false;

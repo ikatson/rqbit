@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use crate::peer_connection::with_timeout;
 use anyhow::{Context, bail};
-use peer_binary_protocol::{Handshake, MAX_MSG_LEN, MessageBorrowed, MessageDeserializeError};
+use peer_binary_protocol::{
+    Handshake, MAX_MSG_LEN, Message, MessageBorrowed, MessageDeserializeError,
+};
 use tokio::io::AsyncReadExt;
 
 // We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
@@ -131,8 +133,7 @@ impl ReadBuf {
     ) -> anyhow::Result<MessageBorrowed<'_>> {
         loop {
             let (first, second) = as_slices!(self);
-            let (mut need_additional_bytes, ne) = match MessageBorrowed::deserialize(first, second)
-            {
+            let (mut need_additional_bytes, ne) = match Message::deserialize(first, second) {
                 Err(ne @ MessageDeserializeError::NotEnoughData(d, ..)) => (d, ne),
                 Err(MessageDeserializeError::NeedContiguous) => {
                     self.make_contiguous()?;

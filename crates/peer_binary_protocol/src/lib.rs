@@ -348,14 +348,13 @@ where
             }
         }
     }
+}
 
+impl MessageBorrowed<'_> {
     pub fn deserialize<'a>(
         buf: &'a [u8],
         buf2: &'a [u8],
-    ) -> Result<(Message<ByteBuf>, usize), MessageDeserializeError>
-    where
-        ByteBuf: From<&'a [u8]> + 'a + Deserialize<'a>,
-    {
+    ) -> Result<(MessageBorrowed<'a>, usize), MessageDeserializeError> {
         let mut buf = DoubleBufHelper::new(buf, buf2);
         let len_prefix = buf
             .read_u32_be()
@@ -609,7 +608,7 @@ mod tests {
     #[test]
     fn test_deserialize_serialize_extended_is_same() {
         let buf = EXTENDED;
-        let (msg, size) = MessageBorrowed::deserialize(buf, &[]).unwrap();
+        let (msg, size) = Message::deserialize(buf, &[]).unwrap();
         assert_eq!(size, buf.len());
         let mut write_buf = Vec::new();
         msg.serialize(&mut write_buf, &Default::default).unwrap();
@@ -634,7 +633,7 @@ mod tests {
     fn test_deserialize_serialize_extended_non_contiguous() {
         for split_point in 0..EXTENDED.len() {
             let (first, second) = EXTENDED.split_at(split_point);
-            let res = MessageBorrowed::deserialize(first, second);
+            let res = Message::deserialize(first, second);
             if split_point > PREAMBLE_LEN && split_point < EXTENDED.len() {
                 assert!(
                     matches!(res, Err(MessageDeserializeError::NeedContiguous)),
@@ -674,7 +673,7 @@ mod tests {
         for split_point in 0..buf.len() {
             dbg!(split_point);
             let (first, second) = buf.split_at(split_point);
-            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+            let (msg, len) = Message::deserialize(first, second).unwrap();
 
             let piece = match &msg {
                 Message::Piece(piece) => piece,
@@ -720,7 +719,7 @@ mod tests {
         for split_point in 0..buf.len() {
             dbg!(split_point);
             let (first, second) = buf.split_at(split_point);
-            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+            let (msg, len) = Message::deserialize(first, second).unwrap();
 
             let request = match msg {
                 Message::Request(req) => req,
@@ -745,7 +744,7 @@ mod tests {
 
         for split_point in 0..buf.len() {
             let (first, second) = buf.split_at(split_point);
-            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+            let (msg, len) = Message::deserialize(first, second).unwrap();
             assert!(matches!(msg, Message::KeepAlive));
             assert_eq!(len, 4);
             let mut tmp = Vec::new();
@@ -764,7 +763,7 @@ mod tests {
 
         for split_point in 0..buf.len() {
             let (first, second) = buf.split_at(split_point);
-            let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+            let (msg, len) = Message::deserialize(first, second).unwrap();
             assert!(matches!(msg, Message::Have(42)));
             assert_eq!(len, 9);
             let mut tmp = Vec::new();
@@ -785,7 +784,7 @@ mod tests {
 
         for split_point in 0..buf.len() {
             let (first, second) = buf.split_at(split_point);
-            let res = MessageBorrowed::deserialize(first, second);
+            let res = Message::deserialize(first, second);
             if (6..47).contains(&split_point) {
                 assert!(
                     matches!(res, Err(MessageDeserializeError::NeedContiguous)),
@@ -824,7 +823,7 @@ mod tests {
             buf[4] = msgid;
             for split_point in 0..buf.len() {
                 let (first, second) = buf.split_at(split_point);
-                let (msg, len) = MessageBorrowed::deserialize(first, second).unwrap();
+                let (msg, len) = Message::deserialize(first, second).unwrap();
                 match (msgid, &msg) {
                     (MSGID_CHOKE, Message::Choke)
                     | (MSGID_UNCHOKE, Message::Unchoke)
