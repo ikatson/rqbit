@@ -23,6 +23,14 @@ const PREAMBLE_LEN: usize = INTEGER_LEN + MSGID_LEN;
 const PIECE_MESSAGE_PREAMBLE_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 2;
 pub const PIECE_MESSAGE_DEFAULT_LEN: usize = PIECE_MESSAGE_PREAMBLE_LEN + CHUNK_SIZE as usize;
 
+// extended message ut_metadata request is the largest known message.
+const MAX_MSG_LEN_LEN_JUST_IN_CASE_EXTRA: usize = 64;
+pub const MAX_MSG_LEN: usize = PREAMBLE_LEN
+    + 1
+    + b"d8:msg_typei1e5:piecei42e10:total_sizei16384ee".len()
+    + CHUNK_SIZE as usize
+    + MAX_MSG_LEN_LEN_JUST_IN_CASE_EXTRA;
+
 const NO_PAYLOAD_MSG_LEN: usize = PREAMBLE_LEN;
 
 const PSTR_BT1: &str = "BitTorrent protocol";

@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use crate::peer_connection::with_timeout;
 use anyhow::{Context, bail};
-use peer_binary_protocol::{
-    Handshake, MessageBorrowed, MessageDeserializeError, PIECE_MESSAGE_DEFAULT_LEN,
-};
+use peer_binary_protocol::{Handshake, MAX_MSG_LEN, MessageBorrowed, MessageDeserializeError};
 use tokio::io::AsyncReadExt;
 
-const BUFLEN: usize = PIECE_MESSAGE_DEFAULT_LEN * 2;
+// We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
+// TODO: consider setting it though to just MAX_MSG_LEN
+const BUFLEN: usize = MAX_MSG_LEN * 2;
 
 pub struct ReadBuf {
     buf: Box<[u8; BUFLEN]>,
@@ -125,8 +125,9 @@ impl ReadBuf {
     ) -> anyhow::Result<MessageBorrowed<'_>> {
         loop {
             let (first, second) = as_slices!(self);
-            let mut need_additional_bytes = match MessageBorrowed::deserialize(first, second) {
-                Err(MessageDeserializeError::NotEnoughData(d, ..)) => d,
+            let (mut need_additional_bytes, ne) = match MessageBorrowed::deserialize(first, second)
+            {
+                Err(ne @ MessageDeserializeError::NotEnoughData(d, ..)) => (d, ne),
                 Err(MessageDeserializeError::NeedContiguous) => {
                     self.make_contiguous()?;
                     continue;
@@ -146,21 +147,14 @@ impl ReadBuf {
                 let buf = self.available_for_read();
                 if buf.is_empty() {
                     anyhow::bail!(
-                        "bug: read_buf.write_buf_for_read() returned empty buffer, start={} len={}",
-                        self.start,
-                        self.len
+                        "read buffer is full. need_additional_bytes={need_additional_bytes}, last_err={ne:?}"
                     );
                 }
-                let buflen = buf.len();
                 let size = with_timeout("reading", timeout, conn.read(buf))
                     .await
                     .context("error reading from peer")?;
                 if size == 0 {
-                    anyhow::bail!(
-                        "disconnected while reading, read so far: {}, buflen: {}",
-                        self.len,
-                        buflen,
-                    )
+                    anyhow::bail!("peer disconected")
                 }
                 self.len += size;
                 need_additional_bytes = need_additional_bytes.saturating_sub(size)
