@@ -61,7 +61,7 @@ impl<'a> DoubleBufHelper<'a> {
 
     pub fn get_contiguous(&self, len: usize) -> Option<&'a [u8]> {
         match (self.buf_0.len(), self.buf_1.len()) {
-            (l, 0) if l >= len => Some(&self.buf_0[..len]),
+            (l, _) if l >= len => Some(&self.buf_0[..len]),
             (0, l) if l >= len => Some(&self.buf_1[..len]),
             _ => None,
         }
@@ -69,5 +69,114 @@ impl<'a> DoubleBufHelper<'a> {
 
     pub fn len(&self) -> usize {
         self.buf_0.len() + self.buf_1.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::double_buf::DoubleBufHelper;
+
+    #[test]
+    fn test_get_contiguous() {
+        let d = DoubleBufHelper::new(&[], &[]);
+        assert_eq!(d.get_contiguous(0).unwrap(), &[]);
+        assert_eq!(d.get_contiguous(1), None);
+
+        let d = DoubleBufHelper::new(&[42u8; 43], &[]);
+        assert_eq!(d.get_contiguous(42).unwrap(), &[42u8; 42]);
+        assert_eq!(d.get_contiguous(43).unwrap(), &[42u8; 43]);
+        assert_eq!(d.get_contiguous(44), None);
+
+        let d = DoubleBufHelper::new(&[], &[42u8; 43]);
+        assert_eq!(d.get_contiguous(42).unwrap(), &[42u8; 42]);
+        assert_eq!(d.get_contiguous(43).unwrap(), &[42u8; 43]);
+        assert_eq!(d.get_contiguous(44), None);
+
+        let d = DoubleBufHelper::new(&[42u8; 43], &[43u8; 52]);
+        assert_eq!(d.get_contiguous(42).unwrap(), &[42u8; 42]);
+        assert_eq!(d.get_contiguous(43).unwrap(), &[42u8; 43]);
+        assert_eq!(d.get_contiguous(44), None);
+
+        let d = DoubleBufHelper::new(&[], &[43u8; 52]);
+        assert_eq!(d.get_contiguous(42).unwrap(), &[43u8; 42]);
+        assert_eq!(d.get_contiguous(43).unwrap(), &[43u8; 43]);
+        assert_eq!(d.get_contiguous(52).unwrap(), &[43u8; 52]);
+        assert_eq!(d.get_contiguous(53), None);
+
+        let d = DoubleBufHelper::new(&[42u8; 43], &[43u8; 52]);
+        assert_eq!(d.get_contiguous(42).unwrap(), &[42u8; 42]);
+    }
+
+    #[test]
+    fn test_consume() {
+        for (first, second) in [(&[0, 1][..], &[][..]), (&[0], &[1]), (&[], &[0, 1])] {
+            let mut d = DoubleBufHelper::new(first, second);
+            assert_eq!(d.consume::<0>(), Ok([]));
+            assert_eq!(d.len(), 2);
+
+            let mut d = DoubleBufHelper::new(first, second);
+            assert_eq!(d.consume::<1>(), Ok([0]));
+            assert_eq!(d.len(), 1);
+
+            let mut d = DoubleBufHelper::new(first, second);
+            assert_eq!(d.consume::<2>(), Ok([0, 1]));
+            assert_eq!(d.len(), 0);
+
+            let mut d = DoubleBufHelper::new(first, second);
+            assert_eq!(d.consume::<3>(), Err(1));
+            assert_eq!(d.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_consume_variable() {
+        let mut d = DoubleBufHelper::new(&[], &[]);
+        assert_eq!(d.consume_variable(0), Ok((&[][..], &[][..])));
+        assert_eq!(d.len(), 0);
+        assert_eq!(d.consume_variable(1), Err(1));
+
+        let mut d = DoubleBufHelper::new(&[0, 1], &[]);
+        assert_eq!(d.consume_variable(0), Ok((&[][..], &[][..])));
+        assert_eq!(d.len(), 2);
+
+        let mut d = DoubleBufHelper::new(&[0, 1], &[]);
+        assert_eq!(d.consume_variable(1), Ok((&[0][..], &[][..])));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d.buf_0, &[1]);
+        assert_eq!(d.buf_1, &[]);
+
+        let mut d = DoubleBufHelper::new(&[0, 1], &[]);
+        assert_eq!(d.consume_variable(2), Ok((&[0, 1][..], &[][..])));
+        assert_eq!(d.len(), 0);
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[]);
+
+        let mut d = DoubleBufHelper::new(&[0, 1], &[]);
+        assert_eq!(d.consume_variable(3), Err(1));
+        assert_eq!(d.len(), 2);
+        assert_eq!(d.buf_0, &[0, 1]);
+        assert_eq!(d.buf_1, &[]);
+
+        let mut d = DoubleBufHelper::new(&[0], &[1]);
+        assert_eq!(d.consume_variable(0), Ok((&[][..], &[][..])));
+        assert_eq!(d.len(), 2);
+
+        let mut d = DoubleBufHelper::new(&[0], &[1]);
+        assert_eq!(d.consume_variable(1), Ok((&[0][..], &[][..])));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[1]);
+
+        let mut d = DoubleBufHelper::new(&[0], &[1]);
+        assert_eq!(d.consume_variable(2), Ok((&[0][..], &[1][..])));
+        assert_eq!(d.len(), 0);
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[]);
+
+        let mut d = DoubleBufHelper::new(&[0], &[1]);
+        assert_eq!(d.consume_variable(3), Err(1));
+        assert_eq!(d.len(), 2);
+        assert_eq!(d.buf_0, &[0]);
+        assert_eq!(d.buf_1, &[1]);
     }
 }
