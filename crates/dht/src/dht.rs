@@ -42,7 +42,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, trace_span, warn};
 
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
@@ -280,7 +280,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
                     debug!("error: {e:#}");
                     e
                 })
-                .instrument(error_span!(
+                .instrument(trace_span!(
                     "find_node",
                     target = format!("{target:?}"),
                     addr = addr.to_string()
@@ -340,7 +340,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
     ) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
         spawn(
-            error_span!(parent: None, "get_peers", is_v4, info_hash = format!("{:?}", self.info_hash)),
+            debug_span!(parent: None, "get_peers", is_v4, info_hash = format!("{:?}", self.info_hash)),
             async move {
                 let this = &this;
                 // Looper adds root nodes to the queue every 60 seconds.
@@ -373,7 +373,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                             futs.push(
                                 this.request_one(id, addr, depth)
                                     .map_err(|e| debug!("error: {e:#}"))
-                                    .instrument(error_span!("addr", addr=addr.to_string()))
+                                    .instrument(debug_span!("addr", addr=addr.to_string()))
                             );
                         }
                         Some(_) = futs.next(), if !futs.is_empty() => {}
@@ -954,14 +954,14 @@ impl DhtWorker {
             self.dht.id,
             addrs.iter().copied().filter(|a| a.is_ipv4()),
         )
-        .instrument(error_span!("v4"));
+        .instrument(debug_span!("v4"));
 
         let v6 = RecursiveRequest::find_node_for_routing_table(
             self.dht.clone(),
             self.dht.id,
             addrs.iter().copied().filter(|a| a.is_ipv6()),
         )
-        .instrument(error_span!("v6"));
+        .instrument(debug_span!("v6"));
 
         let (v4, v6) = tokio::join!(v4, v6);
         v4.or(v6)
@@ -979,7 +979,7 @@ impl DhtWorker {
             .notify(|error, retry_in| {
                 warn!(?retry_in, "error in bootstrap: {error:#}");
             })
-            .instrument(error_span!("bootstrap", hostname = addr))
+            .instrument(trace_span!("bootstrap", hostname = addr))
             .await
             .context("bootstrap failed")
     }
@@ -1049,7 +1049,7 @@ impl DhtWorker {
                     futs.push(
                         RecursiveRequest::find_node_for_routing_table(
                             self.dht.clone(), random_id, addrs.into_iter()
-                        ).instrument(error_span!("refresh_bucket"))
+                        ).instrument(trace_span!("refresh_bucket"))
                     );
                 },
                 _ = futs.next(), if !futs.is_empty() => {},

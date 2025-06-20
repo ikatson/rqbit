@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tracing::{Instrument, Span, debug, error_span, trace, warn};
+use tracing::{Instrument, Span, debug, debug_span, error_span, trace, warn};
 use url::Url;
 
 const SERVICE_TYPE_WAN_IP_CONNECTION: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
@@ -175,7 +175,7 @@ impl Device {
     }
 
     pub fn span(&self, parent: tracing::Span) -> tracing::Span {
-        error_span!(parent: parent, "device", device = self.name())
+        debug_span!(parent: parent, "device", device = self.name())
     }
 }
 
@@ -208,7 +208,7 @@ pub struct Service {
 
 impl Service {
     pub fn span(&self, parent: tracing::Span) -> tracing::Span {
-        error_span!(parent: parent, "service", url = self.control_url)
+        debug_span!(parent: parent, "service", url = self.control_url)
     }
 }
 
@@ -225,7 +225,7 @@ impl UpnpEndpoint {
     }
 
     fn span(&self) -> tracing::Span {
-        error_span!("upnp_endpoint", location = %self.location())
+        debug_span!("upnp_endpoint", location = %self.location())
     }
 
     fn iter_services(&self) -> impl Iterator<Item = (tracing::Span, &Service)> + '_ {
@@ -471,7 +471,7 @@ impl UpnpPortForwarder {
                     endpoints.push(self.parse_endpoint(r).map_err(|e| {
                         debug!("error parsing endpoint: {e:#}");
                         e
-                    }).instrument(error_span!("parse endpoint", location=location.to_string())));
+                    }).instrument(debug_span!("parse endpoint", location=location.to_string())));
                 },
                 Some(Ok(endpoint)) = endpoints.next(), if !endpoints.is_empty() => {
                     let mut local_ip = None;

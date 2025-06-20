@@ -50,7 +50,7 @@ impl ReadBuf {
         mut conn: impl AsyncReadExt + Unpin,
         timeout: Duration,
     ) -> anyhow::Result<Handshake<ByteBuf<'_>>> {
-        self.filled = with_timeout(timeout, conn.read(&mut self.buf))
+        self.filled = with_timeout("reading handshake", timeout, conn.read(&mut self.buf))
             .await
             .context("error reading handshake")?;
         if self.filled == 0 {
@@ -85,7 +85,7 @@ impl ReadBuf {
                 };
             self.prepare_for_read(need_additional_bytes);
             debug_assert!(!self.buf[self.filled..].is_empty());
-            let size = with_timeout(timeout, conn.read(&mut self.buf[self.filled..]))
+            let size = with_timeout("reading", timeout, conn.read(&mut self.buf[self.filled..]))
                 .await
                 .context("error reading from peer")?;
             if size == 0 {

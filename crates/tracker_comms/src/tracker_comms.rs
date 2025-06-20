@@ -16,8 +16,9 @@ use futures::stream::BoxStream;
 use futures::stream::FuturesUnordered;
 use tracing::Instrument;
 use tracing::debug;
-use tracing::error_span;
+use tracing::debug_span;
 use tracing::trace;
+use tracing::trace_span;
 use url::Url;
 
 use crate::tracker_comms_http;
@@ -214,13 +215,13 @@ impl TrackerComms {
         let info_hash = self.info_hash;
         match url {
             SupportedTracker::Udp(url) => {
-                let span = error_span!(parent: None, "udp_tracker", tracker = %url, info_hash = ?info_hash);
+                let span = debug_span!(parent: None, "udp_tracker", tracker = %url, info_hash = ?info_hash);
                 self.task_single_tracker_monitor_udp(url, client.clone())
                     .instrument(span)
                     .right_future()
             }
             SupportedTracker::Http(url) => {
-                let span = error_span!(
+                let span = debug_span!(
                     parent: None,
                     "http_tracker",
                     tracker = %url,
@@ -328,7 +329,7 @@ impl TrackerComms {
             // This should retry forever until the addrs are resolved.
             let addrs = (async || {
                 udp_tracker_to_socket_addrs(host.clone(), port)
-                    .instrument(error_span!("resolve", ?host))
+                    .instrument(trace_span!("resolve", ?host))
                     .await
                     .or_else(|err| prev_addrs.ok_or(err))
             })
@@ -348,7 +349,7 @@ impl TrackerComms {
                 UdpTrackerResolveResult::One(addr) => {
                     match self
                         .tracker_one_request_udp(addr, &client)
-                        .instrument(error_span!("udp request", ?addr))
+                        .instrument(trace_span!("udp request", ?addr))
                         .await
                     {
                         Ok(sleep) => sleep_interval = Some(sleep),
@@ -360,9 +361,9 @@ impl TrackerComms {
                 UdpTrackerResolveResult::Two(v4, v6) => {
                     let (r4, r6) = tokio::join!(
                         self.tracker_one_request_udp(v4.into(), &client)
-                            .instrument(error_span!("udp request", addr=?v4)),
+                            .instrument(trace_span!("udp request", addr=?v4)),
                         self.tracker_one_request_udp(v6.into(), &client)
-                            .instrument(error_span!("udp request", addr=?v6))
+                            .instrument(trace_span!("udp request", addr=?v6))
                     );
                     sleep_interval = Some(
                         r4.or(r6)
