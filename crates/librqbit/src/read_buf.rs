@@ -7,14 +7,17 @@ use tokio::io::AsyncReadExt;
 
 // We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
 // TODO: consider setting it though to just MAX_MSG_LEN
-const BUFLEN: usize = MAX_MSG_LEN * 2;
+const BUFLEN: usize = MAX_MSG_LEN;
 
+/// A ringbuffer for reading bittorrent messages from socket.
+/// Messages may thus span 2 slices (notably, Piece message), which is reflected in their contents.
 pub struct ReadBuf {
     buf: Box<[u8; BUFLEN]>,
     start: usize,
     len: usize,
 }
 
+/// Advance by N bytes
 macro_rules! advance {
     ($self:expr, $len:expr) => {
         $self.len -= $len;
@@ -22,6 +25,7 @@ macro_rules! advance {
     };
 }
 
+/// Convert into 2 slices (as ranges)
 macro_rules! as_slice_ranges {
     ($self:expr) => {{
         let first_len = $self.len.min(crate::read_buf::BUFLEN - $self.start);
@@ -31,6 +35,7 @@ macro_rules! as_slice_ranges {
     }};
 }
 
+/// Convert into 2 slices
 macro_rules! as_slices {
     ($self:expr) => {{
         let (first, second) = as_slice_ranges!($self);
@@ -70,8 +75,9 @@ impl ReadBuf {
         self.start + self.len == (self.start + self.len) % BUFLEN
     }
 
-    // In extremely rare cases, we might need to make the buffer contiguous, as the message
-    // parsing code won't work with a split ringbuffer.
+    // In rare cases, we might need to make the buffer contiguous, as the message
+    // parsing code won't work with a split ringbuffer. Only "bitfield" and "extended" messages
+    // need contiguous buffers.
     fn make_contiguous(&mut self) -> anyhow::Result<()> {
         if self.is_contiguous() {
             bail!(
