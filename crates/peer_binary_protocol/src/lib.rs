@@ -105,12 +105,22 @@ pub enum MessageDeserializeError {
         expected: u32,
         msg_id: MsgIdDebug,
     },
-    #[error("{0}")]
-    Text(&'static str),
+    #[error(
+        "ut_metadata:data total_size({total_size}) doesn't match the buffer length {received_len}"
+    )]
+    UtMetadataSizeMismatch { total_size: u32, received_len: u32 },
+    #[error("ut_metadata:data length must be <= {CHUNK_SIZE} but received {0} bytes")]
+    UtMetadataTooLarge(u32),
+    #[error("ut_metadata: trailing bytes when decoding")]
+    UtMetadataTrailingBytes,
+    #[error("ut_metadata: missing total_size")]
+    UtMetadataMissingTotalSize,
     #[error("unrecognized ut_metadata message type: {0}")]
-    UnrecognizedUtMetadata(u32),
+    UtMetadataTypeUnknown(u32),
+    #[error("pstr doesn't match {PSTR_BT1:?}")]
+    HandshakePstrWrongContent,
     #[error("pstr should be 19 bytes long but got {0}")]
-    InvalidPstr(u8),
+    HandshakePstrWrongLength(u8),
 }
 
 pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize {
@@ -505,12 +515,10 @@ impl Handshake {
             return Err(MessageDeserializeError::NotEnoughData(LEN - b.len(), None));
         }
         if b[0] as usize != PSTR_BT1.len() {
-            return Err(MessageDeserializeError::InvalidPstr(b[0]));
+            return Err(MessageDeserializeError::HandshakePstrWrongLength(b[0]));
         }
         if &b[1..20] != PSTR_BT1.as_bytes() {
-            return Err(MessageDeserializeError::Text(
-                "pstr doesn't match bittorrent V1",
-            ));
+            return Err(MessageDeserializeError::HandshakePstrWrongContent);
         }
 
         let h = Handshake {
