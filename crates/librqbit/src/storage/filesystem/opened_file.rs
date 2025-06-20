@@ -38,10 +38,10 @@ impl OurFileExt for File {
                 use librqbit_core::constants::CHUNK_SIZE;
                 let mut buf = [0u8; CHUNK_SIZE as usize];
 
-                buf.get(..l0)
+                buf.get_mut(..l0)
                     .context("buf too small")?
                     .copy_from_slice(&bufs[0]);
-                buf.get(l0..l0 + l1)
+                buf.get_mut(l0..l0 + l1)
                     .context("buf too small")?
                     .copy_from_slice(&bufs[1]);
                 self.pwrite_all(offset, &buf)?;
