@@ -36,7 +36,7 @@ use crate::{
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
 use bencode::bencode_serialize_to_writer;
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
@@ -464,7 +464,7 @@ pub(crate) struct CheckedIncomingConnection {
     pub reader: BoxAsyncRead,
     pub writer: BoxAsyncWrite,
     pub read_buf: ReadBuf,
-    pub handshake: Handshake<ByteBufOwned>,
+    pub handshake: Handshake,
 }
 
 struct InternalAddResult {
@@ -805,40 +805,34 @@ impl Session {
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
 
-        if h.peer_id == self.peer_id.0 {
+        if h.peer_id == self.peer_id {
             bail!("seems like we are connecting to ourselves, ignoring");
         }
 
-        for (id, torrent) in self.db.read().torrents.iter() {
-            if torrent.info_hash().0 != h.info_hash {
-                continue;
-            }
+        let (id, torrent) = self
+            .db
+            .read()
+            .torrents
+            .iter()
+            .find(|(_, t)| t.info_hash() == h.info_hash)
+            .map(|(id, t)| (*id, t.clone()))
+            .with_context(|| format!("didn't find a matching torrent {:?}", h.info_hash))?;
 
-            let live = match torrent.live() {
-                Some(live) => live,
-                None => {
-                    bail!("torrent {id} is not live, ignoring connection");
-                }
-            };
+        let live = torrent
+            .live_wait_initializing(Duration::from_secs(5))
+            .await
+            .with_context(|| format!("torrent {id} is not live, ignoring connection"))?;
 
-            let handshake = h.clone_to_owned(None);
-
-            return Ok((
-                live,
-                CheckedIncomingConnection {
-                    addr,
-                    reader,
-                    writer,
-                    handshake,
-                    read_buf,
-                },
-            ));
-        }
-
-        bail!(
-            "didn't find a matching torrent for {:?}",
-            Id20::new(h.info_hash)
-        )
+        Ok((
+            live,
+            CheckedIncomingConnection {
+                addr,
+                reader,
+                writer,
+                handshake: h,
+                read_buf,
+            },
+        ))
     }
 
     async fn task_listener(self: Arc<Self>, l: impl Accept) -> anyhow::Result<()> {
@@ -1058,7 +1052,7 @@ impl Session {
         }
 
         if let Some(name) = &info.name {
-            let s = String::from_utf8_lossy(name.as_slice());
+            let s = String::from_utf8_lossy(name.as_ref());
             if !s.is_empty() {
                 let pb = PathBuf::from(s.as_ref());
                 check_valid(&pb)?;
@@ -1514,7 +1508,7 @@ impl Session {
                 Ok(ResolveMagnetResult {
                     metadata: TorrentMetadata::new(
                         info,
-                        torrent_file_from_info_bytes(&info_bytes, trackers)?,
+                        torrent_file_from_info_bytes(info_bytes.as_ref(), trackers)?,
                         info_bytes.0,
                     )?,
                     peer_rx: rx,

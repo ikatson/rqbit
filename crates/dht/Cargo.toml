@@ -42,7 +42,7 @@ librqbit-core = { path = "../librqbit_core", default-features = false, version =
 chrono = { version = "0.4.31", features = ["serde"] }
 tokio-util = "0.7.10"
 bytes = "1.7.1"
-librqbit-dualstack-sockets = { version = "0.6.0" }
+librqbit-dualstack-sockets = { version = "0.6.3" }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

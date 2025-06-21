@@ -8,6 +8,7 @@ pub mod middleware;
 
 use std::{
     any::{Any, TypeId},
+    io::IoSlice,
     path::Path,
 };
 
@@ -107,6 +108,24 @@ pub trait TorrentStorage: Send + Sync {
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// write buf.len() bytes into the file at offset.
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()>;
+
+    fn pwrite_all_vectored(
+        &self,
+        file_id: usize,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        let mut offset = offset;
+        let mut size = 0;
+
+        for ioslice in bufs {
+            self.pwrite_all(file_id, offset, &ioslice)?;
+            offset += ioslice.len() as u64;
+            size += ioslice.len();
+        }
+
+        Ok(size)
+    }
 
     /// Remove a file from the storage. If not supported, or it doesn't matter, just return Ok(())
     fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()>;

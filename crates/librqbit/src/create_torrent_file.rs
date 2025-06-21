@@ -203,7 +203,7 @@ impl CreateTorrentResult {
         let trackers = self
             .meta
             .iter_announce()
-            .map(|i| std::str::from_utf8(i).unwrap().to_owned())
+            .map(|i| std::str::from_utf8(i.as_ref()).unwrap().to_owned())
             .collect();
         Magnet::from_id20(self.info_hash(), trackers, None)
     }

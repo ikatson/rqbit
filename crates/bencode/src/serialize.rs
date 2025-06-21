@@ -131,8 +131,8 @@ impl<W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'_, W> {
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         for (key, value) in self.tmp {
-            self.ser.write_bytes(&key)?;
-            self.ser.write_raw(&value)?;
+            self.ser.write_bytes(key.as_ref())?;
+            self.ser.write_raw(value.as_ref())?;
         }
         self.ser.write_byte(b'e')
     }
@@ -161,7 +161,7 @@ impl<W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'_, W> {
     fn end(self) -> Result<Self::Ok, Self::Error> {
         for (key, value) in self.tmp {
             self.ser.write_bytes(key.as_bytes())?;
-            self.ser.write_raw(&value)?;
+            self.ser.write_raw(value.as_ref())?;
         }
         self.ser.write_byte(b'e')
     }

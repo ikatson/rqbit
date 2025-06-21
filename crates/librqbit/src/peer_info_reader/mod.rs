@@ -160,7 +160,7 @@ impl PeerConnectionHandler for Handler {
         Ok(0)
     }
 
-    fn on_handshake<B>(&self, handshake: Handshake<B>) -> anyhow::Result<()> {
+    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
         if !handshake.supports_extended() {
             anyhow::bail!(
                 "this peer does not support extended handshaking, which is a prerequisite to download metadata"
@@ -178,12 +178,11 @@ impl PeerConnectionHandler for Handler {
             data,
         })) = msg
         {
-            let piece_ready =
-                self.locked
-                    .write()
-                    .as_mut()
-                    .unwrap()
-                    .record_piece(piece, &data, self.info_hash)?;
+            let piece_ready = self.locked.write().as_mut().unwrap().record_piece(
+                piece,
+                data.as_ref(),
+                self.info_hash,
+            )?;
             if piece_ready {
                 let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
                 let info = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf)

@@ -458,15 +458,6 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bincode"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
@@ -2842,7 +2833,7 @@ dependencies = [
  "axum-extra",
  "backon",
  "base64 0.22.1",
- "bincode 2.0.1",
+ "bincode",
  "bitvec",
  "byteorder",
  "bytes",
@@ -2860,7 +2851,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dht",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "librqbit-lsd",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
@@ -2872,6 +2863,7 @@ dependencies = [
  "memmap2",
  "metrics-exporter-prometheus",
  "mime_guess",
+ "nix",
  "notify",
  "parking_lot",
  "rand 0.9.1",
@@ -2972,7 +2964,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "parking_lot",
  "rand 0.9.1",
  "serde",
@@ -2998,9 +2990,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffe780c5c4600ba1eabafe48e738c75b500ee61ddae7048c6abcae7be93735c"
+checksum = "1a0d2e4869ef8d016a7893d840a22cbf56b9aa321400bace56bc64ad01ecab56"
 dependencies = [
  "axum 0.8.4",
  "backon",
@@ -3023,7 +3015,7 @@ dependencies = [
  "governor",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.1",
@@ -3038,7 +3030,6 @@ name = "librqbit-peer-protocol"
 version = "4.3.0"
 dependencies = [
  "anyhow",
- "bincode 1.3.3",
  "bitvec",
  "byteorder",
  "bytes",
@@ -3073,7 +3064,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "parking_lot",
  "rand 0.9.1",
  "reqwest",
@@ -3116,7 +3107,7 @@ dependencies = [
  "http",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "librqbit-sha1-wrapper",
  "librqbit-upnp",
  "mime_guess",
@@ -3469,6 +3460,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
 
 [[package]]
 name = "nodrop"
@@ -4818,7 +4821,7 @@ dependencies = [
  "gethostname",
  "libc",
  "librqbit",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "librqbit-upnp-serve",
  "metrics-exporter-prometheus",
  "openssl",
@@ -4846,7 +4849,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
- "librqbit-dualstack-sockets 0.6.2",
+ "librqbit-dualstack-sockets 0.6.3",
  "metrics-exporter-prometheus",
  "parking_lot",
  "serde",

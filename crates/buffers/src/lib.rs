@@ -20,20 +20,11 @@ pub struct ByteBuf<'a>(pub &'a [u8]);
 pub trait ByteBufT:
     AsRef<[u8]> + std::hash::Hash + Serialize + Eq + core::fmt::Debug + CloneToOwned + Borrow<[u8]>
 {
-    fn as_slice(&self) -> &[u8];
 }
 
-impl ByteBufT for ByteBufOwned {
-    fn as_slice(&self) -> &[u8] {
-        self.as_ref()
-    }
-}
+impl ByteBufT for ByteBufOwned {}
 
-impl ByteBufT for ByteBuf<'_> {
-    fn as_slice(&self) -> &[u8] {
-        self.as_ref()
-    }
-}
+impl ByteBufT for ByteBuf<'_> {}
 
 struct HexBytes<'a>(&'a [u8]);
 impl std::fmt::Display for HexBytes<'_> {
@@ -150,22 +141,6 @@ impl std::borrow::Borrow<[u8]> for ByteBuf<'_> {
     }
 }
 
-impl std::ops::Deref for ByteBuf<'_> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.0
-    }
-}
-
-impl std::ops::Deref for ByteBufOwned {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl<'a> From<&'a [u8]> for ByteBuf<'a> {
     fn from(b: &'a [u8]) -> Self {
         Self(b)
@@ -195,7 +170,7 @@ impl serde::ser::Serialize for ByteBuf<'_> {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.as_slice())
+        serializer.serialize_bytes(self.as_ref())
     }
 }
 
@@ -204,7 +179,7 @@ impl serde::ser::Serialize for ByteBufOwned {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.as_slice())
+        serializer.serialize_bytes(self.as_ref())
     }
 }
 

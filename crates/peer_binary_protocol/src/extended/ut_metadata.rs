@@ -3,6 +3,7 @@ use bencode::bencode_serialize_to_writer;
 use buffers::ByteBufT;
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
+use librqbit_core::constants::CHUNK_SIZE;
 use serde::Deserialize;
 use serde::Serialize;
 use std::io::Write;
@@ -84,6 +85,7 @@ impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
             }
         }
     }
+
     pub fn deserialize<'a>(buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
     where
         ByteBuf: From<&'a [u8]>,
@@ -104,17 +106,24 @@ impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
             // request
             0 => {
                 if !remaining.is_empty() {
-                    return Err(MessageDeserializeError::Text(
-                        "trailing bytes when decoding UtMetadata",
-                    ));
+                    return Err(MessageDeserializeError::UtMetadataTrailingBytes);
                 }
                 Ok(UtMetadata::Request(message.piece))
             }
             // data
             1 => {
-                let total_size = message.total_size.ok_or(MessageDeserializeError::Text(
-                    "expected key total_size to be present in UtMetadata \"data\" message",
-                ))?;
+                let total_size = message
+                    .total_size
+                    .ok_or(MessageDeserializeError::UtMetadataMissingTotalSize)?;
+                if remaining.len() != total_size as usize {
+                    return Err(MessageDeserializeError::UtMetadataSizeMismatch {
+                        total_size,
+                        received_len: buf.len() as u32,
+                    });
+                }
+                if total_size > CHUNK_SIZE {
+                    return Err(MessageDeserializeError::UtMetadataTooLarge(total_size));
+                }
                 Ok(UtMetadata::Data {
                     piece: message.piece,
                     total_size,
@@ -124,13 +133,11 @@ impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
             // reject
             2 => {
                 if !remaining.is_empty() {
-                    return Err(MessageDeserializeError::Text(
-                        "trailing bytes when decoding UtMetadata",
-                    ));
+                    return Err(MessageDeserializeError::UtMetadataTrailingBytes);
                 }
                 Ok(UtMetadata::Reject(message.piece))
             }
-            other => Err(MessageDeserializeError::UnrecognizedUtMetadata(other)),
+            other => Err(MessageDeserializeError::UtMetadataTypeUnknown(other)),
         }
     }
 }

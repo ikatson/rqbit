@@ -139,7 +139,7 @@ impl TorrentFileTree {
 
         let root_node = TorrentFileTreeNode {
             title: match info.name.as_ref() {
-                Some(n) => std::str::from_utf8(n)?.to_owned(),
+                Some(n) => std::str::from_utf8(n.as_ref())?.to_owned(),
                 None => {
                     format!("torrent {}", torent_id)
                 }

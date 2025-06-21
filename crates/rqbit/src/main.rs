@@ -330,25 +330,24 @@ struct DownloadOpts {
     exit_on_finish: bool,
 
     /// A comma-separated list of initial peers
-    #[arg(long = "initial-peers")]
-    initial_peers: Option<InitialPeers>,
+    #[arg(long = "initial-peers", value_parser=parse_initial_peers)]
+    initial_peers: Option<Vec<SocketAddr>>,
 
     /// Disable HTTP API entirely.
     #[arg(long = "disable-http-api")]
     disable_http_api: bool,
 }
 
-#[derive(Clone)]
-struct InitialPeers(Vec<SocketAddr>);
-
-impl From<&str> for InitialPeers {
-    fn from(s: &str) -> Self {
-        let mut v = Vec::new();
-        for addr in s.split(',') {
-            v.push(addr.parse().unwrap());
-        }
-        Self(v)
+fn parse_initial_peers(s: &str) -> anyhow::Result<Vec<SocketAddr>> {
+    let mut v = Vec::new();
+    for addr in s.split(',') {
+        v.push(
+            addr.parse()
+                .ok()
+                .with_context(|| format!("invalid address {addr}, expected host:port"))?,
+        );
     }
+    Ok(v)
 }
 
 #[derive(Parser)]
@@ -687,6 +686,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 let mut http_api_opts = HttpApiOptions {
                     read_only: false,
                     basic_auth: http_api_basic_auth,
+                    allow_create: opts.http_api_allow_create,
                     ..Default::default()
                 };
 
@@ -801,7 +801,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 list_only: download_opts.list,
                 force_tracker_interval: opts.force_tracker_interval,
                 sub_folder: download_opts.sub_folder.clone(),
-                initial_peers: download_opts.initial_peers.clone().map(|p| p.0),
+                initial_peers: download_opts.initial_peers.clone(),
                 disable_trackers: opts.disable_trackers,
                 ..Default::default()
             };

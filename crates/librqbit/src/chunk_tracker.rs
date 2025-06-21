@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
+use buffers::ByteBufT;
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
@@ -298,12 +299,12 @@ impl ChunkTracker {
         piece: &Piece<ByteBuf>,
     ) -> Option<ChunkMarkingResult>
     where
-        ByteBuf: AsRef<[u8]>,
+        ByteBuf: ByteBufT,
     {
         let chunk_info = self.lengths.chunk_info_from_received_data(
             self.lengths.validate_piece_index(piece.index)?,
             piece.begin,
-            piece.block.as_ref().len().try_into().unwrap(),
+            piece.len().try_into().unwrap(),
         )?;
         let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
         let chunk_range = self.chunk_status.get_mut(chunk_range).unwrap();

@@ -1,5 +1,6 @@
 use std::{
     fs::OpenOptions,
+    io::IoSlice,
     path::{Path, PathBuf},
 };
 
@@ -7,7 +8,7 @@ use anyhow::Context;
 use tracing::warn;
 
 use crate::{
-    storage::StorageFactoryExt,
+    storage::{StorageFactoryExt, filesystem::opened_file::OurFileExt},
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
 
@@ -60,14 +61,29 @@ impl TorrentStorage for FilesystemStorage {
         self.opened_files
             .get(file_id)
             .context("no such file")?
+            .lock_read()?
             .pread_exact(offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        self.opened_files
-            .get(file_id)
-            .context("no such file")?
-            .pwrite_all(offset, buf)
+        let of = self.opened_files.get(file_id).context("no such file")?;
+        #[cfg(windows)]
+        return of.try_mark_sparse()?.pwrite_all(offset, buf);
+        #[cfg(not(windows))]
+        return of.lock_read()?.pwrite_all(offset, buf);
+    }
+
+    fn pwrite_all_vectored(
+        &self,
+        file_id: usize,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        let of = self.opened_files.get(file_id).context("no such file")?;
+        #[cfg(windows)]
+        return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
+        #[cfg(not(windows))]
+        return of.lock_read()?.pwrite_all_vectored(offset, bufs);
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
@@ -75,13 +91,10 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
-        let f = &self.opened_files[file_id];
+        let f = &self.opened_files.get(file_id).context("no such file")?;
         #[cfg(windows)]
         f.try_mark_sparse()?;
-        Ok(f.lock_read()
-            .as_ref()
-            .context("file is None")?
-            .set_len(len)?)
+        Ok(f.lock_read()?.set_len(len)?)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {

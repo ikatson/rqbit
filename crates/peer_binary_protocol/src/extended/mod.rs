@@ -94,17 +94,12 @@ impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
         Ok(())
     }
 
-    pub fn deserialize<'a>(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
+    pub fn deserialize_unchecked_len<'a>(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
     where
         ByteBuf: Deserialize<'a> + From<&'a [u8]>,
     {
-        let emsg_id = buf.first().copied().ok_or(MessageDeserializeError::Text(
-            "cannot deserialize extended message: can't read first byte",
-        ))?;
-
-        buf = buf.get(1..).ok_or(MessageDeserializeError::Text(
-            "cannot deserialize extended message: buffer empty",
-        ))?;
+        let emsg_id = buf[0];
+        buf = &buf[1..];
 
         match emsg_id {
             0 => Ok(ExtendedMessage::Handshake(from_bytes(buf)?)),

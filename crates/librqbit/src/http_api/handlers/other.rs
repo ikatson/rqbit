@@ -66,7 +66,7 @@ pub async fn h_resolve_magnet(
     );
 
     if let Some(name) = info.name.as_ref() {
-        if let Ok(name) = std::str::from_utf8(name) {
+        if let Ok(name) = std::str::from_utf8(name.as_ref()) {
             if let Ok(h) =
                 HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
             {

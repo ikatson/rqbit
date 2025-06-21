@@ -4,12 +4,12 @@ use std::{
 };
 
 use anyhow::Context;
-use buffers::ByteBufOwned;
+use buffers::{ByteBufOwned, ByteBufT};
 use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
 };
-use peer_binary_protocol::Piece;
+use peer_binary_protocol::{DoubleBufHelper, Piece};
 use sha1w::{ISha1, Sha1};
 use tracing::{debug, trace, warn};
 
@@ -104,9 +104,7 @@ impl<'a> FileOps<'a> {
                 is_broken: false,
             });
 
-        let mut current_file = file_iterator
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("empty input file list"))?;
+        let mut current_file = file_iterator.next().context("empty input file list")?;
 
         let mut read_buffer = vec![0u8; 65536];
 
@@ -123,9 +121,7 @@ impl<'a> FileOps<'a> {
 
                 // Keep changing the current file to next until we find a file that has greater than 0 length.
                 while to_read_in_file == 0 {
-                    current_file = file_iterator
-                        .next()
-                        .ok_or_else(|| anyhow::anyhow!("broken torrent metadata"))?;
+                    current_file = file_iterator.next().context("broken torrent metadata")?;
 
                     to_read_in_file =
                         std::cmp::min(current_file.remaining(), piece_remaining as u64)
@@ -308,10 +304,10 @@ impl<'a> FileOps<'a> {
         chunk_info: &ChunkInfo,
     ) -> anyhow::Result<()>
     where
-        ByteBuf: AsRef<[u8]>,
+        ByteBuf: ByteBufT,
     {
-        let mut buf = data.block.as_ref();
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
+        let mut data = DoubleBufHelper::new(data.data().0, data.data().1);
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {
             let file_len = file_info.len;
@@ -321,7 +317,7 @@ impl<'a> FileOps<'a> {
             }
 
             let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(buf.len() as u64, remaining_len).try_into()?;
+            let to_write = std::cmp::min(data.len() as u64, remaining_len).try_into()?;
 
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
@@ -333,18 +329,22 @@ impl<'a> FileOps<'a> {
                 to_write,
                 absolute_offset
             );
+            let slices = data.as_ioslices(to_write);
+            debug_assert_eq!(slices[0].len() + slices[1].len(), to_write);
             if !file_info.attrs.padding {
-                self.files
-                    .pwrite_all(file_idx, absolute_offset, &buf[..to_write])
+                let written = self
+                    .files
+                    .pwrite_all_vectored(file_idx, absolute_offset, data.as_ioslices(to_write))
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",
                             file_info.relative_filename
                         )
                     })?;
+                debug_assert_eq!(written, to_write);
             }
-            buf = &buf[to_write..];
-            if buf.is_empty() {
+            data.advance(to_write);
+            if data.is_empty() {
                 break;
             }
 
