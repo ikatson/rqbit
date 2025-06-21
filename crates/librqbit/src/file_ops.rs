@@ -1,5 +1,4 @@
 use std::{
-    io::IoSlice,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -10,7 +9,7 @@ use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
 };
-use peer_binary_protocol::Piece;
+use peer_binary_protocol::{DoubleBufHelper, Piece};
 use sha1w::{ISha1, Sha1};
 use tracing::{debug, trace, warn};
 
@@ -308,7 +307,7 @@ impl<'a> FileOps<'a> {
         ByteBuf: ByteBufT,
     {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
-        let mut data = IoSliceHelper::new(data.data());
+        let mut data = DoubleBufHelper::new(data.data().0, data.data().1);
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {
             let file_len = file_info.len;
@@ -353,39 +352,5 @@ impl<'a> FileOps<'a> {
         }
 
         Ok(())
-    }
-}
-
-struct IoSliceHelper<'a> {
-    first: &'a [u8],
-    second: &'a [u8],
-}
-
-impl<'a> IoSliceHelper<'a> {
-    fn new((first, second): (&'a [u8], &'a [u8])) -> Self {
-        Self { first, second }
-    }
-    fn advance(&mut self, offset: usize) {
-        let first_adv = self.first.len().min(offset);
-        self.first = &self.first[first_adv..];
-        let second_adv = offset - first_adv;
-        self.second = &self.second[second_adv..];
-    }
-
-    fn as_ioslices(&self, len_limit: usize) -> [IoSlice<'a>; 2] {
-        let first_len = self.first.len().min(len_limit);
-        let second_len = (len_limit - first_len).min(self.second.len());
-        [
-            IoSlice::new(&self.first[..first_len]),
-            IoSlice::new(&self.second[..second_len]),
-        ]
-    }
-
-    fn len(&self) -> usize {
-        self.first.len() + self.second.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.first.len() == 0 && self.second.len() == 0
     }
 }

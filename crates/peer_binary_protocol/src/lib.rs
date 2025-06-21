@@ -13,7 +13,7 @@ use extended::PeerExtendedMessageIds;
 use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
 use serde::{Deserialize, Serialize};
 
-use crate::double_buf::DoubleBufHelper;
+pub use crate::double_buf::DoubleBufHelper;
 
 use self::extended::ExtendedMessage;
 
@@ -364,9 +364,10 @@ impl MessageBorrowed<'_> {
             return Ok((Message::KeepAlive, total_len));
         }
 
-        let msg_id = buf
-            .read_u8()
-            .map_err(|_| MessageDeserializeError::NotEnoughData(len_prefix as usize, None))?;
+        let msg_id = buf.read_u8().ok_or(MessageDeserializeError::NotEnoughData(
+            len_prefix as usize,
+            None,
+        ))?;
 
         let msg_len = len_prefix as usize - 1;
         if buf.len() < msg_len {
