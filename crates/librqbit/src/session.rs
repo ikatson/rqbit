@@ -809,31 +809,30 @@ impl Session {
             bail!("seems like we are connecting to ourselves, ignoring");
         }
 
-        for (id, torrent) in self.db.read().torrents.iter() {
-            if torrent.info_hash() != h.info_hash {
-                continue;
-            }
+        let (id, torrent) = self
+            .db
+            .read()
+            .torrents
+            .iter()
+            .find(|(_, t)| t.info_hash() == h.info_hash)
+            .map(|(id, t)| (*id, t.clone()))
+            .with_context(|| format!("didn't find a matching torrent {:?}", h.info_hash))?;
 
-            let live = match torrent.live() {
-                Some(live) => live,
-                None => {
-                    bail!("torrent {id} is not live, ignoring connection");
-                }
-            };
+        let live = torrent
+            .live_wait_initializing(Duration::from_secs(5))
+            .await
+            .with_context(|| format!("torrent {id} is not live, ignoring connection"))?;
 
-            return Ok((
-                live,
-                CheckedIncomingConnection {
-                    addr,
-                    reader,
-                    writer,
-                    handshake: h,
-                    read_buf,
-                },
-            ));
-        }
-
-        bail!("didn't find a matching torrent for {:?}", h.info_hash)
+        Ok((
+            live,
+            CheckedIncomingConnection {
+                addr,
+                reader,
+                writer,
+                handshake: h,
+                read_buf,
+            },
+        ))
     }
 
     async fn task_listener(self: Arc<Self>, l: impl Accept) -> anyhow::Result<()> {

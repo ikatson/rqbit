@@ -274,6 +274,18 @@ impl ManagedTorrent {
         }
     }
 
+    // Get live torrent but wait a bit until it's initialized if it is
+    pub(crate) async fn live_wait_initializing(
+        &self,
+        duration: Duration,
+    ) -> Option<Arc<TorrentStateLive>> {
+        timeout(duration, self.wait_until_initialized())
+            .await
+            .ok()?
+            .ok()?;
+        self.live()
+    }
+
     fn stop_with_error(&self, error: anyhow::Error) {
         let mut g = self.locked.write();
 
@@ -527,7 +539,11 @@ impl ManagedTorrent {
                 if done {
                     return Ok(());
                 }
-                let _ = timeout(Duration::from_secs(1), self.state_change_notify.notified()).await;
+                let _ = timeout(
+                    Duration::from_millis(100),
+                    self.state_change_notify.notified(),
+                )
+                .await;
             }
         }
         .boxed()
