@@ -5,7 +5,7 @@
 mod double_buf;
 pub mod extended;
 
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufT};
 use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
@@ -206,51 +206,23 @@ where
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf: ByteBufT> {
+pub enum Message<'a> {
     Request(Request),
     Cancel(Request),
-    Bitfield(ByteBuf),
+    Bitfield(ByteBuf<'a>),
     KeepAlive,
     Have(u32),
     Choke,
     Unchoke,
     Interested,
     NotInterested,
-    Piece(Piece<ByteBuf>),
-    Extended(ExtendedMessage<ByteBuf>),
+    Piece(Piece<ByteBuf<'a>>),
+    Extended(ExtendedMessage<ByteBuf<'a>>),
 }
 
-pub type MessageBorrowed<'a> = Message<ByteBuf<'a>>;
-pub type MessageOwned = Message<ByteBufOwned>;
+pub type MessageBorrowed<'a> = Message<'a>;
 
-pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<u8, bitvec::order::Msb0>;
-pub type BitfieldOwned = bitvec::vec::BitVec<u8, bitvec::order::Msb0>;
-
-pub struct Bitfield<'a> {
-    pub data: BitfieldBorrowed<'a>,
-}
-
-impl<'a> Bitfield<'a> {
-    pub fn new_from_slice(buf: &'a [u8]) -> anyhow::Result<Self> {
-        Ok(Self {
-            data: bitvec::slice::BitSlice::from_slice(buf),
-        })
-    }
-}
-
-impl std::fmt::Debug for Bitfield<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Bitfield")
-            .field("_ones", &self.data.count_ones())
-            .field("_len", &self.data.len())
-            .finish()
-    }
-}
-
-impl<ByteBuf> Message<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-{
+impl Message<'_> {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
             Message::Request(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),

@@ -1,6 +1,7 @@
 use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
+use buffers::ByteBuf;
 use buffers::ByteBufT;
 use serde::Deserialize;
 use serde::Serialize;
@@ -32,15 +33,12 @@ pub enum ExtendedMessage<ByteBuf: ByteBufT> {
     Dyn(u8, BencodeValue<ByteBuf>),
 }
 
-impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
+impl<'a> ExtendedMessage<ByteBuf<'a>> {
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
         extended_handshake_ut_metadata: &dyn Fn() -> PeerExtendedMessageIds,
-    ) -> anyhow::Result<()>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+    ) -> anyhow::Result<()> {
         match self {
             ExtendedMessage::Dyn(msg_id, v) => {
                 out.push(*msg_id);
@@ -72,10 +70,7 @@ impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
         Ok(())
     }
 
-    pub fn deserialize_unchecked_len<'a>(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
-    where
-        ByteBuf: Deserialize<'a> + From<&'a [u8]>,
-    {
+    pub fn deserialize_unchecked_len(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {
         let emsg_id = buf[0];
         buf = &buf[1..];
 

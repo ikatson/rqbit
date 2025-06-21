@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use buffers::ByteBuf;
+use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     hash_id::Id20,
     lengths::{ChunkInfo, ValidPieceIndex},
@@ -13,8 +13,11 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    Handshake, Message, MessageBorrowed, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
-    extended::{ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake},
+    Handshake, Message, MessageBorrowed, PIECE_MESSAGE_DEFAULT_LEN,
+    extended::{
+        ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake,
+        ut_metadata::UtMetadata, ut_pex::UtPex,
+    },
     serialize_piece_preamble,
 };
 use serde::{Deserialize, Serialize};
@@ -39,7 +42,7 @@ pub trait PeerConnectionHandler {
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()>;
-    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
+    async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -53,7 +56,9 @@ pub trait PeerConnectionHandler {
 
 #[derive(Debug)]
 pub enum WriterRequest {
-    Message(MessageOwned),
+    Message(Message<'static>),
+    UtMetadata(UtMetadata<ByteBufOwned>),
+    UtPex(UtPex<ByteBufOwned>),
     ReadChunkRequest(ChunkInfo),
     Disconnect(anyhow::Result<()>),
 }
@@ -331,7 +336,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         r = have_broadcast.recv(), if !broadcast_closed => match r {
                             Ok(id) => {
                                 if self.handler.should_transmit_have(id) {
-                                     WriterRequest::Message(MessageOwned::Have(id.get()))
+                                     WriterRequest::Message(Message::Have(id.get()))
                                 } else {
                                     continue
                                 }
@@ -348,7 +353,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             Ok(None) => {
                                 anyhow::bail!("closing writer, channel closed");
                             }
-                            Err(_) => WriterRequest::Message(MessageOwned::KeepAlive),
+                            Err(_) => WriterRequest::Message(Message::KeepAlive),
                         }
                     };
                 };
@@ -358,14 +363,24 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let mut uploaded_add = None;
 
                 trace!("about to send: {:?}", &req);
+                let ext_msg_ids = &|| {
+                    extended_handshake_ref
+                        .read()
+                        .as_ref()
+                        .map(|e| *e)
+                        .unwrap_or_default()
+                };
+
                 let len = match req {
-                    WriterRequest::Message(msg) => msg.serialize(&mut write_buf, &|| {
-                        extended_handshake_ref
-                            .read()
-                            .as_ref()
-                            .map(|e| *e)
-                            .unwrap_or_default()
-                    })?,
+                    WriterRequest::Message(msg) => msg.serialize(&mut write_buf, ext_msg_ids)?,
+                    WriterRequest::UtMetadata(utm) => {
+                        Message::Extended(ExtendedMessage::UtMetadata(utm.as_borrowed()))
+                            .serialize(&mut write_buf, ext_msg_ids)?
+                    }
+                    WriterRequest::UtPex(ut_pex) => {
+                        Message::Extended(ExtendedMessage::UtPex(ut_pex.as_borrowed()))
+                            .serialize(&mut write_buf, ext_msg_ids)?
+                    }
                     WriterRequest::ReadChunkRequest(chunk) => {
                         #[allow(unused_mut)]
                         let mut skip_reading_for_e2e_tests = false;
