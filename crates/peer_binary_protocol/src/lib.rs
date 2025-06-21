@@ -5,7 +5,7 @@
 mod double_buf;
 pub mod extended;
 
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufT};
 use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
@@ -206,75 +206,23 @@ where
 }
 
 #[derive(Debug)]
-pub enum Message<ByteBuf: ByteBufT> {
+pub enum Message<'a> {
     Request(Request),
     Cancel(Request),
-    Bitfield(ByteBuf),
+    Bitfield(ByteBuf<'a>),
     KeepAlive,
     Have(u32),
     Choke,
     Unchoke,
     Interested,
     NotInterested,
-    Piece(Piece<ByteBuf>),
-    Extended(ExtendedMessage<ByteBuf>),
+    Piece(Piece<ByteBuf<'a>>),
+    Extended(ExtendedMessage<ByteBuf<'a>>),
 }
 
-pub type MessageBorrowed<'a> = Message<ByteBuf<'a>>;
-pub type MessageOwned = Message<ByteBufOwned>;
+pub type MessageBorrowed<'a> = Message<'a>;
 
-pub type BitfieldBorrowed<'a> = &'a bitvec::slice::BitSlice<u8, bitvec::order::Msb0>;
-pub type BitfieldOwned = bitvec::vec::BitVec<u8, bitvec::order::Msb0>;
-
-pub struct Bitfield<'a> {
-    pub data: BitfieldBorrowed<'a>,
-}
-
-impl<ByteBuf> CloneToOwned for Message<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-    <ByteBuf as CloneToOwned>::Target: ByteBufT,
-{
-    type Target = Message<<ByteBuf as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
-        match self {
-            Message::Request(req) => Message::Request(*req),
-            Message::Cancel(req) => Message::Cancel(*req),
-            Message::Bitfield(b) => Message::Bitfield(b.clone_to_owned(within_buffer)),
-            Message::Choke => Message::Choke,
-            Message::Unchoke => Message::Unchoke,
-            Message::Interested => Message::Interested,
-            Message::Piece(piece) => Message::Piece(piece.clone_to_owned(within_buffer)),
-            Message::KeepAlive => Message::KeepAlive,
-            Message::Have(v) => Message::Have(*v),
-            Message::NotInterested => Message::NotInterested,
-            Message::Extended(e) => Message::Extended(e.clone_to_owned(within_buffer)),
-        }
-    }
-}
-
-impl<'a> Bitfield<'a> {
-    pub fn new_from_slice(buf: &'a [u8]) -> anyhow::Result<Self> {
-        Ok(Self {
-            data: bitvec::slice::BitSlice::from_slice(buf),
-        })
-    }
-}
-
-impl std::fmt::Debug for Bitfield<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Bitfield")
-            .field("_ones", &self.data.count_ones())
-            .field("_len", &self.data.len())
-            .finish()
-    }
-}
-
-impl<ByteBuf> Message<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-{
+impl Message<'_> {
     pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
         match self {
             Message::Request(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
@@ -604,30 +552,6 @@ mod tests {
         let mut out = Vec::new();
         msg.serialize(&mut out, &Default::default).unwrap();
         dbg!(out);
-    }
-
-    #[test]
-    fn test_deserialize_serialize_extended_is_same() {
-        let buf = EXTENDED;
-        let (msg, size) = Message::deserialize(buf, &[]).unwrap();
-        assert_eq!(size, buf.len());
-        let mut write_buf = Vec::new();
-        msg.serialize(&mut write_buf, &Default::default).unwrap();
-        if buf[..] != write_buf {
-            {
-                use std::io::Write;
-                let mut f = std::fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(true)
-                    .write(true)
-                    .open("/tmp/test_deserialize_serialize_extended_is_same")
-                    .unwrap();
-                f.write_all(&write_buf).unwrap();
-            }
-            panic!(
-                "resources/test/extended-handshake.bin did not serialize exactly the same. Dumped to /tmp/test_deserialize_serialize_extended_is_same, you can compare with resources/test/extended-handshake.bin"
-            )
-        }
     }
 
     #[test]

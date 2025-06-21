@@ -67,7 +67,7 @@ use librqbit_core::{
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
-    Handshake, Message, MessageOwned, Piece, Request,
+    Handshake, Message, Piece, Request,
     extended::{
         self, ExtendedMessage, handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex,
     },
@@ -913,11 +913,7 @@ impl TorrentStateLive {
                     connected.iter().copied(),
                     dropped.iter().copied(),
                 );
-                let ext_msg = extended::ExtendedMessage::UtPex(pex_msg);
-                if tx
-                    .send(WriterRequest::Message(Message::Extended(ext_msg)))
-                    .is_err()
-                {
+                if tx.send(WriterRequest::UtPex(pex_msg)).is_err() {
                     return Ok(()); // Peer disconnected
                 }
 
@@ -965,7 +961,7 @@ struct PeerHandler {
     cancel_token: CancellationToken,
 }
 
-impl PeerConnectionHandler for &PeerHandler {
+impl PeerConnectionHandler for PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
             .outgoing_connections
@@ -976,7 +972,7 @@ impl PeerConnectionHandler for &PeerHandler {
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);
     }
 
-    async fn on_received_message(&self, message: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+    fn on_received_message(&self, message: Message<'_>) -> anyhow::Result<()> {
         // The first message must be "bitfield", but if it's not sent,
         // assume the bitfield is all zeroes and was sent.
         if !matches!(&message, Message::Bitfield(..))
@@ -996,10 +992,7 @@ impl PeerConnectionHandler for &PeerHandler {
             Message::Choke => self.on_i_am_choked(),
             Message::Unchoke => self.on_i_am_unchoked(),
             Message::Interested => self.on_peer_interested(),
-            Message::Piece(piece) => self
-                .on_received_piece(piece)
-                .await
-                .context("on_received_piece")?,
+            Message::Piece(piece) => self.on_received_piece(piece).context("on_received_piece")?,
             Message::KeepAlive => {
                 trace!("keepalive received");
             }
@@ -1071,7 +1064,7 @@ impl PeerConnectionHandler for &PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
-        if !self.state.metadata.info.private && hs.ut_pex().is_some() {
+        if !self.state.metadata.info.private && hs.m.ut_pex.is_some() {
             spawn_with_cancel(
                 error_span!(
                     parent: self.state.shared.span.clone(),
@@ -1477,9 +1470,9 @@ impl PeerHandler {
             move |h: &PeerHandler, new_value: bool| -> anyhow::Result<()> {
                 if new_value != current {
                     h.tx.send(if new_value {
-                        WriterRequest::Message(MessageOwned::Interested)
+                        WriterRequest::Message(Message::Interested)
                     } else {
-                        WriterRequest::Message(MessageOwned::NotInterested)
+                        WriterRequest::Message(Message::NotInterested)
                     })?;
                     current = new_value;
                 }
@@ -1597,7 +1590,7 @@ impl PeerHandler {
 
                 if self
                     .tx
-                    .send(WriterRequest::Message(MessageOwned::Request(request)))
+                    .send(WriterRequest::Message(Message::Request(request)))
                     .is_err()
                 {
                     return Ok(());
@@ -1625,7 +1618,7 @@ impl PeerHandler {
         self.requests_sem.add_permits(128);
     }
 
-    async fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
+    fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
         let piece_index = self
             .state
             .lengths
@@ -1849,7 +1842,8 @@ impl PeerHandler {
                     }
                 })
             };
-            dtx.send(Box::new(work)).await?;
+            // TODO: this is probably bad but this is all experimental so whatever
+            dtx.blocking_send(Box::new(work))?;
         } else {
             self.state
                 .shared
@@ -1882,22 +1876,16 @@ impl PeerHandler {
         let data = data.slice(offset as usize..end as usize);
 
         self.tx
-            .send(WriterRequest::Message(Message::Extended(
-                ExtendedMessage::UtMetadata(UtMetadata::Data {
-                    piece: piece_id,
-                    total_size: end - offset,
-                    data: data.into(),
-                }),
-            )))
+            .send(WriterRequest::UtMetadata(UtMetadata::Data {
+                piece: piece_id,
+                total_size: end - offset,
+                data: data.into(),
+            }))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())
     }
 
-    fn on_pex_message<B>(&self, msg: UtPex<B>)
-    where
-        B: ByteBufT,
-    {
-        // TODO: this is just first attempt at pex - will need more sophistication on adding peers - BEP 40,  check number of live, seen peers ...
+    fn on_pex_message(&self, msg: UtPex<ByteBuf<'_>>) {
         msg.dropped_peers()
             .chain(msg.added_peers())
             .for_each(|peer| {

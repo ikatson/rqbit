@@ -3127,9 +3127,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9aa32d285517f1738177d6dc818a7456971a13c1954451760d6ee66b4f55d45d"
+checksum = "d8645d13297b6a38aa00c57d6de69085757a5fcb7e04debbdfa6cd07d1258e8e"
 dependencies = [
  "bitvec",
  "dontfrag",
@@ -3142,7 +3142,6 @@ dependencies = [
  "ringbuf",
  "rustc-hash 2.1.1",
  "socket2",
- "static_assertions",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",

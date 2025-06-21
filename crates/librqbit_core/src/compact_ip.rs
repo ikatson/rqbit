@@ -3,7 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
-use buffers::ByteBufOwned;
+use buffers::{ByteBuf, ByteBufOwned};
 use bytes::BytesMut;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize};
@@ -364,6 +364,13 @@ where
         let end = offset + T::fixed_len();
         let b = self.buf.as_ref().get(offset..end)?;
         Some(T::from_slice_unchecked_len(b))
+    }
+
+    pub fn as_borrowed(&self) -> CompactListInBuffer<ByteBuf<'_>, T> {
+        CompactListInBuffer {
+            buf: self.buf.as_ref().into(),
+            _phantom: Default::default(),
+        }
     }
 }
 

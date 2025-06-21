@@ -1,8 +1,7 @@
 use bencode::BencodeDeserializer;
 use bencode::bencode_serialize_to_writer;
-use buffers::ByteBufT;
-use bytes::Bytes;
-use clone_to_owned::CloneToOwned;
+use buffers::ByteBuf;
+use buffers::ByteBufOwned;
 use librqbit_core::constants::CHUNK_SIZE;
 use serde::Deserialize;
 use serde::Serialize;
@@ -21,10 +20,8 @@ pub enum UtMetadata<ByteBuf> {
     Reject(u32),
 }
 
-impl<ByteBuf: CloneToOwned> CloneToOwned for UtMetadata<ByteBuf> {
-    type Target = UtMetadata<<ByteBuf as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
+impl UtMetadata<ByteBufOwned> {
+    pub fn as_borrowed(&self) -> UtMetadata<ByteBuf> {
         match self {
             UtMetadata::Request(req) => UtMetadata::Request(*req),
             UtMetadata::Data {
@@ -34,18 +31,15 @@ impl<ByteBuf: CloneToOwned> CloneToOwned for UtMetadata<ByteBuf> {
             } => UtMetadata::Data {
                 piece: *piece,
                 total_size: *total_size,
-                data: data.clone_to_owned(within_buffer),
+                data: ByteBuf::from(data.as_ref()),
             },
-            UtMetadata::Reject(piece) => UtMetadata::Reject(*piece),
+            UtMetadata::Reject(r) => UtMetadata::Reject(*r),
         }
     }
 }
 
-impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
-    pub fn serialize(&self, buf: &mut Vec<u8>)
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+impl<'a> UtMetadata<ByteBuf<'a>> {
+    pub fn serialize(&self, buf: &mut Vec<u8>) {
         #[derive(Serialize)]
         struct Message {
             msg_type: u32,
@@ -86,10 +80,7 @@ impl<ByteBuf: ByteBufT> UtMetadata<ByteBuf> {
         }
     }
 
-    pub fn deserialize<'a>(buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
-    where
-        ByteBuf: From<&'a [u8]>,
-    {
+    pub fn deserialize(buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {
         let mut de = BencodeDeserializer::new_from_buf(buf);
 
         #[derive(Deserialize)]

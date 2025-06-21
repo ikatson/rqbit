@@ -1,10 +1,10 @@
 use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
+use buffers::ByteBuf;
 use buffers::ByteBufT;
-use bytes::Bytes;
-use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
+use serde::Serialize;
 use ut_pex::UtPex;
 
 use crate::MY_EXTENDED_UT_PEX;
@@ -19,7 +19,7 @@ pub mod ut_pex;
 
 use super::MY_EXTENDED_UT_METADATA;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
 pub struct PeerExtendedMessageIds {
     pub ut_metadata: Option<u8>,
     pub ut_pex: Option<u8>,
@@ -33,36 +33,12 @@ pub enum ExtendedMessage<ByteBuf: ByteBufT> {
     Dyn(u8, BencodeValue<ByteBuf>),
 }
 
-impl<ByteBuf> CloneToOwned for ExtendedMessage<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-    <ByteBuf as CloneToOwned>::Target: ByteBufT,
-{
-    type Target = ExtendedMessage<<ByteBuf as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
-        match self {
-            ExtendedMessage::Handshake(h) => {
-                ExtendedMessage::Handshake(h.clone_to_owned(within_buffer))
-            }
-            ExtendedMessage::Dyn(u, d) => ExtendedMessage::Dyn(*u, d.clone_to_owned(within_buffer)),
-            ExtendedMessage::UtMetadata(m) => {
-                ExtendedMessage::UtMetadata(m.clone_to_owned(within_buffer))
-            }
-            ExtendedMessage::UtPex(m) => ExtendedMessage::UtPex(m.clone_to_owned(within_buffer)),
-        }
-    }
-}
-
-impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
+impl<'a> ExtendedMessage<ByteBuf<'a>> {
     pub fn serialize(
         &self,
         out: &mut Vec<u8>,
         extended_handshake_ut_metadata: &dyn Fn() -> PeerExtendedMessageIds,
-    ) -> anyhow::Result<()>
-    where
-        ByteBuf: AsRef<[u8]>,
-    {
+    ) -> anyhow::Result<()> {
         match self {
             ExtendedMessage::Dyn(msg_id, v) => {
                 out.push(*msg_id);
@@ -94,10 +70,7 @@ impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {
         Ok(())
     }
 
-    pub fn deserialize_unchecked_len<'a>(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError>
-    where
-        ByteBuf: Deserialize<'a> + From<&'a [u8]>,
-    {
+    pub fn deserialize_unchecked_len(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {
         let emsg_id = buf[0];
         buf = &buf[1..];
 

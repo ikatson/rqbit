@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Context, bail};
 use buffers::{ByteBuf, ByteBufOwned};
-use clone_to_owned::CloneToOwned;
 use librqbit_core::{
     hash_id::Id20,
     lengths::{ChunkInfo, ValidPieceIndex},
@@ -14,8 +13,11 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    Handshake, Message, MessageBorrowed, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
-    extended::{ExtendedMessage, handshake::ExtendedHandshake},
+    Handshake, Message, MessageBorrowed, PIECE_MESSAGE_DEFAULT_LEN,
+    extended::{
+        ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake,
+        ut_metadata::UtMetadata, ut_pex::UtPex,
+    },
     serialize_piece_preamble,
 };
 use serde::{Deserialize, Serialize};
@@ -28,7 +30,6 @@ use crate::{
     spawn_utils::BlockingSpawner,
     stream_connect::StreamConnector,
     type_aliases::{BoxAsyncRead, BoxAsyncWrite},
-    vectored_traits::AsyncReadVectored,
 };
 
 pub trait PeerConnectionHandler {
@@ -40,7 +41,7 @@ pub trait PeerConnectionHandler {
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()>;
-    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()>;
+    fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -54,7 +55,9 @@ pub trait PeerConnectionHandler {
 
 #[derive(Debug)]
 pub enum WriterRequest {
-    Message(MessageOwned),
+    Message(Message<'static>),
+    UtMetadata(UtMetadata<ByteBufOwned>),
+    UtPex(UtPex<ByteBufOwned>),
     ReadChunkRequest(ChunkInfo),
     Disconnect(anyhow::Result<()>),
 }
@@ -72,8 +75,8 @@ pub struct PeerConnectionOptions {
     pub keep_alive_interval: Option<Duration>,
 }
 
-pub(crate) struct PeerConnection<H> {
-    handler: H,
+pub(crate) struct PeerConnection<'a> {
+    handler: &'a (dyn PeerConnectionHandler + Send + Sync),
     addr: SocketAddr,
     info_hash: Id20,
     peer_id: Id20,
@@ -96,22 +99,22 @@ where
     }
 }
 
-struct ManagePeerArgs<R, W> {
+struct ManagePeerArgs {
     handshake_supports_extended: bool,
     read_buf: ReadBuf,
     write_buf: Vec<u8>,
-    read: R,
-    write: W,
+    read: BoxAsyncRead,
+    write: BoxAsyncWrite,
     outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
 }
 
-impl<H: PeerConnectionHandler> PeerConnection<H> {
+impl<'a> PeerConnection<'a> {
     pub fn new(
         addr: SocketAddr,
         info_hash: Id20,
         peer_id: Id20,
-        handler: H,
+        handler: &'a (dyn PeerConnectionHandler + Send + Sync),
         options: Option<PeerConnectionOptions>,
         spawner: BlockingSpawner,
         connector: Arc<StreamConnector>,
@@ -253,13 +256,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         .await
     }
 
-    async fn manage_peer(
-        &self,
-        args: ManagePeerArgs<
-            impl AsyncReadVectored + Send,
-            impl tokio::io::AsyncWrite + Send + Unpin,
-        >,
-    ) -> anyhow::Result<()> {
+    async fn manage_peer(&self, args: ManagePeerArgs) -> anyhow::Result<()> {
         let ManagePeerArgs {
             handshake_supports_extended,
             mut read_buf,
@@ -277,7 +274,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let extended_handshake: RwLock<Option<ExtendedHandshake<ByteBufOwned>>> = RwLock::new(None);
+        let extended_handshake: RwLock<Option<PeerExtendedMessageIds>> = RwLock::new(None);
         let extended_handshake_ref = &extended_handshake;
         let supports_extended = handshake_supports_extended;
 
@@ -332,7 +329,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         r = have_broadcast.recv(), if !broadcast_closed => match r {
                             Ok(id) => {
                                 if self.handler.should_transmit_have(id) {
-                                     WriterRequest::Message(MessageOwned::Have(id.get()))
+                                     WriterRequest::Message(Message::Have(id.get()))
                                 } else {
                                     continue
                                 }
@@ -349,7 +346,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             Ok(None) => {
                                 anyhow::bail!("closing writer, channel closed");
                             }
-                            Err(_) => WriterRequest::Message(MessageOwned::KeepAlive),
+                            Err(_) => WriterRequest::Message(Message::KeepAlive),
                         }
                     };
                 };
@@ -359,14 +356,24 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let mut uploaded_add = None;
 
                 trace!("about to send: {:?}", &req);
+                let ext_msg_ids = &|| {
+                    extended_handshake_ref
+                        .read()
+                        .as_ref()
+                        .map(|e| *e)
+                        .unwrap_or_default()
+                };
+
                 let len = match req {
-                    WriterRequest::Message(msg) => msg.serialize(&mut write_buf, &|| {
-                        extended_handshake_ref
-                            .read()
-                            .as_ref()
-                            .map(|e| e.peer_extended_messages())
-                            .unwrap_or_default()
-                    })?,
+                    WriterRequest::Message(msg) => msg.serialize(&mut write_buf, ext_msg_ids)?,
+                    WriterRequest::UtMetadata(utm) => {
+                        Message::Extended(ExtendedMessage::UtMetadata(utm.as_borrowed()))
+                            .serialize(&mut write_buf, ext_msg_ids)?
+                    }
+                    WriterRequest::UtPex(ut_pex) => {
+                        Message::Extended(ExtendedMessage::UtPex(ut_pex.as_borrowed()))
+                            .serialize(&mut write_buf, ext_msg_ids)?
+                    }
                     WriterRequest::ReadChunkRequest(chunk) => {
                         #[allow(unused_mut)]
                         let mut skip_reading_for_e2e_tests = false;
@@ -447,12 +454,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 tokio::task::yield_now().await;
 
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
-                    *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
+                    *extended_handshake_ref.write() = Some(h.peer_extended_messages());
                     self.handler.on_extended_handshake(h)?;
                 } else {
                     self.handler
                         .on_received_message(message)
-                        .await
                         .context("error in handler.on_received_message()")?;
                 }
             }

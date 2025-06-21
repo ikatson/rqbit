@@ -49,7 +49,7 @@ pub(crate) async fn read_metainfo_from_peer(
         addr,
         info_hash,
         peer_id,
-        handler,
+        &handler,
         peer_connection_options,
         spawner,
         connector,
@@ -169,7 +169,7 @@ impl PeerConnectionHandler for Handler {
         Ok(())
     }
 
-    async fn on_received_message(&self, msg: Message<ByteBuf<'_>>) -> anyhow::Result<()> {
+    fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()> {
         trace!("{}: received message: {:?}", self.addr, msg);
 
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
@@ -220,7 +220,7 @@ impl PeerConnectionHandler for Handler {
             None => anyhow::bail!("peer does not have metadata_size"),
         };
 
-        if extended_handshake.ut_metadata().is_none() {
+        if extended_handshake.m.ut_metadata.is_none() {
             anyhow::bail!("peer does not support ut_metadata");
         }
 

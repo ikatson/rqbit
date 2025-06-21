@@ -1,8 +1,6 @@
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use buffers::{ByteBufOwned, ByteBufT};
-use bytes::Bytes;
-use clone_to_owned::CloneToOwned;
+use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use librqbit_core::compact_ip::{
     CompactListInBuffer, CompactListInBufferOwned, CompactSerialize, CompactSerializeFixedLen,
 };
@@ -65,48 +63,43 @@ pub struct UtPex<B: ByteBufT> {
     dropped6: Option<CompactListInBuffer<B, SocketAddrV6>>,
 }
 
-impl<B: ByteBufT> core::fmt::Debug for UtPex<B> {
+struct IterDebug<I>(I);
+impl<I> core::fmt::Debug for IterDebug<I>
+where
+    I: Iterator<Item = PexPeerInfo> + Clone,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        struct IterDebug<I>(I);
-        impl<I> core::fmt::Debug for IterDebug<I>
-        where
-            I: Iterator<Item = PexPeerInfo> + Clone,
-        {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_list().entries(self.0.clone()).finish()
-            }
-        }
+        f.debug_list().entries(self.0.clone()).finish()
+    }
+}
+
+impl<ByteBuf: ByteBufT> core::fmt::Debug for UtPex<ByteBuf> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UtPex")
-            .field("added", &IterDebug(self.added_peers()))
-            .field("dropped", &IterDebug(self.dropped_peers()))
+            .field("added", &IterDebug(self.as_borrowed().added_peers()))
+            .field("dropped", &IterDebug(self.as_borrowed().dropped_peers()))
             .finish()
     }
 }
 
-impl<B> CloneToOwned for UtPex<B>
-where
-    B: ByteBufT + CloneToOwned,
-    B::Target: ByteBufT,
-{
-    type Target = UtPex<B::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
+impl<B: ByteBufT> UtPex<B> {
+    pub fn as_borrowed(&self) -> UtPex<ByteBuf<'_>> {
         UtPex {
-            added: self.added.clone_to_owned(within_buffer),
-            added_f: self.added_f.clone_to_owned(within_buffer),
-            added6: self.added6.clone_to_owned(within_buffer),
-            added6_f: self.added6_f.clone_to_owned(within_buffer),
-            dropped: self.dropped.clone_to_owned(within_buffer),
-            dropped6: self.dropped6.clone_to_owned(within_buffer),
+            added: self.added.as_ref().map(CompactListInBuffer::as_borrowed),
+            added_f: self.added_f.as_ref().map(CompactListInBuffer::as_borrowed),
+            added6: self.added6.as_ref().map(CompactListInBuffer::as_borrowed),
+            added6_f: self.added6_f.as_ref().map(CompactListInBuffer::as_borrowed),
+            dropped: self.dropped.as_ref().map(CompactListInBuffer::as_borrowed),
+            dropped6: self.dropped6.as_ref().map(CompactListInBuffer::as_borrowed),
         }
     }
 }
 
-impl<B: ByteBufT> UtPex<B> {
+impl<'a> UtPex<ByteBuf<'a>> {
     fn added_peers_inner<T: CompactSerialize + CompactSerializeFixedLen + Into<SocketAddr>>(
         &self,
-        buf: &Option<CompactListInBuffer<B, T>>,
-        flags: &Option<CompactListInBuffer<B, Flags>>,
+        buf: &Option<CompactListInBuffer<ByteBuf<'a>, T>>,
+        flags: &Option<CompactListInBuffer<ByteBuf<'a>, Flags>>,
     ) -> impl Iterator<Item = PexPeerInfo> + Clone {
         buf.iter()
             .flat_map(|l| l.iter())
@@ -223,6 +216,7 @@ mod tests {
 
         let addrs = [a1, aa1, a2, aa2];
         let pex = UtPex::from_addrs(addrs.iter().copied(), addrs.iter().copied());
+        let pex = pex.as_borrowed();
         let mut bytes = Vec::new();
         bencode_serialize_to_writer(&pex, &mut bytes).unwrap();
         let pex2 = from_bytes::<UtPex<ByteBuf>>(&bytes).unwrap();
