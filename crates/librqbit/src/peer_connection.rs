@@ -21,7 +21,7 @@ use peer_binary_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tokio::time::timeout;
-use tracing::{debug, trace};
+use tracing::{Instrument, debug, trace, trace_span};
 
 use crate::{
     read_buf::ReadBuf,
@@ -82,6 +82,7 @@ pub(crate) struct PeerConnection<H> {
 }
 
 pub(crate) async fn with_timeout<T, E>(
+    name: &'static str,
     timeout_value: Duration,
     fut: impl std::future::Future<Output = Result<T, E>>,
 ) -> anyhow::Result<T>
@@ -90,7 +91,7 @@ where
 {
     match timeout(timeout_value, fut).await {
         Ok(v) => v.map_err(Into::into),
-        Err(_) => anyhow::bail!("timeout at {timeout_value:?}"),
+        Err(_) => anyhow::bail!("timeout {name} at {timeout_value:?}"),
     }
 }
 
@@ -159,7 +160,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
         handshake.serialize(&mut write_buf);
-        with_timeout(rwtimeout, write.write_all(&write_buf))
+        with_timeout("writing", rwtimeout, write.write_all(&write_buf))
             .await
             .context("error writing handshake")?;
         write_buf.clear();
@@ -197,50 +198,57 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         let now = Instant::now();
-        let (mut read, mut write) =
-            with_timeout(connect_timeout, self.connector.connect(self.addr))
+        let (ckind, mut read, mut write) = with_timeout(
+            "connecting",
+            connect_timeout,
+            self.connector.connect(self.addr),
+        )
+        .await?;
+
+        async move {
+            self.handler.on_connected(now.elapsed());
+
+            let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
+            let handshake = Handshake::new(self.info_hash, self.peer_id);
+            handshake.serialize(&mut write_buf);
+            with_timeout("writing", rwtimeout, write.write_all(&write_buf))
                 .await
-                .context("error connecting")?;
-        self.handler.on_connected(now.elapsed());
+                .context("error writing handshake")?;
+            write_buf.clear();
 
-        let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
-        let handshake = Handshake::new(self.info_hash, self.peer_id);
-        handshake.serialize(&mut write_buf);
-        with_timeout(rwtimeout, write.write_all(&write_buf))
+            let mut read_buf = ReadBuf::new();
+            let h = read_buf
+                .read_handshake(&mut read, rwtimeout)
+                .await
+                .context("error reading handshake")?;
+            let handshake_supports_extended = h.supports_extended();
+            trace!(
+                peer_id=?Id20::new(h.peer_id),
+                decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
+                "connected",
+            );
+            if h.info_hash != self.info_hash.0 {
+                anyhow::bail!("info hash does not match");
+            }
+
+            if h.peer_id == self.peer_id.0 {
+                bail!("looks like we are connecting to ourselves");
+            }
+
+            self.handler.on_handshake(h)?;
+
+            self.manage_peer(ManagePeerArgs {
+                handshake_supports_extended,
+                read_buf,
+                write_buf,
+                read,
+                write,
+                outgoing_chan,
+                have_broadcast,
+            })
             .await
-            .context("error writing handshake")?;
-        write_buf.clear();
-
-        let mut read_buf = ReadBuf::new();
-        let h = read_buf
-            .read_handshake(&mut read, rwtimeout)
-            .await
-            .context("error reading handshake")?;
-        let handshake_supports_extended = h.supports_extended();
-        trace!(
-            peer_id=?Id20::new(h.peer_id),
-            decoded_id=?try_decode_peer_id(Id20::new(h.peer_id)),
-            "connected",
-        );
-        if h.info_hash != self.info_hash.0 {
-            anyhow::bail!("info hash does not match");
         }
-
-        if h.peer_id == self.peer_id.0 {
-            bail!("looks like we are connecting to ourselves");
-        }
-
-        self.handler.on_handshake(h)?;
-
-        self.manage_peer(ManagePeerArgs {
-            handshake_supports_extended,
-            read_buf,
-            write_buf,
-            read,
-            write,
-            outgoing_chan,
-            have_broadcast,
-        })
+        .instrument(trace_span!("", kind=%ckind))
         .await
     }
 
@@ -283,7 +291,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             my_extended
                 .serialize(&mut write_buf, &Default::default)
                 .unwrap();
-            with_timeout(rwtimeout, write.write_all(&write_buf))
+            with_timeout("writing", rwtimeout, write.write_all(&write_buf))
                 .await
                 .context("error writing extended handshake")?;
             write_buf.clear();
@@ -299,16 +307,24 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 let len = self
                     .handler
                     .serialize_bitfield_message_to_buf(&mut write_buf)?;
-                with_timeout(rwtimeout, write.write_all(&write_buf[..len]))
-                    .await
-                    .context("error writing bitfield to peer")?;
+                with_timeout(
+                    "writing bitfield",
+                    rwtimeout,
+                    write.write_all(&write_buf[..len]),
+                )
+                .await
+                .context("error writing bitfield to peer")?;
                 trace!("sent bitfield");
             }
 
             let len = MessageOwned::Unchoke.serialize(&mut write_buf, &Default::default)?;
-            with_timeout(rwtimeout, write.write_all(&write_buf[..len]))
-                .await
-                .context("error writing unchoke")?;
+            with_timeout(
+                "writing unchoke",
+                rwtimeout,
+                write.write_all(&write_buf[..len]),
+            )
+            .await
+            .context("error writing unchoke")?;
             trace!("sent unchoke");
 
             let mut broadcast_closed = false;
@@ -407,7 +423,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                     }
                 };
 
-                with_timeout(rwtimeout, write.write_all(&write_buf[..len]))
+                with_timeout("writing", rwtimeout, write.write_all(&write_buf[..len]))
                     .await
                     .context("error writing the message to peer")?;
 

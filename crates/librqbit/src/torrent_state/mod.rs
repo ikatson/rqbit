@@ -634,7 +634,7 @@ fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
                 loop {
                     match timeout(Duration::from_secs(5), peer_rx.next()).await {
                         Ok(Some(peer)) => {
-                            trace!(?peer, "received peer from peer_rx");
+                            trace!(?peer, "received peer");
                             let live = match live.upgrade() {
                                 Some(live) => live,
                                 None => return Ok(()),

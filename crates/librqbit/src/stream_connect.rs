@@ -14,6 +14,22 @@ use crate::{
     type_aliases::{BoxAsyncRead, BoxAsyncWrite},
 };
 
+pub enum ConnectionKind {
+    Tcp,
+    Utp,
+    Socks,
+}
+
+impl std::fmt::Display for ConnectionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionKind::Tcp => f.write_str("tcp"),
+            ConnectionKind::Utp => f.write_str("uTP"),
+            ConnectionKind::Socks => f.write_str("socks"),
+        }
+    }
+}
+
 pub struct ConnectionOptions {
     // socks5://[username:password@]host:port
     // If set, all outgoing connections will go through the proxy over TCP.
@@ -150,11 +166,14 @@ impl StreamConnector {
         sock.connect(addr).await
     }
 
-    pub async fn connect(&self, addr: SocketAddr) -> anyhow::Result<(BoxAsyncRead, BoxAsyncWrite)> {
+    pub async fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> anyhow::Result<(ConnectionKind, BoxAsyncRead, BoxAsyncWrite)> {
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = proxy.connect(addr).await?;
             debug!(?addr, "connected through SOCKS5");
-            return Ok((Box::new(r), Box::new(w)));
+            return Ok((ConnectionKind::Socks, Box::new(r), Box::new(w)));
         }
 
         // Try to connect over TCP first. If in 1 second we haven't connected, try uTP also (if configured).
@@ -195,39 +214,43 @@ impl StreamConnector {
         tokio::pin!(tcp_connect);
         tokio::pin!(utp_connect);
 
-        let mut tcp_failed = false;
-        let mut utp_failed = false;
+        let mut tcp_err = None;
+        let mut utp_err = None;
 
-        while !tcp_failed || !utp_failed {
+        while tcp_err.is_none() || utp_err.is_none() {
             tokio::select! {
-                tcp_res = &mut tcp_connect, if !tcp_failed => {
+                tcp_res = &mut tcp_connect, if tcp_err.is_none() => {
                     match tcp_res {
                         Ok(stream) => {
                             let (r, w) = stream.into_split();
-                            return Ok((Box::new(r), Box::new(w)));
+                            return Ok((ConnectionKind::Tcp, Box::new(r), Box::new(w)));
                         },
                         Err(e) => {
-                            debug!(addr=?addr, "error connecting over TCP: {e:#}");
-                            tcp_failed = true;
+                            tcp_err = Some(e);
                             tcp_failed_notify.notify_waiters();
                         }
                     }
                 },
-                utp_res = &mut utp_connect, if !utp_failed => {
+                utp_res = &mut utp_connect, if utp_err.is_none() => {
                     match utp_res {
                         Ok(stream) => {
                             let (r, w) = stream.split();
-                            return Ok((Box::new(r), Box::new(w)));
+                            return Ok((ConnectionKind::Utp, Box::new(r), Box::new(w)));
                         },
                         Err(e) => {
-                            debug!(addr=?addr, "error connecting over uTP: {e:#}");
-                            utp_failed = true;
+                            utp_err = Some(e);
                         }
                     }
                 },
             };
         }
 
-        bail!("can't connect to {addr}")
+        match (&tcp_err, &utp_err) {
+            (Some(tcp_err), Some(utp_err)) => {
+                bail!("error connecting: TCP={tcp_err:#}, uTP={utp_err:#}")
+            }
+            // this is unreachable really, but who knows
+            (_, _) => bail!("bug: tcp_err={tcp_err:?}, utp_err={utp_err:?}"),
+        }
     }
 }
