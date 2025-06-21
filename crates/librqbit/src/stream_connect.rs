@@ -12,6 +12,7 @@ use tracing::debug;
 use crate::{
     PeerConnectionOptions,
     type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+    vectored_traits::AsyncReadVectoredIntoCompat,
 };
 
 pub enum ConnectionKind {
@@ -173,7 +174,11 @@ impl StreamConnector {
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = proxy.connect(addr).await?;
             debug!(?addr, "connected through SOCKS5");
-            return Ok((ConnectionKind::Socks, Box::new(r), Box::new(w)));
+            return Ok((
+                ConnectionKind::Socks,
+                Box::new(r.into_vectored_compat()),
+                Box::new(w),
+            ));
         }
 
         // Try to connect over TCP first. If in 1 second we haven't connected, try uTP also (if configured).
@@ -235,7 +240,7 @@ impl StreamConnector {
                     match utp_res {
                         Ok(stream) => {
                             let (r, w) = stream.split();
-                            return Ok((ConnectionKind::Utp, Box::new(r), Box::new(w)));
+                            return Ok((ConnectionKind::Utp, Box::new(r.into_vectored_compat()), Box::new(w)));
                         },
                         Err(e) => {
                             utp_err = Some(e);

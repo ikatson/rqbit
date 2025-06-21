@@ -2978,12 +2978,12 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbbad71c623beb8e8a43e6c9c63ed9eabb11e95026d453398f9105665f2b693d"
+checksum = "32dcef67ab835bbec8360a3f207bb2036710d4e4f88ed00fcea8997cd78cfc60"
 dependencies = [
- "anyhow",
  "socket2",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -3127,22 +3127,23 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.4.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "285c11847100e07908dadb148db48541165891c3e8cbde60e251873db3025615"
+checksum = "9aa32d285517f1738177d6dc818a7456971a13c1954451760d6ee66b4f55d45d"
 dependencies = [
- "anyhow",
  "bitvec",
  "dontfrag",
  "lazy_static",
  "libc",
- "librqbit-dualstack-sockets 0.1.1",
+ "librqbit-dualstack-sockets 0.2.1",
  "metrics",
  "parking_lot",
  "rand 0.9.1",
  "ringbuf",
  "rustc-hash 2.1.1",
  "socket2",
+ "static_assertions",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-util",
  "tracing",

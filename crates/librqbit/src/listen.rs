@@ -6,9 +6,11 @@ use std::{
 use anyhow::Context;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use librqbit_utp::UtpSocketUdp;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+use crate::vectored_traits::{AsyncReadVectored, AsyncReadVectoredIntoCompat};
 
 pub(crate) struct ListenResult {
     pub tcp_socket: Option<TcpListener>,
@@ -132,7 +134,7 @@ pub(crate) trait Accept {
     ) -> anyhow::Result<(
         SocketAddr,
         (
-            impl AsyncRead + Unpin + Send + 'static,
+            impl AsyncReadVectored + Send + 'static,
             (impl AsyncWrite + Unpin + Send + 'static),
         ),
     )>;
@@ -144,7 +146,7 @@ impl Accept for TcpListener {
     ) -> anyhow::Result<(
         SocketAddr,
         (
-            impl AsyncRead + Send + 'static,
+            impl AsyncReadVectored + Send + 'static,
             (impl AsyncWrite + Send + 'static),
         ),
     )> {
@@ -160,13 +162,13 @@ impl Accept for Arc<UtpSocketUdp> {
     ) -> anyhow::Result<(
         SocketAddr,
         (
-            impl AsyncRead + Unpin + Send + 'static,
+            impl AsyncReadVectored + Send + 'static,
             impl AsyncWrite + Unpin + Send + 'static,
         ),
     )> {
         let stream = self.accept().await.context("error accepting uTP")?;
         let addr = stream.remote_addr();
         let (read, write) = stream.split();
-        Ok((addr, (read, write)))
+        Ok((addr, (read.into_vectored_compat(), write)))
     }
 }
