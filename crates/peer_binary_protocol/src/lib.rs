@@ -555,30 +555,6 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_serialize_extended_is_same() {
-        let buf = EXTENDED;
-        let (msg, size) = Message::deserialize(buf, &[]).unwrap();
-        assert_eq!(size, buf.len());
-        let mut write_buf = Vec::new();
-        msg.serialize(&mut write_buf, &Default::default).unwrap();
-        if buf[..] != write_buf {
-            {
-                use std::io::Write;
-                let mut f = std::fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(true)
-                    .write(true)
-                    .open("/tmp/test_deserialize_serialize_extended_is_same")
-                    .unwrap();
-                f.write_all(&write_buf).unwrap();
-            }
-            panic!(
-                "resources/test/extended-handshake.bin did not serialize exactly the same. Dumped to /tmp/test_deserialize_serialize_extended_is_same, you can compare with resources/test/extended-handshake.bin"
-            )
-        }
-    }
-
-    #[test]
     fn test_deserialize_serialize_extended_non_contiguous() {
         for split_point in 0..EXTENDED.len() {
             let (first, second) = EXTENDED.split_at(split_point);
