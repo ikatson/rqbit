@@ -279,7 +279,7 @@ pub(crate) async fn http_handler(
             let http_hostname = headers
                 .get("host")
                 .and_then(|h| std::str::from_utf8(h.as_bytes()).ok())
-                .and_then(|h| h.split(':').next());
+                .and_then(|h| h.rsplit_once(':').map(|(host, _)| host));
             let http_hostname = match http_hostname {
                 Some(h) => h,
                 None => return StatusCode::BAD_REQUEST.into_response(),
