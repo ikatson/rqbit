@@ -5,6 +5,7 @@ use buffers::ByteBufT;
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
+use serde::Serialize;
 use ut_pex::UtPex;
 
 use crate::MY_EXTENDED_UT_PEX;
@@ -19,7 +20,7 @@ pub mod ut_pex;
 
 use super::MY_EXTENDED_UT_METADATA;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
 pub struct PeerExtendedMessageIds {
     pub ut_metadata: Option<u8>,
     pub ut_pex: Option<u8>,

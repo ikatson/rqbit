@@ -5,8 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use buffers::{ByteBuf, ByteBufOwned};
-use clone_to_owned::CloneToOwned;
+use buffers::ByteBuf;
 use librqbit_core::{
     hash_id::Id20,
     lengths::{ChunkInfo, ValidPieceIndex},
@@ -15,7 +14,7 @@ use librqbit_core::{
 use parking_lot::RwLock;
 use peer_binary_protocol::{
     Handshake, Message, MessageBorrowed, MessageOwned, PIECE_MESSAGE_DEFAULT_LEN,
-    extended::{ExtendedMessage, handshake::ExtendedHandshake},
+    extended::{ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake},
     serialize_piece_preamble,
 };
 use serde::{Deserialize, Serialize};
@@ -277,7 +276,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let extended_handshake: RwLock<Option<ExtendedHandshake<ByteBufOwned>>> = RwLock::new(None);
+        let extended_handshake: RwLock<Option<PeerExtendedMessageIds>> = RwLock::new(None);
         let extended_handshake_ref = &extended_handshake;
         let supports_extended = handshake_supports_extended;
 
@@ -364,7 +363,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         extended_handshake_ref
                             .read()
                             .as_ref()
-                            .map(|e| e.peer_extended_messages())
+                            .map(|e| *e)
                             .unwrap_or_default()
                     })?,
                     WriterRequest::ReadChunkRequest(chunk) => {
@@ -447,7 +446,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 tokio::task::yield_now().await;
 
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
-                    *extended_handshake_ref.write() = Some(h.clone_to_owned(None));
+                    *extended_handshake_ref.write() = Some(h.peer_extended_messages());
                     self.handler.on_extended_handshake(h)?;
                 } else {
                     self.handler

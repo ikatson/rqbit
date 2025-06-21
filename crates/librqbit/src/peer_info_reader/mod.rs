@@ -220,7 +220,7 @@ impl PeerConnectionHandler for Handler {
             None => anyhow::bail!("peer does not have metadata_size"),
         };
 
-        if extended_handshake.ut_metadata().is_none() {
+        if extended_handshake.m.ut_metadata.is_none() {
             anyhow::bail!("peer does not support ut_metadata");
         }
 

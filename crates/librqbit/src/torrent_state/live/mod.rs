@@ -1071,7 +1071,7 @@ impl PeerConnectionHandler for &PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
-        if !self.state.metadata.info.private && hs.ut_pex().is_some() {
+        if !self.state.metadata.info.private && hs.m.ut_pex.is_some() {
             spawn_with_cancel(
                 error_span!(
                     parent: self.state.shared.span.clone(),
