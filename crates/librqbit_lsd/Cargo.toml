@@ -13,7 +13,7 @@ sha1-ring = ["librqbit-sha1-wrapper/sha1-ring", "librqbit-core/sha1-ring"]
 
 [dependencies]
 anyhow = "1.0.98"
-librqbit-dualstack-sockets = { version = "0.6.3" }
+librqbit-dualstack-sockets = "0.6.4"
 tokio = { version = "1.45.1", features = ["time"] }
 tokio-util = "0.7.15"
 librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }
