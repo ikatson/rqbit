@@ -687,6 +687,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 let mut http_api_opts = HttpApiOptions {
                     read_only: false,
                     basic_auth: http_api_basic_auth,
+                    allow_create: opts.http_api_allow_create,
                     ..Default::default()
                 };
 
