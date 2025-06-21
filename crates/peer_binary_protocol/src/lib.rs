@@ -230,30 +230,6 @@ pub struct Bitfield<'a> {
     pub data: BitfieldBorrowed<'a>,
 }
 
-impl<ByteBuf> CloneToOwned for Message<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-    <ByteBuf as CloneToOwned>::Target: ByteBufT,
-{
-    type Target = Message<<ByteBuf as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
-        match self {
-            Message::Request(req) => Message::Request(*req),
-            Message::Cancel(req) => Message::Cancel(*req),
-            Message::Bitfield(b) => Message::Bitfield(b.clone_to_owned(within_buffer)),
-            Message::Choke => Message::Choke,
-            Message::Unchoke => Message::Unchoke,
-            Message::Interested => Message::Interested,
-            Message::Piece(piece) => Message::Piece(piece.clone_to_owned(within_buffer)),
-            Message::KeepAlive => Message::KeepAlive,
-            Message::Have(v) => Message::Have(*v),
-            Message::NotInterested => Message::NotInterested,
-            Message::Extended(e) => Message::Extended(e.clone_to_owned(within_buffer)),
-        }
-    }
-}
-
 impl<'a> Bitfield<'a> {
     pub fn new_from_slice(buf: &'a [u8]) -> anyhow::Result<Self> {
         Ok(Self {

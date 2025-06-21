@@ -2,8 +2,6 @@ use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use buffers::ByteBufT;
-use bytes::Bytes;
-use clone_to_owned::CloneToOwned;
 use serde::Deserialize;
 use serde::Serialize;
 use ut_pex::UtPex;
@@ -32,27 +30,6 @@ pub enum ExtendedMessage<ByteBuf: ByteBufT> {
     UtMetadata(UtMetadata<ByteBuf>),
     UtPex(UtPex<ByteBuf>),
     Dyn(u8, BencodeValue<ByteBuf>),
-}
-
-impl<ByteBuf> CloneToOwned for ExtendedMessage<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-    <ByteBuf as CloneToOwned>::Target: ByteBufT,
-{
-    type Target = ExtendedMessage<<ByteBuf as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
-        match self {
-            ExtendedMessage::Handshake(h) => {
-                ExtendedMessage::Handshake(h.clone_to_owned(within_buffer))
-            }
-            ExtendedMessage::Dyn(u, d) => ExtendedMessage::Dyn(*u, d.clone_to_owned(within_buffer)),
-            ExtendedMessage::UtMetadata(m) => {
-                ExtendedMessage::UtMetadata(m.clone_to_owned(within_buffer))
-            }
-            ExtendedMessage::UtPex(m) => ExtendedMessage::UtPex(m.clone_to_owned(within_buffer)),
-        }
-    }
 }
 
 impl<ByteBuf: ByteBufT> ExtendedMessage<ByteBuf> {

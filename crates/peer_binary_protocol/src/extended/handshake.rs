@@ -1,8 +1,6 @@
 use std::net::IpAddr;
 
 use buffers::{ByteBuf, ByteBufT};
-use bytes::Bytes;
-use clone_to_owned::CloneToOwned;
 use librqbit_core::compact_ip::{CompactIpAddr, CompactIpV4, CompactIpV6};
 use serde::{Deserialize, Serialize};
 
@@ -60,28 +58,5 @@ impl ExtendedHandshake<ByteBuf<'_>> {
 
     pub fn port(&self) -> Option<u16> {
         self.p.and_then(|p| u16::try_from(p).ok())
-    }
-}
-
-impl<ByteBuf> CloneToOwned for ExtendedHandshake<ByteBuf>
-where
-    ByteBuf: ByteBufT,
-    <ByteBuf as CloneToOwned>::Target: ByteBufT,
-{
-    type Target = ExtendedHandshake<<ByteBuf as CloneToOwned>::Target>;
-
-    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
-        ExtendedHandshake {
-            m: self.m,
-            p: self.p,
-            v: self.v.clone_to_owned(within_buffer),
-            yourip: self.yourip,
-            ipv6: self.ipv6,
-            ipv4: self.ipv4,
-            reqq: self.reqq,
-            metadata_size: self.metadata_size,
-            complete_ago: self.complete_ago,
-            upload_only: self.upload_only,
-        }
     }
 }
