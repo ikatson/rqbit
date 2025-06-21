@@ -30,7 +30,6 @@ use crate::{
     spawn_utils::BlockingSpawner,
     stream_connect::StreamConnector,
     type_aliases::{BoxAsyncRead, BoxAsyncWrite},
-    vectored_traits::AsyncReadVectored,
 };
 
 pub trait PeerConnectionHandler {
@@ -100,12 +99,12 @@ where
     }
 }
 
-struct ManagePeerArgs<R, W> {
+struct ManagePeerArgs {
     handshake_supports_extended: bool,
     read_buf: ReadBuf,
     write_buf: Vec<u8>,
-    read: R,
-    write: W,
+    read: BoxAsyncRead,
+    write: BoxAsyncWrite,
     outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
 }
@@ -257,13 +256,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         .await
     }
 
-    async fn manage_peer(
-        &self,
-        args: ManagePeerArgs<
-            impl AsyncReadVectored + Send,
-            impl tokio::io::AsyncWrite + Send + Unpin,
-        >,
-    ) -> anyhow::Result<()> {
+    async fn manage_peer(&self, args: ManagePeerArgs) -> anyhow::Result<()> {
         let ManagePeerArgs {
             handshake_supports_extended,
             mut read_buf,

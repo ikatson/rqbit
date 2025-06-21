@@ -1,6 +1,9 @@
 use std::{io::IoSliceMut, time::Duration};
 
-use crate::{peer_connection::with_timeout, vectored_traits::AsyncReadVectoredExt};
+use crate::{
+    peer_connection::with_timeout, type_aliases::BoxAsyncRead,
+    vectored_traits::AsyncReadVectoredExt,
+};
 use anyhow::{Context, bail};
 use peer_binary_protocol::{
     Handshake, MAX_MSG_LEN, Message, MessageBorrowed, MessageDeserializeError,
@@ -58,7 +61,7 @@ impl ReadBuf {
     // This MUST be run as the first operation on the buffer.
     pub async fn read_handshake(
         &mut self,
-        mut conn: impl AsyncReadExt + Unpin,
+        conn: &mut BoxAsyncRead,
         timeout: Duration,
     ) -> anyhow::Result<Handshake> {
         self.len = with_timeout("reading", timeout, conn.read(&mut *self.buf))
