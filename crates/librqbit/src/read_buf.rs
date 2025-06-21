@@ -9,7 +9,7 @@ use tokio::io::AsyncReadExt;
 
 // We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
 // TODO: consider setting it though to just MAX_MSG_LEN
-const BUFLEN: usize = MAX_MSG_LEN;
+const BUFLEN: usize = MAX_MSG_LEN * 2;
 
 /// A ringbuffer for reading bittorrent messages from socket.
 /// Messages may thus span 2 slices (notably, Piece message), which is reflected in their contents.
