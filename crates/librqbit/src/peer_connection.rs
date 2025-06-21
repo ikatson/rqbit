@@ -75,8 +75,8 @@ pub struct PeerConnectionOptions {
     pub keep_alive_interval: Option<Duration>,
 }
 
-pub(crate) struct PeerConnection<H> {
-    handler: H,
+pub(crate) struct PeerConnection<'a> {
+    handler: &'a (dyn PeerConnectionHandler + Send + Sync),
     addr: SocketAddr,
     info_hash: Id20,
     peer_id: Id20,
@@ -109,12 +109,12 @@ struct ManagePeerArgs {
     have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
 }
 
-impl<H: PeerConnectionHandler> PeerConnection<H> {
+impl<'a> PeerConnection<'a> {
     pub fn new(
         addr: SocketAddr,
         info_hash: Id20,
         peer_id: Id20,
-        handler: H,
+        handler: &'a (dyn PeerConnectionHandler + Send + Sync),
         options: Option<PeerConnectionOptions>,
         spawner: BlockingSpawner,
         connector: Arc<StreamConnector>,

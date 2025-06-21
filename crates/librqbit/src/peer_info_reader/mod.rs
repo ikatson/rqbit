@@ -49,7 +49,7 @@ pub(crate) async fn read_metainfo_from_peer(
         addr,
         info_hash,
         peer_id,
-        handler,
+        &handler,
         peer_connection_options,
         spawner,
         connector,

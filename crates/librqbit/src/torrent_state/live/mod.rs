@@ -961,7 +961,7 @@ struct PeerHandler {
     cancel_token: CancellationToken,
 }
 
-impl PeerConnectionHandler for &PeerHandler {
+impl PeerConnectionHandler for PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
             .outgoing_connections
