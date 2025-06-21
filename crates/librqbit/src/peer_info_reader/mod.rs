@@ -169,7 +169,7 @@ impl PeerConnectionHandler for Handler {
         Ok(())
     }
 
-    async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()> {
+    fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()> {
         trace!("{}: received message: {:?}", self.addr, msg);
 
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
