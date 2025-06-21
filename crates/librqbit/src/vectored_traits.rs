@@ -10,6 +10,26 @@ pub trait AsyncReadVectored: AsyncRead + Unpin {
     ) -> Poll<std::io::Result<usize>>;
 }
 
+impl<T: ?Sized + AsyncReadVectored> AsyncReadVectored for &mut T {
+    fn poll_read_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        vec: &mut [IoSliceMut<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut **self).poll_read_vectored(cx, vec)
+    }
+}
+
+impl<T: ?Sized + AsyncReadVectored> AsyncReadVectored for Box<T> {
+    fn poll_read_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        vec: &mut [IoSliceMut<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut **self).poll_read_vectored(cx, vec)
+    }
+}
+
 pub trait AsyncReadVectoredExt {
     async fn read_vectored(&mut self, vec: &mut [IoSliceMut<'_>]) -> std::io::Result<usize>;
 }

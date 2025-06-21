@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{io::IoSliceMut, time::Duration};
 
-use crate::peer_connection::with_timeout;
+use crate::{peer_connection::with_timeout, vectored_traits::AsyncReadVectoredExt};
 use anyhow::{Context, bail};
 use peer_binary_protocol::{
     Handshake, MAX_MSG_LEN, Message, MessageBorrowed, MessageDeserializeError,
@@ -104,31 +104,35 @@ impl ReadBuf {
         advance!(self, len);
     }
 
-    /// Get a part of the buffer for reading into (as a range).
-    fn available_for_read_range(&self) -> std::ops::Range<usize> {
-        if self.len == BUFLEN {
-            return 0..0;
-        }
-        let start = (self.start + self.len) % BUFLEN;
-        // TODO: can this be written without if?
-        let end = if start < self.start {
-            self.start
-        } else {
-            BUFLEN
-        };
-        start..end
+    fn is_full(&self) -> bool {
+        self.len == BUFLEN
     }
 
     /// Get a part of the buffer for reading into.
-    fn available_for_read(&mut self) -> &mut [u8] {
-        let range = self.available_for_read_range();
-        &mut self.buf[range]
+    fn unfilled_ioslices(&mut self) -> [IoSliceMut; 2] {
+        if self.is_full() {
+            return [IoSliceMut::new(&mut []), IoSliceMut::new(&mut [])];
+        }
+
+        // Wraparound case. TODO: figure out if it's >=
+        if self.start + self.len >= BUFLEN {
+            // [..len..first..start..]
+            [
+                IoSliceMut::new(&mut self.buf[(self.start + self.len) % BUFLEN..self.start]),
+                IoSliceMut::new(&mut []),
+            ]
+        } else {
+            // [second...start..len..first]
+            let (second, first) = self.buf.split_at_mut(self.start + self.len);
+            let second = &mut second[..self.start];
+            [IoSliceMut::new(first), IoSliceMut::new(second)]
+        }
     }
 
     /// Read a message into the buffer, try to deserialize it and call the callback on it.
     pub async fn read_message(
         &mut self,
-        mut conn: impl AsyncReadExt + Unpin,
+        mut conn: impl AsyncReadVectoredExt + Unpin,
         timeout: Duration,
     ) -> anyhow::Result<MessageBorrowed<'_>> {
         loop {
@@ -151,15 +155,18 @@ impl ReadBuf {
                 Err(e) => return Err(e.into()),
             };
             while need_additional_bytes > 0 {
-                let buf = self.available_for_read();
-                if buf.is_empty() {
+                if self.is_full() {
                     anyhow::bail!(
                         "read buffer is full. need_additional_bytes={need_additional_bytes}, last_err={ne:?}"
                     );
                 }
-                let size = with_timeout("reading", timeout, conn.read(buf))
-                    .await
-                    .context("error reading from peer")?;
+                let size = with_timeout(
+                    "reading",
+                    timeout,
+                    conn.read_vectored(&mut self.unfilled_ioslices()),
+                )
+                .await
+                .context("error reading from peer")?;
                 if size == 0 {
                     anyhow::bail!("peer disconected")
                 }
@@ -194,32 +201,6 @@ mod tests {
         b.start = BUFLEN - 100;
         b.len = BUFLEN;
         assert_eq!(as_slice_ranges!(b), (BUFLEN - 100..BUFLEN, 0..BUFLEN - 100));
-    }
-
-    #[test]
-    fn test_ringbuf_write_range() {
-        let mut b = ReadBuf::new();
-        assert_eq!(b.available_for_read_range(), 0..BUFLEN);
-
-        b.start = 10;
-        b.len = 10;
-        assert_eq!(b.available_for_read_range(), 20..BUFLEN);
-
-        b.start = BUFLEN - 100;
-        b.len = 100;
-        assert_eq!(b.available_for_read_range(), 0..BUFLEN - 100);
-
-        b.start = BUFLEN - 100;
-        b.len = 120;
-        assert_eq!(b.available_for_read_range(), 20..BUFLEN - 100);
-
-        b.start = BUFLEN - 100;
-        b.len = BUFLEN - 1;
-        assert_eq!(b.available_for_read_range(), BUFLEN - 101..BUFLEN - 100);
-
-        b.start = BUFLEN - 100;
-        b.len = BUFLEN;
-        assert_eq!(b.available_for_read_range().len(), 0);
     }
 
     #[test]
@@ -262,5 +243,56 @@ mod tests {
         assert_eq!(&b.buf[..100], &[42u8; 100]);
         assert_eq!(&b.buf[100..300], &[43u8; 200]);
         assert_eq!(&b.buf[300..], &[0u8; BUFLEN - 300]);
+    }
+
+    #[test]
+    fn test_unfilled_ioslices() {
+        ReadBuf::new();
+
+        fn offset(buf: &ReadBuf, s: *const u8, len: usize) -> std::ops::Range<usize> {
+            if len == 0 {
+                return 0..0;
+            }
+            let offset = unsafe { s.byte_offset_from(buf.buf.as_ptr()) } as usize;
+            offset..offset + len
+        }
+
+        fn offsets(
+            buf: &ReadBuf,
+            ioslices: [(*const u8, usize); 2],
+        ) -> [std::ops::Range<usize>; 2] {
+            [
+                offset(buf, ioslices[0].0, ioslices[0].1),
+                offset(buf, ioslices[1].0, ioslices[1].1),
+            ]
+        }
+
+        #[track_caller]
+        fn assert_one(start: usize, len: usize, ranges: [std::ops::Range<usize>; 2]) {
+            let mut b = ReadBuf::new();
+            b.start = start;
+            b.len = len;
+            let [f, s] = b.unfilled_ioslices();
+            let slices = [(f.as_ptr(), f.len()), (s.as_ptr(), s.len())];
+            assert_eq!(offsets(&b, slices), ranges)
+        }
+
+        // full
+        assert_one(0, BUFLEN, [0..0, 0..0]);
+        assert_one(100, BUFLEN, [0..0, 0..0]);
+        assert_one(BUFLEN, BUFLEN, [0..0, 0..0]);
+
+        // start=0
+        assert_one(0, 100, [100..BUFLEN, 0..0]);
+        assert_one(0, BUFLEN - 100, [BUFLEN - 100..BUFLEN, 0..0]);
+        assert_one(0, BUFLEN - 1, [BUFLEN - 1..BUFLEN, 0..0]);
+
+        // start=N
+        assert_one(100, 100, [200..BUFLEN, 0..100]);
+        assert_one(100, BUFLEN - 100, [0..100, 0..0]);
+        assert_one(100, BUFLEN - 101, [BUFLEN - 1..BUFLEN, 0..100]);
+
+        // start=BUFLEN-1
+        assert_one(BUFLEN - 1, 100, [99..BUFLEN - 1, 0..0]);
     }
 }

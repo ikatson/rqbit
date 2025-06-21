@@ -28,6 +28,7 @@ use crate::{
     spawn_utils::BlockingSpawner,
     stream_connect::StreamConnector,
     type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+    vectored_traits::AsyncReadVectored,
 };
 
 pub trait PeerConnectionHandler {
@@ -255,7 +256,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     async fn manage_peer(
         &self,
         args: ManagePeerArgs<
-            impl tokio::io::AsyncRead + Send + Unpin,
+            impl AsyncReadVectored + Send,
             impl tokio::io::AsyncWrite + Send + Unpin,
         >,
     ) -> anyhow::Result<()> {
