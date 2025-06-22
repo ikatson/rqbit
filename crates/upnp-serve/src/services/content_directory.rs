@@ -276,11 +276,10 @@ pub(crate) async fn http_handler(
     };
     match action.as_ref() {
         SOAP_ACTION_CONTENT_DIRECTORY_BROWSE => {
-            let http_hostname = headers
+            let http_host = headers
                 .get("host")
-                .and_then(|h| std::str::from_utf8(h.as_bytes()).ok())
-                .and_then(|h| h.rsplit_once(':').map(|(host, _)| host));
-            let http_hostname = match http_hostname {
+                .and_then(|h| std::str::from_utf8(h.as_bytes()).ok());
+            let http_hostname = match http_host {
                 Some(h) => h,
                 None => return StatusCode::BAD_REQUEST.into_response(),
             };
