@@ -36,9 +36,9 @@ pub enum ExtendedMessage<ByteBuf: ByteBufT> {
 impl<'a> ExtendedMessage<ByteBuf<'a>> {
     pub fn serialize(
         &self,
-        out: &mut Vec<u8>,
+        out: &mut [u8],
         extended_handshake_ut_metadata: &dyn Fn() -> PeerExtendedMessageIds,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<usize> {
         match self {
             ExtendedMessage::Dyn(msg_id, v) => {
                 out.push(*msg_id);

@@ -190,7 +190,7 @@ where
         (self.block_0.as_ref(), self.block_1.as_ref())
     }
 
-    pub fn serialize(&self, mut buf: &mut [u8]) -> usize {
+    pub fn serialize_unchecked_len(&self, mut buf: &mut [u8]) -> usize {
         buf[0..4].copy_from_slice(&self.index.to_be_bytes());
         buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
         buf = &mut buf[8..];
@@ -240,59 +240,95 @@ impl Message<'_> {
     }
     pub fn serialize(
         &self,
-        out: &mut Vec<u8>,
+        out: &mut [u8],
         peer_extended_messages: &dyn Fn() -> PeerExtendedMessageIds,
     ) -> anyhow::Result<usize> {
         let (lp, msg_id) = self.len_prefix_and_msg_id();
 
-        out.resize(PREAMBLE_LEN, 0);
-        out[..4].copy_from_slice(&lp.to_be_bytes());
-        out[4] = msg_id;
+        macro_rules! check_len {
+            ($l:expr) => {
+                if out.len() < $l {
+                    anyhow::bail!("not enough space in buffer");
+                }
+            };
+        }
+
+        macro_rules! write_preamble {
+            ($msg_len:expr, $msg_id:expr) => {
+                out[0..4].copy_from_slice(&(($msg_len + 1u32).to_be_bytes()));
+                out[4] = $msg_id;
+            };
+        }
 
         match self {
-            Message::Request(request) | Message::Cancel(request) => {
-                const MSG_LEN: usize = PREAMBLE_LEN + 12;
-                out.resize(MSG_LEN, 0);
-                debug_assert_eq!(out[PREAMBLE_LEN..].len(), 12);
-                request.serialize(&mut out[PREAMBLE_LEN..]);
-                Ok(MSG_LEN)
+            Message::Request(request) => {
+                const TOTAL_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 3;
+                check_len!(TOTAL_LEN);
+                write_preamble!((INTEGER_LEN * 3) as u32, MSGID_REQUEST);
+                request.serialize_unchecked_len(&mut out[PREAMBLE_LEN..]);
+                Ok(TOTAL_LEN)
+            }
+            Message::Cancel(request) => {
+                const TOTAL_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 3;
+                check_len!(TOTAL_LEN);
+                write_preamble!((INTEGER_LEN * 3) as u32, MSGID_REQUEST);
+                request.serialize_unchecked_len(&mut out[PREAMBLE_LEN..]);
+                Ok(TOTAL_LEN)
             }
             Message::Bitfield(b) => {
                 let block_len = b.as_ref().len();
-                let msg_len = PREAMBLE_LEN + block_len;
-                out.resize(msg_len, 0);
+                let total_len: usize = PREAMBLE_LEN + block_len;
+                check_len!(total_len);
+                write_preamble!(block_len as u32, MSGID_BITFIELD);
                 out[PREAMBLE_LEN..PREAMBLE_LEN + block_len].copy_from_slice(b.as_ref());
-                Ok(msg_len)
+                Ok(total_len)
             }
-            Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested => {
+            Message::Choke => {
+                check_len!(PREAMBLE_LEN);
+                write_preamble!(0, MSGID_CHOKE);
+                Ok(PREAMBLE_LEN)
+            }
+            Message::Unchoke => {
+                check_len!(PREAMBLE_LEN);
+                write_preamble!(0, MSGID_UNCHOKE);
+                Ok(PREAMBLE_LEN)
+            }
+            Message::Interested => {
+                check_len!(PREAMBLE_LEN);
+                write_preamble!(0, MSGID_INTERESTED);
+                Ok(PREAMBLE_LEN)
+            }
+            Message::NotInterested => {
+                check_len!(PREAMBLE_LEN);
+                write_preamble!(0, MSGID_NOT_INTERESTED);
                 Ok(PREAMBLE_LEN)
             }
             Message::Piece(p) => {
                 let block_len = p.len();
-                let payload_len = 8 + block_len;
-                let msg_len = PREAMBLE_LEN + payload_len;
-                out.resize(msg_len, 0);
+                let payload_len = INTEGER_LEN * 2 + block_len;
+                let total_len = PREAMBLE_LEN + payload_len;
+                check_len!(total_len);
+                write_preamble!(payload_len as u32, MSGID_PIECE);
                 let tmp = &mut out[PREAMBLE_LEN..];
-                p.serialize(&mut tmp[..payload_len]);
-                Ok(msg_len)
+                p.serialize_unchecked_len(&mut tmp[..payload_len]);
+                Ok(total_len)
             }
             Message::KeepAlive => {
-                // the len prefix was already written out to buf
+                check_len!(4);
+                out[0..4].copy_from_slice(&0u32.to_be_bytes());
                 Ok(4)
             }
             Message::Have(v) => {
-                let msg_len = PREAMBLE_LEN + 4;
-                out.resize(msg_len, 0);
-                BE::write_u32(&mut out[PREAMBLE_LEN..], *v);
-                Ok(msg_len)
+                check_len!(PREAMBLE_LEN + INTEGER_LEN);
+                write_preamble!(INTEGER_LEN as u32, MSGID_HAVE);
+                out[5..9].copy_from_slice(&v.to_be_bytes());
+                Ok(PREAMBLE_LEN + INTEGER_LEN)
             }
             Message::Extended(e) => {
-                e.serialize(out, peer_extended_messages)?;
-                let msg_size = out.len();
-                // no fucking idea why +1, but I tweaked that for it all to match up
-                // with real messages.
-                BE::write_u32(&mut out[..4], (msg_size - PREAMBLE_LEN + 1) as u32);
-                Ok(msg_size)
+                check_len!(PREAMBLE_LEN + 2);
+                let msg_len = e.serialize(&mut out[PREAMBLE_LEN..], peer_extended_messages)?;
+                write_preamble!(msg_len as u32, MSGID_EXTENDED);
+                Ok(PREAMBLE_LEN + msg_len)
             }
         }
     }
@@ -508,10 +544,11 @@ impl Request {
         }
     }
 
-    pub fn serialize(&self, buf: &mut [u8]) {
+    pub fn serialize_unchecked_len(&self, buf: &mut [u8]) -> usize {
         buf[0..4].copy_from_slice(&self.index.to_be_bytes());
         buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
         buf[8..12].copy_from_slice(&self.length.to_be_bytes());
+        12
     }
 }
 
