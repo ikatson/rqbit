@@ -23,6 +23,8 @@ CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
 RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit
 
+# Alternatively run this on OSX to profile easily
+# cargo instruments --profile release-debug --features=_disable_disk_write_net_benchmark -t time --time-limit 20000 -- download -o /tmp/scratch/ --overwrite
 @PHONY: devserver-profile
 devserver-profile:
 	cargo run --release $(CARGO_RUN_FLAGS) -- server start $(RQBIT_OUTPUT_FOLDER)
