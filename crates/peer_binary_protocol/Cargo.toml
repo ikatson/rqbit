@@ -29,3 +29,11 @@ anyhow = "1"
 bytes = "1.7.1"
 itertools = "0.14"
 thiserror = "2.0.12"
+
+[dev-dependencies]
+criterion = "0.6.0"
+
+
+[[bench]]
+name = "bench"
+harness = false
