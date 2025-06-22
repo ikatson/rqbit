@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context;
-use buffers::ByteBufT;
+use buffers::ByteBuf;
 use librqbit_core::lengths::{ChunkInfo, Lengths, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 use tracing::{debug, trace};
@@ -294,13 +294,10 @@ impl ChunkTracker {
     }
 
     // return true if the whole piece is marked downloaded
-    pub fn mark_chunk_downloaded<ByteBuf>(
+    pub fn mark_chunk_downloaded(
         &mut self,
-        piece: &Piece<ByteBuf>,
-    ) -> Option<ChunkMarkingResult>
-    where
-        ByteBuf: ByteBufT,
-    {
+        piece: &Piece<ByteBuf<'_>>,
+    ) -> Option<ChunkMarkingResult> {
         let chunk_info = self.lengths.chunk_info_from_received_data(
             self.lengths.validate_piece_index(piece.index)?,
             piece.begin,

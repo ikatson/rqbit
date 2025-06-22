@@ -7,7 +7,7 @@ pub mod extended;
 
 use std::hint::unreachable_unchecked;
 
-use buffers::{ByteBuf, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
@@ -145,8 +145,8 @@ impl<B: AsRef<[u8]>> std::fmt::Debug for Piece<B> {
     }
 }
 
-impl<B: CloneToOwned> CloneToOwned for Piece<B> {
-    type Target = Piece<B::Target>;
+impl CloneToOwned for Piece<ByteBuf<'_>> {
+    type Target = Piece<ByteBufOwned>;
 
     fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         Piece {
@@ -158,30 +158,34 @@ impl<B: CloneToOwned> CloneToOwned for Piece<B> {
     }
 }
 
-impl<B> Piece<B>
-where
-    B: ByteBufT,
-{
+impl Piece<ByteBufOwned> {
+    pub fn as_borrowed(&self) -> Piece<ByteBuf<'_>> {
+        Piece {
+            index: self.index,
+            begin: self.begin,
+            block_0: self.block_0.as_ref().into(),
+            block_1: self.block_1.as_ref().into(),
+        }
+    }
+}
+
+impl<'a> Piece<ByteBuf<'a>> {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.block_0.as_ref().len() + self.block_1.as_ref().len()
     }
 
-    pub fn from_data<T>(index: u32, begin: u32, block: T) -> Piece<B>
-    where
-        B: From<T>,
-        T: Default,
-    {
+    pub fn from_data(index: u32, begin: u32, block: &'a [u8]) -> Self {
         Piece {
             index,
             begin,
-            block_0: B::from(block),
-            block_1: B::from(T::default()),
+            block_0: ByteBuf(block),
+            block_1: ByteBuf(&[]),
         }
     }
 
-    pub fn data(&self) -> (&[u8], &[u8]) {
-        (self.block_0.as_ref(), self.block_1.as_ref())
+    pub fn data(&self) -> (&'a [u8], &'a [u8]) {
+        (self.block_0.0, self.block_1.0)
     }
 
     pub fn serialize_unchecked_len(&self, mut buf: &mut [u8]) -> usize {

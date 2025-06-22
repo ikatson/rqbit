@@ -55,7 +55,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
     constants::CHUNK_SIZE,
@@ -1671,7 +1671,7 @@ impl PeerHandler {
             state: &TorrentStateLive,
             addr: PeerHandle,
             counters: &AtomicPeerCounters,
-            piece: &Piece<impl ByteBufT>,
+            piece: &Piece<ByteBuf<'_>>,
             chunk_info: &ChunkInfo,
         ) -> anyhow::Result<()> {
             let index = piece.index;
@@ -1837,7 +1837,9 @@ impl PeerHandler {
             let span = tracing::error_span!("deferred_write");
             let work = move || {
                 span.in_scope(|| {
-                    if let Err(e) = write_to_disk(&state, addr, &counters, &piece, &chunk_info) {
+                    if let Err(e) =
+                        write_to_disk(&state, addr, &counters, &piece.as_borrowed(), &chunk_info)
+                    {
                         let _ = tx.send(WriterRequest::Disconnect(Err(e)));
                     }
                 })
