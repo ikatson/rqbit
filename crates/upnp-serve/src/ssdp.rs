@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     time::Duration,
 };
 
@@ -14,6 +14,7 @@ use crate::constants::{UPNP_DEVICE_MEDIASERVER, UPNP_DEVICE_ROOT};
 const SSDP_PORT: u16 = 1900;
 const SSDP_MCAST_IPV4: SocketAddrV4 =
     SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), SSDP_PORT);
+#[allow(unused)]
 const SSDP_MCAST_IPV6_LINK_LOCAL: SocketAddrV6 = SocketAddrV6::new(
     Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xc),
     SSDP_PORT,
@@ -119,7 +120,8 @@ impl SsdpRunner {
             (Ipv6Addr::UNSPECIFIED, SSDP_PORT).into(),
             SSDP_MCAST_IPV4,
             SSDP_MCAST_IPV6_SITE_LOCAL,
-            Some(SSDP_MCAST_IPV6_LINK_LOCAL),
+            None,
+            // Some(SSDP_MCAST_IPV6_LINK_LOCAL),
         )
         .await
         .context("error creating SSDP socket")?;
@@ -156,7 +158,14 @@ USN: {usn}::{device_kind}\r
         &self,
         st: &str,
         addr: SocketAddr,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<Option<String>> {
+        if matches!(addr.ip(), IpAddr::V6(a) if a.is_unicast_link_local()) {
+            // VLC doesn't work with link-local URLs no matter what I tried. Furthermore, it probably
+            // wants an interface name in its scope id, which we of course don't know as its local to
+            // the client.
+            debug!(?addr, "refusing to reply to a link-local address");
+            return Ok(None);
+        }
         let local_ip = ::librqbit_upnp::get_local_ip_relative_to(addr, self.socket.nics())?;
         let location = {
             let mut loc = self.opts.description_http_location.clone();
@@ -165,7 +174,7 @@ USN: {usn}::{device_kind}\r
         };
         let usn = &self.opts.usn;
         let server = &self.opts.server_string;
-        Ok(format!(
+        Ok(Some(format!(
             "HTTP/1.1 200 OK\r
 Cache-Control: max-age=75\r
 Ext: \r
@@ -174,7 +183,7 @@ Server: {server}\r
 St: {st}\r
 Usn: {usn}::{st}\r
 Content-Length: 0\r\n\r\n"
-        ))
+        )))
     }
 
     async fn try_send_notifies(&self, nts: &str) {
@@ -216,11 +225,13 @@ Content-Length: 0\r\n\r\n"
 
         if let Ok(st) = std::str::from_utf8(msg.st) {
             let response = self.generate_ssdp_discover_response(st, addr)?;
-            trace!(content = response, ?addr, "sending SSDP discover response");
-            self.socket
-                .send_to(response.as_bytes(), addr)
-                .await
-                .context("error sending")?;
+            if let Some(response) = response {
+                trace!(content = response, ?addr, "sending SSDP discover response");
+                self.socket
+                    .send_to(response.as_bytes(), addr)
+                    .await
+                    .context("error sending")?;
+            }
         }
 
         Ok(())

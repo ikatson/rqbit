@@ -11,7 +11,6 @@ use crate::{ManagedTorrentShared, Session, session::TorrentId, torrent_state::To
 #[derive(Clone)]
 pub struct UpnpServerSessionAdapter {
     session: Arc<Session>,
-    port: u16,
 }
 
 use anyhow::Context;
@@ -57,7 +56,6 @@ impl TorrentFileTreeNode {
         http_host: &str,
         torrent: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
-        adapter: &UpnpServerSessionAdapter,
     ) -> ItemOrContainer {
         let encoded_id = encode_id(id, torrent.id);
         let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id));
@@ -85,8 +83,8 @@ impl TorrentFileTreeNode {
                     title: self.title.clone(),
                     mime_type: mime_guess::from_path(filename).first(),
                     url: format!(
-                        "http://{}:{}/torrents/{}/stream/{}/{}",
-                        http_host, adapter.port, torrent.id, fid, last_url_bit
+                        "http://{}/torrents/{}/stream/{}/{}",
+                        http_host, torrent.id, fid, last_url_bit
                     ),
                     size: fi.len,
                 })
@@ -234,7 +232,6 @@ impl UpnpServerSessionAdapter {
                             hostname,
                             t.shared(),
                             metadata,
-                            self,
                         ),
                     )
                 } else {
@@ -326,7 +323,6 @@ impl UpnpServerSessionAdapter {
                 http_hostname,
                 torrent.shared(),
                 t_metadata,
-                self,
             ))
         } else {
             for (child_node_id, child_node) in node
@@ -339,7 +335,6 @@ impl UpnpServerSessionAdapter {
                     http_hostname,
                     torrent.shared(),
                     t_metadata,
-                    self,
                 ));
             }
         };
@@ -374,7 +369,6 @@ impl Session {
             http_prefix: "/upnp".to_owned(),
             browse_provider: Box::new(UpnpServerSessionAdapter {
                 session: self.clone(),
-                port: http_listen_port,
             }),
             cancellation_token: self.cancellation_token().child_token(),
         })
@@ -593,10 +587,7 @@ mod tests {
             .await
             .unwrap();
 
-        let adapter = UpnpServerSessionAdapter {
-            session,
-            port: 9005,
-        };
+        let adapter = UpnpServerSessionAdapter { session };
 
         assert_eq!(
             adapter.browse_metadata(0, "127.0.0.1"),
@@ -616,7 +607,7 @@ mod tests {
                     parent_id: 0,
                     title: "f1".into(),
                     mime_type: None,
-                    url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into(),
+                    url: "http://127.0.0.1/torrents/0/stream/0/f1".into(),
                     size: 1,
                 }),
                 ItemOrContainer::Container(Container {
@@ -635,7 +626,7 @@ mod tests {
                 parent_id: 0,
                 title: "f1".into(),
                 mime_type: None,
-                url: "http://127.0.0.1:9005/torrents/0/stream/0/f1".into(),
+                url: "http://127.0.0.1/torrents/0/stream/0/f1".into(),
                 size: 1,
             })]
         );
@@ -677,7 +668,7 @@ mod tests {
                 parent_id: encode_id(1, 1),
                 title: "f2".into(),
                 mime_type: None,
-                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+                url: "http://127.0.0.1/torrents/1/stream/0/d1/f2".into(),
                 size: 1,
             })]
         );
@@ -689,7 +680,7 @@ mod tests {
                 parent_id: encode_id(1, 1),
                 title: "f2".into(),
                 mime_type: None,
-                url: "http://127.0.0.1:9005/torrents/1/stream/0/d1/f2".into(),
+                url: "http://127.0.0.1/torrents/1/stream/0/d1/f2".into(),
                 size: 1,
             })]
         );
