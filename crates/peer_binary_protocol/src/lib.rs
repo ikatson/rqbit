@@ -117,11 +117,11 @@ pub enum MessageDeserializeError {
 }
 
 pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize {
-    let len_prefix = PREAMBLE_LEN as u32 + INTEGER_LEN as u32 * 2 + chunk.size;
+    let len_prefix = MSGID_LEN as u32 + INTEGER_LEN as u32 * 2 + chunk.size;
     BE::write_u32(&mut buf[0..4], len_prefix);
     buf[4] = MSGID_PIECE;
 
-    buf = &mut buf[PREAMBLE_LEN..];
+    buf = &mut buf[5..];
     BE::write_u32(&mut buf[0..4], chunk.piece_index.get());
     BE::write_u32(&mut buf[4..8], chunk.offset);
 
@@ -217,7 +217,6 @@ pub enum Message<'a> {
 pub type MessageBorrowed<'a> = Message<'a>;
 
 impl Message<'_> {
-    #[must_use]
     pub fn serialize(
         &self,
         out: &mut [u8],
