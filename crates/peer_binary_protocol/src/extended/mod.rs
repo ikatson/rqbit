@@ -1,8 +1,11 @@
+use std::io::Cursor;
+
 use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
 use bencode::from_bytes;
 use buffers::ByteBuf;
 use buffers::ByteBufT;
+use byteorder::WriteBytesExt;
 use serde::Deserialize;
 use serde::Serialize;
 use ut_pex::UtPex;
@@ -39,14 +42,15 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
         out: &mut [u8],
         extended_handshake_ut_metadata: &dyn Fn() -> PeerExtendedMessageIds,
     ) -> anyhow::Result<usize> {
+        let mut out = Cursor::new(out);
         match self {
             ExtendedMessage::Dyn(msg_id, v) => {
-                out.push(*msg_id);
-                bencode_serialize_to_writer(v, out)?;
+                out.write_u8(*msg_id)?;
+                bencode_serialize_to_writer(v, &mut out)?;
             }
             ExtendedMessage::Handshake(h) => {
-                out.push(0);
-                bencode_serialize_to_writer(h, out)?;
+                out.write_u8(0)?;
+                bencode_serialize_to_writer(h, &mut out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
                 let emsg_id = extended_handshake_ut_metadata()
@@ -54,8 +58,8 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
                     .ok_or_else(|| {
                         anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
                     })?;
-                out.push(emsg_id);
-                u.serialize(out);
+                out.write_u8(emsg_id)?;
+                u.serialize(&mut out)?;
             }
             ExtendedMessage::UtPex(m) => {
                 let emsg_id = extended_handshake_ut_metadata().ut_pex.ok_or_else(|| {
@@ -63,11 +67,11 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
                         "need peer's handshake to serialize ut_pex, or peer does't support ut_pex"
                     )
                 })?;
-                out.push(emsg_id);
-                bencode_serialize_to_writer(m, out)?;
+                out.write_u8(emsg_id)?;
+                bencode_serialize_to_writer(m, &mut out)?;
             }
         }
-        Ok(())
+        Ok(out.position() as usize)
     }
 
     pub fn deserialize_unchecked_len(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {

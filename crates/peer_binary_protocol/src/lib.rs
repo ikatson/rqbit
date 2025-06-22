@@ -37,15 +37,6 @@ const PSTR_BT1: &str = "BitTorrent protocol";
 
 type MsgId = u8;
 
-const LEN_PREFIX_KEEPALIVE: u32 = 0;
-const LEN_PREFIX_CHOKE: u32 = MSGID_LEN as u32;
-const LEN_PREFIX_UNCHOKE: u32 = MSGID_LEN as u32;
-const LEN_PREFIX_INTERESTED: u32 = MSGID_LEN as u32;
-const LEN_PREFIX_NOT_INTERESTED: u32 = MSGID_LEN as u32;
-const LEN_PREFIX_HAVE: u32 = MSGID_LEN as u32 + INTEGER_LEN as u32;
-const LEN_PREFIX_PIECE: u32 = MSGID_LEN as u32 + INTEGER_LEN as u32 * 2;
-const LEN_PREFIX_REQUEST: u32 = MSGID_LEN as u32 + INTEGER_LEN as u32 * 3;
-
 const MSGID_CHOKE: MsgId = 0;
 const MSGID_UNCHOKE: MsgId = 1;
 const MSGID_INTERESTED: MsgId = 2;
@@ -126,7 +117,8 @@ pub enum MessageDeserializeError {
 }
 
 pub fn serialize_piece_preamble(chunk: &ChunkInfo, mut buf: &mut [u8]) -> usize {
-    BE::write_u32(&mut buf[0..4], LEN_PREFIX_PIECE + chunk.size);
+    let len_prefix = PREAMBLE_LEN as u32 + INTEGER_LEN as u32 * 2 + chunk.size;
+    BE::write_u32(&mut buf[0..4], len_prefix);
     buf[4] = MSGID_PIECE;
 
     buf = &mut buf[PREAMBLE_LEN..];
@@ -225,6 +217,7 @@ pub enum Message<'a> {
 pub type MessageBorrowed<'a> = Message<'a>;
 
 impl Message<'_> {
+    #[must_use]
     pub fn serialize(
         &self,
         out: &mut [u8],
@@ -491,14 +484,15 @@ impl Handshake {
         self.reserved.to_be_bytes()[5] & 0x10 > 0
     }
 
-    pub fn serialize(&self, buf: &mut Vec<u8>) {
-        buf.resize(68, 0);
+    #[must_use]
+    pub fn serialize_unchecked_len(&self, buf: &mut [u8]) -> usize {
         debug_assert_eq!(PSTR_BT1.len(), 19);
         buf[0] = 19;
         buf[1..20].copy_from_slice(PSTR_BT1.as_bytes());
         buf[20..28].copy_from_slice(&self.reserved.to_be_bytes());
         buf[28..48].copy_from_slice(&self.info_hash.0);
         buf[48..68].copy_from_slice(&self.peer_id.0);
+        68
     }
 }
 
@@ -543,24 +537,24 @@ mod tests {
         let peer_id = Id20::new([
             1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ]);
-        let mut buf = Vec::new();
+        let mut buf = [0u8; 100];
         let se = Handshake::new(info_hash, peer_id);
-        se.serialize(&mut buf);
-        assert_eq!(buf.len(), 20 + 20 + 8 + 19 + 1);
+        let len = se.serialize_unchecked_len(&mut buf);
+        assert_eq!(len, 20 + 20 + 8 + 19 + 1);
         assert_eq!(buf[0], 19);
         assert_eq!(&buf[1..20], PSTR_BT1.as_bytes());
         assert_eq!(&buf[28..48], &info_hash.0);
         assert_eq!(&buf[48..68], &peer_id.0);
 
-        let (de, len) = Handshake::deserialize(&buf).unwrap();
-        assert_eq!(len, buf.len());
+        let (de, dlen) = Handshake::deserialize(&buf).unwrap();
+        assert_eq!(dlen, len);
         assert_eq!(se, de);
     }
 
     #[test]
     fn test_extended_serialize() {
         let msg = Message::Extended(ExtendedMessage::Handshake(ExtendedHandshake::new()));
-        let mut out = Vec::new();
+        let mut out = [0u8; 100];
         msg.serialize(&mut out, &Default::default).unwrap();
         dbg!(out);
     }
@@ -621,7 +615,7 @@ mod tests {
             assert_eq!(piece.begin, begin);
             assert_eq!(len, LEN);
 
-            let mut tmp = Vec::new();
+            let mut tmp = [0u8; 100];
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
@@ -667,7 +661,7 @@ mod tests {
             assert_eq!(request.length, length);
             assert_eq!(len, 17);
 
-            let mut tmp = Vec::new();
+            let mut tmp = [0u8; 100];
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
@@ -683,7 +677,7 @@ mod tests {
             let (msg, len) = Message::deserialize(first, second).unwrap();
             assert!(matches!(msg, Message::KeepAlive));
             assert_eq!(len, 4);
-            let mut tmp = Vec::new();
+            let mut tmp = [0u8; 100];
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
@@ -702,7 +696,7 @@ mod tests {
             let (msg, len) = Message::deserialize(first, second).unwrap();
             assert!(matches!(msg, Message::Have(42)));
             assert_eq!(len, 9);
-            let mut tmp = Vec::new();
+            let mut tmp = [0u8; 100];
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
@@ -738,7 +732,7 @@ mod tests {
             for byte in bf.as_ref() {
                 assert_eq!(*byte, 0b10101010);
             }
-            let mut tmp = Vec::new();
+            let mut tmp = [0u8; 100];
             let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
             assert_eq!(slen, len);
             assert_eq!(buf[..len], tmp[..len]);
@@ -768,7 +762,7 @@ mod tests {
                     (msgid, msg) => panic!("msgid={msgid}, msg={msg:?}"),
                 }
                 assert_eq!(len, 5);
-                let mut tmp = Vec::new();
+                let mut tmp = [0u8; 100];
                 let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
                 assert_eq!(slen, len);
                 assert_eq!(buf[..len], tmp[..len]);

@@ -1035,7 +1035,7 @@ impl PeerConnectionHandler for PeerHandler {
         Ok(())
     }
 
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
+    fn serialize_bitfield_message_to_buf(&self, buf: &mut [u8]) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_bytes()));
         let len = msg.serialize(buf, &Default::default)?;

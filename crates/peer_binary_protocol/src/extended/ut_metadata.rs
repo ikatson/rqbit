@@ -5,6 +5,7 @@ use buffers::ByteBufOwned;
 use librqbit_core::constants::CHUNK_SIZE;
 use serde::Deserialize;
 use serde::Serialize;
+use std::io::Cursor;
 use std::io::Write;
 
 use crate::MessageDeserializeError;
@@ -39,7 +40,7 @@ impl UtMetadata<ByteBufOwned> {
 }
 
 impl<'a> UtMetadata<ByteBuf<'a>> {
-    pub fn serialize(&self, buf: &mut Vec<u8>) {
+    pub fn serialize(&self, writer: &mut Cursor<&mut [u8]>) -> anyhow::Result<()> {
         #[derive(Serialize)]
         struct Message {
             msg_type: u32,
@@ -54,7 +55,7 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                     piece: *piece,
                     total_size: None,
                 };
-                bencode_serialize_to_writer(message, buf).unwrap()
+                bencode_serialize_to_writer(message, writer)?
             }
             UtMetadata::Data {
                 piece,
@@ -66,8 +67,8 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                     piece: *piece,
                     total_size: Some(*total_size),
                 };
-                bencode_serialize_to_writer(message, buf).unwrap();
-                buf.write_all(data.as_ref()).unwrap();
+                bencode_serialize_to_writer(message, writer)?;
+                writer.write_all(data.as_ref())?;
             }
             UtMetadata::Reject(piece) => {
                 let message = Message {
@@ -75,9 +76,10 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                     piece: *piece,
                     total_size: None,
                 };
-                bencode_serialize_to_writer(message, buf).unwrap();
+                bencode_serialize_to_writer(message, writer)?;
             }
         }
+        Ok(())
     }
 
     pub fn deserialize(buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {
