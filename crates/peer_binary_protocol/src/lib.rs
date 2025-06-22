@@ -5,6 +5,8 @@
 mod double_buf;
 pub mod extended;
 
+use std::hint::unreachable_unchecked;
+
 use buffers::{ByteBuf, ByteBufT};
 use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
@@ -223,28 +225,11 @@ pub enum Message<'a> {
 pub type MessageBorrowed<'a> = Message<'a>;
 
 impl Message<'_> {
-    pub fn len_prefix_and_msg_id(&self) -> (u32, u8) {
-        match self {
-            Message::Request(_) => (LEN_PREFIX_REQUEST, MSGID_REQUEST),
-            Message::Cancel(_) => (LEN_PREFIX_REQUEST, MSGID_CANCEL),
-            Message::Bitfield(b) => (MSGID_LEN as u32 + b.as_ref().len() as u32, MSGID_BITFIELD),
-            Message::Choke => (LEN_PREFIX_CHOKE, MSGID_CHOKE),
-            Message::Unchoke => (LEN_PREFIX_UNCHOKE, MSGID_UNCHOKE),
-            Message::Interested => (LEN_PREFIX_INTERESTED, MSGID_INTERESTED),
-            Message::NotInterested => (LEN_PREFIX_NOT_INTERESTED, MSGID_NOT_INTERESTED),
-            Message::Piece(p) => (LEN_PREFIX_PIECE + p.len() as u32, MSGID_PIECE),
-            Message::KeepAlive => (LEN_PREFIX_KEEPALIVE, 0),
-            Message::Have(_) => (LEN_PREFIX_HAVE, MSGID_HAVE),
-            Message::Extended(_) => (0, MSGID_EXTENDED),
-        }
-    }
     pub fn serialize(
         &self,
         out: &mut [u8],
         peer_extended_messages: &dyn Fn() -> PeerExtendedMessageIds,
     ) -> anyhow::Result<usize> {
-        let (lp, msg_id) = self.len_prefix_and_msg_id();
-
         macro_rules! check_len {
             ($l:expr) => {
                 if out.len() < $l {
@@ -261,17 +246,15 @@ impl Message<'_> {
         }
 
         match self {
-            Message::Request(request) => {
+            Message::Request(request) | Message::Cancel(request) => {
                 const TOTAL_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 3;
                 check_len!(TOTAL_LEN);
-                write_preamble!((INTEGER_LEN * 3) as u32, MSGID_REQUEST);
-                request.serialize_unchecked_len(&mut out[PREAMBLE_LEN..]);
-                Ok(TOTAL_LEN)
-            }
-            Message::Cancel(request) => {
-                const TOTAL_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 3;
-                check_len!(TOTAL_LEN);
-                write_preamble!((INTEGER_LEN * 3) as u32, MSGID_REQUEST);
+                let msg_id = match self {
+                    Message::Request(..) => MSGID_REQUEST,
+                    Message::Cancel(..) => MSGID_CANCEL,
+                    _ => unsafe { unreachable_unchecked() },
+                };
+                write_preamble!((INTEGER_LEN * 3) as u32, msg_id);
                 request.serialize_unchecked_len(&mut out[PREAMBLE_LEN..]);
                 Ok(TOTAL_LEN)
             }
@@ -283,24 +266,16 @@ impl Message<'_> {
                 out[PREAMBLE_LEN..PREAMBLE_LEN + block_len].copy_from_slice(b.as_ref());
                 Ok(total_len)
             }
-            Message::Choke => {
+            Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested => {
                 check_len!(PREAMBLE_LEN);
-                write_preamble!(0, MSGID_CHOKE);
-                Ok(PREAMBLE_LEN)
-            }
-            Message::Unchoke => {
-                check_len!(PREAMBLE_LEN);
-                write_preamble!(0, MSGID_UNCHOKE);
-                Ok(PREAMBLE_LEN)
-            }
-            Message::Interested => {
-                check_len!(PREAMBLE_LEN);
-                write_preamble!(0, MSGID_INTERESTED);
-                Ok(PREAMBLE_LEN)
-            }
-            Message::NotInterested => {
-                check_len!(PREAMBLE_LEN);
-                write_preamble!(0, MSGID_NOT_INTERESTED);
+                let msg_id = match self {
+                    Message::Choke => MSGID_CHOKE,
+                    Message::Unchoke => MSGID_UNCHOKE,
+                    Message::Interested => MSGID_INTERESTED,
+                    Message::NotInterested => MSGID_NOT_INTERESTED,
+                    _ => unsafe { unreachable_unchecked() },
+                };
+                write_preamble!(0, msg_id);
                 Ok(PREAMBLE_LEN)
             }
             Message::Piece(p) => {
@@ -309,8 +284,7 @@ impl Message<'_> {
                 let total_len = PREAMBLE_LEN + payload_len;
                 check_len!(total_len);
                 write_preamble!(payload_len as u32, MSGID_PIECE);
-                let tmp = &mut out[PREAMBLE_LEN..];
-                p.serialize_unchecked_len(&mut tmp[..payload_len]);
+                p.serialize_unchecked_len(&mut out[PREAMBLE_LEN..]);
                 Ok(total_len)
             }
             Message::KeepAlive => {
@@ -322,7 +296,7 @@ impl Message<'_> {
                 check_len!(PREAMBLE_LEN + INTEGER_LEN);
                 write_preamble!(INTEGER_LEN as u32, MSGID_HAVE);
                 out[5..9].copy_from_slice(&v.to_be_bytes());
-                Ok(PREAMBLE_LEN + INTEGER_LEN)
+                Ok(9)
             }
             Message::Extended(e) => {
                 check_len!(PREAMBLE_LEN + 2);
