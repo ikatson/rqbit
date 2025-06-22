@@ -218,8 +218,6 @@ pub enum Message<'a> {
     Extended(ExtendedMessage<ByteBuf<'a>>),
 }
 
-pub type MessageBorrowed<'a> = Message<'a>;
-
 impl Message<'_> {
     pub fn serialize(
         &self,
@@ -304,11 +302,11 @@ impl Message<'_> {
     }
 }
 
-impl MessageBorrowed<'_> {
+impl Message<'_> {
     pub fn deserialize<'a>(
         buf: &'a [u8],
         buf2: &'a [u8],
-    ) -> Result<(MessageBorrowed<'a>, usize), MessageDeserializeError> {
+    ) -> Result<(Message<'a>, usize), MessageDeserializeError> {
         let mut buf = DoubleBufHelper::new(buf, buf2);
         let len_prefix = buf
             .read_u32_be()

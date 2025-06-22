@@ -40,7 +40,7 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
     pub fn serialize(
         &self,
         out: &mut [u8],
-        extended_handshake_ut_metadata: &dyn Fn() -> PeerExtendedMessageIds,
+        peer_extended_msg_ids: &dyn Fn() -> PeerExtendedMessageIds,
     ) -> anyhow::Result<usize> {
         let mut out = Cursor::new(out);
         match self {
@@ -53,16 +53,14 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
                 bencode_serialize_to_writer(h, &mut out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
-                let emsg_id = extended_handshake_ut_metadata()
-                    .ut_metadata
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
-                    })?;
+                let emsg_id = peer_extended_msg_ids().ut_metadata.ok_or_else(|| {
+                    anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
+                })?;
                 out.write_u8(emsg_id)?;
                 u.serialize(&mut out)?;
             }
             ExtendedMessage::UtPex(m) => {
-                let emsg_id = extended_handshake_ut_metadata().ut_pex.ok_or_else(|| {
+                let emsg_id = peer_extended_msg_ids().ut_pex.ok_or_else(|| {
                     anyhow::anyhow!(
                         "need peer's handshake to serialize ut_pex, or peer does't support ut_pex"
                     )

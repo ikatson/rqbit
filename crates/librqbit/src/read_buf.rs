@@ -5,9 +5,7 @@ use crate::{
     vectored_traits::AsyncReadVectoredExt,
 };
 use anyhow::{Context, bail};
-use peer_binary_protocol::{
-    Handshake, MAX_MSG_LEN, Message, MessageBorrowed, MessageDeserializeError,
-};
+use peer_binary_protocol::{Handshake, MAX_MSG_LEN, Message, MessageDeserializeError};
 use tokio::io::AsyncReadExt;
 
 // We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
@@ -137,7 +135,7 @@ impl ReadBuf {
         &mut self,
         mut conn: impl AsyncReadVectoredExt + Unpin,
         timeout: Duration,
-    ) -> anyhow::Result<MessageBorrowed<'_>> {
+    ) -> anyhow::Result<Message<'_>> {
         loop {
             let (first, second) = as_slices!(self);
             let (mut need_additional_bytes, ne) = match Message::deserialize(first, second) {
@@ -151,8 +149,7 @@ impl ReadBuf {
 
                     // Rust's borrow checker can't do this early return so resort to unsafe.
                     // This erases the lifetime so that it's happy.
-                    let msg: MessageBorrowed<'_> =
-                        unsafe { std::mem::transmute(msg as MessageBorrowed<'_>) };
+                    let msg: Message<'_> = unsafe { std::mem::transmute(msg as Message<'_>) };
                     return Ok(msg);
                 }
                 Err(e) => return Err(e.into()),

@@ -13,7 +13,7 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    Handshake, MAX_MSG_LEN, Message, MessageBorrowed,
+    Handshake, MAX_MSG_LEN, Message,
     extended::{
         ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake,
         ut_metadata::UtMetadata, ut_pex::UtPex,
@@ -310,7 +310,7 @@ impl<'a> PeerConnection<'a> {
                 trace!("sent bitfield");
             }
 
-            let len = MessageBorrowed::Unchoke.serialize(&mut *write_buf, &Default::default)?;
+            let len = Message::Unchoke.serialize(&mut *write_buf, &Default::default)?;
             with_timeout("writing", rwtimeout, write.write_all(&write_buf[..len]))
                 .await
                 .context("error writing unchoke")?;
