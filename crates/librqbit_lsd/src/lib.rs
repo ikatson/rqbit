@@ -1,15 +1,16 @@
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    num::NonZero,
     str::{FromStr, from_utf8},
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, SystemTime},
 };
 
 use anyhow::Context;
 use futures::Stream;
-use governor::{DefaultDirectRateLimiter as RateLimiter, Quota};
 use librqbit_core::{Id20, spawn_utils::spawn_with_cancel};
 use librqbit_dualstack_sockets::MulticastUdpSocket;
 use parking_lot::RwLock;
@@ -26,11 +27,39 @@ const LSD_IPV6: SocketAddrV6 = SocketAddrV6::new(
     0,
 );
 
+const RATE_LIMIT_PERIOD: Duration = Duration::from_secs(1);
+
+#[derive(Default)]
+struct RateLimiter {
+    last_reply: AtomicU64,
+}
+
+impl RateLimiter {
+    fn check(&self) -> Option<()> {
+        // If we can't get system time for some reason, just disable rate limit
+        let now = match SystemTime::UNIX_EPOCH.elapsed() {
+            Ok(t) => t.as_secs(),
+            _ => return Some(()),
+        };
+
+        let last = self.last_reply.load(Ordering::Relaxed);
+        if now.saturating_sub(last) >= RATE_LIMIT_PERIOD.as_secs()
+            && self
+                .last_reply
+                .compare_exchange_weak(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            return Some(());
+        }
+        None
+    }
+}
+
 struct Announce {
     tx: UnboundedSender<SocketAddr>,
     port: Option<u16>,
-    reply_ratelimit_ipv4: RateLimiter,
-    reply_ratelimit_ipv6: RateLimiter,
+    last_reply_ipv4: RateLimiter,
+    last_reply_ipv6: RateLimiter,
 }
 
 struct LocalServiceDiscoveryInner {
@@ -145,15 +174,12 @@ cookie: {cookie}\r
             let announce_port = return_if_none!(announce.port);
 
             let rl = if addr.is_ipv4() {
-                &announce.reply_ratelimit_ipv4
+                &announce.last_reply_ipv4
             } else {
-                &announce.reply_ratelimit_ipv6
+                &announce.last_reply_ipv6
             };
 
-            return_if_none!(
-                rl.check().ok(),
-                trace!(?addr, ?bts, "replying rate-limited")
-            );
+            return_if_none!(rl.check(), trace!(?addr, ?bts, "replying rate-limited"));
 
             announce_port
         };
@@ -233,15 +259,13 @@ cookie: {cookie}\r
             }
         }
 
-        let rl = || RateLimiter::direct(Quota::per_second(NonZero::new(1).unwrap()));
-
         self.inner.receivers.write().insert(
             info_hash,
             Announce {
                 tx,
                 port: announce_port,
-                reply_ratelimit_ipv4: rl(),
-                reply_ratelimit_ipv6: rl(),
+                last_reply_ipv4: Default::default(),
+                last_reply_ipv6: Default::default(),
             },
         );
 
