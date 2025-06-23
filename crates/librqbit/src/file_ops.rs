@@ -331,7 +331,7 @@ impl<'a> FileOps<'a> {
             if !file_info.attrs.padding {
                 let written = self
                     .files
-                    .pwrite_all_vectored(file_idx, absolute_offset, data.as_ioslices(to_write))
+                    .pwrite_all_vectored(file_idx, absolute_offset, slices)
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",

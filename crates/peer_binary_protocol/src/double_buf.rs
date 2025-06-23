@@ -26,7 +26,7 @@ impl<'a> DoubleBufHelper<'a> {
         let first_len = self.buf_0.len().min(len);
         let (first_consumed, first_remaining) = self.buf_0.split_at(first_len);
 
-        let second_len = len - first_len;
+        let second_len = (len - first_len).min(self.buf_1.len()); // the .min() here is just for split_at() to be optimized without panic
         let (second_consumed, second_remaining) = self.buf_1.split_at(second_len);
 
         self.buf_0 = first_remaining;
