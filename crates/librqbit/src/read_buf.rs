@@ -27,12 +27,17 @@ macro_rules! advance {
     };
 }
 
-/// Convert into 2 slices (as ranges)
+/// Convert into 2 slices (as ranges).
 macro_rules! as_slice_ranges {
     ($self:expr) => {{
-        let first_len = $self.len.min(crate::read_buf::BUFLEN - $self.start);
-        let first = $self.start..$self.start + first_len;
-        let second = 0..$self.len.saturating_sub(first_len);
+        const BUFLEN: usize = crate::read_buf::BUFLEN;
+        // These .min() calls are for asm to be branchless and the code panicless.
+        let len = $self.len.min(BUFLEN);
+        let start = $self.start.min(BUFLEN);
+
+        let first_len = len.min(BUFLEN - start);
+        let first = start..start + first_len;
+        let second = 0..len.saturating_sub(first_len);
         (first, second)
     }};
 }
@@ -90,6 +95,8 @@ impl ReadBuf {
         }
 
         // This should be so rare that it's not worth writing complex in-place code.
+        // See the source in VecDequeue::make_contiguous to see how involved it would be
+        // otherwise.
         let mut new = [0u8; BUFLEN];
         let (first, second) = as_slices!(self);
         new[..first.len()].copy_from_slice(first);
