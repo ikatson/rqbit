@@ -294,6 +294,7 @@ impl<'de, T: CompactSerialize> Deserialize<'de> for Compact<T> {
     }
 }
 
+#[derive(Eq, PartialEq)]
 pub struct CompactListInBuffer<Buf, T> {
     buf: Buf,
     _phantom: PhantomData<T>,

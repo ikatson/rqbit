@@ -8,7 +8,7 @@ use crate::{MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX};
 
 use super::PeerExtendedMessageIds;
 
-#[derive(Deserialize, Serialize, Debug, Default)]
+#[derive(Deserialize, Serialize, Debug, Default, Eq, PartialEq)]
 pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
     pub m: PeerExtendedMessageIds,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -9,16 +9,16 @@ use std::io::Cursor;
 use std::io::Write;
 
 use crate::DoubleBufHelper;
-use crate::MAX_MSG_LEN;
 use crate::MessageDeserializeError;
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum UtMetadata<ByteBuf> {
     Request(u32),
     Data {
         piece: u32,
         total_size: u32,
-        data: ByteBuf,
+        data_0: ByteBuf,
+        data_1: ByteBuf,
     },
     Reject(u32),
 }
@@ -30,11 +30,13 @@ impl UtMetadata<ByteBufOwned> {
             UtMetadata::Data {
                 piece,
                 total_size,
-                data,
+                data_0,
+                data_1,
             } => UtMetadata::Data {
                 piece: *piece,
                 total_size: *total_size,
-                data: ByteBuf::from(data.as_ref()),
+                data_0: ByteBuf::from(data_0.as_ref()),
+                data_1: ByteBuf::from(data_1.as_ref()),
             },
             UtMetadata::Reject(r) => UtMetadata::Reject(*r),
         }
@@ -62,7 +64,8 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
             UtMetadata::Data {
                 piece,
                 total_size,
-                data,
+                data_0,
+                data_1,
             } => {
                 let message = Message {
                     msg_type: 1,
@@ -70,7 +73,8 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                     total_size: Some(*total_size),
                 };
                 bencode_serialize_to_writer(message, writer)?;
-                writer.write_all(data.as_ref())?;
+                writer.write_all(data_0.as_ref())?;
+                writer.write_all(data_1.as_ref())?;
             }
             UtMetadata::Reject(piece) => {
                 let message = Message {
@@ -84,12 +88,7 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
         Ok(())
     }
 
-    pub fn deserialize(
-        buf: &mut DoubleBufHelper<'a>,
-        msg_len: usize,
-    ) -> Result<Self, MessageDeserializeError> {
-        //
-
+    pub fn deserialize(mut buf: DoubleBufHelper<'a>) -> Result<Self, MessageDeserializeError> {
         #[derive(Deserialize)]
         struct UtMetadataMsg {
             msg_type: u32,
@@ -99,14 +98,18 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
 
         const MAX_BMSG_SIZE: usize =
             b"d8:msg_typei10e5:piecei4294967296e10:total_sizei16384ee".len();
-        let (contig, is_contig) = match buf.get_contiguous(MAX_BMSG_SIZE) {
+        let (contig, is_contig) = match buf.get_contiguous(MAX_BMSG_SIZE.min(buf.len())) {
             Some(c) => (c, true),
             None => (buf.get().0, false),
         };
 
         let mut de = BencodeDeserializer::new_from_buf(contig);
         let message = match UtMetadataMsg::deserialize(&mut de) {
-            Ok(message) => message,
+            Ok(message) => {
+                let consumed = contig.len() - de.into_remaining().len();
+                buf.advance(consumed);
+                message
+            }
             Err(e) => {
                 if is_contig {
                     return Err(MessageDeserializeError::Bencode(e));
@@ -114,13 +117,11 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 return Err(MessageDeserializeError::NeedContiguous);
             }
         };
-        let remaining = de.into_remaining().len();
-        let remaining = de.into_remaining();
 
         match message.msg_type {
             // request
             0 => {
-                if !remaining.is_empty() {
+                if !buf.is_empty() {
                     return Err(MessageDeserializeError::UtMetadataTrailingBytes);
                 }
                 Ok(UtMetadata::Request(message.piece))
@@ -130,7 +131,10 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 let total_size = message
                     .total_size
                     .ok_or(MessageDeserializeError::UtMetadataMissingTotalSize)?;
-                if remaining.len() != total_size as usize {
+                if buf.len() > total_size as usize {
+                    return Err(MessageDeserializeError::UtMetadataTrailingBytes);
+                }
+                if buf.len() != total_size as usize {
                     return Err(MessageDeserializeError::UtMetadataSizeMismatch {
                         total_size,
                         received_len: buf.len() as u32,
@@ -139,15 +143,17 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 if total_size > CHUNK_SIZE {
                     return Err(MessageDeserializeError::UtMetadataTooLarge(total_size));
                 }
+                let (data_0, data_1) = buf.get();
                 Ok(UtMetadata::Data {
                     piece: message.piece,
                     total_size,
-                    data: ByteBuf::from(remaining),
+                    data_0: data_0.into(),
+                    data_1: data_1.into(),
                 })
             }
             // reject
             2 => {
-                if !remaining.is_empty() {
+                if !buf.is_empty() {
                     return Err(MessageDeserializeError::UtMetadataTrailingBytes);
                 }
                 Ok(UtMetadata::Reject(message.piece))

@@ -2,7 +2,6 @@ use std::io::Cursor;
 
 use bencode::BencodeValue;
 use bencode::bencode_serialize_to_writer;
-use bencode::from_bytes;
 use buffers::ByteBuf;
 use buffers::ByteBufT;
 use byteorder::WriteBytesExt;
@@ -24,13 +23,13 @@ pub mod ut_pex;
 
 use super::MY_EXTENDED_UT_METADATA;
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct PeerExtendedMessageIds {
     pub ut_metadata: Option<u8>,
     pub ut_pex: Option<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum ExtendedMessage<ByteBuf: ByteBufT> {
     Handshake(ExtendedHandshake<ByteBuf>),
     UtMetadata(UtMetadata<ByteBuf>),
@@ -74,47 +73,119 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
         Ok(out.position() as usize)
     }
 
-    pub fn deserialize(
-        mut buf: &mut DoubleBufHelper<'a>,
-        msg_len: usize,
-    ) -> Result<Self, MessageDeserializeError> {
+    pub fn deserialize(mut buf: DoubleBufHelper<'a>) -> Result<Self, MessageDeserializeError> {
         let msg_id = crate::MsgIdDebug(MSGID_EXTENDED);
         let emsg_id = buf
             .read_u8()
             .ok_or(MessageDeserializeError::NotEnoughData(1, Some(msg_id)))?;
-        let msg_len = msg_len
-            .checked_sub(1)
-            .ok_or(MessageDeserializeError::IncorrectMsgLen {
-                received: 1,
-                expected: 2,
-                msg_id,
-            })?;
 
-        fn bencode_from_bytes<'a, T>(
-            buf: &DoubleBufHelper<'a>,
-            msg_len: usize,
-        ) -> Result<T, MessageDeserializeError>
+        fn from_bytes_contig<'a, T>(buf: &DoubleBufHelper<'a>) -> Result<T, MessageDeserializeError>
         where
             T: serde::de::Deserialize<'a>,
         {
             let buf = buf
-                .get_contiguous(msg_len)
+                .get_contiguous(buf.len())
                 .ok_or(MessageDeserializeError::NeedContiguous)?;
-            bencode::from_bytes(buf).map_err(|e| MessageDeserializeError::Bencode(e))
+            bencode::from_bytes(buf).map_err(MessageDeserializeError::Bencode)
         }
 
         match emsg_id {
-            0 => Ok(ExtendedMessage::Handshake(bencode_from_bytes(
-                buf, msg_len,
-            )?)),
-            MY_EXTENDED_UT_METADATA => Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(
-                buf, msg_len,
-            )?)),
-            MY_EXTENDED_UT_PEX => Ok(ExtendedMessage::UtPex(bencode_from_bytes(buf, msg_len)?)),
-            _ => Ok(ExtendedMessage::Dyn(
-                emsg_id,
-                bencode_from_bytes(buf, msg_len)?,
-            )),
+            0 => Ok(ExtendedMessage::Handshake(from_bytes_contig(&buf)?)),
+            MY_EXTENDED_UT_METADATA => {
+                Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(buf)?))
+            }
+            MY_EXTENDED_UT_PEX => Ok(ExtendedMessage::UtPex(from_bytes_contig(&buf)?)),
+            _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes_contig(&buf)?)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buffers::ByteBuf;
+
+    use crate::{
+        DoubleBufHelper, MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX, MessageDeserializeError,
+        extended::{ExtendedMessage, PeerExtendedMessageIds, ut_metadata::UtMetadata},
+    };
+
+    fn ut_metadata_trailing_bytes_is_error(msg: ExtendedMessage<ByteBuf>) {
+        let mut buf = [0u8; 100];
+        let sz = msg
+            .serialize(&mut buf, &|| PeerExtendedMessageIds {
+                ut_metadata: Some(MY_EXTENDED_UT_METADATA),
+                ut_pex: Some(MY_EXTENDED_UT_PEX),
+            })
+            .unwrap();
+
+        let deserialized =
+            ExtendedMessage::deserialize(DoubleBufHelper::new(&buf[..sz], &[])).unwrap();
+        assert_eq!(msg, deserialized);
+
+        let res = ExtendedMessage::deserialize(DoubleBufHelper::new(&buf[..sz + 1], &[]));
+        assert!(
+            matches!(res, Err(MessageDeserializeError::UtMetadataTrailingBytes)),
+            "expected trailing bytes error, got {res:?}"
+        )
+    }
+
+    #[test]
+    fn test_ut_metadata_trailing_bytes_is_error() {
+        ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Request(42)));
+        ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Reject(43)));
+        ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Data {
+            piece: 1,
+            total_size: 5,
+            data_0: b"hello"[..].into(),
+            data_1: Default::default(),
+        }));
+    }
+
+    #[test]
+    fn test_ut_metadata_non_contiguous() {
+        let mut buf = [0u8; 100];
+        let msg = ExtendedMessage::UtMetadata(UtMetadata::Data {
+            piece: 1,
+            total_size: 5,
+            data_0: b"\x42\x42\x42\x42\x42"[..].into(),
+            data_1: Default::default(),
+        });
+        let sz = msg
+            .serialize(&mut buf, &|| PeerExtendedMessageIds {
+                ut_metadata: Some(MY_EXTENDED_UT_METADATA),
+                ut_pex: Some(MY_EXTENDED_UT_PEX),
+            })
+            .unwrap();
+        let bencode_sz = buf[..sz].iter().position(|byte| *byte == 0x42).unwrap();
+
+        for split_point in 0..sz {
+            let (d0, d1) = buf[..sz].split_at(split_point);
+            let buf = DoubleBufHelper::new(d0, d1);
+            let res = ExtendedMessage::deserialize(buf);
+            if (2..bencode_sz).contains(&split_point) {
+                assert!(
+                    matches!(res, Err(MessageDeserializeError::NeedContiguous)),
+                    "expected NeedContiguous, got {res:?}, split_point={split_point}, bencode_sz={bencode_sz}"
+                );
+                continue;
+            }
+            let de = res.unwrap();
+            match de {
+                ExtendedMessage::UtMetadata(UtMetadata::Data {
+                    piece,
+                    total_size,
+                    data_0,
+                    data_1,
+                }) => {
+                    assert_eq!(piece, 1);
+                    assert_eq!(total_size, 5);
+                    let mut debuf = Vec::new();
+                    debuf.extend_from_slice(data_0.as_ref());
+                    debuf.extend_from_slice(data_1.as_ref());
+                    assert_eq!(debuf, b"\x42\x42\x42\x42\x42");
+                }
+                _ => panic!("bad msg"),
+            }
         }
     }
 }

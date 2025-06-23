@@ -2,6 +2,7 @@ use std::io::IoSlice;
 
 /// A helper for working with a buffer split into 2.
 /// You can advance it forward (like you would do with buf=&buf[idx..])
+#[derive(Clone, Copy)]
 pub struct DoubleBufHelper<'a> {
     buf_0: &'a [u8],
     buf_1: &'a [u8],
@@ -106,6 +107,15 @@ impl<'a> DoubleBufHelper<'a> {
         self.buf_0 = &self.buf_0[buf_0_adv..];
         let buf_1_adv = (offset - buf_0_adv).min(self.buf_1.len());
         self.buf_1 = &self.buf_1[buf_1_adv..];
+    }
+
+    pub fn with_max_len(&self, max_len: usize) -> DoubleBufHelper<'a> {
+        let buf_0_len = self.buf_0.len().min(max_len);
+        let buf_1_len = (max_len - buf_0_len).min(self.buf_1.len());
+        DoubleBufHelper {
+            buf_0: &self.buf_0[..buf_0_len],
+            buf_1: &self.buf_1[..buf_1_len],
+        }
     }
 
     pub fn as_ioslices(&self, len_limit: usize) -> [IoSlice<'a>; 2] {

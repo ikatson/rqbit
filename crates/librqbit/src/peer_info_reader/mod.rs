@@ -102,25 +102,33 @@ impl HandlerLocked {
             CHUNK_SIZE as usize
         }
     }
-    fn record_piece(&mut self, index: u32, data: &[u8], info_hash: Id20) -> anyhow::Result<bool> {
+    fn record_piece(
+        &mut self,
+        index: u32,
+        data_0: &[u8],
+        data_1: &[u8],
+        info_hash: Id20,
+    ) -> anyhow::Result<bool> {
         if index as usize >= self.total_pieces {
             anyhow::bail!("wrong index");
         }
         let offset = (index * CHUNK_SIZE) as usize;
         let size = self.piece_size(index);
-        if data.len() != size {
+        let dlen = data_0.len() + data_1.len();
+        if dlen != size {
             anyhow::bail!(
                 "expected length of piece {} to be {}, but got {}",
                 index,
                 size,
-                data.len()
+                dlen
             );
         }
         if self.received_pieces[index as usize] {
             anyhow::bail!("already received piece {}", index);
         }
-        let offset_end = offset + size;
-        self.buffer[offset..offset_end].copy_from_slice(data);
+        self.buffer[offset..offset + data_0.len()].copy_from_slice(data_0);
+        self.buffer[offset + data_0.len()..offset + data_0.len() + data_1.len()]
+            .copy_from_slice(data_1);
         self.received_pieces[index as usize] = true;
 
         if self.received_pieces.iter().all(|p| *p) {
@@ -175,12 +183,14 @@ impl PeerConnectionHandler for Handler {
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
             piece,
             total_size: _,
-            data,
+            data_0,
+            data_1,
         })) = msg
         {
             let piece_ready = self.locked.write().as_mut().unwrap().record_piece(
                 piece,
-                data.as_ref(),
+                data_0.as_ref(),
+                data_1.as_ref(),
                 self.info_hash,
             )?;
             if piece_ready {

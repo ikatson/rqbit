@@ -426,7 +426,7 @@ impl Message<'_> {
                 ))
             }
             MSGID_EXTENDED => Ok((
-                Message::Extended(ExtendedMessage::deserialize(&mut buf, msg_len)?),
+                Message::Extended(ExtendedMessage::deserialize(buf.with_max_len(msg_len))?),
                 PREAMBLE_LEN + msg_len,
             )),
             msg_id => Err(MessageDeserializeError::UnsupportedMessageId(msg_id)),
@@ -560,7 +560,7 @@ mod tests {
         for split_point in 0..EXTENDED.len() {
             let (first, second) = EXTENDED.split_at(split_point);
             let res = Message::deserialize(first, second);
-            if split_point > PREAMBLE_LEN && split_point < EXTENDED.len() {
+            if split_point > PREAMBLE_LEN + 1 && split_point < EXTENDED.len() {
                 assert!(
                     matches!(res, Err(MessageDeserializeError::NeedContiguous)),
                     "expected NeedContiguous: {split_point}"

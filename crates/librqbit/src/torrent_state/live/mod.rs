@@ -1881,7 +1881,8 @@ impl PeerHandler {
             .send(WriterRequest::UtMetadata(UtMetadata::Data {
                 piece: piece_id,
                 total_size: end - offset,
-                data: data.into(),
+                data_0: data.into(),
+                data_1: Default::default(),
             }))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())
