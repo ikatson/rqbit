@@ -66,8 +66,16 @@ impl<'a> DoubleBufHelper<'a> {
 
     /// Read 1 byte and advance. Returns 1
     pub fn read_u8(&mut self) -> Option<u8> {
-        let data = self.consume::<1>().ok()?;
-        Some(data[0])
+        let b = if !self.buf_0.is_empty() {
+            &mut self.buf_0
+        } else if !self.buf_1.is_empty() {
+            &mut self.buf_1
+        } else {
+            return None;
+        };
+        let value = b[0];
+        *b = &b[1..];
+        Some(value)
     }
 
     /// Get a contiguous slice at the start if it exists.
