@@ -5,12 +5,11 @@ use crate::{
     vectored_traits::AsyncReadVectoredExt,
 };
 use anyhow::{Context, bail};
-use peer_binary_protocol::{Handshake, MAX_MSG_LEN, Message, MessageDeserializeError};
+use peer_binary_protocol::{Handshake, Message, MessageDeserializeError};
 use tokio::io::AsyncReadExt;
 
-// We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
-// TODO: consider setting it though to just MAX_MSG_LEN
-const BUFLEN: usize = MAX_MSG_LEN * 2;
+// This should be greater than MAX_MSG_LEN
+const BUFLEN: usize = 0x8000; // 32kb
 
 /// A ringbuffer for reading bittorrent messages from socket.
 /// Messages may thus span 2 slices (notably, Piece message), which is reflected in their contents.
@@ -111,22 +110,19 @@ impl ReadBuf {
 
     /// Get a part of the buffer for reading into.
     fn unfilled_ioslices(&mut self) -> [IoSliceMut; 2] {
-        if self.is_full() {
-            return [IoSliceMut::new(&mut []), IoSliceMut::new(&mut [])];
-        }
+        let write_start = (self.start.saturating_add(self.len)) % BUFLEN;
+        let available_len = BUFLEN.saturating_sub(self.len);
+        let first_len = (BUFLEN.saturating_sub(write_start)).min(available_len);
+        let second_len = available_len.saturating_sub(first_len);
 
-        if self.start + self.len >= BUFLEN {
-            // [..len..first..start..]
-            [
-                IoSliceMut::new(&mut self.buf[(self.start + self.len) % BUFLEN..self.start]),
-                IoSliceMut::new(&mut []),
-            ]
-        } else {
-            // [second...start..len..first]
-            let (second, first) = self.buf.split_at_mut(self.start + self.len);
-            let second = &mut second[..self.start];
-            [IoSliceMut::new(first), IoSliceMut::new(second)]
-        }
+        let (second, first) = self.buf.split_at_mut(write_start);
+
+        let first_len = first_len.min(first.len());
+        let second_len = second_len.min(second.len());
+        [
+            IoSliceMut::new(&mut first[..first_len]),
+            IoSliceMut::new(&mut second[..second_len]),
+        ]
     }
 
     /// Read a message into the buffer, try to deserialize it and call the callback on it.
