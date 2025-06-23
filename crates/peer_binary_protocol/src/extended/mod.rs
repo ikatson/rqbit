@@ -10,6 +10,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use ut_pex::UtPex;
 
+use crate::DoubleBufHelper;
+use crate::MSGID_EXTENDED;
 use crate::MY_EXTENDED_UT_PEX;
 
 use self::{handshake::ExtendedHandshake, ut_metadata::UtMetadata};
@@ -72,17 +74,47 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
         Ok(out.position() as usize)
     }
 
-    pub fn deserialize_unchecked_len(mut buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {
-        let emsg_id = buf[0];
-        buf = &buf[1..];
+    pub fn deserialize(
+        mut buf: &mut DoubleBufHelper<'a>,
+        msg_len: usize,
+    ) -> Result<Self, MessageDeserializeError> {
+        let msg_id = crate::MsgIdDebug(MSGID_EXTENDED);
+        let emsg_id = buf
+            .read_u8()
+            .ok_or(MessageDeserializeError::NotEnoughData(1, Some(msg_id)))?;
+        let msg_len = msg_len
+            .checked_sub(1)
+            .ok_or(MessageDeserializeError::IncorrectMsgLen {
+                received: 1,
+                expected: 2,
+                msg_id,
+            })?;
+
+        fn bencode_from_bytes<'a, T>(
+            buf: &DoubleBufHelper<'a>,
+            msg_len: usize,
+        ) -> Result<T, MessageDeserializeError>
+        where
+            T: serde::de::Deserialize<'a>,
+        {
+            let buf = buf
+                .get_contiguous(msg_len)
+                .ok_or(MessageDeserializeError::NeedContiguous)?;
+            bencode::from_bytes(buf).map_err(|e| MessageDeserializeError::Bencode(e))
+        }
 
         match emsg_id {
-            0 => Ok(ExtendedMessage::Handshake(from_bytes(buf)?)),
-            MY_EXTENDED_UT_METADATA => {
-                Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(buf)?))
-            }
-            MY_EXTENDED_UT_PEX => Ok(ExtendedMessage::UtPex(from_bytes(buf)?)),
-            _ => Ok(ExtendedMessage::Dyn(emsg_id, from_bytes(buf)?)),
+            0 => Ok(ExtendedMessage::Handshake(bencode_from_bytes(
+                buf, msg_len,
+            )?)),
+            MY_EXTENDED_UT_METADATA => Ok(ExtendedMessage::UtMetadata(UtMetadata::deserialize(
+                buf, msg_len,
+            )?)),
+            MY_EXTENDED_UT_PEX => Ok(ExtendedMessage::UtPex(bencode_from_bytes(buf, msg_len)?)),
+            _ => Ok(ExtendedMessage::Dyn(
+                emsg_id,
+                bencode_from_bytes(buf, msg_len)?,
+            )),
         }
     }
 }

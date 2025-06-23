@@ -57,6 +57,10 @@ impl<'a> DoubleBufHelper<'a> {
         Ok(res)
     }
 
+    pub fn get(&self) -> (&'a [u8], &'a [u8]) {
+        (self.buf_0, self.buf_1)
+    }
+
     /// Read 4 big endian bytes and advance the buffer by 4 if successful.
     /// Error returns how many missing bytes are there.
     pub fn read_u32_be(&mut self) -> Result<u32, usize> {

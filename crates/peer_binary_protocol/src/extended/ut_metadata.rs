@@ -8,6 +8,8 @@ use serde::Serialize;
 use std::io::Cursor;
 use std::io::Write;
 
+use crate::DoubleBufHelper;
+use crate::MAX_MSG_LEN;
 use crate::MessageDeserializeError;
 
 #[derive(Debug)]
@@ -82,17 +84,37 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
         Ok(())
     }
 
-    pub fn deserialize(buf: &'a [u8]) -> Result<Self, MessageDeserializeError> {
-        let mut de = BencodeDeserializer::new_from_buf(buf);
+    pub fn deserialize(
+        buf: &mut DoubleBufHelper<'a>,
+        msg_len: usize,
+    ) -> Result<Self, MessageDeserializeError> {
+        //
 
         #[derive(Deserialize)]
-        struct Message {
+        struct UtMetadataMsg {
             msg_type: u32,
             piece: u32,
             total_size: Option<u32>,
         }
 
-        let message = Message::deserialize(&mut de)?;
+        const MAX_BMSG_SIZE: usize =
+            b"d8:msg_typei10e5:piecei4294967296e10:total_sizei16384ee".len();
+        let (contig, is_contig) = match buf.get_contiguous(MAX_BMSG_SIZE) {
+            Some(c) => (c, true),
+            None => (buf.get().0, false),
+        };
+
+        let mut de = BencodeDeserializer::new_from_buf(contig);
+        let message = match UtMetadataMsg::deserialize(&mut de) {
+            Ok(message) => message,
+            Err(e) => {
+                if is_contig {
+                    return Err(MessageDeserializeError::Bencode(e));
+                }
+                return Err(MessageDeserializeError::NeedContiguous);
+            }
+        };
+        let remaining = de.into_remaining().len();
         let remaining = de.into_remaining();
 
         match message.msg_type {

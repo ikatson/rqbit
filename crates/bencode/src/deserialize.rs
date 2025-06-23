@@ -107,6 +107,8 @@ pub enum Error {
     InvalidLength(usize),
     #[error("invalid value")]
     InvalidValue,
+    #[error("eof")]
+    Eof,
 }
 
 impl Error {
@@ -144,6 +146,9 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
+        if self.buf.is_empty() {
+            return Err(Error::Eof);
+        }
         if !self.buf.starts_with(b"i") {
             return Err(Error::new_str(&"expected bencode int to represent bool"));
         }
@@ -179,6 +184,9 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
+        if self.buf.is_empty() {
+            return Err(Error::Eof);
+        }
         if !self.buf.starts_with(b"i") {
             return Err(Error::new_str(&"expected bencode int"));
         }
@@ -240,9 +248,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     {
         let first = match self.buf.first().copied() {
             Some(first) => first,
-            None => {
-                return Err(Error::new_str(&"expected bencode string, got EOF"));
-            }
+            None => return Err(Error::Eof),
         };
         match first {
             b'0'..=b'9' => {}
@@ -315,6 +321,9 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
+        if self.buf.is_empty() {
+            return Err(Error::Eof);
+        }
         if !self.buf.starts_with(b"l") {
             return Err(Error::new_str(&"expected \"l\" as start of list"));
         }
@@ -345,6 +354,9 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
+        if self.buf.is_empty() {
+            return Err(Error::Eof);
+        }
         if !self.buf.starts_with(b"d") {
             return Err(Error::new_str(&"expected bencode dict"));
         }
@@ -408,7 +420,7 @@ impl<'de> serde::de::MapAccess<'de> for MapAccess<'_, 'de> {
         K: serde::de::DeserializeSeed<'de>,
     {
         if self.de.buf.starts_with(b"e") {
-            self.de.buf = self.de.buf.get(1..).unwrap_or_default();
+            self.de.buf = &self.de.buf[1..];
             return Ok(None);
         }
         self.de.parsing_key = true;
@@ -454,7 +466,7 @@ impl<'de> serde::de::SeqAccess<'de> for SeqAccess<'_, 'de> {
         T: serde::de::DeserializeSeed<'de>,
     {
         if self.de.buf.starts_with(b"e") {
-            self.de.buf = self.de.buf.get(1..).unwrap_or_default();
+            self.de.buf = &self.de.buf[1..];
             return Ok(None);
         }
         Ok(Some(seed.deserialize(&mut *self.de)?))

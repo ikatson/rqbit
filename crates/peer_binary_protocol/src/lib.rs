@@ -54,6 +54,7 @@ pub const MY_EXTENDED_UT_METADATA: u8 = 3;
 pub const EXTENDED_UT_PEX_KEY: &[u8] = b"ut_pex";
 pub const MY_EXTENDED_UT_PEX: u8 = 1;
 
+#[derive(Clone, Copy)]
 pub struct MsgIdDebug(MsgId);
 impl MsgIdDebug {
     const fn name(&self) -> Option<&'static str> {
@@ -374,6 +375,7 @@ impl Message<'_> {
             }
             MSGID_BITFIELD => {
                 check_msg_len!(min 1);
+                // In practice, as bitfield is always (almost) the first message, it should be contiguous.
                 let data = buf
                     .get_contiguous(msg_len)
                     .ok_or(MessageDeserializeError::NeedContiguous)?;
@@ -423,17 +425,10 @@ impl Message<'_> {
                     total_len,
                 ))
             }
-            MSGID_EXTENDED => {
-                check_msg_len!(min 3); // 1 byte for msg_id and 2 bytes for empty bencode dict "de"
-                let msg_data = buf
-                    .get_contiguous(msg_len)
-                    .ok_or(MessageDeserializeError::NeedContiguous)?;
-
-                Ok((
-                    Message::Extended(ExtendedMessage::deserialize_unchecked_len(msg_data)?),
-                    PREAMBLE_LEN + msg_len,
-                ))
-            }
+            MSGID_EXTENDED => Ok((
+                Message::Extended(ExtendedMessage::deserialize(&mut buf, msg_len)?),
+                PREAMBLE_LEN + msg_len,
+            )),
             msg_id => Err(MessageDeserializeError::UnsupportedMessageId(msg_id)),
         }
     }
