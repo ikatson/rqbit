@@ -96,11 +96,11 @@ impl<'a> DoubleBufHelper<'a> {
     }
 
     /// Advance it forward. If it was a single buffer this would be equivalent to buf=&buf[idx..]).
-    /// Will panic if offset is too large.
+    /// If offset is too large, will set itself empty.
     pub fn advance(&mut self, offset: usize) {
         let buf_0_adv = self.buf_0.len().min(offset);
         self.buf_0 = &self.buf_0[buf_0_adv..];
-        let buf_1_adv = offset - buf_0_adv;
+        let buf_1_adv = (offset - buf_0_adv).min(self.buf_1.len());
         self.buf_1 = &self.buf_1[buf_1_adv..];
     }
 
@@ -223,31 +223,39 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_advance_out_of_bounds_0() {
         let mut d = DoubleBufHelper::new(&[], &[]);
         d.advance(1);
+        assert!(d.is_empty());
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[]);
     }
 
     #[test]
-    #[should_panic]
     fn test_advance_out_of_bounds_1() {
         let mut d = DoubleBufHelper::new(&[42], &[]);
         d.advance(2);
+        assert!(d.is_empty());
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[]);
     }
 
     #[test]
-    #[should_panic]
     fn test_advance_out_of_bounds_2() {
         let mut d = DoubleBufHelper::new(&[42], &[43]);
         d.advance(3);
+        assert!(d.is_empty());
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[]);
     }
 
     #[test]
-    #[should_panic]
     fn test_advance_out_of_bounds_3() {
         let mut d = DoubleBufHelper::new(&[], &[42, 43]);
         d.advance(3);
+        assert!(d.is_empty());
+        assert_eq!(d.buf_0, &[]);
+        assert_eq!(d.buf_1, &[]);
     }
 
     #[test]

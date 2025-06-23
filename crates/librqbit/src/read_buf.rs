@@ -115,7 +115,6 @@ impl ReadBuf {
             return [IoSliceMut::new(&mut []), IoSliceMut::new(&mut [])];
         }
 
-        // Wraparound case. TODO: figure out if it's >=
         if self.start + self.len >= BUFLEN {
             // [..len..first..start..]
             [
