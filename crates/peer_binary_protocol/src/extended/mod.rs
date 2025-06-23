@@ -106,7 +106,10 @@ mod tests {
 
     use crate::{
         DoubleBufHelper, MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX, MessageDeserializeError,
-        extended::{ExtendedMessage, PeerExtendedMessageIds, ut_metadata::UtMetadata},
+        extended::{
+            ExtendedMessage, PeerExtendedMessageIds,
+            ut_metadata::{UtMetadata, UtMetadataData},
+        },
     };
 
     fn ut_metadata_trailing_bytes_is_error(msg: ExtendedMessage<ByteBuf>) {
@@ -133,23 +136,18 @@ mod tests {
     fn test_ut_metadata_trailing_bytes_is_error() {
         ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Request(42)));
         ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Reject(43)));
-        ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Data {
-            piece: 1,
-            total_size: 5,
-            data_0: b"hello"[..].into(),
-            data_1: Default::default(),
-        }));
+        ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Data(
+            UtMetadataData::from_bytes(1, b"\x42\x42\x42\x42\x42"[..].into()),
+        )));
     }
 
     #[test]
     fn test_ut_metadata_non_contiguous() {
         let mut buf = [0u8; 100];
-        let msg = ExtendedMessage::UtMetadata(UtMetadata::Data {
-            piece: 1,
-            total_size: 5,
-            data_0: b"\x42\x42\x42\x42\x42"[..].into(),
-            data_1: Default::default(),
-        });
+        let msg = ExtendedMessage::UtMetadata(UtMetadata::Data(UtMetadataData::from_bytes(
+            1,
+            b"\x42\x42\x42\x42\x42"[..].into(),
+        )));
         let sz = msg
             .serialize(&mut buf, &|| PeerExtendedMessageIds {
                 ut_metadata: Some(MY_EXTENDED_UT_METADATA),
@@ -171,18 +169,12 @@ mod tests {
             }
             let de = res.unwrap();
             match de {
-                ExtendedMessage::UtMetadata(UtMetadata::Data {
-                    piece,
-                    total_size,
-                    data_0,
-                    data_1,
-                }) => {
-                    assert_eq!(piece, 1);
-                    assert_eq!(total_size, 5);
-                    let mut debuf = Vec::new();
-                    debuf.extend_from_slice(data_0.as_ref());
-                    debuf.extend_from_slice(data_1.as_ref());
-                    assert_eq!(debuf, b"\x42\x42\x42\x42\x42");
+                ExtendedMessage::UtMetadata(UtMetadata::Data(d)) => {
+                    assert_eq!(d.piece(), 1);
+                    assert_eq!(d.len(), 5);
+                    let mut debuf = [0u8; 5];
+                    d.copy_to_slice(&mut debuf);
+                    assert_eq!(debuf, b"\x42\x42\x42\x42\x42"[..]);
                 }
                 _ => panic!("bad msg"),
             }

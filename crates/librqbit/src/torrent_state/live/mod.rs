@@ -69,7 +69,10 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     Handshake, Message, Piece, Request,
     extended::{
-        self, ExtendedMessage, handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex,
+        self, ExtendedMessage,
+        handshake::ExtendedHandshake,
+        ut_metadata::{UtMetadata, UtMetadataData},
+        ut_pex::UtPex,
     },
 };
 use tokio::sync::{
@@ -1878,12 +1881,9 @@ impl PeerHandler {
         let data = data.slice(offset as usize..end as usize);
 
         self.tx
-            .send(WriterRequest::UtMetadata(UtMetadata::Data {
-                piece: piece_id,
-                total_size: end - offset,
-                data_0: data.into(),
-                data_1: Default::default(),
-            }))
+            .send(WriterRequest::UtMetadata(UtMetadata::Data(
+                UtMetadataData::from_bytes(piece_id, data.into()),
+            )))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())
     }

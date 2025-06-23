@@ -18,7 +18,14 @@ pub struct ByteBufOwned(pub bytes::Bytes);
 pub struct ByteBuf<'a>(pub &'a [u8]);
 
 pub trait ByteBufT:
-    AsRef<[u8]> + std::hash::Hash + Serialize + Eq + core::fmt::Debug + CloneToOwned + Borrow<[u8]>
+    AsRef<[u8]>
+    + Default
+    + std::hash::Hash
+    + Serialize
+    + Eq
+    + core::fmt::Debug
+    + CloneToOwned
+    + Borrow<[u8]>
 {
 }
 

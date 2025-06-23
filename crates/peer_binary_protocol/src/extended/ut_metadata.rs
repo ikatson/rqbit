@@ -2,6 +2,7 @@ use bencode::BencodeDeserializer;
 use bencode::bencode_serialize_to_writer;
 use buffers::ByteBuf;
 use buffers::ByteBufOwned;
+use buffers::ByteBufT;
 use librqbit_core::constants::CHUNK_SIZE;
 use serde::Deserialize;
 use serde::Serialize;
@@ -12,14 +13,49 @@ use crate::DoubleBufHelper;
 use crate::MessageDeserializeError;
 
 #[derive(Debug, Eq, PartialEq)]
+pub struct UtMetadataData<ByteBuf> {
+    piece: u32,
+    data_0: ByteBuf,
+    data_1: ByteBuf,
+}
+
+impl<ByteBuf: ByteBufT> UtMetadataData<ByteBuf> {
+    pub fn from_bytes(piece: u32, data: ByteBuf) -> Self {
+        Self {
+            piece,
+            data_0: data,
+            data_1: Default::default(),
+        }
+    }
+}
+
+impl UtMetadataData<ByteBuf<'_>> {
+    pub fn piece(&self) -> u32 {
+        self.piece
+    }
+
+    pub fn len(&self) -> usize {
+        self.data_0.as_ref().len() + self.data_1.as_ref().len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.data_0.as_ref().is_empty() && self.data_1.as_ref().is_empty()
+    }
+
+    pub fn copy_to_slice(&self, mut out: &mut [u8]) {
+        let d0 = self.data_0.as_ref();
+        let d1 = self.data_1.as_ref();
+        out[..d0.len()].copy_from_slice(d0);
+        out = &mut out[d0.len()..];
+        out[..d1.len()].copy_from_slice(d1);
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum UtMetadata<ByteBuf> {
     Request(u32),
-    Data {
-        piece: u32,
-        total_size: u32,
-        data_0: ByteBuf,
-        data_1: ByteBuf,
-    },
+    Data(UtMetadataData<ByteBuf>),
     Reject(u32),
 }
 
@@ -27,17 +63,15 @@ impl UtMetadata<ByteBufOwned> {
     pub fn as_borrowed(&self) -> UtMetadata<ByteBuf> {
         match self {
             UtMetadata::Request(req) => UtMetadata::Request(*req),
-            UtMetadata::Data {
+            UtMetadata::Data(UtMetadataData {
                 piece,
-                total_size,
                 data_0,
                 data_1,
-            } => UtMetadata::Data {
+            }) => UtMetadata::Data(UtMetadataData {
                 piece: *piece,
-                total_size: *total_size,
                 data_0: ByteBuf::from(data_0.as_ref()),
                 data_1: ByteBuf::from(data_1.as_ref()),
-            },
+            }),
             UtMetadata::Reject(r) => UtMetadata::Reject(*r),
         }
     }
@@ -61,20 +95,15 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 };
                 bencode_serialize_to_writer(message, writer)?
             }
-            UtMetadata::Data {
-                piece,
-                total_size,
-                data_0,
-                data_1,
-            } => {
+            UtMetadata::Data(d) => {
                 let message = Message {
                     msg_type: 1,
-                    piece: *piece,
-                    total_size: Some(*total_size),
+                    piece: d.piece,
+                    total_size: Some(d.len() as u32),
                 };
                 bencode_serialize_to_writer(message, writer)?;
-                writer.write_all(data_0.as_ref())?;
-                writer.write_all(data_1.as_ref())?;
+                writer.write_all(d.data_0.as_ref())?;
+                writer.write_all(d.data_1.as_ref())?;
             }
             UtMetadata::Reject(piece) => {
                 let message = Message {
@@ -144,12 +173,11 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                     return Err(MessageDeserializeError::UtMetadataTooLarge(total_size));
                 }
                 let (data_0, data_1) = buf.get();
-                Ok(UtMetadata::Data {
+                Ok(UtMetadata::Data(UtMetadataData {
                     piece: message.piece,
-                    total_size,
                     data_0: data_0.into(),
                     data_1: data_1.into(),
-                })
+                }))
             }
             // reject
             2 => {
