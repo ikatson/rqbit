@@ -4,7 +4,7 @@ use memchr::memchr;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
-    field_context: ArrayVec<ByteBuf<'de>, 6>,
+    field_context: ErrorContext<'de>,
     field_context_did_not_fit: usize,
     parsing_key: bool,
 
@@ -79,14 +79,25 @@ impl<'de> BencodeDeserializer<'de> {
     }
 }
 
-pub fn from_bytes<'a, T>(buf: &'a [u8]) -> Result<T, Error>
+pub fn from_bytes<'a, T>(buf: &'a [u8]) -> Result<T, ErrorWithContext<'a>>
 where
     T: serde::de::Deserialize<'a>,
 {
     let mut de = BencodeDeserializer::new_from_buf(buf);
-    let v = T::deserialize(&mut de)?;
+    let v = match T::deserialize(&mut de) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(ErrorWithContext {
+                kind: e,
+                ctx: de.field_context,
+            });
+        }
+    };
     if !de.buf.is_empty() {
-        return Err(Error::BytesRemaining(de.buf.len()));
+        return Err(ErrorWithContext {
+            kind: Error::BytesRemaining(de.buf.len()),
+            ctx: de.field_context,
+        });
     }
     Ok(v)
 }
@@ -110,6 +121,46 @@ pub enum Error {
     #[error("eof")]
     Eof,
 }
+
+type ErrorContext<'de> = ArrayVec<ByteBuf<'de>, 4>;
+
+#[derive(Debug)]
+pub struct ErrorWithContext<'de> {
+    kind: Error,
+    ctx: ErrorContext<'de>,
+}
+
+impl ErrorWithContext<'_> {
+    pub fn kind(&self) -> &Error {
+        &self.kind
+    }
+
+    pub fn into_kind(self) -> Error {
+        self.kind
+    }
+
+    pub fn into_anyhow(self) -> anyhow::Error {
+        anyhow::Error::new(self.kind).context(format!("{:?}", self.ctx))
+    }
+}
+
+impl std::fmt::Display for ErrorWithContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (id, ctx_key) in self.ctx.iter().copied().enumerate() {
+            if id > 0 {
+                write!(f, " -> {:?}", ctx_key)?;
+            } else {
+                write!(f, "{:?}", ctx_key)?;
+            }
+        }
+        if !self.ctx.is_empty() {
+            write!(f, ": ")?;
+        }
+        write!(f, "{}", self.kind)
+    }
+}
+
+impl std::error::Error for Box<ErrorWithContext<'_>> {}
 
 impl Error {
     fn new_str(msg: &'static &'static str) -> Self {
@@ -470,5 +521,29 @@ impl<'de> serde::de::SeqAccess<'de> for SeqAccess<'_, 'de> {
             return Ok(None);
         }
         Ok(Some(seed.deserialize(&mut *self.de)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+
+    use crate::from_bytes;
+
+    #[test]
+    fn test_deserialize_error_context() {
+        #[derive(Deserialize, Debug)]
+        struct Child {
+            #[allow(unused)]
+            key: u64,
+        }
+        #[derive(Deserialize, Debug)]
+        struct Parent {
+            #[allow(unused)]
+            child: Child,
+        }
+
+        let e = from_bytes::<Parent>(&b"d5:childd3:key2:hiee"[..]).expect_err("expected error");
+        println!("{e:#}")
     }
 }

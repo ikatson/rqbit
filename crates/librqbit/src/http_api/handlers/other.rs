@@ -54,6 +54,10 @@ pub async fn h_resolve_magnet(
         == Some("application/json")
     {
         let data = bencode::dyn_from_bytes::<AsDisplay<ByteBuf>>(&content)
+            .map_err(|e| {
+                tracing::trace!("error decoding .torrent file content: {e:#}");
+                e.into_kind()
+            })
             .context("error decoding .torrent file content")?;
         let data = serde_json::to_string(&data).context("error serializing")?;
         headers.insert("Content-Type", HeaderValue::from_static("application/json"));

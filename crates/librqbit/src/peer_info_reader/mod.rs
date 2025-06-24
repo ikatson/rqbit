@@ -194,6 +194,10 @@ impl PeerConnectionHandler for Handler {
                         use clone_to_owned::CloneToOwned;
                         i.clone_to_owned(Some(&buf))
                     })
+                    .map_err(|e| {
+                        trace!("error deserializing TorrentMetaV1Info: {e:#}");
+                        e.into_kind()
+                    })
                     .map(|i| (i, ByteBufOwned(buf)));
 
                 self.result_tx

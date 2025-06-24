@@ -511,12 +511,13 @@ pub fn deserialize_message<'de, BufT>(buf: &'de [u8]) -> anyhow::Result<Message<
 where
     BufT: ByteBufT + Deserialize<'de>,
 {
-    let de: RawMessage<ByteBuf> = bencode::from_bytes(buf)?;
+    let de: RawMessage<ByteBuf> = bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
     match de.message_type {
         MessageType::Request => match (&de.arguments, &de.method_name, &de.response, &de.error) {
             (Some(_), Some(method_name), None, None) => match method_name.as_ref() {
                 b"find_node" => {
-                    let de: RawMessage<BufT, FindNodeRequest> = bencode::from_bytes(buf)?;
+                    let de: RawMessage<BufT, FindNodeRequest> =
+                        bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
@@ -525,7 +526,8 @@ where
                     })
                 }
                 b"get_peers" => {
-                    let de: RawMessage<BufT, GetPeersRequest> = bencode::from_bytes(buf)?;
+                    let de: RawMessage<BufT, GetPeersRequest> =
+                        bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
@@ -534,7 +536,8 @@ where
                     })
                 }
                 b"ping" => {
-                    let de: RawMessage<BufT, PingRequest> = bencode::from_bytes(buf)?;
+                    let de: RawMessage<BufT, PingRequest> =
+                        bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
@@ -543,7 +546,8 @@ where
                     })
                 }
                 b"announce_peer" => {
-                    let de: RawMessage<BufT, AnnouncePeer<BufT>> = bencode::from_bytes(buf)?;
+                    let de: RawMessage<BufT, AnnouncePeer<BufT>> =
+                        bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
                     Ok(Message {
                         transaction_id: de.transaction_id,
                         version: de.version,
@@ -561,7 +565,8 @@ where
         MessageType::Response => match (&de.arguments, &de.method_name, &de.response, &de.error) {
             // some peers are sending method name against the protocol, so ignore it.
             (None, _, Some(_), None) => {
-                let de: RawMessage<BufT, IgnoredAny, Response<BufT>> = bencode::from_bytes(buf)?;
+                let de: RawMessage<BufT, IgnoredAny, Response<BufT>> =
+                    bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
                 Ok(Message {
                     transaction_id: de.transaction_id,
                     version: de.version,
@@ -577,7 +582,8 @@ where
         MessageType::Error => match (&de.arguments, &de.method_name, &de.response, &de.error) {
             // some peers are sending method name against the protocol, so ignore it.
             (None, _, None, Some(_)) => {
-                let de: RawMessage<BufT, IgnoredAny, Response<BufT>> = bencode::from_bytes(buf)?;
+                let de: RawMessage<BufT, IgnoredAny, Response<BufT>> =
+                    bencode::from_bytes(buf).map_err(|e| e.into_anyhow())?;
                 Ok(Message {
                     transaction_id: de.transaction_id,
                     version: de.version,

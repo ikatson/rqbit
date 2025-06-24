@@ -86,7 +86,10 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
             let buf = buf
                 .get_contiguous(buf.len())
                 .ok_or(MessageDeserializeError::NeedContiguous)?;
-            bencode::from_bytes(buf).map_err(MessageDeserializeError::Bencode)
+            bencode::from_bytes(buf).map_err(|e| {
+                tracing::trace!("error deserializing extended: {e:#}");
+                MessageDeserializeError::Bencode(e.into_kind())
+            })
         }
 
         match emsg_id {

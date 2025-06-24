@@ -3013,6 +3013,7 @@ dependencies = [
 name = "librqbit-bencode"
 version = "3.1.0"
 dependencies = [
+ "anyhow",
  "arrayvec",
  "atoi",
  "bytes",
@@ -3156,6 +3157,7 @@ dependencies = [
  "librqbit-core",
  "serde",
  "thiserror 2.0.12",
+ "tracing",
 ]
 
 [[package]]
