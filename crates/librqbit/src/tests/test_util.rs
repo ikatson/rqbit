@@ -14,7 +14,7 @@ use tracing::{info, trace};
 
 pub fn setup_test_logging() {
     if std::env::var("RUST_LOG").is_err() {
-        unsafe { std::env::set_var("RUST_LOG", "trace") };
+        unsafe { std::env::set_var("RUST_LOG", "info") };
     }
     let _ = tracing_subscriber::fmt::try_init();
 }
