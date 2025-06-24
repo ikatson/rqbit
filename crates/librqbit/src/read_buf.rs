@@ -318,11 +318,11 @@ mod tests {
     #[tokio::test]
     async fn can_read_long_metainfo_correctly() {
         setup_test_logging();
-        let reader = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+        let reader = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .unwrap();
         let port = reader.local_addr().unwrap().port();
-        let mut writer = tokio::net::TcpStream::connect((Ipv4Addr::UNSPECIFIED, port))
+        let mut writer = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
             .await
             .unwrap()
             .into_split()
