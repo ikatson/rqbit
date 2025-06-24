@@ -1878,17 +1878,15 @@ impl PeerHandler {
 
         let offset = piece_id * CHUNK_SIZE;
         let end = (offset + CHUNK_SIZE).min(data.len().try_into()?);
+        let total_size: u32 = data
+            .len()
+            .try_into()
+            .context("can't send metadata: len doesn't fit into u32")?;
         let data = data.slice(offset as usize..end as usize);
 
         self.tx
             .send(WriterRequest::UtMetadata(UtMetadata::Data(
-                UtMetadataData::from_bytes(
-                    piece_id,
-                    data.len()
-                        .try_into()
-                        .context("can't send metadata: len doesn't fit into u32")?,
-                    data.into(),
-                ),
+                UtMetadataData::from_bytes(piece_id, total_size, data.into()),
             )))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())
