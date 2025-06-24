@@ -21,6 +21,7 @@ impl core::fmt::Debug for PexPeerInfo {
     }
 }
 
+#[derive(Eq, PartialEq)]
 struct Flags(u8);
 
 impl CompactSerialize for Flags {
@@ -45,7 +46,7 @@ impl CompactSerializeFixedLen for Flags {
     }
 }
 
-#[derive(Serialize, Default, Deserialize)]
+#[derive(Serialize, Default, Deserialize, Eq, PartialEq)]
 pub struct UtPex<B: ByteBufT> {
     #[serde(skip_serializing_if = "Option::is_none")]
     added: Option<CompactListInBuffer<B, SocketAddrV4>>,

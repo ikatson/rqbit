@@ -13,7 +13,7 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    Handshake, Message, MessageBorrowed, PIECE_MESSAGE_DEFAULT_LEN,
+    Handshake, MAX_MSG_LEN, Message,
     extended::{
         ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake,
         ut_metadata::UtMetadata, ut_pex::UtPex,
@@ -35,7 +35,7 @@ use crate::{
 pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn should_send_bitfield(&self) -> bool;
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize>;
+    fn serialize_bitfield_message_to_buf(&self, buf: &mut [u8]) -> anyhow::Result<usize>;
     fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
@@ -102,7 +102,7 @@ where
 struct ManagePeerArgs {
     handshake_supports_extended: bool,
     read_buf: ReadBuf,
-    write_buf: Vec<u8>,
+    write_buf: Box<[u8; MAX_MSG_LEN]>,
     read: BoxAsyncRead,
     write: BoxAsyncWrite,
     outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
@@ -161,13 +161,12 @@ impl<'a> PeerConnection<'a> {
             try_decode_peer_id(handshake.peer_id)
         );
 
-        let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
+        let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
-        handshake.serialize(&mut write_buf);
-        with_timeout("writing", rwtimeout, write.write_all(&write_buf))
+        let hlen = handshake.serialize_unchecked_len(&mut *write_buf);
+        with_timeout("writing", rwtimeout, write.write_all(&write_buf[..hlen]))
             .await
             .context("error writing handshake")?;
-        write_buf.clear();
 
         let handshake_supports_extended = handshake.supports_extended();
 
@@ -212,13 +211,12 @@ impl<'a> PeerConnection<'a> {
         async move {
             self.handler.on_connected(now.elapsed());
 
-            let mut write_buf = Vec::<u8>::with_capacity(PIECE_MESSAGE_DEFAULT_LEN);
+            let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
             let handshake = Handshake::new(self.info_hash, self.peer_id);
-            handshake.serialize(&mut write_buf);
-            with_timeout("writing", rwtimeout, write.write_all(&write_buf))
+            let hsz = handshake.serialize_unchecked_len(&mut *write_buf);
+            with_timeout("writing", rwtimeout, write.write_all(&write_buf[..hsz]))
                 .await
                 .context("error writing handshake")?;
-            write_buf.clear();
 
             let mut read_buf = ReadBuf::new();
             let h = read_buf
@@ -286,13 +284,10 @@ impl<'a> PeerConnection<'a> {
                 .update_my_extended_handshake(&mut my_extended)?;
             let my_extended = Message::Extended(ExtendedMessage::Handshake(my_extended));
             trace!("sending extended handshake: {:?}", &my_extended);
-            my_extended
-                .serialize(&mut write_buf, &Default::default)
-                .unwrap();
-            with_timeout("writing", rwtimeout, write.write_all(&write_buf))
+            let esz = my_extended.serialize(&mut *write_buf, &Default::default)?;
+            with_timeout("writing", rwtimeout, write.write_all(&write_buf[..esz]))
                 .await
                 .context("error writing extended handshake")?;
-            write_buf.clear();
         }
 
         let writer = async move {
@@ -304,7 +299,7 @@ impl<'a> PeerConnection<'a> {
             if self.handler.should_send_bitfield() {
                 let len = self
                     .handler
-                    .serialize_bitfield_message_to_buf(&mut write_buf)?;
+                    .serialize_bitfield_message_to_buf(&mut *write_buf)?;
                 with_timeout(
                     "writing bitfield",
                     rwtimeout,
@@ -315,7 +310,7 @@ impl<'a> PeerConnection<'a> {
                 trace!("sent bitfield");
             }
 
-            let len = MessageBorrowed::Unchoke.serialize(&mut write_buf, &Default::default)?;
+            let len = Message::Unchoke.serialize(&mut *write_buf, &Default::default)?;
             with_timeout("writing", rwtimeout, write.write_all(&write_buf[..len]))
                 .await
                 .context("error writing unchoke")?;
@@ -365,14 +360,14 @@ impl<'a> PeerConnection<'a> {
                 };
 
                 let len = match req {
-                    WriterRequest::Message(msg) => msg.serialize(&mut write_buf, ext_msg_ids)?,
+                    WriterRequest::Message(msg) => msg.serialize(&mut *write_buf, ext_msg_ids)?,
                     WriterRequest::UtMetadata(utm) => {
                         Message::Extended(ExtendedMessage::UtMetadata(utm.as_borrowed()))
-                            .serialize(&mut write_buf, ext_msg_ids)?
+                            .serialize(&mut *write_buf, ext_msg_ids)?
                     }
                     WriterRequest::UtPex(ut_pex) => {
                         Message::Extended(ExtendedMessage::UtPex(ut_pex.as_borrowed()))
-                            .serialize(&mut write_buf, ext_msg_ids)?
+                            .serialize(&mut *write_buf, ext_msg_ids)?
                     }
                     WriterRequest::ReadChunkRequest(chunk) => {
                         #[allow(unused_mut)]
@@ -407,10 +402,8 @@ impl<'a> PeerConnection<'a> {
                         }
 
                         // this whole section is an optimization
-                        write_buf.resize(PIECE_MESSAGE_DEFAULT_LEN, 0);
-                        let preamble_len = serialize_piece_preamble(&chunk, &mut write_buf);
+                        let preamble_len = serialize_piece_preamble(&chunk, &mut *write_buf);
                         let full_len = preamble_len + chunk.size as usize;
-                        write_buf.resize(full_len, 0);
                         if !skip_reading_for_e2e_tests {
                             self.spawner
                                 .spawn_block_in_place(|| {

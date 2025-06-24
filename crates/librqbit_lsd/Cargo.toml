@@ -25,7 +25,6 @@ parking_lot = "0.12.4"
 httparse = "1.10.1"
 atoi = "2.0.0"
 tracing = "0.1.41"
-governor = "0.10.0"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.19"

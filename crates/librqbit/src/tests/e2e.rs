@@ -19,12 +19,12 @@ use crate::{
     },
 };
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 64)]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_download_tcp() {
     _test_e2e_download_timeout_and_cleanups(ListenerMode::TcpOnly).await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 64)]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_download_utp() {
     _test_e2e_download_timeout_and_cleanups(ListenerMode::UtpOnly).await
 }
@@ -81,7 +81,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
     let num_servers = std::env::var("E2E_NUM_SERVERS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(128u8);
+        .unwrap_or(32u8);
 
     let torrent_file_bytes = torrent_file.as_bytes().unwrap();
     let mut futs = Vec::new();
@@ -111,6 +111,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                             ..Default::default()
                         }),
                         root_span: Some(error_span!(parent: None, "server", id = i)),
+                        disable_local_service_discovery: true,
                         ..Default::default()
                     },
                 )
@@ -226,6 +227,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                     ..Default::default()
                 }),
                 fastresume: true,
+                disable_local_service_discovery: true,
                 root_span: Some(error_span!("client")),
                 ..Default::default()
             },

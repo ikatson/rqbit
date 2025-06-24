@@ -13,12 +13,19 @@ use clone_to_owned::CloneToOwned;
 #[derive(Default, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
 pub struct ByteBufOwned(pub bytes::Bytes);
 
-#[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[derive(Default, Deserialize, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord)]
 #[serde(transparent)]
 pub struct ByteBuf<'a>(pub &'a [u8]);
 
 pub trait ByteBufT:
-    AsRef<[u8]> + std::hash::Hash + Serialize + Eq + core::fmt::Debug + CloneToOwned + Borrow<[u8]>
+    AsRef<[u8]>
+    + Default
+    + std::hash::Hash
+    + Serialize
+    + Eq
+    + core::fmt::Debug
+    + CloneToOwned
+    + Borrow<[u8]>
 {
 }
 

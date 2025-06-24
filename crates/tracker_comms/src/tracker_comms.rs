@@ -295,7 +295,11 @@ impl TrackerComms {
                 error.failure_reason
             )
         };
-        let response = bencode::from_bytes::<tracker_comms_http::TrackerResponse>(&bytes)?;
+        let response =
+            bencode::from_bytes::<tracker_comms_http::TrackerResponse>(&bytes).map_err(|e| {
+                tracing::trace!("error deserializing TrackerResponse: {e:#}");
+                e.into_kind()
+            })?;
 
         for peer in response.iter_peers() {
             self.tx.send(peer).await?;

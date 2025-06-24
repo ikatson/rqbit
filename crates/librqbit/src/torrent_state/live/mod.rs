@@ -55,7 +55,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
     constants::CHUNK_SIZE,
@@ -69,7 +69,10 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     Handshake, Message, Piece, Request,
     extended::{
-        self, ExtendedMessage, handshake::ExtendedHandshake, ut_metadata::UtMetadata, ut_pex::UtPex,
+        self, ExtendedMessage,
+        handshake::ExtendedHandshake,
+        ut_metadata::{UtMetadata, UtMetadataData},
+        ut_pex::UtPex,
     },
 };
 use tokio::sync::{
@@ -1035,7 +1038,7 @@ impl PeerConnectionHandler for PeerHandler {
         Ok(())
     }
 
-    fn serialize_bitfield_message_to_buf(&self, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
+    fn serialize_bitfield_message_to_buf(&self, buf: &mut [u8]) -> anyhow::Result<usize> {
         let g = self.state.lock_read("serialize_bitfield_message_to_buf");
         let msg = Message::Bitfield(ByteBuf(g.get_chunks()?.get_have_pieces().as_bytes()));
         let len = msg.serialize(buf, &Default::default)?;
@@ -1671,7 +1674,7 @@ impl PeerHandler {
             state: &TorrentStateLive,
             addr: PeerHandle,
             counters: &AtomicPeerCounters,
-            piece: &Piece<impl ByteBufT>,
+            piece: &Piece<ByteBuf<'_>>,
             chunk_info: &ChunkInfo,
         ) -> anyhow::Result<()> {
             let index = piece.index;
@@ -1837,7 +1840,9 @@ impl PeerHandler {
             let span = tracing::error_span!("deferred_write");
             let work = move || {
                 span.in_scope(|| {
-                    if let Err(e) = write_to_disk(&state, addr, &counters, &piece, &chunk_info) {
+                    if let Err(e) =
+                        write_to_disk(&state, addr, &counters, &piece.as_borrowed(), &chunk_info)
+                    {
                         let _ = tx.send(WriterRequest::Disconnect(Err(e)));
                     }
                 })
@@ -1876,11 +1881,9 @@ impl PeerHandler {
         let data = data.slice(offset as usize..end as usize);
 
         self.tx
-            .send(WriterRequest::UtMetadata(UtMetadata::Data {
-                piece: piece_id,
-                total_size: end - offset,
-                data: data.into(),
-            }))
+            .send(WriterRequest::UtMetadata(UtMetadata::Data(
+                UtMetadataData::from_bytes(piece_id, data.into()),
+            )))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())
     }

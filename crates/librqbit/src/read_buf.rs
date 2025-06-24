@@ -5,17 +5,14 @@ use crate::{
     vectored_traits::AsyncReadVectoredExt,
 };
 use anyhow::{Context, bail};
-use peer_binary_protocol::{
-    Handshake, MAX_MSG_LEN, Message, MessageBorrowed, MessageDeserializeError,
-};
+use peer_binary_protocol::{Handshake, Message, MessageDeserializeError};
 use tokio::io::AsyncReadExt;
 
-// We could work with just MAX_MSG_LEN buffer, but have it a bit bigger to reduce read() calls.
-// TODO: consider setting it though to just MAX_MSG_LEN
-const BUFLEN: usize = MAX_MSG_LEN * 2;
+// This should be greater than MAX_MSG_LEN
+const BUFLEN: usize = 0x8000; // 32kb
 
 /// A ringbuffer for reading bittorrent messages from socket.
-/// Messages may thus span 2 slices (notably, Piece message), which is reflected in their contents.
+/// Messages may thus span 2 slices (notably, Piece message and UtMetadata messages), which is reflected in their contents.
 pub struct ReadBuf {
     buf: Box<[u8; BUFLEN]>,
     start: usize,
@@ -30,12 +27,17 @@ macro_rules! advance {
     };
 }
 
-/// Convert into 2 slices (as ranges)
+/// Convert into 2 slices (as ranges).
 macro_rules! as_slice_ranges {
     ($self:expr) => {{
-        let first_len = $self.len.min(crate::read_buf::BUFLEN - $self.start);
-        let first = $self.start..$self.start + first_len;
-        let second = 0..$self.len.saturating_sub(first_len);
+        const BUFLEN: usize = crate::read_buf::BUFLEN;
+        // These .min() calls are for asm to be branchless and the code panicless.
+        let len = $self.len.min(BUFLEN);
+        let start = $self.start.min(BUFLEN);
+
+        let first_len = len.min(BUFLEN - start);
+        let first = start..start + first_len;
+        let second = 0..len.saturating_sub(first_len);
         (first, second)
     }};
 }
@@ -83,6 +85,9 @@ impl ReadBuf {
     // In rare cases, we might need to make the buffer contiguous, as the message
     // parsing code won't work with a split ringbuffer. Only "bitfield" and "extended" messages
     // need contiguous buffers.
+    // "Bitfield" however is always sent early, so in practice it won't ever happen. For "extended"
+    // in practice, it would rarely happen with UtMetadata::Data messages if the split happens to land
+    // in the middle of bencoded data (as we only can deserialize bencode from a single slice).
     fn make_contiguous(&mut self) -> anyhow::Result<()> {
         if self.is_contiguous() {
             bail!(
@@ -93,6 +98,8 @@ impl ReadBuf {
         }
 
         // This should be so rare that it's not worth writing complex in-place code.
+        // See the source in VecDequeue::make_contiguous to see how involved it would be
+        // otherwise.
         let mut new = [0u8; BUFLEN];
         let (first, second) = as_slices!(self);
         new[..first.len()].copy_from_slice(first);
@@ -113,31 +120,27 @@ impl ReadBuf {
 
     /// Get a part of the buffer for reading into.
     fn unfilled_ioslices(&mut self) -> [IoSliceMut; 2] {
-        if self.is_full() {
-            return [IoSliceMut::new(&mut []), IoSliceMut::new(&mut [])];
-        }
+        let write_start = (self.start.saturating_add(self.len)) % BUFLEN;
+        let available_len = BUFLEN.saturating_sub(self.len);
+        let first_len = (BUFLEN.saturating_sub(write_start)).min(available_len);
+        let second_len = available_len.saturating_sub(first_len);
 
-        // Wraparound case. TODO: figure out if it's >=
-        if self.start + self.len >= BUFLEN {
-            // [..len..first..start..]
-            [
-                IoSliceMut::new(&mut self.buf[(self.start + self.len) % BUFLEN..self.start]),
-                IoSliceMut::new(&mut []),
-            ]
-        } else {
-            // [second...start..len..first]
-            let (second, first) = self.buf.split_at_mut(self.start + self.len);
-            let second = &mut second[..self.start];
-            [IoSliceMut::new(first), IoSliceMut::new(second)]
-        }
+        let (second, first) = self.buf.split_at_mut(write_start);
+
+        let first_len = first_len.min(first.len());
+        let second_len = second_len.min(second.len());
+        [
+            IoSliceMut::new(&mut first[..first_len]),
+            IoSliceMut::new(&mut second[..second_len]),
+        ]
     }
 
     /// Read a message into the buffer, try to deserialize it and call the callback on it.
     pub async fn read_message(
         &mut self,
-        mut conn: impl AsyncReadVectoredExt + Unpin,
+        conn: &mut BoxAsyncRead,
         timeout: Duration,
-    ) -> anyhow::Result<MessageBorrowed<'_>> {
+    ) -> anyhow::Result<Message<'_>> {
         loop {
             let (first, second) = as_slices!(self);
             let (mut need_additional_bytes, ne) = match Message::deserialize(first, second) {
@@ -151,8 +154,7 @@ impl ReadBuf {
 
                     // Rust's borrow checker can't do this early return so resort to unsafe.
                     // This erases the lifetime so that it's happy.
-                    let msg: MessageBorrowed<'_> =
-                        unsafe { std::mem::transmute(msg as MessageBorrowed<'_>) };
+                    let msg: Message<'_> = unsafe { std::mem::transmute(msg as Message<'_>) };
                     return Ok(msg);
                 }
                 Err(e) => return Err(e.into()),
@@ -182,6 +184,20 @@ impl ReadBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::Ipv4Addr, time::Duration};
+
+    use librqbit_core::constants::CHUNK_SIZE;
+    use peer_binary_protocol::{
+        MAX_MSG_LEN, Message,
+        extended::{
+            ExtendedMessage, PeerExtendedMessageIds,
+            ut_metadata::{UtMetadata, UtMetadataData},
+        },
+    };
+    use tokio::io::AsyncWriteExt;
+
+    use crate::{tests::test_util::setup_test_logging, type_aliases::BoxAsyncRead};
+
     use super::{BUFLEN, ReadBuf};
 
     #[test]
@@ -297,5 +313,73 @@ mod tests {
 
         // start=BUFLEN-1
         assert_one(BUFLEN - 1, 100, [99..BUFLEN - 1, 0..0]);
+    }
+
+    #[tokio::test]
+    async fn can_read_long_metainfo_correctly() {
+        setup_test_logging();
+        let reader = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = reader.local_addr().unwrap().port();
+        let mut writer = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap()
+            .into_split()
+            .1;
+
+        const ITERATIONS: u32 = 4096;
+
+        let reader = async {
+            let reader = reader.accept().await.unwrap().0.into_split().0;
+            let mut reader: BoxAsyncRead = Box::new(reader);
+            let mut rb = ReadBuf::new();
+
+            for piece in 0..ITERATIONS {
+                let msg = rb
+                    .read_message(&mut reader, Duration::from_millis(10))
+                    .await
+                    .unwrap();
+                let utdata = match msg {
+                    Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(utdata))) => {
+                        utdata
+                    }
+                    other => panic!("expected utdata, got {other:?}"),
+                };
+                assert_eq!(utdata.len(), CHUNK_SIZE as usize);
+                assert_eq!(utdata.piece(), piece);
+                #[allow(clippy::cast_possible_truncation)]
+                let expected_byte = { piece as u8 };
+                let all_good = utdata
+                    .as_double_buf()
+                    .get()
+                    .into_iter()
+                    .flatten()
+                    .all(|b| *b == expected_byte);
+                if !all_good {
+                    panic!("broken data");
+                }
+            }
+        };
+
+        let pext = PeerExtendedMessageIds::my();
+        let writer = async {
+            let mut sbuf = [0u8; MAX_MSG_LEN];
+            let mut pbuf = [0u8; CHUNK_SIZE as usize];
+            for piece in 0..ITERATIONS {
+                #[allow(clippy::cast_possible_truncation)]
+                for b in pbuf.iter_mut() {
+                    *b = piece as u8;
+                }
+                let len = Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(
+                    UtMetadataData::from_bytes(piece, pbuf[..].into()),
+                )))
+                .serialize(&mut sbuf, &|| pext)
+                .unwrap();
+                writer.write_all(&sbuf[..len]).await.unwrap();
+            }
+        };
+
+        tokio::join!(reader, writer);
     }
 }

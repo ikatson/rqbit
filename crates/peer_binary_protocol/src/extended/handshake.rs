@@ -4,11 +4,9 @@ use buffers::{ByteBuf, ByteBufT};
 use librqbit_core::compact_ip::{CompactIpAddr, CompactIpV4, CompactIpV6};
 use serde::{Deserialize, Serialize};
 
-use crate::{MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX};
-
 use super::PeerExtendedMessageIds;
 
-#[derive(Deserialize, Serialize, Debug, Default)]
+#[derive(Deserialize, Serialize, Debug, Default, Eq, PartialEq)]
 pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
     pub m: PeerExtendedMessageIds,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,10 +32,7 @@ pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
 impl ExtendedHandshake<ByteBuf<'_>> {
     pub fn new() -> Self {
         Self {
-            m: PeerExtendedMessageIds {
-                ut_metadata: Some(MY_EXTENDED_UT_METADATA),
-                ut_pex: Some(MY_EXTENDED_UT_PEX),
-            },
+            m: PeerExtendedMessageIds::my(),
             ..Default::default()
         }
     }

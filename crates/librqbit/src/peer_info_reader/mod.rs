@@ -12,7 +12,11 @@ use librqbit_core::{
 use parking_lot::{Mutex, RwLock};
 use peer_binary_protocol::{
     Handshake, Message,
-    extended::{ExtendedMessage, handshake::ExtendedHandshake, ut_metadata::UtMetadata},
+    extended::{
+        ExtendedMessage,
+        handshake::ExtendedHandshake,
+        ut_metadata::{UtMetadata, UtMetadataData},
+    },
 };
 use sha1w::{ISha1, Sha1};
 use tokio::sync::mpsc::UnboundedSender;
@@ -102,26 +106,30 @@ impl HandlerLocked {
             CHUNK_SIZE as usize
         }
     }
-    fn record_piece(&mut self, index: u32, data: &[u8], info_hash: Id20) -> anyhow::Result<bool> {
-        if index as usize >= self.total_pieces {
+    fn record_piece(
+        &mut self,
+        d: &UtMetadataData<ByteBuf>,
+        info_hash: &Id20,
+    ) -> anyhow::Result<bool> {
+        let piece = d.piece();
+        if piece as usize >= self.total_pieces {
             anyhow::bail!("wrong index");
         }
-        let offset = (index * CHUNK_SIZE) as usize;
-        let size = self.piece_size(index);
-        if data.len() != size {
+        let offset = (piece * CHUNK_SIZE) as usize;
+        let size = self.piece_size(piece);
+        if d.len() != size {
             anyhow::bail!(
                 "expected length of piece {} to be {}, but got {}",
-                index,
+                piece,
                 size,
-                data.len()
+                d.len()
             );
         }
-        if self.received_pieces[index as usize] {
-            anyhow::bail!("already received piece {}", index);
+        if self.received_pieces[piece as usize] {
+            anyhow::bail!("already received piece {}", piece);
         }
-        let offset_end = offset + size;
-        self.buffer[offset..offset_end].copy_from_slice(data);
-        self.received_pieces[index as usize] = true;
+        d.copy_to_slice(&mut self.buffer[offset..offset + d.len()]);
+        self.received_pieces[piece as usize] = true;
 
         if self.received_pieces.iter().all(|p| *p) {
             // check metadata
@@ -156,7 +164,7 @@ impl PeerConnectionHandler for Handler {
         false
     }
 
-    fn serialize_bitfield_message_to_buf(&self, _buf: &mut Vec<u8>) -> anyhow::Result<usize> {
+    fn serialize_bitfield_message_to_buf(&self, _buf: &mut [u8]) -> anyhow::Result<usize> {
         Ok(0)
     }
 
@@ -172,23 +180,23 @@ impl PeerConnectionHandler for Handler {
     fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()> {
         trace!("{}: received message: {:?}", self.addr, msg);
 
-        if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data {
-            piece,
-            total_size: _,
-            data,
-        })) = msg
-        {
-            let piece_ready = self.locked.write().as_mut().unwrap().record_piece(
-                piece,
-                data.as_ref(),
-                self.info_hash,
-            )?;
+        if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(utdata))) = msg {
+            let piece_ready = self
+                .locked
+                .write()
+                .as_mut()
+                .unwrap()
+                .record_piece(&utdata, &self.info_hash)?;
             if piece_ready {
                 let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
                 let info = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf)
                     .map(|i| {
                         use clone_to_owned::CloneToOwned;
                         i.clone_to_owned(Some(&buf))
+                    })
+                    .map_err(|e| {
+                        trace!("error deserializing TorrentMetaV1Info: {e:#}");
+                        e.into_kind()
                     })
                     .map(|i| (i, ByteBufOwned(buf)));
 

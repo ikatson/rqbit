@@ -39,9 +39,12 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 debug = false
-overflow-checks = true
 lto = "thin"
 
 [profile.release-github]
 inherits = "release"
 lto = false
+
+[profile.release-debug]
+inherits = "release"
+debug = true

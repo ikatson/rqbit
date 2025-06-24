@@ -44,7 +44,7 @@ impl OurFileExt for File {
                 buf.get_mut(l0..l0 + l1)
                     .context("buf too small")?
                     .copy_from_slice(&bufs[1]);
-                self.pwrite_all(offset, &buf)?;
+                self.pwrite_all(offset, &buf[..l0 + l1])?;
                 Ok(l0 + l1)
             }
         }
@@ -180,5 +180,42 @@ impl OpenedFile {
         }
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    use librqbit_core::constants::CHUNK_SIZE;
+    use peer_binary_protocol::DoubleBufHelper;
+    use tempfile::TempDir;
+
+    use crate::storage::filesystem::opened_file::OurFileExt;
+
+    #[test]
+    fn test_pwrite_all_vectored() {
+        let td = TempDir::with_prefix("test_pwrite_all_vectored").unwrap();
+        let mut tmp_buf = [0u8; CHUNK_SIZE as usize];
+        for bufsize in [10000usize, CHUNK_SIZE as usize] {
+            let mut buf = vec![0u8; bufsize];
+            rand::fill(&mut buf[..]);
+            for split_point in [0, bufsize / 2, bufsize] {
+                let path = td.path().join(format!("file_{bufsize}_{split_point}"));
+                let file = std::fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&path)
+                    .unwrap();
+                let (first, second) = buf.split_at(split_point);
+                let bufs = DoubleBufHelper::new(first, second).as_ioslices(bufsize);
+                file.pwrite_all_vectored(0, bufs).unwrap();
+
+                let mut file = std::fs::File::open(&path).unwrap();
+                assert_eq!(file.metadata().unwrap().len(), bufsize as u64, "{path:?}");
+                file.read_exact(&mut tmp_buf[..bufsize]).unwrap();
+                assert_eq!(&tmp_buf[..bufsize], buf);
+            }
+        }
     }
 }

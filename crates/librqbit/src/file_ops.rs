@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use buffers::{ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     torrent_metainfo::TorrentMetaV1Info,
@@ -297,15 +297,12 @@ impl<'a> FileOps<'a> {
         Ok(())
     }
 
-    pub fn write_chunk<ByteBuf>(
+    pub fn write_chunk(
         &self,
         who_sent: PeerHandle,
-        data: &Piece<ByteBuf>,
+        data: &Piece<ByteBuf<'a>>,
         chunk_info: &ChunkInfo,
-    ) -> anyhow::Result<()>
-    where
-        ByteBuf: ByteBufT,
-    {
+    ) -> anyhow::Result<()> {
         let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
         let mut data = DoubleBufHelper::new(data.data().0, data.data().1);
 
@@ -334,7 +331,7 @@ impl<'a> FileOps<'a> {
             if !file_info.attrs.padding {
                 let written = self
                     .files
-                    .pwrite_all_vectored(file_idx, absolute_offset, data.as_ioslices(to_write))
+                    .pwrite_all_vectored(file_idx, absolute_offset, slices)
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",

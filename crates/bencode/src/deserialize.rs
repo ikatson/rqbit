@@ -1,11 +1,11 @@
 use arrayvec::ArrayVec;
+use atoi::FromRadix10;
 use buffers::ByteBuf;
-use memchr::memchr;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
-    field_context: ArrayVec<ByteBuf<'de>, 6>,
-    field_context_did_not_fit: usize,
+    field_context: ErrorContext<'de>,
+    field_context_did_not_fit: u8,
     parsing_key: bool,
 
     // This is a f**ing hack
@@ -26,92 +26,135 @@ impl<'de> BencodeDeserializer<'de> {
             torrent_info_bytes: None,
         }
     }
+
     pub fn into_remaining(self) -> &'de [u8] {
         self.buf
     }
-    fn parse_integer(&mut self) -> Result<i64, Error> {
-        match memchr(b'e', self.buf) {
-            Some(end) => {
-                let intbytes = &self.buf[1..end];
-                let value: i64 =
-                    atoi::atoi(intbytes).ok_or_else(|| Error::new_str(&"invalid int"))?;
-                let rem = self.buf.get(end + 1..).unwrap_or_default();
-                self.buf = rem;
-                Ok(value)
+
+    #[inline]
+    pub fn parse_first_byte(&mut self, c: u8, err: Error) -> Result<(), Error> {
+        match self.buf.first() {
+            Some(start) if *start == c => {
+                self.buf = &self.buf[1..];
+                Ok(())
             }
-            None => Err(Error::new_str(&"error parsing integer: eof")),
+            Some(_) => Err(err),
+            None => Err(Error::Eof),
+        }
+    }
+
+    fn parse_integer<I: FromRadix10>(&mut self) -> Result<I, Error> {
+        self.parse_first_byte(b'i', Error::InvalidValue)?;
+        match I::from_radix_10(self.buf) {
+            (v, len) if len > 0 && self.buf.get(len) == Some(&b'e') => {
+                self.buf = &self.buf[len + 1..];
+                Ok(v)
+            }
+            _ => Err(Error::InvalidValue),
         }
     }
 
     fn parse_bytes(&mut self) -> Result<&'de [u8], Error> {
-        match memchr(b':', self.buf) {
-            Some(length_delim) => {
-                let lenbytes = &self.buf[..length_delim];
-                let length: usize = atoi::atoi(lenbytes)
-                    .ok_or_else(|| Error::new_str(&"invalid list: expected int length"))?;
-                let bytes_start = length_delim + 1;
-                let bytes_end = bytes_start + length;
-                let bytes = &self
-                    .buf
-                    .get(bytes_start..bytes_end)
-                    .ok_or_else(|| Error::new_str(&"invalid list: not enough data"))?;
-                let rem = self.buf.get(bytes_end..).unwrap_or_default();
-                self.buf = rem;
-                Ok(bytes)
+        let b = match usize::from_radix_10(self.buf) {
+            (v, len) if len > 0 && self.buf.get(len) == Some(&b':') => {
+                self.buf = unsafe { self.buf.get_unchecked(len + 1..) };
+                let (bytes, rest) = self.buf.split_at_checked(v).ok_or(Error::Eof)?;
+                self.buf = rest;
+                bytes
             }
-            None => Err(Error::new_str(&"invalid list: expected colon")),
-        }
-    }
-
-    fn parse_bytes_checked(&mut self) -> Result<&'de [u8], Error> {
-        match self.buf.first().copied() {
-            Some(b'0'..=b'9') => {}
-            Some(_) => {
-                return Err(Error::new_str(&"invalid list: expected int"));
-            }
-            None => return Err(Error::new_str(&"invalist list: unexpected eof")),
+            _ => return Err(Error::InvalidValue),
         };
-        let b = self.parse_bytes()?;
         if self.parsing_key && self.field_context.try_push(ByteBuf(b)).is_err() {
-            self.field_context_did_not_fit += 1;
+            self.field_context_did_not_fit = self.field_context_did_not_fit.saturating_add(1);
         }
         Ok(b)
     }
 }
 
-pub fn from_bytes<'a, T>(buf: &'a [u8]) -> Result<T, Error>
+pub fn from_bytes<'a, T>(buf: &'a [u8]) -> Result<T, ErrorWithContext<'a>>
 where
     T: serde::de::Deserialize<'a>,
 {
     let mut de = BencodeDeserializer::new_from_buf(buf);
-    let v = T::deserialize(&mut de)?;
+    let v = match T::deserialize(&mut de) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(ErrorWithContext {
+                kind: e,
+                ctx: de.field_context,
+            });
+        }
+    };
     if !de.buf.is_empty() {
-        return Err(Error::BytesRemaining(de.buf.len()));
+        return Err(ErrorWithContext {
+            kind: Error::BytesRemaining(de.buf.len()),
+            ctx: de.field_context,
+        });
     }
     Ok(v)
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("{0} is not supported by bencode")]
-    NotSupported(&'static &'static str),
-    #[error("{0}")]
-    StaticStr(&'static &'static str),
+    #[error("not supported by bencode")]
+    NotSupported,
     #[error("{0}")]
     Custom(Box<String>), // box to reduce size
     #[error("expected 0 or 1 for boolean, got {0}")]
-    InvalidBool(i64),
+    InvalidBool(u8),
     #[error("deserialized successfully, but {0} bytes remaining")]
     BytesRemaining(usize),
-    #[error("invalid length: ")]
+    #[error("invalid length: {0}")]
     InvalidLength(usize),
     #[error("invalid value")]
     InvalidValue,
+    #[error("invalid utf-8")]
+    InvalidUtf8,
+    #[error("eof")]
+    Eof,
 }
 
-impl Error {
-    fn new_str(msg: &'static &'static str) -> Self {
-        Error::StaticStr(msg)
+type ErrorContext<'de> = ArrayVec<ByteBuf<'de>, 4>;
+
+#[derive(Debug)]
+pub struct ErrorWithContext<'de> {
+    kind: Error,
+    ctx: ErrorContext<'de>,
+}
+
+impl ErrorWithContext<'_> {
+    pub fn kind(&self) -> &Error {
+        &self.kind
+    }
+
+    pub fn into_kind(self) -> Error {
+        self.kind
+    }
+
+    pub fn into_anyhow(self) -> anyhow::Error {
+        anyhow::Error::new(self.kind).context(format!("{:?}", self.ctx))
+    }
+}
+
+impl std::fmt::Display for ErrorWithContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (id, ctx_key) in self.ctx.iter().copied().enumerate() {
+            if id > 0 {
+                write!(f, " -> {:?}", ctx_key)?;
+            } else {
+                write!(f, "{:?}", ctx_key)?;
+            }
+        }
+        if !self.ctx.is_empty() {
+            write!(f, ": ")?;
+        }
+        write!(f, "{}", self.kind)
+    }
+}
+
+impl std::error::Error for ErrorWithContext<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.kind)
     }
 }
 
@@ -133,10 +176,10 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     {
         match self.buf.first().copied() {
             Some(b'd') => self.deserialize_map(visitor),
-            Some(b'i') => self.deserialize_u64(visitor),
+            Some(b'i') => self.deserialize_i64(visitor),
             Some(b'l') => self.deserialize_seq(visitor),
             Some(_) => self.deserialize_bytes(visitor),
-            None => Err(Error::new_str(&"empty input")),
+            None => Err(Error::Eof),
         }
     }
 
@@ -144,10 +187,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"i") {
-            return Err(Error::new_str(&"expected bencode int to represent bool"));
-        }
-        let value = self.parse_integer()?;
+        let value = self.parse_integer::<u8>()?;
         if value > 1 {
             return Err(Error::InvalidBool(value));
         }
@@ -158,30 +198,27 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_i8(self.parse_integer()?)
     }
 
     fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_i16(self.parse_integer()?)
     }
 
     fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_i32(self.parse_integer()?)
     }
 
     fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"i") {
-            return Err(Error::new_str(&"expected bencode int"));
-        }
         visitor.visit_i64(self.parse_integer()?)
     }
 
@@ -189,67 +226,57 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_u8(self.parse_integer()?)
     }
 
     fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_u16(self.parse_integer()?)
     }
 
     fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_u32(self.parse_integer()?)
     }
 
     fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.deserialize_i64(visitor)
+        visitor.visit_u64(self.parse_integer()?)
     }
 
     fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support floats"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support floats"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support chars"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        let first = match self.buf.first().copied() {
-            Some(first) => first,
-            None => {
-                return Err(Error::new_str(&"expected bencode string, got EOF"));
-            }
-        };
-        match first {
-            b'0'..=b'9' => {}
-            _ => return Err(Error::new_str(&"expected bencode string")),
-        }
         let b = self.parse_bytes()?;
-        let s = std::str::from_utf8(b).map_err(|_| Error::new_str(&"invalid utf-8"))?;
+        let s = std::str::from_utf8(b).map_err(|_| Error::InvalidUtf8)?;
         visitor.visit_borrowed_str(s)
     }
 
@@ -264,7 +291,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let b = self.parse_bytes_checked()?;
+        let b = self.parse_bytes()?;
         visitor.visit_borrowed_bytes(b)
     }
 
@@ -286,7 +313,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support unit types"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_unit_struct<V>(
@@ -297,7 +324,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support unit structs"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_newtype_struct<V>(
@@ -308,17 +335,14 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't newtype structs"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"l") {
-            return Err(Error::new_str(&"expected \"l\" as start of list"));
-        }
-        self.buf = self.buf.get(1..).unwrap_or_default();
+        self.parse_first_byte(b'l', Error::InvalidValue)?;
         visitor.visit_seq(SeqAccess { de: self })
     }
 
@@ -345,10 +369,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        if !self.buf.starts_with(b"d") {
-            return Err(Error::new_str(&"expected bencode dict"));
-        }
-        self.buf = self.buf.get(1..).unwrap_or_default();
+        self.parse_first_byte(b'd', Error::InvalidValue)?;
         visitor.visit_map(MapAccess { de: self })
     }
 
@@ -373,15 +394,14 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"deserializing enums not supported"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        let name = self.parse_bytes_checked()?;
-        visitor.visit_borrowed_bytes(name)
+        visitor.visit_borrowed_bytes(self.parse_bytes()?)
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -408,7 +428,7 @@ impl<'de> serde::de::MapAccess<'de> for MapAccess<'_, 'de> {
         K: serde::de::DeserializeSeed<'de>,
     {
         if self.de.buf.starts_with(b"e") {
-            self.de.buf = self.de.buf.get(1..).unwrap_or_default();
+            self.de.buf = &self.de.buf[1..];
             return Ok(None);
         }
         self.de.parsing_key = true;
@@ -454,9 +474,98 @@ impl<'de> serde::de::SeqAccess<'de> for SeqAccess<'_, 'de> {
         T: serde::de::DeserializeSeed<'de>,
     {
         if self.de.buf.starts_with(b"e") {
-            self.de.buf = self.de.buf.get(1..).unwrap_or_default();
+            self.de.buf = &self.de.buf[1..];
             return Ok(None);
         }
         Ok(Some(seed.deserialize(&mut *self.de)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buffers::ByteBuf;
+    use serde::Deserialize;
+
+    use crate::from_bytes;
+
+    #[test]
+    fn test_deserialize_error_context() {
+        #[derive(Deserialize, Debug)]
+        struct Child {
+            #[allow(unused)]
+            key: u64,
+        }
+        #[derive(Deserialize, Debug)]
+        struct Parent {
+            #[allow(unused)]
+            child: Child,
+        }
+
+        let e = from_bytes::<Parent>(&b"d5:childd3:key2:hiee"[..]).expect_err("expected error");
+        assert_eq!(format!("{e}"), "\"child\" -> \"key\": invalid value");
+    }
+
+    #[test]
+    fn test_int() {
+        assert_eq!(from_bytes::<u8>(b"i42e").unwrap(), 42);
+        assert_eq!(from_bytes::<u16>(b"i42e").unwrap(), 42);
+        assert_eq!(from_bytes::<u32>(b"i42e").unwrap(), 42);
+        assert_eq!(from_bytes::<u64>(b"i42e").unwrap(), 42);
+
+        assert_eq!(from_bytes::<u32>(b"i4294967295e").unwrap(), 4294967295);
+
+        assert!(from_bytes::<u32>(b"ie").is_err());
+        assert!(from_bytes::<u32>(b"ifooe").is_err());
+        assert!(from_bytes::<u32>(b"i42").is_err());
+
+        // trailing bytes
+        assert!(from_bytes::<u32>(b"i42ee").is_err());
+    }
+
+    #[test]
+    fn test_str() {
+        assert_eq!(
+            from_bytes::<ByteBuf<'_>>(b"5:hello").unwrap(),
+            ByteBuf(b"hello")
+        );
+        assert_eq!(from_bytes::<ByteBuf<'_>>(b"0:").unwrap(), ByteBuf(b""));
+
+        assert!(from_bytes::<ByteBuf<'_>>(b"5:hell").is_err());
+        assert!(from_bytes::<ByteBuf<'_>>(b"5:helloworld").is_err());
+    }
+
+    #[test]
+    fn test_struct() {
+        #[derive(Deserialize, Eq, PartialEq, Debug)]
+        struct S<'a> {
+            key: u32,
+            #[serde(borrow)]
+            value: Option<ByteBuf<'a>>,
+        }
+
+        assert_eq!(
+            from_bytes::<S<'_>>(b"d3:keyi42ee").unwrap(),
+            S {
+                key: 42,
+                value: None
+            }
+        );
+
+        assert_eq!(
+            from_bytes::<S<'_>>(b"d3:keyi42e5:value5:helloe").unwrap(),
+            S {
+                key: 42,
+                value: Some(ByteBuf(b"hello"))
+            }
+        );
+    }
+
+    #[test]
+    fn test_list() {
+        assert_eq!(from_bytes::<Vec<ByteBuf<'_>>>(b"le").unwrap(), vec![]);
+        assert_eq!(
+            from_bytes::<Vec<ByteBuf<'_>>>(b"l5:hello2:mee").unwrap(),
+            vec![ByteBuf(b"hello"), ByteBuf(b"me")]
+        );
     }
 }

@@ -9,7 +9,7 @@ use crate::deserialize::from_bytes;
 
 pub fn dyn_from_bytes<'de, BufT>(
     buf: &'de [u8],
-) -> Result<BencodeValue<BufT>, crate::deserialize::Error>
+) -> Result<BencodeValue<BufT>, crate::deserialize::ErrorWithContext<'de>>
 where
     BufT: From<&'de [u8]> + std::hash::Hash + Eq,
 {
