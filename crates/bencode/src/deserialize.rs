@@ -29,17 +29,26 @@ impl<'de> BencodeDeserializer<'de> {
     pub fn into_remaining(self) -> &'de [u8] {
         self.buf
     }
+
+    pub fn check_start(&self, c: u8, err: Error) -> Result<(), Error> {
+        match self.buf.first() {
+            Some(start) if *start == c => Ok(()),
+            Some(_) => Err(err),
+            None => Err(Error::Eof),
+        }
+    }
+
     fn parse_integer(&mut self) -> Result<i64, Error> {
         match memchr(b'e', self.buf) {
             Some(end) => {
                 let intbytes = &self.buf[1..end];
                 let value: i64 =
                     atoi::atoi(intbytes).ok_or_else(|| Error::new_str(&"invalid int"))?;
-                let rem = self.buf.get(end + 1..).unwrap_or_default();
+                let rem = &self.buf[end + 1..];
                 self.buf = rem;
                 Ok(value)
             }
-            None => Err(Error::new_str(&"error parsing integer: eof")),
+            None => Err(Error::Eof),
         }
     }
 
@@ -51,10 +60,7 @@ impl<'de> BencodeDeserializer<'de> {
                     .ok_or_else(|| Error::new_str(&"invalid list: expected int length"))?;
                 let bytes_start = length_delim + 1;
                 let bytes_end = bytes_start + length;
-                let bytes = &self
-                    .buf
-                    .get(bytes_start..bytes_end)
-                    .ok_or_else(|| Error::new_str(&"invalid list: not enough data"))?;
+                let bytes = &self.buf.get(bytes_start..bytes_end).ok_or(Error::Eof)?;
                 let rem = self.buf.get(bytes_end..).unwrap_or_default();
                 self.buf = rem;
                 Ok(bytes)
@@ -69,7 +75,7 @@ impl<'de> BencodeDeserializer<'de> {
             Some(_) => {
                 return Err(Error::new_str(&"invalid list: expected int"));
             }
-            None => return Err(Error::new_str(&"invalist list: unexpected eof")),
+            None => return Err(Error::Eof),
         };
         let b = self.parse_bytes()?;
         if self.parsing_key && self.field_context.try_push(ByteBuf(b)).is_err() {
@@ -160,7 +166,11 @@ impl std::fmt::Display for ErrorWithContext<'_> {
     }
 }
 
-impl std::error::Error for Box<ErrorWithContext<'_>> {}
+impl std::error::Error for ErrorWithContext<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.kind)
+    }
+}
 
 impl Error {
     fn new_str(msg: &'static &'static str) -> Self {
@@ -189,7 +199,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
             Some(b'i') => self.deserialize_u64(visitor),
             Some(b'l') => self.deserialize_seq(visitor),
             Some(_) => self.deserialize_bytes(visitor),
-            None => Err(Error::new_str(&"empty input")),
+            None => Err(Error::Eof),
         }
     }
 
@@ -197,12 +207,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        if self.buf.is_empty() {
-            return Err(Error::Eof);
-        }
-        if !self.buf.starts_with(b"i") {
-            return Err(Error::new_str(&"expected bencode int to represent bool"));
-        }
+        self.check_start(b'i', Error::InvalidValue)?;
         let value = self.parse_integer()?;
         if value > 1 {
             return Err(Error::InvalidBool(value));
@@ -235,12 +240,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        if self.buf.is_empty() {
-            return Err(Error::Eof);
-        }
-        if !self.buf.starts_with(b"i") {
-            return Err(Error::new_str(&"expected bencode int"));
-        }
+        self.check_start(b'i', Error::InvalidValue)?;
         visitor.visit_i64(self.parse_integer()?)
     }
 
@@ -372,13 +372,8 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        if self.buf.is_empty() {
-            return Err(Error::Eof);
-        }
-        if !self.buf.starts_with(b"l") {
-            return Err(Error::new_str(&"expected \"l\" as start of list"));
-        }
-        self.buf = self.buf.get(1..).unwrap_or_default();
+        self.check_start(b'l', Error::InvalidValue)?;
+        self.buf = &self.buf[1..];
         visitor.visit_seq(SeqAccess { de: self })
     }
 
@@ -405,12 +400,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        if self.buf.is_empty() {
-            return Err(Error::Eof);
-        }
-        if !self.buf.starts_with(b"d") {
-            return Err(Error::new_str(&"expected bencode dict"));
-        }
+        self.check_start(b'd', Error::InvalidValue)?;
         self.buf = self.buf.get(1..).unwrap_or_default();
         visitor.visit_map(MapAccess { de: self })
     }
