@@ -26,12 +26,7 @@ default-tls = [
     "librqbit-core/sha1-crypto-hash",
 ]
 prometheus = ["metrics-exporter-prometheus"]
-rust-tls = [
-    "reqwest/rustls-tls",
-    "sha1w/sha1-ring",
-    "sha1w/sha1-ring",
-    "librqbit-core/sha1-ring",
-]
+rust-tls = ["reqwest/rustls-tls", "sha1w/sha1-ring", "librqbit-core/sha1-ring"]
 storage_middleware = ["lru"]
 storage_examples = []
 tracing-subscriber-utils = ["tracing-subscriber"]

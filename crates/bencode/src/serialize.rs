@@ -359,3 +359,62 @@ pub fn bencode_serialize_to_writer<T: Serialize, W: std::io::Write>(
     value.serialize(&mut serializer)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use buffers::{ByteBuf, ByteBufOwned};
+    use serde::Serialize;
+
+    use crate::bencode_serialize_to_writer;
+
+    fn ser<T: Serialize>(value: T) -> Result<ByteBufOwned, crate::SerializeError> {
+        let mut vec = Vec::new();
+        bencode_serialize_to_writer(&value, &mut vec)?;
+        Ok(vec.into())
+    }
+
+    #[test]
+    fn test_ints() {
+        assert_eq!(ser(42u16).unwrap(), b"i42e"[..].into());
+        assert_eq!(ser(42u32).unwrap(), b"i42e"[..].into());
+        assert_eq!(ser(42u64).unwrap(), b"i42e"[..].into());
+    }
+
+    #[test]
+    fn test_bytes() {
+        assert_eq!(ser(ByteBuf(b"abc")).unwrap(), b"3:abc"[..].into());
+        assert_eq!(
+            ser(ByteBufOwned::from(&b"abc"[..])).unwrap(),
+            b"3:abc"[..].into()
+        );
+    }
+
+    #[test]
+    fn test_seq() {
+        assert_eq!(
+            ser(&[ByteBuf(b"foo"), ByteBuf(b"bar")][..]).unwrap(),
+            b"l3:foo3:bare"[..].into()
+        );
+        assert_eq!(
+            ser(vec![ByteBuf(b"foo"), ByteBuf(b"bar")]).unwrap(),
+            b"l3:foo3:bare"[..].into()
+        );
+    }
+
+    #[test]
+    fn test_struct() {
+        #[derive(Serialize, Debug)]
+        struct S<'a> {
+            key: u32,
+            value: ByteBuf<'a>,
+        }
+        assert_eq!(
+            ser(S {
+                key: 42,
+                value: b"foo"[..].into()
+            })
+            .unwrap(),
+            b"d3:keyi42e5:value3:fooe"[..].into()
+        );
+    }
+}
