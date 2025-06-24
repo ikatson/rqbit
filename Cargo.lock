@@ -3020,7 +3020,6 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-sha1-wrapper",
- "memchr",
  "serde",
  "thiserror 2.0.12",
 ]
