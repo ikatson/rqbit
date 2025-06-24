@@ -4,13 +4,13 @@ use std::io::{BufWriter, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use bencode::bencode_serialize_to_writer;
+use bencode::{WithRawBytes, bencode_serialize_to_writer};
 use buffers::ByteBufOwned;
 use bytes::Bytes;
 use librqbit_core::Id20;
 use librqbit_core::magnet::Magnet;
 use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
-use sha1w::{ISha1, Sha1};
+use sha1w::ISha1;
 
 use crate::spawn_utils::BlockingSpawner;
 
@@ -32,27 +32,19 @@ fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Resu
     Ok(())
 }
 
-fn compute_info_hash(t: &TorrentMetaV1Info<ByteBufOwned>) -> anyhow::Result<Id20> {
-    struct W {
-        hash: sha1w::Sha1,
-    }
-    impl std::io::Write for W {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.hash.update(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut writer = BufWriter::new(W { hash: Sha1::new() });
+fn compute_info_hash(t: &TorrentMetaV1Info<ByteBufOwned>) -> anyhow::Result<(Id20, Bytes)> {
+    let mut writer = BufWriter::new(Vec::new());
     bencode_serialize_to_writer(t, &mut writer)?;
-    let hash = writer
+    let bytes: Bytes = writer
         .into_inner()
         .map_err(|_| anyhow::anyhow!("into_inner errored"))?
-        .hash;
-    Ok(Id20::new(hash.finish()))
+        .into();
+    let hash = Id20::new({
+        let mut h = sha1w::Sha1::new();
+        h.update(&bytes);
+        h.finish()
+    });
+    Ok((hash, bytes))
 }
 
 fn choose_piece_length(_input_files: &[Cow<'_, Path>]) -> u32 {
@@ -225,12 +217,15 @@ pub async fn create_torrent<'a>(
         .map(|t| ByteBufOwned::from(t.as_bytes()))
         .collect();
     let res = create_torrent_raw(path, options).await?;
-    let info_hash = compute_info_hash(&res.info).context("error computing info hash")?;
+    let (info_hash, bytes) = compute_info_hash(&res.info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
             announce: None,
             announce_list: vec![trackers],
-            info: res.info,
+            info: WithRawBytes {
+                data: res.info,
+                raw_bytes: ByteBufOwned(bytes),
+            },
             comment: None,
             created_by: None,
             encoding: Some(b"utf-8"[..].into()),

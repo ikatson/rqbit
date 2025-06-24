@@ -403,28 +403,31 @@ mod tests {
         TorrentMetaV1Owned {
             announce: None,
             announce_list: vec![],
-            info: TorrentMetaV1Info {
-                name: name.map(|n| n.as_bytes().into()),
-                pieces: b""[..].into(),
-                piece_length: 1,
-                length: None,
-                md5sum: None,
-                files: Some(
-                    files
-                        .iter()
-                        .map(|f| TorrentMetaV1File {
-                            length: 1,
-                            path: f.split("/").map(|f| f.as_bytes().into()).collect(),
-                            attr: None,
-                            sha1: None,
-                            symlink_path: None,
-                        })
-                        .collect(),
-                ),
-                attr: None,
-                sha1: None,
-                symlink_path: None,
-                private: false,
+            info: bencode::WithRawBytes {
+                data: TorrentMetaV1Info {
+                    name: name.map(|n| n.as_bytes().into()),
+                    pieces: b""[..].into(),
+                    piece_length: 1,
+                    length: None,
+                    md5sum: None,
+                    files: Some(
+                        files
+                            .iter()
+                            .map(|f| TorrentMetaV1File {
+                                length: 1,
+                                path: f.split("/").map(|f| f.as_bytes().into()).collect(),
+                                attr: None,
+                                sha1: None,
+                                symlink_path: None,
+                            })
+                            .collect(),
+                    ),
+                    attr: None,
+                    sha1: None,
+                    symlink_path: None,
+                    private: false,
+                },
+                raw_bytes: Default::default(),
             },
             comment: None,
             created_by: None,
@@ -439,7 +442,7 @@ mod tests {
     #[test]
     fn test_torrent_file_tree_single() -> anyhow::Result<()> {
         let t = create_torrent(Some("test t"), &["file0"]);
-        let tree = TorrentFileTree::build(0, &t.info)?;
+        let tree = TorrentFileTree::build(0, &t.info.data)?;
         assert_eq!(
             &tree.nodes,
             &[TorrentFileTreeNode {
@@ -456,7 +459,7 @@ mod tests {
     #[test]
     fn test_torrent_file_tree_flat() -> anyhow::Result<()> {
         let t = create_torrent(Some("test t"), &["file0", "file1"]);
-        let tree = TorrentFileTree::build(0, &t.info)?;
+        let tree = TorrentFileTree::build(0, &t.info.data)?;
         assert_eq!(
             &tree.nodes,
             &[
@@ -490,7 +493,7 @@ mod tests {
             Some("test t"),
             &["file0", "file1", "dir0/file2", "dir0/dir1/file3"],
         );
-        let tree = TorrentFileTree::build(0, &t.info)?;
+        let tree = TorrentFileTree::build(0, &t.info.data)?;
         assert_eq!(
             &tree.nodes,
             &[

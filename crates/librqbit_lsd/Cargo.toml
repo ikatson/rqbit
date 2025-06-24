@@ -3,14 +3,6 @@ name = "librqbit-lsd"
 version = "0.1.0"
 edition = "2024"
 
-[features]
-default = ["sha1-crypto-hash"]
-sha1-crypto-hash = [
-    "librqbit-sha1-wrapper/sha1-crypto-hash",
-    "librqbit-core/sha1-crypto-hash",
-]
-sha1-ring = ["librqbit-sha1-wrapper/sha1-ring", "librqbit-core/sha1-ring"]
-
 [dependencies]
 anyhow = "1.0.98"
 librqbit-dualstack-sockets = "0.6.4"

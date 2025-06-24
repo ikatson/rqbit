@@ -23,7 +23,6 @@ timed_existence = []
 default-tls = [
     "reqwest/default-tls",
     "sha1w/sha1-crypto-hash",
-    "bencode/sha1-crypto-hash",
     "librqbit-core/sha1-crypto-hash",
 ]
 prometheus = ["metrics-exporter-prometheus"]
@@ -31,7 +30,6 @@ rust-tls = [
     "reqwest/rustls-tls",
     "sha1w/sha1-ring",
     "sha1w/sha1-ring",
-    "bencode/sha1-ring",
     "librqbit-core/sha1-ring",
 ]
 storage_middleware = ["lru"]

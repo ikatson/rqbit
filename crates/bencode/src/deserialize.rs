@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 use arrayvec::ArrayVec;
 use atoi::FromRadix10;
 use buffers::ByteBuf;
-use serde::{Deserialize, forward_to_deserialize_any};
+use clone_to_owned::CloneToOwned;
+use serde::{Deserialize, Serialize, forward_to_deserialize_any};
 
 use crate::raw_value::TAG;
 
@@ -12,11 +13,6 @@ pub struct BencodeDeserializer<'de> {
     field_context: ErrorContext<'de>,
     field_context_did_not_fit: u8,
     parsing_key: bool,
-
-    // This is a f**ing hack
-    pub is_torrent_info: bool,
-    pub torrent_info_digest: Option<[u8; 20]>,
-    pub torrent_info_bytes: Option<&'de [u8]>,
 }
 
 impl<'de> BencodeDeserializer<'de> {
@@ -26,9 +22,6 @@ impl<'de> BencodeDeserializer<'de> {
             field_context: Default::default(),
             field_context_did_not_fit: 0,
             parsing_key: false,
-            is_torrent_info: false,
-            torrent_info_digest: None,
-            torrent_info_bytes: None,
         }
     }
 
@@ -113,6 +106,8 @@ pub enum Error {
     InvalidLength(usize),
     #[error("invalid value")]
     InvalidValue,
+    #[error("WithRawValue: invalid value")]
+    RawDeInvalidValue,
     #[error("invalid utf-8")]
     InvalidUtf8,
     #[error("eof")]
@@ -452,22 +447,7 @@ impl<'de> serde::de::MapAccess<'de> for MapAccess<'_, 'de> {
     where
         V: serde::de::DeserializeSeed<'de>,
     {
-        #[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
-        let buf_before = self.de.buf;
         let value = seed.deserialize(&mut *self.de)?;
-        #[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
-        {
-            use sha1w::{ISha1, Sha1};
-            if self.de.is_torrent_info && self.de.field_context.as_slice() == [ByteBuf(b"info")] {
-                let len = self.de.buf.as_ptr() as usize - buf_before.as_ptr() as usize;
-                let mut hash = Sha1::new();
-                let torrent_info_bytes = &buf_before[..len];
-                hash.update(torrent_info_bytes);
-                let digest = hash.finish();
-                self.de.torrent_info_digest = Some(digest);
-                self.de.torrent_info_bytes = Some(torrent_info_bytes);
-            }
-        }
         if self.de.field_context_did_not_fit > 0 {
             self.de.field_context_did_not_fit -= 1;
         } else {
@@ -525,7 +505,7 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for WithRawValueDeserializer<'a, 'de> {
             where
                 V: serde::de::Visitor<'de>,
             {
-                Err(Error::InvalidValue)
+                Err(Error::RawDeInvalidValue)
             }
 
             fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -535,9 +515,16 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for WithRawValueDeserializer<'a, 'de> {
                 visitor.visit_borrowed_bytes(self.0)
             }
 
+            fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            where
+                V: serde::de::Visitor<'de>,
+            {
+                visitor.visit_borrowed_bytes(self.0)
+            }
+
             forward_to_deserialize_any! {
                 bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-                byte_buf option unit unit_struct newtype_struct seq tuple
+                option unit unit_struct newtype_struct seq tuple
                 tuple_struct map struct enum identifier ignored_any
             }
         }
@@ -547,10 +534,30 @@ impl<'a, 'de> serde::de::SeqAccess<'de> for WithRawValueDeserializer<'a, 'de> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithRawBytes<T, Buf> {
     pub data: T,
     pub raw_bytes: Buf,
+}
+
+impl<T: CloneToOwned, Buf: CloneToOwned> CloneToOwned for WithRawBytes<T, Buf> {
+    type Target = WithRawBytes<T::Target, Buf::Target>;
+
+    fn clone_to_owned(&self, within_buffer: Option<&bytes::Bytes>) -> Self::Target {
+        WithRawBytes {
+            data: self.data.clone_to_owned(within_buffer),
+            raw_bytes: self.raw_bytes.clone_to_owned(within_buffer),
+        }
+    }
+}
+
+impl<T: Serialize, Buf> Serialize for WithRawBytes<T, Buf> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.data.serialize(serializer)
+    }
 }
 
 impl<'de, T, Buf> Deserialize<'de> for WithRawBytes<T, Buf>

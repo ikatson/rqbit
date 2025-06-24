@@ -8,14 +8,6 @@ documentation = "https://docs.rs/librqbit-upnp-serve"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
-[features]
-default = ["sha1-crypto-hash"]
-sha1-crypto-hash = [
-    "librqbit-sha1-wrapper/sha1-crypto-hash",
-    "librqbit-core/sha1-crypto-hash",
-]
-sha1-ring = ["librqbit-sha1-wrapper/sha1-ring", "librqbit-core/sha1-ring"]
-
 [dependencies]
 anyhow = "1.0.86"
 axum = { version = "0.8", features = ["tokio"] }
