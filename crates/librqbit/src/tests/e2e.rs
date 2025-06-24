@@ -111,6 +111,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                             ..Default::default()
                         }),
                         root_span: Some(error_span!(parent: None, "server", id = i)),
+                        disable_local_service_discovery: true,
                         ..Default::default()
                     },
                 )
@@ -226,6 +227,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                     ..Default::default()
                 }),
                 fastresume: true,
+                disable_local_service_discovery: true,
                 root_span: Some(error_span!("client")),
                 ..Default::default()
             },
