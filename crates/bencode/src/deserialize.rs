@@ -69,7 +69,23 @@ impl<'de> BencodeDeserializer<'de> {
     }
 }
 
+/// Deserialize a bencode value. If there are trailing bytes, will error.
 pub fn from_bytes<'a, T>(buf: &'a [u8]) -> Result<T, ErrorWithContext<'a>>
+where
+    T: serde::de::Deserialize<'a>,
+{
+    let (v, rest) = from_bytes_with_rest(buf)?;
+    if !rest.is_empty() {
+        return Err(ErrorWithContext {
+            kind: Error::BytesRemaining(rest.len()),
+            ctx: Default::default(),
+        });
+    }
+    Ok(v)
+}
+
+/// Deserialize a bencode value at the start of the buffer, return it and the remaining bytes.
+pub fn from_bytes_with_rest<'a, T>(buf: &'a [u8]) -> Result<(T, &'a [u8]), ErrorWithContext<'a>>
 where
     T: serde::de::Deserialize<'a>,
 {
@@ -83,13 +99,7 @@ where
             });
         }
     };
-    if !de.buf.is_empty() {
-        return Err(ErrorWithContext {
-            kind: Error::BytesRemaining(de.buf.len()),
-            ctx: de.field_context,
-        });
-    }
-    Ok(v)
+    Ok((v, de.buf))
 }
 
 #[derive(thiserror::Error, Debug)]
