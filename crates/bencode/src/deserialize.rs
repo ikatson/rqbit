@@ -30,9 +30,12 @@ impl<'de> BencodeDeserializer<'de> {
         self.buf
     }
 
-    pub fn check_start(&self, c: u8, err: Error) -> Result<(), Error> {
+    pub fn parse_first_byte(&mut self, c: u8, err: Error) -> Result<(), Error> {
         match self.buf.first() {
-            Some(start) if *start == c => Ok(()),
+            Some(start) if *start == c => {
+                self.buf = &self.buf[1..];
+                Ok(())
+            }
             Some(_) => Err(err),
             None => Err(Error::Eof),
         }
@@ -41,9 +44,8 @@ impl<'de> BencodeDeserializer<'de> {
     fn parse_integer(&mut self) -> Result<i64, Error> {
         match memchr(b'e', self.buf) {
             Some(end) => {
-                let intbytes = &self.buf[1..end];
-                let value: i64 =
-                    atoi::atoi(intbytes).ok_or_else(|| Error::new_str(&"invalid int"))?;
+                let intbytes = &self.buf[..end];
+                let value: i64 = atoi::atoi(intbytes).ok_or(Error::InvalidValue)?;
                 let rem = &self.buf[end + 1..];
                 self.buf = rem;
                 Ok(value)
@@ -53,31 +55,19 @@ impl<'de> BencodeDeserializer<'de> {
     }
 
     fn parse_bytes(&mut self) -> Result<&'de [u8], Error> {
-        match memchr(b':', self.buf) {
+        let b = match memchr(b':', self.buf) {
             Some(length_delim) => {
                 let lenbytes = &self.buf[..length_delim];
-                let length: usize = atoi::atoi(lenbytes)
-                    .ok_or_else(|| Error::new_str(&"invalid list: expected int length"))?;
+                let length: usize = atoi::atoi(lenbytes).ok_or(Error::InvalidBytesNotInt)?;
                 let bytes_start = length_delim + 1;
                 let bytes_end = bytes_start + length;
-                let bytes = &self.buf.get(bytes_start..bytes_end).ok_or(Error::Eof)?;
-                let rem = self.buf.get(bytes_end..).unwrap_or_default();
-                self.buf = rem;
-                Ok(bytes)
+                let bytes = self.buf.get(bytes_start..bytes_end).ok_or(Error::Eof)?;
+                self.buf = &self.buf[bytes_end..];
+                bytes
             }
-            None => Err(Error::new_str(&"invalid list: expected colon")),
-        }
-    }
-
-    fn parse_bytes_checked(&mut self) -> Result<&'de [u8], Error> {
-        match self.buf.first().copied() {
-            Some(b'0'..=b'9') => {}
-            Some(_) => {
-                return Err(Error::new_str(&"invalid list: expected int"));
-            }
-            None => return Err(Error::Eof),
+            None if self.buf.is_empty() => return Err(Error::Eof),
+            None => return Err(Error::InvalidBytesNoColon),
         };
-        let b = self.parse_bytes()?;
         if self.parsing_key && self.field_context.try_push(ByteBuf(b)).is_err() {
             self.field_context_did_not_fit += 1;
         }
@@ -110,20 +100,24 @@ where
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("{0} is not supported by bencode")]
-    NotSupported(&'static &'static str),
-    #[error("{0}")]
-    StaticStr(&'static &'static str),
+    #[error("not supported by bencode")]
+    NotSupported,
     #[error("{0}")]
     Custom(Box<String>), // box to reduce size
     #[error("expected 0 or 1 for boolean, got {0}")]
     InvalidBool(i64),
     #[error("deserialized successfully, but {0} bytes remaining")]
     BytesRemaining(usize),
-    #[error("invalid length: ")]
+    #[error("invalid length: {0}")]
     InvalidLength(usize),
     #[error("invalid value")]
     InvalidValue,
+    #[error("expected int_len:data, but int_len is not an integer")]
+    InvalidBytesNotInt,
+    #[error("expected int_len:data, but \":\" not found")]
+    InvalidBytesNoColon,
+    #[error("invalid utf-8")]
+    InvalidUtf8,
     #[error("eof")]
     Eof,
 }
@@ -172,12 +166,6 @@ impl std::error::Error for ErrorWithContext<'_> {
     }
 }
 
-impl Error {
-    fn new_str(msg: &'static &'static str) -> Self {
-        Error::StaticStr(msg)
-    }
-}
-
 impl serde::de::Error for Error {
     fn custom<T>(msg: T) -> Self
     where
@@ -207,7 +195,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        self.check_start(b'i', Error::InvalidValue)?;
+        self.parse_first_byte(b'i', Error::InvalidValue)?;
         let value = self.parse_integer()?;
         if value > 1 {
             return Err(Error::InvalidBool(value));
@@ -240,7 +228,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        self.check_start(b'i', Error::InvalidValue)?;
+        self.parse_first_byte(b'i', Error::InvalidValue)?;
         visitor.visit_i64(self.parse_integer()?)
     }
 
@@ -276,37 +264,29 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support floats"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support floats"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support chars"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        let first = match self.buf.first().copied() {
-            Some(first) => first,
-            None => return Err(Error::Eof),
-        };
-        match first {
-            b'0'..=b'9' => {}
-            _ => return Err(Error::new_str(&"expected bencode string")),
-        }
         let b = self.parse_bytes()?;
-        let s = std::str::from_utf8(b).map_err(|_| Error::new_str(&"invalid utf-8"))?;
+        let s = std::str::from_utf8(b).map_err(|_| Error::InvalidUtf8)?;
         visitor.visit_borrowed_str(s)
     }
 
@@ -321,7 +301,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let b = self.parse_bytes_checked()?;
+        let b = self.parse_bytes()?;
         visitor.visit_borrowed_bytes(b)
     }
 
@@ -343,7 +323,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support unit types"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_unit_struct<V>(
@@ -354,7 +334,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't support unit structs"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_newtype_struct<V>(
@@ -365,15 +345,14 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"bencode doesn't newtype structs"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        self.check_start(b'l', Error::InvalidValue)?;
-        self.buf = &self.buf[1..];
+        self.parse_first_byte(b'l', Error::InvalidValue)?;
         visitor.visit_seq(SeqAccess { de: self })
     }
 
@@ -400,8 +379,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        self.check_start(b'd', Error::InvalidValue)?;
-        self.buf = self.buf.get(1..).unwrap_or_default();
+        self.parse_first_byte(b'd', Error::InvalidValue)?;
         visitor.visit_map(MapAccess { de: self })
     }
 
@@ -426,15 +404,14 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        Err(Error::NotSupported(&"deserializing enums not supported"))
+        Err(Error::NotSupported)
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        let name = self.parse_bytes_checked()?;
-        visitor.visit_borrowed_bytes(name)
+        visitor.visit_borrowed_bytes(self.parse_bytes()?)
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
