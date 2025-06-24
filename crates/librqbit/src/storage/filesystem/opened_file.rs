@@ -44,7 +44,7 @@ impl OurFileExt for File {
                 buf.get_mut(l0..l0 + l1)
                     .context("buf too small")?
                     .copy_from_slice(&bufs[1]);
-                self.pwrite_all(offset, &buf)?;
+                self.pwrite_all(offset, &buf[..l0 + l1])?;
                 Ok(l0 + l1)
             }
         }
