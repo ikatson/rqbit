@@ -79,7 +79,7 @@ fn torrent_from_bytes(bytes: Bytes) -> anyhow::Result<ParsedTorrentFile> {
         "all fields in torrent: {:#?}",
         bencode::dyn_from_bytes::<ByteBuf>(&bytes)
     );
-    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes_ext::<ByteBuf>(&bytes)?;
+    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes(&bytes)?;
     Ok(ParsedTorrentFile {
         meta: parsed.clone_to_owned(Some(&bytes)),
         torrent_bytes: bytes,
@@ -1653,7 +1653,7 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
 mod tests {
     use buffers::ByteBuf;
     use itertools::Itertools;
-    use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes_ext};
+    use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
 
     use super::torrent_file_from_info_bytes;
 
@@ -1668,13 +1668,12 @@ mod tests {
 
         let orig_full_torrent =
             include_bytes!("../resources/ubuntu-21.04-desktop-amd64.iso.torrent");
-        let parsed = torrent_from_bytes_ext::<ByteBuf>(&orig_full_torrent[..]).unwrap();
+        let parsed = torrent_from_bytes(&orig_full_torrent[..]).unwrap();
         let parsed_trackers = get_trackers(&parsed);
 
         let generated_torrent =
             torrent_file_from_info_bytes(parsed.info.raw_bytes.as_ref(), &parsed_trackers).unwrap();
-        let generated_parsed =
-            torrent_from_bytes_ext::<ByteBuf>(generated_torrent.as_ref()).unwrap();
+        let generated_parsed = torrent_from_bytes(generated_torrent.as_ref()).unwrap();
         assert_eq!(parsed.info_hash, generated_parsed.info_hash);
         assert_eq!(parsed.info, generated_parsed.info);
         assert_eq!(parsed_trackers, get_trackers(&generated_parsed));

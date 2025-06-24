@@ -1,6 +1,6 @@
 use anyhow::Context;
 use bencode::{WithRawBytes, from_bytes};
-use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
+use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use itertools::Either;
@@ -21,33 +21,19 @@ pub struct ParsedTorrent<BufType> {
     pub info_bytes: BufType,
 }
 
-/// Parse torrent metainfo from bytes (includes additional fields).
-pub fn torrent_from_bytes_ext<'de, BufType: ByteBufT + Deserialize<'de>>(
-    buf: &'de [u8],
-) -> anyhow::Result<TorrentMetaV1<BufType>> {
-    #[cfg(not(any(feature = "sha1-ring", feature = "sha1-crypto-hash")))]
-    anyhow::bail!("enable sha1-ring or sha1-crypto-hash to deserialize torrents");
-
-    let mut t: TorrentMetaV1<BufType> = from_bytes(buf)
+/// Parse torrent metainfo from bytes (includes info_hash).
+#[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
+pub fn torrent_from_bytes<'de>(buf: &'de [u8]) -> anyhow::Result<TorrentMetaV1<ByteBuf<'de>>> {
+    let mut t: TorrentMetaV1<ByteBuf<'_>> = from_bytes(buf)
         .inspect_err(|e| tracing::trace!("error deserializing torrent: {e:#}"))
         .map_err(|e| e.into_kind())?;
 
-    #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
-    {
-        use sha1w::ISha1;
+    use sha1w::ISha1;
 
-        let mut digest = sha1w::Sha1::new();
-        digest.update(t.info.raw_bytes.as_ref());
-        t.info_hash = Id20::new(digest.finish());
-    }
+    let mut digest = sha1w::Sha1::new();
+    digest.update(t.info.raw_bytes.as_ref());
+    t.info_hash = Id20::new(digest.finish());
     Ok(t)
-}
-
-/// Parse torrent metainfo from bytes.
-pub fn torrent_from_bytes<'de, BufType: ByteBufT + Deserialize<'de>>(
-    buf: &'de [u8],
-) -> anyhow::Result<TorrentMetaV1<BufType>> {
-    torrent_from_bytes_ext(buf)
 }
 
 fn is_false(b: &bool) -> bool {
@@ -421,12 +407,6 @@ mod tests {
 
     const TORRENT_BYTES: &[u8] =
         include_bytes!("../../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent");
-
-    #[test]
-    fn test_deserialize_torrent_owned() {
-        let torrent: TorrentMetaV1Owned = torrent_from_bytes(TORRENT_BYTES).unwrap();
-        dbg!(torrent);
-    }
 
     #[test]
     fn test_deserialize_torrent_borrowed() {

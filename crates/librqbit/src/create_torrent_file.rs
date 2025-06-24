@@ -240,7 +240,6 @@ pub async fn create_torrent<'a>(
 
 #[cfg(test)]
 mod tests {
-    use buffers::{ByteBuf, ByteBufOwned};
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
     use crate::create_torrent;
@@ -260,10 +259,7 @@ mod tests {
 
         let bytes = torrent.as_bytes().unwrap();
 
-        let deserialized = torrent_from_bytes::<ByteBuf>(&bytes).unwrap();
-        assert_eq!(torrent.info_hash(), deserialized.info_hash);
-
-        let deserialized = torrent_from_bytes::<ByteBufOwned>(&bytes).unwrap();
+        let deserialized = torrent_from_bytes(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
     }
 }
