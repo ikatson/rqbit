@@ -5,7 +5,7 @@ use buffers::ByteBuf;
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
     field_context: ErrorContext<'de>,
-    field_context_did_not_fit: usize,
+    field_context_did_not_fit: u8,
     parsing_key: bool,
 
     // This is a f**ing hack
@@ -26,10 +26,12 @@ impl<'de> BencodeDeserializer<'de> {
             torrent_info_bytes: None,
         }
     }
+
     pub fn into_remaining(self) -> &'de [u8] {
         self.buf
     }
 
+    #[inline]
     pub fn parse_first_byte(&mut self, c: u8, err: Error) -> Result<(), Error> {
         match self.buf.first() {
             Some(start) if *start == c => {
@@ -55,7 +57,7 @@ impl<'de> BencodeDeserializer<'de> {
     fn parse_bytes(&mut self) -> Result<&'de [u8], Error> {
         let b = match usize::from_radix_10(self.buf) {
             (v, len) if len > 0 && self.buf.get(len) == Some(&b':') => {
-                self.buf = &self.buf[len + 1..];
+                self.buf = unsafe { self.buf.get_unchecked(len + 1..) };
                 let (bytes, rest) = self.buf.split_at_checked(v).ok_or(Error::Eof)?;
                 self.buf = rest;
                 bytes
@@ -63,7 +65,7 @@ impl<'de> BencodeDeserializer<'de> {
             _ => return Err(Error::InvalidValue),
         };
         if self.parsing_key && self.field_context.try_push(ByteBuf(b)).is_err() {
-            self.field_context_did_not_fit += 1;
+            self.field_context_did_not_fit = self.field_context_did_not_fit.saturating_add(1);
         }
         Ok(b)
     }
