@@ -29,6 +29,15 @@ pub struct PeerExtendedMessageIds {
     pub ut_pex: Option<u8>,
 }
 
+impl PeerExtendedMessageIds {
+    pub fn my() -> Self {
+        Self {
+            ut_metadata: Some(MY_EXTENDED_UT_METADATA),
+            ut_pex: Some(MY_EXTENDED_UT_PEX),
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum ExtendedMessage<ByteBuf: ByteBufT> {
     Handshake(ExtendedHandshake<ByteBuf>),
@@ -108,7 +117,7 @@ mod tests {
     use buffers::ByteBuf;
 
     use crate::{
-        DoubleBufHelper, MY_EXTENDED_UT_METADATA, MY_EXTENDED_UT_PEX, MessageDeserializeError,
+        DoubleBufHelper, MessageDeserializeError,
         extended::{
             ExtendedMessage, PeerExtendedMessageIds,
             ut_metadata::{UtMetadata, UtMetadataData},
@@ -118,10 +127,7 @@ mod tests {
     fn ut_metadata_trailing_bytes_is_error(msg: ExtendedMessage<ByteBuf>) {
         let mut buf = [0u8; 100];
         let sz = msg
-            .serialize(&mut buf, &|| PeerExtendedMessageIds {
-                ut_metadata: Some(MY_EXTENDED_UT_METADATA),
-                ut_pex: Some(MY_EXTENDED_UT_PEX),
-            })
+            .serialize(&mut buf, &|| PeerExtendedMessageIds::my())
             .unwrap();
 
         let deserialized =
@@ -152,10 +158,7 @@ mod tests {
             b"\x42\x42\x42\x42\x42"[..].into(),
         )));
         let sz = msg
-            .serialize(&mut buf, &|| PeerExtendedMessageIds {
-                ut_metadata: Some(MY_EXTENDED_UT_METADATA),
-                ut_pex: Some(MY_EXTENDED_UT_PEX),
-            })
+            .serialize(&mut buf, &|| PeerExtendedMessageIds::my())
             .unwrap();
         let bencode_sz = buf[..sz].iter().position(|byte| *byte == 0x42).unwrap();
 

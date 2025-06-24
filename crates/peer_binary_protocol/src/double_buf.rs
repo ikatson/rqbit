@@ -58,8 +58,8 @@ impl<'a> DoubleBufHelper<'a> {
         Ok(res)
     }
 
-    pub fn get(&self) -> (&'a [u8], &'a [u8]) {
-        (self.buf_0, self.buf_1)
+    pub fn get(&self) -> [&'a [u8]; 2] {
+        [self.buf_0, self.buf_1]
     }
 
     /// Read 4 big endian bytes and advance the buffer by 4 if successful.

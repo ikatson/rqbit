@@ -12,7 +12,7 @@ use tokio::io::AsyncReadExt;
 const BUFLEN: usize = 0x8000; // 32kb
 
 /// A ringbuffer for reading bittorrent messages from socket.
-/// Messages may thus span 2 slices (notably, Piece message), which is reflected in their contents.
+/// Messages may thus span 2 slices (notably, Piece message and UtMetadata messages), which is reflected in their contents.
 pub struct ReadBuf {
     buf: Box<[u8; BUFLEN]>,
     start: usize,
@@ -85,6 +85,9 @@ impl ReadBuf {
     // In rare cases, we might need to make the buffer contiguous, as the message
     // parsing code won't work with a split ringbuffer. Only "bitfield" and "extended" messages
     // need contiguous buffers.
+    // "Bitfield" however is always sent early, so in practice it won't ever happen. For "extended"
+    // in practice, it would rarely happen with UtMetadata::Data messages if the split happens to land
+    // in the middle of bencoded data (as we only can deserialize bencode from a single slice).
     fn make_contiguous(&mut self) -> anyhow::Result<()> {
         if self.is_contiguous() {
             bail!(
@@ -135,7 +138,7 @@ impl ReadBuf {
     /// Read a message into the buffer, try to deserialize it and call the callback on it.
     pub async fn read_message(
         &mut self,
-        mut conn: impl AsyncReadVectoredExt + Unpin,
+        conn: &mut BoxAsyncRead,
         timeout: Duration,
     ) -> anyhow::Result<Message<'_>> {
         loop {
@@ -181,6 +184,20 @@ impl ReadBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::Ipv4Addr, time::Duration};
+
+    use librqbit_core::constants::CHUNK_SIZE;
+    use peer_binary_protocol::{
+        MAX_MSG_LEN, Message,
+        extended::{
+            ExtendedMessage, PeerExtendedMessageIds,
+            ut_metadata::{UtMetadata, UtMetadataData},
+        },
+    };
+    use tokio::io::AsyncWriteExt;
+
+    use crate::{tests::test_util::setup_test_logging, type_aliases::BoxAsyncRead};
+
     use super::{BUFLEN, ReadBuf};
 
     #[test]
@@ -296,5 +313,73 @@ mod tests {
 
         // start=BUFLEN-1
         assert_one(BUFLEN - 1, 100, [99..BUFLEN - 1, 0..0]);
+    }
+
+    #[tokio::test]
+    async fn can_read_long_metainfo_correctly() {
+        setup_test_logging();
+        let reader = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+            .await
+            .unwrap();
+        let port = reader.local_addr().unwrap().port();
+        let mut writer = tokio::net::TcpStream::connect((Ipv4Addr::UNSPECIFIED, port))
+            .await
+            .unwrap()
+            .into_split()
+            .1;
+
+        const ITERATIONS: u32 = 4096;
+
+        let reader = async {
+            let reader = reader.accept().await.unwrap().0.into_split().0;
+            let mut reader: BoxAsyncRead = Box::new(reader);
+            let mut rb = ReadBuf::new();
+
+            for piece in 0..ITERATIONS {
+                let msg = rb
+                    .read_message(&mut reader, Duration::from_millis(10))
+                    .await
+                    .unwrap();
+                let utdata = match msg {
+                    Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(utdata))) => {
+                        utdata
+                    }
+                    other => panic!("expected utdata, got {other:?}"),
+                };
+                assert_eq!(utdata.len(), CHUNK_SIZE as usize);
+                assert_eq!(utdata.piece(), piece);
+                #[allow(clippy::cast_possible_truncation)]
+                let expected_byte = { piece as u8 };
+                let all_good = utdata
+                    .as_double_buf()
+                    .get()
+                    .into_iter()
+                    .flatten()
+                    .all(|b| *b == expected_byte);
+                if !all_good {
+                    panic!("broken data");
+                }
+            }
+        };
+
+        let pext = PeerExtendedMessageIds::my();
+        let writer = async {
+            let mut sbuf = [0u8; MAX_MSG_LEN];
+            let mut pbuf = [0u8; CHUNK_SIZE as usize];
+            for piece in 0..ITERATIONS {
+                #[allow(clippy::cast_possible_truncation)]
+                for b in pbuf.iter_mut() {
+                    *b = piece as u8;
+                }
+                let len = Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(
+                    UtMetadataData::from_bytes(piece, pbuf[..].into()),
+                )))
+                .serialize(&mut sbuf, &|| pext)
+                .unwrap();
+                writer.write_all(&sbuf[..len]).await.unwrap();
+            }
+        };
+
+        tokio::join!(reader, writer);
     }
 }

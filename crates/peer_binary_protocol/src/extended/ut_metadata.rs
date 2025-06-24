@@ -29,7 +29,7 @@ impl<ByteBuf: ByteBufT> UtMetadataData<ByteBuf> {
     }
 }
 
-impl UtMetadataData<ByteBuf<'_>> {
+impl<'a> UtMetadataData<ByteBuf<'a>> {
     pub fn piece(&self) -> u32 {
         self.piece
     }
@@ -41,6 +41,10 @@ impl UtMetadataData<ByteBuf<'_>> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data_0.as_ref().is_empty() && self.data_1.as_ref().is_empty()
+    }
+
+    pub fn as_double_buf(&self) -> DoubleBufHelper<'a> {
+        DoubleBufHelper::new(self.data_0.0, self.data_1.0)
     }
 
     pub fn copy_to_slice(&self, mut out: &mut [u8]) {
@@ -129,7 +133,7 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
             b"d8:msg_typei10e5:piecei4294967296e10:total_sizei16384ee".len();
         let (contig, is_contig) = match buf.get_contiguous(MAX_BMSG_SIZE.min(buf.len())) {
             Some(c) => (c, true),
-            None => (buf.get().0, false),
+            None => (buf.get()[0], false),
         };
 
         let mut de = BencodeDeserializer::new_from_buf(contig);
@@ -172,7 +176,7 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 if total_size > CHUNK_SIZE {
                     return Err(MessageDeserializeError::UtMetadataTooLarge(total_size));
                 }
-                let (data_0, data_1) = buf.get();
+                let [data_0, data_1] = buf.get();
                 Ok(UtMetadata::Data(UtMetadataData {
                     piece: message.piece,
                     data_0: data_0.into(),
