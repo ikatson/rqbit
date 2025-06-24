@@ -289,17 +289,20 @@ impl TrackerComms {
             anyhow::bail!("tracker responded with {:?}", response.status());
         }
         let bytes = response.bytes().await?;
-        if let Ok(error) = bencode::from_bytes::<tracker_comms_http::TrackerError>(&bytes) {
+        if let Ok((error, _)) =
+            bencode::from_bytes_with_rest::<tracker_comms_http::TrackerError>(&bytes)
+        {
             anyhow::bail!(
                 "tracker returned failure. Failure reason: {}",
                 error.failure_reason
             )
         };
-        let response =
-            bencode::from_bytes::<tracker_comms_http::TrackerResponse>(&bytes).map_err(|e| {
+        let response = bencode::from_bytes_with_rest::<tracker_comms_http::TrackerResponse>(&bytes)
+            .map_err(|e| {
                 tracing::trace!("error deserializing TrackerResponse: {e:#}");
                 e.into_kind()
-            })?;
+            })?
+            .0;
 
         for peer in response.iter_peers() {
             self.tx.send(peer).await?;
