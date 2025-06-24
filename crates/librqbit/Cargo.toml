@@ -132,7 +132,7 @@ intervaltree = "0.2.7"
 async-compression = { version = "0.4.18", features = ["tokio", "gzip"] }
 librqbit-utp = { version = "0.5.3", features = ["export-metrics"] }
 axum-extra = { version = "0.10.1", features = ["query"] }
-librqbit-dualstack-sockets = { version = "0.6.4", features = ["axum"] }
+librqbit-dualstack-sockets = { version = "0.6.5", features = ["axum"] }
 socket2 = "0.5.10"
 nix = { version = "0.30.1", features = ["uio"] }
 
