@@ -1882,7 +1882,13 @@ impl PeerHandler {
 
         self.tx
             .send(WriterRequest::UtMetadata(UtMetadata::Data(
-                UtMetadataData::from_bytes(piece_id, data.into()),
+                UtMetadataData::from_bytes(
+                    piece_id,
+                    data.len()
+                        .try_into()
+                        .context("can't send metadata: len doesn't fit into u32")?,
+                    data.into(),
+                ),
             )))
             .context("error sending UtMetadata: channel closed")?;
         Ok(())

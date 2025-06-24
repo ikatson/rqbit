@@ -372,7 +372,7 @@ mod tests {
                     *b = piece as u8;
                 }
                 let len = Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(
-                    UtMetadataData::from_bytes(piece, pbuf[..].into()),
+                    UtMetadataData::from_bytes(piece, CHUNK_SIZE * ITERATIONS, pbuf[..].into()),
                 )))
                 .serialize(&mut sbuf, &|| pext)
                 .unwrap();

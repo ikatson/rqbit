@@ -15,14 +15,16 @@ use crate::MessageDeserializeError;
 #[derive(Debug, Eq, PartialEq)]
 pub struct UtMetadataData<ByteBuf> {
     piece: u32,
+    total_size: u32,
     data_0: ByteBuf,
     data_1: ByteBuf,
 }
 
 impl<ByteBuf: ByteBufT> UtMetadataData<ByteBuf> {
-    pub fn from_bytes(piece: u32, data: ByteBuf) -> Self {
+    pub fn from_bytes(piece: u32, total_size: u32, data: ByteBuf) -> Self {
         Self {
             piece,
+            total_size,
             data_0: data,
             data_1: Default::default(),
         }
@@ -54,6 +56,35 @@ impl<'a> UtMetadataData<ByteBuf<'a>> {
         out = &mut out[d0.len()..];
         out[..d1.len()].copy_from_slice(d1);
     }
+
+    fn validate(&self) -> Result<(), MessageDeserializeError> {
+        if self.total_size == 0 {
+            return Err(MessageDeserializeError::UtMetadataMissingTotalSize);
+        }
+        if self.len() > CHUNK_SIZE as usize {
+            return Err(MessageDeserializeError::UtMetadataTooLarge(
+                self.len() as u32
+            ));
+        }
+        let total_pieces = self.total_size.div_ceil(CHUNK_SIZE);
+        if self.piece >= total_pieces {
+            return Err(MessageDeserializeError::UtMetadataPieceOutOfBounds {
+                total_pieces,
+                received_piece: self.piece,
+            });
+        }
+        let expected_size = self
+            .total_size
+            .saturating_sub(self.piece * CHUNK_SIZE)
+            .min(CHUNK_SIZE);
+        if self.len() as u32 != expected_size {
+            return Err(MessageDeserializeError::UtMetadataSizeMismatch {
+                expected_size,
+                received_size: self.len() as u32,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -67,14 +98,11 @@ impl UtMetadata<ByteBufOwned> {
     pub fn as_borrowed(&self) -> UtMetadata<ByteBuf> {
         match self {
             UtMetadata::Request(req) => UtMetadata::Request(*req),
-            UtMetadata::Data(UtMetadataData {
-                piece,
-                data_0,
-                data_1,
-            }) => UtMetadata::Data(UtMetadataData {
-                piece: *piece,
-                data_0: ByteBuf::from(data_0.as_ref()),
-                data_1: ByteBuf::from(data_1.as_ref()),
+            UtMetadata::Data(d) => UtMetadata::Data(UtMetadataData {
+                piece: d.piece,
+                data_0: ByteBuf::from(d.data_0.as_ref()),
+                data_1: ByteBuf::from(d.data_1.as_ref()),
+                total_size: d.total_size,
             }),
             UtMetadata::Reject(r) => UtMetadata::Reject(*r),
         }
@@ -103,7 +131,7 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 let message = Message {
                     msg_type: 1,
                     piece: d.piece,
-                    total_size: Some(d.len() as u32),
+                    total_size: Some(d.total_size),
                 };
                 bencode_serialize_to_writer(message, writer)?;
                 writer.write_all(d.data_0.as_ref())?;
@@ -164,24 +192,16 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
                 let total_size = message
                     .total_size
                     .ok_or(MessageDeserializeError::UtMetadataMissingTotalSize)?;
-                if buf.len() > total_size as usize {
-                    return Err(MessageDeserializeError::UtMetadataTrailingBytes);
-                }
-                if buf.len() != total_size as usize {
-                    return Err(MessageDeserializeError::UtMetadataSizeMismatch {
-                        total_size,
-                        received_len: buf.len() as u32,
-                    });
-                }
-                if total_size > CHUNK_SIZE {
-                    return Err(MessageDeserializeError::UtMetadataTooLarge(total_size));
-                }
+
                 let [data_0, data_1] = buf.get();
-                Ok(UtMetadata::Data(UtMetadataData {
+                let d = UtMetadataData {
                     piece: message.piece,
                     data_0: data_0.into(),
                     data_1: data_1.into(),
-                }))
+                    total_size,
+                };
+                d.validate()?;
+                Ok(UtMetadata::Data(d))
             }
             // reject
             2 => {
@@ -192,5 +212,119 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
             }
             other => Err(MessageDeserializeError::UtMetadataTypeUnknown(other)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buffers::ByteBuf;
+    use librqbit_core::constants::CHUNK_SIZE;
+
+    use crate::{MessageDeserializeError, extended::ut_metadata::UtMetadataData};
+
+    #[test]
+    fn test_ut_metadata_validate() {
+        // success
+        UtMetadataData::from_bytes(0, 3, ByteBuf(&b"foo"[..]))
+            .validate()
+            .unwrap();
+
+        // 0 size
+        let err = UtMetadataData::from_bytes(0, 0, ByteBuf(&[]))
+            .validate()
+            .unwrap_err();
+        assert!(
+            matches!(err, MessageDeserializeError::UtMetadataMissingTotalSize),
+            "{:?}",
+            err
+        );
+
+        // 0 provided size
+        let err = UtMetadataData::from_bytes(0, 0, ByteBuf(&b"foo"[..]))
+            .validate()
+            .unwrap_err();
+        assert!(
+            matches!(err, MessageDeserializeError::UtMetadataMissingTotalSize),
+            "{:?}",
+            err
+        );
+
+        // piece out of bounds
+        let err = UtMetadataData::from_bytes(1, 3, ByteBuf(&b"foo"[..]))
+            .validate()
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MessageDeserializeError::UtMetadataPieceOutOfBounds {
+                    total_pieces: 1,
+                    received_piece: 1
+                }
+            ),
+            "{:?}",
+            err
+        );
+
+        // piece out of bounds
+        let err = UtMetadataData::from_bytes(0, 3, ByteBuf(&b"foobar"[..]))
+            .validate()
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MessageDeserializeError::UtMetadataSizeMismatch {
+                    expected_size: 3,
+                    received_size: 6
+                }
+            ),
+            "{:?}",
+            err
+        );
+
+        // success large piece
+        UtMetadataData::from_bytes(0, CHUNK_SIZE + 1, ByteBuf(&[0u8; CHUNK_SIZE as usize][..]))
+            .validate()
+            .unwrap();
+        UtMetadataData::from_bytes(1, CHUNK_SIZE + 1, ByteBuf(&[0u8; 1][..]))
+            .validate()
+            .unwrap();
+
+        // piece out of bounds
+        let err =
+            UtMetadataData::from_bytes(2, CHUNK_SIZE + 1, ByteBuf(&[0u8; CHUNK_SIZE as usize][..]))
+                .validate()
+                .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MessageDeserializeError::UtMetadataPieceOutOfBounds {
+                    total_pieces: 2,
+                    received_piece: 2
+                }
+            ),
+            "{:?}",
+            err
+        );
+
+        // wrong size
+        let err = UtMetadataData::from_bytes(
+            0,
+            CHUNK_SIZE + 1,
+            ByteBuf(&[0u8; CHUNK_SIZE as usize - 1][..]),
+        )
+        .validate()
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                MessageDeserializeError::UtMetadataSizeMismatch {
+                    expected_size,
+                    received_size,
+                } if expected_size == CHUNK_SIZE && received_size == CHUNK_SIZE - 1
+            ),
+            "{:?}",
+            err
+        );
     }
 }

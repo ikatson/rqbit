@@ -146,7 +146,7 @@ mod tests {
         ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Request(42)));
         ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Reject(43)));
         ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Data(
-            UtMetadataData::from_bytes(1, b"\x42\x42\x42\x42\x42"[..].into()),
+            UtMetadataData::from_bytes(0, 5, b"\x42\x42\x42\x42\x42"[..].into()),
         )));
     }
 
@@ -154,7 +154,8 @@ mod tests {
     fn test_ut_metadata_non_contiguous() {
         let mut buf = [0u8; 100];
         let msg = ExtendedMessage::UtMetadata(UtMetadata::Data(UtMetadataData::from_bytes(
-            1,
+            0,
+            5,
             b"\x42\x42\x42\x42\x42"[..].into(),
         )));
         let sz = msg
