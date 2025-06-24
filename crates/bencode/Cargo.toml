@@ -8,17 +8,10 @@ documentation = "https://docs.rs/librqbit-bencode"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[features]
-default = ["sha1-crypto-hash"]
-sha1-crypto-hash = ["sha1w/sha1-crypto-hash"]
-sha1-ring = ["sha1w/sha1-ring"]
-
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-sha1w = { path = "../sha1w", default-features = false, optional = true, package = "librqbit-sha1-wrapper", version = "4.1" }
 bytes = "1.7.1"
 atoi = "2.0.0"
 thiserror = "2.0.12"

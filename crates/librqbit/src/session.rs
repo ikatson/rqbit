@@ -70,8 +70,7 @@ pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 pub type TorrentId = usize;
 
 struct ParsedTorrentFile {
-    info: TorrentMetaV1Owned,
-    info_bytes: Bytes,
+    meta: TorrentMetaV1Owned,
     torrent_bytes: Bytes,
 }
 
@@ -80,10 +79,9 @@ fn torrent_from_bytes(bytes: Bytes) -> anyhow::Result<ParsedTorrentFile> {
         "all fields in torrent: {:#?}",
         bencode::dyn_from_bytes::<ByteBuf>(&bytes)
     );
-    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes_ext::<ByteBuf>(&bytes)?;
+    let parsed = librqbit_core::torrent_metainfo::torrent_from_bytes(&bytes)?;
     Ok(ParsedTorrentFile {
-        info: parsed.meta.clone_to_owned(Some(&bytes)),
-        info_bytes: parsed.info_bytes.clone_to_owned(Some(&bytes)).0,
+        meta: parsed.clone_to_owned(Some(&bytes)),
         torrent_bytes: bytes,
     })
 }
@@ -994,7 +992,7 @@ impl Session {
                     };
 
                     let mut trackers = torrent
-                        .info
+                        .meta
                         .iter_announce()
                         .unique()
                         .filter_map(|tracker| match std::str::from_utf8(tracker.as_ref()) {
@@ -1010,11 +1008,11 @@ impl Session {
                     }
 
                     InternalAddResult {
-                        info_hash: torrent.info.info_hash,
+                        info_hash: torrent.meta.info_hash,
                         metadata: Some(TorrentMetadata::new(
-                            torrent.info.info,
+                            torrent.meta.info.data,
                             torrent.torrent_bytes,
-                            torrent.info_bytes,
+                            torrent.meta.info.raw_bytes.0,
                         )?),
                         trackers: trackers
                             .iter()
@@ -1655,7 +1653,7 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
 mod tests {
     use buffers::ByteBuf;
     use itertools::Itertools;
-    use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes_ext};
+    use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
 
     use super::torrent_file_from_info_bytes;
 
@@ -1670,16 +1668,14 @@ mod tests {
 
         let orig_full_torrent =
             include_bytes!("../resources/ubuntu-21.04-desktop-amd64.iso.torrent");
-        let parsed = torrent_from_bytes_ext::<ByteBuf>(&orig_full_torrent[..]).unwrap();
-        let parsed_trackers = get_trackers(&parsed.meta);
+        let parsed = torrent_from_bytes(&orig_full_torrent[..]).unwrap();
+        let parsed_trackers = get_trackers(&parsed);
 
         let generated_torrent =
-            torrent_file_from_info_bytes(parsed.info_bytes.as_ref(), &parsed_trackers).unwrap();
-        let generated_parsed =
-            torrent_from_bytes_ext::<ByteBuf>(generated_torrent.as_ref()).unwrap();
-        assert_eq!(parsed.meta.info_hash, generated_parsed.meta.info_hash);
-        assert_eq!(parsed.meta.info, generated_parsed.meta.info);
-        assert_eq!(parsed.info_bytes, generated_parsed.info_bytes);
-        assert_eq!(parsed_trackers, get_trackers(&generated_parsed.meta));
+            torrent_file_from_info_bytes(parsed.info.raw_bytes.as_ref(), &parsed_trackers).unwrap();
+        let generated_parsed = torrent_from_bytes(generated_torrent.as_ref()).unwrap();
+        assert_eq!(parsed.info_hash, generated_parsed.info_hash);
+        assert_eq!(parsed.info, generated_parsed.info);
+        assert_eq!(parsed_trackers, get_trackers(&generated_parsed));
     }
 }

@@ -3019,7 +3019,6 @@ dependencies = [
  "bytes",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
- "librqbit-sha1-wrapper",
  "serde",
  "thiserror 2.0.12",
 ]
@@ -3054,6 +3053,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-clone-to-owned",
+ "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.1",
  "serde",

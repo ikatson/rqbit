@@ -334,6 +334,7 @@ pub async fn h_create_torrent(
             let name = torrent
                 .as_info()
                 .info
+                .data
                 .name
                 .as_ref()
                 .and_then(|b| std::str::from_utf8(b.as_ref()).ok())

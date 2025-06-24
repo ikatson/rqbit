@@ -6,7 +6,6 @@ use std::{
 
 use crate::Magnet;
 use anyhow::{Context, bail};
-use buffers::ByteBuf;
 use librqbit_core::torrent_metainfo::torrent_from_bytes;
 use notify::Watcher;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -104,7 +103,7 @@ fn watch_thread(
             .context("error opening")?
             .read_to_end(&mut buf)
             .context("error reading")?;
-        torrent_from_bytes::<ByteBuf>(&buf).context("invalid .torrent file")?;
+        torrent_from_bytes(&buf).context("invalid .torrent file")?;
         Ok(AddTorrent::from_bytes(buf))
     }
 

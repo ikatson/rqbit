@@ -1,5 +1,5 @@
 use anyhow::Context;
-use bencode::BencodeDeserializer;
+use bencode::{WithRawBytes, from_bytes};
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
@@ -21,33 +21,19 @@ pub struct ParsedTorrent<BufType> {
     pub info_bytes: BufType,
 }
 
-/// Parse torrent metainfo from bytes (includes additional fields).
-pub fn torrent_from_bytes_ext<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
-    buf: &'de [u8],
-) -> anyhow::Result<ParsedTorrent<BufType>> {
-    let mut de = BencodeDeserializer::new_from_buf(buf);
-    de.is_torrent_info = true;
-    let mut t = TorrentMetaV1::deserialize(&mut de)?;
-    let (digest, info_bytes) = match (de.torrent_info_digest, de.torrent_info_bytes) {
-        (Some(digest), Some(info_bytes)) => (digest, info_bytes),
-        (o1, o2) => anyhow::bail!(
-            "programming error: digest.is_some()={}, info_bytes.is_some()={}. Probably one of bencode/sha1* features isn't enabled.",
-            o1.is_some(),
-            o2.is_some()
-        ),
-    };
-    t.info_hash = Id20::new(digest);
-    Ok(ParsedTorrent {
-        meta: t,
-        info_bytes: BufType::from(info_bytes),
-    })
-}
+/// Parse torrent metainfo from bytes (includes info_hash).
+#[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
+pub fn torrent_from_bytes<'de>(buf: &'de [u8]) -> anyhow::Result<TorrentMetaV1<ByteBuf<'de>>> {
+    let mut t: TorrentMetaV1<ByteBuf<'_>> = from_bytes(buf)
+        .inspect_err(|e| tracing::trace!("error deserializing torrent: {e:#}"))
+        .map_err(|e| e.into_kind())?;
 
-/// Parse torrent metainfo from bytes.
-pub fn torrent_from_bytes<'de, BufType: Deserialize<'de> + From<&'de [u8]>>(
-    buf: &'de [u8],
-) -> anyhow::Result<TorrentMetaV1<BufType>> {
-    torrent_from_bytes_ext(buf).map(|r| r.meta)
+    use sha1w::ISha1;
+
+    let mut digest = sha1w::Sha1::new();
+    digest.update(t.info.raw_bytes.as_ref());
+    t.info_hash = Id20::new(digest.finish());
+    Ok(t)
 }
 
 fn is_false(b: &bool) -> bool {
@@ -65,7 +51,7 @@ pub struct TorrentMetaV1<BufType> {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub announce_list: Vec<Vec<BufType>>,
-    pub info: TorrentMetaV1Info<BufType>,
+    pub info: WithRawBytes<TorrentMetaV1Info<BufType>, BufType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
     #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
@@ -423,12 +409,6 @@ mod tests {
         include_bytes!("../../librqbit/resources/ubuntu-21.04-desktop-amd64.iso.torrent");
 
     #[test]
-    fn test_deserialize_torrent_owned() {
-        let torrent: TorrentMetaV1Owned = torrent_from_bytes(TORRENT_BYTES).unwrap();
-        dbg!(torrent);
-    }
-
-    #[test]
     fn test_deserialize_torrent_borrowed() {
         let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
         dbg!(torrent);
@@ -445,13 +425,11 @@ mod tests {
 
     #[test]
     fn test_serialize_then_deserialize_bencode() {
-        let torrent: TorrentMetaV1Info<ByteBuf> = torrent_from_bytes(TORRENT_BYTES).unwrap().info;
+        let torrent: TorrentMetaV1Info<ByteBuf> =
+            torrent_from_bytes(TORRENT_BYTES).unwrap().info.data;
         let mut writer = Vec::new();
         bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
-        let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
-            &mut BencodeDeserializer::new_from_buf(&writer),
-        )
-        .unwrap();
+        let deserialized = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&writer).unwrap();
 
         assert_eq!(torrent, deserialized);
     }
@@ -466,10 +444,7 @@ mod tests {
             let mut buf = Vec::new();
             bencode::bencode_serialize_to_writer(&info, &mut buf).unwrap();
 
-            let deserialized = TorrentMetaV1Info::<ByteBuf>::deserialize(
-                &mut BencodeDeserializer::new_from_buf(&buf),
-            )
-            .unwrap();
+            let deserialized = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf).unwrap();
             assert_eq!(info.private, deserialized.private);
 
             let deserialized_dyn = ::bencode::dyn_from_bytes::<ByteBuf>(&buf).unwrap();
@@ -491,6 +466,6 @@ mod tests {
     fn test_private_real_torrent() {
         let buf = include_bytes!("resources/test/private.torrent");
         let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(buf).unwrap();
-        assert!(torrent.info.private);
+        assert!(torrent.info.data.private);
     }
 }
