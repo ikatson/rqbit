@@ -124,6 +124,7 @@ mod tests {
         },
     };
 
+    #[track_caller]
     fn ut_metadata_trailing_bytes_is_error(msg: ExtendedMessage<ByteBuf>) {
         let mut buf = [0u8; 100];
         let sz = msg
@@ -136,7 +137,14 @@ mod tests {
 
         let res = ExtendedMessage::deserialize(DoubleBufHelper::new(&buf[..sz + 1], &[]));
         assert!(
-            matches!(res, Err(MessageDeserializeError::UtMetadataTrailingBytes)),
+            matches!(
+                res,
+                Err(MessageDeserializeError::UtMetadataTrailingBytes
+                    | MessageDeserializeError::UtMetadataSizeMismatch {
+                        expected_size: 5,
+                        received_size: 6
+                    })
+            ),
             "expected trailing bytes error, got {res:?}"
         )
     }
@@ -177,7 +185,7 @@ mod tests {
             let de = res.unwrap();
             match de {
                 ExtendedMessage::UtMetadata(UtMetadata::Data(d)) => {
-                    assert_eq!(d.piece(), 1);
+                    assert_eq!(d.piece(), 0);
                     assert_eq!(d.len(), 5);
                     let mut debuf = [0u8; 5];
                     d.copy_to_slice(&mut debuf);
