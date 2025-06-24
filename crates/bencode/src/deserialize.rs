@@ -1,6 +1,11 @@
+use std::marker::PhantomData;
+
 use arrayvec::ArrayVec;
 use atoi::FromRadix10;
 use buffers::ByteBuf;
+use serde::{Deserialize, forward_to_deserialize_any};
+
+use crate::raw_value::TAG;
 
 pub struct BencodeDeserializer<'de> {
     buf: &'de [u8],
@@ -329,12 +334,18 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
 
     fn deserialize_newtype_struct<V>(
         self,
-        _name: &'static str,
-        _visitor: V,
+        name: &'static str,
+        visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
+        if name == TAG {
+            return visitor.visit_seq(WithRawValueDeserializer {
+                de: self,
+                buf: None,
+            });
+        }
         Err(Error::NotSupported)
     }
 
@@ -481,12 +492,121 @@ impl<'de> serde::de::SeqAccess<'de> for SeqAccess<'_, 'de> {
     }
 }
 
+struct WithRawValueDeserializer<'a, 'de> {
+    de: &'a mut BencodeDeserializer<'de>,
+    buf: Option<&'de [u8]>,
+}
+
+impl<'a, 'de> serde::de::SeqAccess<'de> for WithRawValueDeserializer<'a, 'de> {
+    type Error = Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+    where
+        T: serde::de::DeserializeSeed<'de>,
+    {
+        let buf = match self.buf {
+            None => {
+                let buf_before = self.de.buf;
+                let el = seed.deserialize(&mut *self.de)?;
+                let buf_after = self.de.buf;
+                let consumed = buf_before.len() - buf_after.len();
+                self.buf = Some(&buf_before[..consumed]);
+                return Ok(Some(el));
+            }
+            Some(buf) => buf,
+        };
+
+        struct RawValueDe<'a>(&'a [u8]);
+
+        impl<'de> serde::de::Deserializer<'de> for RawValueDe<'de> {
+            type Error = Error;
+
+            fn deserialize_any<V>(self, _: V) -> Result<V::Value, Self::Error>
+            where
+                V: serde::de::Visitor<'de>,
+            {
+                Err(Error::InvalidValue)
+            }
+
+            fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+            where
+                V: serde::de::Visitor<'de>,
+            {
+                visitor.visit_borrowed_bytes(self.0)
+            }
+
+            forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+                byte_buf option unit unit_struct newtype_struct seq tuple
+                tuple_struct map struct enum identifier ignored_any
+            }
+        }
+
+        let buf = seed.deserialize(RawValueDe(buf))?;
+        Ok(Some(buf))
+    }
+}
+
+#[derive(Debug)]
+pub struct WithRawBytes<T, Buf> {
+    pub data: T,
+    pub raw_bytes: Buf,
+}
+
+impl<'de, T, Buf> Deserialize<'de> for WithRawBytes<T, Buf>
+where
+    T: Deserialize<'de>,
+    Buf: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor<T, Buf>(PhantomData<(T, Buf)>);
+        impl<'de, T, Buf> serde::de::Visitor<'de> for Visitor<T, Buf>
+        where
+            T: Deserialize<'de>,
+            Buf: Deserialize<'de>,
+        {
+            type Value = WithRawBytes<T, Buf>;
+
+            fn expecting(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+                fmt.write_str("WithRawBytes only works with librqbit_bencode")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let data: T = match seq.next_element()? {
+                    Some(v) => v,
+                    None => {
+                        return Err(<A::Error as serde::de::Error>::custom(
+                            "expecting T as first element",
+                        ));
+                    }
+                };
+                let raw_bytes: Buf = match seq.next_element()? {
+                    Some(b) => b,
+                    None => {
+                        return Err(<A::Error as serde::de::Error>::custom(
+                            "expecting buf as second element",
+                        ));
+                    }
+                };
+                Ok(WithRawBytes { data, raw_bytes })
+            }
+        }
+        deserializer.deserialize_newtype_struct(TAG, Visitor(Default::default()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use buffers::ByteBuf;
     use serde::Deserialize;
 
-    use crate::from_bytes;
+    use crate::{WithRawBytes, from_bytes};
 
     #[test]
     fn test_deserialize_error_context() {
@@ -567,5 +687,24 @@ mod tests {
             from_bytes::<Vec<ByteBuf<'_>>>(b"l5:hello2:mee").unwrap(),
             vec![ByteBuf(b"hello"), ByteBuf(b"me")]
         );
+    }
+
+    #[test]
+    fn test_with_raw_bytes() {
+        #[derive(Deserialize, Debug)]
+        struct TorrentInfo<'a> {
+            #[serde(borrow)]
+            name: ByteBuf<'a>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Torrent<'a> {
+            #[serde(borrow)]
+            info: WithRawBytes<TorrentInfo<'a>, ByteBuf<'a>>,
+        }
+
+        let t: Torrent = from_bytes(&b"d4:infod4:name5:helloee"[..]).unwrap();
+        assert_eq!(t.info.data.name, ByteBuf(b"hello"));
+        assert_eq!(t.info.raw_bytes, ByteBuf(b"d4:name5:helloe"));
     }
 }
