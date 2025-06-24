@@ -99,18 +99,26 @@ pub enum MessageDeserializeError {
         expected: u32,
         msg_id: MsgIdDebug,
     },
-    #[error(
-        "ut_metadata:data total_size({total_size}) doesn't match the buffer length {received_len}"
-    )]
-    UtMetadataSizeMismatch { total_size: u32, received_len: u32 },
+    #[error("ut_metadata:data recieved {received_len} >= total_size is {total_size}")]
+    UtMetadataBufLargerThanTotalSize { total_size: u32, received_len: u32 },
     #[error("ut_metadata:data length must be <= {CHUNK_SIZE} but received {0} bytes")]
     UtMetadataTooLarge(u32),
     #[error("ut_metadata: trailing bytes when decoding")]
     UtMetadataTrailingBytes,
     #[error("ut_metadata: missing total_size")]
     UtMetadataMissingTotalSize,
-    #[error("unrecognized ut_metadata message type: {0}")]
+    #[error("ut_metadata: unrecognized message type: {0}")]
     UtMetadataTypeUnknown(u32),
+    #[error("ut_metadata: received piece {received_piece} > total pieces {total_pieces}")]
+    UtMetadataPieceOutOfBounds {
+        total_pieces: u32,
+        received_piece: u32,
+    },
+    #[error("ut_meatadata: expected size {expected_size} != received size {received_size}")]
+    UtMetadataSizeMismatch {
+        expected_size: u32,
+        received_size: u32,
+    },
     #[error("pstr doesn't match {PSTR_BT1:?}")]
     HandshakePstrWrongContent,
     #[error("pstr should be 19 bytes long but got {0}")]
