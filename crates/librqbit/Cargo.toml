@@ -128,6 +128,7 @@ axum-extra = { version = "0.10.1", features = ["query"] }
 librqbit-dualstack-sockets = { version = "0.6.5", features = ["axum"] }
 socket2 = "0.5.10"
 nix = { version = "0.30.1", features = ["uio"] }
+thiserror = "2.0.12"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.1", features = [
