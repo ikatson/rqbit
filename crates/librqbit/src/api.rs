@@ -10,7 +10,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::{
-    api_error::{ApiError, ApiErrorExt},
+    WithStatus,
+    api_error::ApiError,
     session::{
         AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
     },
@@ -286,7 +287,7 @@ impl Api {
             .pause(&handle)
             .await
             .context("error pausing torrent")
-            .with_error_status_code(StatusCode::BAD_REQUEST)?;
+            .with_status(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())
     }
 
@@ -299,7 +300,7 @@ impl Api {
             .unpause(&handle)
             .await
             .context("error unpausing torrent")
-            .with_error_status_code(StatusCode::BAD_REQUEST)?;
+            .with_status(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())
     }
 
@@ -374,7 +375,7 @@ impl Api {
             .add_torrent(add, opts)
             .await
             .context("error adding torrent")
-            .with_error_status_code(StatusCode::BAD_REQUEST)?
+            .with_status(StatusCode::BAD_REQUEST)?
         {
             AddTorrentResponse::AlreadyManaged(id, handle) => {
                 let details = make_torrent_details(
@@ -593,7 +594,8 @@ fn torrent_file_mime_type(
     info: &TorrentMetaV1Info<ByteBufOwned>,
     file_idx: usize,
 ) -> Result<&'static str> {
-    info.iter_file_details()?
+    Ok(info
+        .iter_file_details()?
         .nth(file_idx)
         .and_then(|d| {
             d.filename
@@ -602,10 +604,8 @@ fn torrent_file_mime_type(
                 .and_then(|r| r.ok())
                 .and_then(|s| mime_guess::from_path(s).first_raw())
         })
-        .ok_or_else(|| {
-            ApiError::new_from_text(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "cannot determine mime type for file",
-            )
-        })
+        .ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot determine mime type for file",
+        ))?)
 }

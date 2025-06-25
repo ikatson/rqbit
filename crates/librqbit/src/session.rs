@@ -11,6 +11,7 @@ use std::{
 use crate::{
     ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
     api::TorrentIdOrHash,
+    api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
     blocklist, create_torrent,
     create_torrent_file::CreateTorrentResult,
@@ -1531,15 +1532,15 @@ impl Session {
         opts: CreateTorrentOptions<'_>,
     ) -> Result<(CreateTorrentResult, ManagedTorrentHandle), ApiError> {
         if !path.exists() {
-            return Err(ApiError::new_from_text(
+            return Err(ApiError::from((
                 StatusCode::BAD_REQUEST,
                 "path doesn't exist",
-            ));
+            )));
         }
 
         let torrent = create_torrent(path, opts)
             .await
-            .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
+            .with_status(StatusCode::BAD_REQUEST)?;
 
         let bytes = torrent.as_bytes()?;
 

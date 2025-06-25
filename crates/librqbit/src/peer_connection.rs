@@ -4,8 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, bail};
+use crate::{Error, Result};
 use buffers::{ByteBuf, ByteBufOwned};
+use futures::TryFutureExt;
 use librqbit_core::{
     hash_id::Id20,
     lengths::{ChunkInfo, ValidPieceIndex},
@@ -85,17 +86,14 @@ pub(crate) struct PeerConnection<'a> {
     connector: Arc<StreamConnector>,
 }
 
-pub(crate) async fn with_timeout<T, E>(
+pub(crate) async fn with_timeout<T>(
     name: &'static str,
     timeout_value: Duration,
-    fut: impl std::future::Future<Output = Result<T, E>>,
-) -> anyhow::Result<T>
-where
-    E: Into<anyhow::Error>,
-{
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> crate::Result<T> {
     match timeout(timeout_value, fut).await {
-        Ok(v) => v.map_err(Into::into),
-        Err(_) => anyhow::bail!("timeout {name} at {timeout_value:?}"),
+        Ok(v) => v,
+        Err(_) => Err(Error::Timeout(name)),
     }
 }
 
@@ -140,7 +138,7 @@ impl<'a> PeerConnection<'a> {
         read: BoxAsyncRead,
         mut write: BoxAsyncWrite,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let rwtimeout = self
@@ -149,11 +147,11 @@ impl<'a> PeerConnection<'a> {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         if handshake.info_hash != self.info_hash {
-            anyhow::bail!("wrong info hash");
+            return Err(Error::WrongInfoHash);
         }
 
         if handshake.peer_id == self.peer_id {
-            bail!("looks like we are connecting to ourselves");
+            return Err(Error::ConnectingToOurselves);
         }
 
         trace!(
@@ -164,13 +162,20 @@ impl<'a> PeerConnection<'a> {
         let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
         let handshake = Handshake::new(self.info_hash, self.peer_id);
         let hlen = handshake.serialize_unchecked_len(&mut *write_buf);
-        with_timeout("writing", rwtimeout, write.write_all(&write_buf[..hlen]))
-            .await
-            .context("error writing handshake")?;
+        with_timeout(
+            "writing handshake",
+            rwtimeout,
+            write
+                .write_all(&write_buf[..hlen])
+                .map_err(Error::WriteHandshake),
+        )
+        .await?;
 
         let handshake_supports_extended = handshake.supports_extended();
 
-        self.handler.on_handshake(handshake)?;
+        self.handler
+            .on_handshake(handshake)
+            .map_err(Error::Anyhow)?;
 
         self.manage_peer(ManagePeerArgs {
             handshake_supports_extended,
@@ -188,7 +193,7 @@ impl<'a> PeerConnection<'a> {
         &self,
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
         let rwtimeout = self
             .options
@@ -214,15 +219,17 @@ impl<'a> PeerConnection<'a> {
             let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
             let handshake = Handshake::new(self.info_hash, self.peer_id);
             let hsz = handshake.serialize_unchecked_len(&mut *write_buf);
-            with_timeout("writing", rwtimeout, write.write_all(&write_buf[..hsz]))
-                .await
-                .context("error writing handshake")?;
+            with_timeout(
+                "writing",
+                rwtimeout,
+                write
+                    .write_all(&write_buf[..hsz])
+                    .map_err(Error::WriteHandshake),
+            )
+            .await?;
 
             let mut read_buf = ReadBuf::new();
-            let h = read_buf
-                .read_handshake(&mut read, rwtimeout)
-                .await
-                .context("error reading handshake")?;
+            let h = read_buf.read_handshake(&mut read, rwtimeout).await?;
             let handshake_supports_extended = h.supports_extended();
             trace!(
                 peer_id=?h.peer_id,
@@ -230,14 +237,14 @@ impl<'a> PeerConnection<'a> {
                 "connected",
             );
             if h.info_hash != self.info_hash {
-                anyhow::bail!("info hash does not match");
+                return Err(Error::WrongInfoHash);
             }
 
             if h.peer_id == self.peer_id {
-                bail!("looks like we are connecting to ourselves");
+                return Err(Error::ConnectingToOurselves);
             }
 
-            self.handler.on_handshake(h)?;
+            self.handler.on_handshake(h).map_err(Error::Anyhow)?;
 
             self.manage_peer(ManagePeerArgs {
                 handshake_supports_extended,
@@ -254,7 +261,7 @@ impl<'a> PeerConnection<'a> {
         .await
     }
 
-    async fn manage_peer(&self, args: ManagePeerArgs) -> anyhow::Result<()> {
+    async fn manage_peer(&self, args: ManagePeerArgs) -> Result<()> {
         let ManagePeerArgs {
             handshake_supports_extended,
             mut read_buf,
@@ -281,13 +288,17 @@ impl<'a> PeerConnection<'a> {
             my_extended.v = Some(ByteBuf(crate::client_name_and_version().as_bytes()));
             my_extended.yourip = Some(self.addr.ip().into());
             self.handler
-                .update_my_extended_handshake(&mut my_extended)?;
+                .update_my_extended_handshake(&mut my_extended)
+                .map_err(Error::Anyhow)?;
             let my_extended = Message::Extended(ExtendedMessage::Handshake(my_extended));
             trace!("sending extended handshake: {:?}", &my_extended);
             let esz = my_extended.serialize(&mut *write_buf, &Default::default)?;
-            with_timeout("writing", rwtimeout, write.write_all(&write_buf[..esz]))
-                .await
-                .context("error writing extended handshake")?;
+            with_timeout(
+                "writing extended handshake",
+                rwtimeout,
+                write.write_all(&write_buf[..esz]).map_err(Error::Write),
+            )
+            .await?;
         }
 
         let writer = async move {
@@ -299,21 +310,24 @@ impl<'a> PeerConnection<'a> {
             if self.handler.should_send_bitfield() {
                 let len = self
                     .handler
-                    .serialize_bitfield_message_to_buf(&mut *write_buf)?;
+                    .serialize_bitfield_message_to_buf(&mut *write_buf)
+                    .map_err(Error::Anyhow)?;
                 with_timeout(
                     "writing bitfield",
                     rwtimeout,
-                    write.write_all(&write_buf[..len]),
+                    write.write_all(&write_buf[..len]).map_err(Error::Write),
                 )
-                .await
-                .context("error writing bitfield to peer")?;
+                .await?;
                 trace!("sent bitfield");
             }
 
             let len = Message::Unchoke.serialize(&mut *write_buf, &Default::default)?;
-            with_timeout("writing", rwtimeout, write.write_all(&write_buf[..len]))
-                .await
-                .context("error writing unchoke")?;
+            with_timeout(
+                "writing",
+                rwtimeout,
+                write.write_all(&write_buf[..len]).map_err(Error::Write),
+            )
+            .await?;
             trace!("sent unchoke");
 
             let mut broadcast_closed = false;
@@ -339,7 +353,7 @@ impl<'a> PeerConnection<'a> {
                         r = timeout(keep_alive_interval, outgoing_chan.recv()) => match r {
                             Ok(Some(msg)) => msg,
                             Ok(None) => {
-                                anyhow::bail!("closing writer, channel closed");
+                                return Err(Error::TorrentIsNotLive);
                             }
                             Err(_) => WriterRequest::Message(Message::KeepAlive),
                         }
@@ -381,7 +395,7 @@ impl<'a> PeerConnection<'a> {
                             let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
                             use rand::Rng;
                             if rand::rng().random_bool(tpm.disconnect_probability()) {
-                                bail!("disconnecting, to simulate failure in tests");
+                                return Err(Error::TestDisconnect);
                             }
 
                             #[allow(clippy::cast_possible_truncation)]
@@ -410,7 +424,7 @@ impl<'a> PeerConnection<'a> {
                                     self.handler
                                         .read_chunk(&chunk, &mut write_buf[preamble_len..])
                                 })
-                                .with_context(|| format!("error reading chunk {chunk:?}"))?;
+                                .map_err(Error::ReadChunk)?;
                         }
 
                         uploaded_add = Some(chunk.size);
@@ -418,13 +432,19 @@ impl<'a> PeerConnection<'a> {
                     }
                     WriterRequest::Disconnect(res) => {
                         trace!("disconnect requested, closing writer");
-                        return res;
+                        match res {
+                            Ok(()) => return Err(Error::Disconnect),
+                            Err(e) => return Err(Error::DisconnectWithSource(e)),
+                        }
                     }
                 };
 
-                with_timeout("writing", rwtimeout, write.write_all(&write_buf[..len]))
-                    .await
-                    .context("error writing the message to peer")?;
+                with_timeout(
+                    "writing",
+                    rwtimeout,
+                    write.write_all(&write_buf[..len]).map_err(Error::Write),
+                )
+                .await?;
 
                 if let Some(uploaded_add) = uploaded_add {
                     self.handler.on_uploaded_bytes(uploaded_add)
@@ -433,32 +453,31 @@ impl<'a> PeerConnection<'a> {
 
             // For type inference.
             #[allow(unreachable_code)]
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, Error>(())
         };
 
         let reader = async move {
             loop {
-                let message = read_buf
-                    .read_message(&mut read, rwtimeout)
-                    .await
-                    .context("error reading message")?;
+                let message = read_buf.read_message(&mut read, rwtimeout).await?;
                 trace!("received: {:?}", &message);
 
                 tokio::task::yield_now().await;
 
                 if let Message::Extended(ExtendedMessage::Handshake(h)) = &message {
                     *extended_handshake_ref.write() = Some(h.peer_extended_messages());
-                    self.handler.on_extended_handshake(h)?;
+                    self.handler
+                        .on_extended_handshake(h)
+                        .map_err(Error::Anyhow)?;
                 } else {
                     self.handler
                         .on_received_message(message)
-                        .context("error in handler.on_received_message()")?;
+                        .map_err(Error::Anyhow)?;
                 }
             }
 
             // For type inference.
             #[allow(unreachable_code)]
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, Error>(())
         };
 
         tokio::select! {

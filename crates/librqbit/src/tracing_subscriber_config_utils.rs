@@ -129,7 +129,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
     }
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    spawn(error_span!("fmt_filter_reloader"), async move {
+    spawn::<&'static str>(error_span!("fmt_filter_reloader"), async move {
         while let Some(rust_log) = reload_rx.recv().await {
             let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
                 Ok(f) => f,

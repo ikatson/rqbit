@@ -24,7 +24,7 @@ impl Limit {
         Self(ArcSwapOption::new(Self::new_inner(bps)))
     }
 
-    async fn acquire(&self, size: NonZeroU32) -> anyhow::Result<()> {
+    async fn acquire(&self, size: NonZeroU32) -> crate::Result<()> {
         let lim = self.0.load().clone();
         if let Some(rl) = lim.as_ref() {
             rl.until_n_ready(size).await?;
@@ -51,11 +51,11 @@ impl Limits {
         }
     }
 
-    pub async fn prepare_for_upload(&self, len: NonZeroU32) -> anyhow::Result<()> {
+    pub async fn prepare_for_upload(&self, len: NonZeroU32) -> crate::Result<()> {
         self.up.acquire(len).await
     }
 
-    pub async fn prepare_for_download(&self, len: NonZeroU32) -> anyhow::Result<()> {
+    pub async fn prepare_for_download(&self, len: NonZeroU32) -> crate::Result<()> {
         self.down.acquire(len).await
     }
 

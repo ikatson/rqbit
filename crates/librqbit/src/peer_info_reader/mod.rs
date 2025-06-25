@@ -67,7 +67,7 @@ pub(crate) async fn read_metainfo_from_peer(
         result = result_reader => Ok(result??),
         whatever = connection_runner => match whatever {
             Ok(_) => anyhow::bail!("connection runner completed first"),
-            Err(e) => Err(e)
+            Err(e) => Err(e.into())
         }
     }
 }

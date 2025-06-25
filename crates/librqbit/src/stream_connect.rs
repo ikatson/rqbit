@@ -10,7 +10,7 @@ use socket2::SockRef;
 use tracing::debug;
 
 use crate::{
-    PeerConnectionOptions,
+    Error, PeerConnectionOptions, Result,
     type_aliases::{BoxAsyncRead, BoxAsyncWrite},
     vectored_traits::AsyncReadVectoredIntoCompat,
 };
@@ -86,7 +86,7 @@ impl SocksProxyConfig {
     async fn connect(
         &self,
         addr: SocketAddr,
-    ) -> anyhow::Result<(
+    ) -> tokio_socks::Result<(
         impl tokio::io::AsyncRead + Unpin + 'static,
         impl tokio::io::AsyncWrite + Unpin + 'static,
     )> {
@@ -99,12 +99,9 @@ impl SocksProxyConfig {
                 username.as_str(),
                 password.as_str(),
             )
-            .await
-            .context("error connecting to proxy")?
+            .await?
         } else {
-            tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr)
-                .await
-                .context("error connecting to proxy")?
+            tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr).await?
         };
 
         Ok(tokio::io::split(stream))
@@ -170,7 +167,7 @@ impl StreamConnector {
     pub async fn connect(
         &self,
         addr: SocketAddr,
-    ) -> anyhow::Result<(ConnectionKind, BoxAsyncRead, BoxAsyncWrite)> {
+    ) -> Result<(ConnectionKind, BoxAsyncRead, BoxAsyncWrite)> {
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = proxy.connect(addr).await?;
             debug!(?addr, "connected through SOCKS5");
@@ -186,11 +183,11 @@ impl StreamConnector {
 
         let tcp_connect = async {
             if !self.enable_tcp {
-                bail!("TCP outgoing connections disabled");
+                return Ok(None);
             }
             let conn = self.tcp_connect(addr).await?;
             debug!(?addr, "connected over TCP");
-            Ok(conn)
+            Ok(Some(conn))
         };
 
         let tcp_failed_notify = tokio::sync::Notify::new();
@@ -198,7 +195,7 @@ impl StreamConnector {
         let utp_connect = async {
             let sock = match self.utp_socket.as_ref() {
                 Some(sock) => sock,
-                None => bail!("uTP disabled"),
+                None => return Ok(None),
             };
 
             // Give TCP priority as it's more mature and simpler.
@@ -213,49 +210,57 @@ impl StreamConnector {
             let conn = sock.connect(addr).await?;
 
             debug!(?addr, "connected over uTP");
-            Ok(conn)
+            Ok(Some(conn))
         };
 
         tokio::pin!(tcp_connect);
         tokio::pin!(utp_connect);
 
-        let mut tcp_err = None;
-        let mut utp_err = None;
+        let mut tcp_err: Option<Option<std::io::Error>> = None;
+        let mut utp_err: Option<Option<librqbit_utp::Error>> = None;
 
-        while tcp_err.is_none() || utp_err.is_none() {
+        // wait until all fail, or one succeeds.
+        loop {
+            if let (Some(tcp), Some(utp)) = (tcp_err.as_mut(), utp_err.as_mut()) {
+                match (tcp.take(), utp.take()) {
+                    (Some(tcp), Some(utp)) => return Err(Error::Connect { tcp, utp }),
+                    (Some(tcp), None) => return Err(Error::TcpConnect(tcp)),
+                    (None, Some(utp)) => return Err(Error::UtpConnect(utp)),
+                    (None, None) => return Err(Error::ConnectDisaled),
+                }
+            }
             tokio::select! {
                 tcp_res = &mut tcp_connect, if tcp_err.is_none() => {
                     match tcp_res {
-                        Ok(stream) => {
+                        Ok(Some(stream)) => {
                             let (r, w) = stream.into_split();
                             return Ok((ConnectionKind::Tcp, Box::new(r), Box::new(w)));
                         },
+                        Ok(None) => {
+                            tcp_err = Some(None);
+                            tcp_failed_notify.notify_waiters();
+                        }
                         Err(e) => {
-                            tcp_err = Some(e);
+                            tcp_err = Some(Some(e));
                             tcp_failed_notify.notify_waiters();
                         }
                     }
                 },
                 utp_res = &mut utp_connect, if utp_err.is_none() => {
                     match utp_res {
-                        Ok(stream) => {
+                        Ok(Some(stream)) => {
                             let (r, w) = stream.split();
                             return Ok((ConnectionKind::Utp, Box::new(r.into_vectored_compat()), Box::new(w)));
                         },
+                        Ok(None) => {
+                            utp_err = Some(None);
+                        }
                         Err(e) => {
-                            utp_err = Some(e);
+                            utp_err = Some(Some(e));
                         }
                     }
                 },
             };
-        }
-
-        match (&tcp_err, &utp_err) {
-            (Some(tcp_err), Some(utp_err)) => {
-                bail!("error connecting: TCP={tcp_err:#}, uTP={utp_err:#}")
-            }
-            // this is unreachable really, but who knows
-            (_, _) => bail!("bug: tcp_err={tcp_err:?}, utp_err={utp_err:?}"),
         }
     }
 }

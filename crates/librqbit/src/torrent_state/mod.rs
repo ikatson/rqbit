@@ -617,7 +617,7 @@ fn spawn_fatal_errors_receiver(
 ) {
     let span = state.shared.span.clone();
     let state = Arc::downgrade(state);
-    spawn_with_cancel(
+    spawn_with_cancel::<&'static str>(
         error_span!(parent: span, "fatal_errors_receiver"),
         token,
         async move {
@@ -655,7 +655,7 @@ fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
                                 Some(live) => live,
                                 None => return Ok(()),
                             };
-                            live.add_peer_if_not_seen(peer).context("torrent closed")?;
+                            live.add_peer_if_not_seen(peer)?;
                         }
                         Ok(None) => {
                             debug!("peer_rx closed, closing peer adder");

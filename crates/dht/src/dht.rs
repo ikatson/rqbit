@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
+    Error, INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bprotocol::{
         self, AnnouncePeer, CompactNodeInfo, CompactNodeInfoOwned, ErrorDescription,
         FindNodeRequest, GetPeersRequest, Message, MessageKind, Node, PingRequest, Response, Want,
@@ -19,7 +19,6 @@ use crate::{
     peer_store::PeerStore,
     routing_table::{InsertResult, NodeStatus, RoutingTable},
 };
-use anyhow::{Context, bail};
 use backon::{ExponentialBuilder, Retryable};
 use bencode::ByteBufOwned;
 use dashmap::DashMap;
@@ -44,6 +43,10 @@ use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unb
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, trace_span, warn};
 
+fn now() -> Instant {
+    Instant::now()
+}
+
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
     #[serde(serialize_with = "crate::utils::serialize_id20")]
@@ -54,7 +57,7 @@ pub struct DhtStats {
 }
 
 struct OutstandingRequest {
-    done: tokio::sync::oneshot::Sender<anyhow::Result<ResponseOrError>>,
+    done: tokio::sync::oneshot::Sender<crate::Result<ResponseOrError>>,
 }
 
 pub struct WorkerSendRequest {
@@ -98,7 +101,7 @@ trait RecursiveRequestCallbacks: Sized + Send + Sync + 'static {
         req: &RecursiveRequest<Self>,
         target_node: Id20,
         addr: SocketAddr,
-        resp: &anyhow::Result<ResponseOrError>,
+        resp: &crate::Result<ResponseOrError>,
     );
 }
 
@@ -116,7 +119,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
         req: &RecursiveRequest<Self>,
         target_node: Id20,
         addr: SocketAddr,
-        resp: &anyhow::Result<ResponseOrError>,
+        resp: &crate::Result<ResponseOrError>,
     ) {
         let announce_port = match self.announce_port {
             Some(a) => a,
@@ -160,7 +163,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
         let mut rt = req.dht.get_table_for_addr(addr).write();
         match rt.add_node(target_node, addr) {
             InsertResult::WasExisting | InsertResult::ReplacedBad(_) | InsertResult::Added => {
-                rt.mark_outgoing_request(&target_node);
+                rt.mark_outgoing_request(&target_node, now());
             }
             InsertResult::Ignored => {}
         }
@@ -171,11 +174,11 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
         req: &RecursiveRequest<Self>,
         target_node: Id20,
         addr: SocketAddr,
-        resp: &anyhow::Result<ResponseOrError>,
+        resp: &crate::Result<ResponseOrError>,
     ) {
         let mut table = req.dht.get_table_for_addr(addr).write();
         if resp.is_ok() {
-            table.mark_response(&target_node);
+            table.mark_response(&target_node, now());
         } else {
             table.mark_error(&target_node);
         }
@@ -260,7 +263,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
         dht: Arc<DhtState>,
         target: Id20,
         addrs: impl Iterator<Item = SocketAddr>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         let (node_tx, mut node_rx) = unbounded_channel();
         let req = RecursiveRequest {
             max_depth: 4,
@@ -323,7 +326,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
             }
         }
         if successes == 0 {
-            bail!("no successful lookups, errors = {errors}");
+            return Err(Error::NoSuccessfulLookups { errors });
         }
         debug!(
             "finished, successes = {successes}, errors = {errors}, initial_addrs = {initial_addrs}"
@@ -355,7 +358,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                                 Ok(_) => REQUERY_INTERVAL,
                                 Err(e) => {
                                     error!("error in get_peers_root(): {e:#}");
-                                    return Err::<(), anyhow::Error>(e);
+                                    return Err::<(), crate::Error>(e);
                                 }
                             };
                             tokio::time::sleep(sleep).await;
@@ -386,7 +389,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         )
     }
 
-    fn get_peers_root(&self, is_v4: bool) -> anyhow::Result<usize> {
+    fn get_peers_root(&self, is_v4: bool) -> crate::Result<usize> {
         let mut count = 0;
         let table = if is_v4 {
             &self.dht.routing_table_v4
@@ -395,13 +398,16 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         };
         for (id, addr) in table
             .read()
-            .sorted_by_distance_from(self.info_hash)
+            .sorted_by_distance_from(self.info_hash, now())
             .iter()
             .map(|n| (n.id(), n.addr()))
             .take(8)
         {
             count += 1;
-            self.node_tx.send((Some(id), addr, 0))?;
+            self.node_tx
+                .send((Some(id), addr, 0))
+                .ok()
+                .ok_or(Error::DhtDead)?;
         }
 
         Ok(count)
@@ -414,7 +420,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
         id: Option<Id20>,
         addr: SocketAddr,
         depth: usize,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         if let Some(id) = id {
             self.callbacks.on_request_start(self, id, addr);
         }
@@ -432,7 +438,10 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         let response = match self.dht.request(self.request.clone(), addr).await {
             Ok(ResponseOrError::Response(r)) => r,
-            Ok(ResponseOrError::Error(e)) => bail!("error response: {:?}", e),
+            Ok(ResponseOrError::Error(e)) => {
+                debug!("error response: {e:?}");
+                return Err(Error::ErrorResponse);
+            }
             Err(e) => {
                 self.mark_node_error(addr);
                 return Err(e);
@@ -441,7 +450,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         if let Some(peers) = response.values {
             for peer in peers {
-                self.peer_tx.send(peer.0)?;
+                self.peer_tx.send(peer.0).ok().ok_or(Error::ReceiverDead)?;
             }
         }
 
@@ -457,14 +466,19 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             )
             .filter(|node| addr.is_ipv4() == node.addr.is_ipv4());
 
+        let now = now();
+
         for node in node_it {
-            let should_request = self.should_request_node(node.id, node.addr, depth);
+            let should_request = self.should_request_node(node.id, node.addr, depth, now);
             trace!(
                 "should_request={}, id={:?}, addr={}, depth={}/{}",
                 should_request, node.id, node.addr, depth, self.max_depth
             );
             if should_request {
-                self.node_tx.send((Some(node.id), node.addr, depth + 1))?;
+                self.node_tx
+                    .send((Some(node.id), node.addr, depth + 1))
+                    .ok()
+                    .ok_or(Error::ReceiverDead)?;
             }
         }
         Ok(())
@@ -487,7 +501,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .iter_mut()
             .find(|n| n.addr == addr)
             .map(|node| {
-                node.last_response = Some(Instant::now());
+                node.last_response = Some(now());
                 node.errors_in_a_row = 0;
                 match response {
                     ResponseOrError::Response(r) => {
@@ -502,7 +516,13 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .is_some()
     }
 
-    fn should_request_node(&self, node_id: Id20, addr: SocketAddr, depth: usize) -> bool {
+    fn should_request_node(
+        &self,
+        node_id: Id20,
+        addr: SocketAddr,
+        depth: usize,
+        now: Instant,
+    ) -> bool {
         if depth >= self.max_depth {
             return false;
         }
@@ -511,8 +531,8 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         // If recently requested, ignore
         if let Some(existing) = closest_nodes.iter_mut().find(|n| n.id == node_id) {
-            if existing.last_request.elapsed() > Duration::from_secs(60) {
-                existing.last_request = Instant::now();
+            if now - existing.last_request > Duration::from_secs(60) {
+                existing.last_request = now;
                 return true;
             }
             return false;
@@ -521,7 +541,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
         closest_nodes.push(MaybeUsefulNode {
             id: node_id,
             addr,
-            last_request: Instant::now(),
+            last_request: now,
             last_response: None,
             returned_peers: false,
             errors_in_a_row: 0,
@@ -531,10 +551,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             let has_returned_peers_desc = Reverse(n.returned_peers);
             let has_responded_desc = Reverse(n.last_response.is_some() as u8);
             let distance = n.id.distance(&self.info_hash);
-            let freshest_response = n
-                .last_response
-                .map(|r| r.elapsed())
-                .unwrap_or(Duration::MAX);
+            let freshest_response = n.last_response.map(|r| now - r).unwrap_or(Duration::MAX);
             (
                 has_returned_peers_desc,
                 has_responded_desc,
@@ -600,7 +617,7 @@ impl DhtState {
         }
     }
 
-    async fn request(&self, request: Request, addr: SocketAddr) -> anyhow::Result<ResponseOrError> {
+    async fn request(&self, request: Request, addr: SocketAddr) -> crate::Result<ResponseOrError> {
         self.rate_limiter.acquire_one().await;
         let (tid, message) = self.create_request(request, addr);
         let key = (tid, addr);
@@ -614,9 +631,9 @@ impl DhtState {
             addr,
         }) {
             Ok(_) => {}
-            Err(e) => {
+            Err(_) => {
                 self.inflight_by_transaction_id.remove(&key);
-                return Err(e.into());
+                return Err(Error::DhtDead);
             }
         };
         match tokio::time::timeout(RESPONSE_TIMEOUT, rx).await {
@@ -627,11 +644,11 @@ impl DhtState {
             Ok(Err(e)) => {
                 self.inflight_by_transaction_id.remove(&key);
                 warn!("recv error, did not expect this: {:?}", e);
-                Err(e.into())
+                Err(Error::DhtDead)
             }
             Err(_) => {
                 self.inflight_by_transaction_id.remove(&key);
-                bail!("timeout ({RESPONSE_TIMEOUT:?})")
+                Err(Error::ResponseTimeout(RESPONSE_TIMEOUT))
             }
         }
     }
@@ -701,18 +718,19 @@ impl DhtState {
         Option<CompactNodeInfoOwned<SocketAddrV4>>,
         Option<CompactNodeInfoOwned<SocketAddrV6>>,
     ) {
+        let now = now();
         match want {
             Want::V4 => (
-                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read(), now)),
                 None,
             ),
             Want::V6 => (
                 None,
-                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read(), now)),
             ),
             Want::Both => (
-                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read())),
-                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read(), now)),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read(), now)),
             ),
             Want::None => (None, None),
         }
@@ -730,13 +748,14 @@ impl DhtState {
         &self,
         target: Id20,
         table: &RoutingTable,
+        now: Instant,
     ) -> CompactNodeInfo<ByteBufOwned, A>
     where
         A: CompactSerialize + CompactSerializeFixedLen + FromSocketAddr,
         Node<A>: CompactSerialize + CompactSerializeFixedLen,
     {
         let it = table
-            .sorted_by_distance_from(target)
+            .sorted_by_distance_from(target, now)
             .into_iter()
             .filter_map(|r| {
                 Some(Node {
@@ -752,12 +771,14 @@ impl DhtState {
         self: &Arc<Self>,
         msg: Message<ByteBufOwned>,
         addr: SocketAddr,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         match &msg.kind {
             // If it's a response to a request we made, find the request task, notify it with the response,
             // and let it handle it.
             MessageKind::Error(_) | MessageKind::Response(_) => {
-                let tid = msg.get_our_transaction_id().context("bad transaction id")?;
+                let tid = msg
+                    .get_our_transaction_id()
+                    .ok_or(Error::BadTransactionId)?;
                 let request = match self
                     .inflight_by_transaction_id
                     .remove(&(tid, addr))
@@ -765,7 +786,8 @@ impl DhtState {
                 {
                     Some(req) => req,
                     None => {
-                        bail!("outstanding request not found. Message: {:?}", msg)
+                        trace!(?msg, "outstanding request not found");
+                        return Err(Error::RequestNotFound);
                     }
                 };
 
@@ -804,18 +826,21 @@ impl DhtState {
                 };
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&req.id);
-                self.worker_sender.send(WorkerSendRequest {
-                    our_tid: None,
-                    message,
-                    addr,
-                })?;
+                    .mark_last_query(&req.id, now());
+                self.worker_sender
+                    .send(WorkerSendRequest {
+                        our_tid: None,
+                        message,
+                        addr,
+                    })
+                    .ok()
+                    .ok_or(Error::DhtDead)?;
                 Ok(())
             }
             MessageKind::AnnouncePeer(ann) => {
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&ann.id);
+                    .mark_last_query(&ann.id, now());
                 let added = self.peer_store.store_peer(ann, addr);
                 trace!("{addr}: added_peer={added}, announce={ann:?}");
                 let message = Message {
@@ -827,11 +852,14 @@ impl DhtState {
                         ..Default::default()
                     }),
                 };
-                self.worker_sender.send(WorkerSendRequest {
-                    our_tid: None,
-                    message,
-                    addr,
-                })?;
+                self.worker_sender
+                    .send(WorkerSendRequest {
+                        our_tid: None,
+                        message,
+                        addr,
+                    })
+                    .ok()
+                    .ok_or(Error::DhtDead)?;
                 Ok(())
             }
             MessageKind::GetPeersRequest(req) => {
@@ -842,7 +870,7 @@ impl DhtState {
                 let compact_peer_info = self.peer_store.get_for_info_hash(req.info_hash, want);
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&req.id);
+                    .mark_last_query(&req.id, now());
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -857,11 +885,14 @@ impl DhtState {
                         )),
                     }),
                 };
-                self.worker_sender.send(WorkerSendRequest {
-                    our_tid: None,
-                    message,
-                    addr,
-                })?;
+                self.worker_sender
+                    .send(WorkerSendRequest {
+                        our_tid: None,
+                        message,
+                        addr,
+                    })
+                    .ok()
+                    .ok_or(Error::DhtDead)?;
                 Ok(())
             }
             MessageKind::FindNodeRequest(req) => {
@@ -871,7 +902,7 @@ impl DhtState {
                 let (nodes, nodes6) = self.generate_compact_nodes_both(req.target, want);
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&req.id);
+                    .mark_last_query(&req.id, now());
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -883,11 +914,14 @@ impl DhtState {
                         ..Default::default()
                     }),
                 };
-                self.worker_sender.send(WorkerSendRequest {
-                    our_tid: None,
-                    message,
-                    addr,
-                })?;
+                self.worker_sender
+                    .send(WorkerSendRequest {
+                        our_tid: None,
+                        message,
+                        addr,
+                    })
+                    .ok()
+                    .ok_or(Error::DhtDead)?;
                 Ok(())
             }
             _ => unreachable!(),
@@ -936,7 +970,7 @@ struct DhtWorker {
 }
 
 impl DhtWorker {
-    fn on_send_error(&self, tid: u16, addr: SocketAddr, err: anyhow::Error) {
+    fn on_send_error(&self, tid: u16, addr: SocketAddr, err: crate::Error) {
         if let Some((_, OutstandingRequest { done })) =
             self.dht.inflight_by_transaction_id.remove(&(tid, addr))
         {
@@ -944,10 +978,10 @@ impl DhtWorker {
         };
     }
 
-    async fn bootstrap_hostname(&self, hostname: &str) -> anyhow::Result<()> {
+    async fn bootstrap_hostname(&self, hostname: &str) -> crate::Result<()> {
         let addrs = tokio::net::lookup_host(hostname)
             .await
-            .with_context(|| format!("error looking up {}", hostname))?
+            .map_err(|err| Error::lookup(hostname, err))?
             .collect::<Vec<_>>();
         let v4 = RecursiveRequest::find_node_for_routing_table(
             self.dht.clone(),
@@ -967,7 +1001,7 @@ impl DhtWorker {
         v4.or(v6)
     }
 
-    async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> anyhow::Result<()> {
+    async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> crate::Result<()> {
         let backoff = ExponentialBuilder::new()
             .with_max_delay(Duration::from_secs(60))
             .with_jitter()
@@ -981,10 +1015,9 @@ impl DhtWorker {
             })
             .instrument(trace_span!("bootstrap", hostname = addr))
             .await
-            .context("bootstrap failed")
     }
 
-    async fn bootstrap(&self, bootstrap_addrs: &[String]) -> anyhow::Result<()> {
+    async fn bootstrap(&self, bootstrap_addrs: &[String]) -> crate::Result<()> {
         let mut futs = FuturesUnordered::new();
 
         for addr in bootstrap_addrs.iter() {
@@ -997,12 +1030,12 @@ impl DhtWorker {
             }
         }
         if successes == 0 {
-            bail!("bootstrapping failed")
+            return Err(Error::BootstrapFailed);
         }
         Ok(())
     }
 
-    async fn bucket_refresher(&self, is_v4: bool) -> anyhow::Result<()> {
+    async fn bucket_refresher(&self, is_v4: bool) -> crate::Result<()> {
         let (tx, mut rx) = unbounded_channel();
 
         let table = if is_v4 {
@@ -1018,10 +1051,11 @@ impl DhtWorker {
             let mut iteration = 0;
             loop {
                 interval.tick().await;
+                let now = now();
                 let mut found = 0;
 
                 for bucket in table.read().iter_buckets() {
-                    if bucket.leaf.last_refreshed.elapsed() < INACTIVITY_TIMEOUT {
+                    if now - bucket.leaf.last_refreshed < INACTIVITY_TIMEOUT {
                         continue;
                     }
                     found += 1;
@@ -1042,7 +1076,7 @@ impl DhtWorker {
                     let random_id = random_id.unwrap();
                     let addrs = table
                         .read()
-                        .sorted_by_distance_from(random_id)
+                        .sorted_by_distance_from(random_id, now())
                         .iter()
                         .map(|n| n.addr())
                         .take(8).collect::<Vec<_>>();
@@ -1057,7 +1091,7 @@ impl DhtWorker {
         }
     }
 
-    async fn pinger(&self, is_v4: bool) -> anyhow::Result<()> {
+    async fn pinger(&self, is_v4: bool) -> crate::Result<()> {
         let table = if is_v4 {
             &self.dht.routing_table_v4
         } else {
@@ -1071,7 +1105,7 @@ impl DhtWorker {
             loop {
                 interval.tick().await;
                 let mut found = 0;
-                let now = Instant::now();
+                let now = now();
                 for node in table.read().iter() {
                     if matches!(
                         node.status(now),
@@ -1094,10 +1128,10 @@ impl DhtWorker {
                 r = rx.recv() => {
                     let (id, addr) = r.unwrap();
                     futs.push(async move {
-                        table.write().mark_outgoing_request(&id);
+                        table.write().mark_outgoing_request(&id, now());
                         match self.dht.request(Request::Ping, addr).await {
                             Ok(_) => {
-                                table.write().mark_response(&id);
+                                table.write().mark_response(&id, now());
                             },
                             Err(e) => {
                                 table.write().mark_error(&id);
@@ -1116,7 +1150,7 @@ impl DhtWorker {
         socket: &UdpSocket,
         mut input_rx: UnboundedReceiver<WorkerSendRequest>,
         output_tx: Sender<(Message<ByteBufOwned>, SocketAddr)>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         let writer = async {
             let mut buf = Vec::new();
             while let Some(WorkerSendRequest {
@@ -1140,45 +1174,37 @@ impl DhtWorker {
                 if let Err(e) = socket.send_to(&buf, addr).await {
                     debug!("error sending to {addr}: {e:#}");
                     if let Some(tid) = our_tid {
-                        self.on_send_error(tid, addr, e.into());
+                        self.on_send_error(tid, addr, Error::Send(e));
                     }
                 }
             }
-            Err::<(), _>(anyhow::anyhow!(
-                "DHT UDP socket writer over, nowhere to read messages from"
-            ))
+            Err(Error::DhtDead)
         };
         let reader = async {
             let mut buf = vec![0u8; 16384];
             loop {
-                let (size, addr) = socket
-                    .recv_from(&mut buf)
-                    .await
-                    .context("error reading from UDP socket")?;
+                let (size, addr) = socket.recv_from(&mut buf).await.map_err(Error::Recv)?;
                 match bprotocol::deserialize_message::<ByteBufOwned>(&buf[..size]) {
                     Ok(msg) => match output_tx.send((msg, addr)).await {
                         Ok(_) => {}
-                        Err(_) => break,
+                        Err(_) => return Err(Error::DhtDead),
                     },
                     Err(e) => debug!("{}: error deserializing incoming message: {}", addr, e),
                 }
             }
-            Err::<(), _>(anyhow::anyhow!(
-                "DHT UDP socket reader over, nowhere to send responses to"
-            ))
         };
         let result = tokio::select! {
             err = writer => err,
             err = reader => err,
         };
-        result.context("DHT UDP framer closed")
+        result
     }
 
     async fn start(
         self,
         in_rx: UnboundedReceiver<WorkerSendRequest>,
         bootstrap_addrs: &[String],
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         let (out_tx, mut out_rx) = channel(1);
         let framer = self
             .framer(&self.socket, in_rx, out_tx)
@@ -1195,9 +1221,7 @@ impl DhtWorker {
                         debug!("error in on_response, addr={:?}: {}", addr, e)
                     }
                 }
-                Err::<(), _>(anyhow::anyhow!(
-                    "closed response reader, nowhere to send results to, DHT closed"
-                ))
+                Err(Error::DhtDead)
             }
         }
         .instrument(debug_span!("dht_responese_reader"));
@@ -1223,25 +1247,27 @@ impl DhtWorker {
         loop {
             tokio::select! {
                 err = &mut framer => {
-                    anyhow::bail!("framer quit: {:?}", err)
+                    return Error::task_finished(&"framer", err);
                 },
                 result = &mut bootstrap, if !bootstrap_done => {
                     bootstrap_done = true;
                     result?;
                 },
                 err = &mut pinger_v4 => {
-                    anyhow::bail!("pinger_v4 quit: {:?}", err)
+                    return Error::task_finished(&"pinger_v4", err);
                 },
                 err = &mut bucket_refresher_v4 => {
-                    anyhow::bail!("bucket_refresher_v4 quit: {:?}", err)
+                    return Error::task_finished(&"bucket_refresher_v4", err);
                 },
                 err = &mut pinger_v6 => {
-                    anyhow::bail!("pinger_v6 quit: {:?}", err)
+                    return Error::task_finished(&"pinger_v6", err);
                 },
                 err = &mut bucket_refresher_v6 => {
-                    anyhow::bail!("bucket_refresher_v6 quit: {:?}", err)
+                    return Error::task_finished(&"bucket_refresher_v6", err);
                 },
-                err = &mut response_reader => {anyhow::bail!("response reader quit: {:?}", err)}
+                err = &mut response_reader => {
+                    return Error::task_finished(&"response_reader", err);
+                }
             }
         }
     }
@@ -1259,7 +1285,7 @@ pub struct DhtConfig {
 }
 
 impl DhtState {
-    pub async fn new() -> anyhow::Result<Arc<Self>> {
+    pub async fn new() -> crate::Result<Arc<Self>> {
         Self::with_config(DhtConfig::default()).await
     }
     pub fn cancellation_token(&self) -> &CancellationToken {
@@ -1267,13 +1293,13 @@ impl DhtState {
     }
 
     #[inline(never)]
-    pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {
+    pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, crate::Result<Arc<Self>>> {
         async move {
             let addr = config
                 .listen_addr
                 .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into());
             let socket = UdpSocket::bind_udp(addr, Default::default())
-                .context("error binding UDP socket")?;
+                .map_err(|e| Error::Bind(Box::new(e)))?;
 
             let listen_addr = socket.bind_addr();
             info!("DHT listening on {:?}", listen_addr);

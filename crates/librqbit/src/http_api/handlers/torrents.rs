@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, str::FromStr};
 
 use anyhow::Context;
 use axum::{
@@ -17,6 +17,7 @@ use super::ApiState;
 use crate::{
     AddTorrent, ApiError, CreateTorrentOptions, SUPPORTED_SCHEMES,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
+    api_error::WithStatusError,
     http_api::timeout::Timeout,
     http_api_types::TorrentAddQueryParams,
     torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsFilterState},
@@ -179,9 +180,9 @@ pub async fn h_peer_stats_prometheus(
 ) -> Result<impl IntoResponse> {
     let handle = state.api.mgr_handle(idx)?;
 
-    let live = handle.live().ok_or_else(|| {
-        ApiError::new_from_text(StatusCode::PRECONDITION_FAILED, "torrent not live")
-    })?;
+    let live = handle
+        .live()
+        .with_status_error(StatusCode::PRECONDITION_FAILED, "torrent is not live")?;
 
     let peer_stats = live.per_peer_stats_snapshot(PeerStatsFilter {
         state: PeerStatsFilterState::Live,
@@ -244,25 +245,18 @@ pub async fn h_add_peers(
     body: Bytes,
 ) -> Result<impl IntoResponse> {
     let handle = state.api.mgr_handle(idx)?;
-    let live = handle
-        .live()
-        .context("torrent is not live")
-        .map_err(ApiError::from)?;
+    let live = handle.live().ok_or(crate::Error::TorrentIsNotLive)?;
+
+    let body =
+        std::str::from_utf8(&body).with_status_error(StatusCode::BAD_REQUEST, "invalid utf-8")?;
 
     let addrs = body
-        .split(|c| *c == b'\n')
-        .map(|l| {
-            std::str::from_utf8(l)
-                .context("invalid UTF-8")
-                .and_then(|l| l.parse().context("cant parse SocketAddr"))
-        })
-        .collect::<anyhow::Result<Vec<SocketAddr>>>()
-        .context("invalid input")
-        .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
+        .split('\n')
+        .filter_map(|s| SocketAddr::from_str(s).ok());
 
     let mut count = 0;
     for addr in addrs {
-        if live.add_peer_if_not_seen(addr).map_err(ApiError::from)? {
+        if live.add_peer_if_not_seen(addr)? {
             count += 1;
         }
     }
@@ -294,15 +288,16 @@ pub async fn h_create_torrent(
     body: Bytes,
 ) -> Result<impl IntoResponse> {
     if !state.opts.allow_create {
-        return Err(ApiError::new_from_text(
+        return Err((
             StatusCode::FORBIDDEN,
             "creating torrents not allowed. Enable through CLI options",
-        ));
+        )
+            .into());
     }
 
     let path = std::path::Path::new(
         std::str::from_utf8(body.as_ref())
-            .map_err(|_| ApiError::new_from_text(StatusCode::BAD_REQUEST, "invalid utf-8"))?,
+            .with_status_error(StatusCode::BAD_REQUEST, "invalid utf-8")?,
     );
 
     let create_opts = CreateTorrentOptions {

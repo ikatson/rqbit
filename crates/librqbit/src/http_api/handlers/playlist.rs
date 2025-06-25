@@ -8,8 +8,9 @@ use itertools::Itertools;
 
 use super::ApiState;
 use crate::{
-    ApiError, ManagedTorrent,
+    ManagedTorrent,
     api::{Result, TorrentIdOrHash},
+    api_error::WithStatus,
 };
 
 fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)>> {
@@ -43,11 +44,11 @@ fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)
 }
 
 fn get_host(headers: &HeaderMap) -> Result<&str> {
-    Ok(headers
+    headers
         .get("host")
-        .ok_or_else(|| ApiError::new_from_text(StatusCode::BAD_REQUEST, "Missing host header"))?
-        .to_str()
-        .context("hostname is not string")?)
+        .ok_or("Missing host header")
+        .and_then(|h| h.to_str().map_err(|_| "hostname is not a string"))
+        .with_status(StatusCode::BAD_REQUEST)
 }
 
 fn build_playlist_content<I: IntoIterator<Item = (TorrentIdOrHash, usize, String)>>(

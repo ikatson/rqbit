@@ -53,7 +53,7 @@ impl UpnpServerStateInner {
             cancel_token: cancel_token.clone(),
         });
 
-        spawn_with_cancel(
+        spawn_with_cancel::<anyhow::Error>(
             error_span!(parent: span, "system_update_id_updater"),
             cancel_token,
             {

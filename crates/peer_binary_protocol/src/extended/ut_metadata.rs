@@ -11,6 +11,7 @@ use std::io::Write;
 
 use crate::DoubleBufHelper;
 use crate::MessageDeserializeError;
+use crate::SerializeError;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct UtMetadataData<ByteBuf> {
@@ -110,7 +111,7 @@ impl UtMetadata<ByteBufOwned> {
 }
 
 impl<'a> UtMetadata<ByteBuf<'a>> {
-    pub fn serialize(&self, writer: &mut Cursor<&mut [u8]>) -> anyhow::Result<()> {
+    pub fn serialize(&self, writer: &mut Cursor<&mut [u8]>) -> Result<(), SerializeError> {
         #[derive(Serialize)]
         struct Message {
             msg_type: u32,
