@@ -44,6 +44,10 @@ use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unb
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, trace_span, warn};
 
+fn now() -> Instant {
+    Instant::now()
+}
+
 #[derive(Debug, Serialize)]
 pub struct DhtStats {
     #[serde(serialize_with = "crate::utils::serialize_id20")]
@@ -160,7 +164,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
         let mut rt = req.dht.get_table_for_addr(addr).write();
         match rt.add_node(target_node, addr) {
             InsertResult::WasExisting | InsertResult::ReplacedBad(_) | InsertResult::Added => {
-                rt.mark_outgoing_request(&target_node);
+                rt.mark_outgoing_request(&target_node, now());
             }
             InsertResult::Ignored => {}
         }
@@ -175,7 +179,7 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksFindNodes {
     ) {
         let mut table = req.dht.get_table_for_addr(addr).write();
         if resp.is_ok() {
-            table.mark_response(&target_node);
+            table.mark_response(&target_node, now());
         } else {
             table.mark_error(&target_node);
         }
@@ -395,7 +399,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         };
         for (id, addr) in table
             .read()
-            .sorted_by_distance_from(self.info_hash)
+            .sorted_by_distance_from(self.info_hash, now())
             .iter()
             .map(|n| (n.id(), n.addr()))
             .take(8)
@@ -457,8 +461,10 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             )
             .filter(|node| addr.is_ipv4() == node.addr.is_ipv4());
 
+        let now = now();
+
         for node in node_it {
-            let should_request = self.should_request_node(node.id, node.addr, depth);
+            let should_request = self.should_request_node(node.id, node.addr, depth, now);
             trace!(
                 "should_request={}, id={:?}, addr={}, depth={}/{}",
                 should_request, node.id, node.addr, depth, self.max_depth
@@ -487,7 +493,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .iter_mut()
             .find(|n| n.addr == addr)
             .map(|node| {
-                node.last_response = Some(Instant::now());
+                node.last_response = Some(now());
                 node.errors_in_a_row = 0;
                 match response {
                     ResponseOrError::Response(r) => {
@@ -502,7 +508,13 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             .is_some()
     }
 
-    fn should_request_node(&self, node_id: Id20, addr: SocketAddr, depth: usize) -> bool {
+    fn should_request_node(
+        &self,
+        node_id: Id20,
+        addr: SocketAddr,
+        depth: usize,
+        now: Instant,
+    ) -> bool {
         if depth >= self.max_depth {
             return false;
         }
@@ -511,8 +523,8 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         // If recently requested, ignore
         if let Some(existing) = closest_nodes.iter_mut().find(|n| n.id == node_id) {
-            if existing.last_request.elapsed() > Duration::from_secs(60) {
-                existing.last_request = Instant::now();
+            if now - existing.last_request > Duration::from_secs(60) {
+                existing.last_request = now;
                 return true;
             }
             return false;
@@ -521,7 +533,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
         closest_nodes.push(MaybeUsefulNode {
             id: node_id,
             addr,
-            last_request: Instant::now(),
+            last_request: now,
             last_response: None,
             returned_peers: false,
             errors_in_a_row: 0,
@@ -531,10 +543,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             let has_returned_peers_desc = Reverse(n.returned_peers);
             let has_responded_desc = Reverse(n.last_response.is_some() as u8);
             let distance = n.id.distance(&self.info_hash);
-            let freshest_response = n
-                .last_response
-                .map(|r| r.elapsed())
-                .unwrap_or(Duration::MAX);
+            let freshest_response = n.last_response.map(|r| now - r).unwrap_or(Duration::MAX);
             (
                 has_returned_peers_desc,
                 has_responded_desc,
@@ -701,18 +710,19 @@ impl DhtState {
         Option<CompactNodeInfoOwned<SocketAddrV4>>,
         Option<CompactNodeInfoOwned<SocketAddrV6>>,
     ) {
+        let now = now();
         match want {
             Want::V4 => (
-                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read(), now)),
                 None,
             ),
             Want::V6 => (
                 None,
-                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read(), now)),
             ),
             Want::Both => (
-                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read())),
-                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read())),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v4.read(), now)),
+                Some(self.generate_compact_nodes(target, &self.routing_table_v6.read(), now)),
             ),
             Want::None => (None, None),
         }
@@ -730,13 +740,14 @@ impl DhtState {
         &self,
         target: Id20,
         table: &RoutingTable,
+        now: Instant,
     ) -> CompactNodeInfo<ByteBufOwned, A>
     where
         A: CompactSerialize + CompactSerializeFixedLen + FromSocketAddr,
         Node<A>: CompactSerialize + CompactSerializeFixedLen,
     {
         let it = table
-            .sorted_by_distance_from(target)
+            .sorted_by_distance_from(target, now)
             .into_iter()
             .filter_map(|r| {
                 Some(Node {
@@ -804,7 +815,7 @@ impl DhtState {
                 };
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&req.id);
+                    .mark_last_query(&req.id, now());
                 self.worker_sender.send(WorkerSendRequest {
                     our_tid: None,
                     message,
@@ -815,7 +826,7 @@ impl DhtState {
             MessageKind::AnnouncePeer(ann) => {
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&ann.id);
+                    .mark_last_query(&ann.id, now());
                 let added = self.peer_store.store_peer(ann, addr);
                 trace!("{addr}: added_peer={added}, announce={ann:?}");
                 let message = Message {
@@ -842,7 +853,7 @@ impl DhtState {
                 let compact_peer_info = self.peer_store.get_for_info_hash(req.info_hash, want);
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&req.id);
+                    .mark_last_query(&req.id, now());
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -871,7 +882,7 @@ impl DhtState {
                 let (nodes, nodes6) = self.generate_compact_nodes_both(req.target, want);
                 self.get_table_for_addr(addr)
                     .write()
-                    .mark_last_query(&req.id);
+                    .mark_last_query(&req.id, now());
                 let message = Message {
                     transaction_id: msg.transaction_id,
                     version: None,
@@ -1018,10 +1029,11 @@ impl DhtWorker {
             let mut iteration = 0;
             loop {
                 interval.tick().await;
+                let now = now();
                 let mut found = 0;
 
                 for bucket in table.read().iter_buckets() {
-                    if bucket.leaf.last_refreshed.elapsed() < INACTIVITY_TIMEOUT {
+                    if now - bucket.leaf.last_refreshed < INACTIVITY_TIMEOUT {
                         continue;
                     }
                     found += 1;
@@ -1042,7 +1054,7 @@ impl DhtWorker {
                     let random_id = random_id.unwrap();
                     let addrs = table
                         .read()
-                        .sorted_by_distance_from(random_id)
+                        .sorted_by_distance_from(random_id, now())
                         .iter()
                         .map(|n| n.addr())
                         .take(8).collect::<Vec<_>>();
@@ -1071,7 +1083,7 @@ impl DhtWorker {
             loop {
                 interval.tick().await;
                 let mut found = 0;
-                let now = Instant::now();
+                let now = now();
                 for node in table.read().iter() {
                     if matches!(
                         node.status(now),
@@ -1094,10 +1106,10 @@ impl DhtWorker {
                 r = rx.recv() => {
                     let (id, addr) = r.unwrap();
                     futs.push(async move {
-                        table.write().mark_outgoing_request(&id);
+                        table.write().mark_outgoing_request(&id, now());
                         match self.dht.request(Request::Ping, addr).await {
                             Ok(_) => {
-                                table.write().mark_response(&id);
+                                table.write().mark_response(&id, now());
                             },
                             Err(e) => {
                                 table.write().mark_error(&id);
