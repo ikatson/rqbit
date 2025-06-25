@@ -3044,7 +3044,6 @@ name = "librqbit-core"
 version = "5.0.0"
 dependencies = [
  "anyhow",
- "assert_cfg",
  "bytes",
  "data-encoding",
  "directories",
