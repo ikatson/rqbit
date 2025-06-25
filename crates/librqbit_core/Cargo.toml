@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-sha1w = { path = "../sha1w", package = "librqbit-sha1-wrapper", version = "4.1", default-features = false }
+sha1w = { path = "../sha1w", package = "librqbit-sha1-wrapper", version = "4.1", default-features = false, optional = true }
 itertools = "0.14"
 directories = "6"
 tokio-util = "0.7.10"

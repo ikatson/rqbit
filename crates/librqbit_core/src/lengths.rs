@@ -73,7 +73,6 @@ impl ValidPieceIndex {
 }
 
 impl Lengths {
-    #[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
     pub fn from_torrent<ByteBuf: AsRef<[u8]>>(
         torrent: &crate::torrent_metainfo::TorrentMetaV1Info<ByteBuf>,
     ) -> anyhow::Result<Lengths> {

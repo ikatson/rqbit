@@ -20,7 +20,6 @@ httparse = "1.9.4"
 uuid = { version = "1.10.0", features = ["v4"] }
 librqbit-upnp = { version = "1", path = "../upnp", default-features = false }
 gethostname = "1"
-librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }
 librqbit-core = { version = "5", path = "../librqbit_core", default-features = false }
 mime_guess = "2.0.5"
 url = { version = "2", default-features = false }
@@ -31,6 +30,7 @@ quick-xml = { version = "0.37.1", features = ["serialize"] }
 network-interface = "2.0.0"
 futures = "0.3.30"
 librqbit-dualstack-sockets = "0.6.4"
+rand = "0.9.1"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"
