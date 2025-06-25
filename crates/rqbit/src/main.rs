@@ -691,14 +691,13 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 };
 
                 // We need to install prometheus recorder early before we registered any metrics.
-                if cfg!(feature = "prometheus") {
-                    match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
-                        Ok(handle) => {
-                            http_api_opts.prometheus_handle = Some(handle);
-                        }
-                        Err(e) => {
-                            warn!("error installting prometheus recorder: {e:#}");
-                        }
+                #[cfg(feature = "prometheus")]
+                match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
+                    Ok(handle) => {
+                        http_api_opts.prometheus_handle = Some(handle);
+                    }
+                    Err(e) => {
+                        warn!("error installting prometheus recorder: {e:#}");
                     }
                 }
 
