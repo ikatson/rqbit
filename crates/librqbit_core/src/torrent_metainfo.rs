@@ -1,5 +1,5 @@
 use anyhow::Context;
-use bencode::{WithRawBytes, from_bytes};
+use bencode::WithRawBytes;
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
@@ -24,7 +24,7 @@ pub struct ParsedTorrent<BufType> {
 /// Parse torrent metainfo from bytes (includes info_hash).
 #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
 pub fn torrent_from_bytes<'de>(buf: &'de [u8]) -> anyhow::Result<TorrentMetaV1<ByteBuf<'de>>> {
-    let mut t: TorrentMetaV1<ByteBuf<'_>> = from_bytes(buf)
+    let mut t: TorrentMetaV1<ByteBuf<'_>> = bencode::from_bytes(buf)
         .inspect_err(|e| tracing::trace!("error deserializing torrent: {e:#}"))
         .map_err(|e| e.into_kind())?;
 
@@ -401,7 +401,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bencode::BencodeValue;
+    use bencode::{BencodeValue, from_bytes};
 
     use super::*;
 
@@ -410,11 +410,12 @@ mod tests {
 
     #[test]
     fn test_deserialize_torrent_borrowed() {
-        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
+        let torrent: TorrentMetaV1Borrowed = from_bytes(TORRENT_BYTES).unwrap();
         dbg!(torrent);
     }
 
     #[test]
+    #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
     fn test_deserialize_torrent_with_info_hash() {
         let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(TORRENT_BYTES).unwrap();
         assert_eq!(
@@ -425,8 +426,10 @@ mod tests {
 
     #[test]
     fn test_serialize_then_deserialize_bencode() {
-        let torrent: TorrentMetaV1Info<ByteBuf> =
-            torrent_from_bytes(TORRENT_BYTES).unwrap().info.data;
+        let torrent = from_bytes::<TorrentMetaV1<ByteBuf>>(TORRENT_BYTES)
+            .unwrap()
+            .info
+            .data;
         let mut writer = Vec::new();
         bencode::bencode_serialize_to_writer(&torrent, &mut writer).unwrap();
         let deserialized = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&writer).unwrap();
@@ -463,9 +466,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
     fn test_private_real_torrent() {
         let buf = include_bytes!("resources/test/private.torrent");
-        let torrent: TorrentMetaV1Borrowed = torrent_from_bytes(buf).unwrap();
+        let torrent: TorrentMetaV1Borrowed = from_bytes(buf).unwrap();
         assert!(torrent.info.data.private);
     }
 }

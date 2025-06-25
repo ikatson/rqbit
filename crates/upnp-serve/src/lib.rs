@@ -1,8 +1,11 @@
-use std::{io::Write, time::Duration};
+use std::{
+    io::{Cursor, Write},
+    time::Duration,
+};
 
 use anyhow::Context;
 use gethostname::gethostname;
-use librqbit_sha1_wrapper::ISha1;
+use rand::{Rng, SeedableRng};
 use services::content_directory::ContentDirectoryBrowseProvider;
 use ssdp::SsdpRunner;
 
@@ -31,20 +34,19 @@ pub struct UpnpServer {
 }
 
 fn create_usn(opts: &UpnpServerOptions) -> anyhow::Result<String> {
-    let mut buf = Vec::new();
+    let mut buf = [0u8; 32];
+    let mut cursor = Cursor::new(&mut buf[..]);
 
-    buf.write_all(gethostname().as_encoded_bytes())?;
-    write!(
-        &mut buf,
+    let _ = cursor.write_all(gethostname().as_encoded_bytes());
+    let _ = write!(
+        &mut cursor,
         "{}{}{}",
         opts.friendly_name, opts.http_listen_port, opts.http_prefix
-    )?;
+    );
 
-    let mut sha1 = librqbit_sha1_wrapper::Sha1::new();
-    sha1.update(&buf);
-
-    let hash = sha1.finish();
-    let uuid = uuid::Builder::from_slice(&hash[..16])
+    let mut uuid = [0u8; 16];
+    rand::rngs::SmallRng::from_seed(buf).fill(&mut uuid);
+    let uuid = uuid::Builder::from_slice(&uuid)
         .context("error generating UUID")?
         .into_uuid();
     Ok(format!("uuid:{}", uuid))
