@@ -353,7 +353,7 @@ impl<'a> PeerConnection<'a> {
                         r = timeout(keep_alive_interval, outgoing_chan.recv()) => match r {
                             Ok(Some(msg)) => msg,
                             Ok(None) => {
-                                return Err(Error::ClosingWriterChannelClosed);
+                                return Err(Error::TorrentIsNotLive);
                             }
                             Err(_) => WriterRequest::Message(Message::KeepAlive),
                         }

@@ -1,21 +1,13 @@
-use anyhow::bail;
+use std::fmt::Display;
+
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, trace};
 
-#[derive(Debug)]
-struct CancelledError {}
-impl std::error::Error for CancelledError {}
-impl std::fmt::Display for CancelledError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("cancelled")
-    }
-}
-
 /// Spawns a future with tracing instrumentation.
 #[track_caller]
-pub fn spawn(
+pub fn spawn<E: Display + Send + 'static>(
     span: tracing::Span,
-    fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    fut: impl std::future::Future<Output = Result<(), E>> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
     let fut = async move {
         trace!("started");
@@ -33,12 +25,7 @@ pub fn spawn(
                             trace!("finished");
                         }
                         Err(e) => {
-                            if e.is::<CancelledError>() {
-                                debug!("task cancelled")
-                            } else {
-                                error!("finished with error: {:#}", e)
-                            }
-
+                            error!("finished with error: {:#}", e)
                         }
                     }
                     return;
@@ -51,15 +38,16 @@ pub fn spawn(
 }
 
 #[track_caller]
-pub fn spawn_with_cancel(
+pub fn spawn_with_cancel<E: Display + Send + 'static>(
     span: tracing::Span,
     cancellation_token: CancellationToken,
-    fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    fut: impl std::future::Future<Output = Result<(), E>> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
     spawn(span, async move {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
-                bail!(CancelledError{})
+                debug!("task cancelled");
+                Ok(())
             },
             r = fut => r
         }

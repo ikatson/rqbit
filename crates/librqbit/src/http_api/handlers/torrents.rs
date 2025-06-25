@@ -244,10 +244,7 @@ pub async fn h_add_peers(
     body: Bytes,
 ) -> Result<impl IntoResponse> {
     let handle = state.api.mgr_handle(idx)?;
-    let live = handle
-        .live()
-        .context("torrent is not live")
-        .map_err(ApiError::from)?;
+    let live = handle.live().ok_or(crate::Error::TorrentIsNotLive)?;
 
     let addrs = body
         .split(|c| *c == b'\n')
@@ -262,7 +259,7 @@ pub async fn h_add_peers(
 
     let mut count = 0;
     for addr in addrs {
-        if live.add_peer_if_not_seen(addr).map_err(ApiError::from)? {
+        if live.add_peer_if_not_seen(addr)? {
             count += 1;
         }
     }

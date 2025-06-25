@@ -17,7 +17,15 @@ impl ApiError {
     pub fn new_from_anyhow(status: StatusCode, error: anyhow::Error) -> Self {
         Self {
             status: Some(status),
-            kind: ApiErrorKind::Other(error),
+            kind: ApiErrorKind::OtherAnyhow(error),
+            plaintext: false,
+        }
+    }
+
+    pub fn new_from_error(status: StatusCode, error: crate::Error) -> Self {
+        Self {
+            status: Some(status),
+            kind: ApiErrorKind::OtherError(error),
             plaintext: false,
         }
     }
@@ -39,10 +47,10 @@ impl ApiError {
     }
 
     #[allow(dead_code)]
-    pub fn not_implemented(msg: &str) -> Self {
+    pub fn not_implemented(msg: &'static str) -> Self {
         Self {
             status: Some(StatusCode::INTERNAL_SERVER_ERROR),
-            kind: ApiErrorKind::Other(anyhow::anyhow!("{}", msg)),
+            kind: ApiErrorKind::Text(msg),
             plaintext: false,
         }
     }
@@ -84,13 +92,20 @@ impl ApiError {
     }
 }
 
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 enum ApiErrorKind {
+    #[error("torrent not found {0}")]
     TorrentNotFound(TorrentIdOrHash),
+    #[error("DHT is disabled")]
     DhtDisabled,
+    #[error("unauthorized")]
     Unauthorized,
+    #[error("{0}")]
     Text(&'static str),
-    Other(anyhow::Error),
+    #[error(transparent)]
+    OtherAnyhow(#[from] anyhow::Error),
+    #[error(transparent)]
+    OtherError(#[from] crate::Error),
 }
 
 impl Serialize for ApiError {
@@ -112,7 +127,8 @@ impl Serialize for ApiError {
                 ApiErrorKind::TorrentNotFound(_) => "torrent_not_found",
                 ApiErrorKind::DhtDisabled => "dht_disabled",
                 ApiErrorKind::Unauthorized => "unathorized",
-                ApiErrorKind::Other(_) => "internal_error",
+                ApiErrorKind::OtherAnyhow(_) => "internal_error",
+                ApiErrorKind::OtherError(_) => "internal_error",
                 ApiErrorKind::Text(_) => "internal_error",
             },
             human_readable: format!("{self}"),
@@ -132,7 +148,30 @@ impl From<anyhow::Error> for ApiError {
         let status = value.downcast_ref::<ApiError>().and_then(|e| e.status);
         Self {
             status,
-            kind: ApiErrorKind::Other(value),
+            kind: ApiErrorKind::OtherAnyhow(value),
+            plaintext: false,
+        }
+    }
+}
+
+impl From<crate::Error> for ApiError {
+    fn from(e: crate::Error) -> Self {
+        Self {
+            status: Some(StatusCode::INTERNAL_SERVER_ERROR),
+            kind: ApiErrorKind::OtherError(e),
+            plaintext: false,
+        }
+    }
+}
+
+impl<E> From<(StatusCode, E)> for ApiError
+where
+    ApiErrorKind: From<E>,
+{
+    fn from(value: (StatusCode, E)) -> Self {
+        Self {
+            status: Some(value.0),
+            kind: value.1.into(),
             plaintext: false,
         }
     }
@@ -141,7 +180,8 @@ impl From<anyhow::Error> for ApiError {
 impl std::error::Error for ApiError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.kind {
-            ApiErrorKind::Other(err) => err.source(),
+            ApiErrorKind::OtherAnyhow(err) => Some(err.as_ref()),
+            ApiErrorKind::OtherError(err) => Some(err),
             _ => None,
         }
     }
@@ -149,13 +189,7 @@ impl std::error::Error for ApiError {
 
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
-            ApiErrorKind::TorrentNotFound(idx) => write!(f, "torrent {idx} not found"),
-            ApiErrorKind::Other(err) => write!(f, "{err:?}"),
-            ApiErrorKind::Unauthorized => write!(f, "unathorized"),
-            ApiErrorKind::DhtDisabled => write!(f, "DHT is disabled"),
-            ApiErrorKind::Text(t) => write!(f, "{t}"),
-        }
+        write!(f, "{:#}", self.kind)
     }
 }
 

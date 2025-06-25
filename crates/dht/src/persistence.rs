@@ -151,7 +151,7 @@ impl PersistentDht {
                 ..Default::default()
             };
             let dht = DhtState::with_config(dht_config).await?;
-            spawn_with_cancel(
+            spawn_with_cancel::<anyhow::Error>(
                 error_span!("dht_persistence"),
                 dht.cancellation_token().clone(),
                 {

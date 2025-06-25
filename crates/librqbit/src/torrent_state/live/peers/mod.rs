@@ -1,12 +1,12 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
-use anyhow::Context;
 use dashmap::DashMap;
 use librqbit_core::lengths::ValidPieceIndex;
 use parking_lot::RwLock;
 use peer_binary_protocol::{Message, Request};
 
 use crate::{
+    Error,
     peer_connection::WriterRequest,
     session_stats::atomic::AtomicSessionStats,
     torrent_state::utils::{TimedExistence, atomic_inc},
@@ -120,12 +120,13 @@ impl PeerStates {
         })
     }
 
-    pub fn mark_peer_connecting(&self, h: PeerHandle) -> anyhow::Result<(PeerRx, PeerTx)> {
+    pub fn mark_peer_connecting(&self, h: PeerHandle) -> crate::Result<(PeerRx, PeerTx)> {
         let rx = self
             .with_peer_mut(h, "mark_peer_connecting", |peer| {
-                peer.idle_to_connecting(self).context("invalid peer state")
+                peer.idle_to_connecting(self)
+                    .ok_or(Error::BugInvalidPeerState)
             })
-            .context("peer not found in states")??;
+            .ok_or(Error::BugPeerNotFound)??;
         Ok(rx)
     }
 

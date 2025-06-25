@@ -333,7 +333,7 @@ impl TorrentStateLive {
     pub(crate) fn spawn(
         &self,
         span: tracing::Span,
-        fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+        fut: impl std::future::Future<Output = crate::Result<()>> + Send + 'static,
     ) {
         spawn_with_cancel(span, self.cancellation_token.clone(), fut);
     }
@@ -409,7 +409,7 @@ impl TorrentStateLive {
             tokio::sync::mpsc::UnboundedSender<WriterRequest>,
             ChunkInfo,
         )>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         while let Some((tx, ci)) = rx.recv().await {
             self.ratelimits
                 .prepare_for_upload(NonZeroU32::new(ci.size).unwrap())
@@ -432,7 +432,7 @@ impl TorrentStateLive {
         tx: PeerTx,
         rx: PeerRx,
         permit: OwnedSemaphorePermit,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         // TODO: bump counters for incoming
         let handler = PeerHandler {
             addr: checked_peer.addr,
@@ -482,7 +482,7 @@ impl TorrentStateLive {
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e.into()))?;
+                handler.on_peer_died(Some(e))?;
             }
         };
         drop(permit);
@@ -493,13 +493,13 @@ impl TorrentStateLive {
         self: Arc<Self>,
         addr: SocketAddr,
         permit: OwnedSemaphorePermit,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         let state = self;
         let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
         let counters = state
             .peers
             .with_peer(addr, |p| p.stats.counters.clone())
-            .context("bug: peer not found")?;
+            .ok_or(Error::BugPeerNotFound)?;
 
         let handler = PeerHandler {
             addr,
@@ -555,20 +555,20 @@ impl TorrentStateLive {
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e.into()))?;
+                handler.on_peer_died(Some(e))?;
             }
         }
         drop(permit);
-        Ok::<_, anyhow::Error>(())
+        Ok(())
     }
 
     async fn task_peer_adder(
         self: Arc<Self>,
         mut peer_queue_rx: UnboundedReceiver<SocketAddr>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::Result<()> {
         let state = self;
         loop {
-            let addr = peer_queue_rx.recv().await.context("torrent closed")?;
+            let addr = peer_queue_rx.recv().await.ok_or(Error::TorrentIsNotLive)?;
             if state.shared.options.disable_upload() && state.is_finished_and_no_active_streams() {
                 debug!("ignoring peer {} as we are finished", addr);
                 state.peers.mark_peer_not_needed(addr);
@@ -659,13 +659,16 @@ impl TorrentStateLive {
         let _ = self.have_broadcast_tx.send(index);
     }
 
-    pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> anyhow::Result<bool> {
+    pub(crate) fn add_peer_if_not_seen(&self, addr: SocketAddr) -> crate::Result<bool> {
         match self.peers.add_if_not_seen(addr) {
             Some(handle) => handle,
             None => return Ok(false),
         };
 
-        self.peer_queue_tx.send(addr)?;
+        self.peer_queue_tx
+            .send(addr)
+            .ok()
+            .ok_or(Error::TorrentIsNotLive)?;
         Ok(true)
     }
 
@@ -1129,7 +1132,7 @@ impl PeerConnectionHandler for PeerHandler {
 }
 
 impl PeerHandler {
-    fn on_peer_died(self, error: Option<anyhow::Error>) -> anyhow::Result<()> {
+    fn on_peer_died(self, error: Option<crate::Error>) -> crate::Result<()> {
         let peers = &self.state.peers;
         let handle = self.addr;
         let mut pe = match peers.states.get_mut(&handle) {
@@ -1225,16 +1228,21 @@ impl PeerHandler {
                                 PeerState::Dead => {
                                     peer.set_state(PeerState::Queued, &self.state.peers)
                                 }
-                                other => bail!(
-                                    "peer is in unexpected state: {}. Expected dead",
-                                    other.name()
-                                ),
+                                other => {
+                                    return Err(Error::BugPeerExpectedDead {
+                                        state: other.name(),
+                                    });
+                                }
                             };
                             Ok(())
                         })
-                        .context("bug: peer disappeared")??;
-                    self.state.peer_queue_tx.send(handle)?;
-                    Ok::<_, anyhow::Error>(())
+                        .ok_or(Error::BugPeerNotFound)??;
+                    self.state
+                        .peer_queue_tx
+                        .send(handle)
+                        .ok()
+                        .ok_or(Error::TorrentIsNotLive)?;
+                    Ok::<_, Error>(())
                 },
             );
         } else {

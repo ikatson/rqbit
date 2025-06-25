@@ -88,8 +88,8 @@ pub enum Error {
     #[error("disconnected to simulate failure in tests")]
     TestDisconnect,
 
-    #[error("closing writer, channel closed")]
-    ClosingWriterChannelClosed,
+    #[error("torrent is not live")]
+    TorrentIsNotLive,
 
     #[error("peer task is dead")]
     PeerTaskDead,
@@ -110,6 +110,15 @@ pub enum Error {
         #[source]
         AcquireError,
     ),
+
+    #[error("bug: peer not found")]
+    BugPeerNotFound,
+
+    #[error("bug: invalid peer state")]
+    BugInvalidPeerState,
+
+    #[error("peer is in unexpected state: {state}. Expected dead")]
+    BugPeerExpectedDead { state: &'static str },
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
