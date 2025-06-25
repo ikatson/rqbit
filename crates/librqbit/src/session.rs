@@ -1050,10 +1050,9 @@ impl Session {
             Ok(())
         }
 
-        if let Some(name) = &info.name {
-            let s = String::from_utf8_lossy(name.as_ref());
-            if !s.is_empty() {
-                let pb = PathBuf::from(s.as_ref());
+        if let Some(name) = info.name_lossy() {
+            if !name.is_empty() {
+                let pb = PathBuf::from(name.as_ref());
                 check_valid(&pb)?;
                 return Ok(Some(pb));
             }
@@ -1255,7 +1254,7 @@ impl Session {
             .start(peer_rx, opts.paused)
             .context("error starting torrent")?;
 
-        if let Some(name) = metadata.info.name.as_ref() {
+        if let Some(name) = metadata.info.name_lossy() {
             info!(?name, "added torrent");
         }
 

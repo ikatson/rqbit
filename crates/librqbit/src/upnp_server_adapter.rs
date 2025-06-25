@@ -136,12 +136,9 @@ impl TorrentFileTree {
         }
 
         let root_node = TorrentFileTreeNode {
-            title: match info.name.as_ref() {
-                Some(n) => std::str::from_utf8(n.as_ref())?.to_owned(),
-                None => {
-                    format!("torrent {}", torent_id)
-                }
-            },
+            title: info
+                .name_lossy_or_else(|| format!("torrent {}", torent_id))
+                .into_owned(),
             parent_id: None,
             children: vec![],
             real_torrent_file_id: None,
@@ -237,11 +234,8 @@ impl UpnpServerSessionAdapter {
                 } else {
                     let title = metadata
                         .info
-                        .name
-                        .as_ref()
-                        .and_then(|b| std::str::from_utf8(&b.0).ok())
-                        .map(|n| n.to_owned())
-                        .unwrap_or_else(|| format!("torrent {real_id}"));
+                        .name_lossy_or_else(|| format!("torrent {real_id}"))
+                        .into_owned();
 
                     // Create a folder
                     Some(ItemOrContainer::Container(Container {

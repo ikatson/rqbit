@@ -5,7 +5,7 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
-use std::{iter::once, path::PathBuf};
+use std::{borrow::Cow, iter::once, path::PathBuf};
 use tracing::debug;
 
 use crate::{hash_id::Id20, lengths::Lengths};
@@ -249,6 +249,28 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         let end = start + 20;
         let expected_hash = self.pieces.as_ref().get(start..end)?;
         Some(expected_hash == hash)
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.name
+            .as_ref()
+            .and_then(|n| std::str::from_utf8(n.as_ref()).ok())
+    }
+
+    pub fn name_lossy(&self) -> Option<Cow<'_, str>> {
+        self.name
+            .as_ref()
+            .map(|n| String::from_utf8_lossy(n.as_ref()))
+    }
+
+    pub fn name_lossy_or_else<'a, DefaultT: Into<Cow<'a, str>>>(
+        &'a self,
+        default: impl Fn() -> DefaultT,
+    ) -> Cow<'a, str> {
+        self.name
+            .as_ref()
+            .map(|n| String::from_utf8_lossy(n.as_ref()))
+            .unwrap_or_else(|| default().into())
     }
 
     #[inline(never)]
