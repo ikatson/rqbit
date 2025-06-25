@@ -724,4 +724,47 @@ mod tests {
         assert_eq!(t.info.data.name, ByteBuf(b"hello"));
         assert_eq!(t.info.raw_bytes, ByteBuf(b"d4:name5:helloe"));
     }
+
+    #[test]
+    fn test_dict() {
+        use std::collections::BTreeMap;
+        let mut m = BTreeMap::new();
+        m.insert(ByteBuf(b"key"), ByteBuf(b"value"));
+        m.insert(ByteBuf(b"key2"), ByteBuf(b"value2"));
+        assert_eq!(
+            from_bytes::<BTreeMap<ByteBuf, ByteBuf>>(b"d3:key5:value4:key26:value2e").unwrap(),
+            m
+        );
+    }
+
+    #[test]
+    fn test_struct_unknown_field() {
+        #[derive(Deserialize, Eq, PartialEq, Debug)]
+        struct S {
+            key: u32,
+        }
+
+        assert_eq!(
+            from_bytes::<S>(b"d3:keyi42e5:value5:helloe").unwrap(),
+            S { key: 42 }
+        );
+    }
+
+    #[test]
+    fn test_complex_struct() {
+        #[derive(Deserialize, Eq, PartialEq, Debug)]
+        struct S<'a> {
+            key: u32,
+            #[serde(borrow)]
+            values: Vec<ByteBuf<'a>>,
+        }
+
+        assert_eq!(
+            from_bytes::<S>(b"d3:keyi42e6:valuesl5:hello5:worldee").unwrap(),
+            S {
+                key: 42,
+                values: vec![ByteBuf(b"hello"), ByteBuf(b"world")]
+            }
+        );
+    }
 }
