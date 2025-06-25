@@ -6,8 +6,7 @@ use http::{HeaderMap, HeaderValue, StatusCode};
 
 use super::ApiState;
 use crate::{
-    AddTorrent, AddTorrentOptions, ApiError, ListOnlyResponse, api::Result,
-    http_api::timeout::Timeout,
+    AddTorrent, AddTorrentOptions, ListOnlyResponse, api::Result, http_api::timeout::Timeout,
 };
 
 pub async fn h_resolve_magnet(
@@ -39,10 +38,11 @@ pub async fn h_resolve_magnet(
             ..
         }) => (info, torrent_bytes),
         crate::AddTorrentResponse::Added(_, _) => {
-            return Err(ApiError::new_from_text(
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "bug: torrent was added to session, but shouldn't have been",
-            ));
+            )
+                .into());
         }
     };
 

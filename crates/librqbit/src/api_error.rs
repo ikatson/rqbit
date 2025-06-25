@@ -10,39 +10,57 @@ use crate::api::TorrentIdOrHash;
 pub struct ApiError {
     status: Option<StatusCode>,
     kind: ApiErrorKind,
-    plaintext: bool,
+}
+
+pub trait WithStatus<T> {
+    fn with_status(self, status: StatusCode) -> Result<T, ApiError>;
+}
+
+pub trait WithStatusError<T> {
+    fn with_status_error<E: Into<ApiErrorKind>>(
+        self,
+        status: StatusCode,
+        err: E,
+    ) -> Result<T, ApiError>;
+}
+
+impl<T> WithStatusError<T> for Option<T> {
+    fn with_status_error<E: Into<ApiErrorKind>>(
+        self,
+        status: StatusCode,
+        err: E,
+    ) -> Result<T, ApiError> {
+        self.ok_or(ApiError {
+            status: Some(status),
+            kind: err.into(),
+        })
+    }
+}
+
+impl<T, RE> WithStatusError<T> for Result<T, RE> {
+    fn with_status_error<E: Into<ApiErrorKind>>(
+        self,
+        status: StatusCode,
+        err: E,
+    ) -> Result<T, ApiError> {
+        self.map_err(|_| ApiError::from((status, err.into())))
+    }
+}
+
+impl<T, RE> WithStatus<T> for Result<T, RE>
+where
+    ApiErrorKind: From<RE>,
+{
+    fn with_status(self, status: StatusCode) -> Result<T, ApiError> {
+        self.map_err(|e| ApiError::from((status, ApiErrorKind::from(e))))
+    }
 }
 
 impl ApiError {
-    pub fn new_from_anyhow(status: StatusCode, error: anyhow::Error) -> Self {
-        Self {
-            status: Some(status),
-            kind: ApiErrorKind::OtherAnyhow(error),
-            plaintext: false,
-        }
-    }
-
-    pub fn new_from_error(status: StatusCode, error: crate::Error) -> Self {
-        Self {
-            status: Some(status),
-            kind: ApiErrorKind::OtherError(error),
-            plaintext: false,
-        }
-    }
-
     pub const fn torrent_not_found(torrent_id: TorrentIdOrHash) -> Self {
         Self {
             status: Some(StatusCode::NOT_FOUND),
             kind: ApiErrorKind::TorrentNotFound(torrent_id),
-            plaintext: false,
-        }
-    }
-
-    pub const fn new_from_text(status: StatusCode, text: &'static str) -> Self {
-        Self {
-            status: Some(status),
-            kind: ApiErrorKind::Text(text),
-            plaintext: false,
         }
     }
 
@@ -51,7 +69,6 @@ impl ApiError {
         Self {
             status: Some(StatusCode::INTERNAL_SERVER_ERROR),
             kind: ApiErrorKind::Text(msg),
-            plaintext: false,
         }
     }
 
@@ -59,7 +76,6 @@ impl ApiError {
         Self {
             status: Some(StatusCode::NOT_FOUND),
             kind: ApiErrorKind::DhtDisabled,
-            plaintext: false,
         }
     }
 
@@ -67,33 +83,16 @@ impl ApiError {
         Self {
             status: Some(StatusCode::UNAUTHORIZED),
             kind: ApiErrorKind::Unauthorized,
-            plaintext: true,
         }
     }
 
     pub fn status(&self) -> StatusCode {
         self.status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     }
-
-    pub fn with_status(self, status: StatusCode) -> Self {
-        Self {
-            status: Some(status),
-            kind: self.kind,
-            plaintext: self.plaintext,
-        }
-    }
-
-    pub fn with_plaintext_error(self, value: bool) -> Self {
-        Self {
-            status: self.status,
-            kind: self.kind,
-            plaintext: value,
-        }
-    }
 }
 
 #[derive(thiserror::Error, Debug)]
-enum ApiErrorKind {
+pub enum ApiErrorKind {
     #[error("torrent not found {0}")]
     TorrentNotFound(TorrentIdOrHash),
     #[error("DHT is disabled")]
@@ -106,6 +105,12 @@ enum ApiErrorKind {
     OtherAnyhow(#[from] anyhow::Error),
     #[error(transparent)]
     OtherError(#[from] crate::Error),
+}
+
+impl From<&'static str> for ApiErrorKind {
+    fn from(value: &'static str) -> Self {
+        Self::Text(value)
+    }
 }
 
 impl Serialize for ApiError {
@@ -149,7 +154,6 @@ impl From<anyhow::Error> for ApiError {
         Self {
             status,
             kind: ApiErrorKind::OtherAnyhow(value),
-            plaintext: false,
         }
     }
 }
@@ -159,7 +163,6 @@ impl From<crate::Error> for ApiError {
         Self {
             status: Some(StatusCode::INTERNAL_SERVER_ERROR),
             kind: ApiErrorKind::OtherError(e),
-            plaintext: false,
         }
     }
 }
@@ -172,7 +175,6 @@ where
         Self {
             status: Some(value.0),
             kind: value.1.into(),
-            plaintext: false,
         }
     }
 }
@@ -199,24 +201,5 @@ impl IntoResponse for ApiError {
         let mut response = axum::Json(&self).into_response();
         *response.status_mut() = self.status();
         response
-    }
-}
-
-pub trait ApiErrorExt<T> {
-    fn with_error_status_code(self, s: StatusCode) -> Result<T, ApiError>;
-    #[allow(dead_code)]
-    fn with_plaintext_error(self, value: bool) -> Result<T, ApiError>;
-}
-
-impl<T, E> ApiErrorExt<T> for std::result::Result<T, E>
-where
-    E: Into<ApiError>,
-{
-    fn with_error_status_code(self, s: StatusCode) -> Result<T, ApiError> {
-        self.map_err(|e| e.into().with_status(s))
-    }
-
-    fn with_plaintext_error(self, value: bool) -> Result<T, ApiError> {
-        self.map_err(|e| e.into().with_plaintext_error(value))
     }
 }

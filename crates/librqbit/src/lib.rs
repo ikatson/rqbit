@@ -80,7 +80,7 @@ pub mod watch;
 pub use error::{Error, Result};
 
 pub use api::Api;
-pub use api_error::ApiError;
+pub use api_error::{ApiError, WithStatus, WithStatusError};
 pub use create_torrent_file::{CreateTorrentOptions, create_torrent};
 pub use dht;
 pub use listen::{ListenerMode, ListenerOptions};

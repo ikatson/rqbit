@@ -15,7 +15,7 @@ use config::RqbitDesktopConfig;
 use http::StatusCode;
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
-    SessionPersistenceConfig,
+    SessionPersistenceConfig, WithStatusError,
     api::{
         ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentIdOrHash,
         TorrentListResponse, TorrentStats,
@@ -28,9 +28,6 @@ use librqbit_dualstack_sockets::TcpListener;
 use parking_lot::RwLock;
 use serde::Serialize;
 use tracing::{error, error_span, info, warn};
-
-const ERR_NOT_CONFIGURED: ApiError =
-    ApiError::new_from_text(StatusCode::FAILED_DEPENDENCY, "not configured");
 
 struct StateShared {
     config: config::RqbitDesktopConfig,
@@ -212,10 +209,9 @@ impl State {
 
     fn api(&self) -> Result<Api, ApiError> {
         let g = self.shared.read();
-        match g.as_ref().and_then(|s| s.api.as_ref()) {
-            Some(api) => Ok(api.clone()),
-            None => Err(ERR_NOT_CONFIGURED),
-        }
+        g.as_ref()
+            .and_then(|a| a.api.clone())
+            .with_status_error(StatusCode::FAILED_DEPENDENCY, "not configured")
     }
 
     async fn configure(&self, config: RqbitDesktopConfig) -> Result<(), ApiError> {
@@ -306,8 +302,7 @@ async fn torrent_create_from_base64_file(
     use base64::{Engine as _, engine::general_purpose};
     let bytes = general_purpose::STANDARD
         .decode(&contents)
-        .context("invalid base64")
-        .map_err(|e| ApiError::new_from_anyhow(StatusCode::BAD_REQUEST, e))?;
+        .with_status_error(StatusCode::BAD_REQUEST, "invalid base64")?;
     state
         .api()?
         .api_add_torrent(AddTorrent::TorrentFileBytes(bytes.into()), opts)
