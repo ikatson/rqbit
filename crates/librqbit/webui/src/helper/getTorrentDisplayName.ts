@@ -1,6 +1,9 @@
 import { TorrentDetails } from "../api-types";
 
-function getLargestFileName(torrentDetails: TorrentDetails): string {
+function getLargestFileName(torrentDetails: TorrentDetails): string | null {
+  if (torrentDetails.files.length == 0) {
+    return null;
+  }
   const largestFile = torrentDetails.files
     .filter((f) => f.included)
     .reduce((prev: any, current: any) =>
@@ -9,6 +12,11 @@ function getLargestFileName(torrentDetails: TorrentDetails): string {
   return largestFile.name;
 }
 
-export function torrentDisplayName(torrentDetails: TorrentDetails): string {
-  return torrentDetails.name ?? getLargestFileName(torrentDetails);
+export function torrentDisplayName(
+  torrentDetails: TorrentDetails | null
+): string {
+  if (!torrentDetails) {
+    return "";
+  }
+  return torrentDetails.name ?? getLargestFileName(torrentDetails) ?? "";
 }

@@ -159,6 +159,7 @@ export const TorrentRow: React.FC<{
             <TorrentActions
               id={id}
               statsResponse={statsResponse}
+              detailsResponse={detailsResponse}
               extendedView={extendedView}
               setExtendedView={setExtendedView}
             />
