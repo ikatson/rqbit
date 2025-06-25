@@ -94,9 +94,10 @@ impl ReadBuf {
     // in the middle of bencoded data (as we only can deserialize bencode from a single slice).
     fn make_contiguous(&mut self) -> Result<()> {
         if self.is_contiguous() {
+            #[allow(clippy::cast_possible_truncation)]
             return Err(Error::BugReadBufMakeContiguous {
-                start: self.start,
-                len: self.len,
+                start: self.start as u16,
+                len: self.len as u16,
             });
         }
 
@@ -165,7 +166,8 @@ impl ReadBuf {
             while need_additional_bytes > 0 {
                 if self.is_full() {
                     return Err(Error::ReadBufFull {
-                        need_additional_bytes,
+                        #[allow(clippy::cast_possible_truncation)]
+                        need_additional_bytes: need_additional_bytes as u16,
                         last_error: ne,
                     });
                 }

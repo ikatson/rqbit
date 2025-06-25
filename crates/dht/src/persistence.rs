@@ -1,5 +1,6 @@
 // TODO: this now stores only the routing table, but we also need AT LEAST the same socket address...
 
+use anyhow::Context;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use librqbit_core::directories::get_configuration_directory;
@@ -12,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use anyhow::Context;
 use tracing::{error, error_span, info, trace, warn};
 
 use crate::peer_store::PeerStore;

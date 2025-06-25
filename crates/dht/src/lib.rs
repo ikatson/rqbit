@@ -1,5 +1,6 @@
 mod bprotocol;
 mod dht;
+mod error;
 mod peer_store;
 mod persistence;
 mod routing_table;
@@ -7,6 +8,8 @@ mod utils;
 
 use std::sync::Arc;
 use std::time::Duration;
+
+pub use error::{Error, Result};
 
 pub use crate::dht::DhtStats;
 pub use crate::dht::{DhtConfig, DhtState, RequestPeersStream};
@@ -26,11 +29,11 @@ pub struct DhtBuilder {}
 
 impl DhtBuilder {
     #[allow(clippy::new_ret_no_self)]
-    pub async fn new() -> anyhow::Result<Dht> {
+    pub async fn new() -> crate::Result<Dht> {
         DhtState::new().await
     }
 
-    pub async fn with_config(config: DhtConfig) -> anyhow::Result<Dht> {
+    pub async fn with_config(config: DhtConfig) -> crate::Result<Dht> {
         DhtState::with_config(config).await
     }
 }

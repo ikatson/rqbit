@@ -74,13 +74,13 @@ pub enum Error {
     DisconnectWithSource(#[source] anyhow::Error),
 
     #[error("bug: make_contiguous() called on a contiguous buffer; start={start} len={len}")]
-    BugReadBufMakeContiguous { start: usize, len: usize },
+    BugReadBufMakeContiguous { start: u16, len: u16 },
 
     #[error(
         "read buffer is full. need_additional_bytes={need_additional_bytes}, last_err={last_error:#}"
     )]
     ReadBufFull {
-        need_additional_bytes: usize,
+        need_additional_bytes: u16,
         last_error: MessageDeserializeError,
     },
 

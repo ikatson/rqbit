@@ -1,4 +1,6 @@
 .bacon-locations
 /target
+/crates/*/target
+/crates/*/Cargo.lock
 /desktop/src-tauri/gen/
 .DS_Store

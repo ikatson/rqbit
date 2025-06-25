@@ -423,7 +423,7 @@ pub fn serialize_message<'a, W: Write, BufT: ByteBufT + From<&'a [u8]>>(
     version: Option<BufT>,
     ip: Option<SocketAddr>,
     kind: MessageKind<BufT>,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     let ip = ip.map(Compact);
     match kind {
         MessageKind::Error(e) => {
