@@ -83,6 +83,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, error_span, info, trace, warn};
 
 use crate::{
+    Error,
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
     file_ops::FileOps,
     limits::Limits,
@@ -143,16 +144,12 @@ pub(crate) struct TorrentStateLocked {
 }
 
 impl TorrentStateLocked {
-    pub(crate) fn get_chunks(&self) -> anyhow::Result<&ChunkTracker> {
-        self.chunks
-            .as_ref()
-            .context("chunk tracker empty, torrent was paused")
+    pub(crate) fn get_chunks(&self) -> crate::Result<&ChunkTracker> {
+        self.chunks.as_ref().ok_or(Error::ChunkTrackerEmpty)
     }
 
-    pub(crate) fn get_chunks_mut(&mut self) -> anyhow::Result<&mut ChunkTracker> {
-        self.chunks
-            .as_mut()
-            .context("chunk tracker empty, torrent was paused")
+    pub(crate) fn get_chunks_mut(&mut self) -> crate::Result<&mut ChunkTracker> {
+        self.chunks.as_mut().ok_or(Error::ChunkTrackerEmpty)
     }
 
     fn try_flush_bitv(&mut self) {
@@ -485,7 +482,7 @@ impl TorrentStateLive {
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e))?;
+                handler.on_peer_died(Some(e.into()))?;
             }
         };
         drop(permit);
@@ -558,7 +555,7 @@ impl TorrentStateLive {
             }
             Err(e) => {
                 debug!("error managing peer: {:#}", e);
-                handler.on_peer_died(Some(e))?;
+                handler.on_peer_died(Some(e.into()))?;
             }
         }
         drop(permit);
@@ -1247,7 +1244,7 @@ impl PeerHandler {
         Ok(())
     }
 
-    fn reserve_next_needed_piece(&self) -> anyhow::Result<Option<ValidPieceIndex>> {
+    fn reserve_next_needed_piece(&self) -> crate::Result<Option<ValidPieceIndex>> {
         // TODO: locking one inside the other in different order results in deadlocks.
         self.state
             .peers
@@ -1464,19 +1461,21 @@ impl PeerHandler {
 
     // The job of this is to request chunks and also to keep peer alive.
     // The moment this ends, the peer is disconnected.
-    async fn task_peer_chunk_requester(&self) -> anyhow::Result<()> {
+    async fn task_peer_chunk_requester(&self) -> crate::Result<()> {
         let handle = self.addr;
         self.wait_for_bitfield().await;
 
         let mut update_interest = {
             let mut current = false;
-            move |h: &PeerHandler, new_value: bool| -> anyhow::Result<()> {
+            move |h: &PeerHandler, new_value: bool| -> crate::Result<()> {
                 if new_value != current {
                     h.tx.send(if new_value {
                         WriterRequest::Message(Message::Interested)
                     } else {
                         WriterRequest::Message(Message::NotInterested)
-                    })?;
+                    })
+                    .ok()
+                    .ok_or(Error::PeerTaskDead)?;
                     current = new_value;
                 }
                 Ok(())
@@ -1497,7 +1496,10 @@ impl PeerHandler {
                     )
                 {
                     debug!("nothing left to do, neither of us is interested, disconnecting peer");
-                    self.tx.send(WriterRequest::Disconnect(Ok(())))?;
+                    self.tx
+                        .send(WriterRequest::Disconnect(Ok(())))
+                        .ok()
+                        .ok_or(Error::PeerTaskDead)?;
                     // wait until the receiver gets the message so that it doesn't finish with an error.
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     return Ok(());

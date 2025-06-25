@@ -227,16 +227,34 @@ pub enum Message<'a> {
     Extended(ExtendedMessage<ByteBuf<'a>>),
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum SerializeError {
+    #[error("not enough space in buffer")]
+    NoSpaceInBuffer,
+    #[error(transparent)]
+    Bencode(#[from] bencode::SerializeError),
+    #[error("need peer's handshake to serialize ut_metadata, or peer does't support ut_metadata")]
+    NeedUtMetadata,
+    #[error("need peer's handshake to serialize ut_pex, or peer does't support ut_pex")]
+    NeedPex,
+}
+
+impl From<std::io::Error> for SerializeError {
+    fn from(_: std::io::Error) -> Self {
+        Self::NoSpaceInBuffer
+    }
+}
+
 impl Message<'_> {
     pub fn serialize(
         &self,
         out: &mut [u8],
         peer_extended_messages: &dyn Fn() -> PeerExtendedMessageIds,
-    ) -> anyhow::Result<usize> {
+    ) -> Result<usize, SerializeError> {
         macro_rules! check_len {
             ($l:expr) => {
                 if out.len() < $l {
-                    anyhow::bail!("not enough space in buffer");
+                    return Err(SerializeError::NoSpaceInBuffer);
                 }
             };
         }

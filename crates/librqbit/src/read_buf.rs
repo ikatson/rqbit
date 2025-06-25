@@ -1,10 +1,11 @@
 use std::{io::IoSliceMut, time::Duration};
 
+use crate::{Error, Result};
 use crate::{
     peer_connection::with_timeout, type_aliases::BoxAsyncRead,
     vectored_traits::AsyncReadVectoredExt,
 };
-use anyhow::{Context, bail};
+use futures::TryFutureExt;
 use peer_binary_protocol::{Handshake, Message, MessageDeserializeError};
 use tokio::io::AsyncReadExt;
 
@@ -65,15 +66,18 @@ impl ReadBuf {
         &mut self,
         conn: &mut BoxAsyncRead,
         timeout: Duration,
-    ) -> anyhow::Result<Handshake> {
-        self.len = with_timeout("reading", timeout, conn.read(&mut *self.buf))
-            .await
-            .context("error reading handshake")?;
+    ) -> Result<Handshake> {
+        self.len = with_timeout(
+            "reading",
+            timeout,
+            conn.read(&mut *self.buf).map_err(Error::ReadHandshake),
+        )
+        .await?;
         if self.len == 0 {
-            anyhow::bail!("peer disconnected while reading handshake");
+            return Err(Error::PeerDisconnectedReadingHandshake);
         }
-        let (h, size) = Handshake::deserialize(&self.buf[..self.len])
-            .context("error deserializing handshake")?;
+        let (h, size) =
+            Handshake::deserialize(&self.buf[..self.len]).map_err(Error::DeserializeHandshake)?;
         advance!(self, size);
         Ok(h)
     }
@@ -88,13 +92,12 @@ impl ReadBuf {
     // "Bitfield" however is always sent early, so in practice it won't ever happen. For "extended"
     // in practice, it would rarely happen with UtMetadata::Data messages if the split happens to land
     // in the middle of bencoded data (as we only can deserialize bencode from a single slice).
-    fn make_contiguous(&mut self) -> anyhow::Result<()> {
+    fn make_contiguous(&mut self) -> Result<()> {
         if self.is_contiguous() {
-            bail!(
-                "bug: make_contiguous() called on a contiguous buffer; start={} len={}",
-                self.start,
-                self.len
-            );
+            return Err(Error::BugReadBufMakeContiguous {
+                start: self.start,
+                len: self.len,
+            });
         }
 
         // This should be so rare that it's not worth writing complex in-place code.
@@ -140,7 +143,7 @@ impl ReadBuf {
         &mut self,
         conn: &mut BoxAsyncRead,
         timeout: Duration,
-    ) -> anyhow::Result<Message<'_>> {
+    ) -> Result<Message<'_>> {
         loop {
             let (first, second) = as_slices!(self);
             let (mut need_additional_bytes, ne) = match Message::deserialize(first, second) {
@@ -157,23 +160,24 @@ impl ReadBuf {
                     let msg: Message<'_> = unsafe { std::mem::transmute(msg as Message<'_>) };
                     return Ok(msg);
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(Error::Deserialize(e)),
             };
             while need_additional_bytes > 0 {
                 if self.is_full() {
-                    anyhow::bail!(
-                        "read buffer is full. need_additional_bytes={need_additional_bytes}, last_err={ne:?}"
-                    );
+                    return Err(Error::ReadBufFull {
+                        need_additional_bytes,
+                        last_error: ne,
+                    });
                 }
                 let size = with_timeout(
                     "reading",
                     timeout,
-                    conn.read_vectored(&mut self.unfilled_ioslices()),
+                    conn.read_vectored(&mut self.unfilled_ioslices())
+                        .map_err(Error::Write),
                 )
-                .await
-                .context("error reading from peer")?;
+                .await?;
                 if size == 0 {
-                    anyhow::bail!("peer disconected")
+                    return Err(Error::PeerDisconnected);
                 }
                 self.len += size;
                 need_additional_bytes = need_additional_bytes.saturating_sub(size)

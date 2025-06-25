@@ -12,6 +12,7 @@ use ut_pex::UtPex;
 use crate::DoubleBufHelper;
 use crate::MSGID_EXTENDED;
 use crate::MY_EXTENDED_UT_PEX;
+use crate::SerializeError;
 
 use self::{handshake::ExtendedHandshake, ut_metadata::UtMetadata};
 
@@ -51,7 +52,7 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
         &self,
         out: &mut [u8],
         peer_extended_msg_ids: &dyn Fn() -> PeerExtendedMessageIds,
-    ) -> anyhow::Result<usize> {
+    ) -> Result<usize, SerializeError> {
         let mut out = Cursor::new(out);
         match self {
             ExtendedMessage::Dyn(msg_id, v) => {
@@ -63,18 +64,16 @@ impl<'a> ExtendedMessage<ByteBuf<'a>> {
                 bencode_serialize_to_writer(h, &mut out)?;
             }
             ExtendedMessage::UtMetadata(u) => {
-                let emsg_id = peer_extended_msg_ids().ut_metadata.ok_or_else(|| {
-                    anyhow::anyhow!("need peer's handshake to serialize ut_metadata")
-                })?;
+                let emsg_id = peer_extended_msg_ids()
+                    .ut_metadata
+                    .ok_or(SerializeError::NeedUtMetadata)?;
                 out.write_u8(emsg_id)?;
                 u.serialize(&mut out)?;
             }
             ExtendedMessage::UtPex(m) => {
-                let emsg_id = peer_extended_msg_ids().ut_pex.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "need peer's handshake to serialize ut_pex, or peer does't support ut_pex"
-                    )
-                })?;
+                let emsg_id = peer_extended_msg_ids()
+                    .ut_pex
+                    .ok_or(SerializeError::NeedPex)?;
                 out.write_u8(emsg_id)?;
                 bencode_serialize_to_writer(m, &mut out)?;
             }
