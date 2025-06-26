@@ -48,9 +48,9 @@ impl AsyncReadVectored for tokio::net::tcp::OwnedReadHalf {
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
         loop {
-            std::task::ready!(this.as_ref().poll_read_ready(cx)?);
             match this.try_read_vectored(vec) {
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::task::ready!(this.as_ref().poll_read_ready(cx)?);
                     continue;
                 }
                 res => return Poll::Ready(res),
