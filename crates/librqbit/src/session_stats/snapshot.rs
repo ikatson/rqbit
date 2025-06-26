@@ -28,3 +28,43 @@ impl From<&SessionStats> for SessionStatsSnapshot {
         }
     }
 }
+
+impl SessionStatsSnapshot {
+    pub fn as_prometheus(&self, mut out: &mut String) {
+        use core::fmt::Write;
+
+        out.push('\n');
+
+        macro_rules! m {
+            ($type:ident, $name:ident, $value:expr) => {{
+                writeln!(
+                    &mut out,
+                    concat!("# TYPE ", stringify!($name), " ", stringify!($type))
+                )
+                .unwrap();
+                writeln!(&mut out, concat!(stringify!($name), " {}"), $value).unwrap();
+            }};
+        }
+
+        m!(counter, rqbit_fetched_bytes, self.fetched_bytes);
+        m!(counter, rqbit_uploaded_bytes, self.uploaded_bytes);
+        m!(
+            gauge,
+            rqbit_download_speed_bytes,
+            self.download_speed.as_bytes()
+        );
+        m!(
+            gauge,
+            rqbit_upload_speed_bytes,
+            self.upload_speed.as_bytes()
+        );
+        m!(gauge, rqbit_uptime_seconds, self.uptime_seconds);
+        m!(gauge, rqbit_peers_connecting, self.peers.connecting);
+        m!(gauge, rqbit_peers_live, self.peers.live);
+        m!(gauge, rqbit_peers_dead, self.peers.dead);
+        m!(gauge, rqbit_peers_not_needed, self.peers.not_needed);
+        m!(gauge, rqbit_peers_queued, self.peers.queued);
+        m!(gauge, rqbit_peers_queued, self.peers.seen);
+        m!(gauge, rqbit_peers_steals, self.peers.steals);
+    }
+}
