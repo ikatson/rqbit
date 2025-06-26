@@ -55,6 +55,7 @@ impl UpnpServerStateInner {
 
         spawn_with_cancel::<anyhow::Error>(
             debug_span!(parent: span, "system_update_id_updater"),
+            "system_update_id_updater",
             cancel_token,
             {
                 let state = Arc::downgrade(&state);

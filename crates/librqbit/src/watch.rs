@@ -6,7 +6,7 @@ use std::{
 
 use crate::Magnet;
 use anyhow::{Context, bail};
-use librqbit_core::torrent_metainfo::torrent_from_bytes;
+use librqbit_core::{spawn_utils::spawn, torrent_metainfo::torrent_from_bytes};
 use notify::Watcher;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, debug_span, error, trace, warn};
@@ -189,22 +189,26 @@ impl Session {
     pub fn watch_folder(self: &Arc<Self>, watch_folder: &Path) {
         let session_w = Arc::downgrade(self);
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.spawn(debug_span!("watch_adder", ?watch_folder), async move {
-            watch_adder(session_w, rx).await;
-            Ok(())
-        });
+        self.spawn(
+            debug_span!("watch_adder", ?watch_folder),
+            "watch_adder",
+            async move {
+                watch_adder(session_w, rx).await;
+                Ok(())
+            },
+        );
 
         let cancel_event = ThreadCancelEvent::new();
         let cancel_event_2 = cancel_event.clone();
         let cancel_token = self.cancellation_token().clone();
-        crate::spawn_utils::spawn(
-            "watch_cancel",
+        spawn(
             debug_span!("watch_cancel", ?watch_folder),
+            "watch_cancel",
             async move {
                 cancel_token.cancelled().await;
                 trace!("canceling watcher");
                 cancel_event.cancel();
-                Ok(())
+                Ok::<_, &'static str>(())
             },
         );
 

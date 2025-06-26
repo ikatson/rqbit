@@ -308,6 +308,7 @@ impl UpnpServerStateInner {
 
         spawn_with_cancel::<anyhow::Error>(
             debug_span!(parent: pspan, "subscription-manager", sid, %url, service="ContentDirectory"),
+            "upnp-subscription-manager:ContentDirectory",
             token,
             subscription_manager,
         );
@@ -356,6 +357,7 @@ impl UpnpServerStateInner {
 
         spawn_with_cancel::<anyhow::Error>(
             debug_span!(parent: pspan, "subscription-manager", sid, %url, service="ConnectionManager"),
+            "upnp-subscription-manager:ConnectionManager",
             token,
             subscription_manager,
         );

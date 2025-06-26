@@ -153,7 +153,7 @@ async fn api_from_config(
                 .await
                 .context("error starting UPnP server")?;
             let router = upnp_adapter.take_router()?;
-            session.spawn(debug_span!("ssdp"), async move {
+            session.spawn(debug_span!("ssdp"), "ssdp", async move {
                 upnp_adapter.run_ssdp_forever().await
             });
             Some(router)
@@ -168,7 +168,7 @@ async fn api_from_config(
                 .await
         };
 
-        session.spawn(debug_span!("http_api"), http_api_task);
+        session.spawn(debug_span!("http_api"), "http_api", http_api_task);
     }
     Ok(api)
 }

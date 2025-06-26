@@ -102,6 +102,7 @@ impl LocalServiceDiscovery {
 
         spawn_with_cancel(
             debug_span!("lsd"),
+            "lsd",
             opts.cancel_token,
             lsd.clone().task_monitor_recv(),
         );
@@ -273,6 +274,7 @@ cookie: {cookie}\r
             let cancel_token = self.inner.cancel_token.child_token();
             spawn_with_cancel(
                 debug_span!(parent: None, "lsd-announce", ?info_hash, port=announce_port),
+                "lsd-announce",
                 cancel_token,
                 self.clone()
                     .task_announce_periodically(info_hash, announce_port),

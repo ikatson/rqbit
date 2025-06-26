@@ -129,20 +129,24 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
     }
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    spawn::<&'static str>(debug_span!("fmt_filter_reloader"), async move {
-        while let Some(rust_log) = reload_rx.recv().await {
-            let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
-                    continue;
-                }
-            };
-            eprintln!("setting RUST_LOG to {:?}", rust_log);
-            let _ = reload_stderr_filter.reload(stderr_env_filter);
-        }
-        Ok(())
-    });
+    spawn::<&'static str>(
+        debug_span!("fmt_filter_reloader"),
+        "fmt_filter_reloader",
+        async move {
+            while let Some(rust_log) = reload_rx.recv().await {
+                let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
+                        continue;
+                    }
+                };
+                eprintln!("setting RUST_LOG to {:?}", rust_log);
+                let _ = reload_stderr_filter.reload(stderr_env_filter);
+            }
+            Ok(())
+        },
+    );
     Ok(InitLoggingResult {
         rust_log_reload_tx: reload_tx,
         line_broadcast,

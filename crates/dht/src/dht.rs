@@ -344,6 +344,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         let this = self.clone();
         spawn(
             debug_span!(parent: None, "get_peers", is_v4, info_hash = format!("{:?}", self.info_hash)),
+            "get_peers",
             async move {
                 let this = &this;
                 // Looper adds root nodes to the queue every 60 seconds.
@@ -1324,13 +1325,18 @@ impl DhtState {
                 token,
             ));
 
-            spawn_with_cancel(debug_span!("dht"), state.cancellation_token.clone(), {
-                let state = state.clone();
-                async move {
-                    let worker = DhtWorker { socket, dht: state };
-                    worker.start(in_rx, &bootstrap_addrs).await
-                }
-            });
+            spawn_with_cancel(
+                debug_span!("dht"),
+                "dht",
+                state.cancellation_token.clone(),
+                {
+                    let state = state.clone();
+                    async move {
+                        let worker = DhtWorker { socket, dht: state };
+                        worker.start(in_rx, &bootstrap_addrs).await
+                    }
+                },
+            );
             Ok(state)
         }
         .boxed()

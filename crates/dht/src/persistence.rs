@@ -153,6 +153,7 @@ impl PersistentDht {
             let dht = DhtState::with_config(dht_config).await?;
             spawn_with_cancel::<anyhow::Error>(
                 debug_span!("dht_persistence"),
+                "dht_persistence",
                 dht.cancellation_token().clone(),
                 {
                     let dht = dht.clone();

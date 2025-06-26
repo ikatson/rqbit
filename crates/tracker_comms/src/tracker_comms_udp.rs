@@ -277,7 +277,7 @@ impl UdpTrackerClient {
             }),
         };
 
-        spawn_with_cancel(debug_span!("udp_tracker"), cancel_token, {
+        spawn_with_cancel(debug_span!("udp_tracker"), "udp_tracker", cancel_token, {
             let client = client.clone();
             async move { client.run().await }
         });

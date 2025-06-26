@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, trace};
@@ -7,8 +7,10 @@ use tracing::{Instrument, debug, error, trace};
 #[track_caller]
 pub fn spawn<E: Display + Send + 'static>(
     span: tracing::Span,
+    name: impl Into<Cow<'static, str>>,
     fut: impl std::future::Future<Output = Result<(), E>> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
+    let name = name.into();
     let fut = async move {
         trace!("started");
         tokio::pin!(fut);
@@ -25,7 +27,7 @@ pub fn spawn<E: Display + Send + 'static>(
                             trace!("finished");
                         }
                         Err(e) => {
-                            error!("finished with error: {:#}", e)
+                            error!("{name} finished with error: {:#}", e)
                         }
                     }
                     return;
@@ -40,10 +42,11 @@ pub fn spawn<E: Display + Send + 'static>(
 #[track_caller]
 pub fn spawn_with_cancel<E: Display + Send + 'static>(
     span: tracing::Span,
+    name: impl Into<Cow<'static, str>>,
     cancellation_token: CancellationToken,
     fut: impl std::future::Future<Output = Result<(), E>> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
-    spawn(span, async move {
+    spawn(span, name, async move {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
                 debug!("task cancelled");

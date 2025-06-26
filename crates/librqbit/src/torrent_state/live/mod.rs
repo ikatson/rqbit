@@ -44,6 +44,7 @@ pub mod peers;
 pub mod stats;
 
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     num::NonZeroU32,
@@ -175,7 +176,7 @@ const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub struct TorrentStateLive {
     peers: PeerStates,
-    shared: Arc<ManagedTorrentShared>,
+    pub(crate) shared: Arc<ManagedTorrentShared>,
     metadata: Arc<TorrentMetadata>,
     locked: RwLock<TorrentStateLocked>,
 
@@ -294,6 +295,7 @@ impl TorrentStateLive {
 
         state.spawn(
             debug_span!(parent: state.shared.span.clone(), "speed_estimator_updater"),
+            format!("[{}]speed_estimator_updater", state.shared.id),
             {
                 let state = Arc::downgrade(&state);
                 async move {
@@ -320,11 +322,13 @@ impl TorrentStateLive {
 
         state.spawn(
             debug_span!(parent: state.shared.span.clone(), "peer_adder"),
+            format!("[{}]peer_adder", state.shared.id),
             state.clone().task_peer_adder(peer_queue_rx),
         );
 
         state.spawn(
             debug_span!(parent: state.shared.span.clone(), "upload_scheduler"),
+            format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
         Ok(state)
@@ -334,9 +338,10 @@ impl TorrentStateLive {
     pub(crate) fn spawn(
         &self,
         span: tracing::Span,
+        name: impl Into<Cow<'static, str>>,
         fut: impl std::future::Future<Output = crate::Result<()>> + Send + 'static,
     ) {
-        spawn_with_cancel(span, self.cancellation_token.clone(), fut);
+        spawn_with_cancel(span, name, self.cancellation_token.clone(), fut);
     }
 
     pub fn down_speed_estimator(&self) -> &SpeedEstimator {
@@ -401,6 +406,10 @@ impl TorrentStateLive {
                 parent: self.shared.span.clone(),
                 "manage_incoming_peer",
                 addr = %checked_peer.addr
+            ),
+            format!(
+                "[{}][addr={}]manage_incoming_peer",
+                self.shared.id, checked_peer.addr
             ),
             aframe!(
                 self.clone()
@@ -592,7 +601,8 @@ impl TorrentStateLive {
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
-                debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = addr.to_string()),
+                debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = ?addr),
+                format!("[{}][addr={addr}]manage_peer", state.shared.id),
                 aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
         }
@@ -1084,7 +1094,11 @@ impl PeerConnectionHandler for PeerHandler {
                 debug_span!(
                     parent: self.state.shared.span.clone(),
                     "sending_pex_to_peer",
-                    peer = self.addr.to_string()
+                    peer = ?self.addr,
+                ),
+                format!(
+                    "[{}][addr={}]sending_pex_to_peer",
+                    self.state.shared.id, self.addr
                 ),
                 self.cancel_token.clone(),
                 self.state
@@ -1236,9 +1250,10 @@ impl PeerHandler {
                 debug_span!(
                     parent: self.state.shared.span.clone(),
                     "wait_for_peer",
-                    peer = handle.to_string(),
+                    peer = ?handle,
                     duration = format!("{dur:?}")
                 ),
+                format!("[{}][addr={}]wait_for_peer", self.state.shared.id, handle),
                 async move {
                     trace!("waiting to reconnect again");
                     tokio::time::sleep(dur).await;

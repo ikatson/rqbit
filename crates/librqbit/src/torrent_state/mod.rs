@@ -347,6 +347,7 @@ impl ManagedTorrent {
 
                     spawn_with_cancel(
                         debug_span!(parent: span.clone(), "initialize_and_start"),
+                        "initialize_and_start",
                         token.clone(),
                         async move {
                             let concurrent_init_semaphore =
@@ -624,6 +625,7 @@ fn spawn_fatal_errors_receiver(
     let state = Arc::downgrade(state);
     spawn_with_cancel::<&'static str>(
         debug_span!(parent: span, "fatal_errors_receiver"),
+        "fatal_errors_receiver",
         token,
         async move {
             let e = match rx.await {
@@ -647,6 +649,7 @@ fn spawn_fatal_errors_receiver(
 fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
     live.spawn(
         debug_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
+        format!("[{}]external_peer_adder", live.shared.id),
         {
             let live = live.clone();
             async move {

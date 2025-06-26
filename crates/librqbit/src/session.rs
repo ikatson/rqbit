@@ -701,6 +701,7 @@ impl Session {
             if let Some(mut disk_write_rx) = disk_write_rx {
                 session.spawn(
                     debug_span!(parent: session.rs(), "disk_writer"),
+                    "disk_writer",
                     async move {
                         while let Some(work) = disk_write_rx.recv().await {
                             trace!(disk_write_rx_queue_len = disk_write_rx.len());
@@ -715,6 +716,7 @@ impl Session {
                 if let Some(tcp) = listen.tcp_socket.take() {
                     session.spawn(
                         debug_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
+                        "tcp_listen",
                         {
                             let this = session.clone();
                             async move { this.task_listener(tcp).await }
@@ -724,6 +726,7 @@ impl Session {
                 if let Some(utp) = listen.utp_socket.take() {
                     session.spawn(
                         debug_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
+                        "utp_listen",
                         {
                             let this = session.clone();
                             async move { this.task_listener(utp).await }
@@ -735,6 +738,7 @@ impl Session {
                         info!(port = announce_port, "starting UPnP port forwarder");
                         session.spawn(
                             debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
+                            "upnp_forward",
                             Self::task_upnp_port_forwarder(announce_port),
                         );
                     }
@@ -909,9 +913,10 @@ impl Session {
     pub fn spawn(
         &self,
         span: tracing::Span,
+        name: impl Into<Cow<'static, str>>,
         fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
     ) {
-        spawn_with_cancel(span, self.cancellation_token.clone(), fut);
+        spawn_with_cancel(span, name, self.cancellation_token.clone(), fut);
     }
 
     pub(crate) fn rs(&self) -> Option<tracing::Id> {

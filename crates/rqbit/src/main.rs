@@ -651,6 +651,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 });
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+        #[allow(unreachable_code)]
+        Ok::<_, &'static str>(())
     };
 
     match opts.subcommand {
@@ -708,8 +710,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         .await
                         .context("error initializing rqbit session")?;
                 librqbit_spawn(
-                    "stats_printer",
                     trace_span!("stats_printer"),
+                    "stats_printer",
                     stats_printer(session.clone()),
                 );
 
@@ -816,8 +818,8 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             .context("error initializing rqbit session")?;
 
             librqbit_spawn(
-                "stats_printer",
                 trace_span!("stats_printer"),
+                "stats_printer",
                 stats_printer(session.clone()),
             );
 
@@ -1004,8 +1006,8 @@ fn start_ephemeral_http_api(
     let http_api_listen_addr = listener.bind_addr();
     info!("started HTTP API at http://{http_api_listen_addr}");
     librqbit_spawn(
-        "http_api",
         debug_span!("http_api"),
+        "http_api",
         http_api.make_http_api_and_run(listener, None),
     );
     Ok(())
