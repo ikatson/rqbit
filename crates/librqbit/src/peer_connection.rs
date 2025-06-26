@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{Error, Result};
+use crate::{Error, Result, session::CheckedIncomingConnection, stream_connect::ConnectionKind};
 use buffers::{ByteBuf, ByteBufOwned};
 use futures::TryFutureExt;
 use librqbit_core::{
@@ -37,7 +37,7 @@ pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn should_send_bitfield(&self) -> bool;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut [u8]) -> anyhow::Result<usize>;
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()>;
+    fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
@@ -133,10 +133,7 @@ impl<'a> PeerConnection<'a> {
     pub async fn manage_peer_incoming(
         &self,
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
-        read_buf: ReadBuf,
-        handshake: Handshake,
-        read: BoxAsyncRead,
-        mut write: BoxAsyncWrite,
+        mut incoming: CheckedIncomingConnection,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
@@ -146,17 +143,17 @@ impl<'a> PeerConnection<'a> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        if handshake.info_hash != self.info_hash {
+        if incoming.handshake.info_hash != self.info_hash {
             return Err(Error::WrongInfoHash);
         }
 
-        if handshake.peer_id == self.peer_id {
+        if incoming.handshake.peer_id == self.peer_id {
             return Err(Error::ConnectingToOurselves);
         }
 
         trace!(
             "incoming connection: id={:?}",
-            try_decode_peer_id(handshake.peer_id)
+            try_decode_peer_id(incoming.handshake.peer_id)
         );
 
         let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
@@ -165,7 +162,8 @@ impl<'a> PeerConnection<'a> {
         with_timeout(
             "writing handshake",
             rwtimeout,
-            write
+            incoming
+                .writer
                 .write_all(&write_buf[..hlen])
                 .map_err(Error::WriteHandshake),
         )
@@ -174,15 +172,15 @@ impl<'a> PeerConnection<'a> {
         let handshake_supports_extended = handshake.supports_extended();
 
         self.handler
-            .on_handshake(handshake)
+            .on_handshake(handshake, incoming.kind)
             .map_err(Error::Anyhow)?;
 
         self.manage_peer(ManagePeerArgs {
             handshake_supports_extended,
-            read_buf,
+            read_buf: incoming.read_buf,
             write_buf,
-            read,
-            write,
+            read: incoming.reader,
+            write: incoming.writer,
             outgoing_chan,
             have_broadcast,
         })
@@ -244,7 +242,7 @@ impl<'a> PeerConnection<'a> {
                 return Err(Error::ConnectingToOurselves);
             }
 
-            self.handler.on_handshake(h).map_err(Error::Anyhow)?;
+            self.handler.on_handshake(h, ckind).map_err(Error::Anyhow)?;
 
             self.manage_peer(ManagePeerArgs {
                 handshake_supports_extended,

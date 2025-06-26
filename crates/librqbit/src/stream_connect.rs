@@ -15,6 +15,7 @@ use crate::{
     vectored_traits::AsyncReadVectoredIntoCompat,
 };
 
+#[derive(Debug, Clone, Copy)]
 pub enum ConnectionKind {
     Tcp,
     Utp,
