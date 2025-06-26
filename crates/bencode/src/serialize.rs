@@ -424,10 +424,7 @@ mod tests {
         let mut m = BTreeMap::new();
         m.insert(ByteBuf(b"key"), ByteBuf(b"value"));
         m.insert(ByteBuf(b"key2"), ByteBuf(b"value2"));
-        assert_eq!(
-            ser(&m).unwrap(),
-            b"d3:key5:value4:key26:value2e"[..].into()
-        );
+        assert_eq!(ser(&m).unwrap(), b"d3:key5:value4:key26:value2e"[..].into());
     }
 
     #[test]
