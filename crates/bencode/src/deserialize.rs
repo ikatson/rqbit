@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use arrayvec::ArrayVec;
-use atoi::FromRadix10;
+use atoi::{FromRadix10, FromRadix10Signed};
 use buffers::ByteBuf;
 use clone_to_owned::CloneToOwned;
 use serde::{Deserialize, Serialize, forward_to_deserialize_any};
@@ -41,9 +41,9 @@ impl<'de> BencodeDeserializer<'de> {
         }
     }
 
-    fn parse_integer<I: FromRadix10>(&mut self) -> Result<I, Error> {
+    fn parse_integer<I>(&mut self, atoi: impl Fn(&'de [u8]) -> (I, usize)) -> Result<I, Error> {
         self.parse_first_byte(b'i', Error::InvalidValue)?;
-        match I::from_radix_10(self.buf) {
+        match atoi(self.buf) {
             (v, len) if len > 0 && self.buf.get(len) == Some(&b'e') => {
                 self.buf = &self.buf[len + 1..];
                 Ok(v)
@@ -197,7 +197,7 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        let value = self.parse_integer::<u8>()?;
+        let value = self.parse_integer::<u8>(u8::from_radix_10)?;
         if value > 1 {
             return Err(Error::InvalidBool(value));
         }
@@ -208,56 +208,56 @@ impl<'de> serde::de::Deserializer<'de> for &mut BencodeDeserializer<'de> {
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_i8(self.parse_integer()?)
+        visitor.visit_i8(self.parse_integer(i8::from_radix_10_signed)?)
     }
 
     fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_i16(self.parse_integer()?)
+        visitor.visit_i16(self.parse_integer(i16::from_radix_10_signed)?)
     }
 
     fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_i32(self.parse_integer()?)
+        visitor.visit_i32(self.parse_integer(i32::from_radix_10_signed)?)
     }
 
     fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_i64(self.parse_integer()?)
+        visitor.visit_i64(self.parse_integer(i64::from_radix_10_signed)?)
     }
 
     fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_u8(self.parse_integer()?)
+        visitor.visit_u8(self.parse_integer(u8::from_radix_10)?)
     }
 
     fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_u16(self.parse_integer()?)
+        visitor.visit_u16(self.parse_integer(u16::from_radix_10)?)
     }
 
     fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_u32(self.parse_integer()?)
+        visitor.visit_u32(self.parse_integer(u32::from_radix_10)?)
     }
 
     fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
     {
-        visitor.visit_u64(self.parse_integer()?)
+        visitor.visit_u64(self.parse_integer(u64::from_radix_10)?)
     }
 
     fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
@@ -650,6 +650,10 @@ mod tests {
         assert_eq!(from_bytes::<u64>(b"i42e").unwrap(), 42);
 
         assert_eq!(from_bytes::<u32>(b"i4294967295e").unwrap(), 4294967295);
+
+        // negative
+        assert_eq!(from_bytes::<i8>(b"i-1e").unwrap(), -1);
+        assert_eq!(from_bytes::<i64>(b"i-1e").unwrap(), -1);
 
         assert!(from_bytes::<u32>(b"ie").is_err());
         assert!(from_bytes::<u32>(b"ifooe").is_err());
