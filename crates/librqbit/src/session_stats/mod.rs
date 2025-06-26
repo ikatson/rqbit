@@ -7,7 +7,7 @@ use anyhow::Context;
 use atomic::AtomicSessionStats;
 use librqbit_core::speed_estimator::SpeedEstimator;
 use snapshot::SessionStatsSnapshot;
-use tracing::error_span;
+use tracing::debug_span;
 
 use crate::Session;
 
@@ -40,7 +40,7 @@ impl Default for SessionStats {
 
 impl Session {
     pub(crate) fn start_speed_estimator_updater(self: &Arc<Self>) {
-        self.spawn(error_span!(parent: self.rs(), "speed_estimator"), {
+        self.spawn(debug_span!(parent: self.rs(), "speed_estimator"), {
             let s = Arc::downgrade(self);
 
             async move {

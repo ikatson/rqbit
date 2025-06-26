@@ -80,7 +80,7 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 
 use crate::{
     Error,

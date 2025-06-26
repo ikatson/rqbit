@@ -28,7 +28,7 @@ use librqbit::{
 use librqbit_dualstack_sockets::TcpListener;
 use size_format::SizeFormatterBinary as SF;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, error_span, info, trace_span, warn};
+use tracing::{debug_span, error, info, trace_span, warn};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum LogLevel {
@@ -1005,7 +1005,7 @@ fn start_ephemeral_http_api(
     info!("started HTTP API at http://{http_api_listen_addr}");
     librqbit_spawn(
         "http_api",
-        error_span!("http_api"),
+        debug_span!("http_api"),
         http_api.make_http_api_and_run(listener, None),
     );
     Ok(())

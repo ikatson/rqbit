@@ -12,7 +12,7 @@ use librqbit_dualstack_sockets::UdpSocket;
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace, warn};
+use tracing::{debug, debug_span, trace, warn};
 
 const ACTION_CONNECT: u32 = 0;
 const ACTION_ANNOUNCE: u32 = 1;
@@ -277,7 +277,7 @@ impl UdpTrackerClient {
             }),
         };
 
-        spawn_with_cancel(error_span!("udp_tracker"), cancel_token, {
+        spawn_with_cancel(debug_span!("udp_tracker"), cancel_token, {
             let client = client.clone();
             async move { client.run().await }
         });

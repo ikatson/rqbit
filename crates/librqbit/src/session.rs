@@ -65,7 +65,7 @@ use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
-use tracing::{Instrument, debug, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
@@ -700,7 +700,7 @@ impl Session {
 
             if let Some(mut disk_write_rx) = disk_write_rx {
                 session.spawn(
-                    error_span!(parent: session.rs(), "disk_writer"),
+                    debug_span!(parent: session.rs(), "disk_writer"),
                     async move {
                         while let Some(work) = disk_write_rx.recv().await {
                             trace!(disk_write_rx_queue_len = disk_write_rx.len());
@@ -714,7 +714,7 @@ impl Session {
             if let Some(mut listen) = listen_result {
                 if let Some(tcp) = listen.tcp_socket.take() {
                     session.spawn(
-                        error_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
+                        debug_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
                         {
                             let this = session.clone();
                             async move { this.task_listener(tcp).await }
@@ -723,7 +723,7 @@ impl Session {
                 }
                 if let Some(utp) = listen.utp_socket.take() {
                     session.spawn(
-                        error_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
+                        debug_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
                         {
                             let this = session.clone();
                             async move { this.task_listener(utp).await }
@@ -734,7 +734,7 @@ impl Session {
                     if listen.enable_upnp_port_forwarding {
                         info!(port = announce_port, "starting UPnP port forwarder");
                         session.spawn(
-                            error_span!(parent: session.rs(), "upnp_forward", port = announce_port),
+                            debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
                             Self::task_upnp_port_forwarder(announce_port),
                         );
                     }
@@ -751,7 +751,7 @@ impl Session {
                 while !added_all || !futs.is_empty() {
                     // NOTE: this closure exists purely to workaround rustfmt screwing up when inlining it.
                     let add_torrent_span = |info_hash: &Id20| -> tracing::Span {
-                        error_span!(parent: session.rs(), "add_torrent", info_hash=?info_hash)
+                        debug_span!(parent: session.rs(), "add_torrent", info_hash=?info_hash)
                     };
                     tokio::select! {
                         Some(res) = futs.next(), if !futs.is_empty() => {
@@ -851,7 +851,7 @@ impl Session {
                         Ok((addr, (read, write))) => {
                             trace!("accepted connection from {addr}");
                             let session = session.upgrade().context("session is dead")?;
-                            let span = error_span!(parent: session.rs(), "incoming", addr=%addr);
+                            let span = debug_span!(parent: session.rs(), "incoming", addr=%addr);
                             futs.push(
                                 session.check_incoming_connection(addr, A::KIND, Box::new(read), Box::new(write))
                                     .map_err(|e| {
@@ -1031,7 +1031,7 @@ impl Session {
 
             self.add_torrent_internal(add_res, opts).await
         }
-        .instrument(error_span!(parent: self.rs(), "add_torrent"))
+        .instrument(debug_span!(parent: self.rs(), "add_torrent"))
         .boxed()
     }
 
@@ -1196,7 +1196,7 @@ impl Session {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
             }
 
-            let span = error_span!(parent: self.rs(), "torrent", id);
+            let span = debug_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);
             let metadata = Arc::new(metadata);
             let minfo = Arc::new(ManagedTorrentShared {

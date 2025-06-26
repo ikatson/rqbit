@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tracing::{Instrument, Span, debug, debug_span, error_span, trace, warn};
+use tracing::{Instrument, Span, debug, debug_span, trace, warn};
 use url::Url;
 
 const SERVICE_TYPE_WAN_IP_CONNECTION: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
@@ -445,7 +445,7 @@ impl UpnpPortForwarder {
     async fn manage_service(&self, control_url: Url, local_ip: IpAddr) -> anyhow::Result<()> {
         futures::future::join_all(self.ports.iter().cloned().map(|port| {
             self.manage_port(control_url.clone(), local_ip, port)
-                .instrument(error_span!("manage_port", port = port))
+                .instrument(debug_span!("manage_port", port = port))
         }))
         .await;
         Ok(())

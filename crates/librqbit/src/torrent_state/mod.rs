@@ -33,7 +33,7 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-use tracing::error_span;
+use tracing::debug_span;
 use tracing::trace;
 use tracing::warn;
 
@@ -340,7 +340,7 @@ impl ManagedTorrent {
                     let token = token.clone();
 
                     spawn_with_cancel(
-                        error_span!(parent: span.clone(), "initialize_and_start"),
+                        debug_span!(parent: span.clone(), "initialize_and_start"),
                         token.clone(),
                         async move {
                             let concurrent_init_semaphore =
@@ -615,7 +615,7 @@ fn spawn_fatal_errors_receiver(
     let span = state.shared.span.clone();
     let state = Arc::downgrade(state);
     spawn_with_cancel::<&'static str>(
-        error_span!(parent: span, "fatal_errors_receiver"),
+        debug_span!(parent: span, "fatal_errors_receiver"),
         token,
         async move {
             let e = match rx.await {
@@ -634,7 +634,7 @@ fn spawn_fatal_errors_receiver(
 
 fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
     live.spawn(
-        error_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
+        debug_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
         {
             let live = live.clone();
             async move {

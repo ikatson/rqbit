@@ -41,7 +41,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, trace_span, warn};
+use tracing::{Instrument, debug, debug_span, error, info, trace, trace_span, warn};
 
 fn now() -> Instant {
     Instant::now()
@@ -1138,7 +1138,7 @@ impl DhtWorker {
                                 debug!("error: {e:#}");
                             }
                         }
-                    }.instrument(error_span!("ping", addr=addr.to_string())))
+                    }.instrument(debug_span!("ping", addr=addr.to_string())))
                 },
                 _ = futs.next(), if !futs.is_empty() => {},
             }
@@ -1226,15 +1226,15 @@ impl DhtWorker {
         }
         .instrument(debug_span!("dht_responese_reader"));
 
-        let pinger_v4 = self.pinger(true).instrument(error_span!("pinger_v4"));
+        let pinger_v4 = self.pinger(true).instrument(debug_span!("pinger_v4"));
         let bucket_refresher_v4 = self
             .bucket_refresher(true)
-            .instrument(error_span!("bucket_refresher_v4"));
+            .instrument(debug_span!("bucket_refresher_v4"));
 
-        let pinger_v6 = self.pinger(false).instrument(error_span!("pinger_v6"));
+        let pinger_v6 = self.pinger(false).instrument(debug_span!("pinger_v6"));
         let bucket_refresher_v6 = self
             .bucket_refresher(false)
-            .instrument(error_span!("bucket_refresher_v6"));
+            .instrument(debug_span!("bucket_refresher_v6"));
 
         tokio::pin!(framer);
         tokio::pin!(bootstrap);
@@ -1325,7 +1325,7 @@ impl DhtState {
                 token,
             ));
 
-            spawn_with_cancel(error_span!("dht"), state.cancellation_token.clone(), {
+            spawn_with_cancel(debug_span!("dht"), state.cancellation_token.clone(), {
                 let state = state.clone();
                 async move {
                     let worker = DhtWorker { socket, dht: state };
