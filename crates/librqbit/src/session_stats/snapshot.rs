@@ -60,7 +60,25 @@ impl SessionStatsSnapshot {
         );
         m!(gauge, rqbit_uptime_seconds, self.uptime_seconds);
         m!(gauge, rqbit_peers_connecting, self.peers.connecting);
-        m!(gauge, rqbit_peers_live, self.peers.live);
+        writeln!(&mut out, "# TYPE rqbit_peers_live gauge").unwrap();
+        writeln!(
+            &mut out,
+            "rqbit_peers_live{{kind=\"tcp\"}} {}",
+            self.peers.live_tcp
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "rqbit_peers_live{{kind=\"utp\"}} {}",
+            self.peers.live_utp
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "rqbit_peers_live{{kind=\"socks\"}} {}",
+            self.peers.live_socks
+        )
+        .unwrap();
         m!(gauge, rqbit_peers_dead, self.peers.dead);
         m!(gauge, rqbit_peers_not_needed, self.peers.not_needed);
         m!(gauge, rqbit_peers_queued, self.peers.queued);
