@@ -122,7 +122,7 @@ impl PersistentDht {
                         Err(e) => {
                             warn!(
                                 filename=?config_filename,
-                                "cannot deserialize routing table: {:#}",
+                                "DHT: cannot deserialize routing table: {:#}",
                                 e
                             );
                             None

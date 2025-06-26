@@ -151,6 +151,7 @@ where
         }
         Ok(buf)
     }
+
     pub fn to_pathbuf(&self) -> anyhow::Result<PathBuf> {
         let mut buf = PathBuf::new();
         for bit in self.iter_components() {

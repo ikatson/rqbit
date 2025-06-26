@@ -1317,7 +1317,7 @@ impl Session {
                     .pause()
                     // inspect_err not available in 1.75
                     .map_err(|e| {
-                        warn!("error pausing torrent: {e:#}");
+                        warn!(?id, "error pausing torrent: {e:#}");
                         e
                     })
                     .ok()
@@ -1334,7 +1334,10 @@ impl Session {
 
         if let Some(p) = self.persistence.as_ref() {
             if let Err(e) = p.delete(id).await {
-                error!(error=?e, "error deleting torrent from persistence database");
+                error!(
+                    ?id,
+                    "error deleting torrent from persistence database: {e:#}"
+                );
             } else {
                 debug!(?id, "deleted torrent from persistence database")
             }
@@ -1348,6 +1351,7 @@ impl Session {
                 if removed.shared().options.output_folder != self.output_folder {
                     if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
                         warn!(
+                            ?id,
                             "error removing {:?}: {e:#}",
                             removed.shared().options.output_folder
                         )
@@ -1410,7 +1414,10 @@ impl Session {
         }
 
         if is_private && trackers.len() > 1 {
-            warn!("private trackers are not fully implemented, so using only the first tracker");
+            warn!(
+                ?info_hash,
+                "private trackers are not fully implemented, so using only the first tracker"
+            );
             trackers.truncate(1);
         } else if !self.disable_trackers {
             trackers.extend(self.trackers.iter().cloned());

@@ -27,7 +27,7 @@ use librqbit::{
 use librqbit_dualstack_sockets::TcpListener;
 use parking_lot::RwLock;
 use serde::Serialize;
-use tracing::{error, error_span, info, warn};
+use tracing::{debug_span, error, info, warn};
 
 struct StateShared {
     config: config::RqbitDesktopConfig,

@@ -290,19 +290,25 @@ impl ManagedTorrent {
             ManagedTorrentState::Live(live) => {
                 if let Err(err) = live.pause() {
                     warn!(
-                        "error pausing live torrent during fatal error handling: {:?}",
-                        err
+                        id = self.shared.id,
+                        info_hash = ?self.shared.info_hash,
+                        "error pausing live torrent during fatal error handling: {err:#}",
                     );
                 }
             }
             ManagedTorrentState::Error(e) => {
                 warn!(
-                    "bug: torrent already was in error state when trying to stop it. Previous error was: {:?}",
-                    e
+                    id = self.shared.id,
+                    info_hash = ?self.shared.info_hash,
+                    "bug: torrent already was in error state when trying to stop it. Previous error was: {e:#}",
                 );
             }
             ManagedTorrentState::None => {
-                warn!("bug: torrent encountered in None state during fatal error handling")
+                warn!(
+                    id = self.shared.id,
+                    info_hash = ?self.shared.info_hash,
+                    "bug: torrent encountered in None state during fatal error handling"
+                )
             }
             _ => {}
         };
@@ -613,6 +619,8 @@ fn spawn_fatal_errors_receiver(
     token: CancellationToken,
 ) {
     let span = state.shared.span.clone();
+    let id = state.shared.id;
+    let info_hash = state.shared.info_hash;
     let state = Arc::downgrade(state);
     spawn_with_cancel::<&'static str>(
         debug_span!(parent: span, "fatal_errors_receiver"),
@@ -625,7 +633,11 @@ fn spawn_fatal_errors_receiver(
             if let Some(state) = state.upgrade() {
                 state.stop_with_error(e);
             } else {
-                warn!("tried to stop the torrent with error, but couldn't upgrade the arc");
+                warn!(
+                    ?id,
+                    ?info_hash,
+                    "tried to stop the torrent with error, but couldn't upgrade the arc"
+                );
             }
             Ok(())
         },

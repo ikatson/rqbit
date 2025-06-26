@@ -558,7 +558,13 @@ fn make_torrent_details(
                 let name = match d.filename.to_string() {
                     Ok(s) => s,
                     Err(err) => {
-                        warn!("error reading filename: {:?}", err);
+                        warn!(
+                            ?info_hash,
+                            ?id,
+                            file_id = idx,
+                            "error reading filename: {:#}",
+                            err
+                        );
                         "<INVALID NAME>".to_string()
                     }
                 };

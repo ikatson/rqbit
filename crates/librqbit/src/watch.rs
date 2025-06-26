@@ -92,7 +92,7 @@ fn watch_thread(
             .context("error opening")?
             .read_to_string(&mut url)
             .context("error reading")?;
-        warn!("validating {url}");
+        debug!("validating {url}");
         Magnet::parse(&url)?;
         Ok(AddTorrent::Url(url.into()))
     }

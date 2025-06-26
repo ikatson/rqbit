@@ -348,7 +348,7 @@ pub async fn discover_once(
                         tx.send(r)?;
                         discovered += 1;
                     },
-                    Err(e) => warn!(error=?e, response=?BStr::new(response), "failed to parse SSDP response"),
+                    Err(e) => warn!(response=?BStr::new(response), "failed to parse SSDP response: {e:#}"),
                 };
             },
         }
@@ -423,7 +423,7 @@ impl UpnpPortForwarder {
         loop {
             discover_interval.tick().await;
             if let Err(e) = self.discover_once(&tx).await {
-                warn!("failed to run discovery: {e:#}");
+                warn!("failed to run SSDP/UPNP discovery: {e:#}");
             }
         }
     }

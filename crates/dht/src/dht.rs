@@ -357,7 +357,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                                 Ok(n) if n < 8 => REQUERY_INTERVAL / 8 * (n as u32),
                                 Ok(_) => REQUERY_INTERVAL,
                                 Err(e) => {
-                                    error!("error in get_peers_root(): {e:#}");
+                                    error!("dht: error in get_peers_root(): {e:#}");
                                     return Err::<(), crate::Error>(e);
                                 }
                             };
@@ -641,9 +641,8 @@ impl DhtState {
                 trace!("received {r:?}");
                 r
             }),
-            Ok(Err(e)) => {
+            Ok(Err(_)) => {
                 self.inflight_by_transaction_id.remove(&key);
-                warn!("recv error, did not expect this: {:?}", e);
                 Err(Error::DhtDead)
             }
             Err(_) => {
