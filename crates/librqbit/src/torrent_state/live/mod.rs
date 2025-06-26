@@ -397,7 +397,7 @@ impl TorrentStateLive {
         atomic_inc(&counters.incoming_connections);
 
         self.spawn(
-            error_span!(
+            debug_span!(
                 parent: self.shared.span.clone(),
                 "manage_incoming_peer",
                 addr = %checked_peer.addr
@@ -592,7 +592,7 @@ impl TorrentStateLive {
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
-                error_span!(parent: state.shared.span.clone(), "manage_peer", peer = addr.to_string()),
+                debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = addr.to_string()),
                 aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
         }
@@ -1073,7 +1073,7 @@ impl PeerConnectionHandler for PeerHandler {
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
         if !self.state.metadata.info.private && hs.m.ut_pex.is_some() {
             spawn_with_cancel(
-                error_span!(
+                debug_span!(
                     parent: self.state.shared.span.clone(),
                     "sending_pex_to_peer",
                     peer = self.addr.to_string()
@@ -1215,7 +1215,7 @@ impl PeerHandler {
                 return Ok(());
             }
             self.state.clone().spawn(
-                error_span!(
+                debug_span!(
                     parent: self.state.shared.span.clone(),
                     "wait_for_peer",
                     peer = handle.to_string(),
@@ -1851,7 +1851,7 @@ impl PeerHandler {
             let piece = piece.clone_to_owned(None);
             let tx = self.tx.clone();
 
-            let span = tracing::error_span!("deferred_write");
+            let span = tracing::debug_span!("deferred_write");
             let work = move || {
                 span.in_scope(|| {
                     if let Err(e) =
