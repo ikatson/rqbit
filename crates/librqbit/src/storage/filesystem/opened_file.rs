@@ -8,6 +8,8 @@ use std::{
 use anyhow::Context;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::Error;
+
 pub(crate) trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
     fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -150,32 +152,32 @@ impl OpenedFile {
         })
     }
 
-    pub fn lock_read(&self) -> anyhow::Result<impl Deref<Target = File>> {
+    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
         RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
             .ok()
-            .context("bug: file is empty")
+            .ok_or(Error::FsFileIsNone)
     }
 
-    pub fn lock_write(&self) -> anyhow::Result<impl DerefMut<Target = File>> {
+    pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
         RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
             .ok()
-            .context("bug: file is empty")
+            .ok_or(Error::FsFileIsNone)
     }
 
     #[cfg(windows)]
-    pub fn try_mark_sparse(&self) -> anyhow::Result<impl Deref<Target = File>> {
+    pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
         {
             let g = self.file.read();
             if g.tried_marking_sparse {
                 return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
                     .ok()
-                    .context("file is empty");
+                    .ok_or(Error::FsFileIsNone);
             }
         }
         let mut g = self.file.write();
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
-            let f = g.fd.as_ref().context("file is None")?;
+            let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
             tracing::debug!(path=?g.path, marked=super::sparse::mark_file_sparse(&f), "marking sparse");
         }
         let g = parking_lot::RwLockWriteGuard::downgrade(g);

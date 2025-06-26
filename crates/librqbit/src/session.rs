@@ -27,7 +27,9 @@ use crate::{
     storage::{
         BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
-    stream_connect::{ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs},
+    stream_connect::{
+        ConnectionKind, ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs,
+    },
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
@@ -459,6 +461,7 @@ fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> any
 }
 
 pub(crate) struct CheckedIncomingConnection {
+    pub kind: ConnectionKind,
     pub addr: SocketAddr,
     pub reader: BoxAsyncRead,
     pub writer: BoxAsyncWrite,
@@ -784,6 +787,7 @@ impl Session {
     async fn check_incoming_connection(
         self: Arc<Self>,
         addr: SocketAddr,
+        kind: ConnectionKind,
         mut reader: BoxAsyncRead,
         writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
@@ -828,13 +832,14 @@ impl Session {
                 addr,
                 reader,
                 writer,
+                kind,
                 handshake: h,
                 read_buf,
             },
         ))
     }
 
-    async fn task_listener(self: Arc<Self>, l: impl Accept) -> anyhow::Result<()> {
+    async fn task_listener<A: Accept>(self: Arc<Self>, l: A) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
@@ -848,7 +853,7 @@ impl Session {
                             let session = session.upgrade().context("session is dead")?;
                             let span = error_span!(parent: session.rs(), "incoming", addr=%addr);
                             futs.push(
-                                session.check_incoming_connection(addr, Box::new(read), Box::new(write))
+                                session.check_incoming_connection(addr, A::KIND, Box::new(read), Box::new(write))
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
@@ -1050,10 +1055,9 @@ impl Session {
             Ok(())
         }
 
-        if let Some(name) = &info.name {
-            let s = String::from_utf8_lossy(name.as_ref());
-            if !s.is_empty() {
-                let pb = PathBuf::from(s.as_ref());
+        if let Some(name) = info.name_lossy() {
+            if !name.is_empty() {
+                let pb = PathBuf::from(name.as_ref());
                 check_valid(&pb)?;
                 return Ok(Some(pb));
             }
@@ -1255,7 +1259,7 @@ impl Session {
             .start(peer_rx, opts.paused)
             .context("error starting torrent")?;
 
-        if let Some(name) = metadata.info.name.as_ref() {
+        if let Some(name) = metadata.info.name_lossy() {
             info!(?name, "added torrent");
         }
 

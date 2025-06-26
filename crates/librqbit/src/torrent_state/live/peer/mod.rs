@@ -11,6 +11,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::debug;
 
 use crate::peer_connection::WriterRequest;
+use crate::stream_connect::ConnectionKind;
 use crate::type_aliases::BF;
 
 use super::PeerStates;
@@ -33,8 +34,9 @@ impl Peer {
         peer_id: Id20,
         tx: PeerTx,
         counters: &PeerStates,
+        connection_kind: ConnectionKind,
     ) -> Self {
-        let state = PeerState::Live(LivePeerState::new(peer_id, tx, true));
+        let state = PeerState::Live(LivePeerState::new(peer_id, tx, true, connection_kind));
         for counter in [&counters.session_stats.peers, &counters.stats] {
             counter.inc(&state);
         }
@@ -193,6 +195,7 @@ impl Peer {
         peer_id: Id20,
         tx: PeerTx,
         counters: &PeerStates,
+        connection_kind: ConnectionKind,
     ) -> anyhow::Result<()> {
         if matches!(&self.state, PeerState::Connecting(..) | PeerState::Live(..)) {
             anyhow::bail!("peer already active");
@@ -200,7 +203,7 @@ impl Peer {
         match self.take_state(counters) {
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {
                 self.set_state(
-                    PeerState::Live(LivePeerState::new(peer_id, tx, true)),
+                    PeerState::Live(LivePeerState::new(peer_id, tx, true, connection_kind)),
                     counters,
                 );
             }
@@ -213,6 +216,7 @@ impl Peer {
         &mut self,
         peer_id: Id20,
         counters: &PeerStates,
+        conn_kind: ConnectionKind,
     ) -> Option<&mut LivePeerState> {
         if let PeerState::Connecting(_) = &self.state {
             let tx = match self.take_state(counters) {
@@ -220,7 +224,7 @@ impl Peer {
                 _ => unreachable!(),
             };
             self.set_state(
-                PeerState::Live(LivePeerState::new(peer_id, tx, false)),
+                PeerState::Live(LivePeerState::new(peer_id, tx, false, conn_kind)),
                 counters,
             );
             self.get_live_mut()
@@ -249,16 +253,24 @@ pub(crate) struct LivePeerState {
 
     // The main channel to send requests to peer.
     pub tx: PeerTx,
+
+    pub connection_kind: ConnectionKind,
 }
 
 impl LivePeerState {
-    pub fn new(peer_id: Id20, tx: PeerTx, initial_interested: bool) -> Self {
+    pub fn new(
+        peer_id: Id20,
+        tx: PeerTx,
+        initial_interested: bool,
+        connection_kind: ConnectionKind,
+    ) -> Self {
         LivePeerState {
             peer_id,
             peer_interested: initial_interested,
             bitfield: BF::default(),
             inflight_requests: Default::default(),
             tx,
+            connection_kind,
         }
     }
 

@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import { TorrentStats } from "../../api-types";
+import { TorrentDetails, TorrentStats } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
@@ -16,9 +16,10 @@ import { ErrorComponent } from "../ErrorComponent";
 export const TorrentActions: React.FC<{
   id: number;
   statsResponse: TorrentStats;
+  detailsResponse: TorrentDetails | null;
   extendedView: boolean;
   setExtendedView: (extendedView: boolean) => void;
-}> = ({ id, statsResponse, extendedView, setExtendedView }) => {
+}> = ({ id, statsResponse, detailsResponse, extendedView, setExtendedView }) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
@@ -145,7 +146,12 @@ export const TorrentActions: React.FC<{
       >
         <FaClipboardList className="hover:text-green-500" />
       </IconButton>
-      <DeleteTorrentModal id={id} show={deleting} onHide={cancelDeleting} />
+      <DeleteTorrentModal
+        id={id}
+        show={deleting}
+        onHide={cancelDeleting}
+        torrent={detailsResponse}
+      />
     </div>
   );
 };

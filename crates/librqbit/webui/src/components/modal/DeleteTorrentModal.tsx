@@ -1,19 +1,22 @@
 import { useContext, useState } from "react";
+import { TorrentDetails } from "../../api-types";
 import { APIContext } from "../../context";
+import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { ErrorWithLabel } from "../../rqbit-web";
+import { useTorrentStore } from "../../stores/torrentStore";
+import { Button } from "../buttons/Button";
 import { ErrorComponent } from "../ErrorComponent";
 import { Spinner } from "../Spinner";
 import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
-import { Button } from "../buttons/Button";
-import { useTorrentStore } from "../../stores/torrentStore";
 
 export const DeleteTorrentModal: React.FC<{
   id: number;
   show: boolean;
   onHide: () => void;
-}> = ({ id, show, onHide }) => {
+  torrent: TorrentDetails | null;
+}> = ({ id, show, onHide, torrent }) => {
   if (!show) {
     return null;
   }
@@ -53,8 +56,10 @@ export const DeleteTorrentModal: React.FC<{
   return (
     <Modal isOpen={show} onClose={onHide} title="Delete torrent">
       <ModalBody>
+        <p></p>
         <p className="text-gray-700 dark:text-slate-300">
-          Are you sure you want to delete the torrent?
+          Are you sure you want to delete{" "}
+          <span className="font-medium">"{torrentDisplayName(torrent)}"</span>?
         </p>
 
         <div className="mt-4 flex items-center">

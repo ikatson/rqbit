@@ -10,7 +10,10 @@ use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::vectored_traits::{AsyncReadVectored, AsyncReadVectoredIntoCompat};
+use crate::{
+    stream_connect::ConnectionKind,
+    vectored_traits::{AsyncReadVectored, AsyncReadVectoredIntoCompat},
+};
 
 pub(crate) struct ListenResult {
     pub tcp_socket: Option<TcpListener>,
@@ -129,6 +132,8 @@ impl ListenerOptions {
 }
 
 pub(crate) trait Accept {
+    const KIND: ConnectionKind;
+
     async fn accept(
         &self,
     ) -> anyhow::Result<(
@@ -141,6 +146,7 @@ pub(crate) trait Accept {
 }
 
 impl Accept for TcpListener {
+    const KIND: ConnectionKind = ConnectionKind::Tcp;
     async fn accept(
         &self,
     ) -> anyhow::Result<(
@@ -157,6 +163,7 @@ impl Accept for TcpListener {
 }
 
 impl Accept for Arc<UtpSocketUdp> {
+    const KIND: ConnectionKind = ConnectionKind::Utp;
     async fn accept(
         &self,
     ) -> anyhow::Result<(

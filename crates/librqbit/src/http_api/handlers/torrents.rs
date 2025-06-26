@@ -219,7 +219,9 @@ pub async fn h_metadata(
     let (filename, bytes) = handle
         .with_metadata(|meta| {
             (
-                meta.name.clone().unwrap_or_else(|| format!("{}", idx)),
+                meta.info
+                    .name_lossy_or_else(|| format!("torrent_{idx}"))
+                    .into_owned(),
                 meta.torrent_bytes.clone(),
             )
         })
@@ -326,14 +328,7 @@ pub async fn h_create_torrent(
             Ok(magnet.to_string().into_response())
         }
         CreateTorrentOutput::Torrent => {
-            let name = torrent
-                .as_info()
-                .info
-                .data
-                .name
-                .as_ref()
-                .and_then(|b| std::str::from_utf8(b.as_ref()).ok())
-                .unwrap_or("torrent");
+            let name = torrent.as_info().info.data.name_lossy_or_else(|| "torrent");
 
             headers.insert(
                 CONTENT_TYPE,

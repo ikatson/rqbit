@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::{
-    WithStatus,
+    WithStatus, WithStatusError,
     api_error::ApiError,
     session::{
         AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
@@ -274,7 +274,10 @@ impl Api {
         let handle = self.mgr_handle(idx)?;
         Ok(handle
             .live()
-            .context("not live")?
+            .with_status_error(
+                StatusCode::PRECONDITION_FAILED,
+                crate::Error::TorrentIsNotLive,
+            )?
             .per_peer_stats_snapshot(filter))
     }
 
@@ -286,7 +289,6 @@ impl Api {
         self.session()
             .pause(&handle)
             .await
-            .context("error pausing torrent")
             .with_status(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())
     }
@@ -299,7 +301,6 @@ impl Api {
         self.session
             .unpause(&handle)
             .await
-            .context("error unpausing torrent")
             .with_status(StatusCode::BAD_REQUEST)?;
         Ok(Default::default())
     }
@@ -577,13 +578,9 @@ fn make_torrent_details(
     Ok(TorrentDetailsResponse {
         id,
         info_hash: info_hash.as_string(),
-        name: name.map(|s| s.to_owned()).or_else(|| {
-            info.and_then(|i| {
-                i.name
-                    .as_ref()
-                    .map(|b| String::from_utf8_lossy(b.as_ref()).into())
-            })
-        }),
+        name: name
+            .map(|s| s.to_owned())
+            .or_else(|| info.and_then(|i| i.name_lossy().map(|n| n.into_owned()))),
         files: Some(files),
         output_folder,
         stats: None,

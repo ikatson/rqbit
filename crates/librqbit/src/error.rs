@@ -119,6 +119,9 @@ pub enum Error {
 
     #[error("peer is in unexpected state: {state}. Expected dead")]
     BugPeerExpectedDead { state: &'static str },
+
+    #[error("file is None, torrent was probably paused")]
+    FsFileIsNone,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

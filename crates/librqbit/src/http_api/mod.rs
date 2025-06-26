@@ -108,8 +108,15 @@ impl HttpApi {
 
         #[cfg(feature = "prometheus")]
         if let Some(handle) = prometheus_handle.take() {
-            main_router =
-                main_router.route("/metrics", get(move || async move { handle.render() }));
+            let session = state.api.session().clone();
+            main_router = main_router.route(
+                "/metrics",
+                get(move || async move {
+                    let mut metrics = handle.render();
+                    session.stats_snapshot().as_prometheus(&mut metrics);
+                    metrics
+                }),
+            );
         }
 
         let cors_layer = {

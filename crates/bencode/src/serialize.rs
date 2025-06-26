@@ -417,4 +417,39 @@ mod tests {
             b"d3:keyi42e5:value3:fooe"[..].into()
         );
     }
+
+    #[test]
+    fn test_dict() {
+        use std::collections::BTreeMap;
+        let mut m = BTreeMap::new();
+        m.insert(ByteBuf(b"key"), ByteBuf(b"value"));
+        m.insert(ByteBuf(b"key2"), ByteBuf(b"value2"));
+        assert_eq!(ser(&m).unwrap(), b"d3:key5:value4:key26:value2e"[..].into());
+    }
+
+    #[test]
+    fn test_struct_with_option() {
+        #[derive(Serialize, Debug)]
+        struct S<'a> {
+            key: u32,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            value: Option<ByteBuf<'a>>,
+        }
+        assert_eq!(
+            ser(S {
+                key: 42,
+                value: Some(b"foo"[..].into())
+            })
+            .unwrap(),
+            b"d3:keyi42e5:value3:fooe"[..].into()
+        );
+        assert_eq!(
+            ser(S {
+                key: 42,
+                value: None
+            })
+            .unwrap(),
+            b"d3:keyi42ee"[..].into()
+        );
+    }
 }

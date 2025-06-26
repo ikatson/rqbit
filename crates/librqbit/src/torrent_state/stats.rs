@@ -190,6 +190,11 @@ impl Speed {
     fn new(mbps: f64) -> Self {
         Self { mbps }
     }
+
+    #[allow(clippy::cast_possible_truncation)]
+    pub const fn as_bytes(&self) -> u64 {
+        (self.mbps * 1024f64 * 1024f64) as u64
+    }
 }
 
 impl From<f64> for Speed {

@@ -27,7 +27,7 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     spawn_utils::BlockingSpawner,
-    stream_connect::StreamConnector,
+    stream_connect::{ConnectionKind, StreamConnector},
 };
 
 pub(crate) async fn read_metainfo_from_peer(
@@ -168,7 +168,7 @@ impl PeerConnectionHandler for Handler {
         Ok(0)
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
+    fn on_handshake(&self, handshake: Handshake, _kind: ConnectionKind) -> anyhow::Result<()> {
         if !handshake.supports_extended() {
             anyhow::bail!(
                 "this peer does not support extended handshaking, which is a prerequisite to download metadata"

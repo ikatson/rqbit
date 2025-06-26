@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use librqbit_utp::UtpSocketUdp;
+use serde::Serialize;
 use socket2::SockRef;
 use tracing::debug;
 
@@ -15,9 +16,13 @@ use crate::{
     vectored_traits::AsyncReadVectoredIntoCompat,
 };
 
+#[derive(Debug, Clone, Copy, Serialize)]
 pub enum ConnectionKind {
+    #[serde(rename = "tcp")]
     Tcp,
+    #[serde(rename = "utp")]
     Utp,
+    #[serde(rename = "socks")]
     Socks,
 }
 

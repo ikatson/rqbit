@@ -92,6 +92,7 @@ use crate::{
     },
     session::CheckedIncomingConnection,
     session_stats::atomic::AtomicSessionStats,
+    stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
     type_aliases::{BF, DiskWorkQueueSender, FilePriorities, FileStorage, PeerHandle},
 };
@@ -370,8 +371,13 @@ impl TorrentStateLive {
         let counters = match self.peers.states.entry(checked_peer.addr) {
             Entry::Occupied(mut occ) => {
                 let peer = occ.get_mut();
-                peer.incoming_connection(checked_peer.handshake.peer_id, tx.clone(), &self.peers)
-                    .context("peer already existed")?;
+                peer.incoming_connection(
+                    checked_peer.handshake.peer_id,
+                    tx.clone(),
+                    &self.peers,
+                    checked_peer.kind,
+                )
+                .context("peer already existed")?;
                 peer.stats.counters.clone()
             }
             Entry::Vacant(vac) => {
@@ -381,6 +387,7 @@ impl TorrentStateLive {
                     checked_peer.handshake.peer_id,
                     tx.clone(),
                     &self.peers,
+                    checked_peer.kind,
                 );
                 let counters = peer.stats.counters.clone();
                 vac.insert(peer);
@@ -467,10 +474,7 @@ impl TorrentStateLive {
             r = requester => {r}
             r = peer_connection.manage_peer_incoming(
                 rx,
-                checked_peer.read_buf,
-                checked_peer.handshake,
-                checked_peer.reader,
-                checked_peer.writer,
+                checked_peer,
                 self.have_broadcast_tx.subscribe()
             ) => {r}
         };
@@ -629,9 +633,9 @@ impl TorrentStateLive {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
-    fn set_peer_live(&self, handle: PeerHandle, h: Handshake) {
+    fn set_peer_live(&self, handle: PeerHandle, h: Handshake, connection_kind: ConnectionKind) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
-            p.connecting_to_live(h.peer_id, &self.peers);
+            p.connecting_to_live(h.peer_id, &self.peers, connection_kind);
         });
     }
 
@@ -1046,8 +1050,8 @@ impl PeerConnectionHandler for PeerHandler {
         Ok(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake) -> anyhow::Result<()> {
-        self.state.set_peer_live(self.addr, handshake);
+    fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()> {
+        self.state.set_peer_live(self.addr, handshake, ckind);
         Ok(())
     }
 
