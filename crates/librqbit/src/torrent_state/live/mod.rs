@@ -80,7 +80,7 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, warn};
 
 use crate::{
     Error,
@@ -293,7 +293,7 @@ impl TorrentStateLive {
         });
 
         state.spawn(
-            error_span!(parent: state.shared.span.clone(), "speed_estimator_updater"),
+            debug_span!(parent: state.shared.span.clone(), "speed_estimator_updater"),
             {
                 let state = Arc::downgrade(&state);
                 async move {
@@ -319,12 +319,12 @@ impl TorrentStateLive {
         );
 
         state.spawn(
-            error_span!(parent: state.shared.span.clone(), "peer_adder"),
+            debug_span!(parent: state.shared.span.clone(), "peer_adder"),
             state.clone().task_peer_adder(peer_queue_rx),
         );
 
         state.spawn(
-            error_span!(parent: state.shared.span.clone(), "upload_scheduler"),
+            debug_span!(parent: state.shared.span.clone(), "upload_scheduler"),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
         Ok(state)
@@ -535,12 +535,12 @@ impl TorrentStateLive {
         let requester = aframe!(
             handler
                 .task_peer_chunk_requester()
-                .instrument(error_span!("chunk_requester"))
+                .instrument(debug_span!("chunk_requester"))
         );
         let conn_manager = aframe!(
             peer_connection
                 .manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe())
-                .instrument(error_span!("peer_connection"))
+                .instrument(debug_span!("peer_connection"))
         );
 
         handler
