@@ -41,7 +41,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, debug_span, error, info, trace, trace_span, warn};
+use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 
 fn now() -> Instant {
     Instant::now()
@@ -283,7 +283,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
                     debug!("error: {e:#}");
                     e
                 })
-                .instrument(trace_span!(
+                .instrument(debug_span!(
                     "find_node",
                     target = format!("{target:?}"),
                     addr = addr.to_string()
@@ -1011,9 +1011,9 @@ impl DhtWorker {
         (|| self.bootstrap_hostname(addr))
             .retry(backoff)
             .notify(|error, retry_in| {
-                warn!(?retry_in, "error in bootstrap: {error:#}");
+                warn!(?retry_in, ?addr, "error in bootstrap: {error:#}");
             })
-            .instrument(trace_span!("bootstrap", hostname = addr))
+            .instrument(debug_span!("bootstrap", hostname = addr))
             .await
     }
 
@@ -1083,7 +1083,7 @@ impl DhtWorker {
                     futs.push(
                         RecursiveRequest::find_node_for_routing_table(
                             self.dht.clone(), random_id, addrs.into_iter()
-                        ).instrument(trace_span!("refresh_bucket"))
+                        ).instrument(debug_span!("refresh_bucket"))
                     );
                 },
                 _ = futs.next(), if !futs.is_empty() => {},
