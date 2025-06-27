@@ -6,9 +6,9 @@ use crate::{
 };
 use anyhow::Context;
 use futures::{StreamExt, stream::BoxStream};
-use librqbit_core::Id20;
+use librqbit_core::{Id20, spawn_utils::spawn};
 use sqlx::{Pool, Postgres};
-use tracing::error_span;
+use tracing::debug_span;
 
 use super::{SerializedTorrent, SessionPersistenceStore};
 
@@ -216,9 +216,9 @@ impl BitV for PgBitfield {
 
     fn flush(&mut self) -> anyhow::Result<()> {
         // TODO: make flush async, and don't spawn this, to avoid allocations and capture the result.
-        crate::spawn_utils::spawn(
-            "pg",
-            error_span!("pg_update_bitfield", id=?self.torrent_id),
+        spawn(
+            debug_span!("pg_update_bitfield", id=?self.torrent_id),
+            "pg_update_bitfield",
             {
                 let hb = self.as_bytes().to_owned();
                 let pool = self.pool.clone();
@@ -254,7 +254,7 @@ impl BitV for PgBitfield {
                             )?;
                         }
                     };
-                    Ok(())
+                    Ok::<_, anyhow::Error>(())
                 }
             },
         );

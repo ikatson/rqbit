@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{Notify, broadcast::error::RecvError};
-use tracing::{Instrument, debug, error_span, trace, warn};
+use tracing::{Instrument, debug, debug_span, trace, warn};
 
 pub struct Subscription {
     #[allow(dead_code)]
@@ -280,7 +280,7 @@ impl UpnpServerStateInner {
                         }
                     }
                 }
-                .instrument(error_span!("system-update-id-notifier"));
+                .instrument(debug_span!("system-update-id-notifier"));
 
                 let timeout_notifier = async {
                     let mut timeout = timeout;
@@ -297,7 +297,7 @@ impl UpnpServerStateInner {
                             }
                         }
                     }
-                }.instrument(error_span!("timeout-killer"));
+                }.instrument(debug_span!("timeout-killer"));
 
                 tokio::select! {
                     r = system_update_id_notifier => r,
@@ -307,7 +307,8 @@ impl UpnpServerStateInner {
         };
 
         spawn_with_cancel::<anyhow::Error>(
-            error_span!(parent: pspan, "subscription-manager", sid, %url, service="ContentDirectory"),
+            debug_span!(parent: pspan, "subscription-manager", sid, %url, service="ContentDirectory"),
+            "upnp-subscription-manager:ContentDirectory",
             token,
             subscription_manager,
         );
@@ -348,14 +349,15 @@ impl UpnpServerStateInner {
                             }
                         }
                     }
-                }.instrument(error_span!("timeout-killer"));
+                }.instrument(debug_span!("timeout-killer"));
 
                 timeout_notifier.await
             }
         };
 
         spawn_with_cancel::<anyhow::Error>(
-            error_span!(parent: pspan, "subscription-manager", sid, %url, service="ConnectionManager"),
+            debug_span!(parent: pspan, "subscription-manager", sid, %url, service="ConnectionManager"),
+            "upnp-subscription-manager:ConnectionManager",
             token,
             subscription_manager,
         );

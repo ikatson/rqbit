@@ -33,7 +33,7 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-use tracing::error_span;
+use tracing::debug_span;
 use tracing::trace;
 use tracing::warn;
 
@@ -290,19 +290,25 @@ impl ManagedTorrent {
             ManagedTorrentState::Live(live) => {
                 if let Err(err) = live.pause() {
                     warn!(
-                        "error pausing live torrent during fatal error handling: {:?}",
-                        err
+                        id = self.shared.id,
+                        info_hash = ?self.shared.info_hash,
+                        "error pausing live torrent during fatal error handling: {err:#}",
                     );
                 }
             }
             ManagedTorrentState::Error(e) => {
                 warn!(
-                    "bug: torrent already was in error state when trying to stop it. Previous error was: {:?}",
-                    e
+                    id = self.shared.id,
+                    info_hash = ?self.shared.info_hash,
+                    "bug: torrent already was in error state when trying to stop it. Previous error was: {e:#}",
                 );
             }
             ManagedTorrentState::None => {
-                warn!("bug: torrent encountered in None state during fatal error handling")
+                warn!(
+                    id = self.shared.id,
+                    info_hash = ?self.shared.info_hash,
+                    "bug: torrent encountered in None state during fatal error handling"
+                )
             }
             _ => {}
         };
@@ -340,7 +346,8 @@ impl ManagedTorrent {
                     let token = token.clone();
 
                     spawn_with_cancel(
-                        error_span!(parent: span.clone(), "initialize_and_start"),
+                        debug_span!(parent: span.clone(), "initialize_and_start"),
+                        "initialize_and_start",
                         token.clone(),
                         async move {
                             let concurrent_init_semaphore =
@@ -613,9 +620,12 @@ fn spawn_fatal_errors_receiver(
     token: CancellationToken,
 ) {
     let span = state.shared.span.clone();
+    let id = state.shared.id;
+    let info_hash = state.shared.info_hash;
     let state = Arc::downgrade(state);
     spawn_with_cancel::<&'static str>(
-        error_span!(parent: span, "fatal_errors_receiver"),
+        debug_span!(parent: span, "fatal_errors_receiver"),
+        "fatal_errors_receiver",
         token,
         async move {
             let e = match rx.await {
@@ -625,7 +635,11 @@ fn spawn_fatal_errors_receiver(
             if let Some(state) = state.upgrade() {
                 state.stop_with_error(e);
             } else {
-                warn!("tried to stop the torrent with error, but couldn't upgrade the arc");
+                warn!(
+                    ?id,
+                    ?info_hash,
+                    "tried to stop the torrent with error, but couldn't upgrade the arc"
+                );
             }
             Ok(())
         },
@@ -634,7 +648,8 @@ fn spawn_fatal_errors_receiver(
 
 fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
     live.spawn(
-        error_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
+        debug_span!(parent: live.torrent().span.clone(), "external_peer_adder"),
+        format!("[{}]external_peer_adder", live.shared.id),
         {
             let live = live.clone();
             async move {

@@ -7,3 +7,5 @@
 /AGENTS.md
 /CLAUDE.md
 /GEMINI.md
+/perf.data*
+/flamegraph.svg

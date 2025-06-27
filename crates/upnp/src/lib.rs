@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tracing::{Instrument, Span, debug, debug_span, error_span, trace, warn};
+use tracing::{Instrument, Span, debug, debug_span, trace, warn};
 use url::Url;
 
 const SERVICE_TYPE_WAN_IP_CONNECTION: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
@@ -348,7 +348,7 @@ pub async fn discover_once(
                         tx.send(r)?;
                         discovered += 1;
                     },
-                    Err(e) => warn!(error=?e, response=?BStr::new(response), "failed to parse SSDP response"),
+                    Err(e) => warn!(response=?BStr::new(response), "failed to parse SSDP response: {e:#}"),
                 };
             },
         }
@@ -423,7 +423,7 @@ impl UpnpPortForwarder {
         loop {
             discover_interval.tick().await;
             if let Err(e) = self.discover_once(&tx).await {
-                warn!("failed to run discovery: {e:#}");
+                warn!("failed to run SSDP/UPNP discovery: {e:#}");
             }
         }
     }
@@ -445,7 +445,7 @@ impl UpnpPortForwarder {
     async fn manage_service(&self, control_url: Url, local_ip: IpAddr) -> anyhow::Result<()> {
         futures::future::join_all(self.ports.iter().cloned().map(|port| {
             self.manage_port(control_url.clone(), local_ip, port)
-                .instrument(error_span!("manage_port", port = port))
+                .instrument(debug_span!("manage_port", port = port))
         }))
         .await;
         Ok(())

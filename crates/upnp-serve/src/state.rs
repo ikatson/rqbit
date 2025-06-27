@@ -10,7 +10,7 @@ use anyhow::Context;
 use axum::body::Bytes;
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use tokio_util::sync::CancellationToken;
-use tracing::{Span, error_span};
+use tracing::{Span, debug_span};
 
 use crate::{ContentDirectoryBrowseProvider, subscriptions::Subscriptions};
 
@@ -40,7 +40,7 @@ impl UpnpServerStateInner {
         let cancel_token = cancellation_token.child_token();
         let drop_guard = cancel_token.clone().drop_guard();
         let (btx, _) = tokio::sync::broadcast::channel(32);
-        let span = error_span!(parent: None, "upnp-server");
+        let span = debug_span!(parent: None, "upnp-server");
         let state = Arc::new(Self {
             rendered_root_description,
             provider,
@@ -54,7 +54,8 @@ impl UpnpServerStateInner {
         });
 
         spawn_with_cancel::<anyhow::Error>(
-            error_span!(parent: span, "system_update_id_updater"),
+            debug_span!(parent: span, "system_update_id_updater"),
+            "system_update_id_updater",
             cancel_token,
             {
                 let state = Arc::downgrade(&state);

@@ -44,6 +44,7 @@ pub mod peers;
 pub mod stats;
 
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     num::NonZeroU32,
@@ -80,7 +81,7 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, error_span, info, trace, warn};
+use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 
 use crate::{
     Error,
@@ -153,7 +154,7 @@ impl TorrentStateLocked {
         self.chunks.as_mut().ok_or(Error::ChunkTrackerEmpty)
     }
 
-    fn try_flush_bitv(&mut self) {
+    fn try_flush_bitv(&mut self, shared: &ManagedTorrentShared) {
         if self.unflushed_bitv_bytes == 0 {
             return;
         }
@@ -163,7 +164,7 @@ impl TorrentStateLocked {
             .as_mut()
             .map(|ct| ct.get_have_pieces_mut().flush())
         {
-            warn!(error=?e, "error flushing bitfield");
+            warn!(id=?shared.id, info_hash = ?shared.info_hash, "error flushing bitfield: {e:#}");
         } else {
             trace!("flushed bitfield");
             self.unflushed_bitv_bytes = 0;
@@ -175,7 +176,7 @@ const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub struct TorrentStateLive {
     peers: PeerStates,
-    shared: Arc<ManagedTorrentShared>,
+    pub(crate) shared: Arc<ManagedTorrentShared>,
     metadata: Arc<TorrentMetadata>,
     locked: RwLock<TorrentStateLocked>,
 
@@ -293,7 +294,8 @@ impl TorrentStateLive {
         });
 
         state.spawn(
-            error_span!(parent: state.shared.span.clone(), "speed_estimator_updater"),
+            debug_span!(parent: state.shared.span.clone(), "speed_estimator_updater"),
+            format!("[{}]speed_estimator_updater", state.shared.id),
             {
                 let state = Arc::downgrade(&state);
                 async move {
@@ -319,12 +321,14 @@ impl TorrentStateLive {
         );
 
         state.spawn(
-            error_span!(parent: state.shared.span.clone(), "peer_adder"),
+            debug_span!(parent: state.shared.span.clone(), "peer_adder"),
+            format!("[{}]peer_adder", state.shared.id),
             state.clone().task_peer_adder(peer_queue_rx),
         );
 
         state.spawn(
-            error_span!(parent: state.shared.span.clone(), "upload_scheduler"),
+            debug_span!(parent: state.shared.span.clone(), "upload_scheduler"),
+            format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
         Ok(state)
@@ -334,9 +338,10 @@ impl TorrentStateLive {
     pub(crate) fn spawn(
         &self,
         span: tracing::Span,
+        name: impl Into<Cow<'static, str>>,
         fut: impl std::future::Future<Output = crate::Result<()>> + Send + 'static,
     ) {
-        spawn_with_cancel(span, self.cancellation_token.clone(), fut);
+        spawn_with_cancel(span, name, self.cancellation_token.clone(), fut);
     }
 
     pub fn down_speed_estimator(&self) -> &SpeedEstimator {
@@ -397,10 +402,14 @@ impl TorrentStateLive {
         atomic_inc(&counters.incoming_connections);
 
         self.spawn(
-            error_span!(
+            debug_span!(
                 parent: self.shared.span.clone(),
                 "manage_incoming_peer",
                 addr = %checked_peer.addr
+            ),
+            format!(
+                "[{}][addr={}]manage_incoming_peer",
+                self.shared.id, checked_peer.addr
             ),
             aframe!(
                 self.clone()
@@ -535,12 +544,12 @@ impl TorrentStateLive {
         let requester = aframe!(
             handler
                 .task_peer_chunk_requester()
-                .instrument(error_span!("chunk_requester"))
+                .instrument(debug_span!("chunk_requester"))
         );
         let conn_manager = aframe!(
             peer_connection
                 .manage_peer_outgoing(rx, state.have_broadcast_tx.subscribe())
-                .instrument(error_span!("peer_connection"))
+                .instrument(debug_span!("peer_connection"))
         );
 
         handler
@@ -592,7 +601,8 @@ impl TorrentStateLive {
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
             state.spawn(
-                error_span!(parent: state.shared.span.clone(), "manage_peer", peer = addr.to_string()),
+                debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = ?addr),
+                format!("[{}][addr={addr}]manage_peer", state.shared.id),
                 aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
         }
@@ -742,7 +752,7 @@ impl TorrentStateLive {
             .context("fatal_errors_tx already taken")?;
         let res = anyhow::anyhow!("fatal error: {:?}", e);
         if tx.send(e).is_err() {
-            warn!("there's nowhere to send fatal error, receiver is dead");
+            warn!(id=self.shared.id, info_hash=?self.shared.info_hash, "there's nowhere to send fatal error, receiver is dead");
         }
         Err(res)
     }
@@ -806,14 +816,14 @@ impl TorrentStateLive {
 
         locked.unflushed_bitv_bytes += self.metadata.lengths.piece_length(id) as u64;
         if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
-            locked.try_flush_bitv()
+            locked.try_flush_bitv(&self.shared)
         }
 
         let chunks = locked.get_chunks()?;
         if chunks.is_finished() {
             if chunks.get_selected_pieces()[id.get_usize()] {
-                locked.try_flush_bitv();
-                info!("torrent finished downloading");
+                locked.try_flush_bitv(&self.shared);
+                info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
 
@@ -1015,6 +1025,8 @@ impl PeerConnectionHandler for PeerHandler {
             ))) => {
                 if self.state.metadata.info.private {
                     warn!(
+                        id = self.state.shared.id,
+                        info_hash = ?self.state.shared.info_hash,
                         "recieved noncompliant ut_metadata message from {}, ignoring",
                         self.addr
                     );
@@ -1028,6 +1040,8 @@ impl PeerConnectionHandler for PeerHandler {
             Message::Extended(ExtendedMessage::UtPex(pex)) => {
                 if self.state.metadata.info.private {
                     warn!(
+                        id = self.state.shared.id,
+                        info_hash = ?self.state.shared.info_hash,
                         "recieved noncompliant PEX message from {}, ignoring",
                         self.addr
                     );
@@ -1036,7 +1050,11 @@ impl PeerConnectionHandler for PeerHandler {
                 }
             }
             message => {
-                warn!("received unsupported message {:?}, ignoring", message);
+                warn!(
+                    id = self.state.shared.id,
+                    info_hash = ?self.state.shared.info_hash,
+                    "received unsupported message {:?}, ignoring", message
+                );
             }
         };
         Ok(())
@@ -1073,10 +1091,14 @@ impl PeerConnectionHandler for PeerHandler {
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
         if !self.state.metadata.info.private && hs.m.ut_pex.is_some() {
             spawn_with_cancel(
-                error_span!(
+                debug_span!(
                     parent: self.state.shared.span.clone(),
                     "sending_pex_to_peer",
-                    peer = self.addr.to_string()
+                    peer = ?self.addr,
+                ),
+                format!(
+                    "[{}][addr={}]sending_pex_to_peer",
+                    self.state.shared.id, self.addr
                 ),
                 self.cancel_token.clone(),
                 self.state
@@ -1142,7 +1164,12 @@ impl PeerHandler {
         let mut pe = match peers.states.get_mut(&handle) {
             Some(peer) => TimedExistence::new(peer, "on_peer_died"),
             None => {
-                warn!("bug: peer not found in table. Forgetting it forever");
+                warn!(
+                    id = self.state.shared.id,
+                    info_hash = ?self.state.shared.info_hash,
+                    addr=?handle,
+                    "bug: peer not found in table. Forgetting it forever"
+                );
                 return Ok(());
             }
         };
@@ -1169,7 +1196,12 @@ impl PeerHandler {
                 return Ok(());
             }
             s @ PeerState::Queued | s @ PeerState::Dead => {
-                warn!("bug: peer was in a wrong state {s:?}, ignoring it forever");
+                warn!(
+                    id = self.state.shared.id,
+                    info_hash = ?self.state.shared.info_hash,
+                    addr = ?handle,
+                    "bug: peer was in a wrong state {s:?}, ignoring it forever"
+                );
                 // Prevent deadlocks.
                 drop(pe);
                 self.state.peers.drop_peer(handle);
@@ -1215,12 +1247,13 @@ impl PeerHandler {
                 return Ok(());
             }
             self.state.clone().spawn(
-                error_span!(
+                debug_span!(
                     parent: self.state.shared.span.clone(),
                     "wait_for_peer",
-                    peer = handle.to_string(),
+                    peer = ?handle,
                     duration = format!("{dur:?}")
                 ),
+                format!("[{}][addr={}]wait_for_peer", self.state.shared.id, handle),
                 async move {
                     trace!("waiting to reconnect again");
                     tokio::time::sleep(dur).await;
@@ -1410,7 +1443,13 @@ impl PeerHandler {
                 match live.bitfield.get_mut(have as usize) {
                     Some(mut v) => *v = true,
                     None => {
-                        warn!("received have {} out of range", have);
+                        warn!(
+                            id = self.state.shared.id,
+                            info_hash = ?self.state.shared.info_hash,
+                            addr = ?self.addr,
+                            "received have {} out of range",
+                            have
+                        );
                         return;
                     }
                 };
@@ -1574,7 +1613,13 @@ impl PeerHandler {
                         // Example:
                         // someone stole a piece from us, and then died, the piece became "needed" again, and we reserved it
                         // all before the piece request was processed by us.
-                        warn!("we already requested {:?} previously", chunk);
+                        warn!(
+                            id = self.state.shared.id,
+                            info_hash = ?self.state.shared.info_hash,
+                            addr = ?self.addr,
+                            "we already requested {:?} previously",
+                            chunk
+                        );
                         continue;
                     }
                     // peer died
@@ -1736,7 +1781,11 @@ impl PeerHandler {
                 match state.file_ops().write_chunk(addr, piece, chunk_info) {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("FATAL: error writing chunk to disk: {e:#}");
+                        error!(
+                            id = state.shared.id,
+                            info_hash = ?state.shared.info_hash,
+                            "FATAL: error writing chunk to disk: {e:#}"
+                        );
                         return state.on_fatal_error(e);
                     }
                 };
@@ -1829,8 +1878,10 @@ impl PeerHandler {
                 }
                 false => {
                     warn!(
-                        "checksum for piece={} did not validate. disconecting peer.",
-                        index
+                        id = state.shared.id,
+                        info_hash = ?state.shared.info_hash,
+                        ?addr,
+                        "checksum for piece={} did not validate. disconecting peer.", index
                     );
                     state
                         .lock_write("mark_piece_broken")
@@ -1851,7 +1902,7 @@ impl PeerHandler {
             let piece = piece.clone_to_owned(None);
             let tx = self.tx.clone();
 
-            let span = tracing::error_span!("deferred_write");
+            let span = tracing::debug_span!("deferred_write");
             let work = move || {
                 span.in_scope(|| {
                     if let Err(e) =
@@ -1913,7 +1964,12 @@ impl PeerHandler {
                 self.state
                     .add_peer_if_not_seen(peer.addr)
                     .map_err(|error| {
-                        warn!(?peer, ?error, "failed to add peer");
+                        warn!(
+                            id = self.state.shared.id,
+                            info_hash = ?self.state.shared.info_hash,
+                            ?peer,
+                            "failed to add peer: {error:#}"
+                        );
                         error
                     })
                     .ok();

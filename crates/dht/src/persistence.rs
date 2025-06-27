@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use tracing::{error, error_span, info, trace, warn};
+use tracing::{debug_span, error, info, trace, warn};
 
 use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
@@ -122,7 +122,7 @@ impl PersistentDht {
                         Err(e) => {
                             warn!(
                                 filename=?config_filename,
-                                "cannot deserialize routing table: {:#}",
+                                "DHT: cannot deserialize routing table: {:#}",
                                 e
                             );
                             None
@@ -152,7 +152,8 @@ impl PersistentDht {
             };
             let dht = DhtState::with_config(dht_config).await?;
             spawn_with_cancel::<anyhow::Error>(
-                error_span!("dht_persistence"),
+                debug_span!("dht_persistence"),
+                "dht_persistence",
                 dht.cancellation_token().clone(),
                 {
                     let dht = dht.clone();

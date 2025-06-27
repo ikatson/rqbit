@@ -141,9 +141,13 @@ impl TorrentStateInitializing {
         });
 
         if is_broken {
-            warn!("data corrupted, ignoring fastresume data");
+            warn!(
+                id = ?self.shared.id,
+                info_hash = ?self.shared.info_hash,
+                "data corrupted, ignoring fastresume data"
+            );
             if let Err(e) = bitv_factory.clear(self.shared.id.into()).await {
-                warn!(error=?e, "error clearing bitfield");
+                warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, "error clearing bitfield: {e:#}");
             }
             self.checked_bytes.store(0, Ordering::Relaxed);
             return None;
@@ -163,7 +167,7 @@ impl TorrentStateInitializing {
             .clone();
         let have_pieces = if self.previously_errored {
             if let Err(e) = bitv_factory.clear(id).await {
-                warn!(error=?e, "error clearing bitfield");
+                warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
             }
             None
         } else {
@@ -217,6 +221,7 @@ impl TorrentStateInitializing {
         let hns = chunk_tracker.get_hns();
 
         info!(
+            torrent=?self.shared.id,
             "Initial check results: have {}, needed {}, total selected {}",
             SF::new(hns.have_bytes),
             SF::new(hns.needed_bytes),
@@ -238,6 +243,7 @@ impl TorrentStateInitializing {
                     }
                     if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
                         warn!(
+                            id=?self.shared.id, info_hash = ?self.shared.info_hash,
                             "Error setting length for file {:?} to {}: {:#?}",
                             fi.relative_filename, fi.len, err
                         );

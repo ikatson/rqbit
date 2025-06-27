@@ -16,7 +16,7 @@ use librqbit_dualstack_sockets::MulticastUdpSocket;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error_span, trace};
+use tracing::{debug, debug_span, trace};
 
 const LSD_PORT: u16 = 6771;
 const LSD_IPV4: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(239, 192, 152, 143), LSD_PORT);
@@ -101,7 +101,8 @@ impl LocalServiceDiscovery {
         };
 
         spawn_with_cancel(
-            error_span!("lsd"),
+            debug_span!("lsd"),
+            "lsd",
             opts.cancel_token,
             lsd.clone().task_monitor_recv(),
         );
@@ -272,7 +273,8 @@ cookie: {cookie}\r
         if let Some(announce_port) = announce_port {
             let cancel_token = self.inner.cancel_token.child_token();
             spawn_with_cancel(
-                error_span!(parent: None, "lsd-announce", ?info_hash, port=announce_port),
+                debug_span!(parent: None, "lsd-announce", ?info_hash, port=announce_port),
+                "lsd-announce",
                 cancel_token,
                 self.clone()
                     .task_announce_periodically(info_hash, announce_port),

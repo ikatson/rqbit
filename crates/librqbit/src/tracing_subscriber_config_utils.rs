@@ -3,8 +3,8 @@ use std::io::LineWriter;
 use anyhow::Context;
 use bytes::Bytes;
 use librqbit_core::spawn_utils::spawn;
-use tracing::error_span;
-use tracing_subscriber::fmt::MakeWriter;
+use tracing::debug_span;
+use tracing_subscriber::{filter::FilterExt, fmt::MakeWriter};
 
 struct Subscriber {
     tx: tokio::sync::broadcast::Sender<Bytes>,
@@ -89,11 +89,13 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new())
                 .event_format(fmt::format().with_ansi(false).json())
                 .with_writer(line_sub)
-                .with_filter(tracing_subscriber::filter::filter_fn({
-                    let line_broadcast = line_broadcast.clone();
-                    move |_| line_broadcast.receiver_count() > 0
-                }))
-                .with_filter(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
+                .with_filter(
+                    tracing_subscriber::filter::filter_fn({
+                        let line_broadcast = line_broadcast.clone();
+                        move |_| line_broadcast.receiver_count() > 0
+                    })
+                    .and(EnvFilter::builder().parse("info,librqbit=debug").unwrap()),
+                ),
         );
 
     #[cfg(feature = "tokio-console")]
@@ -129,20 +131,24 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
     }
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    spawn::<&'static str>(error_span!("fmt_filter_reloader"), async move {
-        while let Some(rust_log) = reload_rx.recv().await {
-            let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
-                    continue;
-                }
-            };
-            eprintln!("setting RUST_LOG to {:?}", rust_log);
-            let _ = reload_stderr_filter.reload(stderr_env_filter);
-        }
-        Ok(())
-    });
+    spawn::<&'static str>(
+        debug_span!("fmt_filter_reloader"),
+        "fmt_filter_reloader",
+        async move {
+            while let Some(rust_log) = reload_rx.recv().await {
+                let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
+                        continue;
+                    }
+                };
+                eprintln!("setting RUST_LOG to {:?}", rust_log);
+                let _ = reload_stderr_filter.reload(stderr_env_filter);
+            }
+            Ok(())
+        },
+    );
     Ok(InitLoggingResult {
         rust_log_reload_tx: reload_tx,
         line_broadcast,

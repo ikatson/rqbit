@@ -10,7 +10,7 @@ use http::{HeaderMap, StatusCode};
 use librqbit_dualstack_sockets::TcpListener;
 use std::sync::Arc;
 use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, OnFailure};
-use tracing::{Span, debug, error_span, info};
+use tracing::{Span, debug, debug_span, info};
 
 use axum::Router;
 
@@ -176,9 +176,9 @@ impl HttpApi {
                             .extensions()
                             .get::<ConnectInfo<librqbit_dualstack_sockets::WrappedSocketAddr>>()
                         {
-                            error_span!("request", %method, %uri, addr=%addr.0)
+                            debug_span!("request", %method, %uri, addr=%addr.0)
                         } else {
-                            error_span!("request", %method, %uri)
+                            debug_span!("request", %method, %uri)
                         }
                     })
                     .on_request(|req: &Request, _: &Span| {

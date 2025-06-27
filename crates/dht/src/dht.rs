@@ -41,7 +41,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, debug_span, error, error_span, info, trace, trace_span, warn};
+use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 
 fn now() -> Instant {
     Instant::now()
@@ -283,7 +283,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksFindNodes> {
                     debug!("error: {e:#}");
                     e
                 })
-                .instrument(trace_span!(
+                .instrument(debug_span!(
                     "find_node",
                     target = format!("{target:?}"),
                     addr = addr.to_string()
@@ -344,6 +344,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         let this = self.clone();
         spawn(
             debug_span!(parent: None, "get_peers", is_v4, info_hash = format!("{:?}", self.info_hash)),
+            "get_peers",
             async move {
                 let this = &this;
                 // Looper adds root nodes to the queue every 60 seconds.
@@ -357,7 +358,7 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                                 Ok(n) if n < 8 => REQUERY_INTERVAL / 8 * (n as u32),
                                 Ok(_) => REQUERY_INTERVAL,
                                 Err(e) => {
-                                    error!("error in get_peers_root(): {e:#}");
+                                    error!("dht: error in get_peers_root(): {e:#}");
                                     return Err::<(), crate::Error>(e);
                                 }
                             };
@@ -641,9 +642,8 @@ impl DhtState {
                 trace!("received {r:?}");
                 r
             }),
-            Ok(Err(e)) => {
+            Ok(Err(_)) => {
                 self.inflight_by_transaction_id.remove(&key);
-                warn!("recv error, did not expect this: {:?}", e);
                 Err(Error::DhtDead)
             }
             Err(_) => {
@@ -1011,9 +1011,9 @@ impl DhtWorker {
         (|| self.bootstrap_hostname(addr))
             .retry(backoff)
             .notify(|error, retry_in| {
-                warn!(?retry_in, "error in bootstrap: {error:#}");
+                warn!(?retry_in, ?addr, "error in bootstrap: {error:#}");
             })
-            .instrument(trace_span!("bootstrap", hostname = addr))
+            .instrument(debug_span!("bootstrap", hostname = addr))
             .await
     }
 
@@ -1083,7 +1083,7 @@ impl DhtWorker {
                     futs.push(
                         RecursiveRequest::find_node_for_routing_table(
                             self.dht.clone(), random_id, addrs.into_iter()
-                        ).instrument(trace_span!("refresh_bucket"))
+                        ).instrument(debug_span!("refresh_bucket"))
                     );
                 },
                 _ = futs.next(), if !futs.is_empty() => {},
@@ -1138,7 +1138,7 @@ impl DhtWorker {
                                 debug!("error: {e:#}");
                             }
                         }
-                    }.instrument(error_span!("ping", addr=addr.to_string())))
+                    }.instrument(debug_span!("ping", addr=addr.to_string())))
                 },
                 _ = futs.next(), if !futs.is_empty() => {},
             }
@@ -1226,15 +1226,15 @@ impl DhtWorker {
         }
         .instrument(debug_span!("dht_responese_reader"));
 
-        let pinger_v4 = self.pinger(true).instrument(error_span!("pinger_v4"));
+        let pinger_v4 = self.pinger(true).instrument(debug_span!("pinger_v4"));
         let bucket_refresher_v4 = self
             .bucket_refresher(true)
-            .instrument(error_span!("bucket_refresher_v4"));
+            .instrument(debug_span!("bucket_refresher_v4"));
 
-        let pinger_v6 = self.pinger(false).instrument(error_span!("pinger_v6"));
+        let pinger_v6 = self.pinger(false).instrument(debug_span!("pinger_v6"));
         let bucket_refresher_v6 = self
             .bucket_refresher(false)
-            .instrument(error_span!("bucket_refresher_v6"));
+            .instrument(debug_span!("bucket_refresher_v6"));
 
         tokio::pin!(framer);
         tokio::pin!(bootstrap);
@@ -1325,13 +1325,18 @@ impl DhtState {
                 token,
             ));
 
-            spawn_with_cancel(error_span!("dht"), state.cancellation_token.clone(), {
-                let state = state.clone();
-                async move {
-                    let worker = DhtWorker { socket, dht: state };
-                    worker.start(in_rx, &bootstrap_addrs).await
-                }
-            });
+            spawn_with_cancel(
+                debug_span!("dht"),
+                "dht",
+                state.cancellation_token.clone(),
+                {
+                    let state = state.clone();
+                    async move {
+                        let worker = DhtWorker { socket, dht: state };
+                        worker.start(in_rx, &bootstrap_addrs).await
+                    }
+                },
+            );
             Ok(state)
         }
         .boxed()
