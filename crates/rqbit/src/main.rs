@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
@@ -12,7 +12,6 @@ use std::{
 use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
-use futures::future::BoxFuture;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
     CreateTorrentOptions, ListOnlyResponse, ListenerMode, ListenerOptions, PeerConnectionOptions,
@@ -519,7 +518,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
     };
 
     let trackers = if let Some(f) = &opts.trackers_filename {
-        parse_trackers_file(&f)
+        parse_trackers_file(f)
             .await
             .inspect_err(|e| warn!("error reading trackers file: {e:#}"))
             .unwrap_or_default()
@@ -620,7 +619,8 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
 
         ..Default::default()
     };
-    match &mut opts.subcommand {
+
+    match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
                 if !start_opts.disable_persistence {
@@ -647,18 +647,13 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 }
 
                 http_api_opts.read_only = false;
-
                 sopts.fastresume = start_opts.fastresume;
 
                 let session =
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
                         .await
                         .context("error initializing rqbit session")?;
-                librqbit_spawn(
-                    trace_span!("stats_printer"),
-                    "stats_printer",
-                    stats_printer(session.clone()),
-                );
+                spawn_stats_printer(session.clone());
 
                 if let Some(watch_folder) = start_opts.watch_folder.as_ref() {
                     session.watch_folder(Path::new(watch_folder));
@@ -687,9 +682,11 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             sopts.disable_dht_persistence = true;
             sopts.persistence = None;
 
+            let mut disable_http_api = download_opts.disable_http_api;
+
             if download_opts.list {
                 sopts.listen = None;
-                download_opts.disable_http_api = true;
+                disable_http_api = true;
             }
 
             if let Some(listen) = sopts.listen.as_mut() {
@@ -725,20 +722,18 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 stats_printer(session.clone()),
             );
 
-            if !download_opts.disable_http_api {
-                start_ephemeral_http_api(
+            if !disable_http_api {
+                let http_api_fut = start_http_api(
+                    cancel.clone(),
                     session.clone(),
-                    if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
-                        let (u, p) = up.split_once(":").context(
-                            "basic auth credentials should be in format username:password",
-                        )?;
-                        Some((u.to_owned(), p.to_owned()))
-                    } else {
-                        None
-                    },
+                    opts.http_api_listen_addr
+                        .unwrap_or((Ipv4Addr::LOCALHOST, 0).into()),
+                    http_api_opts,
+                    &opts,
                     log_config,
-                    opts.http_api_listen_addr,
-                )?;
+                )
+                .await?;
+                librqbit_spawn(debug_span!("http_api"), "http_api", http_api_fut);
             }
 
             let mut added = false;
@@ -849,19 +844,16 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 .await
                 .context("error initializing rqbit session")?;
 
-            start_ephemeral_http_api(
+            let http_api_fut = start_http_api(
+                cancel,
                 session.clone(),
-                if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
-                    let (u, p) = up
-                        .split_once(":")
-                        .context("basic auth credentials should be in format username:password")?;
-                    Some((u.to_owned(), p.to_owned()))
-                } else {
-                    None
-                },
+                opts.http_api_listen_addr
+                    .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into()),
+                http_api_opts,
+                &opts,
                 log_config,
-                opts.http_api_listen_addr,
-            )?;
+            )
+            .await?;
 
             let (create_result, _) = session
                 .create_and_serve_torrent(
@@ -875,14 +867,14 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 .await
                 .context("error creating and sharing torrent")?;
 
+            spawn_stats_printer(session.clone());
+
             tracing::warn!(
                 "WARNING: torrents are public, anyone can download it, even if they don't have the magnet link"
             );
             println!("share this magnet link: {}", create_result.as_magnet());
 
-            loop {
-                tokio::time::sleep(Duration::from_secs(1000)).await;
-            }
+            http_api_fut.await
         }
         SubCommand::Completions(_) => unreachable!(),
     }
@@ -914,7 +906,7 @@ async fn start_http_api(
     http_api_opts: HttpApiOptions,
     opts: &Opts,
     log_config: InitLoggingResult,
-) -> anyhow::Result<impl Future<Output = anyhow::Result<()>>> {
+) -> anyhow::Result<impl Future<Output = anyhow::Result<()>> + use<> + 'static> {
     let api = Api::new(
         session.clone(),
         Some(log_config.rust_log_reload_tx),
@@ -971,46 +963,6 @@ async fn start_http_api(
     })
 }
 
-fn start_ephemeral_http_api(
-    session: Arc<Session>,
-    basic_auth: Option<(String, String)>,
-    log_config: InitLoggingResult,
-    listen_addr: Option<SocketAddr>,
-) -> anyhow::Result<()> {
-    let api = Api::new(
-        session,
-        Some(log_config.rust_log_reload_tx),
-        Some(log_config.line_broadcast),
-    );
-    let mut http_api_opts = HttpApiOptions {
-        read_only: true,
-        basic_auth,
-        ..Default::default()
-    };
-
-    #[cfg(feature = "prometheus")]
-    match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
-        Ok(handle) => {
-            http_api_opts.prometheus_handle = Some(handle);
-        }
-        Err(e) => {
-            warn!("error installing prometheus recorder: {e:#}");
-        }
-    }
-    let http_api = HttpApi::new(api, Some(http_api_opts));
-    let listen_addr = listen_addr.unwrap_or((Ipv4Addr::LOCALHOST, 0).into());
-    let listener = TcpListener::bind_tcp(listen_addr, Default::default())
-        .with_context(|| format!("error binding HTTP server to {listen_addr}"))?;
-    let listen_addr = listener.bind_addr();
-    info!("started HTTP API at http://{listen_addr}");
-    librqbit_spawn(
-        debug_span!("http_api"),
-        "http_api",
-        http_api.make_http_api_and_run(listener, None),
-    );
-    Ok(())
-}
-
 async fn stats_printer(session: Arc<Session>) -> Result<(), &'static str> {
     loop {
         session.with_torrents(|torrents| {
@@ -1061,6 +1013,14 @@ async fn stats_printer(session: Arc<Session>) -> Result<(), &'static str> {
             });
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+fn spawn_stats_printer(session: Arc<Session>) {
+    librqbit_spawn(
+        trace_span!("stats_printer"),
+        "stats_printer",
+        stats_printer(session.clone()),
+    );
 }
 
 #[cfg(test)]
