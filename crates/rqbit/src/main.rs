@@ -1003,14 +1003,22 @@ fn start_ephemeral_http_api(
         Some(log_config.rust_log_reload_tx),
         Some(log_config.line_broadcast),
     );
-    let http_api = HttpApi::new(
-        api,
-        Some(HttpApiOptions {
-            read_only: true,
-            basic_auth,
-            ..Default::default()
-        }),
-    );
+    let mut http_api_opts = HttpApiOptions {
+        read_only: true,
+        basic_auth,
+        ..Default::default()
+    };
+
+    #[cfg(feature = "prometheus")]
+    match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
+        Ok(handle) => {
+            http_api_opts.prometheus_handle = Some(handle);
+        }
+        Err(e) => {
+            warn!("error installing prometheus recorder: {e:#}");
+        }
+    }
+    let http_api = HttpApi::new(api, Some(http_api_opts));
     let listen_addr = listen_addr.unwrap_or((Ipv4Addr::LOCALHOST, 0).into());
     let listener = TcpListener::bind_tcp(listen_addr, Default::default())
         .with_context(|| format!("error binding HTTP server to {listen_addr}"))?;
