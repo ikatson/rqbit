@@ -824,7 +824,12 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             );
 
             if !download_opts.disable_http_api {
-                start_ephemeral_http_api(session.clone(), http_api_basic_auth, log_config)?;
+                start_ephemeral_http_api(
+                    session.clone(),
+                    http_api_basic_auth,
+                    log_config,
+                    opts.http_api_listen_addr,
+                )?;
             }
 
             let mut added = false;
@@ -936,7 +941,12 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 .await
                 .context("error initializing rqbit session")?;
 
-            start_ephemeral_http_api(session.clone(), http_api_basic_auth, log_config)?;
+            start_ephemeral_http_api(
+                session.clone(),
+                http_api_basic_auth,
+                log_config,
+                opts.http_api_listen_addr,
+            )?;
 
             let (create_result, _) = session
                 .create_and_serve_torrent(
@@ -986,6 +996,7 @@ fn start_ephemeral_http_api(
     session: Arc<Session>,
     basic_auth: Option<(String, String)>,
     log_config: InitLoggingResult,
+    listen_addr: Option<SocketAddr>,
 ) -> anyhow::Result<()> {
     let api = Api::new(
         session,
@@ -1000,11 +1011,11 @@ fn start_ephemeral_http_api(
             ..Default::default()
         }),
     );
-    let http_api_listen_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
-    let listener = TcpListener::bind_tcp(http_api_listen_addr, Default::default())
-        .with_context(|| format!("error binding HTTP server to {http_api_listen_addr}"))?;
-    let http_api_listen_addr = listener.bind_addr();
-    info!("started HTTP API at http://{http_api_listen_addr}");
+    let listen_addr = listen_addr.unwrap_or((Ipv4Addr::LOCALHOST, 0).into());
+    let listener = TcpListener::bind_tcp(listen_addr, Default::default())
+        .with_context(|| format!("error binding HTTP server to {listen_addr}"))?;
+    let listen_addr = listener.bind_addr();
+    info!("started HTTP API at http://{listen_addr}");
     librqbit_spawn(
         debug_span!("http_api"),
         "http_api",
