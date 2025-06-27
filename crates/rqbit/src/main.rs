@@ -12,6 +12,7 @@ use std::{
 use anyhow::{Context, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
+use futures::future::BoxFuture;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
     CreateTorrentOptions, ListOnlyResponse, ListenerMode, ListenerOptions, PeerConnectionOptions,
@@ -499,7 +500,7 @@ async fn parse_trackers_file(filename: &str) -> anyhow::Result<HashSet<url::Url>
     Ok(trackers)
 }
 
-async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()> {
+async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result<()> {
     let log_config = init_logging(InitLoggingOptions {
         default_rust_log_value: Some(match opts.log_level.unwrap_or(LogLevel::Info) {
             LogLevel::Trace => "trace",
@@ -517,7 +518,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
     };
 
-    let trackers = if let Some(f) = opts.trackers_filename {
+    let trackers = if let Some(f) = &opts.trackers_filename {
         parse_trackers_file(&f)
             .await
             .inspect_err(|e| warn!("error reading trackers file: {e:#}"))
@@ -548,7 +549,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
         peer_id: None,
         listen,
         connect: Some(ConnectionOptions {
-            proxy_url: opts.socks_url,
+            proxy_url: opts.socks_url.take(),
             enable_tcp: !opts.disable_tcp_connect,
             peer_opts: Some(PeerConnectionOptions {
                 connect_timeout: Some(opts.peer_connect_timeout),
@@ -586,82 +587,42 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             upload_bps: opts.ratelimit_upload_bps,
             download_bps: opts.ratelimit_download_bps,
         },
-        blocklist_url: opts.blocklist_url,
+        blocklist_url: opts.blocklist_url.take(),
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
         trackers,
     };
 
-    let http_api_basic_auth = if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
-        let (u, p) = up
-            .split_once(":")
-            .context("basic auth credentials should be in format username:password")?;
-        Some((u.to_owned(), p.to_owned()))
-    } else {
-        None
-    };
+    #[allow(clippy::needless_update)]
+    let mut http_api_opts = HttpApiOptions {
+        read_only: true,
+        basic_auth: if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
+            let (u, p) = up
+                .split_once(":")
+                .context("basic auth credentials should be in format username:password")?;
+            Some((u.to_owned(), p.to_owned()))
+        } else {
+            None
+        },
+        allow_create: opts.http_api_allow_create,
 
-    let stats_printer = |session: Arc<Session>| async move {
-        loop {
-            session.with_torrents(|torrents| {
-                    for (idx, torrent) in torrents {
-                        let stats = torrent.stats();
-                        if let TorrentStatsState::Initializing = stats.state {
-                            let total = stats.total_bytes;
-                            let progress = stats.progress_bytes;
-                            let pct =  (progress as f64 / total as f64) * 100f64;
-                            info!("[{}] initializing {:.2}%", idx, pct);
-                            continue;
-                        }
-                        let (live, live_stats) = match (torrent.live(), stats.live.as_ref()) {
-                            (Some(live), Some(live_stats)) => (live, live_stats),
-                            _ => continue
-                        };
-                        let down_speed = live.down_speed_estimator();
-                        let up_speed = live.up_speed_estimator();
-                        let total = stats.total_bytes;
-                        let progress = stats.progress_bytes;
-                        let downloaded_pct = if stats.finished {
-                            100f64
-                        } else {
-                            (progress as f64 / total as f64) * 100f64
-                        };
-                        let time_remaining = down_speed.time_remaining();
-                        let eta = match &time_remaining {
-                            Some(d) => format!(", ETA: {:?}", d),
-                            None => String::new()
-                        };
-                        let peer_stats = &live_stats.snapshot.peer_stats;
-                        info!(
-                            "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}, known: {}}}",
-                            idx,
-                            downloaded_pct,
-                            SF::new(progress),
-                            SF::new(total),
-                            down_speed.mbps(),
-                            up_speed.mbps(),
-                            SF::new(live_stats.snapshot.uploaded_bytes),
-                            eta,
-                            peer_stats.live,
-                            peer_stats.queued + peer_stats.connecting,
-                            peer_stats.dead,
-                            peer_stats.seen,
-                        );
-                    }
-                });
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-        #[allow(unreachable_code)]
-        Ok::<_, &'static str>(())
-    };
+        // We need to install prometheus recorder early before we registered any metrics.
+        #[cfg(feature = "prometheus")]
+        prometheus_handle: match metrics_exporter_prometheus::PrometheusBuilder::new()
+            .install_recorder()
+        {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                warn!("error installing prometheus recorder: {e:#}");
+                None
+            }
+        },
 
-    match opts.subcommand {
+        ..Default::default()
+    };
+    match &mut opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
-                let http_api_listen_addr = opts
-                    .http_api_listen_addr
-                    .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3030));
-
                 if !start_opts.disable_persistence {
                     if let Some(p) = start_opts.persistence_location.as_ref() {
                         if p.starts_with("postgres://") {
@@ -685,23 +646,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     }
                 }
 
-                let mut http_api_opts = HttpApiOptions {
-                    read_only: false,
-                    basic_auth: http_api_basic_auth,
-                    allow_create: opts.http_api_allow_create,
-                    ..Default::default()
-                };
-
-                // We need to install prometheus recorder early before we registered any metrics.
-                #[cfg(feature = "prometheus")]
-                match metrics_exporter_prometheus::PrometheusBuilder::new().install_recorder() {
-                    Ok(handle) => {
-                        http_api_opts.prometheus_handle = Some(handle);
-                    }
-                    Err(e) => {
-                        warn!("error installing prometheus recorder: {e:#}");
-                    }
-                }
+                http_api_opts.read_only = false;
 
                 sopts.fastresume = start_opts.fastresume;
 
@@ -715,68 +660,25 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                     stats_printer(session.clone()),
                 );
 
-                let mut upnp_server = {
-                    match opts.enable_upnp_server {
-                        true => {
-                            if http_api_listen_addr.ip().is_loopback() {
-                                bail!(
-                                    "cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0"
-                                );
-                            }
-                            let server = session
-                                .make_upnp_adapter(
-                                    opts.upnp_server_friendly_name.unwrap_or_else(|| {
-                                        format!(
-                                            "rqbit@{}",
-                                            gethostname::gethostname().to_string_lossy()
-                                        )
-                                    }),
-                                    http_api_listen_addr.port(),
-                                )
-                                .await
-                                .context("error starting UPNP server")?;
-                            Some(server)
-                        }
-                        false => None,
-                    }
-                };
-
-                let api = Api::new(
-                    session.clone(),
-                    Some(log_config.rust_log_reload_tx),
-                    Some(log_config.line_broadcast),
-                );
-                let http_api = HttpApi::new(api, Some(http_api_opts));
-                let tcp_listener = TcpListener::bind_tcp(http_api_listen_addr, Default::default())
-                    .with_context(|| format!("error binding to {http_api_listen_addr}"))?;
-                let http_api_listen_addr = tcp_listener.bind_addr();
-                info!("starting HTTP API at http://{http_api_listen_addr}");
-
-                let upnp_router = upnp_server.as_mut().and_then(|s| s.take_router().ok());
-                let http_api_fut = http_api.make_http_api_and_run(tcp_listener, upnp_router);
-
                 if let Some(watch_folder) = start_opts.watch_folder.as_ref() {
                     session.watch_folder(Path::new(watch_folder));
                 }
 
-                let res = match upnp_server {
-                    Some(srv) => {
-                        let upnp_fut = srv.run_ssdp_forever();
+                let http_api_fut = start_http_api(
+                    cancel,
+                    session.clone(),
+                    opts.http_api_listen_addr
+                        .unwrap_or((Ipv4Addr::LOCALHOST, 3030).into()),
+                    http_api_opts,
+                    &opts,
+                    log_config,
+                )
+                .await?;
 
-                        tokio::select! {
-                            r = http_api_fut => r,
-                            r = upnp_fut => r
-                        }
-                    }
-                    None => tokio::select! {
-                        _ = cancel.cancelled() => bail!("cancelled"),
-                        r = http_api_fut => r,
-                    },
-                };
-                res.context("error running server")
+                http_api_fut.await
             }
         },
-        SubCommand::Download(mut download_opts) => {
+        SubCommand::Download(download_opts) => {
             if download_opts.torrent_path.is_empty() {
                 anyhow::bail!("you must provide at least one URL to download")
             }
@@ -826,7 +728,14 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             if !download_opts.disable_http_api {
                 start_ephemeral_http_api(
                     session.clone(),
-                    http_api_basic_auth,
+                    if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
+                        let (u, p) = up.split_once(":").context(
+                            "basic auth credentials should be in format username:password",
+                        )?;
+                        Some((u.to_owned(), p.to_owned()))
+                    } else {
+                        None
+                    },
                     log_config,
                     opts.http_api_listen_addr,
                 )?;
@@ -914,7 +823,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                 anyhow::bail!("you must provide a path to share")
             }
 
-            let path = PathBuf::from(share_opts.path);
+            let path = PathBuf::from(&share_opts.path);
             if !path.exists() {
                 anyhow::bail!("{path:?} does not exist")
             }
@@ -932,8 +841,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
             let trackers = sopts
                 .trackers
                 .iter()
-                .cloned()
-                .chain(share_opts.trackers.into_iter())
+                .chain(share_opts.trackers.iter())
                 .map(|t| t.to_string())
                 .collect();
 
@@ -943,7 +851,14 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
 
             start_ephemeral_http_api(
                 session.clone(),
-                http_api_basic_auth,
+                if let Ok(up) = std::env::var("RQBIT_HTTP_BASIC_AUTH_USERPASS") {
+                    let (u, p) = up
+                        .split_once(":")
+                        .context("basic auth credentials should be in format username:password")?;
+                    Some((u.to_owned(), p.to_owned()))
+                } else {
+                    None
+                },
                 log_config,
                 opts.http_api_listen_addr,
             )?;
@@ -992,6 +907,70 @@ fn maybe_set_ephemeral_port(
     Ok(())
 }
 
+async fn start_http_api(
+    cancel: CancellationToken,
+    session: Arc<Session>,
+    listen_addr: SocketAddr,
+    http_api_opts: HttpApiOptions,
+    opts: &Opts,
+    log_config: InitLoggingResult,
+) -> anyhow::Result<impl Future<Output = anyhow::Result<()>>> {
+    let api = Api::new(
+        session.clone(),
+        Some(log_config.rust_log_reload_tx),
+        Some(log_config.line_broadcast),
+    );
+    let http_api = HttpApi::new(api, Some(http_api_opts));
+    let listener = TcpListener::bind_tcp(listen_addr, Default::default())
+        .with_context(|| format!("error binding HTTP server to {listen_addr}"))?;
+    let listen_addr = listener.bind_addr();
+    info!("started HTTP API at http://{listen_addr}");
+
+    let mut upnp_server = {
+        match opts.enable_upnp_server {
+            true => {
+                if listen_addr.ip().is_loopback() {
+                    bail!(
+                        "cannot enable UPNP server as HTTP API listen addr is localhost. Change --http-api-listen-addr to start with 0.0.0.0"
+                    );
+                }
+                let server = session
+                    .make_upnp_adapter(
+                        opts.upnp_server_friendly_name.clone().unwrap_or_else(|| {
+                            format!("rqbit@{}", gethostname::gethostname().to_string_lossy())
+                        }),
+                        listen_addr.port(),
+                    )
+                    .await
+                    .context("error starting UPNP server")?;
+                Some(server)
+            }
+            false => None,
+        }
+    };
+
+    let upnp_router = upnp_server.as_mut().and_then(|s| s.take_router().ok());
+    let http_api_fut = http_api.make_http_api_and_run(listener, upnp_router);
+
+    Ok(async move {
+        let res = match upnp_server {
+            Some(srv) => {
+                let upnp_fut = srv.run_ssdp_forever();
+
+                tokio::select! {
+                    r = http_api_fut => r,
+                    r = upnp_fut => r
+                }
+            }
+            None => tokio::select! {
+                _ = cancel.cancelled() => bail!("cancelled"),
+                r = http_api_fut => r,
+            },
+        };
+        res.context("error running server")
+    })
+}
+
 fn start_ephemeral_http_api(
     session: Arc<Session>,
     basic_auth: Option<(String, String)>,
@@ -1030,6 +1009,58 @@ fn start_ephemeral_http_api(
         http_api.make_http_api_and_run(listener, None),
     );
     Ok(())
+}
+
+async fn stats_printer(session: Arc<Session>) -> Result<(), &'static str> {
+    loop {
+        session.with_torrents(|torrents| {
+                for (idx, torrent) in torrents {
+                    let stats = torrent.stats();
+                    if let TorrentStatsState::Initializing = stats.state {
+                        let total = stats.total_bytes;
+                        let progress = stats.progress_bytes;
+                        let pct =  (progress as f64 / total as f64) * 100f64;
+                        info!("[{}] initializing {:.2}%", idx, pct);
+                        continue;
+                    }
+                    let (live, live_stats) = match (torrent.live(), stats.live.as_ref()) {
+                        (Some(live), Some(live_stats)) => (live, live_stats),
+                        _ => continue
+                    };
+                    let down_speed = live.down_speed_estimator();
+                    let up_speed = live.up_speed_estimator();
+                    let total = stats.total_bytes;
+                    let progress = stats.progress_bytes;
+                    let downloaded_pct = if stats.finished {
+                        100f64
+                    } else {
+                        (progress as f64 / total as f64) * 100f64
+                    };
+                    let time_remaining = down_speed.time_remaining();
+                    let eta = match &time_remaining {
+                        Some(d) => format!(", ETA: {:?}", d),
+                        None => String::new()
+                    };
+                    let peer_stats = &live_stats.snapshot.peer_stats;
+                    info!(
+                        "[{}]: {:.2}% ({:.2} / {:.2}), ↓{:.2} MiB/s, ↑{:.2} MiB/s ({:.2}){}, {{live: {}, queued: {}, dead: {}, known: {}}}",
+                        idx,
+                        downloaded_pct,
+                        SF::new(progress),
+                        SF::new(total),
+                        down_speed.mbps(),
+                        up_speed.mbps(),
+                        SF::new(live_stats.snapshot.uploaded_bytes),
+                        eta,
+                        peer_stats.live,
+                        peer_stats.queued + peer_stats.connecting,
+                        peer_stats.dead,
+                        peer_stats.seen,
+                    );
+                }
+            });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
 
 #[cfg(test)]
