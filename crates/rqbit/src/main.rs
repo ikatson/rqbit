@@ -699,7 +699,7 @@ async fn async_main(opts: Opts, cancel: CancellationToken) -> anyhow::Result<()>
                         http_api_opts.prometheus_handle = Some(handle);
                     }
                     Err(e) => {
-                        warn!("error installting prometheus recorder: {e:#}");
+                        warn!("error installing prometheus recorder: {e:#}");
                     }
                 }
 
