@@ -3239,9 +3239,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41d1c4ec460ae628289a8f8fff479aae03ed0813b6d522f70beb970529fa8c7"
+checksum = "576b1b194caec9dd980405da0e02dd0c3ea9edbd79857b33711881a5fca21115"
 dependencies = [
  "bitvec",
  "dontfrag",
