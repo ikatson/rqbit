@@ -59,6 +59,16 @@ impl AsyncReadVectored for tokio::net::tcp::OwnedReadHalf {
     }
 }
 
+impl AsyncReadVectored for librqbit_utp::UtpStreamReadHalf {
+    fn poll_read_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        vec: &mut [IoSliceMut<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        librqbit_utp::UtpStreamReadHalf::poll_read_vectored(self, cx, vec)
+    }
+}
+
 pub struct AsyncReadToVectoredCompat<T>(T);
 
 impl<T: AsyncRead + Unpin> AsyncRead for AsyncReadToVectoredCompat<T> {
@@ -72,14 +82,6 @@ impl<T: AsyncRead + Unpin> AsyncRead for AsyncReadToVectoredCompat<T> {
 }
 
 impl<T: AsyncRead + Unpin> AsyncReadVectored for AsyncReadToVectoredCompat<T> {
-    // async fn read_vectored(&mut self, vec: &mut [IoSliceMut<'_>]) -> std::io::Result<usize> {
-    //     let first_non_empty = match vec.iter_mut().find(|s| !s.is_empty()) {
-    //         Some(s) => &mut **s,
-    //         None => return Ok(0),
-    //     };
-    //     self.read(first_non_empty).await
-    // }
-
     fn poll_read_vectored(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

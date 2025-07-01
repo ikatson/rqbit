@@ -10,10 +10,7 @@ use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{
-    stream_connect::ConnectionKind,
-    vectored_traits::{AsyncReadVectored, AsyncReadVectoredIntoCompat},
-};
+use crate::{stream_connect::ConnectionKind, vectored_traits::AsyncReadVectored};
 
 pub(crate) struct ListenResult {
     pub tcp_socket: Option<TcpListener>,
@@ -140,7 +137,7 @@ pub(crate) trait Accept {
         SocketAddr,
         (
             impl AsyncReadVectored + Send + 'static,
-            (impl AsyncWrite + Unpin + Send + 'static),
+            impl AsyncWrite + Unpin + Send + 'static,
         ),
     )>;
 }
@@ -176,6 +173,6 @@ impl Accept for Arc<UtpSocketUdp> {
         let stream = self.accept().await.context("error accepting uTP")?;
         let addr = stream.remote_addr();
         let (read, write) = stream.split();
-        Ok((addr, (read.into_vectored_compat(), write)))
+        Ok((addr, (read, write)))
     }
 }
