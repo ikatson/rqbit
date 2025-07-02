@@ -11,6 +11,7 @@ use crate::{
 pub struct PeerCounters {
     pub incoming_connections: u32,
     pub fetched_bytes: u64,
+    pub uploaded_bytes: u64,
     pub total_time_connecting_ms: u64,
     pub connection_attempts: u32,
     pub connections: u32,
@@ -34,6 +35,7 @@ impl From<&super::atomic::PeerCountersAtomic> for PeerCounters {
         Self {
             incoming_connections: counters.incoming_connections.load(Ordering::Relaxed),
             fetched_bytes: counters.fetched_bytes.load(Ordering::Relaxed),
+            uploaded_bytes: counters.uploaded_bytes.load(Ordering::Relaxed),
             total_time_connecting_ms: counters.total_time_connecting_ms.load(Ordering::Relaxed),
             connection_attempts: counters
                 .outgoing_connection_attempts
