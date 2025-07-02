@@ -2961,7 +2961,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "librqbit-dht",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "librqbit-lsd",
  "librqbit-peer-protocol",
  "librqbit-sha1-wrapper",
@@ -3074,7 +3074,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "parking_lot",
  "rand 0.9.1",
  "serde",
@@ -3089,21 +3089,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.2.1"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32dcef67ab835bbec8360a3f207bb2036710d4e4f88ed00fcea8997cd78cfc60"
-dependencies = [
- "socket2",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "librqbit-dualstack-sockets"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1554597ffcde44a72d06fd60b062581302515322510c65597dad014b0c7225c"
+checksum = "5ee215a079686e08b525112e96e7db2899b6371027bf32c57064af1d2b64c0f8"
 dependencies = [
  "axum 0.8.4",
  "backon",
@@ -3125,7 +3113,7 @@ dependencies = [
  "futures",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.1",
@@ -3176,7 +3164,7 @@ dependencies = [
  "librqbit-bencode",
  "librqbit-buffers",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "parking_lot",
  "rand 0.9.1",
  "reqwest",
@@ -3219,7 +3207,7 @@ dependencies = [
  "http",
  "httparse",
  "librqbit-core",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "librqbit-upnp",
  "mime_guess",
  "network-interface",
@@ -3239,15 +3227,15 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.5.6"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33b3e93d7ca6614c4b40065904ffca20107c7fbed9d1f9158b69eef95bbf9e4d"
+checksum = "d435f3cad6ea0456c85e4350139fd143960c51ffcbaab981b8f033f6b27c89fa"
 dependencies = [
  "bitvec",
  "dontfrag",
  "lazy_static",
  "libc",
- "librqbit-dualstack-sockets 0.2.1",
+ "librqbit-dualstack-sockets",
  "metrics",
  "parking_lot",
  "rand 0.9.1",
@@ -4974,7 +4962,7 @@ dependencies = [
  "gethostname",
  "libc",
  "librqbit",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "librqbit-upnp-serve",
  "metrics-exporter-prometheus",
  "openssl",
@@ -5002,7 +4990,7 @@ dependencies = [
  "gethostname",
  "http",
  "librqbit",
- "librqbit-dualstack-sockets 0.6.5",
+ "librqbit-dualstack-sockets",
  "metrics-exporter-prometheus",
  "parking_lot",
  "serde",
