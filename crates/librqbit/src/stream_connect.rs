@@ -255,7 +255,7 @@ impl StreamConnector {
                     match utp_res {
                         Ok(Some(stream)) => {
                             let (r, w) = stream.split();
-                            return Ok((ConnectionKind::Utp, Box::new(r.into_vectored_compat()), Box::new(w)));
+                            return Ok((ConnectionKind::Utp, Box::new(r), Box::new(w)));
                         },
                         Ok(None) => {
                             utp_err = Some(None);
