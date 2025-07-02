@@ -34,7 +34,7 @@ use librqbit_core::{
     peer_id::generate_azereus_style,
     spawn_utils::{spawn, spawn_with_cancel},
 };
-use librqbit_dualstack_sockets::UdpSocket;
+use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
 use parking_lot::RwLock;
 
 use serde::Serialize;
@@ -1274,7 +1274,7 @@ impl DhtWorker {
 }
 
 #[derive(Default)]
-pub struct DhtConfig {
+pub struct DhtConfig<'a> {
     pub peer_id: Option<Id20>,
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
@@ -1282,6 +1282,7 @@ pub struct DhtConfig {
     pub listen_addr: Option<SocketAddr>,
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
+    pub bind_device: Option<&'a BindDevice>,
 }
 
 impl DhtState {

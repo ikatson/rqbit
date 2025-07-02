@@ -29,7 +29,7 @@ reqwest = { version = "0.12.7", default-features = false }
 quick-xml = { version = "0.37.1", features = ["serialize"] }
 network-interface = "2.0.0"
 futures = "0.3.30"
-librqbit-dualstack-sockets = "0.6.4"
+librqbit-dualstack-sockets = "0.6.7"
 rand = "0.9.1"
 
 [dev-dependencies]

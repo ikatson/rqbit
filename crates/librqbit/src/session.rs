@@ -526,6 +526,9 @@ impl Session {
                 let dht = if opts.disable_dht_persistence {
                     DhtBuilder::with_config(DhtConfig {
                         cancellation_token: Some(token.child_token()),
+                        bind_device: listen_result
+                            .as_ref()
+                            .and_then(|lr| lr.bind_device.as_ref()),
                         ..Default::default()
                     })
                     .await

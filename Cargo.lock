@@ -2894,9 +2894,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.172"
+version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
+checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
 
 [[package]]
 name = "libloading"
@@ -3089,13 +3089,14 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.6.6"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee215a079686e08b525112e96e7db2899b6371027bf32c57064af1d2b64c0f8"
+checksum = "9ff1d8bec458224dae61e8b2d2955a5e91606252eeb8206d2840cf0a5afb91fc"
 dependencies = [
  "axum 0.8.4",
  "backon",
  "futures",
+ "libc",
  "network-interface",
  "socket2",
  "thiserror 2.0.12",
@@ -3227,9 +3228,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.5.7"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d435f3cad6ea0456c85e4350139fd143960c51ffcbaab981b8f033f6b27c89fa"
+checksum = "9cf1eb17eeac7fcb9d808b9a1925ee63e08dae5817c0d971465196410777281c"
 dependencies = [
  "bitvec",
  "dontfrag",

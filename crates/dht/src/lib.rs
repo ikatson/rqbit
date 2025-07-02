@@ -33,7 +33,7 @@ impl DhtBuilder {
         DhtState::new().await
     }
 
-    pub async fn with_config(config: DhtConfig) -> crate::Result<Dht> {
+    pub async fn with_config(config: DhtConfig<'_>) -> crate::Result<Dht> {
         DhtState::with_config(config).await
     }
 }

@@ -175,6 +175,10 @@ struct Opts {
     )]
     upnp_server_friendly_name: Option<String>,
 
+    /// Force some sockets (BT TCP, BT uTP, DHT) to bind to a specific device name.
+    #[arg(long = "bind-device", env = "RQBIT_BIND_DEVICE")]
+    bind_device_name: Option<String>,
+
     #[command(subcommand)]
     subcommand: SubCommand,
 
@@ -510,6 +514,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         mode,
         listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(4240)).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
+        bind_device_name: opts.bind_device_name.clone(),
         ..Default::default()
     });
 
