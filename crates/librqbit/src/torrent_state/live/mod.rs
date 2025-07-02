@@ -1074,6 +1074,9 @@ impl PeerConnectionHandler for PeerHandler {
     }
 
     fn on_uploaded_bytes(&self, bytes: u32) {
+        self.counters
+            .uploaded_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
         self.state
             .stats
             .uploaded_bytes
