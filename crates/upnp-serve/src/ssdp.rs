@@ -122,6 +122,7 @@ impl SsdpRunner {
             SSDP_MCAST_IPV6_SITE_LOCAL,
             None,
             // Some(SSDP_MCAST_IPV6_LINK_LOCAL),
+            None,
         )
         .await
         .context("error creating SSDP socket")?;

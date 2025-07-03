@@ -680,6 +680,7 @@ impl Session {
                 } else {
                     LocalServiceDiscovery::new(LocalServiceDiscoveryOptions {
                         cancel_token: token.clone(),
+                        bind_device: bind_device.as_ref(),
                         ..Default::default()
                     })
                     .await
