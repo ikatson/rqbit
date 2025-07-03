@@ -5,6 +5,7 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use librqbit_core::directories::get_configuration_directory;
 use librqbit_core::spawn_utils::spawn_with_cancel;
+use librqbit_dualstack_sockets::BindDevice;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
@@ -81,10 +82,11 @@ impl PersistentDht {
     }
 
     #[inline(never)]
-    pub fn create(
+    pub fn create<'a>(
         config: Option<PersistentDhtConfig>,
         cancellation_token: Option<CancellationToken>,
-    ) -> BoxFuture<'static, anyhow::Result<Dht>> {
+        bind_device: Option<&'a BindDevice>,
+    ) -> BoxFuture<'a, anyhow::Result<Dht>> {
         async move {
             let mut config = config.unwrap_or_default();
             let config_filename = match config.config_filename.take() {
@@ -148,6 +150,7 @@ impl PersistentDht {
                 listen_addr,
                 peer_store,
                 cancellation_token,
+                bind_device,
                 ..Default::default()
             };
             let dht = DhtState::with_config(dht_config).await?;

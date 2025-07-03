@@ -514,7 +514,6 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         mode,
         listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(4240)).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
-        bind_device_name: opts.bind_device_name.clone(),
         ..Default::default()
     });
 
@@ -535,6 +534,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 ..Default::default()
             }),
         }),
+        bind_device_name: opts.bind_device_name.take(),
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {

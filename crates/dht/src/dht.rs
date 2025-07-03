@@ -1294,13 +1294,20 @@ impl DhtState {
     }
 
     #[inline(never)]
-    pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, crate::Result<Arc<Self>>> {
+    pub fn with_config<'a>(mut config: DhtConfig<'a>) -> BoxFuture<'a, crate::Result<Arc<Self>>> {
         async move {
             let addr = config
                 .listen_addr
                 .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into());
-            let socket = UdpSocket::bind_udp(addr, Default::default())
-                .map_err(|e| Error::Bind(Box::new(e)))?;
+            let socket = UdpSocket::bind_udp(
+                addr,
+                librqbit_dualstack_sockets::BindOpts {
+                    request_dualstack: true,
+                    reuseport: false,
+                    device: config.bind_device,
+                },
+            )
+            .map_err(|e| Error::Bind(Box::new(e)))?;
 
             let listen_addr = socket.bind_addr();
             info!("DHT listening on {:?}", listen_addr);

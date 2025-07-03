@@ -60,6 +60,7 @@ use librqbit_core::{
     torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
 };
 use librqbit_lsd::{LocalServiceDiscovery, LocalServiceDiscoveryOptions};
+use librqbit_utp::BindDevice;
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
@@ -395,6 +396,9 @@ pub struct SessionOptions {
     /// librqbit instances at a time.
     pub dht_config: Option<PersistentDhtConfig>,
 
+    /// What device to bind to for DHT, BT-UDP, BT-TCP, trackers.
+    pub bind_device_name: Option<String>,
+
     /// Disable tracker communication
     pub disable_trackers: bool,
 
@@ -506,12 +510,21 @@ impl Session {
                 warn!("uploading disabled");
             }
 
+            let bind_device = match opts.bind_device_name.as_ref() {
+                Some(name) => Some(
+                    BindDevice::new_from_name(name)
+                        .with_context(|| format!("error creating bind device {name}"))?,
+                ),
+                None => None,
+            };
+
             let listen_result = if let Some(listen_opts) = opts.listen.take() {
                 Some(
                     listen_opts
                         .start(
                             opts.root_span.as_ref().and_then(|s| s.id()),
                             token.child_token(),
+                            bind_device.as_ref(),
                         )
                         .await
                         .context("error starting listeners")?,
@@ -526,18 +539,20 @@ impl Session {
                 let dht = if opts.disable_dht_persistence {
                     DhtBuilder::with_config(DhtConfig {
                         cancellation_token: Some(token.child_token()),
-                        bind_device: listen_result
-                            .as_ref()
-                            .and_then(|lr| lr.bind_device.as_ref()),
+                        bind_device: bind_device.as_ref(),
                         ..Default::default()
                     })
                     .await
                     .context("error initializing DHT")?
                 } else {
                     let pdht_config = opts.dht_config.take().unwrap_or_default();
-                    PersistentDht::create(Some(pdht_config), Some(token.clone()))
-                        .await
-                        .context("error initializing persistent DHT")?
+                    PersistentDht::create(
+                        Some(pdht_config),
+                        Some(token.clone()),
+                        bind_device.as_ref(),
+                    )
+                    .await
+                    .context("error initializing persistent DHT")?
                 };
 
                 Some(dht)
@@ -620,7 +635,12 @@ impl Session {
                         .context("error creating socks5 proxy for HTTP")?;
                     reqwest::Client::builder().proxy(proxy)
                 } else {
-                    reqwest::Client::builder()
+                    let mut b = reqwest::Client::builder();
+                    #[cfg(not(windows))]
+                    if let Some(bd) = opts.bind_device_name.as_ref() {
+                        b = b.interface(bd);
+                    }
+                    b
                 };
 
                 builder.build().context("error building HTTP(S) client")?
@@ -635,6 +655,7 @@ impl Session {
                         .and_then(|l| l.announce_port)
                         .or_else(|| opts.listen.as_ref().map(|l| l.listen_addr.port())),
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
+                    bind_device: bind_device.clone(),
                 })
                 .await
                 .context("error creating stream connector")?,
@@ -649,7 +670,7 @@ impl Session {
                 blocklist::Blocklist::empty()
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone())
+            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
                 .await
                 .context("error creating UDP tracker client")?;
 

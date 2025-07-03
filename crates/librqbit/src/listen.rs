@@ -15,7 +15,6 @@ use crate::{stream_connect::ConnectionKind, vectored_traits::AsyncReadVectored};
 pub(crate) struct ListenResult {
     pub tcp_socket: Option<TcpListener>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
-    pub bind_device: Option<BindDevice>,
     pub enable_upnp_port_forwarding: bool,
     pub addr: SocketAddr,
     pub announce_port: Option<u16>,
@@ -51,7 +50,6 @@ pub struct ListenerOptions {
     pub mode: ListenerMode,
     pub listen_addr: SocketAddr,
     pub enable_upnp_port_forwarding: bool,
-    pub bind_device_name: Option<String>,
     pub utp_opts: Option<librqbit_utp::SocketOpts>,
 }
 
@@ -62,7 +60,6 @@ impl Default for ListenerOptions {
             mode: ListenerMode::TcpOnly,
             listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             enable_upnp_port_forwarding: false,
-            bind_device_name: None,
             utp_opts: None,
         }
     }
@@ -73,6 +70,7 @@ impl ListenerOptions {
         mut self,
         parent_span: Option<tracing::Id>,
         cancellation_token: CancellationToken,
+        bind_device: Option<&BindDevice>,
     ) -> anyhow::Result<ListenResult> {
         if self.listen_addr.port() == 0 {
             anyhow::bail!("you must set the listen port explicitly")
@@ -81,13 +79,6 @@ impl ListenerOptions {
         utp_opts.cancellation_token = cancellation_token.clone();
         utp_opts.parent_span = parent_span;
         utp_opts.dont_wait_for_lastack = true;
-
-        let bind_device = match self.bind_device_name {
-            Some(name) => Some(
-                BindDevice::new_from_name(&name).context("error processing bind device name")?,
-            ),
-            None => None,
-        };
 
         let tcp = async {
             if !self.mode.tcp_enabled() {
@@ -98,7 +89,7 @@ impl ListenerOptions {
                 BindOpts {
                     request_dualstack: true,
                     reuseport: true,
-                    device: bind_device.as_ref(),
+                    device: bind_device,
                 },
             )
             .context("error starting TCP listener")?;
@@ -116,9 +107,7 @@ impl ListenerOptions {
             let socket = UtpSocketUdp::new_udp_with_opts(
                 self.listen_addr,
                 utp_opts,
-                UtpSocketUdpOpts {
-                    bind_device: bind_device.as_ref(),
-                },
+                UtpSocketUdpOpts { bind_device },
             )
             .await
             .context("error starting uTP listener")?;
@@ -139,7 +128,6 @@ impl ListenerOptions {
             tcp_socket,
             utp_socket,
             announce_port,
-            bind_device,
             addr: self.listen_addr,
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
         })

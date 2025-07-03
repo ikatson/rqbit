@@ -11,14 +11,14 @@ pub enum Error {
         tokio_socks::Error,
     ),
     #[error("error connecting over TCP: {0:#}")]
-    TcpConnect(#[source] std::io::Error),
+    TcpConnect(#[source] librqbit_dualstack_sockets::Error),
     #[error("error connecting over uTP: {0:#}")]
     UtpConnect(#[source] librqbit_utp::Error),
     #[error("can't connect, all connection methods disabled")]
-    ConnectDisaled,
+    ConnectDisabled,
     #[error("error connecting: TCP={tcp:#} uTP={utp:#}")]
     Connect {
-        tcp: std::io::Error,
+        tcp: librqbit_dualstack_sockets::Error,
         utp: librqbit_utp::Error,
     },
     #[error("uTP disabled")]
