@@ -761,10 +761,11 @@ impl Session {
                 if let Some(announce_port) = listen.announce_port {
                     if listen.enable_upnp_port_forwarding {
                         info!(port = announce_port, "starting UPnP port forwarder");
+                        let bind_device = bind_device.clone();
                         session.spawn(
                             debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
                             "upnp_forward",
-                            Self::task_upnp_port_forwarder(announce_port),
+                            Self::task_upnp_port_forwarder(announce_port, bind_device),
                         );
                     }
                 }
@@ -908,8 +909,11 @@ impl Session {
         }
     }
 
-    async fn task_upnp_port_forwarder(port: u16) -> anyhow::Result<()> {
-        let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None)?;
+    async fn task_upnp_port_forwarder(
+        port: u16,
+        bind_device: Option<BindDevice>,
+    ) -> anyhow::Result<()> {
+        let pf = librqbit_upnp::UpnpPortForwarder::new(vec![port], None, bind_device)?;
         pf.run_forever().await
     }
 
