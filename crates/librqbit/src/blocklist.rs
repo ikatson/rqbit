@@ -111,42 +111,18 @@ impl Blocklist {
     async fn create_from_decoded_stream(
         reader: &mut (dyn AsyncBufRead + Unpin + Send),
     ) -> Result<Self> {
-        use tokio::sync::mpsc::{Sender, channel};
-
-        // IntervalTree can only be built from an Iterator. We spawn a thread to convert a tokio
-        // receiver to a blocking iterator not to allocate temporary storage for the whole ranges.
-        struct SpawnResult<T> {
-            tx: Sender<Range<T>>,
-            join: tokio::task::JoinHandle<IntervalTreeWithSize<T>>,
-        }
-
-        impl<T> SpawnResult<T> {
-            async fn join(self) -> anyhow::Result<IntervalTreeWithSize<T>> {
-                drop(self.tx);
-                Ok(self.join.await?)
-            }
-        }
-
-        fn spawn<T: Clone + Ord + Send + 'static>() -> anyhow::Result<SpawnResult<T>> {
-            let (tx, mut rx) = channel::<Range<T>>(16);
-            let join = tokio::task::spawn_blocking(move || {
-                interval_tree(std::iter::from_fn(move || rx.blocking_recv()))
-            });
-            Ok(SpawnResult { tx, join })
-        }
-
-        let v4 = spawn::<Ipv4Addr>()?;
-        let v6 = spawn::<Ipv6Addr>()?;
+        let mut v4 = Vec::new();
+        let mut v6 = Vec::new();
 
         let mut line = String::new();
 
         while reader.read_line(&mut line).await? > 0 {
             match parse_ip_range(&line) {
                 Some(IpRange::V4(r)) => {
-                    v4.tx.send(r).await?;
+                    v4.push(r);
                 }
                 Some(IpRange::V6(r)) => {
-                    v6.tx.send(r).await?;
+                    v6.push(r);
                 }
                 None => {
                     tracing::debug!(line, "couldn't parse line");
@@ -155,9 +131,7 @@ impl Blocklist {
             line.clear();
         }
 
-        let (v4, v6) = tokio::join!(v4.join(), v6.join());
-
-        Ok(Self { v4: v4?, v6: v6? })
+        Ok(Self::new(v4, v6))
     }
 
     pub fn is_blocked(&self, ip: IpAddr) -> bool {
