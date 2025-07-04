@@ -26,7 +26,7 @@ impl From<&SessionStats> for SessionStatsSnapshot {
             fetched_bytes: s.atomic.fetched_bytes.load(Ordering::Relaxed),
             uploaded_bytes: s.atomic.uploaded_bytes.load(Ordering::Relaxed),
             blocked_incoming: s.atomic.blocked_incoming.load(Ordering::Relaxed),
-            blocked_outgoing: s.atomic.blocked_incoming.load(Ordering::Relaxed),
+            blocked_outgoing: s.atomic.blocked_outgoing.load(Ordering::Relaxed),
             peers: AggregatePeerStats::from(&s.atomic.peers),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
         }
@@ -52,6 +52,8 @@ impl SessionStatsSnapshot {
 
         m!(counter, rqbit_fetched_bytes, self.fetched_bytes);
         m!(counter, rqbit_uploaded_bytes, self.uploaded_bytes);
+        m!(counter, rqbit_blocked_incoming, self.blocked_incoming);
+        m!(counter, rqbit_blocked_outgoing, self.blocked_outgoing);
         m!(
             gauge,
             rqbit_download_speed_bytes,
