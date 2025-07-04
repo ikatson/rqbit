@@ -8,7 +8,7 @@ use std::str::FromStr;
 use tokio::io::{AsyncBufRead, AsyncRead};
 use tokio::{io::AsyncBufReadExt, io::BufReader};
 use tokio_util::io::StreamReader;
-use tracing::{debug, trace};
+use tracing::trace;
 use url::Url;
 
 pub struct Blocklist {
@@ -100,6 +100,8 @@ impl Blocklist {
             if let Some((start_ip, end_ip)) = parse_ip_range(&line) {
                 let range = start_ip..increment_ip(end_ip);
                 ip_ranges.push(range);
+            } else {
+                tracing::debug!(line, "couldn't parse line");
             }
             line.clear();
         }
@@ -113,54 +115,41 @@ impl Blocklist {
     }
 }
 
-/// Safely increments an `IpAddr`, returning `None` if it would overflow.
+/// Safely increments an `IpAddr`, as IntervalTree doesn't support inclusive ranges.
 fn increment_ip(ip: IpAddr) -> IpAddr {
     match ip {
-        IpAddr::V4(ipv4) => {
-            let num = u32::from_be_bytes(ipv4.octets());
-            std::net::IpAddr::V4(Ipv4Addr::from(num.saturating_add(1)))
-        }
-        IpAddr::V6(ipv6) => {
-            let num = u128::from_be_bytes(ipv6.octets());
-            std::net::IpAddr::V6(Ipv6Addr::from(num.saturating_add(1)))
-        }
+        IpAddr::V4(ipv4) => IpAddr::V4(Ipv4Addr::from(ipv4.to_bits().saturating_add(1))),
+        IpAddr::V6(ipv6) => IpAddr::V6(Ipv6Addr::from(ipv6.to_bits().saturating_add(1))),
     }
 }
 
 fn parse_ip_range(line: &str) -> Option<(IpAddr, IpAddr)> {
-    // Skip comments and empty lines
     let line = line.trim();
     if line.starts_with('#') || line.is_empty() {
         return None;
     }
 
-    let is_ipv4 = line.matches('.').count() >= 6;
-    // Find the split point based on whether it's IPv4 or not
-    let split_point: usize = if is_ipv4 {
-        line.rfind(':')
-    } else {
-        line.find(':')
-    }
-    .unwrap_or(0);
-
-    let (rule_name, ip_range) = line.split_at(split_point + 1);
-    if let Some((start, end)) = ip_range.split_once('-') {
-        if let (Ok(start_ip), Ok(end_ip)) =
-            (IpAddr::from_str(start.trim()), IpAddr::from_str(end.trim()))
-        {
-            return Some((start_ip, end_ip));
+    let (_name, ips) = {
+        let is_ipv6 = line.matches(":").count() > 2;
+        if is_ipv6 {
+            line.split_once(':')?
         } else {
-            // Mismatched IP versions, skip this range
-            debug!(rulen_name = rule_name, "Could not be parsed");
+            line.rsplit_once(':')?
         }
+    };
+    let (start, end) = ips.split_once('-')?;
+    match (IpAddr::from_str(start).ok()?, IpAddr::from_str(end).ok()?) {
+        (start @ IpAddr::V4(_), end @ IpAddr::V4(_))
+        | (start @ IpAddr::V6(_), end @ IpAddr::V6(_)) => Some((start, end)),
+        _ => None,
     }
-
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+
+    use crate::tests::test_util::setup_test_logging;
 
     use super::*;
     use async_compression::tokio::write::GzipEncoder;
@@ -246,5 +235,14 @@ mod tests {
         // Test IPv6 addresses
         assert!(blocklist.is_blocked("2001:db8::1".parse().unwrap()));
         assert!(!blocklist.is_blocked("2001:db9::1".parse().unwrap()));
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_blocklist_real_url() {
+        setup_test_logging();
+        let _ = Blocklist::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
+            .await
+            .unwrap();
     }
 }
