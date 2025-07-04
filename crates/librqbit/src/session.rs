@@ -663,10 +663,12 @@ impl Session {
             );
 
             let blocklist: blocklist::Blocklist = if let Some(blocklist_url) = opts.blocklist_url {
-                blocklist::Blocklist::load_from_url(&blocklist_url)
+                info!(url = blocklist_url, "loading p2p blocklist");
+                let bl = blocklist::Blocklist::load_from_url(&blocklist_url)
                     .await
-                    .inspect_err(|e| warn!("failed to read blocklist: {e}"))
-                    .unwrap()
+                    .with_context(|| format!("error reading blocklist from {blocklist_url}"))?;
+                info!(len = bl.len(), "loaded blocklist");
+                bl
             } else {
                 blocklist::Blocklist::empty()
             };
