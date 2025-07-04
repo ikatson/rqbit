@@ -122,6 +122,9 @@ pub enum Error {
 
     #[error("file is None, torrent was probably paused")]
     FsFileIsNone,
+
+    #[error("session is dead")]
+    SessionDestroyed,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

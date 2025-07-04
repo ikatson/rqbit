@@ -4,7 +4,10 @@ use std::{
     io::Read,
     net::SocketAddr,
     path::{Component, Path, PathBuf},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -831,6 +834,10 @@ impl Session {
 
         let incoming_ip = addr.ip();
         if self.blocklist.is_blocked(incoming_ip) {
+            self.stats
+                .atomic
+                .blocked_incoming
+                .fetch_add(1, Ordering::Relaxed);
             bail!("Incoming ip {incoming_ip} is in blocklist");
         }
 
