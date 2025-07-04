@@ -48,6 +48,3 @@ lto = false
 [profile.release-debug]
 inherits = "release"
 debug = true
-
-[patch.crates-io]
-librqbit-dualstack-sockets = { path = "../librqbit-dualstack-sockets" }
