@@ -117,21 +117,21 @@ impl Blocklist {
         // receiver to a blocking iterator not to allocate temporary storage for the whole ranges.
         struct SpawnResult<T> {
             tx: Sender<Range<T>>,
-            join: std::thread::JoinHandle<IntervalTreeWithSize<T>>,
+            join: tokio::task::JoinHandle<IntervalTreeWithSize<T>>,
         }
 
         impl<T> SpawnResult<T> {
-            fn join(self) -> anyhow::Result<IntervalTreeWithSize<T>> {
+            async fn join(self) -> anyhow::Result<IntervalTreeWithSize<T>> {
                 drop(self.tx);
-                self.join.join().ok().context("panicked")
+                Ok(self.join.await?)
             }
         }
 
         fn spawn<T: Clone + Ord + Send + 'static>() -> anyhow::Result<SpawnResult<T>> {
             let (tx, mut rx) = channel::<Range<T>>(16);
-            let join = std::thread::Builder::new()
-                .stack_size(16 * 1024)
-                .spawn(move || interval_tree(std::iter::from_fn(move || rx.blocking_recv())))?;
+            let join = tokio::task::spawn_blocking(move || {
+                interval_tree(std::iter::from_fn(move || rx.blocking_recv()))
+            });
             Ok(SpawnResult { tx, join })
         }
 
@@ -155,10 +155,9 @@ impl Blocklist {
             line.clear();
         }
 
-        Ok(Self {
-            v4: v4.join()?,
-            v6: v6.join()?,
-        })
+        let (v4, v6) = tokio::join!(v4.join(), v6.join());
+
+        Ok(Self { v4: v4?, v6: v6? })
     }
 
     pub fn is_blocked(&self, ip: IpAddr) -> bool {
