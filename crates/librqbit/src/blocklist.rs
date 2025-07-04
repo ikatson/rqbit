@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_compression::tokio::bufread::GzipDecoder;
 use futures::TryStreamExt;
 use intervaltree::IntervalTree;
+use std::iter::empty;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 use std::path::Path;
@@ -13,31 +14,46 @@ use tracing::trace;
 use url::Url;
 
 pub struct Blocklist {
-    // ipv4 and ipv6 do not overlap
-    // see: https://www.rfc-editor.org/rfc/rfc4291#section-2.5.5
-    blocked_ranges: IntervalTree<IpAddr, ()>,
+    // We could store only one interval tree, but splitting them takes less memory,
+    // as IpAddr is 17 bytes, Ipv4Addr is only 4 bytes (the majority of ranges).
+    v4: IntervalTreeWithSize<Ipv4Addr>,
+    v6: IntervalTreeWithSize<Ipv6Addr>,
+}
+
+struct IntervalTreeWithSize<T> {
+    t: IntervalTree<T, ()>,
     len: usize,
+}
+
+fn interval_tree<T: Clone + Ord>(it: impl Iterator<Item = Range<T>>) -> IntervalTreeWithSize<T> {
+    let mut len = 0;
+    let t = IntervalTree::from_iter(it.map(|r| {
+        len += 1;
+        (r, ())
+    }));
+    IntervalTreeWithSize { t, len }
 }
 
 impl Blocklist {
     pub fn empty() -> Self {
-        Self::new(std::iter::empty())
+        Self {
+            v4: interval_tree(empty()),
+            v6: interval_tree(empty()),
+        }
     }
 
-    pub fn new(ip_ranges: impl IntoIterator<Item = std::ops::Range<IpAddr>>) -> Self {
-        let mut len = 0;
-        let it = ip_ranges.into_iter().map(|r| {
-            len += 1;
-            (r, ())
-        });
+    pub fn new(
+        v4_ranges: impl IntoIterator<Item = Range<Ipv4Addr>>,
+        v6_ranges: impl IntoIterator<Item = Range<Ipv6Addr>>,
+    ) -> Self {
         Self {
-            blocked_ranges: IntervalTree::from_iter(it),
-            len,
+            v4: interval_tree(v4_ranges.into_iter()),
+            v6: interval_tree(v6_ranges.into_iter()),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.v4.len + self.v6.len
     }
 
     pub async fn load_from_url(url: &str) -> Result<Self> {
@@ -95,40 +111,70 @@ impl Blocklist {
     async fn create_from_decoded_stream(
         reader: &mut (dyn AsyncBufRead + Unpin + Send),
     ) -> Result<Self> {
-        let mut line: String = Default::default();
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Range<IpAddr>>(32);
-        let thread = std::thread::spawn(move || {
-            Blocklist::new(std::iter::from_fn(move || rx.blocking_recv()))
-        });
+        use tokio::sync::mpsc::{Sender, channel};
+
+        // IntervalTree can only be built from an Iterator. We spawn a thread to convert a tokio
+        // receiver to a blocking iterator not to allocate temporary storage for the whole ranges.
+        struct SpawnResult<T> {
+            tx: Sender<Range<T>>,
+            join: std::thread::JoinHandle<IntervalTreeWithSize<T>>,
+        }
+
+        impl<T> SpawnResult<T> {
+            fn join(self) -> anyhow::Result<IntervalTreeWithSize<T>> {
+                drop(self.tx);
+                self.join.join().ok().context("panicked")
+            }
+        }
+
+        fn spawn<T: Clone + Ord + Send + 'static>() -> anyhow::Result<SpawnResult<T>> {
+            let (tx, mut rx) = channel::<Range<T>>(16);
+            let join = std::thread::Builder::new()
+                .stack_size(16 * 1024)
+                .spawn(move || interval_tree(std::iter::from_fn(move || rx.blocking_recv())))?;
+            Ok(SpawnResult { tx, join })
+        }
+
+        let v4 = spawn::<Ipv4Addr>()?;
+        let v6 = spawn::<Ipv6Addr>()?;
+
+        let mut line = String::new();
+
         while reader.read_line(&mut line).await? > 0 {
-            if let Some((start_ip, end_ip)) = parse_ip_range(&line) {
-                let range = start_ip..increment_ip(end_ip);
-                tx.send(range).await?;
-            } else {
-                tracing::debug!(line, "couldn't parse line");
+            match parse_ip_range(&line) {
+                Some(IpRange::V4(r)) => {
+                    v4.tx.send(r).await?;
+                }
+                Some(IpRange::V6(r)) => {
+                    v6.tx.send(r).await?;
+                }
+                None => {
+                    tracing::debug!(line, "couldn't parse line");
+                }
             }
             line.clear();
         }
-        drop(tx);
 
-        let blocklist = thread.join().ok().context("blocklist builder panicked")?;
-        Ok(blocklist)
+        Ok(Self {
+            v4: v4.join()?,
+            v6: v6.join()?,
+        })
     }
 
     pub fn is_blocked(&self, ip: IpAddr) -> bool {
-        self.blocked_ranges.query_point(ip).next().is_some()
+        match ip {
+            IpAddr::V4(a) => self.v4.t.query_point(a).next().is_some(),
+            IpAddr::V6(a) => self.v6.t.query_point(a).next().is_some(),
+        }
     }
 }
 
-/// Safely increments an `IpAddr`, as IntervalTree doesn't support inclusive ranges.
-fn increment_ip(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V4(ipv4) => IpAddr::V4(Ipv4Addr::from(ipv4.to_bits().saturating_add(1))),
-        IpAddr::V6(ipv6) => IpAddr::V6(Ipv6Addr::from(ipv6.to_bits().saturating_add(1))),
-    }
+enum IpRange {
+    V4(Range<Ipv4Addr>),
+    V6(Range<Ipv6Addr>),
 }
 
-fn parse_ip_range(line: &str) -> Option<(IpAddr, IpAddr)> {
+fn parse_ip_range(line: &str) -> Option<IpRange> {
     let line = line.trim();
     if line.starts_with('#') || line.is_empty() {
         return None;
@@ -144,8 +190,14 @@ fn parse_ip_range(line: &str) -> Option<(IpAddr, IpAddr)> {
     };
     let (start, end) = ips.split_once('-')?;
     match (IpAddr::from_str(start).ok()?, IpAddr::from_str(end).ok()?) {
-        (start @ IpAddr::V4(_), end @ IpAddr::V4(_))
-        | (start @ IpAddr::V6(_), end @ IpAddr::V6(_)) => Some((start, end)),
+        (IpAddr::V4(start), IpAddr::V4(end)) => {
+            let end = Ipv4Addr::from_bits(end.to_bits().saturating_add(1));
+            Some(IpRange::V4(start..end))
+        }
+        (IpAddr::V6(start), IpAddr::V6(end)) => {
+            let end = Ipv6Addr::from_bits(end.to_bits().saturating_add(1));
+            Some(IpRange::V6(start..end))
+        }
         _ => None,
     }
 }
@@ -223,16 +275,16 @@ mod tests {
     #[test]
     fn test_manual_ranges() {
         // Add IPv4 range
-        let start_v4: IpAddr = "192.168.0.0".parse().unwrap();
-        let end_v4: IpAddr = "192.168.255.255".parse().unwrap();
+        let start_v4: Ipv4Addr = "192.168.0.0".parse().unwrap();
+        let end_v4: Ipv4Addr = "192.168.255.255".parse().unwrap();
         let ipv4_range = start_v4..end_v4;
 
         // Add IPv6 range
-        let start_v6: IpAddr = "2001:db8::".parse().unwrap();
-        let end_v6: IpAddr = "2001:db8::ffff".parse().unwrap();
+        let start_v6: Ipv6Addr = "2001:db8::".parse().unwrap();
+        let end_v6: Ipv6Addr = "2001:db8::ffff".parse().unwrap();
         let ipv6_range = start_v6..end_v6;
 
-        let blocklist = Blocklist::new(vec![ipv4_range, ipv6_range]);
+        let blocklist = Blocklist::new(Some(ipv4_range), Some(ipv6_range));
         // Test IPv4 addresses
         assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
         assert!(!blocklist.is_blocked("10.0.0.1".parse().unwrap()));
