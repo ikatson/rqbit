@@ -10,6 +10,8 @@ use super::SessionStats;
 pub struct SessionStatsSnapshot {
     pub fetched_bytes: u64,
     pub uploaded_bytes: u64,
+    pub blocked_incoming: u64,
+    pub blocked_outgoing: u64,
     pub download_speed: Speed,
     pub upload_speed: Speed,
     pub peers: AggregatePeerStats,
@@ -23,6 +25,8 @@ impl From<&SessionStats> for SessionStatsSnapshot {
             upload_speed: s.up_speed_estimator.mbps().into(),
             fetched_bytes: s.atomic.fetched_bytes.load(Ordering::Relaxed),
             uploaded_bytes: s.atomic.uploaded_bytes.load(Ordering::Relaxed),
+            blocked_incoming: s.atomic.blocked_incoming.load(Ordering::Relaxed),
+            blocked_outgoing: s.atomic.blocked_incoming.load(Ordering::Relaxed),
             peers: AggregatePeerStats::from(&s.atomic.peers),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
         }

@@ -3,6 +3,7 @@ use async_compression::tokio::bufread::GzipDecoder;
 use futures::TryStreamExt;
 use intervaltree::IntervalTree;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::ops::Range;
 use std::path::Path;
 use std::str::FromStr;
 use tokio::io::{AsyncBufRead, AsyncRead};
@@ -76,17 +77,17 @@ impl Blocklist {
         if buffer.len() >= 2 {
             peek_bytes.copy_from_slice(&buffer[0..2]);
         } else {
-            anyhow::bail!("Content too short: not enough data to determine compression");
+            anyhow::bail!("content too short: not enough data to determine compression");
         }
 
-        // Check for Gzip magic bytes (1F 8B)
+        // Check for Gzip magic bytes
         let is_gzip = peek_bytes == [0x1F, 0x8B];
 
         if is_gzip {
-            trace!("Detected Gzip file, decompressing...");
+            trace!("detected gzip stream, decompressing");
             Self::create_from_decoded_stream(&mut BufReader::new(GzipDecoder::new(reader))).await
         } else {
-            trace!("Plain text file detected.");
+            trace!("plain text file detected.");
             Self::create_from_decoded_stream(&mut reader).await
         }
     }
@@ -95,18 +96,22 @@ impl Blocklist {
         reader: &mut (dyn AsyncBufRead + Unpin + Send),
     ) -> Result<Self> {
         let mut line: String = Default::default();
-        let mut ip_ranges: Vec<std::ops::Range<IpAddr>> = Vec::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Range<IpAddr>>(32);
+        let thread = std::thread::spawn(move || {
+            Blocklist::new(std::iter::from_fn(move || rx.blocking_recv()))
+        });
         while reader.read_line(&mut line).await? > 0 {
             if let Some((start_ip, end_ip)) = parse_ip_range(&line) {
                 let range = start_ip..increment_ip(end_ip);
-                ip_ranges.push(range);
+                tx.send(range).await?;
             } else {
                 tracing::debug!(line, "couldn't parse line");
             }
             line.clear();
         }
+        drop(tx);
 
-        let blocklist = Self::new(ip_ranges);
+        let blocklist = thread.join().ok().context("blocklist builder panicked")?;
         Ok(blocklist)
     }
 

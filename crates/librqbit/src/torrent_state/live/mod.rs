@@ -583,19 +583,29 @@ impl TorrentStateLive {
         loop {
             let addr = peer_queue_rx.recv().await.ok_or(Error::TorrentIsNotLive)?;
             if state.shared.options.disable_upload() && state.is_finished_and_no_active_streams() {
-                debug!("ignoring peer {} as we are finished", addr);
+                debug!(?addr, "ignoring peer as we are finished");
                 state.peers.mark_peer_not_needed(addr);
                 continue;
             }
 
-            let outgoing_ip = addr.ip();
             let is_blocked_ip = state.shared.session.upgrade().map_or_else(
                 || false,
-                |session| session.blocklist.is_blocked(outgoing_ip),
+                |session| {
+                    if session.blocklist.is_blocked(addr.ip()) {
+                        session
+                            .stats
+                            .atomic
+                            .blocked_outgoing
+                            .fetch_add(1, Ordering::Relaxed);
+                        true
+                    } else {
+                        false
+                    }
+                },
             );
 
             if is_blocked_ip {
-                info!("Outgoing ip {outgoing_ip} for peer is in blocklist skipping");
+                debug!(?addr, "blocked outgoing connection");
                 continue;
             }
 
