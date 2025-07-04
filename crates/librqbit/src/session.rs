@@ -396,7 +396,8 @@ pub struct SessionOptions {
     /// librqbit instances at a time.
     pub dht_config: Option<PersistentDhtConfig>,
 
-    /// What device to bind to for DHT, BT-UDP, BT-TCP, trackers.
+    /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
+    /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
     pub bind_device_name: Option<String>,
 
     /// Disable tracker communication
