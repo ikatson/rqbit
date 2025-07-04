@@ -9,13 +9,14 @@ use std::str::FromStr;
 use tokio::io::{AsyncBufRead, AsyncRead};
 use tokio::{io::AsyncBufReadExt, io::BufReader};
 use tokio_util::io::StreamReader;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 use url::Url;
 
 pub struct Blocklist {
     // ipv4 and ipv6 do not overlap
     // see: https://www.rfc-editor.org/rfc/rfc4291#section-2.5.5
     blocked_ranges: IntervalTree<IpAddr, ()>,
+    len: usize,
 }
 
 impl Blocklist {
@@ -24,13 +25,23 @@ impl Blocklist {
     }
 
     pub fn new(ip_ranges: impl IntoIterator<Item = std::ops::Range<IpAddr>>) -> Self {
+        let mut len = 0;
+        let it = ip_ranges.into_iter().map(|r| {
+            len += 1;
+            (r, ())
+        });
         Self {
-            blocked_ranges: IntervalTree::from_iter(ip_ranges.into_iter().map(|r| (r, ()))),
+            blocked_ranges: IntervalTree::from_iter(it),
+            len,
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     pub async fn load_from_url(url: &str) -> Result<Self> {
-        let parsed_url = Url::parse(url).context("Failed to parse URL")?;
+        let parsed_url = Url::parse(url).context("failed to parse URL")?;
 
         if parsed_url.scheme() == "file" {
             let path = parsed_url
@@ -42,13 +53,14 @@ impl Blocklist {
 
         let response = reqwest::get(parsed_url)
             .await
-            .context("Failed to send request for blocklist")?;
+            .context("error fetching blocklist")?;
         if !response.status().is_success() {
-            anyhow::bail!("Failed to fetch blocklist: HTTP {}", response.status());
+            anyhow::bail!("error fetching blocklist: HTTP {}", response.status());
         }
 
         let reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
-        Self::create_from_stream(reader).await
+        let bl = Self::create_from_stream(reader).await?;
+        Ok(bl)
     }
 
     pub async fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -92,11 +104,6 @@ impl Blocklist {
             }
             line.clear();
         }
-
-        info!(
-            ip_entry_count = ip_ranges.len(),
-            "Finished loading blocklist"
-        );
 
         let blocklist = Self::new(ip_ranges);
         Ok(blocklist)
