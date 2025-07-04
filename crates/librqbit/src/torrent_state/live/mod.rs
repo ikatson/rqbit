@@ -588,23 +588,19 @@ impl TorrentStateLive {
                 continue;
             }
 
-            let is_blocked_ip = state.shared.session.upgrade().map_or_else(
-                || false,
-                |session| {
-                    if session.blocklist.is_blocked(addr.ip()) {
-                        session
-                            .stats
-                            .atomic
-                            .blocked_outgoing
-                            .fetch_add(1, Ordering::Relaxed);
-                        true
-                    } else {
-                        false
-                    }
-                },
-            );
+            let session = state
+                .shared
+                .session
+                .upgrade()
+                .ok_or(Error::SessionDestroyed)?;
 
-            if is_blocked_ip {
+            let is_in_blocklist = session.blocklist.is_blocked(addr.ip());
+            if is_in_blocklist {
+                session
+                    .stats
+                    .atomic
+                    .blocked_outgoing
+                    .fetch_add(1, Ordering::Relaxed);
                 debug!(?addr, "blocked outgoing connection");
                 continue;
             }
