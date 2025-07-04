@@ -4,7 +4,6 @@ use futures::TryStreamExt;
 use intervaltree::IntervalTree;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
-use std::pin::Pin;
 use std::str::FromStr;
 use tokio::io::{AsyncBufRead, AsyncRead};
 use tokio::{io::AsyncBufReadExt, io::BufReader};
@@ -58,21 +57,17 @@ impl Blocklist {
             anyhow::bail!("error fetching blocklist: HTTP {}", response.status());
         }
 
-        let reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
-        let bl = Self::create_from_stream(reader).await?;
+        let mut reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
+        let bl = Self::create_from_stream(&mut reader).await?;
         Ok(bl)
     }
 
     pub async fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = tokio::fs::File::open(path).await?;
-        let reader = tokio::io::BufReader::new(file);
-        Self::create_from_stream(reader).await
+        let mut file = tokio::fs::File::open(path).await?;
+        Self::create_from_stream(&mut file).await
     }
 
-    async fn create_from_stream<R>(reader: R) -> Result<Self>
-    where
-        R: AsyncRead + Unpin + Send,
-    {
+    async fn create_from_stream(reader: &mut (dyn AsyncRead + Unpin + Send)) -> Result<Self> {
         let mut peek_bytes = [0u8; 2];
         let mut reader = tokio::io::BufReader::new(reader);
 
@@ -87,14 +82,18 @@ impl Blocklist {
         // Check for Gzip magic bytes (1F 8B)
         let is_gzip = peek_bytes == [0x1F, 0x8B];
 
-        let mut reader: Pin<Box<dyn AsyncBufRead + Send>> = if is_gzip {
+        if is_gzip {
             trace!("Detected Gzip file, decompressing...");
-            Box::pin(BufReader::new(GzipDecoder::new(reader)))
+            Self::create_from_decoded_stream(&mut BufReader::new(GzipDecoder::new(reader))).await
         } else {
             trace!("Plain text file detected.");
-            Box::pin(reader)
-        };
+            Self::create_from_decoded_stream(&mut reader).await
+        }
+    }
 
+    async fn create_from_decoded_stream(
+        reader: &mut (dyn AsyncBufRead + Unpin + Send),
+    ) -> Result<Self> {
         let mut line: String = Default::default();
         let mut ip_ranges: Vec<std::ops::Range<IpAddr>> = Vec::new();
         while reader.read_line(&mut line).await? > 0 {
@@ -165,28 +164,24 @@ mod tests {
 
     use super::*;
     use async_compression::tokio::write::GzipEncoder;
-    use futures::stream::once;
     use tokio::io::AsyncWriteExt;
+
+    const BLOCKLIST: &[u8] = br#"
+    # test
+    local:192.168.1.1-192.168.1.255
+    localv6:2001:db8::1-2001:db8::ffff
+    "#;
 
     #[tokio::test]
     async fn test_blocklist_gzipped() -> Result<()> {
-        let blocklist = r#"
-        # test
-        local:192.168.1.1-192.168.1.255
-        localv6:2001:db8::1-2001:db8::ffff
-        "#;
         let mut gzipped_blocklist = Vec::new();
         {
             let mut encoder = GzipEncoder::new(&mut gzipped_blocklist);
-            encoder.write_all(blocklist.as_bytes()).await.unwrap();
+            encoder.write_all(BLOCKLIST).await.unwrap();
             encoder.flush().await.unwrap();
             encoder.shutdown().await.unwrap();
         }
-
-        let stream = StreamReader::new(Box::pin(once(async {
-            Ok::<_, std::io::Error>(Cursor::new(gzipped_blocklist))
-        })));
-        let blocklist = Blocklist::create_from_stream(stream).await?;
+        let blocklist = Blocklist::create_from_stream(&mut Cursor::new(gzipped_blocklist)).await?;
         assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
         assert!(!blocklist.is_blocked("8.8.8.8".parse().unwrap()));
 
@@ -195,16 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocklist_plaintext() -> Result<()> {
-        let blocklist = r#"
-        # test
-        local:192.168.1.1-192.168.1.255
-        localv6:2001:db8::1-2001:db8::ffff
-        "#;
-
-        let stream = StreamReader::new(Box::pin(once(async {
-            Ok::<_, std::io::Error>(Cursor::new(blocklist.as_bytes().to_vec()))
-        })));
-        let blocklist = Blocklist::create_from_stream(stream).await?;
+        let blocklist = Blocklist::create_from_stream(&mut Cursor::new(BLOCKLIST)).await?;
         assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
         assert!(!blocklist.is_blocked("8.8.8.8".parse().unwrap()));
 
@@ -213,15 +199,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_blocklist_from_plaintext_file() -> Result<()> {
-        let blocklist_content = r#"
-        # test
-        local:192.168.1.1-192.168.1.255
-        localv6:2001:db8::1-2001:db8::ffff
-        "#;
-
         // Create a temporary file
         let mut temp_file = tokio::fs::File::create("temp_blocklist.txt").await?;
-        tokio::io::AsyncWriteExt::write_all(&mut temp_file, blocklist_content.as_bytes()).await?;
+        tokio::io::AsyncWriteExt::write_all(&mut temp_file, BLOCKLIST).await?;
         drop(temp_file); // Close the file
 
         // Load the blocklist from the file
