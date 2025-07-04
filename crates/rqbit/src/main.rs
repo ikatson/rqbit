@@ -92,7 +92,7 @@ struct Opts {
 
     /// The listen address for HTTP API.
     ///
-    /// If unspecisifed, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download" will listen
+    /// If not set, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download" will listen
     /// on an ephemeral port that it will print.
     #[arg(long = "http-api-listen-addr", env = "RQBIT_HTTP_API_LISTEN_ADDR")]
     http_api_listen_addr: Option<SocketAddr>,
@@ -123,7 +123,7 @@ struct Opts {
     #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse, default_value="2s", env="RQBIT_PEER_CONNECT_TIMEOUT")]
     peer_connect_timeout: Duration,
 
-    /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
+    /// The timeout for read() and write() operations, e.g. 1s, 1.5s, 100ms etc.
     #[arg(long = "peer-read-write-timeout" , value_parser = parse_duration::parse, default_value="10s", env="RQBIT_PEER_READ_WRITE_TIMEOUT")]
     peer_read_write_timeout: Duration,
 
@@ -131,15 +131,18 @@ struct Opts {
     #[arg(short = 't', long, env = "RQBIT_RUNTIME_WORKER_THREADS")]
     worker_threads: Option<usize>,
 
-    // Enable to listen on 0.0.0.0 on TCP for torrent requests.
+    /// Disable listening for incoming connections over TCP. Note that outgoing connections
+    /// can still be made (--disable-tcp-connect to disable).
     #[arg(long = "disable-tcp-listen", env = "RQBIT_TCP_LISTEN_DISABLE")]
     disable_tcp_listen: bool,
 
-    // Disable connecting over TCP. Only uTP will be used (if enabled).
+    /// Disable outgoing connections over TCP.
+    /// Note that listening over TCP for incoming connections is enabled by default
+    /// (--disable-tcp-listen to disable).
     #[arg(long = "disable-tcp-connect", env = "RQBIT_TCP_CONNECT_DISABLE")]
     disable_tcp_connect: bool,
 
-    // Enable to listen and connect over uTP
+    /// Enable to listen and connect over uTP
     #[arg(
         long = "experimental-enable-utp-listen",
         env = "RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE"
@@ -148,7 +151,7 @@ struct Opts {
 
     /// The port to listen for incoming connections (applies to both TCP and uTP).
     ///
-    /// Defaults to 4240 for the server, and for ephemeral for "rqbit download".
+    /// Defaults to 4240 for the server, and an ephemeral port for "rqbit download / rqbit share".
     #[arg(long = "listen-port", env = "RQBIT_LISTEN_PORT")]
     listen_port: Option<u16>,
 
@@ -156,24 +159,31 @@ struct Opts {
     #[arg(long = "listen-ip", default_value = "::", env = "RQBIT_LISTEN_IP")]
     listen_ip: IpAddr,
 
-    /// If set, will try to publish the chosen port through upnp on your router.
-    /// If the listen-ip is localhost, this will not be used.
+    /// By default, rqbit will try to publish LISTEN_PORT through UPnP on your router.
+    /// This can disable it.
     #[arg(
         long = "disable-upnp-port-forward",
         env = "RQBIT_UPNP_PORT_FORWARD_DISABLE"
     )]
     disable_upnp_port_forward: bool,
 
-    /// If set, will run a UPNP Media server on RQBIT_HTTP_API_LISTEN_ADDR.
+    /// If set, will run a UPnP Media server on RQBIT_HTTP_API_LISTEN_ADDR.
     #[arg(long = "enable-upnp-server", env = "RQBIT_UPNP_SERVER_ENABLE")]
     enable_upnp_server: bool,
 
-    /// UPNP server name that would be displayed on devices in your network.
+    /// UPnP server name that would be displayed on devices in your network.
     #[arg(
         long = "upnp-server-friendly-name",
         env = "RQBIT_UPNP_SERVER_FRIENDLY_NAME"
     )]
     upnp_server_friendly_name: Option<String>,
+
+    /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
+    /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
+    ///
+    /// Not supported on Windows (will error if you try to use it).
+    #[arg(long = "bind-device", env = "RQBIT_BIND_DEVICE")]
+    bind_device_name: Option<String>,
 
     #[command(subcommand)]
     subcommand: SubCommand,
@@ -188,10 +198,10 @@ struct Opts {
     )]
     max_blocking_threads: u16,
 
-    // If you set this to something, all writes to disk will happen in background and be
-    // buffered in memory up to approximately the given number of megabytes.
-    //
-    // Might be useful for slow disks.
+    /// If you set this to something, all writes to disk will happen in background and be
+    /// buffered in memory up to approximately the given number of megabytes.
+    ///
+    /// Might be useful for slow disks.
     #[arg(long = "defer-writes-up-to", env = "RQBIT_DEFER_WRITES_UP_TO")]
     defer_writes_up_to: Option<usize>,
 
@@ -200,10 +210,10 @@ struct Opts {
     #[arg(long)]
     experimental_mmap_storage: bool,
 
-    /// Provide a socks5 URL.
+    /// If set will use socks5 proxy for all outgoing connections.
     /// The format is socks5://[username:password]@host:port
     ///
-    /// Alternatively, set this as an environment variable RQBIT_SOCKS_PROXY_URL
+    /// You may also want to disable incoming connections via --disable-tcp-listen.
     #[arg(long, env = "RQBIT_SOCKS_PROXY_URL")]
     socks_url: Option<String>,
 
@@ -230,23 +240,25 @@ struct Opts {
     #[arg(long, env = "RQBIT_DISABLE_UPLOAD")]
     disable_upload: bool,
 
-    /// Limit download to bytes-per-second.
+    /// Limit download speed to bytes-per-second.
     #[arg(long = "ratelimit-download", env = "RQBIT_RATELIMIT_DOWNLOAD")]
     ratelimit_download_bps: Option<NonZeroU32>,
 
-    /// Limit upload to bytes-per-second.
+    /// Limit upload speed to bytes-per-second.
     #[arg(long = "ratelimit-upload", env = "RQBIT_RATELIMIT_UPLOAD")]
     ratelimit_upload_bps: Option<NonZeroU32>,
 
-    /// Downloads a p2p blocklist from this url and blocks peers from it
+    /// Downloads a p2p blocklist from this url and blocks connections from/to those peers.
+    /// Supports file:/// and http(s):// URLs. Format is newline-delimited "name:start_ip-end_ip"
+    /// E.g. https://github.com/Naunter/BT_BlockLists/raw/refs/heads/master/bt_blocklists.gz
     #[arg(long, env = "RQBIT_BLOCKLIST_URL")]
     blocklist_url: Option<String>,
 
-    /// The filename with tracker URLs to always use for each torrent.
+    /// The filename with tracker URLs to always use for each torrent. Newline-delimited.
     #[arg(long, env = "RQBIT_TRACKERS_FILENAME")]
     trackers_filename: Option<String>,
 
-    /// Disable local peer discovery (LSD)
+    /// Disable local peer discovery (LSD). By default rqbit will announce torrents to LAN.
     #[arg(long = "disable-lsd", env = "RQBIT_LSD_DISABLE")]
     disable_local_peer_discovery: bool,
 
@@ -294,6 +306,7 @@ struct ServerOpts {
 
 #[derive(Parser)]
 enum ServerSubcommand {
+    /// Start the server
     Start(ServerStartOptions),
 }
 
@@ -372,9 +385,13 @@ struct ShareOpts {
 
 #[derive(Parser)]
 enum SubCommand {
+    /// Start rqbit server with HTTP API.
     Server(ServerOpts),
+    /// Create a torrent from a given path and announce it. Stateless.
     Share(ShareOpts),
+    /// Download a single torrent, stateless.
     Download(DownloadOpts),
+    /// Shell completions. eval "$(rqbit completions bash)"
     Completions(CompletionsOpts),
 }
 
@@ -530,6 +547,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 ..Default::default()
             }),
         }),
+        bind_device_name: opts.bind_device_name.take(),
         defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {

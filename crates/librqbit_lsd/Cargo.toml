@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
-librqbit-dualstack-sockets = "0.6.5"
+librqbit-dualstack-sockets = "0.6.10"
 tokio = { version = "1.45.1", features = ["time"] }
 tokio-util = "0.7.15"
 librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }

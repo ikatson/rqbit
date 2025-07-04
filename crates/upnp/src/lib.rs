@@ -1,6 +1,7 @@
 use anyhow::{Context, bail};
 use bstr::BStr;
 use futures::{StreamExt, TryFutureExt, stream::FuturesUnordered};
+use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use reqwest::Client;
 use serde::Deserialize;
@@ -318,15 +319,22 @@ pub async fn discover_once(
     tx: &UnboundedSender<UpnpDiscoverResponse>,
     kind: &str,
     timeout: Duration,
+    bind_device: Option<&BindDevice>,
 ) -> anyhow::Result<()> {
-    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
-        .await
-        .context("failed to bind UDP socket")?;
+    // TODO: do we need IPv6 support here? I can't test it, don't have the hardware for it (router / IPv6 provider).
+    let socket = UdpSocket::bind_udp(
+        (Ipv4Addr::UNSPECIFIED, 0).into(),
+        librqbit_dualstack_sockets::BindOpts {
+            device: bind_device,
+            ..Default::default()
+        },
+    )?;
+
     let message = make_ssdp_search_request(kind);
     socket
         .send_to(message.as_bytes(), SSDP_MULTICAST_IP)
         .await
-        .context("failed to send SSDP search request")?;
+        .with_context(|| format!("failed to send SSDP search request to {SSDP_MULTICAST_IP}"))?;
 
     let mut buffer = [0; 2048];
 
@@ -377,16 +385,22 @@ impl Default for UpnpPortForwarderOptions {
 pub struct UpnpPortForwarder {
     ports: Vec<u16>,
     opts: UpnpPortForwarderOptions,
+    bind_device: Option<BindDevice>,
 }
 
 impl UpnpPortForwarder {
-    pub fn new(ports: Vec<u16>, opts: Option<UpnpPortForwarderOptions>) -> anyhow::Result<Self> {
+    pub fn new(
+        ports: Vec<u16>,
+        opts: Option<UpnpPortForwarderOptions>,
+        bind_device: Option<BindDevice>,
+    ) -> anyhow::Result<Self> {
         if ports.is_empty() {
             bail!("empty ports")
         }
         Ok(Self {
             ports,
             opts: opts.unwrap_or_default(),
+            bind_device,
         })
     }
 
@@ -412,6 +426,7 @@ impl UpnpPortForwarder {
             tx,
             SSDP_SEARCH_WAN_IPCONNECTION_ST,
             self.opts.discover_timeout,
+            self.bind_device.as_ref(),
         )
         .await
     }

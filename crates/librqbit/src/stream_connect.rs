@@ -1,13 +1,9 @@
-use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
-use librqbit_utp::UtpSocketUdp;
+use librqbit_dualstack_sockets::ConnectOpts;
+use librqbit_utp::{BindDevice, UtpSocketUdp};
 use serde::Serialize;
-use socket2::SockRef;
 use tracing::debug;
 
 use crate::{
@@ -68,6 +64,7 @@ pub(crate) struct StreamConnectorArgs {
     pub tcp_source_port: Option<u16>,
     pub socks_proxy_config: Option<SocksProxyConfig>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
+    pub bind_device: Option<BindDevice>,
 }
 
 impl SocksProxyConfig {
@@ -117,6 +114,7 @@ impl SocksProxyConfig {
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     enable_tcp: bool,
+    bind_device: Option<BindDevice>,
     tcp_source_port: Option<u16>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
 }
@@ -142,31 +140,22 @@ impl StreamConnector {
             enable_tcp: config.enable_tcp,
             tcp_source_port: config.tcp_source_port,
             utp_socket: config.utp_socket,
+            bind_device: config.bind_device,
         })
     }
 
-    async fn tcp_connect(&self, addr: SocketAddr) -> std::io::Result<tokio::net::TcpStream> {
-        let (sock, bind_addr) = if addr.is_ipv6() {
-            (
-                tokio::net::TcpSocket::new_v6()?,
-                SocketAddr::from((Ipv6Addr::UNSPECIFIED, self.tcp_source_port.unwrap_or(0))),
-            )
-        } else {
-            (
-                tokio::net::TcpSocket::new_v4()?,
-                SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.tcp_source_port.unwrap_or(0))),
-            )
-        };
-        let sref = SockRef::from(&sock);
-
-        if bind_addr.port() > 0 {
-            #[cfg(not(windows))]
-            sref.set_reuse_port(true)?;
-            sref.set_reuse_address(true)?;
-            sref.bind(&bind_addr.into())?;
-        }
-
-        sock.connect(addr).await
+    async fn tcp_connect(
+        &self,
+        addr: SocketAddr,
+    ) -> librqbit_dualstack_sockets::Result<tokio::net::TcpStream> {
+        librqbit_dualstack_sockets::tcp_connect(
+            addr,
+            ConnectOpts {
+                source_port: self.tcp_source_port,
+                bind_device: self.bind_device.as_ref(),
+            },
+        )
+        .await
     }
 
     pub async fn connect(
@@ -192,7 +181,7 @@ impl StreamConnector {
             }
             let conn = self.tcp_connect(addr).await?;
             debug!(?addr, "connected over TCP");
-            Ok(Some(conn))
+            Ok::<_, librqbit_dualstack_sockets::Error>(Some(conn))
         };
 
         let tcp_failed_notify = tokio::sync::Notify::new();
@@ -221,7 +210,7 @@ impl StreamConnector {
         tokio::pin!(tcp_connect);
         tokio::pin!(utp_connect);
 
-        let mut tcp_err: Option<Option<std::io::Error>> = None;
+        let mut tcp_err: Option<Option<librqbit_dualstack_sockets::Error>> = None;
         let mut utp_err: Option<Option<librqbit_utp::Error>> = None;
 
         // wait until all fail, or one succeeds.
@@ -231,7 +220,7 @@ impl StreamConnector {
                     (Some(tcp), Some(utp)) => return Err(Error::Connect { tcp, utp }),
                     (Some(tcp), None) => return Err(Error::TcpConnect(tcp)),
                     (None, Some(utp)) => return Err(Error::UtpConnect(utp)),
-                    (None, None) => return Err(Error::ConnectDisaled),
+                    (None, None) => return Err(Error::ConnectDisabled),
                 }
             }
             tokio::select! {

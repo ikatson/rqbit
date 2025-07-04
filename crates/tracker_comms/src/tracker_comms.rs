@@ -138,6 +138,7 @@ async fn udp_tracker_to_socket_addrs(
 }
 
 impl TrackerComms {
+    // TODO: fix too many args
     #[allow(clippy::too_many_arguments)]
     pub fn start(
         info_hash: Id20,
@@ -179,7 +180,7 @@ impl TrackerComms {
                 tx,
                 announce_port,
                 reqwest_client,
-                key: rand::random()
+                key: rand::random(),
             });
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {

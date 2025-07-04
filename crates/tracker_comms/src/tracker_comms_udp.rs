@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use librqbit_core::{hash_id::Id20, spawn_utils::spawn_with_cancel};
-use librqbit_dualstack_sockets::UdpSocket;
+use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
 use parking_lot::RwLock;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
@@ -265,10 +265,19 @@ impl Drop for TransactionIdGuard<'_> {
 }
 
 impl UdpTrackerClient {
-    pub async fn new(cancel_token: CancellationToken) -> anyhow::Result<Self> {
+    pub async fn new(
+        cancel_token: CancellationToken,
+        bind_device: Option<&BindDevice>,
+    ) -> anyhow::Result<Self> {
         let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
-        let sock = UdpSocket::bind_udp(addr, Default::default())
-            .with_context(|| format!("error creating UDP socket at {addr}"))?;
+        let sock = UdpSocket::bind_udp(
+            addr,
+            librqbit_dualstack_sockets::BindOpts {
+                device: bind_device,
+                ..Default::default()
+            },
+        )
+        .with_context(|| format!("error creating UDP socket at {addr}"))?;
 
         let client = Self {
             state: Arc::new(ClientShared {

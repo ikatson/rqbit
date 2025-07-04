@@ -9,7 +9,8 @@ async fn main() -> anyhow::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let (stx, mut srx) = tokio::sync::mpsc::unbounded_channel::<()>();
 
-    let f1 = async move { discover_once(&tx, SSDP_SEARCH_ROOT_ST, Duration::from_secs(10)).await };
+    let f1 =
+        async move { discover_once(&tx, SSDP_SEARCH_ROOT_ST, Duration::from_secs(10), None).await };
 
     let f2 = async move {
         while let Some(r) = rx.recv().await {

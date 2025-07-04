@@ -58,7 +58,7 @@ signal-hook = "0.3.17"
 tokio-util = "0.7.11"
 gethostname = "1"
 url = "2"
-librqbit-dualstack-sockets = "0.6.4"
+librqbit-dualstack-sockets = "0.6.10"
 
 [dev-dependencies]
 futures = { version = "0.3" }

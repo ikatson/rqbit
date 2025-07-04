@@ -34,7 +34,7 @@ use librqbit_core::{
     peer_id::generate_azereus_style,
     spawn_utils::{spawn, spawn_with_cancel},
 };
-use librqbit_dualstack_sockets::UdpSocket;
+use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
 use parking_lot::RwLock;
 
 use serde::Serialize;
@@ -1274,7 +1274,7 @@ impl DhtWorker {
 }
 
 #[derive(Default)]
-pub struct DhtConfig {
+pub struct DhtConfig<'a> {
     pub peer_id: Option<Id20>,
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
@@ -1282,6 +1282,7 @@ pub struct DhtConfig {
     pub listen_addr: Option<SocketAddr>,
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
+    pub bind_device: Option<&'a BindDevice>,
 }
 
 impl DhtState {
@@ -1293,13 +1294,20 @@ impl DhtState {
     }
 
     #[inline(never)]
-    pub fn with_config(mut config: DhtConfig) -> BoxFuture<'static, crate::Result<Arc<Self>>> {
+    pub fn with_config<'a>(mut config: DhtConfig<'a>) -> BoxFuture<'a, crate::Result<Arc<Self>>> {
         async move {
             let addr = config
                 .listen_addr
                 .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into());
-            let socket = UdpSocket::bind_udp(addr, Default::default())
-                .map_err(|e| Error::Bind(Box::new(e)))?;
+            let socket = UdpSocket::bind_udp(
+                addr,
+                librqbit_dualstack_sockets::BindOpts {
+                    request_dualstack: true,
+                    reuseport: false,
+                    device: config.bind_device,
+                },
+            )
+            .map_err(|e| Error::Bind(Box::new(e)))?;
 
             let listen_addr = socket.bind_addr();
             info!("DHT listening on {:?}", listen_addr);

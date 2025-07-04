@@ -2894,9 +2894,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.172"
+version = "0.2.174"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
+checksum = "1171693293099992e19cddea4e8b849964e9846f4acee11b3948bcc337be8776"
 
 [[package]]
 name = "libloading"
@@ -3089,13 +3089,14 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dualstack-sockets"
-version = "0.6.6"
+version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee215a079686e08b525112e96e7db2899b6371027bf32c57064af1d2b64c0f8"
+checksum = "85487507ba93672d995c0c53b7941080adbb4754060160762b4ef3e7fe193b05"
 dependencies = [
  "axum 0.8.4",
  "backon",
  "futures",
+ "libc",
  "network-interface",
  "socket2",
  "thiserror 2.0.12",
@@ -3185,10 +3186,12 @@ dependencies = [
  "bstr",
  "futures",
  "httparse",
+ "librqbit-dualstack-sockets",
  "network-interface",
  "quick-xml 0.37.5",
  "reqwest",
  "serde",
+ "socket2",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3227,9 +3230,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-utp"
-version = "0.5.7"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d435f3cad6ea0456c85e4350139fd143960c51ffcbaab981b8f033f6b27c89fa"
+checksum = "9cf1eb17eeac7fcb9d808b9a1925ee63e08dae5817c0d971465196410777281c"
 dependencies = [
  "bitvec",
  "dontfrag",

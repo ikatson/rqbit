@@ -12,7 +12,7 @@ use std::{
 use anyhow::Context;
 use futures::Stream;
 use librqbit_core::{Id20, spawn_utils::spawn_with_cancel};
-use librqbit_dualstack_sockets::MulticastUdpSocket;
+use librqbit_dualstack_sockets::{BindDevice, MulticastUdpSocket};
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::sync::CancellationToken;
@@ -75,18 +75,20 @@ pub struct LocalServiceDiscovery {
 }
 
 #[derive(Default)]
-pub struct LocalServiceDiscoveryOptions {
+pub struct LocalServiceDiscoveryOptions<'a> {
     pub cancel_token: CancellationToken,
     pub cookie: Option<u32>,
+    pub bind_device: Option<&'a BindDevice>,
 }
 
 impl LocalServiceDiscovery {
-    pub async fn new(opts: LocalServiceDiscoveryOptions) -> anyhow::Result<Self> {
+    pub async fn new(opts: LocalServiceDiscoveryOptions<'_>) -> anyhow::Result<Self> {
         let socket = MulticastUdpSocket::new(
             (Ipv6Addr::UNSPECIFIED, LSD_PORT).into(),
             LSD_IPV4,
             LSD_IPV6,
             None,
+            opts.bind_device,
         )
         .await
         .context("error binding LSD socket")?;

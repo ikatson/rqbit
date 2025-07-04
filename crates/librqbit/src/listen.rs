@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
-use librqbit_utp::UtpSocketUdp;
+use librqbit_utp::{BindDevice, UtpSocketUdp, UtpSocketUdpOpts};
 use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -70,6 +70,7 @@ impl ListenerOptions {
         mut self,
         parent_span: Option<tracing::Id>,
         cancellation_token: CancellationToken,
+        bind_device: Option<&BindDevice>,
     ) -> anyhow::Result<ListenResult> {
         if self.listen_addr.port() == 0 {
             anyhow::bail!("you must set the listen port explicitly")
@@ -88,6 +89,7 @@ impl ListenerOptions {
                 BindOpts {
                     request_dualstack: true,
                     reuseport: true,
+                    device: bind_device,
                 },
             )
             .context("error starting TCP listener")?;
@@ -102,9 +104,13 @@ impl ListenerOptions {
             if !self.mode.utp_enabled() {
                 return Ok::<_, anyhow::Error>(None);
             }
-            let socket = UtpSocketUdp::new_udp_with_opts(self.listen_addr, utp_opts)
-                .await
-                .context("error starting uTP listener")?;
+            let socket = UtpSocketUdp::new_udp_with_opts(
+                self.listen_addr,
+                utp_opts,
+                UtpSocketUdpOpts { bind_device },
+            )
+            .await
+            .context("error starting uTP listener")?;
             info!(
                 "Listening on UDP {:?} for incoming uTP peer connections",
                 self.listen_addr
