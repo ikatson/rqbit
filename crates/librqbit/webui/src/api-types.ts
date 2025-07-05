@@ -2,6 +2,7 @@
 export interface TorrentId {
   id: number;
   info_hash: string;
+  output_folder: string;
 }
 
 export interface TorrentFile {
@@ -26,6 +27,10 @@ export interface TorrentDetails {
   files: Array<TorrentFile>;
 }
 
+export interface TorrentIdWithStats extends TorrentId {
+  stats: TorrentStats;
+}
+
 export interface AddTorrentResponse {
   id: number | null;
   details: TorrentDetails;
@@ -34,7 +39,7 @@ export interface AddTorrentResponse {
 }
 
 export interface ListTorrentsResponse {
-  torrents: Array<TorrentId>;
+  torrents: Array<TorrentIdWithStats>;
 }
 
 export interface Speed {

@@ -29,7 +29,7 @@ const makeRequest = async (
   method: string,
   path: string,
   data?: any,
-  isJson?: boolean
+  isJson?: boolean,
 ): Promise<any> => {
   console.log(method, path);
   const url = apiUrl + path;
@@ -87,7 +87,7 @@ const makeRequest = async (
 export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getStreamLogsUrl: () => apiUrl + "/stream_logs",
   listTorrents: (): Promise<ListTorrentsResponse> =>
-    makeRequest("GET", "/torrents"),
+    makeRequest("GET", "/torrents?with_stats=true"),
   getTorrentDetails: (index: number): Promise<TorrentDetails> => {
     return makeRequest("GET", `/torrents/${index}`);
   },
@@ -132,7 +132,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
       {
         only_files: files,
       },
-      true
+      true,
     );
   },
 
@@ -158,7 +158,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
-    filename?: string | null
+    filename?: string | null,
   ) => {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {

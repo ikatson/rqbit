@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { ErrorDetails as ApiErrorDetails } from "./api-types";
 import { APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
@@ -36,19 +36,19 @@ export const RqbitWebUI = (props: {
 
   const setTorrents = useTorrentStore((state) => state.setTorrents);
   const setTorrentsLoading = useTorrentStore(
-    (state) => state.setTorrentsLoading
+    (state) => state.setTorrentsLoading,
   );
   const setRefreshTorrents = useTorrentStore(
-    (state) => state.setRefreshTorrents
+    (state) => state.setRefreshTorrents,
   );
 
-  const refreshTorrents = async () => {
+  const refreshTorrents = useCallback(async () => {
     setTorrentsLoading(true);
     let torrents = await API.listTorrents().finally(() =>
-      setTorrentsLoading(false)
+      setTorrentsLoading(false),
     );
     setTorrents(torrents.torrents);
-  };
+  }, []);
   setRefreshTorrents(refreshTorrents);
 
   const setStats = useStatsStore((state) => state.setStats);
@@ -59,15 +59,15 @@ export const RqbitWebUI = (props: {
         refreshTorrents().then(
           () => {
             setOtherError(null);
-            return 5000;
+            return 1000;
           },
           (e) => {
             setOtherError({ text: "Error refreshing torrents", details: e });
             console.error(e);
-            return 5000;
-          }
+            return 1000;
+          },
         ),
-      0
+      0,
     );
   }, []);
 
@@ -82,9 +82,9 @@ export const RqbitWebUI = (props: {
           (e) => {
             console.error(e);
             return 5000;
-          }
+          },
         ),
-      0
+      0,
     );
   }, []);
 
