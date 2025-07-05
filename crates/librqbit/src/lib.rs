@@ -38,6 +38,9 @@ macro_rules! aframe {
     }};
 }
 
+#[macro_use]
+mod stat_gen;
+
 pub mod api;
 mod api_error;
 mod bitv;
@@ -65,6 +68,7 @@ mod session;
 mod session_persistence;
 pub mod session_stats;
 mod spawn_utils;
+
 pub mod storage;
 mod stream_connect;
 mod torrent_state;

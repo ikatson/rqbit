@@ -37,7 +37,7 @@ use crate::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
-    type_aliases::{BoxAsyncRead, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
+    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -142,7 +142,7 @@ pub struct Session {
     pub blocklist: blocklist::Blocklist,
 
     // Monitoring / tracing / logging
-    pub(crate) stats: SessionStats,
+    pub(crate) stats: Arc<SessionStats>,
     root_span: Option<tracing::Span>,
 
     // Feature flags
@@ -471,7 +471,7 @@ fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> any
 pub(crate) struct CheckedIncomingConnection {
     pub kind: ConnectionKind,
     pub addr: SocketAddr,
-    pub reader: BoxAsyncRead,
+    pub reader: BoxAsyncReadVectored,
     pub writer: BoxAsyncWrite,
     pub read_buf: ReadBuf,
     pub handshake: Handshake,
@@ -654,10 +654,6 @@ impl Session {
                 StreamConnector::new(StreamConnectorArgs {
                     enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
                     socks_proxy_config: proxy_config,
-                    tcp_source_port: listen_result
-                        .as_ref()
-                        .and_then(|l| l.announce_port)
-                        .or_else(|| opts.listen.as_ref().map(|l| l.listen_addr.port())),
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                     bind_device: bind_device.clone(),
                 })
@@ -714,7 +710,7 @@ impl Session {
                 reqwest_client,
                 connector: stream_connector,
                 root_span: opts.root_span,
-                stats: SessionStats::new(),
+                stats: Arc::new(SessionStats::new()),
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
@@ -824,7 +820,7 @@ impl Session {
         self: Arc<Self>,
         addr: SocketAddr,
         kind: ConnectionKind,
-        mut reader: BoxAsyncRead,
+        mut reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
         let rwtimeout = self
@@ -835,7 +831,7 @@ impl Session {
         let incoming_ip = addr.ip();
         if self.blocklist.is_blocked(incoming_ip) {
             self.stats
-                .atomic
+                .counters
                 .blocked_incoming
                 .fetch_add(1, Ordering::Relaxed);
             bail!("Incoming ip {incoming_ip} is in blocklist");

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::torrent_state::live::peers::stats::snapshot::AggregatePeerStats;
+use crate::torrent_state::live::peers::stats::AggregatePeerStats;
 
 #[derive(Debug, Serialize, Default)]
 pub struct StatsSnapshot {

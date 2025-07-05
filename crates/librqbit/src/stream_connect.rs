@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::{
     Error, PeerConnectionOptions, Result,
-    type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite},
     vectored_traits::AsyncReadVectoredIntoCompat,
 };
 
@@ -61,7 +61,6 @@ pub(crate) struct SocksProxyConfig {
 #[derive(Default, Debug, Clone)]
 pub(crate) struct StreamConnectorArgs {
     pub enable_tcp: bool,
-    pub tcp_source_port: Option<u16>,
     pub socks_proxy_config: Option<SocksProxyConfig>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub bind_device: Option<BindDevice>,
@@ -110,13 +109,28 @@ impl SocksProxyConfig {
     }
 }
 
+gen_stats!(SingleStatAtomic SingleStatSnapshot, [
+    attempts u64,
+    successes u64,
+    errors u64
+], []);
+gen_stats!(PerFamilyAtomic PerFamilySnapshot, [], [
+    v4 SingleStatAtomic SingleStatSnapshot,
+    v6 SingleStatAtomic SingleStatSnapshot
+]);
+gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
+    socks PerFamilyAtomic PerFamilySnapshot,
+    tcp PerFamilyAtomic PerFamilySnapshot,
+    utp PerFamilyAtomic PerFamilySnapshot
+]);
+
 #[derive(Debug)]
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     enable_tcp: bool,
     bind_device: Option<BindDevice>,
-    tcp_source_port: Option<u16>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
+    stats: ConnectStatsAtomic,
 }
 
 impl StreamConnector {
@@ -138,32 +152,66 @@ impl StreamConnector {
         Ok(Self {
             proxy_config: config.socks_proxy_config,
             enable_tcp: config.enable_tcp,
-            tcp_source_port: config.tcp_source_port,
             utp_socket: config.utp_socket,
             bind_device: config.bind_device,
+            stats: Default::default(),
         })
+    }
+
+    fn get_stat(&self, kind: ConnectionKind, is_v6: bool) -> &SingleStatAtomic {
+        let stat = match kind {
+            ConnectionKind::Tcp => &self.stats.tcp,
+            ConnectionKind::Utp => &self.stats.utp,
+            ConnectionKind::Socks => &self.stats.socks,
+        };
+        if is_v6 { &stat.v6 } else { &stat.v4 }
+    }
+
+    async fn with_stat<R, E>(
+        &self,
+        kind: ConnectionKind,
+        is_v6: bool,
+        fut: impl Future<Output = std::result::Result<R, E>>,
+    ) -> std::result::Result<R, E> {
+        let stat = self.get_stat(kind, is_v6);
+        stat.attempts(1);
+        fut.await
+            .inspect(|_| stat.successes(1))
+            .inspect_err(|_| stat.errors(1))
     }
 
     async fn tcp_connect(
         &self,
         addr: SocketAddr,
     ) -> librqbit_dualstack_sockets::Result<tokio::net::TcpStream> {
-        librqbit_dualstack_sockets::tcp_connect(
-            addr,
-            ConnectOpts {
-                source_port: self.tcp_source_port,
-                bind_device: self.bind_device.as_ref(),
-            },
+        self.with_stat(
+            ConnectionKind::Tcp,
+            addr.is_ipv6(),
+            librqbit_dualstack_sockets::tcp_connect(
+                addr,
+                ConnectOpts {
+                    // Setting source port doesn't work with cloudflare warp on linux
+                    // source_port: self.tcp_source_port,
+                    source_port: None,
+                    bind_device: self.bind_device.as_ref(),
+                },
+            ),
         )
         .await
+    }
+
+    pub fn stats(&self) -> &ConnectStatsAtomic {
+        &self.stats
     }
 
     pub async fn connect(
         &self,
         addr: SocketAddr,
-    ) -> Result<(ConnectionKind, BoxAsyncRead, BoxAsyncWrite)> {
+    ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
         if let Some(proxy) = self.proxy_config.as_ref() {
-            let (r, w) = proxy.connect(addr).await?;
+            let (r, w) = self
+                .with_stat(ConnectionKind::Socks, addr.is_ipv6(), proxy.connect(addr))
+                .await?;
             debug!(?addr, "connected through SOCKS5");
             return Ok((
                 ConnectionKind::Socks,
@@ -174,7 +222,6 @@ impl StreamConnector {
 
         // Try to connect over TCP first. If in 1 second we haven't connected, try uTP also (if configured).
         // Whoever connects first wins.
-
         let tcp_connect = async {
             if !self.enable_tcp {
                 return Ok(None);
@@ -201,7 +248,9 @@ impl StreamConnector {
                 }
             }
 
-            let conn = sock.connect(addr).await?;
+            let conn = self
+                .with_stat(ConnectionKind::Utp, addr.is_ipv6(), sock.connect(addr))
+                .await?;
 
             debug!(?addr, "connected over uTP");
             Ok(Some(conn))
