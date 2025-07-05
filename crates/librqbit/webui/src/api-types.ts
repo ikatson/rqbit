@@ -2,7 +2,33 @@
 export interface TorrentId {
   id: number;
   info_hash: string;
+  name: string;
   output_folder: string;
+}
+
+export interface PeerCounters {
+  incoming_connections: number;
+  fetched_bytes: number;
+  uploaded_bytes: number;
+  total_time_connecting_ms: number;
+  connection_attempts: number;
+  connections: number;
+  errors: number;
+  fetched_chunks: number;
+  downloaded_and_checked_pieces: number;
+  total_piece_download_ms: number;
+  times_stolen_from_me: number;
+  times_i_stole: number;
+}
+
+export interface PeerStats {
+  counters: PeerCounters;
+  state: string;
+  conn_kind: string | null;
+}
+
+export interface PeerStatsSnapshot {
+  peers: Record<string, PeerStats>;
 }
 
 export interface TorrentFile {
@@ -208,25 +234,29 @@ export interface JSONLogLine {
 }
 
 export interface RqbitAPI {
-  getPlaylistUrl: (index: number) => string | null;
-  getStreamLogsUrl: () => string | null;
   listTorrents: () => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
+
+  getTorrentPeerStats: (
+    index: number,
+    state?: "all" | "live",
+  ) => Promise<PeerStatsSnapshot>;
+  stats: () => Promise<SessionStats>;
+  uploadTorrent: (
+    data: File | string,
+    opts?: AddTorrentOptions,
+  ) => Promise<AddTorrentResponse>;
+  updateOnlyFiles: (index: number, files: number[]) => Promise<void>;
+  pause: (index: number) => Promise<void>;
+  start: (index: number) => Promise<void>;
+  forget: (index: number) => Promise<void>;
+  delete: (index: number) => Promise<void>;
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
     filename?: string | null,
-  ) => string | null;
-  uploadTorrent: (
-    data: string | File,
-    opts?: AddTorrentOptions,
-  ) => Promise<AddTorrentResponse>;
-
-  pause: (index: number) => Promise<void>;
-  updateOnlyFiles: (index: number, files: number[]) => Promise<void>;
-  start: (index: number) => Promise<void>;
-  forget: (index: number) => Promise<void>;
-  delete: (index: number) => Promise<void>;
-  stats: () => Promise<SessionStats>;
+  ) => string;
+  getPlaylistUrl: (index: number) => string;
+  getStreamLogsUrl: () => string;
 }
