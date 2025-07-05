@@ -42,4 +42,3 @@ export const APIContext = createContext<RqbitAPI>({
     throw new Error("Function not implemented.");
   },
 });
-export const RefreshTorrentStatsContext = createContext({ refresh: () => {} });

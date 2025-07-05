@@ -4,6 +4,7 @@ import {
   TorrentStats,
   STATE_INITIALIZING,
   ErrorDetails,
+  TorrentIdWithStats,
 } from "../api-types";
 import { TorrentActions } from "./buttons/TorrentActions";
 import { ProgressBar } from "./ProgressBar";
@@ -14,24 +15,26 @@ import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
 import { FileListInput } from "./FileListInput";
 import { useContext, useEffect, useState } from "react";
-import { APIContext, RefreshTorrentStatsContext } from "../context";
+import { APIContext } from "../context";
 import { useErrorStore } from "../stores/errorStore";
+import { useTorrentStore } from "../stores/torrentStore";
 
 export const TorrentRow: React.FC<{
-  id: number;
   detailsResponse: TorrentDetails | null;
-  statsResponse: TorrentStats | null;
-}> = ({ id, detailsResponse, statsResponse }) => {
-  const state = statsResponse?.state ?? "";
-  const error = statsResponse?.error ?? null;
-  const totalBytes = statsResponse?.total_bytes ?? 1;
-  const progressBytes = statsResponse?.progress_bytes ?? 0;
-  const finished = statsResponse?.finished || false;
+  torrent: TorrentIdWithStats;
+}> = ({ detailsResponse, torrent }) => {
+  const statsResponse = torrent.stats;
+  const state = statsResponse.state ?? "";
+  const error = statsResponse.error ?? null;
+  const totalBytes = statsResponse.total_bytes ?? 1;
+  const progressBytes = statsResponse.progress_bytes ?? 0;
+  const finished = statsResponse.finished || false;
   const progressPercentage = error
     ? 100
     : totalBytes == 0
       ? 100
       : (progressBytes / totalBytes) * 100;
+  const refresh = useTorrentStore((state) => state.refreshTorrents);
 
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;
@@ -61,14 +64,12 @@ export const TorrentRow: React.FC<{
         detailsResponse?.files
           .map((f, id) => ({ f, id }))
           .filter(({ f }) => f.included)
-          .map(({ id }) => id) ?? []
-      )
+          .map(({ id }) => id) ?? [],
+      ),
     );
   }, [detailsResponse]);
 
   const API = useContext(APIContext);
-
-  const refreshCtx = useContext(RefreshTorrentStatsContext);
 
   const [savingSelectedFiles, setSavingSelectedFiles] = useState(false);
 
@@ -76,10 +77,10 @@ export const TorrentRow: React.FC<{
 
   const updateSelectedFiles = (selectedFiles: Set<number>) => {
     setSavingSelectedFiles(true);
-    API.updateOnlyFiles(id, Array.from(selectedFiles))
+    API.updateOnlyFiles(torrent.id, Array.from(selectedFiles))
       .then(
         () => {
-          refreshCtx.refresh();
+          refresh();
           setCloseableError(null);
         },
         (e) => {
@@ -87,7 +88,7 @@ export const TorrentRow: React.FC<{
             text: "Error configuring torrent",
             details: e as ErrorDetails,
           });
-        }
+        },
       )
       .finally(() => setSavingSelectedFiles(false));
   };
@@ -157,7 +158,7 @@ export const TorrentRow: React.FC<{
         {statsResponse && (
           <div className="">
             <TorrentActions
-              id={id}
+              id={torrent.id}
               statsResponse={statsResponse}
               detailsResponse={detailsResponse}
               extendedView={extendedView}
@@ -171,7 +172,7 @@ export const TorrentRow: React.FC<{
       {detailsResponse && extendedView && (
         <div className="">
           <FileListInput
-            torrentId={id}
+            torrentId={torrent.id}
             torrentDetails={detailsResponse}
             torrentStats={statsResponse}
             selectedFiles={selectedFiles}

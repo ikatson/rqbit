@@ -1,9 +1,9 @@
-import { TorrentId } from "../api-types";
+import { TorrentIdWithStats, TorrentId } from "../api-types";
 import { Spinner } from "./Spinner";
 import { Torrent } from "./Torrent";
 
 export const TorrentsList = (props: {
-  torrents: Array<TorrentId> | null;
+  torrents: Array<TorrentIdWithStats> | null;
   loading: boolean;
 }) => {
   return (
@@ -18,10 +18,8 @@ export const TorrentsList = (props: {
       ) : props.torrents.length === 0 ? (
         <p className="text-center">No existing torrents found.</p>
       ) : (
-        props.torrents.map((t: TorrentId) => (
-          <>
-            <Torrent id={t.id} key={t.id} torrent={t} />
-          </>
+        props.torrents.map((t: TorrentIdWithStats) => (
+          <Torrent key={t.id} torrent={t} />
         ))
       )}
     </div>
