@@ -51,12 +51,34 @@ export interface AggregatePeerStats {
   not_needed: number;
 }
 
-export interface SessionStats {
-  download_speed: Speed;
-  upload_speed: Speed;
+export interface ConnectionStatSingle {
+  attempts: number;
+  successes: number;
+  errors: number;
+}
+export interface ConnectionStatsPerFamily {
+  v4: ConnectionStatSingle;
+  v6: ConnectionStatSingle;
+}
+export interface ConnectionStats {
+  tcp: ConnectionStatsPerFamily;
+  utp: ConnectionStatsPerFamily;
+  socks: ConnectionStatsPerFamily;
+}
+
+export interface SessionCounters {
   fetched_bytes: number;
   uploaded_bytes: number;
+  blocked_incoming: number;
+  blocked_outgoing: number;
+}
+
+export interface SessionStats {
+  counters: SessionCounters;
   peers: AggregatePeerStats;
+  connections: ConnectionStats;
+  download_speed: Speed;
+  upload_speed: Speed;
   uptime_seconds: number;
 }
 
