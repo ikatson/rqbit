@@ -11,6 +11,10 @@ export const APIContext = createContext<RqbitAPI>({
   getTorrentStats: () => {
     throw new Error("Function not implemented.");
   },
+  
+  getTorrentPeerStats: () => {
+    throw new Error("Function not implemented.");
+  },
   uploadTorrent: () => {
     throw new Error("Function not implemented.");
   },
@@ -32,10 +36,10 @@ export const APIContext = createContext<RqbitAPI>({
   getTorrentStreamUrl: () => {
     throw new Error("Function not implemented.");
   },
-  getStreamLogsUrl: function (): string | null {
+  getStreamLogsUrl: function (): string {
     throw new Error("Function not implemented.");
   },
-  getPlaylistUrl: function (index: number): string | null {
+  getPlaylistUrl: function (index: number): string {
     throw new Error("Function not implemented.");
   },
   stats: function (): Promise<SessionStats> {

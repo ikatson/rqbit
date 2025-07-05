@@ -6,6 +6,7 @@ import {
   SessionStats,
   TorrentDetails,
   TorrentStats,
+  PeerStatsSnapshot,
 } from "./api-types";
 
 // Define API URL and base path
@@ -93,6 +94,14 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
   getTorrentStats: (index: number): Promise<TorrentStats> => {
     return makeRequest("GET", `/torrents/${index}/stats/v1`);
+  },
+  
+  getTorrentPeerStats: (index: number, state?: "all" | "live"): Promise<PeerStatsSnapshot> => {
+    let url = `/torrents/${index}/peer_stats`;
+    if (state) {
+      url += `?state=${state}`;
+    }
+    return makeRequest("GET", url);
   },
   stats: (): Promise<SessionStats> => {
     return makeRequest("GET", "/stats");

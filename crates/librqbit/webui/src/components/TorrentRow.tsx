@@ -1,7 +1,6 @@
 import { GoClock, GoFile, GoPeople } from "react-icons/go";
 import {
   TorrentDetails,
-  TorrentStats,
   STATE_INITIALIZING,
   ErrorDetails,
   TorrentIdWithStats,
@@ -131,7 +130,7 @@ export const TorrentRow: React.FC<{
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
                 <div className="flex gap-2 items-center">
-                  <GoPeople /> {formatPeersString().toString()}
+                  <GoPeople /> {formatPeersString()}
                 </div>
                 <div className="flex gap-2 items-center">
                   <GoFile />
