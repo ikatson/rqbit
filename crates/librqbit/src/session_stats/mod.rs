@@ -65,6 +65,6 @@ impl Session {
     }
 
     pub fn stats_snapshot(&self) -> SessionStatsSnapshot {
-        SessionStatsSnapshot::from(&self.stats)
+        SessionStatsSnapshot::from((&self.stats, self.connector.stats().snapshot()))
     }
 }

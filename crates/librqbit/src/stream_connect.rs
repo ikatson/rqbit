@@ -113,6 +113,21 @@ impl SocksProxyConfig {
     }
 }
 
+gen_stats!(SingleStatAtomic SingleStatSnapshot, [
+    attempts u64,
+    successes u64,
+    errors u64
+], []);
+gen_stats!(PerFamilyAtomic PerFamilySnapshot, [], [
+    v4 SingleStatAtomic SingleStatSnapshot,
+    v6 SingleStatAtomic SingleStatSnapshot
+]);
+gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
+    socks PerFamilyAtomic PerFamilySnapshot,
+    tcp PerFamilyAtomic PerFamilySnapshot,
+    utp PerFamilyAtomic PerFamilySnapshot
+]);
+
 #[derive(Default, Debug, Serialize)]
 pub struct SingleStat {
     attempts: AtomicU64,
@@ -139,7 +154,7 @@ pub(crate) struct StreamConnector {
     enable_tcp: bool,
     bind_device: Option<BindDevice>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
-    stats: SingleStat,
+    stats: ConnectStatsAtomic,
 }
 
 impl StreamConnector {
@@ -183,7 +198,7 @@ impl StreamConnector {
         .await
     }
 
-    pub fn stats(&self) -> &SingleStat {
+    pub fn stats(&self) -> &ConnectStatsAtomic {
         &self.stats
     }
 

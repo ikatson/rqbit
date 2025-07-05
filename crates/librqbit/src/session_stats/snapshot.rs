@@ -2,7 +2,10 @@ use std::sync::atomic::Ordering;
 
 use serde::Serialize;
 
-use crate::torrent_state::{peers::stats::snapshot::AggregatePeerStats, stats::Speed};
+use crate::{
+    stream_connect::ConnectStatsSnapshot,
+    torrent_state::{peers::stats::snapshot::AggregatePeerStats, stats::Speed},
+};
 
 use super::SessionStats;
 
@@ -16,10 +19,11 @@ pub struct SessionStatsSnapshot {
     pub upload_speed: Speed,
     pub peers: AggregatePeerStats,
     pub uptime_seconds: u64,
+    pub connections: ConnectStatsSnapshot,
 }
 
-impl From<&SessionStats> for SessionStatsSnapshot {
-    fn from(s: &SessionStats) -> Self {
+impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
+    fn from((s, c): (&SessionStats, ConnectStatsSnapshot)) -> Self {
         Self {
             download_speed: s.down_speed_estimator.mbps().into(),
             upload_speed: s.up_speed_estimator.mbps().into(),
@@ -29,6 +33,7 @@ impl From<&SessionStats> for SessionStatsSnapshot {
             blocked_outgoing: s.atomic.blocked_outgoing.load(Ordering::Relaxed),
             peers: AggregatePeerStats::from(&s.atomic.peers),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
+            connections: c,
         }
     }
 }
