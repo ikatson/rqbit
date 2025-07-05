@@ -13,7 +13,7 @@ use crate::{
     type_aliases::{BF, PeerHandle},
 };
 
-use self::stats::{atomic::AggregatePeerStatsAtomic, snapshot::AggregatePeerStats};
+use self::stats::{AggregatePeerStats, AggregatePeerStatsAtomic};
 
 use super::peer::{LivePeerState, Peer, PeerRx, PeerState, PeerTx};
 
@@ -38,7 +38,7 @@ impl Drop for PeerStates {
 
 impl PeerStates {
     pub fn stats(&self) -> AggregatePeerStats {
-        AggregatePeerStats::from(&self.stats)
+        self.stats.snapshot()
     }
 
     pub fn add_if_not_seen(&self, addr: SocketAddr) -> Option<PeerHandle> {

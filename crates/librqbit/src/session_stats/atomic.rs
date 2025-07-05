@@ -1,6 +1,6 @@
 use std::sync::atomic::AtomicU64;
 
-use crate::torrent_state::live::peers::stats::atomic::AggregatePeerStatsAtomic;
+use crate::torrent_state::live::peers::stats::AggregatePeerStatsAtomic;
 
 #[derive(Default, Debug)]
 pub struct AtomicSessionStats {

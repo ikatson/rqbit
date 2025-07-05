@@ -16,7 +16,7 @@ macro_rules! stype {
 macro_rules! gen_stats {
     ($atomic_name:ident $snapshot_name:ident, [$($stat_name:ident $stat_ty:tt),*], [$($nested_field_name:ident $nested_atomic_name:ident $nested_snapshot_name:ident),*]) => {
         #[derive(Debug, Default)]
-        pub struct $atomic_name {
+        pub(crate) struct $atomic_name {
             $(
                 pub $stat_name: stype!(atomic $stat_ty),
             )*
@@ -40,13 +40,14 @@ macro_rules! gen_stats {
             }
 
             $(
+                #[allow(unused)]
                 pub fn $stat_name(&self, value: $stat_ty) {
                     self.$stat_name.fetch_add(value, std::sync::atomic::Ordering::Relaxed);
                 }
             )*
         }
 
-        #[derive(Debug, serde::Serialize)]
+        #[derive(Debug, Default, serde::Serialize)]
         pub struct $snapshot_name {
             $(
                 pub $stat_name: stype!($stat_ty),

@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::{
     stream_connect::ConnectStatsSnapshot,
-    torrent_state::{peers::stats::snapshot::AggregatePeerStats, stats::Speed},
+    torrent_state::{peers::stats::AggregatePeerStats, stats::Speed},
 };
 
 use super::SessionStats;
@@ -31,7 +31,7 @@ impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
             uploaded_bytes: s.atomic.uploaded_bytes.load(Ordering::Relaxed),
             blocked_incoming: s.atomic.blocked_incoming.load(Ordering::Relaxed),
             blocked_outgoing: s.atomic.blocked_outgoing.load(Ordering::Relaxed),
-            peers: AggregatePeerStats::from(&s.atomic.peers),
+            peers: s.atomic.peers.snapshot(),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
             connections: c,
         }
