@@ -37,7 +37,7 @@ impl Peer {
         connection_kind: ConnectionKind,
     ) -> Self {
         let state = PeerState::Live(LivePeerState::new(peer_id, tx, true, connection_kind));
-        for counter in [&counters.session_stats.peers, &counters.stats] {
+        for counter in [&counters.session_stats, &counters.stats] {
             counter.inc(&state);
         }
         Self {
@@ -133,7 +133,7 @@ impl Peer {
     }
 
     pub fn destroy(self, counters: &PeerStates) {
-        for counter in [&counters.session_stats.peers, &counters.stats] {
+        for counter in [&counters.session_stats, &counters.stats] {
             counter.dec(&self.state);
         }
         if let (Some(addr), PeerState::Live(..)) = (self.outgoing_address, &self.state) {
@@ -142,7 +142,7 @@ impl Peer {
     }
 
     pub fn set_state(&mut self, new: PeerState, counters: &PeerStates) -> PeerState {
-        for counter in [&counters.session_stats.peers, &counters.stats] {
+        for counter in [&counters.session_stats, &counters.stats] {
             counter.incdec(&self.state, &new);
         }
         if let Some(addr) = self.outgoing_address {

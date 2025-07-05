@@ -8,7 +8,6 @@ use peer_binary_protocol::{Message, Request};
 use crate::{
     Error,
     peer_connection::WriterRequest,
-    session_stats::atomic::AtomicSessionStats,
     torrent_state::utils::{TimedExistence, atomic_inc},
     type_aliases::{BF, PeerHandle},
 };
@@ -20,7 +19,7 @@ use super::peer::{LivePeerState, Peer, PeerRx, PeerState, PeerTx};
 pub mod stats;
 
 pub(crate) struct PeerStates {
-    pub session_stats: Arc<AtomicSessionStats>,
+    pub session_stats: Arc<AggregatePeerStatsAtomic>,
 
     // This keeps track of live addresses we connected to, for PEX.
     pub live_outgoing_peers: RwLock<HashSet<PeerHandle>>,
@@ -48,10 +47,10 @@ impl PeerStates {
             Entry::Vacant(vac) => {
                 vac.insert(Peer::new_with_outgoing_address(addr));
                 atomic_inc(&self.stats.queued);
-                atomic_inc(&self.session_stats.peers.queued);
+                atomic_inc(&self.session_stats.queued);
 
                 atomic_inc(&self.stats.seen);
-                atomic_inc(&self.session_stats.peers.seen);
+                atomic_inc(&self.session_stats.seen);
                 Some(addr)
             }
         }
@@ -90,7 +89,7 @@ impl PeerStates {
         let p = self.states.remove(&handle).map(|r| r.1)?;
         let s = p.get_state();
         self.stats.dec(s);
-        self.session_stats.peers.dec(s);
+        self.session_stats.dec(s);
 
         Some(p)
     }
@@ -156,7 +155,7 @@ impl PeerStates {
             atomic_inc(&p.stats.counters.times_stolen_from_me);
         });
         self.stats.inc_steals();
-        self.session_stats.peers.inc_steals();
+        self.session_stats.inc_steals();
 
         self.with_live_mut(from_peer, "send_cancellations", |live| {
             let to_remove = live

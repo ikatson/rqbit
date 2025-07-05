@@ -16,7 +16,7 @@ macro_rules! stype {
 macro_rules! gen_stats {
     ($atomic_name:ident $snapshot_name:ident, [$($stat_name:ident $stat_ty:tt),*], [$($nested_field_name:ident $nested_atomic_name:ident $nested_snapshot_name:ident),*]) => {
         #[derive(Debug, Default)]
-        pub(crate) struct $atomic_name {
+        pub struct $atomic_name {
             $(
                 pub $stat_name: stype!(atomic $stat_ty),
             )*

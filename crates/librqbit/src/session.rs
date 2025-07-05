@@ -142,7 +142,7 @@ pub struct Session {
     pub blocklist: blocklist::Blocklist,
 
     // Monitoring / tracing / logging
-    pub(crate) stats: SessionStats,
+    pub(crate) stats: Arc<SessionStats>,
     root_span: Option<tracing::Span>,
 
     // Feature flags
@@ -710,7 +710,7 @@ impl Session {
                 reqwest_client,
                 connector: stream_connector,
                 root_span: opts.root_span,
-                stats: SessionStats::new(),
+                stats: Arc::new(SessionStats::new()),
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
@@ -831,7 +831,7 @@ impl Session {
         let incoming_ip = addr.ip();
         if self.blocklist.is_blocked(incoming_ip) {
             self.stats
-                .atomic
+                .counters
                 .blocked_incoming
                 .fetch_add(1, Ordering::Relaxed);
             bail!("Incoming ip {incoming_ip} is in blocklist");

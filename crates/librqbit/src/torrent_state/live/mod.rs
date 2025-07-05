@@ -92,7 +92,7 @@ use crate::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
     },
     session::CheckedIncomingConnection,
-    session_stats::atomic::AtomicSessionStats,
+    session_stats::SessionStats,
     stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
     type_aliases::{BF, DiskWorkQueueSender, FilePriorities, FileStorage, PeerHandle},
@@ -200,7 +200,7 @@ pub struct TorrentStateLive {
     up_speed_estimator: SpeedEstimator,
     cancellation_token: CancellationToken,
 
-    session_stats: Arc<AtomicSessionStats>,
+    session_stats: Arc<SessionStats>,
 
     pub(crate) streams: Arc<TorrentStreams>,
     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
@@ -224,7 +224,7 @@ impl TorrentStateLive {
             .session
             .upgrade()
             .context("session is dead, cannot start torrent")?;
-        let session_stats = session.stats.atomic.clone();
+        let session_stats = session.stats.clone();
         let down_speed_estimator = SpeedEstimator::default();
         let up_speed_estimator = SpeedEstimator::default();
 
@@ -257,7 +257,7 @@ impl TorrentStateLive {
             shared: paused.shared.clone(),
             metadata: paused.metadata.clone(),
             peers: PeerStates {
-                session_stats: session_stats.clone(),
+                session_stats: session_stats.peers.clone(),
                 stats: Default::default(),
                 states: Default::default(),
                 live_outgoing_peers: Default::default(),
@@ -598,7 +598,7 @@ impl TorrentStateLive {
             if is_in_blocklist {
                 session
                     .stats
-                    .atomic
+                    .counters
                     .blocked_outgoing
                     .fetch_add(1, Ordering::Relaxed);
                 debug!(?addr, "blocked outgoing connection");
@@ -1089,6 +1089,7 @@ impl PeerConnectionHandler for PeerHandler {
             .fetch_add(bytes as u64, Ordering::Relaxed);
         self.state
             .session_stats
+            .counters
             .uploaded_bytes
             .fetch_add(bytes as u64, Ordering::Relaxed);
     }
@@ -1735,6 +1736,7 @@ impl PeerHandler {
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.state
             .session_stats
+            .counters
             .fetched_bytes
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
 

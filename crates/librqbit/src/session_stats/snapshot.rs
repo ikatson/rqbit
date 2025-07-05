@@ -1,8 +1,7 @@
-use std::sync::atomic::Ordering;
-
 use serde::Serialize;
 
 use crate::{
+    session_stats::SessionCountersSnapshot,
     stream_connect::ConnectStatsSnapshot,
     torrent_state::{peers::stats::AggregatePeerStats, stats::Speed},
 };
@@ -11,10 +10,7 @@ use super::SessionStats;
 
 #[derive(Debug, Serialize)]
 pub struct SessionStatsSnapshot {
-    pub fetched_bytes: u64,
-    pub uploaded_bytes: u64,
-    pub blocked_incoming: u64,
-    pub blocked_outgoing: u64,
+    pub counters: SessionCountersSnapshot,
     pub download_speed: Speed,
     pub upload_speed: Speed,
     pub peers: AggregatePeerStats,
@@ -27,11 +23,8 @@ impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
         Self {
             download_speed: s.down_speed_estimator.mbps().into(),
             upload_speed: s.up_speed_estimator.mbps().into(),
-            fetched_bytes: s.atomic.fetched_bytes.load(Ordering::Relaxed),
-            uploaded_bytes: s.atomic.uploaded_bytes.load(Ordering::Relaxed),
-            blocked_incoming: s.atomic.blocked_incoming.load(Ordering::Relaxed),
-            blocked_outgoing: s.atomic.blocked_outgoing.load(Ordering::Relaxed),
-            peers: s.atomic.peers.snapshot(),
+            counters: s.counters.snapshot(),
+            peers: s.peers.snapshot(),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
             connections: c,
         }
@@ -55,10 +48,18 @@ impl SessionStatsSnapshot {
             }};
         }
 
-        m!(counter, rqbit_fetched_bytes, self.fetched_bytes);
-        m!(counter, rqbit_uploaded_bytes, self.uploaded_bytes);
-        m!(counter, rqbit_blocked_incoming, self.blocked_incoming);
-        m!(counter, rqbit_blocked_outgoing, self.blocked_outgoing);
+        m!(counter, rqbit_fetched_bytes, self.counters.fetched_bytes);
+        m!(counter, rqbit_uploaded_bytes, self.counters.uploaded_bytes);
+        m!(
+            counter,
+            rqbit_blocked_incoming,
+            self.counters.blocked_incoming
+        );
+        m!(
+            counter,
+            rqbit_blocked_outgoing,
+            self.counters.blocked_outgoing
+        );
         m!(
             gauge,
             rqbit_download_speed_bytes,

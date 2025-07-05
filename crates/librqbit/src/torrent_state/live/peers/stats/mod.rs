@@ -41,21 +41,21 @@ impl AggregatePeerStatsAtomic {
         }
     }
 
-    pub fn inc(&self, state: &PeerState) {
+    pub(crate) fn inc(&self, state: &PeerState) {
         if let PeerState::Live(l) = state {
             atomic_inc(self.live_kind_counter(l));
         }
         atomic_inc(self.counter(state));
     }
 
-    pub fn dec(&self, state: &PeerState) {
+    pub(crate) fn dec(&self, state: &PeerState) {
         if let PeerState::Live(l) = state {
             atomic_dec(self.live_kind_counter(l));
         }
         atomic_dec(self.counter(state));
     }
 
-    pub fn incdec(&self, old: &PeerState, new: &PeerState) {
+    pub(crate) fn incdec(&self, old: &PeerState, new: &PeerState) {
         self.dec(old);
         self.inc(new);
     }
