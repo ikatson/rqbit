@@ -1,8 +1,4 @@
-use std::{
-    net::SocketAddr,
-    sync::{Arc, atomic::AtomicU64},
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, bail};
 use librqbit_dualstack_sockets::ConnectOpts;
@@ -128,26 +124,6 @@ gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
     utp PerFamilyAtomic PerFamilySnapshot
 ]);
 
-#[derive(Default, Debug, Serialize)]
-pub struct SingleStat {
-    attempts: AtomicU64,
-    success: AtomicU64,
-    errors: AtomicU64,
-}
-
-#[derive(Default, Debug, Serialize)]
-pub struct PerFamilyStats {
-    v4: SingleStat,
-    v6: SingleStat,
-}
-
-#[derive(Default, Debug, Serialize)]
-pub struct ConnectStats {
-    socks: PerFamilyStats,
-    tcp: PerFamilyStats,
-    utp: PerFamilyStats,
-}
-
 #[derive(Debug)]
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
@@ -182,18 +158,44 @@ impl StreamConnector {
         })
     }
 
+    fn get_stat(&self, kind: ConnectionKind, is_v6: bool) -> &SingleStatAtomic {
+        let stat = match kind {
+            ConnectionKind::Tcp => &self.stats.tcp,
+            ConnectionKind::Utp => &self.stats.utp,
+            ConnectionKind::Socks => &self.stats.socks,
+        };
+        if is_v6 { &stat.v6 } else { &stat.v4 }
+    }
+
+    async fn with_stat<R, E>(
+        &self,
+        kind: ConnectionKind,
+        is_v6: bool,
+        fut: impl Future<Output = std::result::Result<R, E>>,
+    ) -> std::result::Result<R, E> {
+        let stat = self.get_stat(kind, is_v6);
+        stat.attempts(1);
+        fut.await
+            .inspect(|_| stat.successes(1))
+            .inspect_err(|_| stat.errors(1))
+    }
+
     async fn tcp_connect(
         &self,
         addr: SocketAddr,
     ) -> librqbit_dualstack_sockets::Result<tokio::net::TcpStream> {
-        librqbit_dualstack_sockets::tcp_connect(
-            addr,
-            ConnectOpts {
-                // Setting source port doesn't work with cloudflare warp on linux
-                // source_port: self.tcp_source_port,
-                source_port: None,
-                bind_device: self.bind_device.as_ref(),
-            },
+        self.with_stat(
+            ConnectionKind::Tcp,
+            addr.is_ipv6(),
+            librqbit_dualstack_sockets::tcp_connect(
+                addr,
+                ConnectOpts {
+                    // Setting source port doesn't work with cloudflare warp on linux
+                    // source_port: self.tcp_source_port,
+                    source_port: None,
+                    bind_device: self.bind_device.as_ref(),
+                },
+            ),
         )
         .await
     }
@@ -207,7 +209,9 @@ impl StreamConnector {
         addr: SocketAddr,
     ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
         if let Some(proxy) = self.proxy_config.as_ref() {
-            let (r, w) = proxy.connect(addr).await?;
+            let (r, w) = self
+                .with_stat(ConnectionKind::Socks, addr.is_ipv6(), proxy.connect(addr))
+                .await?;
             debug!(?addr, "connected through SOCKS5");
             return Ok((
                 ConnectionKind::Socks,
@@ -218,7 +222,6 @@ impl StreamConnector {
 
         // Try to connect over TCP first. If in 1 second we haven't connected, try uTP also (if configured).
         // Whoever connects first wins.
-
         let tcp_connect = async {
             if !self.enable_tcp {
                 return Ok(None);
@@ -245,7 +248,9 @@ impl StreamConnector {
                 }
             }
 
-            let conn = sock.connect(addr).await?;
+            let conn = self
+                .with_stat(ConnectionKind::Utp, addr.is_ipv6(), sock.connect(addr))
+                .await?;
 
             debug!(?addr, "connected over uTP");
             Ok(Some(conn))

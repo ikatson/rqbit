@@ -38,6 +38,12 @@ macro_rules! gen_stats {
                     )*
                 }
             }
+
+            $(
+                pub fn $stat_name(&self, value: $stat_ty) {
+                    self.$stat_name.fetch_add(value, std::sync::atomic::Ordering::Relaxed);
+                }
+            )*
         }
 
         #[derive(Debug, serde::Serialize)]
