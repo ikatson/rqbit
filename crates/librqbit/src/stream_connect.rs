@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use anyhow::{Context, bail};
 use librqbit_dualstack_sockets::ConnectOpts;
@@ -109,12 +113,33 @@ impl SocksProxyConfig {
     }
 }
 
+#[derive(Default, Debug, Serialize)]
+pub struct SingleStat {
+    attempts: AtomicU64,
+    success: AtomicU64,
+    errors: AtomicU64,
+}
+
+#[derive(Default, Debug, Serialize)]
+pub struct PerFamilyStats {
+    v4: SingleStat,
+    v6: SingleStat,
+}
+
+#[derive(Default, Debug, Serialize)]
+pub struct ConnectStats {
+    socks: PerFamilyStats,
+    tcp: PerFamilyStats,
+    utp: PerFamilyStats,
+}
+
 #[derive(Debug)]
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     enable_tcp: bool,
     bind_device: Option<BindDevice>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
+    stats: SingleStat,
 }
 
 impl StreamConnector {
@@ -138,6 +163,7 @@ impl StreamConnector {
             enable_tcp: config.enable_tcp,
             utp_socket: config.utp_socket,
             bind_device: config.bind_device,
+            stats: Default::default(),
         })
     }
 
@@ -155,6 +181,10 @@ impl StreamConnector {
             },
         )
         .await
+    }
+
+    pub fn stats(&self) -> &SingleStat {
+        &self.stats
     }
 
     pub async fn connect(
