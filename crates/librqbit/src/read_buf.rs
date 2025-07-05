@@ -2,7 +2,7 @@ use std::{io::IoSliceMut, time::Duration};
 
 use crate::{Error, Result};
 use crate::{
-    peer_connection::with_timeout, type_aliases::BoxAsyncRead,
+    peer_connection::with_timeout, type_aliases::BoxAsyncReadVectored,
     vectored_traits::AsyncReadVectoredExt,
 };
 use futures::TryFutureExt;
@@ -64,7 +64,7 @@ impl ReadBuf {
     // This MUST be run as the first operation on the buffer.
     pub async fn read_handshake(
         &mut self,
-        conn: &mut BoxAsyncRead,
+        conn: &mut BoxAsyncReadVectored,
         timeout: Duration,
     ) -> Result<Handshake> {
         self.len = with_timeout(
@@ -142,7 +142,7 @@ impl ReadBuf {
     /// Read a message into the buffer, try to deserialize it and call the callback on it.
     pub async fn read_message(
         &mut self,
-        conn: &mut BoxAsyncRead,
+        conn: &mut BoxAsyncReadVectored,
         timeout: Duration,
     ) -> Result<Message<'_>> {
         loop {
@@ -202,7 +202,7 @@ mod tests {
     };
     use tokio::io::AsyncWriteExt;
 
-    use crate::{tests::test_util::setup_test_logging, type_aliases::BoxAsyncRead};
+    use crate::{tests::test_util::setup_test_logging, type_aliases::BoxAsyncReadVectored};
 
     use super::{BUFLEN, ReadBuf};
 
@@ -338,7 +338,7 @@ mod tests {
 
         let reader = async {
             let reader = reader.accept().await.unwrap().0.into_split().0;
-            let mut reader: BoxAsyncRead = Box::new(reader);
+            let mut reader: BoxAsyncReadVectored = Box::new(reader);
             let mut rb = ReadBuf::new();
 
             for piece in 0..ITERATIONS {

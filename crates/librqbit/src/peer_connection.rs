@@ -30,7 +30,7 @@ use crate::{
     read_buf::ReadBuf,
     spawn_utils::BlockingSpawner,
     stream_connect::StreamConnector,
-    type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite},
 };
 
 pub trait PeerConnectionHandler {
@@ -101,7 +101,7 @@ struct ManagePeerArgs {
     handshake_supports_extended: bool,
     read_buf: ReadBuf,
     write_buf: Box<[u8; MAX_MSG_LEN]>,
-    read: BoxAsyncRead,
+    read: BoxAsyncReadVectored,
     write: BoxAsyncWrite,
     outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
     have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,

@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::{
     Error, PeerConnectionOptions, Result,
-    type_aliases::{BoxAsyncRead, BoxAsyncWrite},
+    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite},
     vectored_traits::AsyncReadVectoredIntoCompat,
 };
 
@@ -61,7 +61,6 @@ pub(crate) struct SocksProxyConfig {
 #[derive(Default, Debug, Clone)]
 pub(crate) struct StreamConnectorArgs {
     pub enable_tcp: bool,
-    pub tcp_source_port: Option<u16>,
     pub socks_proxy_config: Option<SocksProxyConfig>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub bind_device: Option<BindDevice>,
@@ -115,7 +114,6 @@ pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     enable_tcp: bool,
     bind_device: Option<BindDevice>,
-    tcp_source_port: Option<u16>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
 }
 
@@ -138,7 +136,6 @@ impl StreamConnector {
         Ok(Self {
             proxy_config: config.socks_proxy_config,
             enable_tcp: config.enable_tcp,
-            tcp_source_port: config.tcp_source_port,
             utp_socket: config.utp_socket,
             bind_device: config.bind_device,
         })
@@ -151,7 +148,9 @@ impl StreamConnector {
         librqbit_dualstack_sockets::tcp_connect(
             addr,
             ConnectOpts {
-                source_port: self.tcp_source_port,
+                // Setting source port doesn't work with cloudflare warp on linux
+                // source_port: self.tcp_source_port,
+                source_port: None,
                 bind_device: self.bind_device.as_ref(),
             },
         )
@@ -161,7 +160,7 @@ impl StreamConnector {
     pub async fn connect(
         &self,
         addr: SocketAddr,
-    ) -> Result<(ConnectionKind, BoxAsyncRead, BoxAsyncWrite)> {
+    ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = proxy.connect(addr).await?;
             debug!(?addr, "connected through SOCKS5");
