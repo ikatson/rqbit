@@ -3115,7 +3115,6 @@ dependencies = [
  "httparse",
  "librqbit-core",
  "librqbit-dualstack-sockets",
- "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.1",
  "tokio",
@@ -6153,6 +6152,10 @@ dependencies = [
  "mac",
  "utf-8",
 ]
+
+[[package]]
+name = "test-librqbit"
+version = "0.1.0"
 
 [[package]]
 name = "thin-slice"

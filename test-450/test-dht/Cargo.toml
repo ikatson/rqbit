@@ -1,0 +1,11 @@
+[package]
+name = "test-dht"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+librqbit-dht = { path = "../../crates/dht" }
+tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = "0.3.19"
+
+[workspace]

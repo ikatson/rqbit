@@ -1,0 +1,9 @@
+[package]
+name = "test-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+librqbit-core = { path = "../../crates/librqbit_core" }
+
+[workspace]

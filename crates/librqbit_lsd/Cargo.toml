@@ -8,7 +8,6 @@ anyhow = "1.0.98"
 librqbit-dualstack-sockets = "0.6.10"
 tokio = { version = "1.45.1", features = ["time"] }
 tokio-util = "0.7.15"
-librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }
 librqbit-core = { version = "5", path = "../librqbit_core", default-features = false }
 rand = "0.9.1"
 futures = "0.3.31"

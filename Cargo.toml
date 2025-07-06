@@ -14,7 +14,15 @@ members = [
     "crates/upnp",
     "crates/tracker_comms",
     "crates/upnp-serve",
-    "desktop/src-tauri",
+    "desktop/src-tauri", "test-450/test-librqbit",
+    # "test-450/test-bencode",
+    # "test-450/test-dht",
+    # "test-450/test-core",
+    # "test-450/test-lsd",
+    # "test-450/test-peer-binary-protocol",
+    # "test-450/test-tracker-comms",
+    # "test-450/test-upnp",
+    # "test-450/test-upnp-serve",
 ]
 
 # Everything except desktop

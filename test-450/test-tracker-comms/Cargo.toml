@@ -1,0 +1,12 @@
+[package]
+name = "test-tracker-comms"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = "0.3.19"
+librqbit-tracker-comms = { path = "../../crates/tracker_comms" }
+reqwest = "0.12.22"
+
+[workspace]

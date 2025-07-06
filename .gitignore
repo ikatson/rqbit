@@ -9,3 +9,4 @@
 /GEMINI.md
 /perf.data*
 /flamegraph.svg
+/test-450/**/target
