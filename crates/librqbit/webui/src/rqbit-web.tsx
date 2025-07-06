@@ -119,7 +119,10 @@ export const RqbitWebUI = (props: {
 
         <Footer />
 
-        <LogStreamModal show={logsOpened} onClose={() => setLogsOpened(false)} />
+        <LogStreamModal
+          show={logsOpened}
+          onClose={() => setLogsOpened(false)}
+        />
         <AlertModal />
       </div>
     </ViewModeContext.Provider>

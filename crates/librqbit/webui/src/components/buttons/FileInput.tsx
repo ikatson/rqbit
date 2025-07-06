@@ -30,7 +30,7 @@ export const FileInput = ({ className }: { className?: string }) => {
           },
           (err) => {
             console.error("error uploading file", err);
-          }
+          },
         );
       }
       reset();

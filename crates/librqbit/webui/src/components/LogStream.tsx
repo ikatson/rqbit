@@ -36,7 +36,7 @@ const mergeBuffers = (a1: Uint8Array, a2: Uint8Array): Uint8Array => {
 const streamLogs = (
   url: string,
   addLine: (text: string) => void,
-  setError: (error: ErrorWithLabel | null) => void
+  setError: (error: ErrorWithLabel | null) => void,
 ): (() => void) => {
   const controller = new AbortController();
   const signal = controller.signal;
@@ -116,9 +116,9 @@ const streamLogs = (
             },
           });
           throw e;
-        }
+        },
       ),
-    1000
+    1000,
   );
 
   return () => {
@@ -154,7 +154,7 @@ export const LogStream: React.FC<LogStreamProps> = ({ url, maxLines }) => {
         return newLogLines;
       });
     },
-    [filterRegex.current, maxLines]
+    [filterRegex.current, maxLines],
   );
 
   const addLineRef = useRef(addLine);

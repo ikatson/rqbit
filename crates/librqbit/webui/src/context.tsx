@@ -11,7 +11,7 @@ export const APIContext = createContext<RqbitAPI>({
   getTorrentStats: () => {
     throw new Error("Function not implemented.");
   },
-  
+
   getTorrentPeerStats: () => {
     throw new Error("Function not implemented.");
   },
