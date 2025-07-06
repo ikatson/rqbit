@@ -99,6 +99,10 @@ export const CompactTorrentsList = (props: {
     return null;
   };
 
+  const thClassNames =
+    "px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
+  const thClickableClassNames = `${thClassNames} cursor-pointer`;
+
   return (
     <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7">
       {props.torrents === null ? (
@@ -116,44 +120,44 @@ export const CompactTorrentsList = (props: {
             <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("id")}
                 >
                   ID{getSortIndicator("id")}
                 </th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
+                <th className={thClassNames}></th>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("name")}
                 >
                   Name{getSortIndicator("name")}
                 </th>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("progress")}
                 >
                   Progress{getSortIndicator("progress")}
                 </th>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("speed")}
                 >
                   Speed{getSortIndicator("speed")}
                 </th>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("eta")}
                 >
                   ETA{getSortIndicator("eta")}
                 </th>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("peers")}
                 >
                   Peers{getSortIndicator("peers")}
                 </th>
                 <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  className={thClickableClassNames}
                   onClick={() => handleSort("size")}
                 >
                   Size{getSortIndicator("size")}
