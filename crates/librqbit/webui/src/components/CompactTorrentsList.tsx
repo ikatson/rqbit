@@ -1,4 +1,3 @@
-
 import { TorrentIdWithStats, TorrentDetails } from "../api-types";
 import { Spinner } from "./Spinner";
 import { Torrent } from "./Torrent";
@@ -16,38 +15,15 @@ export const CompactTorrentsList = (props: {
   onTorrentClick: (id: number) => void;
   selectedTorrent: number | null;
 }) => {
-  const [allTorrentDetails, setAllTorrentDetails] = useState<Array<{ id: number, details: TorrentDetails | null }>>([]);
   const [sortColumn, setSortColumn] = useState<string>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const API = useContext(APIContext);
 
-  useEffect(() => {
-    if (!props.torrents) {
-      setAllTorrentDetails([]);
-      return;
-    }
-
-    const fetchAllTorrentDetails = async () => {
-      const data = await Promise.all(props.torrents!.map(async (t) => {
-        const details = await API.getTorrentDetails(t.id);
-        return { id: t.id, details };
-      }));
-      setAllTorrentDetails(data);
-    };
-
-    return loopUntilSuccess(fetchAllTorrentDetails, 5000);
-  }, [props.torrents]);
-
   const sortedTorrentData = useMemo(() => {
     if (!props.torrents) return [];
 
-    const combinedData = props.torrents.map(torrentWithStats => {
-      const details = allTorrentDetails.find(d => d.id === torrentWithStats.id)?.details || null;
-      return { ...torrentWithStats, details };
-    });
-
-    const sortableData = [...combinedData];
+    const sortableData = [...props.torrents];
 
     sortableData.sort((a, b) => {
       let compareValue = 0;
@@ -56,28 +32,35 @@ export const CompactTorrentsList = (props: {
           compareValue = a.id - b.id;
           break;
         case "name":
-          compareValue = (torrentDisplayName(a.details) || "").localeCompare(torrentDisplayName(b.details) || "");
+          compareValue = (a.name || "").localeCompare(b.name || "");
           break;
         case "progress":
           const progressA = a.stats?.progress_bytes || 0;
           const totalA = a.stats?.total_bytes || 1;
           const progressB = b.stats?.progress_bytes || 0;
           const totalB = b.stats?.total_bytes || 1;
-          compareValue = (progressA / totalA) - (progressB / totalB);
+          compareValue = progressA / totalA - progressB / totalB;
           break;
         case "speed":
-          compareValue = (a.stats?.live?.download_speed.mbps || 0) - (b.stats?.live?.download_speed.mbps || 0);
+          compareValue =
+            (a.stats?.live?.download_speed.mbps || 0) -
+            (b.stats?.live?.download_speed.mbps || 0);
           break;
         case "eta":
-          const etaA = a.stats?.live?.time_remaining?.duration?.secs || Infinity;
-          const etaB = b.stats?.live?.time_remaining?.duration?.secs || Infinity;
+          const etaA =
+            a.stats?.live?.time_remaining?.duration?.secs || Infinity;
+          const etaB =
+            b.stats?.live?.time_remaining?.duration?.secs || Infinity;
           compareValue = etaA - etaB;
           break;
         case "peers":
-          compareValue = (a.stats?.live?.snapshot.peer_stats.live || 0) - (b.stats?.live?.snapshot.peer_stats.live || 0);
+          compareValue =
+            (a.stats?.live?.snapshot.peer_stats.live || 0) -
+            (b.stats?.live?.snapshot.peer_stats.live || 0);
           break;
         case "size":
-          compareValue = (a.stats?.total_bytes || 0) - (b.stats?.total_bytes || 0);
+          compareValue =
+            (a.stats?.total_bytes || 0) - (b.stats?.total_bytes || 0);
           break;
         default:
           break;
@@ -85,7 +68,7 @@ export const CompactTorrentsList = (props: {
       return sortDirection === "asc" ? compareValue : -compareValue;
     });
     return sortableData;
-  }, [props.torrents, allTorrentDetails, sortColumn, sortDirection]);
+  }, [props.torrents, sortColumn, sortDirection]);
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {
@@ -119,14 +102,49 @@ export const CompactTorrentsList = (props: {
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("id")}>ID{getSortIndicator("id")}</th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("id")}
+                >
+                  ID{getSortIndicator("id")}
+                </th>
                 <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"></th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("name")}>Name{getSortIndicator("name")}</th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("progress")}>Progress{getSortIndicator("progress")}</th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("speed")}>Speed{getSortIndicator("speed")}</th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("eta")}>ETA{getSortIndicator("eta")}</th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("peers")}>Peers{getSortIndicator("peers")}</th>
-                <th className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort("size")}>Size{getSortIndicator("size")}</th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("name")}
+                >
+                  Name{getSortIndicator("name")}
+                </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("progress")}
+                >
+                  Progress{getSortIndicator("progress")}
+                </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("speed")}
+                >
+                  Speed{getSortIndicator("speed")}
+                </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("eta")}
+                >
+                  ETA{getSortIndicator("eta")}
+                </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("peers")}
+                >
+                  Peers{getSortIndicator("peers")}
+                </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("size")}
+                >
+                  Size{getSortIndicator("size")}
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
