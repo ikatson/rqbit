@@ -10,101 +10,111 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        target: x86_64-pc-windows-msvc
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
 
-    - name: Build test-bencode
-      run: cargo build --release -p librqbit-bencode
-      working-directory: ./test-450/test-bencode
+      - name: Build test-network-interface
+        run: cargo build --release
+        working-directory: ./test-450/test-network-interface
 
-    - name: Upload test-bencode artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-bencode-windows
-        path: ./test-450/test-bencode/target/x86_64-pc-windows-msvc/release/librqbit-bencode.exe
+      - name: Upload test-network-interface artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-network-interface-windows
+          path: ./test-450/test-network-interface/target/release/test-network-interface.exe
 
-    - name: Build test-core
-      run: cargo build --release -p librqbit-core
-      working-directory: ./test-450/test-core
+      - name: Build test-bencode
+        run: cargo build --release
+        working-directory: ./test-450/test-bencode
 
-    - name: Upload test-core artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-core-windows
-        path: ./test-450/test-core/target/x86_64-pc-windows-msvc/release/librqbit-core.exe
+      - name: Upload test-bencode artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-bencode-windows
+          path: ./test-450/test-bencode/target/release/test-bencode.exe
 
-    - name: Build test-dht
-      run: cargo build --release -p librqbit-dht
-      working-directory: ./test-450/test-dht
+      - name: Build test-core
+        run: cargo build --release
+        working-directory: ./test-450/test-core
 
-    - name: Upload test-dht artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-dht-windows
-        path: ./test-450/test-dht/target/x86_64-pc-windows-msvc/release/librqbit-dht.exe
+      - name: Upload test-core artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-core-windows
+          path: ./test-450/test-core/target/release/test-core.exe
 
-    - name: Build test-librqbit
-      run: cargo build --release -p librqbit
-      working-directory: ./test-450/test-librqbit
+      - name: Build test-dht
+        run: cargo build --release
+        working-directory: ./test-450/test-dht
 
-    - name: Upload test-librqbit artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-librqbit-windows
-        path: ./test-450/test-librqbit/target/x86_64-pc-windows-msvc/release/librqbit.exe
+      - name: Upload test-dht artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-dht-windows
+          path: ./test-450/test-dht/target/release/test-dht.exe
 
-    - name: Build test-lsd
-      run: cargo build --release -p librqbit-lsd
-      working-directory: ./test-450/test-lsd
+      - name: Build test-librqbit
+        run: cargo build --release
+        working-directory: ./test-450/test-librqbit
 
-    - name: Upload test-lsd artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-lsd-windows
-        path: ./test-450/test-lsd/target/x86_64-pc-windows-msvc/release/librqbit-lsd.exe
+      - name: Upload test-librqbit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-librqbit-windows
+          path: ./test-450/test-librqbit/target/release/test-librqbit.exe
 
-    - name: Build test-peer-binary-protocol
-      run: cargo build --release -p librqbit-peer-protocol
-      working-directory: ./test-450/test-peer-binary-protocol
+      - name: Build test-lsd
+        run: cargo build --release
+        working-directory: ./test-450/test-lsd
 
-    - name: Upload test-peer-binary-protocol artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-peer-binary-protocol-windows
-        path: ./test-450/test-peer-binary-protocol/target/x86_64-pc-windows-msvc/release/librqbit-peer-protocol.exe
+      - name: Upload test-lsd artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-lsd-windows
+          path: ./test-450/test-lsd/target/release/test-lsd.exe
 
-    - name: Build test-tracker-comms
-      run: cargo build --release -p librqbit-tracker-comms
-      working-directory: ./test-450/test-tracker-comms
+      - name: Build test-peer-binary-protocol
+        run: cargo build --release
+        working-directory: ./test-450/test-peer-binary-protocol
 
-    - name: Upload test-tracker-comms artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-tracker-comms-windows
-        path: ./test-450/test-tracker-comms/target/x86_64-pc-windows-msvc/release/librqbit-tracker-comms.exe
+      - name: Upload test-peer-binary-protocol artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-peer-binary-protocol-windows
+          path: ./test-450/test-peer-binary-protocol/target/release/test-peer-binary-protocoll.exe
 
-    - name: Build test-upnp
-      run: cargo build --release -p librqbit-upnp
-      working-directory: ./test-450/test-upnp
+      - name: Build test-tracker-comms
+        run: cargo build --release
+        working-directory: ./test-450/test-tracker-comms
 
-    - name: Upload test-upnp artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-upnp-windows
-        path: ./test-450/test-upnp/target/x86_64-pc-windows-msvc/release/librqbit-upnp.exe
+      - name: Upload test-tracker-comms artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-tracker-comms-windows
+          path: ./test-450/test-tracker-comms/target/release/test-tracker-comms.exe
 
-    - name: Build test-upnp-serve
-      run: cargo build --release -p librqbit-upnp-serve
-      working-directory: ./test-450/test-upnp-serve
+      - name: Build test-upnp
+        run: cargo build --release
+        working-directory: ./test-450/test-upnp
 
-    - name: Upload test-upnp-serve artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-upnp-serve-windows
-        path: ./test-450/test-upnp-serve/target/x86_64-pc-windows-msvc/release/librqbit-upnp-serve.exe
+      - name: Upload test-upnp artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-upnp-windows
+          path: ./test-450/test-upnp/target/release/test-upnp.exe
+
+      - name: Build test-upnp-serve
+        run: cargo build --release
+        working-directory: ./test-450/test-upnp-serve
+
+      - name: Upload test-upnp-serve artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-upnp-serve-windows
+          path: ./test-450/test-upnp-serve/target/release/test-upnp-serve.exe

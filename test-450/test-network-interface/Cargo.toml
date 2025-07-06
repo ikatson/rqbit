@@ -1,0 +1,9 @@
+[package]
+name = "test-network-interface"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+network-interface = "2.0.1"
+
+[workspace]
