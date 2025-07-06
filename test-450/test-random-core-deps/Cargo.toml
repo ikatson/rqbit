@@ -1,0 +1,10 @@
+[package]
+name = "test-random-core-deps"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crypto-hash = "0.3.4"
+url = "2.5.4"
+
+[workspace]
