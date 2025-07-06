@@ -76,17 +76,14 @@ export const CompactTorrentsList = (props: {
     return sortableData;
   }, [props.torrents, sortColumn, sortDirectionIsAsc]);
 
-  const handleSort = useCallback(
-    (newColumn: SortColumn) => {
-      if (sortColumn === newColumn) {
-        setSortDirectionIsAsc(!sortDirectionIsAsc);
-      } else {
-        setSortColumn(newColumn);
-        setSortDirectionIsAsc(["name", "id"].indexOf(sortColumn) !== -1);
-      }
-    },
-    [sortColumn],
-  );
+  const handleSort = (newColumn: SortColumn) => {
+    if (sortColumn === newColumn) {
+      setSortDirectionIsAsc(!sortDirectionIsAsc);
+    } else {
+      setSortColumn(newColumn);
+      setSortDirectionIsAsc(["name", "id"].indexOf(newColumn) !== -1);
+    }
+  };
 
   const getSortIndicator = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -100,7 +97,7 @@ export const CompactTorrentsList = (props: {
   };
 
   const thClassNames =
-    "px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
+    "px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap";
   const thClickableClassNames = `${thClassNames} cursor-pointer`;
 
   return (
