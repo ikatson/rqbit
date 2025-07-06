@@ -15,7 +15,16 @@ export const CompactTorrentsList = (props: {
   onTorrentClick: (id: number) => void;
   selectedTorrent: number | null;
 }) => {
-  const [sortColumn, setSortColumn] = useState<string>("name");
+  type SortColumn =
+    | "id"
+    | "name"
+    | "progress"
+    | "speed"
+    | "eta"
+    | "peers"
+    | "size";
+
+  const [sortColumn, setSortColumn] = useState<SortColumn>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
   const API = useContext(APIContext);
@@ -26,51 +35,47 @@ export const CompactTorrentsList = (props: {
     const sortableData = [...props.torrents];
 
     sortableData.sort((a, b) => {
+      const getSortValue = (
+        torrent: TorrentIdWithStats,
+        column: SortColumn,
+      ) => {
+        switch (column) {
+          case "id":
+            return torrent.id;
+          case "name":
+            return torrent.name || "";
+          case "progress":
+            const progress = torrent.stats?.progress_bytes || 0;
+            const total = torrent.stats?.total_bytes || 1;
+            return progress / total;
+          case "speed":
+            return torrent.stats?.live?.download_speed.mbps || 0;
+          case "eta":
+            return (
+              torrent.stats?.live?.time_remaining?.duration?.secs || Infinity
+            );
+          case "peers":
+            return torrent.stats?.live?.snapshot.peer_stats.live || 0;
+          case "size":
+            return torrent.stats?.total_bytes || 0;
+        }
+      };
+
+      const valueA = getSortValue(a, sortColumn);
+      const valueB = getSortValue(b, sortColumn);
+
       let compareValue = 0;
-      switch (sortColumn) {
-        case "id":
-          compareValue = a.id - b.id;
-          break;
-        case "name":
-          compareValue = (a.name || "").localeCompare(b.name || "");
-          break;
-        case "progress":
-          const progressA = a.stats?.progress_bytes || 0;
-          const totalA = a.stats?.total_bytes || 1;
-          const progressB = b.stats?.progress_bytes || 0;
-          const totalB = b.stats?.total_bytes || 1;
-          compareValue = progressA / totalA - progressB / totalB;
-          break;
-        case "speed":
-          compareValue =
-            (a.stats?.live?.download_speed.mbps || 0) -
-            (b.stats?.live?.download_speed.mbps || 0);
-          break;
-        case "eta":
-          const etaA =
-            a.stats?.live?.time_remaining?.duration?.secs || Infinity;
-          const etaB =
-            b.stats?.live?.time_remaining?.duration?.secs || Infinity;
-          compareValue = etaA - etaB;
-          break;
-        case "peers":
-          compareValue =
-            (a.stats?.live?.snapshot.peer_stats.live || 0) -
-            (b.stats?.live?.snapshot.peer_stats.live || 0);
-          break;
-        case "size":
-          compareValue =
-            (a.stats?.total_bytes || 0) - (b.stats?.total_bytes || 0);
-          break;
-        default:
-          break;
+      if (typeof valueA === "string" && typeof valueB === "string") {
+        compareValue = valueA.localeCompare(valueB);
+      } else if (typeof valueA === "number" && typeof valueB === "number") {
+        compareValue = valueA - valueB;
       }
       return sortDirection === "asc" ? compareValue : -compareValue;
     });
     return sortableData;
   }, [props.torrents, sortColumn, sortDirection]);
 
-  const handleSort = (column: string) => {
+  const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
@@ -79,7 +84,7 @@ export const CompactTorrentsList = (props: {
     }
   };
 
-  const getSortIndicator = (column: string) => {
+  const getSortIndicator = (column: SortColumn) => {
     if (sortColumn === column) {
       return sortDirection === "asc" ? " 🔼" : " 🔽";
     }
