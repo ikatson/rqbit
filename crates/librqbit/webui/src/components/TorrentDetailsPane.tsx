@@ -53,7 +53,7 @@ export const TorrentDetailsPane: React.FC<{
             selectedFiles={new Set(details.files.map((_, i) => i))}
             setSelectedFiles={() => {}}
             disabled={false}
-            allowStream={false}
+            allowStream={true}
             showProgressBar={true}
           />
         )}
