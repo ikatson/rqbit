@@ -1,13 +1,14 @@
 import { TorrentIdWithStats, TorrentDetails } from "../api-types";
 import { Spinner } from "./Spinner";
 import { Torrent } from "./Torrent";
-import { useContext, useEffect, useState, useMemo } from "react";
+import { useContext, useEffect, useState, useMemo, useCallback } from "react";
 import { APIContext } from "../context";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
 import { torrentDisplayName } from "../helper/getTorrentDisplayName";
 import { formatBytes } from "../helper/formatBytes";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { Speed } from "./Speed";
+import { FaArrowUp, FaArrowDown } from "react-icons/fa";
 
 export const CompactTorrentsList = (props: {
   torrents: Array<TorrentIdWithStats> | null;
@@ -25,7 +26,7 @@ export const CompactTorrentsList = (props: {
     | "size";
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("name");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [sortDirectionIsAsc, setSortDirectionIsAsc] = useState<boolean>(true);
 
   const API = useContext(APIContext);
 
@@ -70,25 +71,32 @@ export const CompactTorrentsList = (props: {
       } else if (typeof valueA === "number" && typeof valueB === "number") {
         compareValue = valueA - valueB;
       }
-      return sortDirection === "asc" ? compareValue : -compareValue;
+      return sortDirectionIsAsc ? compareValue : -compareValue;
     });
     return sortableData;
-  }, [props.torrents, sortColumn, sortDirection]);
+  }, [props.torrents, sortColumn, sortDirectionIsAsc]);
 
-  const handleSort = (column: SortColumn) => {
-    if (sortColumn === column) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setSortColumn(column);
-      setSortDirection("asc"); // Default to ascending when changing column
-    }
-  };
+  const handleSort = useCallback(
+    (newColumn: SortColumn) => {
+      if (sortColumn === newColumn) {
+        setSortDirectionIsAsc(!sortDirectionIsAsc);
+      } else {
+        setSortColumn(newColumn);
+        setSortDirectionIsAsc(["name", "id"].indexOf(sortColumn) !== -1);
+      }
+    },
+    [sortColumn],
+  );
 
   const getSortIndicator = (column: SortColumn) => {
     if (sortColumn === column) {
-      return sortDirection === "asc" ? " 🔼" : " 🔽";
+      return sortDirectionIsAsc ? (
+        <FaArrowUp className="inline ml-1" />
+      ) : (
+        <FaArrowDown className="inline ml-1" />
+      );
     }
-    return "";
+    return null;
   };
 
   return (
