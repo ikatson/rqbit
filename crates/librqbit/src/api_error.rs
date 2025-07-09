@@ -101,8 +101,12 @@ pub enum ApiErrorKind {
     Unauthorized,
     #[error("{0}")]
     Text(&'static str),
+
+    // TODO: consider just boxing all other errors into anyhow
     #[error(transparent)]
     OtherAnyhow(#[from] anyhow::Error),
+    #[error(transparent)]
+    OtherCore(#[from] librqbit_core::Error),
     #[error(transparent)]
     OtherError(#[from] crate::Error),
 }
@@ -134,6 +138,7 @@ impl Serialize for ApiError {
                 ApiErrorKind::Unauthorized => "unathorized",
                 ApiErrorKind::OtherAnyhow(_) => "internal_error",
                 ApiErrorKind::OtherError(_) => "internal_error",
+                ApiErrorKind::OtherCore(_) => "internal_error",
                 ApiErrorKind::Text(_) => "internal_error",
             },
             human_readable: format!("{self}"),
@@ -163,6 +168,15 @@ impl From<crate::Error> for ApiError {
         Self {
             status: Some(StatusCode::INTERNAL_SERVER_ERROR),
             kind: ApiErrorKind::OtherError(e),
+        }
+    }
+}
+
+impl From<librqbit_core::Error> for ApiError {
+    fn from(e: librqbit_core::Error) -> Self {
+        Self {
+            status: Some(StatusCode::INTERNAL_SERVER_ERROR),
+            kind: ApiErrorKind::OtherCore(e),
         }
     }
 }

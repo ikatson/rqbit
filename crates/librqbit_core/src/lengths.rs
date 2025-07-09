@@ -1,6 +1,4 @@
-use anyhow::Context;
-
-use crate::constants::CHUNK_SIZE;
+use crate::{Error, constants::CHUNK_SIZE};
 
 pub fn last_element_size<T>(total_length: T, piece_length: T) -> T
 where
@@ -75,14 +73,14 @@ impl ValidPieceIndex {
 impl Lengths {
     pub fn from_torrent<ByteBuf: AsRef<[u8]>>(
         torrent: &crate::torrent_metainfo::TorrentMetaV1Info<ByteBuf>,
-    ) -> anyhow::Result<Lengths> {
+    ) -> crate::Result<Lengths> {
         let total_length = torrent.iter_file_lengths()?.sum();
         Lengths::new(total_length, torrent.piece_length)
     }
 
-    pub fn new(total_length: u64, piece_length: u32) -> anyhow::Result<Self> {
+    pub fn new(total_length: u64, piece_length: u32) -> crate::Result<Self> {
         if total_length == 0 {
-            anyhow::bail!("torrent with 0 length is useless")
+            return Err(Error::BadTorrentZeroLength);
         }
         let total_pieces = total_length.div_ceil(piece_length as u64) as u32;
         Ok(Self {
@@ -112,9 +110,9 @@ impl Lengths {
         }
         Some(ValidPieceIndex(index))
     }
-    pub fn try_validate_piece_index(&self, index: u32) -> anyhow::Result<ValidPieceIndex> {
+    pub fn try_validate_piece_index(&self, index: u32) -> crate::Result<ValidPieceIndex> {
         self.validate_piece_index(index)
-            .with_context(|| format!("invalid piece index {index}"))
+            .ok_or(Error::InvalidPieceInex(index))
     }
     pub const fn default_piece_length(&self) -> u32 {
         self.piece_length

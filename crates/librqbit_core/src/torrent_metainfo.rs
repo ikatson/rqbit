@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, iter::once, path::PathBuf};
 use tracing::debug;
 
-use crate::{hash_id::Id20, lengths::Lengths};
+use crate::{Error, hash_id::Id20, lengths::Lengths};
 
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteBufOwned>;
@@ -22,7 +22,9 @@ pub struct ParsedTorrent<BufType> {
 
 /// Parse torrent metainfo from bytes (includes info_hash).
 #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
-pub fn torrent_from_bytes<'de>(buf: &'de [u8]) -> anyhow::Result<TorrentMetaV1<ByteBuf<'de>>> {
+pub fn torrent_from_bytes<'de>(
+    buf: &'de [u8],
+) -> Result<TorrentMetaV1<ByteBuf<'de>>, bencode::DeserializeError> {
     let mut t: TorrentMetaV1<ByteBuf<'_>> = bencode::from_bytes(buf)
         .inspect_err(|e| tracing::trace!("error deserializing torrent: {e:#}"))
         .map_err(|e| e.into_kind())?;
@@ -134,14 +136,14 @@ where
     BufType: AsRef<[u8]>,
 {
     /// Convert path components into a vector, lossy utf-8 decode + path traversal detection.
-    pub fn to_vec_lossy(&self) -> anyhow::Result<Vec<String>> {
+    pub fn to_vec_lossy(&self) -> crate::Result<Vec<String>> {
         self.iter_components_lossy()
             .map(|c| c.map(|s| s.into_owned()))
             .collect()
     }
 
     /// Convert path components into a string, lossy utf-8 decode + path traversal detection.
-    pub fn to_string_lossy(&self) -> anyhow::Result<String> {
+    pub fn to_string_lossy(&self) -> crate::Result<String> {
         let mut buf = String::new();
         for (idx, bit) in self.iter_components_lossy().enumerate() {
             let bit = bit?;
@@ -154,7 +156,7 @@ where
     }
 
     /// Convert path components into PathBuf, lossy utf-8 decode + path traversal detection.
-    pub fn to_pathbuf_lossy(&self) -> anyhow::Result<PathBuf> {
+    pub fn to_pathbuf_lossy(&self) -> crate::Result<PathBuf> {
         let mut buf = PathBuf::new();
         for bit in self.iter_components_lossy() {
             let bit = bit?;
@@ -166,7 +168,7 @@ where
     /// Iterate path components while validating path traversal, lossy decode utf-8 names.
     pub fn iter_components_lossy(
         &self,
-    ) -> impl Iterator<Item = anyhow::Result<Cow<'a, str>>> + use<'a, BufType> {
+    ) -> impl Iterator<Item = crate::Result<Cow<'a, str>>> + use<'a, BufType> {
         self.iter_components_bytes()
             .map(|part| part.map(String::from_utf8_lossy))
     }
@@ -174,14 +176,14 @@ where
     /// Iterate path components while validating path traversal.
     pub fn iter_components_bytes(
         &self,
-    ) -> impl Iterator<Item = anyhow::Result<&'a [u8]>> + use<'a, BufType> {
+    ) -> impl Iterator<Item = crate::Result<&'a [u8]>> + use<'a, BufType> {
         self.iter_components_raw().map(|bit| {
             if bit == b".." {
-                anyhow::bail!("path traversal detected, \"..\" in filename");
+                return Err(Error::BadTorrentPathTraversal);
             }
             use memchr::memchr;
             if memchr(b'/', bit).is_some() || memchr(b'\\', bit).is_some() {
-                anyhow::bail!("suspicios separator in filename");
+                return Err(Error::BadTorrentSeparatorInName);
             }
             Ok(bit)
         })
@@ -293,7 +295,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     #[inline(never)]
     pub fn iter_file_details(
         &self,
-    ) -> anyhow::Result<impl Iterator<Item = FileDetails<'_, BufType>>> {
+    ) -> crate::Result<impl Iterator<Item = FileDetails<'_, BufType>>> {
         match (self.length, self.files.as_ref()) {
             // Single-file
             (Some(length), None) => Ok(Either::Left(once(FileDetails {
@@ -307,7 +309,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             // Multi-file
             (None, Some(files)) => {
                 if files.is_empty() {
-                    anyhow::bail!("expected multi-file torrent to have at least one file")
+                    return Err(Error::BadTorrentMultiFileEmpty);
                 }
                 Ok(Either::Right(files.iter().map(|f| FileDetails {
                     filename: FileIteratorName::Tree(&f.path),
@@ -317,11 +319,11 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
                     symlink_path: f.symlink_path.as_deref(),
                 })))
             }
-            _ => anyhow::bail!("torrent can't be both in single and multi-file mode"),
+            _ => Err(Error::BadTorrentBothSingleAndMultiFile),
         }
     }
 
-    pub fn iter_file_lengths(&self) -> anyhow::Result<impl Iterator<Item = u64> + '_> {
+    pub fn iter_file_lengths(&self) -> crate::Result<impl Iterator<Item = u64> + '_> {
         Ok(self.iter_file_details()?.map(|d| d.len))
     }
 
@@ -330,7 +332,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn iter_file_details_ext<'a>(
         &'a self,
         lengths: &'a Lengths,
-    ) -> anyhow::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
+    ) -> crate::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
         Ok(self.iter_file_details()?.scan(0u64, |acc_offset, details| {
             let offset = *acc_offset;
             *acc_offset += details.len;
@@ -362,19 +364,6 @@ pub struct TorrentMetaV1File<BufType> {
         skip_serializing_if = "Option::is_none"
     )]
     pub symlink_path: Option<Vec<BufType>>,
-}
-
-impl<BufType> TorrentMetaV1File<BufType>
-where
-    BufType: AsRef<[u8]>,
-{
-    pub fn full_path(&self, parent: &mut PathBuf) -> anyhow::Result<()> {
-        for p in self.path.iter() {
-            let bit = std::str::from_utf8(p.as_ref())?;
-            parent.push(bit);
-        }
-        Ok(())
-    }
 }
 
 impl<BufType> CloneToOwned for TorrentMetaV1File<BufType>

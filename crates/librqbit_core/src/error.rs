@@ -1,0 +1,15 @@
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("expected multi-file torrent to have at least one file")]
+    BadTorrentMultiFileEmpty,
+    #[error("torrent can't be both in single and multi-file mode")]
+    BadTorrentBothSingleAndMultiFile,
+    #[error("path traversal detected, \"..\" in filename")]
+    BadTorrentPathTraversal,
+    #[error("suspicios separator in filename")]
+    BadTorrentSeparatorInName,
+    #[error("torrent with 0 length is useless")]
+    BadTorrentZeroLength,
+    #[error("invalid piece index {0}")]
+    InvalidPieceInex(u32),
+}
