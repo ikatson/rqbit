@@ -178,7 +178,7 @@ fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
     for (idx, fd) in torrent.iter_file_details()?.enumerate() {
         let full_path = fd
             .filename
-            .to_pathbuf()
+            .to_pathbuf_lossy()
             .with_context(|| format!("filename of file {idx} is not valid utf8"))?;
         if filename_re.is_match(full_path.to_str().unwrap()) {
             only_files.push(idx);
@@ -1082,7 +1082,7 @@ impl Session {
     ) -> anyhow::Result<Option<PathBuf>> {
         let files = info
             .iter_file_details()?
-            .map(|fd| Ok((fd.filename.to_pathbuf()?, fd.len)))
+            .map(|fd| Ok((fd.filename.to_pathbuf_lossy()?, fd.len)))
             .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
         if files.len() < 2 {
             return Ok(None);

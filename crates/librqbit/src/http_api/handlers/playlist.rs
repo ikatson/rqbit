@@ -23,7 +23,7 @@ fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)
         .iter_file_details()?
         .enumerate()
         .filter_map(|(file_idx, file_details)| {
-            let filename = file_details.filename.to_vec().ok()?.join("/");
+            let filename = file_details.filename.to_vec_lossy().ok()?.join("/");
             let is_playable = mime_guess::from_path(&filename)
                 .first()
                 .map(|mime| {

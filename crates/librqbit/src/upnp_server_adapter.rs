@@ -69,7 +69,7 @@ impl TorrentFileTreeNode {
                     .iter_file_details()
                     .ok()
                     .and_then(|mut it| it.nth(fid))
-                    .and_then(|fd| fd.filename.to_vec().ok())
+                    .and_then(|fd| fd.filename.to_vec_lossy().ok())
                     .map(|components| {
                         components
                             .into_iter()
@@ -108,7 +108,7 @@ fn is_single_file_at_root(info: &TorrentMetaV1Info<ByteBufOwned>) -> bool {
     info.iter_file_details()
         .into_iter()
         .flatten()
-        .flat_map(move |fd| fd.filename.iter_components())
+        .flat_map(move |fd| fd.filename.iter_components_lossy())
         .nth(1)
         .is_none()
 }
@@ -121,11 +121,11 @@ impl TorrentFileTree {
                 .next()
                 .context("bug")?
                 .filename
-                .iter_components()
+                .iter_components_lossy()
                 .last()
                 .context("bug")??;
             let root_node = TorrentFileTreeNode {
-                title: filename.to_owned(),
+                title: filename.into_owned(),
                 parent_id: None,
                 children: vec![],
                 real_torrent_file_id: Some(0),
@@ -151,7 +151,7 @@ impl TorrentFileTree {
         let mut name_cache = HashMap::new();
 
         for (fid, fd) in info.iter_file_details()?.enumerate() {
-            let components = match fd.filename.to_vec() {
+            let components = match fd.filename.to_vec_lossy() {
                 Ok(v) => v,
                 Err(_) => continue,
             };

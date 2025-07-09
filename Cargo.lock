@@ -3048,6 +3048,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "librqbit-sha1-wrapper",
+ "memchr",
  "parking_lot",
  "rand 0.9.1",
  "serde",

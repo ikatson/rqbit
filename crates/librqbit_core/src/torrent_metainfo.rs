@@ -1,4 +1,3 @@
-use anyhow::Context;
 use bencode::WithRawBytes;
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
@@ -123,7 +122,7 @@ where
     BufType: AsRef<[u8]>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.to_string() {
+        match self.to_string_lossy() {
             Ok(s) => write!(f, "{s:?}"),
             Err(e) => write!(f, "<{e:?}>"),
         }
@@ -134,50 +133,67 @@ impl<'a, BufType> FileIteratorName<'a, BufType>
 where
     BufType: AsRef<[u8]>,
 {
-    pub fn to_vec(&self) -> anyhow::Result<Vec<String>> {
-        self.iter_components()
-            .map(|c| c.map(|s| s.to_owned()))
+    /// Convert path components into a vector, lossy utf-8 decode + path traversal detection.
+    pub fn to_vec_lossy(&self) -> anyhow::Result<Vec<String>> {
+        self.iter_components_lossy()
+            .map(|c| c.map(|s| s.into_owned()))
             .collect()
     }
 
-    pub fn to_string(&self) -> anyhow::Result<String> {
+    /// Convert path components into a string, lossy utf-8 decode + path traversal detection.
+    pub fn to_string_lossy(&self) -> anyhow::Result<String> {
         let mut buf = String::new();
-        for (idx, bit) in self.iter_components().enumerate() {
+        for (idx, bit) in self.iter_components_lossy().enumerate() {
             let bit = bit?;
             if idx > 0 {
                 buf.push(std::path::MAIN_SEPARATOR);
             }
-            buf.push_str(bit)
+            buf.push_str(&bit)
         }
         Ok(buf)
     }
 
-    pub fn to_pathbuf(&self) -> anyhow::Result<PathBuf> {
+    /// Convert path components into PathBuf, lossy utf-8 decode + path traversal detection.
+    pub fn to_pathbuf_lossy(&self) -> anyhow::Result<PathBuf> {
         let mut buf = PathBuf::new();
-        for bit in self.iter_components() {
+        for bit in self.iter_components_lossy() {
             let bit = bit?;
-            buf.push(bit)
+            buf.push(&*bit)
         }
         Ok(buf)
     }
-    pub fn iter_components(
+
+    /// Iterate path components while validating path traversal, lossy decode utf-8 names.
+    pub fn iter_components_lossy(
         &self,
-    ) -> impl Iterator<Item = anyhow::Result<&'a str>> + use<'a, BufType> {
+    ) -> impl Iterator<Item = anyhow::Result<Cow<'a, str>>> + use<'a, BufType> {
+        self.iter_components_bytes()
+            .map(|part| part.map(String::from_utf8_lossy))
+    }
+
+    /// Iterate path components while validating path traversal.
+    pub fn iter_components_bytes(
+        &self,
+    ) -> impl Iterator<Item = anyhow::Result<&'a [u8]>> + use<'a, BufType> {
+        self.iter_components_raw().map(|bit| {
+            if bit == b".." {
+                anyhow::bail!("path traversal detected, \"..\" in filename");
+            }
+            use memchr::memchr;
+            if memchr(b'/', bit).is_some() || memchr(b'\\', bit).is_some() {
+                anyhow::bail!("suspicios separator in filename");
+            }
+            Ok(bit)
+        })
+    }
+
+    fn iter_components_raw(&self) -> impl Iterator<Item = &'a [u8]> + use<'a, BufType> {
         let it = match self {
-            FileIteratorName::Single(None) => return Either::Left(once(Ok("torrent-content"))),
+            FileIteratorName::Single(None) => return Either::Left(once(&b"torrent-content"[..])),
             FileIteratorName::Single(Some(name)) => Either::Left(once((*name).as_ref())),
             FileIteratorName::Tree(t) => Either::Right(t.iter().map(|bb| bb.as_ref())),
         };
-        Either::Right(it.map(|part: &'a [u8]| {
-            let bit = std::str::from_utf8(part).context("cannot decode filename bit as UTF-8")?;
-            if bit == ".." {
-                anyhow::bail!("path traversal detected, \"..\" in filename bit {:?}", bit);
-            }
-            if bit.contains('/') || bit.contains('\\') {
-                anyhow::bail!("suspicios separator in filename bit {:?}", bit);
-            }
-            Ok(bit)
-        }))
+        Either::Right(it)
     }
 }
 

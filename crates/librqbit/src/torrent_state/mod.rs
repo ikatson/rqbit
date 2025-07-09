@@ -154,7 +154,7 @@ impl TorrentMetadata {
             .iter_file_details_ext(&lengths)?
             .map(|fd| {
                 Ok::<_, anyhow::Error>(FileInfo {
-                    relative_filename: fd.details.filename.to_pathbuf()?,
+                    relative_filename: fd.details.filename.to_pathbuf_lossy()?,
                     offset_in_torrent: fd.offset,
                     piece_range: fd.pieces,
                     len: fd.details.len,
@@ -162,6 +162,18 @@ impl TorrentMetadata {
                 })
             })
             .collect::<anyhow::Result<Vec<FileInfo>>>()?;
+
+        // Ensure the torrent contains only unique filenames.
+        let all_filenames = file_infos
+            .iter()
+            .map(|fi| &fi.relative_filename)
+            .collect::<HashSet<_>>();
+        if all_filenames.len() < file_infos.len() {
+            anyhow::bail!(
+                "error validating torrent: duplicate filenames, possibly because of unknown filename encoding"
+            )
+        }
+
         Ok(Self {
             info,
             torrent_bytes,

@@ -555,7 +555,7 @@ fn make_torrent_details(
             .context("error iterating filenames and lengths")?
             .enumerate()
             .map(|(idx, d)| {
-                let name = match d.filename.to_string() {
+                let name = match d.filename.to_string_lossy() {
                     Ok(s) => s,
                     Err(err) => {
                         warn!(
@@ -568,7 +568,7 @@ fn make_torrent_details(
                         "<INVALID NAME>".to_string()
                     }
                 };
-                let components = d.filename.to_vec().unwrap_or_default();
+                let components = d.filename.to_vec_lossy().unwrap_or_default();
                 let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
                 TorrentDetailsResponseFile {
                     name,
@@ -602,10 +602,10 @@ fn torrent_file_mime_type(
         .nth(file_idx)
         .and_then(|d| {
             d.filename
-                .iter_components()
+                .iter_components_lossy()
                 .last()
                 .and_then(|r| r.ok())
-                .and_then(|s| mime_guess::from_path(s).first_raw())
+                .and_then(|s| mime_guess::from_path(&*s).first_raw())
         })
         .ok_or((
             StatusCode::INTERNAL_SERVER_ERROR,
