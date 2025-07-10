@@ -2,6 +2,7 @@ use bencode::WithRawBytes;
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
+use encoding_rs::Encoding;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, iter::once, path::PathBuf};
@@ -114,7 +115,13 @@ pub struct TorrentMetaV1Info<BufType> {
 }
 
 #[derive(Clone, Copy)]
-pub enum FileIteratorName<'a, BufType> {
+pub struct FileIteratorName<'a, BufType> {
+    encoding: &'static Encoding,
+    data: FileIteratorNameData<'a, BufType>,
+}
+
+#[derive(Clone, Copy)]
+pub enum FileIteratorNameData<'a, BufType> {
     Single(Option<&'a BufType>),
     Tree(&'a [BufType]),
 }
@@ -167,10 +174,10 @@ where
 
     /// Iterate path components while validating path traversal, lossy decode utf-8 names.
     pub fn iter_components_lossy(
-        &self,
+        &'a self,
     ) -> impl Iterator<Item = crate::Result<Cow<'a, str>>> + use<'a, BufType> {
         self.iter_components_bytes()
-            .map(|part| part.map(String::from_utf8_lossy))
+            .map(move |part| Ok(self.decode(part?)))
     }
 
     /// Iterate path components while validating path traversal.
@@ -189,11 +196,17 @@ where
         })
     }
 
+    fn decode(&self, data: &'a [u8]) -> Cow<'a, str> {
+        self.encoding.decode(data).0
+    }
+
     fn iter_components_raw(&self) -> impl Iterator<Item = &'a [u8]> + use<'a, BufType> {
-        let it = match self {
-            FileIteratorName::Single(None) => return Either::Left(once(&b"torrent-content"[..])),
-            FileIteratorName::Single(Some(name)) => Either::Left(once((*name).as_ref())),
-            FileIteratorName::Tree(t) => Either::Right(t.iter().map(|bb| bb.as_ref())),
+        let it = match self.data {
+            FileIteratorNameData::Single(None) => {
+                return Either::Left(once(&b"torrent-content"[..]));
+            }
+            FileIteratorNameData::Single(Some(name)) => Either::Left(once((*name).as_ref())),
+            FileIteratorNameData::Tree(t) => Either::Right(t.iter().map(|bb| bb.as_ref())),
         };
         Either::Right(it)
     }
@@ -292,14 +305,33 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             .unwrap_or_else(|| default().into())
     }
 
+    pub fn detect_encoding(&self) -> &'static Encoding {
+        let mut encdetect = chardetng::EncodingDetector::new();
+        if let Some(name) = self.name.as_ref() {
+            encdetect.feed(name.as_ref(), false);
+        }
+
+        for file in self.files.iter().flat_map(|f| f.iter()) {
+            for component in file.path.iter() {
+                encdetect.feed(component.as_ref(), false);
+            }
+        }
+
+        encdetect.guess(None, true)
+    }
+
     #[inline(never)]
     pub fn iter_file_details(
         &self,
+        encoding: &'static Encoding,
     ) -> crate::Result<impl Iterator<Item = FileDetails<'_, BufType>>> {
         match (self.length, self.files.as_ref()) {
             // Single-file
             (Some(length), None) => Ok(Either::Left(once(FileDetails {
-                filename: FileIteratorName::Single(self.name.as_ref()),
+                filename: FileIteratorName {
+                    encoding,
+                    data: FileIteratorNameData::Single(self.name.as_ref()),
+                },
                 len: length,
                 attr: self.attr.as_ref(),
                 sha1: self.sha1.as_ref(),
@@ -311,8 +343,11 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
                 if files.is_empty() {
                     return Err(Error::BadTorrentMultiFileEmpty);
                 }
-                Ok(Either::Right(files.iter().map(|f| FileDetails {
-                    filename: FileIteratorName::Tree(&f.path),
+                Ok(Either::Right(files.iter().map(move |f| FileDetails {
+                    filename: FileIteratorName {
+                        encoding,
+                        data: FileIteratorNameData::Tree(&f.path),
+                    },
                     len: f.length,
                     attr: f.attr.as_ref(),
                     sha1: f.sha1.as_ref(),
@@ -324,7 +359,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     }
 
     pub fn iter_file_lengths(&self) -> crate::Result<impl Iterator<Item = u64> + '_> {
-        Ok(self.iter_file_details()?.map(|d| d.len))
+        Ok(self.iter_file_details(encoding_rs::UTF_8)?.map(|d| d.len))
     }
 
     // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
@@ -332,16 +367,19 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     pub fn iter_file_details_ext<'a>(
         &'a self,
         lengths: &'a Lengths,
+        encoding: &'static Encoding,
     ) -> crate::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
-        Ok(self.iter_file_details()?.scan(0u64, |acc_offset, details| {
-            let offset = *acc_offset;
-            *acc_offset += details.len;
-            Some(FileDetailsExt {
-                pieces: lengths.iter_pieces_within_offset(offset, details.len),
-                details,
-                offset,
-            })
-        }))
+        Ok(self
+            .iter_file_details(encoding)?
+            .scan(0u64, |acc_offset, details| {
+                let offset = *acc_offset;
+                *acc_offset += details.len;
+                Some(FileDetailsExt {
+                    pieces: lengths.iter_pieces_within_offset(offset, details.len),
+                    details,
+                    offset,
+                })
+            }))
     }
 }
 
