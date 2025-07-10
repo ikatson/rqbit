@@ -154,12 +154,12 @@ impl<'a, BufType> FileIteratorName<'a, BufType>
 where
     BufType: AsRef<[u8]>,
 {
-    /// Convert path components into a vector, lossy utf-8 decode + path traversal detection.
+    /// Convert path components into a vector.
     pub fn to_vec(&self) -> Vec<String> {
         self.iter_components().map(|c| c.into_owned()).collect()
     }
 
-    /// Convert path components into PathBuf, lossy utf-8 decode + path traversal detection.
+    /// Convert path components into a PathBuf, for use with local FS.
     pub fn to_pathbuf(&self) -> PathBuf {
         let mut buf = PathBuf::new();
         for bit in self.iter_components() {
@@ -168,7 +168,8 @@ where
         buf
     }
 
-    /// Iterate path components while validating path traversal, lossy decode utf-8 names.
+    /// Iterate path components as strings. Will decode using the detected encoding, replacing
+    /// uknown characters with a placeholder.
     pub fn iter_components(&self) -> impl Iterator<Item = Cow<'a, str>> + use<'a, BufType> {
         let encoding = self.encoding;
         self.iter_components_bytes()
