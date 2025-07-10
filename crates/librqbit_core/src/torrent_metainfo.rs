@@ -258,6 +258,7 @@ impl<BufType: AsRef<[u8]>> ValidatedTorrentMetaV1Info<BufType> {
             .name
             .as_ref()
             .map(|n| self.encoding.decode(n.as_ref()).0)
+            .filter(|n| !n.is_empty())
     }
 
     pub fn info(&self) -> &TorrentMetaV1Info<BufType> {
@@ -276,7 +277,6 @@ impl<BufType: AsRef<[u8]>> ValidatedTorrentMetaV1Info<BufType> {
     }
 
     /// Guaranteed to produce at least one file.
-    #[inline(never)]
     pub fn iter_file_details(&self) -> impl Iterator<Item = FileDetails<'_, BufType>> {
         // .unwrap is ok here() as we checked errors at creation time.
         self.info.iter_file_details_raw(self.encoding).unwrap()
@@ -286,8 +286,7 @@ impl<BufType: AsRef<[u8]>> ValidatedTorrentMetaV1Info<BufType> {
         self.iter_file_details().map(|d| d.len)
     }
 
-    // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
-    // the yielded results will be garbage.
+    // Iterate file details with additional compuations for offsets.
     pub fn iter_file_details_ext<'a>(
         &'a self,
     ) -> impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a {
@@ -341,12 +340,15 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             return Err(Error::BadTorrentNoFiles);
         }
 
-        let unique_filenames = validated
-            .iter_file_details()
-            .map(|fd| fd.filename.to_pathbuf())
-            .collect::<HashSet<_>>()
-            .len();
-        if unique_filenames != seen_files {
+        let mut unique_filenames = HashSet::<PathBuf>::new();
+        for fd in validated.iter_file_details() {
+            let pb = fd.filename.to_pathbuf();
+            if pb.as_os_str().is_empty() {
+                return Err(Error::BadTorrentFileNoName);
+            }
+            unique_filenames.insert(pb);
+        }
+        if unique_filenames.len() != seen_files {
             return Err(Error::BadTorrentDuplicateFilenames);
         }
 

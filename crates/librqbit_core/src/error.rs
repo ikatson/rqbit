@@ -18,4 +18,6 @@ pub enum Error {
     BadTorrentNoFiles,
     #[error("duplicate filenames in torrent")]
     BadTorrentDuplicateFilenames,
+    #[error("empty filename in torrent")]
+    BadTorrentEmptyFilename,
 }
