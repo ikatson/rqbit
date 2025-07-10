@@ -74,7 +74,10 @@ impl Lengths {
     pub fn from_torrent<ByteBuf: AsRef<[u8]>>(
         torrent: &crate::torrent_metainfo::TorrentMetaV1Info<ByteBuf>,
     ) -> crate::Result<Lengths> {
-        let total_length = torrent.iter_file_lengths()?.sum();
+        let total_length = torrent
+            .iter_file_details_raw(encoding_rs::UTF_8)?
+            .map(|d| d.len)
+            .sum();
         Lengths::new(total_length, torrent.piece_length)
     }
 

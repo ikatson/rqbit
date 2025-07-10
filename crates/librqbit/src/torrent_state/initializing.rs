@@ -63,7 +63,7 @@ impl TorrentStateInitializing {
     ) -> Option<Box<dyn BitV>> {
         let hp = have_pieces?;
         let actual = hp.as_bytes().len();
-        let expected = self.metadata.lengths.piece_bitfield_bytes();
+        let expected = self.metadata.lengths().piece_bitfield_bytes();
         if actual != expected {
             warn!(
                 actual,
@@ -78,13 +78,12 @@ impl TorrentStateInitializing {
                 &self.metadata.info,
                 &self.files,
                 &self.metadata.file_infos,
-                &self.metadata.lengths,
             );
 
             use rand::seq::SliceRandom;
 
             let mut to_validate = BF::from_boxed_slice(
-                vec![0u8; self.metadata.lengths.piece_bitfield_bytes()].into_boxed_slice(),
+                vec![0u8; self.metadata.lengths().piece_bitfield_bytes()].into_boxed_slice(),
             );
             let mut queue = hp.as_slice().to_owned();
 
@@ -120,7 +119,7 @@ impl TorrentStateInitializing {
                 .iter_ones()
                 .filter_map(|id| {
                     self.metadata
-                        .lengths
+                        .lengths()
                         .validate_piece_index(id.try_into().ok()?)
                 })
                 .enumerate()
@@ -130,10 +129,10 @@ impl TorrentStateInitializing {
                 }
 
                 #[allow(clippy::cast_possible_truncation)]
-                let progress = (self.metadata.lengths.total_length() as f64
+                let progress = (self.metadata.lengths().total_length() as f64
                     / to_validate_count as f64
                     * (id + 1) as f64) as u64;
-                let progress = progress.min(self.metadata.lengths.total_length());
+                let progress = progress.min(self.metadata.lengths().total_length());
                 self.checked_bytes.store(progress, Ordering::Relaxed);
             }
 
@@ -184,13 +183,8 @@ impl TorrentStateInitializing {
             None => {
                 info!("Doing initial checksum validation, this might take a while...");
                 let have_pieces = self.shared.spawner.spawn_block_in_place(|| {
-                    FileOps::new(
-                        &self.metadata.info,
-                        &self.files,
-                        &self.metadata.file_infos,
-                        &self.metadata.lengths,
-                    )
-                    .initial_check(&self.checked_bytes)
+                    FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
+                        .initial_check(&self.checked_bytes)
                 })?;
                 bitv_factory
                     .store_initial_check(id, have_pieces)
@@ -200,7 +194,7 @@ impl TorrentStateInitializing {
         };
 
         let selected_pieces = compute_selected_pieces(
-            &self.metadata.lengths,
+            self.metadata.lengths(),
             |idx| {
                 self.only_files
                     .as_ref()
@@ -213,7 +207,7 @@ impl TorrentStateInitializing {
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
             selected_pieces,
-            self.metadata.lengths,
+            *self.metadata.lengths(),
             &self.metadata.file_infos,
         )
         .context("error creating chunk tracker")?;

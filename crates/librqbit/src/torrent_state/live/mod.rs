@@ -64,7 +64,7 @@ use librqbit_core::{
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
     spawn_utils::spawn_with_cancel,
     speed_estimator::SpeedEstimator,
-    torrent_metainfo::TorrentMetaV1Info,
+    torrent_metainfo::ValidatedTorrentMetaV1Info,
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
@@ -618,7 +618,7 @@ impl TorrentStateLive {
         &self.shared
     }
 
-    pub fn info(&self) -> &TorrentMetaV1Info<ByteBufOwned> {
+    pub fn info(&self) -> &ValidatedTorrentMetaV1Info<ByteBufOwned> {
         &self.metadata.info
     }
     pub fn info_hash(&self) -> Id20 {
@@ -628,12 +628,7 @@ impl TorrentStateLive {
         self.shared.peer_id
     }
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
-        FileOps::new(
-            &self.metadata.info,
-            &*self.files,
-            &self.metadata.file_infos,
-            &self.lengths,
-        )
+        FileOps::new(&self.metadata.info, &*self.files, &self.metadata.file_infos)
     }
 
     pub(crate) fn lock_read(
@@ -818,9 +813,9 @@ impl TorrentStateLive {
         }
 
         self.streams
-            .wake_streams_on_piece_completed(id, &self.metadata.lengths);
+            .wake_streams_on_piece_completed(id, self.metadata.lengths());
 
-        locked.unflushed_bitv_bytes += self.metadata.lengths.piece_length(id) as u64;
+        locked.unflushed_bitv_bytes += self.metadata.lengths().piece_length(id) as u64;
         if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
             locked.try_flush_bitv(&self.shared)
         }
@@ -1029,7 +1024,7 @@ impl PeerConnectionHandler for PeerHandler {
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
-                if self.state.metadata.info.private {
+                if self.state.metadata.info.info().private {
                     warn!(
                         id = self.state.shared.id,
                         info_hash = ?self.state.shared.info_hash,
@@ -1044,7 +1039,7 @@ impl PeerConnectionHandler for PeerHandler {
                 }
             }
             Message::Extended(ExtendedMessage::UtPex(pex)) => {
-                if self.state.metadata.info.private {
+                if self.state.metadata.info.info().private {
                     warn!(
                         id = self.state.shared.id,
                         info_hash = ?self.state.shared.info_hash,
@@ -1099,7 +1094,7 @@ impl PeerConnectionHandler for PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
-        if !self.state.metadata.info.private && hs.m.ut_pex.is_some() {
+        if !self.state.metadata.info.info().private && hs.m.ut_pex.is_some() {
             spawn_with_cancel(
                 debug_span!(
                     parent: self.state.shared.span.clone(),

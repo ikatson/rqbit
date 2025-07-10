@@ -16,7 +16,7 @@ pub struct UpnpServerSessionAdapter {
 use anyhow::Context;
 use buffers::ByteBufOwned;
 use itertools::Itertools;
-use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
+use librqbit_core::torrent_metainfo::ValidatedTorrentMetaV1Info;
 use tracing::{debug, trace, warn};
 use upnp_serve::{
     UpnpServer, UpnpServerOptions,
@@ -67,9 +67,8 @@ impl TorrentFileTreeNode {
                 let last_url_bit = metadata
                     .info
                     .iter_file_details()
-                    .ok()
-                    .and_then(|mut it| it.nth(fid))
-                    .and_then(|fd| fd.filename.to_vec_lossy().ok())
+                    .nth(fid)
+                    .map(|fd| fd.filename.to_vec())
                     .map(|components| {
                         components
                             .into_iter()
@@ -104,26 +103,27 @@ struct TorrentFileTree {
     nodes: Vec<TorrentFileTreeNode>,
 }
 
-fn is_single_file_at_root(info: &TorrentMetaV1Info<ByteBufOwned>) -> bool {
+fn is_single_file_at_root(info: &ValidatedTorrentMetaV1Info<ByteBufOwned>) -> bool {
     info.iter_file_details()
-        .into_iter()
-        .flatten()
-        .flat_map(move |fd| fd.filename.iter_components_lossy())
+        .flat_map(move |fd| fd.filename.iter_components())
         .nth(1)
         .is_none()
 }
 
 impl TorrentFileTree {
-    fn build(torent_id: TorrentId, info: &TorrentMetaV1Info<ByteBufOwned>) -> anyhow::Result<Self> {
+    fn build(
+        torent_id: TorrentId,
+        info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
+    ) -> anyhow::Result<Self> {
         if is_single_file_at_root(info) {
             let filename = info
-                .iter_file_details()?
+                .iter_file_details()
                 .next()
-                .context("bug")?
+                .unwrap()
                 .filename
-                .iter_components_lossy()
+                .iter_components()
                 .last()
-                .context("bug")??;
+                .unwrap();
             let root_node = TorrentFileTreeNode {
                 title: filename.into_owned(),
                 parent_id: None,
@@ -137,7 +137,7 @@ impl TorrentFileTree {
 
         let root_node = TorrentFileTreeNode {
             title: info
-                .name_lossy_or_else(|| format!("torrent {}", torent_id))
+                .name_or_else(|| format!("torrent {}", torent_id))
                 .into_owned(),
             parent_id: None,
             children: vec![],
@@ -150,11 +150,8 @@ impl TorrentFileTree {
 
         let mut name_cache = HashMap::new();
 
-        for (fid, fd) in info.iter_file_details()?.enumerate() {
-            let components = match fd.filename.to_vec_lossy() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
+        for (fid, fd) in info.iter_file_details().enumerate() {
+            let components = fd.filename.to_vec();
             let mut parent_id = 0;
             let mut it = components.iter().peekable();
             while let Some(component) = it.next() {
@@ -234,7 +231,7 @@ impl UpnpServerSessionAdapter {
                 } else {
                     let title = metadata
                         .info
-                        .name_lossy_or_else(|| format!("torrent {real_id}"))
+                        .name_or_else(|| format!("torrent {real_id}"))
                         .into_owned();
 
                     // Create a folder
@@ -436,7 +433,7 @@ mod tests {
     #[test]
     fn test_torrent_file_tree_single() -> anyhow::Result<()> {
         let t = create_torrent(Some("test t"), &["file0"]);
-        let tree = TorrentFileTree::build(0, &t.info.data)?;
+        let tree = TorrentFileTree::build(0, &t.info.data.validate().unwrap())?;
         assert_eq!(
             &tree.nodes,
             &[TorrentFileTreeNode {
@@ -453,7 +450,7 @@ mod tests {
     #[test]
     fn test_torrent_file_tree_flat() -> anyhow::Result<()> {
         let t = create_torrent(Some("test t"), &["file0", "file1"]);
-        let tree = TorrentFileTree::build(0, &t.info.data)?;
+        let tree = TorrentFileTree::build(0, &t.info.data.validate().unwrap())?;
         assert_eq!(
             &tree.nodes,
             &[
@@ -487,7 +484,7 @@ mod tests {
             Some("test t"),
             &["file0", "file1", "dir0/file2", "dir0/dir1/file3"],
         );
-        let tree = TorrentFileTree::build(0, &t.info.data)?;
+        let tree = TorrentFileTree::build(0, &t.info.data.validate().unwrap())?;
         assert_eq!(
             &tree.nodes,
             &[

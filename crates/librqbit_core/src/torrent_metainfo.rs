@@ -5,7 +5,7 @@ use clone_to_owned::CloneToOwned;
 use encoding_rs::Encoding;
 use itertools::Either;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, iter::once, path::PathBuf};
+use std::{borrow::Cow, collections::HashSet, iter::once, path::PathBuf};
 use tracing::debug;
 
 use crate::{Error, hash_id::Id20, lengths::Lengths};
@@ -131,10 +131,22 @@ where
     BufType: AsRef<[u8]>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.to_string_lossy() {
-            Ok(s) => write!(f, "{s:?}"),
-            Err(e) => write!(f, "<{e:?}>"),
+        <Self as std::fmt::Display>::fmt(self, f)
+    }
+}
+
+impl<BufType> std::fmt::Display for FileIteratorName<'_, BufType>
+where
+    BufType: AsRef<[u8]>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (idx, bit) in self.iter_components().enumerate() {
+            if idx > 0 {
+                write!(f, "{}", std::path::MAIN_SEPARATOR)?;
+            }
+            write!(f, "{}", bit)?;
         }
+        Ok(())
     }
 }
 
@@ -143,64 +155,28 @@ where
     BufType: AsRef<[u8]>,
 {
     /// Convert path components into a vector, lossy utf-8 decode + path traversal detection.
-    pub fn to_vec_lossy(&self) -> crate::Result<Vec<String>> {
-        self.iter_components_lossy()
-            .map(|c| c.map(|s| s.into_owned()))
-            .collect()
-    }
-
-    /// Convert path components into a string, lossy utf-8 decode + path traversal detection.
-    pub fn to_string_lossy(&self) -> crate::Result<String> {
-        let mut buf = String::new();
-        for (idx, bit) in self.iter_components_lossy().enumerate() {
-            let bit = bit?;
-            if idx > 0 {
-                buf.push(std::path::MAIN_SEPARATOR);
-            }
-            buf.push_str(&bit)
-        }
-        Ok(buf)
+    pub fn to_vec(&self) -> Vec<String> {
+        self.iter_components().map(|c| c.into_owned()).collect()
     }
 
     /// Convert path components into PathBuf, lossy utf-8 decode + path traversal detection.
-    pub fn to_pathbuf_lossy(&self) -> crate::Result<PathBuf> {
+    pub fn to_pathbuf(&self) -> PathBuf {
         let mut buf = PathBuf::new();
-        for bit in self.iter_components_lossy() {
-            let bit = bit?;
+        for bit in self.iter_components() {
             buf.push(&*bit)
         }
-        Ok(buf)
+        buf
     }
 
     /// Iterate path components while validating path traversal, lossy decode utf-8 names.
-    pub fn iter_components_lossy(
-        &'a self,
-    ) -> impl Iterator<Item = crate::Result<Cow<'a, str>>> + use<'a, BufType> {
+    pub fn iter_components(&self) -> impl Iterator<Item = Cow<'a, str>> + use<'a, BufType> {
+        let encoding = self.encoding;
         self.iter_components_bytes()
-            .map(move |part| Ok(self.decode(part?)))
+            .map(move |part| encoding.decode(part).0)
     }
 
-    /// Iterate path components while validating path traversal.
-    pub fn iter_components_bytes(
-        &self,
-    ) -> impl Iterator<Item = crate::Result<&'a [u8]>> + use<'a, BufType> {
-        self.iter_components_raw().map(|bit| {
-            if bit == b".." {
-                return Err(Error::BadTorrentPathTraversal);
-            }
-            use memchr::memchr;
-            if memchr(b'/', bit).is_some() || memchr(b'\\', bit).is_some() {
-                return Err(Error::BadTorrentSeparatorInName);
-            }
-            Ok(bit)
-        })
-    }
-
-    fn decode(&self, data: &'a [u8]) -> Cow<'a, str> {
-        self.encoding.decode(data).0
-    }
-
-    fn iter_components_raw(&self) -> impl Iterator<Item = &'a [u8]> + use<'a, BufType> {
+    /// Iterate path components as bytes.
+    pub fn iter_components_bytes(&self) -> impl Iterator<Item = &'a [u8]> + use<'a, BufType> {
         let it = match self.data {
             FileIteratorNameData::Single(None) => {
                 return Either::Left(once(&b"torrent-content"[..]));
@@ -268,7 +244,114 @@ impl<BufType> FileDetailsExt<'_, BufType> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct ValidatedTorrentMetaV1Info<BufType> {
+    encoding: &'static Encoding,
+    lengths: Lengths,
+    info: TorrentMetaV1Info<BufType>,
+}
+
+impl<BufType: AsRef<[u8]>> ValidatedTorrentMetaV1Info<BufType> {
+    pub fn name(&self) -> Option<Cow<'_, str>> {
+        self.info
+            .name
+            .as_ref()
+            .map(|n| self.encoding.decode(n.as_ref()).0)
+    }
+
+    pub fn info(&self) -> &TorrentMetaV1Info<BufType> {
+        &self.info
+    }
+
+    pub fn lengths(&self) -> &Lengths {
+        &self.lengths
+    }
+
+    pub fn name_or_else<'a, DefaultT: Into<Cow<'a, str>>>(
+        &'a self,
+        default: impl Fn() -> DefaultT,
+    ) -> Cow<'a, str> {
+        self.name().unwrap_or_else(|| default().into())
+    }
+
+    /// Guaranteed to produce at least one file.
+    #[inline(never)]
+    pub fn iter_file_details(&self) -> impl Iterator<Item = FileDetails<'_, BufType>> {
+        // .unwrap is ok here() as we checked errors at creation time.
+        self.info.iter_file_details_raw(self.encoding).unwrap()
+    }
+
+    pub fn iter_file_lengths(&self) -> impl Iterator<Item = u64> + '_ {
+        self.iter_file_details().map(|d| d.len)
+    }
+
+    // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
+    // the yielded results will be garbage.
+    pub fn iter_file_details_ext<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a {
+        self.iter_file_details()
+            .scan(0u64, move |acc_offset, details| {
+                let offset = *acc_offset;
+                *acc_offset += details.len;
+                Some(FileDetailsExt {
+                    pieces: self.lengths.iter_pieces_within_offset(offset, details.len),
+                    details,
+                    offset,
+                })
+            })
+    }
+}
+
 impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
+    pub fn validate(self) -> crate::Result<ValidatedTorrentMetaV1Info<BufType>> {
+        let lengths = Lengths::from_torrent(&self)?;
+        let encoding = self.detect_encoding();
+        let validated = ValidatedTorrentMetaV1Info {
+            encoding,
+            lengths,
+            info: self,
+        };
+
+        // Ensure:
+        // - there's at least one file
+        // - each filename has at least one path component
+        // - there's no path traversal
+        // - all filenames are unique
+        let mut seen_files = 0;
+        for file in validated.info.iter_file_details_raw(encoding)? {
+            seen_files += 1;
+            let mut seen_a_bit = false;
+            for bit in file.filename.iter_components_bytes() {
+                seen_a_bit = true;
+                if bit == b".." {
+                    return Err(Error::BadTorrentPathTraversal);
+                }
+                use memchr::memchr;
+                if memchr(b'/', bit).is_some() || memchr(b'\\', bit).is_some() {
+                    return Err(Error::BadTorrentSeparatorInName);
+                }
+            }
+            if !seen_a_bit {
+                return Err(Error::BadTorrentFileNoName);
+            }
+        }
+        if seen_files == 0 {
+            return Err(Error::BadTorrentNoFiles);
+        }
+
+        let unique_filenames = validated
+            .iter_file_details()
+            .map(|fd| fd.filename.to_pathbuf())
+            .collect::<HashSet<_>>()
+            .len();
+        if unique_filenames != seen_files {
+            return Err(Error::BadTorrentDuplicateFilenames);
+        }
+
+        Ok(validated)
+    }
+
     pub fn get_hash(&self, piece: u32) -> Option<&[u8]> {
         let start = piece as usize * 20;
         let end = start + 20;
@@ -281,28 +364,6 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         let end = start + 20;
         let expected_hash = self.pieces.as_ref().get(start..end)?;
         Some(expected_hash == hash)
-    }
-
-    pub fn name(&self) -> Option<&str> {
-        self.name
-            .as_ref()
-            .and_then(|n| std::str::from_utf8(n.as_ref()).ok())
-    }
-
-    pub fn name_lossy(&self) -> Option<Cow<'_, str>> {
-        self.name
-            .as_ref()
-            .map(|n| String::from_utf8_lossy(n.as_ref()))
-    }
-
-    pub fn name_lossy_or_else<'a, DefaultT: Into<Cow<'a, str>>>(
-        &'a self,
-        default: impl Fn() -> DefaultT,
-    ) -> Cow<'a, str> {
-        self.name
-            .as_ref()
-            .map(|n| String::from_utf8_lossy(n.as_ref()))
-            .unwrap_or_else(|| default().into())
     }
 
     pub fn detect_encoding(&self) -> &'static Encoding {
@@ -320,8 +381,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         encdetect.guess(None, true)
     }
 
-    #[inline(never)]
-    pub fn iter_file_details(
+    pub(crate) fn iter_file_details_raw(
         &self,
         encoding: &'static Encoding,
     ) -> crate::Result<impl Iterator<Item = FileDetails<'_, BufType>>> {
@@ -356,30 +416,6 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             }
             _ => Err(Error::BadTorrentBothSingleAndMultiFile),
         }
-    }
-
-    pub fn iter_file_lengths(&self) -> crate::Result<impl Iterator<Item = u64> + '_> {
-        Ok(self.iter_file_details(encoding_rs::UTF_8)?.map(|d| d.len))
-    }
-
-    // NOTE: lenghts MUST be construced with Lenghts::from_torrent, otherwise
-    // the yielded results will be garbage.
-    pub fn iter_file_details_ext<'a>(
-        &'a self,
-        lengths: &'a Lengths,
-        encoding: &'static Encoding,
-    ) -> crate::Result<impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a> {
-        Ok(self
-            .iter_file_details(encoding)?
-            .scan(0u64, |acc_offset, details| {
-                let offset = *acc_offset;
-                *acc_offset += details.len;
-                Some(FileDetailsExt {
-                    pieces: lengths.iter_pieces_within_offset(offset, details.len),
-                    details,
-                    offset,
-                })
-            }))
     }
 }
 

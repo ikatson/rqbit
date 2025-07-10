@@ -4,10 +4,9 @@ use anyhow::Context;
 use buffers::ByteBufOwned;
 use dht::{DhtStats, Id20};
 use http::StatusCode;
-use librqbit_core::torrent_metainfo::{FileDetailsAttrs, TorrentMetaV1Info};
+use librqbit_core::torrent_metainfo::{FileDetailsAttrs, ValidatedTorrentMetaV1Info};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::warn;
 
 use crate::{
     WithStatus, WithStatusError,
@@ -544,7 +543,7 @@ pub struct ApiAddTorrentResponse {
 fn make_torrent_details(
     id: Option<TorrentId>,
     info_hash: &Id20,
-    info: Option<&TorrentMetaV1Info<ByteBufOwned>>,
+    info: Option<&ValidatedTorrentMetaV1Info<ByteBufOwned>>,
     name: Option<&str>,
     only_files: Option<&[usize]>,
     output_folder: String,
@@ -552,23 +551,10 @@ fn make_torrent_details(
     let files = match info {
         Some(info) => info
             .iter_file_details()
-            .context("error iterating filenames and lengths")?
             .enumerate()
             .map(|(idx, d)| {
-                let name = match d.filename.to_string_lossy() {
-                    Ok(s) => s,
-                    Err(err) => {
-                        warn!(
-                            ?info_hash,
-                            ?id,
-                            file_id = idx,
-                            "error reading filename: {:#}",
-                            err
-                        );
-                        "<INVALID NAME>".to_string()
-                    }
-                };
-                let components = d.filename.to_vec_lossy().unwrap_or_default();
+                let name = d.filename.to_string();
+                let components = d.filename.to_vec();
                 let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
                 TorrentDetailsResponseFile {
                     name,
@@ -586,7 +572,7 @@ fn make_torrent_details(
         info_hash: info_hash.as_string(),
         name: name
             .map(|s| s.to_owned())
-            .or_else(|| info.and_then(|i| i.name_lossy().map(|n| n.into_owned()))),
+            .or_else(|| info.and_then(|i| i.name().map(|n| n.into_owned()))),
         files: Some(files),
         output_folder,
         stats: None,
@@ -594,17 +580,16 @@ fn make_torrent_details(
 }
 
 fn torrent_file_mime_type(
-    info: &TorrentMetaV1Info<ByteBufOwned>,
+    info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
     file_idx: usize,
 ) -> Result<&'static str> {
     Ok(info
-        .iter_file_details()?
+        .iter_file_details()
         .nth(file_idx)
         .and_then(|d| {
             d.filename
-                .iter_components_lossy()
+                .iter_components()
                 .last()
-                .and_then(|r| r.ok())
                 .and_then(|s| mime_guess::from_path(&*s).first_raw())
         })
         .ok_or((

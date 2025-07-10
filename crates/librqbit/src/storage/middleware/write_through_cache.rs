@@ -43,14 +43,14 @@ impl<U: StorageFactory + Clone> StorageFactory for WriteThroughCacheStorageFacto
     ) -> anyhow::Result<Self::Storage> {
         let pieces = self
             .max_cache_bytes
-            .div_ceil(metadata.lengths.default_piece_length() as u64)
+            .div_ceil(metadata.info.lengths().default_piece_length() as u64)
             .try_into()?;
         let pieces = NonZeroUsize::new(pieces).context("bug: pieces == 0")?;
         let lru = RwLock::new(LruCache::new(pieces));
         Ok(WriteThroughCacheStorage {
             lru,
             underlying: self.underlying.create(shared, metadata)?,
-            lengths: metadata.lengths,
+            lengths: *metadata.info.lengths(),
             file_infos: metadata.file_infos.clone(),
         })
     }
