@@ -20,10 +20,10 @@ fn torrent_playlist_items(handle: &ManagedTorrent) -> Result<Vec<(usize, String)
         .as_ref()
         .context("torrent metadata not resolved")?
         .info
-        .iter_file_details()?
+        .iter_file_details()
         .enumerate()
         .filter_map(|(file_idx, file_details)| {
-            let filename = file_details.filename.to_vec_lossy().ok()?.join("/");
+            let filename = file_details.filename.to_vec().join("/");
             let is_playable = mime_guess::from_path(&filename)
                 .first()
                 .map(|mime| {

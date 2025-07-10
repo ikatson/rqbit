@@ -180,7 +180,7 @@ impl AsyncRead for FileStream {
 
         let current = poll_try_io!(
             self.metadata
-                .lengths
+                .lengths()
                 .compute_current_piece(self.position, self.file_torrent_abs_offset)
                 .context("invalid position")
         );

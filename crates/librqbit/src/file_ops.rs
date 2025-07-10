@@ -6,8 +6,8 @@ use std::{
 use anyhow::Context;
 use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
-    lengths::{ChunkInfo, Lengths, ValidPieceIndex},
-    torrent_metainfo::TorrentMetaV1Info,
+    lengths::{ChunkInfo, ValidPieceIndex},
+    torrent_metainfo::ValidatedTorrentMetaV1Info,
 };
 use peer_binary_protocol::{DoubleBufHelper, Piece};
 use sha1w::{ISha1, Sha1};
@@ -49,25 +49,22 @@ pub fn update_hash_from_file<Sha1: ISha1>(
 }
 
 pub(crate) struct FileOps<'a> {
-    torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
+    torrent: &'a ValidatedTorrentMetaV1Info<ByteBufOwned>,
     files: &'a dyn TorrentStorage,
     file_infos: &'a FileInfos,
-    lengths: &'a Lengths,
     phantom_data: PhantomData<Sha1>,
 }
 
 impl<'a> FileOps<'a> {
     pub fn new(
-        torrent: &'a TorrentMetaV1Info<ByteBufOwned>,
+        torrent: &'a ValidatedTorrentMetaV1Info<ByteBufOwned>,
         files: &'a dyn TorrentStorage,
         file_infos: &'a FileInfos,
-        lengths: &'a Lengths,
     ) -> Self {
         Self {
             torrent,
             files,
             file_infos,
-            lengths,
             phantom_data: PhantomData,
         }
     }
@@ -75,7 +72,7 @@ impl<'a> FileOps<'a> {
     // Returns the bitvector with pieces we have.
     pub fn initial_check(&self, progress: &AtomicU64) -> anyhow::Result<BF> {
         let mut have_pieces =
-            BF::from_boxed_slice(vec![0u8; self.lengths.piece_bitfield_bytes()].into());
+            BF::from_boxed_slice(vec![0u8; self.torrent.lengths().piece_bitfield_bytes()].into());
         let mut piece_files = Vec::<usize>::new();
 
         #[derive(Debug)]
@@ -108,7 +105,7 @@ impl<'a> FileOps<'a> {
 
         let mut read_buffer = vec![0u8; 65536];
 
-        for piece_info in self.lengths.iter_piece_infos() {
+        for piece_info in self.torrent.lengths().iter_piece_infos() {
             piece_files.clear();
             let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
@@ -167,6 +164,7 @@ impl<'a> FileOps<'a> {
 
             if self
                 .torrent
+                .info()
                 .compare_hash(piece_info.piece_index.get(), computed_hash.finish())
                 .context("bug: either torrent info broken or we have a bug - piece index invalid")?
             {
@@ -183,8 +181,8 @@ impl<'a> FileOps<'a> {
         }
 
         let mut h = Sha1::new();
-        let piece_length = self.lengths.piece_length(piece_index);
-        let mut absolute_offset = self.lengths.piece_offset(piece_index);
+        let piece_length = self.torrent.lengths().piece_length(piece_index);
+        let mut absolute_offset = self.torrent.lengths().piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];
 
         let mut piece_remaining_bytes = piece_length as usize;
@@ -228,14 +226,18 @@ impl<'a> FileOps<'a> {
             absolute_offset = 0;
         }
 
-        match self.torrent.compare_hash(piece_index.get(), h.finish()) {
+        match self
+            .torrent
+            .info()
+            .compare_hash(piece_index.get(), h.finish())
+        {
             Some(true) => {
                 trace!("piece={} hash matches", piece_index);
                 Ok(true)
             }
             Some(false) => {
-                let piece_length = self.lengths.piece_length(piece_index);
-                let absolute_offset = self.lengths.piece_offset(piece_index);
+                let piece_length = self.torrent.lengths().piece_length(piece_index);
+                let absolute_offset = self.torrent.lengths().piece_offset(piece_index);
                 warn!(
                     piece_length,
                     absolute_offset, "the piece={} hash does not match", piece_index
@@ -259,7 +261,7 @@ impl<'a> FileOps<'a> {
         if result_buf.len() < chunk_info.size as usize {
             anyhow::bail!("read_chunk(): not enough capacity in the provided buffer")
         }
-        let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
+        let mut absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
         let mut buf = result_buf;
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {
@@ -303,7 +305,7 @@ impl<'a> FileOps<'a> {
         data: &Piece<ByteBuf<'a>>,
         chunk_info: &ChunkInfo,
     ) -> anyhow::Result<()> {
-        let mut absolute_offset = self.lengths.chunk_absolute_offset(chunk_info);
+        let mut absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
         let mut data = DoubleBufHelper::new(data.data().0, data.data().1);
 
         for (file_idx, file_info) in self.file_infos.iter().enumerate() {

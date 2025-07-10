@@ -60,7 +60,7 @@ use librqbit_core::{
     magnet::Magnet,
     peer_id::generate_azereus_style,
     spawn_utils::spawn_with_cancel,
-    torrent_metainfo::{TorrentMetaV1Info, TorrentMetaV1Owned},
+    torrent_metainfo::{TorrentMetaV1Owned, ValidatedTorrentMetaV1Info},
 };
 use librqbit_lsd::{LocalServiceDiscovery, LocalServiceDiscoveryOptions};
 use librqbit_utp::BindDevice;
@@ -170,16 +170,13 @@ async fn torrent_from_url(
 }
 
 fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
-    torrent: &TorrentMetaV1Info<ByteBuf>,
+    torrent: &ValidatedTorrentMetaV1Info<ByteBuf>,
     filename_re: &str,
 ) -> anyhow::Result<Vec<usize>> {
     let filename_re = regex::Regex::new(filename_re).context("filename regex is incorrect")?;
     let mut only_files = Vec::new();
-    for (idx, fd) in torrent.iter_file_details()?.enumerate() {
-        let full_path = fd
-            .filename
-            .to_pathbuf_lossy()
-            .with_context(|| format!("filename of file {idx} is not valid utf8"))?;
+    for (idx, fd) in torrent.iter_file_details().enumerate() {
+        let full_path = fd.filename.to_pathbuf();
         if filename_re.is_match(full_path.to_str().unwrap()) {
             only_files.push(idx);
         }
@@ -191,7 +188,7 @@ fn compute_only_files_regex<ByteBuf: AsRef<[u8]>>(
 }
 
 fn compute_only_files(
-    info: &TorrentMetaV1Info<ByteBufOwned>,
+    info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
     only_files: Option<Vec<usize>>,
     only_files_regex: Option<String>,
     list_only: bool,
@@ -201,7 +198,7 @@ fn compute_only_files(
             bail!("only_files and only_files_regex are mutually exclusive");
         }
         (Some(only_files), None) => {
-            let total_files = info.iter_file_lengths()?.count();
+            let total_files = info.iter_file_lengths().count();
             for id in only_files.iter().copied() {
                 if id >= total_files {
                     bail!("file id {} is out of range", id);
@@ -211,7 +208,7 @@ fn compute_only_files(
         }
         (None, Some(filename_re)) => {
             let only_files = compute_only_files_regex(info, &filename_re)?;
-            for (idx, fd) in info.iter_file_details()?.enumerate() {
+            for (idx, fd) in info.iter_file_details().enumerate() {
                 if !only_files.contains(&idx) {
                     continue;
                 }
@@ -293,7 +290,7 @@ pub struct AddTorrentOptions {
 
 pub struct ListOnlyResponse {
     pub info_hash: Id20,
-    pub info: TorrentMetaV1Info<ByteBufOwned>,
+    pub info: ValidatedTorrentMetaV1Info<ByteBufOwned>,
     pub only_files: Option<Vec<usize>>,
     pub output_folder: PathBuf,
     pub seen_peers: Vec<SocketAddr>,
@@ -1056,7 +1053,7 @@ impl Session {
                     InternalAddResult {
                         info_hash: torrent.meta.info_hash,
                         metadata: Some(TorrentMetadata::new(
-                            torrent.meta.info.data,
+                            torrent.meta.info.data.validate()?,
                             torrent.torrent_bytes,
                             torrent.meta.info.raw_bytes.0,
                         )?),
@@ -1077,12 +1074,12 @@ impl Session {
 
     fn get_default_subfolder_for_torrent(
         &self,
-        info: &TorrentMetaV1Info<ByteBufOwned>,
+        info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
         magnet_name: Option<&str>,
     ) -> anyhow::Result<Option<PathBuf>> {
         let files = info
-            .iter_file_details()?
-            .map(|fd| Ok((fd.filename.to_pathbuf_lossy()?, fd.len)))
+            .iter_file_details()
+            .map(|fd| Ok((fd.filename.to_pathbuf(), fd.len)))
             .collect::<anyhow::Result<Vec<(PathBuf, u64)>>>()?;
         if files.len() < 2 {
             return Ok(None);
@@ -1095,7 +1092,7 @@ impl Session {
             Ok(())
         }
 
-        if let Some(name) = info.name_lossy() {
+        if let Some(name) = info.name() {
             if !name.is_empty() {
                 let pb = PathBuf::from(name.as_ref());
                 check_valid(&pb)?;
@@ -1130,7 +1127,7 @@ impl Session {
             name,
         } = add_res;
 
-        let private = metadata.as_ref().is_some_and(|m| m.info.private);
+        let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
 
         let make_peer_rx = || {
             self.make_peer_rx(
@@ -1177,7 +1174,7 @@ impl Session {
             }
         };
 
-        trace!("Torrent metadata: {:#?}", &metadata.info);
+        trace!("Torrent metadata: {:#?}", &metadata.info.info());
 
         let only_files = compute_only_files(
             &metadata.info,
@@ -1299,7 +1296,7 @@ impl Session {
             .start(peer_rx, opts.paused)
             .context("error starting torrent")?;
 
-        if let Some(name) = metadata.info.name_lossy() {
+        if let Some(name) = metadata.info.name() {
             info!(?name, "added torrent");
         }
 
@@ -1412,7 +1409,7 @@ impl Session {
         t: &Arc<ManagedTorrent>,
         announce: bool,
     ) -> Option<PeerStream> {
-        let is_private = t.with_metadata(|m| m.info.private).unwrap_or(false);
+        let is_private = t.with_metadata(|m| m.info.info().private).unwrap_or(false);
         self.make_peer_rx(
             t.info_hash(),
             t.shared().trackers.iter().cloned().collect(),
@@ -1555,6 +1552,7 @@ impl Session {
                 seen,
             } => {
                 trace!(?info, "received result from DHT");
+                let info = info.validate()?;
                 Ok(ResolveMagnetResult {
                     metadata: TorrentMetadata::new(
                         info,

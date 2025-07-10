@@ -760,7 +760,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                             only_files,
                             ..
                         }) => {
-                            for (idx, fd) in info.iter_file_details()?.enumerate() {
+                            for (idx, fd) in info.iter_file_details().enumerate() {
                                 let included = match &only_files {
                                     Some(files) => files.contains(&idx),
                                     None => true,

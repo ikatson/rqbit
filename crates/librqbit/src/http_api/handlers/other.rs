@@ -69,7 +69,7 @@ pub async fn h_resolve_magnet(
         HeaderValue::from_static("application/x-bittorrent"),
     );
 
-    if let Some(name) = info.name_lossy() {
+    if let Some(name) = info.name() {
         if let Ok(h) = HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
         {
             headers.insert("Content-Disposition", h);

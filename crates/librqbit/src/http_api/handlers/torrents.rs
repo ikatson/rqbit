@@ -220,7 +220,7 @@ pub async fn h_metadata(
         .with_metadata(|meta| {
             (
                 meta.info
-                    .name_lossy_or_else(|| format!("torrent_{idx}"))
+                    .name_or_else(|| format!("torrent_{idx}"))
                     .into_owned(),
                 meta.torrent_bytes.clone(),
             )
@@ -328,7 +328,14 @@ pub async fn h_create_torrent(
             Ok(magnet.to_string().into_response())
         }
         CreateTorrentOutput::Torrent => {
-            let name = torrent.as_info().info.data.name_lossy_or_else(|| "torrent");
+            let name = torrent
+                .as_info()
+                .info
+                .data
+                .name
+                .as_ref()
+                .map(|n| String::from_utf8_lossy(n.as_ref()))
+                .unwrap_or("torrent".into());
 
             headers.insert(
                 CONTENT_TYPE,

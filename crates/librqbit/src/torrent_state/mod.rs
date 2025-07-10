@@ -24,7 +24,7 @@ use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
 
 use librqbit_core::spawn_utils::spawn_with_cancel;
-use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
+use librqbit_core::torrent_metainfo::ValidatedTorrentMetaV1Info;
 pub use live::*;
 use parking_lot::RwLock;
 
@@ -136,25 +136,23 @@ impl ManagedTorrentOptions {
 
 // Torrent bencodee "info" + some precomputed fields based on it for frequent access.
 pub struct TorrentMetadata {
-    pub info: TorrentMetaV1Info<ByteBufOwned>,
+    pub info: ValidatedTorrentMetaV1Info<ByteBufOwned>,
     pub torrent_bytes: Bytes,
     pub info_bytes: Bytes,
-    pub lengths: Lengths,
     pub file_infos: FileInfos,
 }
 
 impl TorrentMetadata {
     pub(crate) fn new(
-        info: TorrentMetaV1Info<ByteBufOwned>,
+        info: ValidatedTorrentMetaV1Info<ByteBufOwned>,
         torrent_bytes: Bytes,
         info_bytes: Bytes,
     ) -> anyhow::Result<Self> {
-        let lengths = Lengths::from_torrent(&info)?;
         let file_infos = info
-            .iter_file_details_ext(&lengths)?
+            .iter_file_details_ext()
             .map(|fd| {
                 Ok::<_, anyhow::Error>(FileInfo {
-                    relative_filename: fd.details.filename.to_pathbuf_lossy()?,
+                    relative_filename: fd.details.filename.to_pathbuf(),
                     offset_in_torrent: fd.offset,
                     piece_range: fd.pieces,
                     len: fd.details.len,
@@ -163,24 +161,16 @@ impl TorrentMetadata {
             })
             .collect::<anyhow::Result<Vec<FileInfo>>>()?;
 
-        // Ensure the torrent contains only unique filenames.
-        let all_filenames = file_infos
-            .iter()
-            .map(|fi| &fi.relative_filename)
-            .collect::<HashSet<_>>();
-        if all_filenames.len() < file_infos.len() {
-            anyhow::bail!(
-                "error validating torrent: duplicate filenames, possibly because of unknown filename encoding"
-            )
-        }
-
         Ok(Self {
             info,
             torrent_bytes,
             info_bytes,
-            lengths,
             file_infos,
         })
+    }
+
+    pub fn lengths(&self) -> &Lengths {
+        self.info.lengths()
     }
 }
 
@@ -223,7 +213,7 @@ impl ManagedTorrent {
         if let Some(m) = &*self.metadata.load() {
             return m
                 .info
-                .name_lossy()
+                .name()
                 .map(|n| n.into_owned())
                 .or_else(|| self.shared.magnet_name.clone());
         }
@@ -487,7 +477,7 @@ impl ManagedTorrent {
                 .metadata
                 .load()
                 .as_ref()
-                .map(|r| r.lengths.total_length())
+                .map(|r| r.info.lengths().total_length())
                 .unwrap_or_default(),
             file_progress: Vec::new(),
             state: S::Error,
