@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv4Addr, SocketAddr},
+    net::{Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
@@ -58,7 +58,7 @@ impl Default for ListenerOptions {
         Self {
             // TODO: once uTP is stable upgrade default to both
             mode: ListenerMode::TcpOnly,
-            listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
             enable_upnp_port_forwarding: false,
             utp_opts: None,
         }
@@ -72,63 +72,72 @@ impl ListenerOptions {
         cancellation_token: CancellationToken,
         bind_device: Option<&BindDevice>,
     ) -> anyhow::Result<ListenResult> {
-        if self.listen_addr.port() == 0 {
-            anyhow::bail!("you must set the listen port explicitly")
-        }
         let mut utp_opts = self.utp_opts.take().unwrap_or_default();
         utp_opts.cancellation_token = cancellation_token.clone();
         utp_opts.parent_span = parent_span;
         utp_opts.dont_wait_for_lastack = true;
 
-        let tcp = async {
-            if !self.mode.tcp_enabled() {
-                return Ok::<_, anyhow::Error>(None);
-            }
+        let mut listen_addr = self.listen_addr;
+
+        let tcp_socket = if self.mode.tcp_enabled() {
             let listener = TcpListener::bind_tcp(
                 self.listen_addr,
                 BindOpts {
                     request_dualstack: true,
-                    reuseport: true,
+                    reuseport: false,
                     device: bind_device,
                 },
             )
             .context("error starting TCP listener")?;
+            listen_addr = listener.bind_addr();
             info!(
                 "Listening on TCP {:?} for incoming peer connections",
-                self.listen_addr
+                listen_addr
             );
-            Ok(Some(listener))
+            Some(listener)
+        } else {
+            None
         };
 
-        let utp = async {
-            if !self.mode.utp_enabled() {
-                return Ok::<_, anyhow::Error>(None);
-            }
-            let socket = UtpSocketUdp::new_udp_with_opts(
-                self.listen_addr,
+        let utp_socket = if self.mode.utp_enabled() {
+            let bind_result = UtpSocketUdp::new_udp_with_opts(
+                listen_addr,
                 utp_opts,
                 UtpSocketUdpOpts { bind_device },
             )
-            .await
-            .context("error starting uTP listener")?;
-            info!(
-                "Listening on UDP {:?} for incoming uTP peer connections",
-                self.listen_addr
-            );
-            Ok(Some(socket))
+            .await;
+            match bind_result {
+                Ok(sock) => {
+                    listen_addr = sock.bind_addr();
+                    info!(
+                        "Listening on UDP {:?} for incoming uTP peer connections",
+                        listen_addr
+                    );
+                    Some(sock)
+                }
+                Err(e) if tcp_socket.is_some() => {
+                    // If we listen over TCP, it's not a fatal error if we can't listen over uTP.
+                    tracing::error!("Error listening on UDP {listen_addr:?}: {e:#}");
+                    None
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
+        } else {
+            None
         };
 
-        let announce_port = if self.listen_addr.ip().is_loopback() {
+        let announce_port = if listen_addr.ip().is_loopback() {
             None
         } else {
-            Some(self.listen_addr.port())
+            Some(listen_addr.port())
         };
-        let (tcp_socket, utp_socket) = tokio::try_join!(tcp, utp)?;
         Ok(ListenResult {
             tcp_socket,
             utp_socket,
             announce_port,
-            addr: self.listen_addr,
+            addr: listen_addr,
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
         })
     }

@@ -528,7 +528,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
     };
     let listen = listen_mode.map(|mode| ListenerOptions {
         mode,
-        listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(4240)).into(),
+        listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(0)).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         ..Default::default()
     });
@@ -618,6 +618,13 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
     match &opts.subcommand {
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
+                // If the listen port wasn't set, default to 4240
+                if let Some(l) = sopts.listen.as_mut() {
+                    if l.listen_addr.port() == 0 {
+                        l.listen_addr.set_port(4240);
+                    }
+                }
+
                 if !start_opts.disable_persistence {
                     if let Some(p) = start_opts.persistence_location.as_ref() {
                         if p.starts_with("postgres://") {
@@ -685,9 +692,8 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             }
 
             if let Some(listen) = sopts.listen.as_mut() {
-                // We are creating ephemeral ports, no point in port forwarding.
+                // We are creating an ephemeral download, no point in port forwarding.
                 listen.enable_upnp_port_forwarding = false;
-                maybe_set_ephemeral_port(&opts.listen_port, listen)?;
             }
 
             let torrent_opts = || AddTorrentOptions {
@@ -822,9 +828,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             sopts.disable_dht_persistence = true;
             sopts.persistence = None;
 
-            if let Some(listen) = sopts.listen.as_mut() {
-                maybe_set_ephemeral_port(&opts.listen_port, listen)?;
-            } else {
+            if sopts.listen.is_none() {
                 anyhow::bail!("you disabled all listeners, can't share");
             }
 
@@ -873,25 +877,6 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         }
         SubCommand::Completions(_) => unreachable!(),
     }
-}
-
-fn maybe_set_ephemeral_port(
-    forced_listen_port: &Option<u16>,
-    listen: &mut ListenerOptions,
-) -> anyhow::Result<()> {
-    // If the user hasn't specified a specific port, find a free random port.
-    // It needs to be the same for TCP and UDP, as we announce that port
-    // to trackers and DHT.
-    if forced_listen_port.is_none() {
-        let mut addr = listen.listen_addr;
-        addr.set_port(0);
-        let ephemeral_port = std::net::TcpListener::bind(addr)
-            .and_then(|l| l.local_addr())
-            .context("failed finding an ephemeral TCP/UDP listen port to use")?
-            .port();
-        listen.listen_addr.set_port(ephemeral_port);
-    }
-    Ok(())
 }
 
 async fn start_http_api(
