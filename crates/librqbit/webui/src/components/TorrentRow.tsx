@@ -21,7 +21,8 @@ import { useTorrentStore } from "../stores/torrentStore";
 export const TorrentRow: React.FC<{
   detailsResponse: TorrentDetails | null;
   torrent: TorrentIdWithStats;
-}> = ({ detailsResponse, torrent }) => {
+  compact: boolean;
+}> = ({ detailsResponse, torrent, compact }) => {
   const statsResponse = torrent.stats;
   const state = statsResponse.state ?? "";
   const error = statsResponse.error ?? null;
@@ -162,6 +163,7 @@ export const TorrentRow: React.FC<{
               detailsResponse={detailsResponse}
               extendedView={extendedView}
               setExtendedView={setExtendedView}
+              compact={compact}
             />
           </div>
         )}

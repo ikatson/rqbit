@@ -5,6 +5,7 @@ import { Torrent } from "./Torrent";
 export const TorrentsList = (props: {
   torrents: Array<TorrentIdWithStats> | null;
   loading: boolean;
+  compact: boolean;
 }) => {
   return (
     <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7">
@@ -19,7 +20,7 @@ export const TorrentsList = (props: {
         <p className="text-center">No existing torrents found.</p>
       ) : (
         props.torrents.map((t: TorrentIdWithStats) => (
-          <Torrent key={t.id} torrent={t} />
+          <Torrent key={t.id} torrent={t} compact={props.compact} />
         ))
       )}
     </div>

@@ -11,22 +11,22 @@ const TABS = ["Overview", "Files", "Peers"];
 export const TorrentDetailsPane: React.FC<{
   torrent: TorrentIdWithStats;
   details: TorrentDetails | null;
-}> = ({ details, torrent }) => {
+  compact: boolean;
+}> = ({ details, torrent, compact }) => {
   const [extendedView, setExtendedView] = useState(false);
 
   return (
     <div>
-      <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-md text-sm font-bold">
-        {torrent.name}
-      </div>
-      <div className="mt-2">
+      <div className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded-md">
         <TorrentActions
           id={torrent.id}
           statsResponse={torrent.stats}
           detailsResponse={details}
           extendedView={extendedView}
           setExtendedView={setExtendedView}
+          compact={compact}
         />
+        <div className="text-xs font-bold pr-2">{torrent.name}</div>
       </div>
       <Tabs tabs={TABS}>
         <Tab>

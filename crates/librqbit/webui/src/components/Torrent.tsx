@@ -73,6 +73,7 @@ export const Torrent: React.FC<{
         <TorrentRow
           torrent={torrent}
           detailsResponse={currentDetailsResponse}
+          compact={compact ?? false}
         />
       )}
     </>
