@@ -9,6 +9,7 @@ import { TorrentDetailsPane } from "./TorrentDetailsPane";
 import { TorrentDetails, TorrentStats } from "../api-types";
 import { APIContext } from "../context";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
+import { ResizablePanes } from "./ResizablePanes";
 
 export const RootContent = (props: {}) => {
   const { compact } = useContext(ViewModeContext);
@@ -48,24 +49,24 @@ export const RootContent = (props: {}) => {
 
   if (compact) {
     return (
-      <div className="flex flex-col h-full">
-        <div className="h-1/2 overflow-y-auto">
+      <ResizablePanes
+        top={
           <CompactTorrentsList
             torrents={torrents}
             loading={torrentsInitiallyLoading}
             onTorrentClick={onTorrentClick}
             selectedTorrent={selectedTorrent}
           />
-        </div>
-        <div className="h-1/2 overflow-y-auto">
-          {selectedTorrentData !== null && (
+        }
+        bottom={
+          selectedTorrentData !== null && (
             <TorrentDetailsPane
               torrent={selectedTorrentData}
               details={selectedTorrentDetails}
             />
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
     );
   }
 
