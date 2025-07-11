@@ -166,7 +166,7 @@ export const CompactTorrentsList = (props: {
                 <Torrent
                   key={t.id}
                   torrent={t}
-                  compact
+                  compact={true}
                   onClick={() => props.onTorrentClick(t.id)}
                   selected={t.id === props.selectedTorrent}
                 />

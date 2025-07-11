@@ -63,6 +63,7 @@ export const RootContent = (props: {}) => {
             <TorrentDetailsPane
               torrent={selectedTorrentData}
               details={selectedTorrentDetails}
+              compact={compact}
             />
           )
         }
@@ -77,7 +78,11 @@ export const RootContent = (props: {}) => {
         remove={() => setCloseableError(null)}
       />
       <ErrorComponent error={otherError} />
-      <TorrentsList torrents={torrents} loading={torrentsInitiallyLoading} />
+      <TorrentsList
+        torrents={torrents}
+        loading={torrentsInitiallyLoading}
+        compact={compact}
+      />
     </div>
   );
 };

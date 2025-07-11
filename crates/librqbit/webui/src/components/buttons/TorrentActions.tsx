@@ -20,12 +20,14 @@ export const TorrentActions: React.FC<{
   detailsResponse: TorrentDetails | null;
   extendedView: boolean;
   setExtendedView: (extendedView: boolean) => void;
+  compact: boolean;
 }> = ({
   id,
   statsResponse,
   detailsResponse,
   extendedView,
   setExtendedView,
+  compact,
 }) => {
   let state = statsResponse.state;
 
@@ -125,7 +127,7 @@ export const TorrentActions: React.FC<{
   };
 
   return (
-    <div className="flex w-full justify-center gap-2 dark:text-slate-300">
+    <div className="flex gap-2 dark:text-slate-300">
       {canUnpause && (
         <IconButton onClick={unpause} disabled={disabled}>
           <FaPlay className="hover:text-green-600" />
@@ -136,7 +138,7 @@ export const TorrentActions: React.FC<{
           <FaPause className="hover:text-amber-500" />
         </IconButton>
       )}
-      {canConfigure && (
+      {canConfigure && !compact && (
         <IconButton
           onClick={() => setExtendedView(!extendedView)}
           disabled={disabled}
