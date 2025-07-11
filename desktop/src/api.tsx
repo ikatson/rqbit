@@ -86,7 +86,7 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
   return {
     getStreamLogsUrl: () => {
       if (!httpBase) {
-        return null;
+        return "";
       }
       return `${httpBase}/stream_logs`;
     },
@@ -138,12 +138,15 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     },
     getPlaylistUrl: (index: number) => {
       if (!httpBase) {
-        return null;
+        return "";
       }
       return `${httpBase}/torrents/${index}/playlist`;
     },
     stats: () => {
       return invokeAPI<SessionStats>("stats");
+    },
+    getTorrentPeerStats: async function (id: number): Promise<any> {
+      return [];
     },
   };
 };
