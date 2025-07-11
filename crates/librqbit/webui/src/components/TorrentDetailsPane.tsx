@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { TorrentDetails, TorrentIdWithStats } from "../api-types";
 import { FileListInput } from "./FileListInput";
-import { formatBytes } from "../helper/formatBytes";
 import { TorrentActions } from "./buttons/TorrentActions";
 import { PeerTable } from "./PeerTable";
 import { Tab, Tabs } from "./tabs/Tabs";
+import { TorrentDetailsOverviewTab } from "./TorrentDetailsOverviewTab";
 
-const TABS = ["Files", "Peers"];
+const TABS = ["Overview", "Files", "Peers"];
 
 export const TorrentDetailsPane: React.FC<{
   torrent: TorrentIdWithStats;
@@ -16,12 +16,8 @@ export const TorrentDetailsPane: React.FC<{
 
   return (
     <div>
-      <div className="mb-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-md text-xs">
-        <p className="font-bold text-sm">{torrent.name}</p>
-        <p>ID: {torrent.id}</p>
-        <p>Size: {formatBytes(torrent.stats.total_bytes)}</p>
-        <p>Info Hash: {torrent.info_hash}</p>
-        <p>Output folder: {torrent.output_folder}</p>
+      <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-md text-sm font-bold">
+        {torrent.name}
       </div>
       <div className="mt-2">
         <TorrentActions
@@ -33,6 +29,9 @@ export const TorrentDetailsPane: React.FC<{
         />
       </div>
       <Tabs tabs={TABS}>
+        <Tab>
+          <TorrentDetailsOverviewTab torrent={torrent} details={details} />
+        </Tab>
         <Tab>
           {details && (
             <FileListInput
