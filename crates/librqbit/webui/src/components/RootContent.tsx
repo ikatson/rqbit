@@ -4,7 +4,6 @@ import { ErrorComponent } from "./ErrorComponent";
 import { useTorrentStore } from "../stores/torrentStore";
 import { useErrorStore } from "../stores/errorStore";
 import { ViewModeContext } from "../stores/viewMode";
-import { CompactTorrentsList } from "./CompactTorrentsList";
 import { TorrentDetailsPane } from "./TorrentDetailsPane";
 import { TorrentDetails, TorrentStats } from "../api-types";
 import { APIContext } from "../context";
@@ -51,7 +50,7 @@ export const RootContent = (props: {}) => {
     return (
       <ResizablePanes
         top={
-          <CompactTorrentsList
+          <TorrentsList
             torrents={torrents}
             loading={torrentsInitiallyLoading}
             onTorrentClick={onTorrentClick}
@@ -63,7 +62,6 @@ export const RootContent = (props: {}) => {
             <TorrentDetailsPane
               torrent={selectedTorrentData}
               details={selectedTorrentDetails}
-              compact={compact}
             />
           )
         }
@@ -78,11 +76,7 @@ export const RootContent = (props: {}) => {
         remove={() => setCloseableError(null)}
       />
       <ErrorComponent error={otherError} />
-      <TorrentsList
-        torrents={torrents}
-        loading={torrentsInitiallyLoading}
-        compact={compact}
-      />
+      <TorrentsList torrents={torrents} loading={torrentsInitiallyLoading} />
     </div>
   );
 };

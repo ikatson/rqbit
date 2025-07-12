@@ -8,16 +8,16 @@ import {
 import { APIContext } from "../context";
 import { customSetInterval } from "../helper/customSetInterval";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
-import { TorrentRow } from "./TorrentRow";
-import { CompactTorrentRow } from "./CompactTorrentRow";
+import { TorrentRow, CompactTorrentRow } from "./TorrentRow";
 import { useTorrentStore } from "../stores/torrentStore";
+import { ViewModeContext } from "../stores/viewMode";
 
 export const Torrent: React.FC<{
   torrent: TorrentIdWithStats;
-  compact?: boolean;
   onClick?: () => void;
   selected?: boolean;
-}> = ({ torrent, compact, onClick, selected }) => {
+}> = ({ torrent, onClick, selected }) => {
+  const { compact } = useContext(ViewModeContext);
   const [currentDetailsResponse, updateDetailsResponse] =
     useState<TorrentDetails | null>(null);
   const API = useContext(APIContext);
@@ -73,7 +73,6 @@ export const Torrent: React.FC<{
         <TorrentRow
           torrent={torrent}
           detailsResponse={currentDetailsResponse}
-          compact={compact ?? false}
         />
       )}
     </>

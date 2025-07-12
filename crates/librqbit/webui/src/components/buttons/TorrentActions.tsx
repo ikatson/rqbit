@@ -13,6 +13,7 @@ import {
 import { useErrorStore } from "../../stores/errorStore";
 import { ErrorComponent } from "../ErrorComponent";
 import { useTorrentStore } from "../../stores/torrentStore";
+import { ViewModeContext } from "../../stores/viewMode";
 
 export const TorrentActions: React.FC<{
   id: number;
@@ -20,15 +21,14 @@ export const TorrentActions: React.FC<{
   detailsResponse: TorrentDetails | null;
   extendedView: boolean;
   setExtendedView: (extendedView: boolean) => void;
-  compact: boolean;
 }> = ({
   id,
   statsResponse,
   detailsResponse,
   extendedView,
   setExtendedView,
-  compact,
 }) => {
+  const { compact } = useContext(ViewModeContext);
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
