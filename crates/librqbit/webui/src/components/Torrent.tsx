@@ -31,36 +31,6 @@ export const Torrent: React.FC<{
     }, 1000);
   }, [compact, torrent.id]);
 
-  // Update stats once then forever.
-  useEffect(() => {
-    if (compact) return;
-    return customSetInterval(async () => {
-      const errorInterval = 10000;
-      const liveInterval = 1000;
-      const nonLiveInterval = 10000;
-
-      return API.getTorrentStats(torrent.id)
-        .then((stats) => {
-          refreshTorrents();
-          return stats;
-        })
-        .then(
-          (stats) => {
-            if (
-              stats.state == STATE_INITIALIZING ||
-              stats.state == STATE_LIVE
-            ) {
-              return liveInterval;
-            }
-            return nonLiveInterval;
-          },
-          () => {
-            return errorInterval;
-          },
-        );
-    }, 0);
-  }, [compact, torrent.id, refreshTorrents]);
-
   return (
     <>
       {compact ? (
