@@ -12,7 +12,10 @@ import { ResizablePanes } from "./ResizablePanes";
 
 export const RootContent = (props: {}) => {
   const { compact } = useContext(ViewModeContext);
-  const [selectedTorrent, setSelectedTorrent] = useState<number | null>(null);
+  const selectedTorrent = useTorrentStore((state) => state.selectedTorrent);
+  const setSelectedTorrent = useTorrentStore(
+    (state) => state.setSelectedTorrent,
+  );
   const [selectedTorrentDetails, setSelectedTorrentDetails] =
     useState<TorrentDetails | null>(null);
 
@@ -26,7 +29,7 @@ export const RootContent = (props: {}) => {
   );
 
   let selectedTorrentData =
-    torrents?.find((t) => (t.id === selectedTorrent ? t : null)) ?? null;
+    selectedTorrent ?? null;
 
   const API = useContext(APIContext);
 
@@ -36,14 +39,14 @@ export const RootContent = (props: {}) => {
       return;
     }
     return loopUntilSuccess(async () => {
-      await API.getTorrentDetails(selectedTorrent).then(
+      await API.getTorrentDetails(selectedTorrent.id).then(
         setSelectedTorrentDetails,
       );
     }, 1000);
   }, [selectedTorrent]);
 
   const onTorrentClick = (id: number) => {
-    setSelectedTorrent(id);
+    setSelectedTorrent(torrents?.find((t) => t.id === id) ?? null);
   };
 
   if (compact) {
@@ -54,7 +57,7 @@ export const RootContent = (props: {}) => {
             torrents={torrents}
             loading={torrentsInitiallyLoading}
             onTorrentClick={onTorrentClick}
-            selectedTorrent={selectedTorrent}
+            
           />
         }
         bottom={

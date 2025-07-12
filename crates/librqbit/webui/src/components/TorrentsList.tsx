@@ -11,12 +11,15 @@ import { Speed } from "./Speed";
 import { FaArrowUp, FaArrowDown } from "react-icons/fa";
 import { ViewModeContext } from "../stores/viewMode";
 
+import { useTorrentStore } from "../stores/torrentStore";
+
 export const TorrentsList = (props: {
   torrents: Array<TorrentIdWithStats> | null;
   loading: boolean;
   onTorrentClick?: (id: number) => void;
-  selectedTorrent?: number | null;
 }) => {
+  const selectedTorrent = useTorrentStore((state) => state.selectedTorrent);
+
   const { compact } = useContext(ViewModeContext);
 
   type SortColumn =
@@ -171,7 +174,7 @@ export const TorrentsList = (props: {
                     key={t.id}
                     torrent={t}
                     onClick={() => props.onTorrentClick!(t.id)}
-                    selected={t.id === props.selectedTorrent}
+                    
                   />
                 ))}
               </tbody>

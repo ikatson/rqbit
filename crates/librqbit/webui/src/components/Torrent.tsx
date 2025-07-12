@@ -15,8 +15,8 @@ import { ViewModeContext } from "../stores/viewMode";
 export const Torrent: React.FC<{
   torrent: TorrentIdWithStats;
   onClick?: () => void;
-  selected?: boolean;
-}> = ({ torrent, onClick, selected }) => {
+}> = ({ torrent, onClick }) => {
+  const selectedTorrent = useTorrentStore((state) => state.selectedTorrent);
   const { compact } = useContext(ViewModeContext);
   const [currentDetailsResponse, updateDetailsResponse] =
     useState<TorrentDetails | null>(null);
@@ -37,7 +37,7 @@ export const Torrent: React.FC<{
         <CompactTorrentRow
           torrent={torrent}
           onClick={onClick!}
-          selected={selected!}
+          selected={selectedTorrent?.id === torrent.id}
         />
       ) : (
         <TorrentRow
