@@ -93,7 +93,7 @@ export const RqbitWebUI = (props: {
   }, []);
 
   return (
-    <ViewModeContext.Provider value={{ compact, toggleCompact }}>
+    <ViewModeContext.Provider value={{ compact }}>
       <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen flex flex-col">
         <Header title={props.title} version={props.version} />
         <div className="relative">
@@ -107,7 +107,7 @@ export const RqbitWebUI = (props: {
             <IconButton onClick={DarkMode.toggle}>
               <BsMoon />
             </IconButton>
-            <IconButton onClick={toggleCompact}>
+            <IconButton onClick={() => setCompact(!compact)}>
               <BsList />
             </IconButton>
           </div>

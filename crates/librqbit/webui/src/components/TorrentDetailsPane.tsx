@@ -1,19 +1,20 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { TorrentDetails, TorrentIdWithStats } from "../api-types";
 import { FileListInput } from "./FileListInput";
 import { TorrentActions } from "./buttons/TorrentActions";
 import { PeerTable } from "./PeerTable";
 import { Tab, Tabs } from "./tabs/Tabs";
 import { TorrentDetailsOverviewTab } from "./TorrentDetailsOverviewTab";
+import { ViewModeContext } from "../stores/viewMode";
 
 const TABS = ["Overview", "Files", "Peers"];
 
 export const TorrentDetailsPane: React.FC<{
   torrent: TorrentIdWithStats;
   details: TorrentDetails | null;
-  compact: boolean;
-}> = ({ details, torrent, compact }) => {
+}> = ({ details, torrent }) => {
   const [extendedView, setExtendedView] = useState(false);
+  const { compact } = useContext(ViewModeContext);
 
   return (
     <div>
@@ -24,7 +25,6 @@ export const TorrentDetailsPane: React.FC<{
           detailsResponse={details}
           extendedView={extendedView}
           setExtendedView={setExtendedView}
-          compact={compact}
         />
         <div className="text-xs font-bold pr-2">{torrent.name}</div>
       </div>
