@@ -3,6 +3,7 @@ import { PeerStatsSnapshot, TorrentIdWithStats } from "../api-types";
 import { APIContext } from "../context";
 import { customSetInterval } from "../helper/customSetInterval";
 import { formatBytes } from "../helper/formatBytes";
+import { FaArrowUp, FaArrowDown } from "react-icons/fa";
 
 export const PeerTable: React.FC<{
   torrent: TorrentIdWithStats;
@@ -124,7 +125,11 @@ export const PeerTable: React.FC<{
 
   const getSortIndicator = (column: string) => {
     if (sortColumn === column) {
-      return sortDirection === "asc" ? " 🔼" : " 🔽";
+      return sortDirection === "asc" ? (
+        <FaArrowUp className="inline ml-1" />
+      ) : (
+        <FaArrowDown className="inline ml-1" />
+      );
     }
     return "";
   };
@@ -176,6 +181,18 @@ export const PeerTable: React.FC<{
                 >
                   Down Speed{getSortIndicator("down_speed")}
                 </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("downloaded")}
+                >
+                  Uploaded{getSortIndicator("uploaded")}
+                </th>
+                <th
+                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort("down_speed")}
+                >
+                  Up Speed{getSortIndicator("up_speed")}
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
@@ -194,6 +211,10 @@ export const PeerTable: React.FC<{
                   <td className="px-2 py-1 whitespace-nowrap">
                     {formatBytes(peerDownloadSpeeds[addr] || 0)}/s
                   </td>
+                  <td className="px-2 py-1 whitespace-nowrap">
+                    {formatBytes(peerStats.counters.uploaded_bytes)}
+                  </td>
+                  <td className="px-2 py-1 whitespace-nowrap">TODO</td>
                 </tr>
               ))}
             </tbody>
