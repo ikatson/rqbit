@@ -18,7 +18,8 @@ const apiUrl = (() => {
 
   // assume Vite devserver
   if (url.port == "3031") {
-    return `${url.protocol}//${url.hostname}:3030`;
+    return "http://router.lan:3030";
+    // return `${url.protocol}//${url.hostname}:3030`;
   }
 
   // Remove "/web" or "/web/" from the end and also ending slash.

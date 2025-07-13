@@ -3,8 +3,7 @@ import { formatBytes } from "../helper/formatBytes";
 
 export const TorrentDetailsOverviewTab: React.FC<{
   torrent: TorrentIdWithStats;
-  details: TorrentDetails | null;
-}> = ({ details, torrent }) => {
+}> = ({ torrent }) => {
   return (
     <div className="p-2 text-xs">
       <p>

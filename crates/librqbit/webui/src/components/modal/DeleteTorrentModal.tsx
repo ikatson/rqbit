@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import { TorrentDetails } from "../../api-types";
+import { TorrentDetails, TorrentIdWithStats } from "../../api-types";
 import { APIContext } from "../../context";
 import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { ErrorWithLabel } from "../../rqbit-web";
@@ -12,11 +12,10 @@ import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 
 export const DeleteTorrentModal: React.FC<{
-  id: number;
   show: boolean;
   onHide: () => void;
-  torrent: TorrentDetails | null;
-}> = ({ id, show, onHide, torrent }) => {
+  torrent: TorrentIdWithStats;
+}> = ({ show, onHide, torrent }) => {
   if (!show) {
     return null;
   }
@@ -39,14 +38,14 @@ export const DeleteTorrentModal: React.FC<{
 
     const call = deleteFiles ? API.delete : API.forget;
 
-    call(id)
+    call(torrent.id)
       .then(() => {
         refreshTorrents();
         close();
       })
       .catch((e) => {
         setError({
-          text: `Error deleting torrent id=${id}`,
+          text: `Error deleting torrent id=${torrent.id} name=${torrent.name}`,
           details: e,
         });
         setDeleting(false);
@@ -59,7 +58,7 @@ export const DeleteTorrentModal: React.FC<{
         <p></p>
         <p className="text-gray-700 dark:text-slate-300">
           Are you sure you want to delete{" "}
-          <span className="font-medium">"{torrentDisplayName(torrent)}"</span>?
+          <span className="font-medium">"{torrent.name}"</span>?
         </p>
 
         <div className="mt-4 flex items-center">

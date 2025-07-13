@@ -1,5 +1,9 @@
 import { useContext, useState } from "react";
-import { TorrentDetails, TorrentStats } from "../../api-types";
+import {
+  TorrentDetails,
+  TorrentIdWithStats,
+  TorrentStats,
+} from "../../api-types";
 import { APIContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
@@ -16,20 +20,12 @@ import { useTorrentStore } from "../../stores/torrentStore";
 import { ViewModeContext } from "../../stores/viewMode";
 
 export const TorrentActions: React.FC<{
-  id: number;
-  statsResponse: TorrentStats;
-  detailsResponse: TorrentDetails | null;
+  torrent: TorrentIdWithStats;
   extendedView: boolean;
   setExtendedView: (extendedView: boolean) => void;
-}> = ({
-  id,
-  statsResponse,
-  detailsResponse,
-  extendedView,
-  setExtendedView,
-}) => {
+}> = ({ torrent, extendedView, setExtendedView }) => {
   const { compact } = useContext(ViewModeContext);
-  let state = statsResponse.state;
+  let state = torrent.stats.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
@@ -46,14 +42,14 @@ export const TorrentActions: React.FC<{
 
   const unpause = () => {
     setDisabled(true);
-    API.start(id)
+    API.start(torrent.id)
       .then(
         () => {
           refresh();
         },
         (e) => {
           setCloseableError({
-            text: `Error starting torrent id=${id}`,
+            text: `Error starting torrent id=${torrent.id} name=${torrent.name}`,
             details: e,
           });
         },
@@ -63,14 +59,14 @@ export const TorrentActions: React.FC<{
 
   const pause = () => {
     setDisabled(true);
-    API.pause(id)
+    API.pause(torrent.id)
       .then(
         () => {
           refresh();
         },
         (e) => {
           setCloseableError({
-            text: `Error pausing torrent id=${id}`,
+            text: `Error pausing torrent id=${torrent.id} name=${torrent.name}`,
             details: e,
           });
         },
@@ -88,7 +84,7 @@ export const TorrentActions: React.FC<{
     setDeleting(false);
   };
 
-  const playlistUrl = API.getPlaylistUrl(id);
+  const playlistUrl = API.getPlaylistUrl(torrent.id);
 
   const setAlert = useErrorStore((state) => state.setAlert);
 
@@ -156,10 +152,9 @@ export const TorrentActions: React.FC<{
         <FaClipboardList className="hover:text-green-500" />
       </IconButton>
       <DeleteTorrentModal
-        id={id}
         show={deleting}
         onHide={cancelDeleting}
-        torrent={detailsResponse}
+        torrent={torrent}
       />
     </div>
   );
