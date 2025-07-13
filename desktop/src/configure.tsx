@@ -353,7 +353,7 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
                 label="Download rate limit"
                 name="ratelimits.download_bps"
                 inputType="number"
-                value={config.ratelimits.download_bps ?? ''}
+                value={config.ratelimits.download_bps ?? ""}
                 onChange={handleInputChange}
                 help={`Limit total download speed to this number of bytes per second (${
                   (config.ratelimits.download_bps ?? 0) > 0
@@ -368,7 +368,7 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
                 label="Upload rate limit"
                 name="ratelimits.upload_bps"
                 inputType="number"
-                value={config.ratelimits.upload_bps ?? ''}
+                value={config.ratelimits.upload_bps ?? ""}
                 onChange={handleInputChange}
                 help={`Limit total upload speed to this number of bytes per second (${
                   (config.ratelimits.upload_bps ?? 0) > 0
