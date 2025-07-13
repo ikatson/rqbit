@@ -16,10 +16,7 @@ import { useTorrentStore } from "../stores/torrentStore";
 export const TorrentsList = (props: {
   torrents: Array<TorrentIdWithStats> | null;
   loading: boolean;
-  onTorrentClick?: (id: number) => void;
 }) => {
-  const selectedTorrent = useTorrentStore((state) => state.selectedTorrent);
-
   const { compact } = useContext(ViewModeContext);
 
   type SortColumn =
@@ -170,12 +167,7 @@ export const TorrentsList = (props: {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
                 {sortedTorrentData.map((t) => (
-                  <Torrent
-                    key={t.id}
-                    torrent={t}
-                    onClick={() => props.onTorrentClick!(t.id)}
-                    
-                  />
+                  <Torrent key={t.id} torrent={t} />
                 ))}
               </tbody>
             </table>

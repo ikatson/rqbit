@@ -14,36 +14,19 @@ import { ViewModeContext } from "../stores/viewMode";
 
 export const Torrent: React.FC<{
   torrent: TorrentIdWithStats;
-  onClick?: () => void;
-}> = ({ torrent, onClick }) => {
-  const selectedTorrent = useTorrentStore((state) => state.selectedTorrent);
+}> = ({ torrent }) => {
   const { compact } = useContext(ViewModeContext);
   const [currentDetailsResponse, updateDetailsResponse] =
     useState<TorrentDetails | null>(null);
   const API = useContext(APIContext);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
-  // Update details once then when asked for.
-  useEffect(() => {
-    if (compact) return;
-    return loopUntilSuccess(async () => {
-      await API.getTorrentDetails(torrent.id).then(updateDetailsResponse);
-    }, 1000);
-  }, [compact, torrent.id]);
-
   return (
     <>
       {compact ? (
-        <CompactTorrentRow
-          torrent={torrent}
-          onClick={onClick!}
-          selected={selectedTorrent?.id === torrent.id}
-        />
+        <CompactTorrentRow torrent={torrent} />
       ) : (
-        <TorrentRow
-          torrent={torrent}
-          detailsResponse={currentDetailsResponse}
-        />
+        <TorrentRow torrent={torrent} />
       )}
     </>
   );

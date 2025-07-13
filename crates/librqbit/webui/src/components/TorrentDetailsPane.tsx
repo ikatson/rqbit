@@ -6,45 +6,29 @@ import { PeerTable } from "./PeerTable";
 import { Tab, Tabs } from "./tabs/Tabs";
 import { TorrentDetailsOverviewTab } from "./TorrentDetailsOverviewTab";
 import { ViewModeContext } from "../stores/viewMode";
-
-const TABS = ["Overview", "Files", "Peers"];
+import { ManagedTorrentFileListInput } from "./ManagedTorrentFileListInput";
 
 export const TorrentDetailsPane: React.FC<{
   torrent: TorrentIdWithStats;
-  details: TorrentDetails | null;
-}> = ({ details, torrent }) => {
+}> = ({ torrent }) => {
   const [extendedView, setExtendedView] = useState(false);
   const { compact } = useContext(ViewModeContext);
 
   return (
     <div>
-      <div className="flex justify-between items-center p-2 bg-gray-100 dark:bg-gray-800 rounded-md">
+      <div className="p-2 bg-gray-100 dark:bg-gray-800">
         <TorrentActions
-          id={torrent.id}
-          statsResponse={torrent.stats}
-          detailsResponse={details}
+          torrent={torrent}
           extendedView={extendedView}
           setExtendedView={setExtendedView}
         />
-        <div className="text-xs font-bold pr-2">{torrent.name}</div>
       </div>
-      <Tabs tabs={TABS}>
+      <Tabs tabs={["Overview", "Files", "Peers"]}>
         <Tab>
-          <TorrentDetailsOverviewTab torrent={torrent} details={details} />
+          <TorrentDetailsOverviewTab torrent={torrent} />
         </Tab>
         <Tab>
-          {details && (
-            <FileListInput
-              torrentId={torrent.id}
-              torrentDetails={details}
-              torrentStats={torrent.stats}
-              selectedFiles={new Set(details.files.map((_, i) => i))}
-              setSelectedFiles={() => {}}
-              disabled={false}
-              allowStream={true}
-              showProgressBar={true}
-            />
-          )}
+          <ManagedTorrentFileListInput torrent={torrent} />
         </Tab>
         <Tab>
           <PeerTable torrent={torrent} />
