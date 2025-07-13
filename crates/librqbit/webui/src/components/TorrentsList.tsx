@@ -23,7 +23,8 @@ export const TorrentsList: React.FC<{
     | "id"
     | "name"
     | "progress"
-    | "speed"
+    | "download"
+    | "upload"
     | "eta"
     | "peers"
     | "size";
@@ -52,8 +53,10 @@ export const TorrentsList: React.FC<{
             const progress = torrent.stats?.progress_bytes || 0;
             const total = torrent.stats?.total_bytes || 1;
             return progress / total;
-          case "speed":
+          case "download":
             return torrent.stats?.live?.download_speed.mbps || 0;
+          case "upload":
+            return torrent.stats?.live?.upload_speed.mbps || 0;
           case "eta":
             return (
               torrent.stats?.live?.time_remaining?.duration?.secs || Infinity
@@ -141,9 +144,15 @@ export const TorrentsList: React.FC<{
                   </th>
                   <th
                     className={thClickableClassNames}
-                    onClick={() => handleSort("speed")}
+                    onClick={() => handleSort("download")}
                   >
-                    Speed{getSortIndicator("speed")}
+                    Download{getSortIndicator("download")}
+                  </th>
+                  <th
+                    className={thClickableClassNames}
+                    onClick={() => handleSort("upload")}
+                  >
+                    Upload{getSortIndicator("upload")}
                   </th>
                   <th
                     className={thClickableClassNames}

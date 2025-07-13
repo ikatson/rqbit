@@ -42,6 +42,7 @@ export const ManagedTorrentFileListInput: React.FC<{
     API.updateOnlyFiles(torrent.id, Array.from(selectedFiles))
       .then(
         () => {
+          setSelectedFiles(selectedFiles);
           setCloseableError(null);
         },
         (e) => {
