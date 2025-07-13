@@ -9,12 +9,18 @@ export const PeerTable: React.FC<{
   torrent: TorrentIdWithStats;
 }> = ({ torrent }) => {
   const [peers, setPeers] = useState<PeerStatsSnapshot | null>(null);
-  const [showAllPeers, setShowAllPeers] = useState(false);
-  const [peerDownloadSpeeds, setPeerDownloadSpeeds] = useState<
-    Record<string, number>
+  const [peerSpeeds, setPeerSpeeds] = useState<
+    Record<string, { download: number; upload: number }>
   >({});
-  const [peerDownloadHistory, setPeerDownloadHistory] = useState<
-    Record<string, Array<{ timestamp: number; fetched_bytes: number }>>
+  const [peerHistory, setPeerHistory] = useState<
+    Record<
+      string,
+      Array<{
+        timestamp: number;
+        fetched_bytes: number;
+        uploaded_bytes: number;
+      }>
+    >
   >({});
   const [sortColumn, setSortColumn] = useState<string>("downloaded");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
@@ -25,21 +31,22 @@ export const PeerTable: React.FC<{
     const SPEED_WINDOW_MS = 10 * 1000; // 10 seconds
 
     return customSetInterval(async () => {
-      const newPeers = await API.getTorrentPeerStats(
-        torrent.id,
-        showAllPeers ? "all" : "live",
-      );
+      const newPeers = await API.getTorrentPeerStats(torrent.id, "live");
       const now = Date.now();
 
-      const currentDownloadSpeeds: Record<string, number> = {};
+      const currentSpeeds: Record<
+        string,
+        { download: number; upload: number }
+      > = {};
 
-      setPeerDownloadHistory((prevHistory) => {
+      setPeerHistory((prevHistory) => {
         const newHistory: typeof prevHistory = {};
         Object.entries(newPeers.peers).forEach(([addr, peerStats]) => {
           newHistory[addr] = prevHistory[addr] ?? [];
           newHistory[addr].push({
             timestamp: now,
             fetched_bytes: peerStats.counters.fetched_bytes,
+            uploaded_bytes: peerStats.counters.uploaded_bytes,
           });
 
           // Clean up old history entries
@@ -47,50 +54,52 @@ export const PeerTable: React.FC<{
             (entry) => now - entry.timestamp <= SPEED_WINDOW_MS,
           );
 
-          // Calculate speed using sliding window
+          // Calculate speeds using sliding window
           if (newHistory[addr].length > 1) {
             const firstEntry = newHistory[addr][0];
             const lastEntry = newHistory[addr][newHistory[addr].length - 1];
             const timeDiff =
               (lastEntry.timestamp - firstEntry.timestamp) / 1000; // in seconds
-            const downloadedDiff =
-              lastEntry.fetched_bytes - firstEntry.fetched_bytes;
-            currentDownloadSpeeds[addr] =
-              timeDiff > 0 ? downloadedDiff / timeDiff : 0; // bytes per second
+
+            if (timeDiff > 0) {
+              // Calculate download speed
+              const downloadedDiff =
+                lastEntry.fetched_bytes - firstEntry.fetched_bytes;
+              // Calculate upload speed
+              const uploadedDiff =
+                lastEntry.uploaded_bytes - firstEntry.uploaded_bytes;
+
+              currentSpeeds[addr] = {
+                download: downloadedDiff / timeDiff, // bytes per second
+                upload: uploadedDiff / timeDiff, // bytes per second
+              };
+            } else {
+              currentSpeeds[addr] = { download: 0, upload: 0 };
+            }
           } else {
-            currentDownloadSpeeds[addr] = 0;
+            currentSpeeds[addr] = { download: 0, upload: 0 };
           }
         });
         return newHistory;
       });
 
       setPeers(newPeers);
-      setPeerDownloadSpeeds(currentDownloadSpeeds);
+      setPeerSpeeds(currentSpeeds);
 
       return 1000; // Refresh every second while open
     }, 0);
-  }, [torrent.id, torrent.stats.state, showAllPeers]);
+  }, [torrent.id, torrent.stats.state]);
 
   const sortedPeers = useMemo(() => {
     if (!peers) return [];
 
     let peersArray = Object.entries(peers.peers);
 
-    // Filter out "not_needed" peers if not showing all
-    if (!showAllPeers) {
-      peersArray = peersArray.filter(
-        ([, peerStats]) => peerStats.state !== "not_needed",
-      );
-    }
-
     peersArray.sort(([addrA, peerStatsA], [addrB, peerStatsB]) => {
       let compareValue = 0;
       switch (sortColumn) {
         case "address":
           compareValue = addrA.localeCompare(addrB);
-          break;
-        case "state":
-          compareValue = peerStatsA.state.localeCompare(peerStatsB.state);
           break;
         case "conn_kind":
           compareValue = (peerStatsA.conn_kind || "").localeCompare(
@@ -104,7 +113,12 @@ export const PeerTable: React.FC<{
           break;
         case "down_speed":
           compareValue =
-            (peerDownloadSpeeds[addrA] || 0) - (peerDownloadSpeeds[addrB] || 0);
+            (peerSpeeds[addrA]?.download || 0) -
+            (peerSpeeds[addrB]?.download || 0);
+          break;
+        case "up_speed":
+          compareValue =
+            (peerSpeeds[addrA]?.upload || 0) - (peerSpeeds[addrB]?.upload || 0);
           break;
         default:
           break;
@@ -112,7 +126,7 @@ export const PeerTable: React.FC<{
       return sortDirection === "asc" ? compareValue : -compareValue;
     });
     return peersArray;
-  }, [peers, showAllPeers, sortColumn, sortDirection, peerDownloadSpeeds]);
+  }, [peers, sortColumn, sortDirection, peerSpeeds]);
 
   const handleSort = (column: string) => {
     if (sortColumn === column) {
@@ -136,16 +150,6 @@ export const PeerTable: React.FC<{
 
   return (
     <>
-      <div className="flex items-center mt-2 text-sm">
-        <input
-          type="checkbox"
-          id="showAllPeers"
-          checked={showAllPeers}
-          onChange={(e) => setShowAllPeers(e.target.checked)}
-          className="mr-2"
-        />
-        <label htmlFor="showAllPeers">Show all peers</label>
-      </div>
       {peers && (
         <div className="overflow-x-auto text-xs">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
@@ -156,12 +160,6 @@ export const PeerTable: React.FC<{
                   onClick={() => handleSort("address")}
                 >
                   Address{getSortIndicator("address")}
-                </th>
-                <th
-                  className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                  onClick={() => handleSort("state")}
-                >
-                  State{getSortIndicator("state")}
                 </th>
                 <th
                   className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
@@ -189,7 +187,7 @@ export const PeerTable: React.FC<{
                 </th>
                 <th
                   className="px-2 py-1 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                  onClick={() => handleSort("down_speed")}
+                  onClick={() => handleSort("up_speed")}
                 >
                   Up Speed{getSortIndicator("up_speed")}
                 </th>
@@ -200,21 +198,20 @@ export const PeerTable: React.FC<{
                 <tr key={addr}>
                   <td className="px-2 py-1 whitespace-nowrap">{addr}</td>
                   <td className="px-2 py-1 whitespace-nowrap">
-                    {peerStats.state}
-                  </td>
-                  <td className="px-2 py-1 whitespace-nowrap">
                     {peerStats.conn_kind || "N/A"}
                   </td>
                   <td className="px-2 py-1 whitespace-nowrap">
                     {formatBytes(peerStats.counters.fetched_bytes)}
                   </td>
                   <td className="px-2 py-1 whitespace-nowrap">
-                    {formatBytes(peerDownloadSpeeds[addr] || 0)}/s
+                    {formatBytes(peerSpeeds[addr]?.download || 0)}/s
                   </td>
                   <td className="px-2 py-1 whitespace-nowrap">
                     {formatBytes(peerStats.counters.uploaded_bytes)}
                   </td>
-                  <td className="px-2 py-1 whitespace-nowrap">TODO</td>
+                  <td className="px-2 py-1 whitespace-nowrap">
+                    {formatBytes(peerSpeeds[addr]?.upload || 0)}/s
+                  </td>
                 </tr>
               ))}
             </tbody>
