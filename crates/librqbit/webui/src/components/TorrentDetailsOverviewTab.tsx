@@ -21,6 +21,10 @@ export const TorrentDetailsOverviewTab: React.FC<{
       <p>
         <b>Output folder:</b> {torrent.output_folder}
       </p>
+      <p>
+        <b>Uploaded:</b>{" "}
+        {formatBytes(torrent.stats.live?.snapshot.uploaded_bytes ?? 0)}
+      </p>
     </div>
   );
 };
