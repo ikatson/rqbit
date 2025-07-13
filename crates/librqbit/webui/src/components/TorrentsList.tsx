@@ -13,10 +13,10 @@ import { ViewModeContext } from "../stores/viewMode";
 
 import { useTorrentStore } from "../stores/torrentStore";
 
-export const TorrentsList = (props: {
+export const TorrentsList: React.FC<{
   torrents: Array<TorrentIdWithStats> | null;
   loading: boolean;
-}) => {
+}> = ({ torrents, loading }) => {
   const { compact } = useContext(ViewModeContext);
 
   type SortColumn =
@@ -28,15 +28,15 @@ export const TorrentsList = (props: {
     | "peers"
     | "size";
 
-  const [sortColumn, setSortColumn] = useState<SortColumn>("name");
-  const [sortDirectionIsAsc, setSortDirectionIsAsc] = useState<boolean>(true);
+  const [sortColumn, setSortColumn] = useState<SortColumn>("id");
+  const [sortDirectionIsAsc, setSortDirectionIsAsc] = useState<boolean>(false);
 
   const API = useContext(APIContext);
 
   const sortedTorrentData = useMemo(() => {
-    if (!props.torrents) return [];
+    if (!torrents) return [];
 
-    const sortableData = [...props.torrents];
+    const sortableData = [...torrents];
 
     sortableData.sort((a, b) => {
       const getSortValue = (
@@ -77,7 +77,7 @@ export const TorrentsList = (props: {
       return sortDirectionIsAsc ? compareValue : -compareValue;
     });
     return sortableData;
-  }, [props.torrents, sortColumn, sortDirectionIsAsc]);
+  }, [torrents, sortColumn, sortDirectionIsAsc]);
 
   const handleSort = (newColumn: SortColumn) => {
     if (sortColumn === newColumn) {
@@ -106,14 +106,14 @@ export const TorrentsList = (props: {
   if (compact) {
     return (
       <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7">
-        {props.torrents === null ? (
-          props.loading ? (
+        {torrents === null ? (
+          loading ? (
             <Spinner
               className="justify-center m-5"
               label="Loading torrent list"
             />
           ) : null
-        ) : props.torrents.length === 0 ? (
+        ) : torrents.length === 0 ? (
           <p className="text-center">No existing torrents found.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -179,17 +179,17 @@ export const TorrentsList = (props: {
 
   return (
     <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7">
-      {props.torrents === null ? (
-        props.loading ? (
+      {sortedTorrentData === null ? (
+        loading ? (
           <Spinner
             className="justify-center m-5"
             label="Loading torrent list"
           />
         ) : null
-      ) : props.torrents.length === 0 ? (
+      ) : sortedTorrentData.length === 0 ? (
         <p className="text-center">No existing torrents found.</p>
       ) : (
-        props.torrents.map((t: TorrentIdWithStats) => (
+        sortedTorrentData.map((t: TorrentIdWithStats) => (
           <Torrent key={t.id} torrent={t} />
         ))
       )}

@@ -142,7 +142,7 @@ export const PeerTable: React.FC<{
         <label htmlFor="showAllPeers">Show all peers</label>
       </div>
       {peers && (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto text-xs">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
