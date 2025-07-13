@@ -27,7 +27,7 @@ Promise.all([get_version(), get_default_config(), get_current_config()]).then(
           defaultConfig={defaultConfig}
           currentState={currentState}
         />
-      </StrictMode>
+      </StrictMode>,
     );
-  }
+  },
 );
