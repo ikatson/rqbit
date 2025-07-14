@@ -10,6 +10,8 @@ import { ManagedTorrentFileListInput } from "./ManagedTorrentFileListInput";
 import { useTorrentStore } from "../stores/torrentStore";
 import { TorrentActionsMulti } from "./TorrentActionsMulti";
 
+const noop = () => {};
+
 export const TorrentDetailsPane: React.FC<{}> = () => {
   const selectedTorrents = useTorrentStore((state) =>
     state.selectedTorrentIds
@@ -26,7 +28,7 @@ export const TorrentDetailsPane: React.FC<{}> = () => {
           <TorrentActions
             torrent={torrent}
             extendedView={false}
-            setExtendedView={() => {}}
+            setExtendedView={noop}
           />
         </div>
         <Tabs tabs={["Overview", "Files", "Peers"]}>
