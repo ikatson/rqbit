@@ -30,7 +30,7 @@ export const RqbitWebUI = (props: {
   version: string;
   menuButtons?: JSX.Element[];
 }) => {
-  const [compact, setCompact] = useState(window.innerWidth >= 850);
+  const [compact, setCompact] = useState(window.outerWidth >= 850);
 
   let [logsOpened, setLogsOpened] = useState<boolean>(false);
   const setOtherError = useErrorStore((state) => state.setOtherError);
@@ -52,7 +52,10 @@ export const RqbitWebUI = (props: {
     );
     setTorrents(torrents.torrents);
   }, []);
-  setRefreshTorrents(refreshTorrents);
+
+  useEffect(() => {
+    setRefreshTorrents(refreshTorrents);
+  }, [refreshTorrents]);
 
   const setStats = useStatsStore((state) => state.setStats);
 
