@@ -4,6 +4,7 @@ import { APIContext } from "../context";
 import { customSetInterval } from "../helper/customSetInterval";
 import { formatBytes } from "../helper/formatBytes";
 import { FaArrowUp, FaArrowDown } from "react-icons/fa";
+import { Spinner } from "./Spinner";
 
 export const PeerTable: React.FC<{
   torrent: TorrentIdWithStats;
@@ -12,7 +13,7 @@ export const PeerTable: React.FC<{
   const [peerSpeeds, setPeerSpeeds] = useState<
     Record<string, { download: number; upload: number }>
   >({});
-  const [peerHistory, setPeerHistory] = useState<
+  const [_, setPeerHistory] = useState<
     Record<
       string,
       Array<{
@@ -147,6 +148,14 @@ export const PeerTable: React.FC<{
     }
     return "";
   };
+
+  if (!peers) {
+    return (
+      <div className="flex justify-center p-2">
+        <Spinner label="Loading peers" />
+      </div>
+    );
+  }
 
   return (
     <>
