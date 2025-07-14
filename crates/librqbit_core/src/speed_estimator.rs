@@ -1,10 +1,11 @@
 use std::{
     collections::VecDeque,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
-
-use parking_lot::Mutex;
 
 #[derive(Clone, Copy)]
 struct ProgressSnapshot {
@@ -12,31 +13,41 @@ struct ProgressSnapshot {
     instant: Instant,
 }
 
-/// Estimates download/upload speed in a sliding time window.
-pub struct SpeedEstimator {
-    snapshots: Mutex<VecDeque<ProgressSnapshot>>,
+struct Shared {
     bytes_per_second: AtomicU64,
     time_remaining_millis: AtomicU64,
 }
 
-impl Default for SpeedEstimator {
-    fn default() -> Self {
-        Self::new(5)
-    }
+pub struct Updater {
+    snapshots: VecDeque<ProgressSnapshot>,
+    shared: Arc<Shared>,
+}
+
+/// Estimates download/upload speed in a sliding time window.
+pub struct SpeedEstimator {
+    shared: Arc<Shared>,
 }
 
 impl SpeedEstimator {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> (SpeedEstimator, Updater) {
         assert!(capacity > 1);
-        Self {
-            snapshots: Mutex::new(VecDeque::with_capacity(capacity)),
+        let shared = Arc::new(Shared {
             bytes_per_second: Default::default(),
             time_remaining_millis: Default::default(),
-        }
+        });
+        (
+            SpeedEstimator {
+                shared: shared.clone(),
+            },
+            Updater {
+                snapshots: VecDeque::with_capacity(capacity),
+                shared,
+            },
+        )
     }
 
     pub fn time_remaining(&self) -> Option<Duration> {
-        let tr = self.time_remaining_millis.load(Ordering::Relaxed);
+        let tr = self.shared.time_remaining_millis.load(Ordering::Relaxed);
         if tr == 0 {
             return None;
         }
@@ -44,36 +55,36 @@ impl SpeedEstimator {
     }
 
     pub fn bps(&self) -> u64 {
-        self.bytes_per_second.load(Ordering::Relaxed)
+        self.shared.bytes_per_second.load(Ordering::Relaxed)
     }
 
     pub fn mbps(&self) -> f64 {
         self.bps() as f64 / 1024f64 / 1024f64
     }
+}
 
+impl Updater {
     pub fn add_snapshot(
-        &self,
+        &mut self,
         progress_bytes: u64,
         remaining_bytes: Option<u64>,
         instant: Instant,
     ) {
         let first = {
-            let mut g = self.snapshots.lock();
-
             let current = ProgressSnapshot {
                 progress_bytes,
                 instant,
             };
 
-            if g.is_empty() {
-                g.push_back(current);
+            if self.snapshots.is_empty() {
+                self.snapshots.push_back(current);
                 return;
-            } else if g.len() < g.capacity() {
-                g.push_back(current);
-                g.front().copied().unwrap()
+            } else if self.snapshots.len() < self.snapshots.capacity() {
+                self.snapshots.push_back(current);
+                self.snapshots.front().copied().unwrap()
             } else {
-                let first = g.pop_front().unwrap();
-                g.push_back(current);
+                let first = self.snapshots.pop_front().unwrap();
+                self.snapshots.push_back(current);
                 first
             }
         };
@@ -88,8 +99,11 @@ impl SpeedEstimator {
         } else {
             0
         };
-        self.time_remaining_millis
+        self.shared
+            .time_remaining_millis
             .store(time_remaining_millis_rounded, Ordering::Relaxed);
-        self.bytes_per_second.store(bps as u64, Ordering::Relaxed);
+        self.shared
+            .bytes_per_second
+            .store(bps as u64, Ordering::Relaxed);
     }
 }
