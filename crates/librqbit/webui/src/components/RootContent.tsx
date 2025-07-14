@@ -14,10 +14,7 @@ export const RootContent = (props: {}) => {
   let closeableError = useErrorStore((state) => state.closeableError);
   let setCloseableError = useErrorStore((state) => state.setCloseableError);
   let otherError = useErrorStore((state) => state.otherError);
-  let selectedTorrentId = useTorrentStore((state) => state.selectedTorrentId);
   let torrents = useTorrentStore((state) => state.torrents);
-  let selectedTorrent =
-    torrents?.find((t) => t.id === selectedTorrentId) ?? null;
   let torrentsInitiallyLoading = useTorrentStore(
     (state) => state.torrentsInitiallyLoading,
   );
@@ -33,11 +30,7 @@ export const RootContent = (props: {}) => {
             loading={torrentsInitiallyLoading}
           />
         }
-        bottom={
-          selectedTorrent !== null && (
-            <TorrentDetailsPane torrent={selectedTorrent} />
-          )
-        }
+        bottom={<TorrentDetailsPane />}
       />
     );
   }

@@ -1,12 +1,8 @@
 import { useContext, useState } from "react";
-import {
-  TorrentDetails,
-  TorrentIdWithStats,
-  TorrentStats,
-} from "../../api-types";
-import { APIContext } from "../../context";
-import { IconButton } from "./IconButton";
-import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
+import { TorrentDetails, TorrentIdWithStats, TorrentStats } from "../api-types";
+import { APIContext } from "../context";
+import { IconButton } from "./buttons/IconButton";
+import { DeleteTorrentModal } from "./modal/DeleteTorrentModal";
 import {
   FaCog,
   FaPause,
@@ -14,10 +10,10 @@ import {
   FaTrash,
   FaClipboardList,
 } from "react-icons/fa";
-import { useErrorStore } from "../../stores/errorStore";
-import { ErrorComponent } from "../ErrorComponent";
-import { useTorrentStore } from "../../stores/torrentStore";
-import { ViewModeContext } from "../../stores/viewMode";
+import { useErrorStore } from "../stores/errorStore";
+import { ErrorComponent } from "./ErrorComponent";
+import { useTorrentStore } from "../stores/torrentStore";
+import { ViewModeContext } from "../stores/viewMode";
 
 export const TorrentActions: React.FC<{
   torrent: TorrentIdWithStats;

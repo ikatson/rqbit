@@ -9,12 +9,15 @@ import { StatusIcon } from "./StatusIcon";
 export const CompactTorrentRow: React.FC<{
   torrent: TorrentIdWithStats;
 }> = ({ torrent }) => {
-  const selected = useTorrentStore(
-    (state) => state.selectedTorrentId === torrent.id,
+  const selected = useTorrentStore((state) =>
+    state.selectedTorrentIds.includes(torrent.id),
   );
-  const onClick = () => {
-    useTorrentStore.setState({ selectedTorrentId: torrent.id });
-  };
+  const setSelectedTorrentId = useTorrentStore(
+    (state) => state.setSelectedTorrentId,
+  );
+  const toggleSelectedTorrentId = useTorrentStore(
+    (state) => state.toggleSelectedTorrentId,
+  );
   const statsResponse = torrent.stats;
   const error = statsResponse?.error ?? null;
   const finished = statsResponse?.finished || false;
@@ -48,7 +51,15 @@ export const CompactTorrentRow: React.FC<{
   return (
     <tr
       className={`cursor-pointer ${selected ? "bg-gray-200 dark:bg-slate-700" : ""}`}
-      onClick={onClick}
+      onClick={(event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        if (event.metaKey || event.ctrlKey || event.shiftKey) {
+          toggleSelectedTorrentId(torrent.id);
+        } else {
+          setSelectedTorrentId(torrent.id);
+        }
+      }}
     >
       <td className="px-2 py-1 whitespace-nowrap text-xs">{torrent.id}</td>
       <td className="px-2 py-1 whitespace-nowrap">{statusIcon("w-4 h-4")}</td>
