@@ -12,16 +12,23 @@ export interface TorrentStore {
   refreshTorrents: () => void;
   setRefreshTorrents: (callback: () => void) => void;
 
-  selectedTorrentId: number | null;
-  setSelectedTorrentId: (torrent: number | null) => void;
+  selectedTorrentIds: number[];
+  setSelectedTorrentId: (torrent: number) => void;
+  toggleSelectedTorrentId: (torrent: number) => void;
 }
 
 export const useTorrentStore = create<TorrentStore>((set) => ({
   torrents: null,
   torrentsLoading: false,
   torrentsInitiallyLoading: false,
-  selectedTorrentId: null,
-  setSelectedTorrentId: (torrent) => set({ selectedTorrentId: torrent }),
+  selectedTorrentIds: [],
+  setSelectedTorrentId: (torrent) => set({ selectedTorrentIds: [torrent] }),
+  toggleSelectedTorrentId: (torrent) =>
+    set((prev) => ({
+      selectedTorrentIds: prev.selectedTorrentIds.includes(torrent)
+        ? prev.selectedTorrentIds.filter((id) => id !== torrent)
+        : [...prev.selectedTorrentIds, torrent],
+    })),
   setTorrentsLoading: (loading: boolean) =>
     set((prev) => {
       if (prev.torrents == null) {

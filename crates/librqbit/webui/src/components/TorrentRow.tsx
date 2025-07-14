@@ -1,6 +1,6 @@
 import { GoClock, GoFile, GoPeople } from "react-icons/go";
 import { STATE_INITIALIZING, TorrentIdWithStats } from "../api-types";
-import { TorrentActions } from "./buttons/TorrentActions";
+import { TorrentActions } from "./TorrentActions";
 import { ProgressBar } from "./ProgressBar";
 import { Speed } from "./Speed";
 import { formatBytes } from "../helper/formatBytes";
