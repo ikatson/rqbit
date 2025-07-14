@@ -30,8 +30,7 @@ export const RqbitWebUI = (props: {
   version: string;
   menuButtons?: JSX.Element[];
 }) => {
-  const [compact, setCompact] = useState(false);
-  const toggleCompact = () => setCompact(!compact);
+  const [compact, setCompact] = useState(window.innerWidth >= 850);
 
   let [logsOpened, setLogsOpened] = useState<boolean>(false);
   const setOtherError = useErrorStore((state) => state.setOtherError);
