@@ -6,8 +6,8 @@ import { useContext, useState } from "react";
 import { APIContext } from "../context";
 
 export const TorrentActionsMulti: React.FC<{
-  torrents: TorrentIdWithStats[];
-}> = ({ torrents }) => {
+  torrentIds: number[];
+}> = ({ torrentIds }) => {
   const refresh = useTorrentStore((state) => state.refreshTorrents);
   const [disabled, setDisabled] = useState(false);
   const API = useContext(APIContext);
@@ -15,11 +15,8 @@ export const TorrentActionsMulti: React.FC<{
   const pause = () => {
     setDisabled(true);
     Promise.all(
-      torrents.map((t) => {
-        console.log(t.id, t.stats.state);
-        if (t.stats.state === "live") {
-          API.pause(t.id).then(() => refresh());
-        }
+      torrentIds.map((id) => {
+        API.pause(id).then(() => refresh());
       }),
     ).finally(() => setDisabled(false));
   };
@@ -27,11 +24,8 @@ export const TorrentActionsMulti: React.FC<{
   const unpause = () => {
     setDisabled(true);
     Promise.all(
-      torrents.map((t) => {
-        console.log(t.id, t.stats.state);
-        if (t.stats.state !== "live") {
-          API.start(t.id).then(() => refresh());
-        }
+      torrentIds.map((id) => {
+        API.start(id).then(() => refresh());
       }),
     ).finally(() => setDisabled(false));
   };
