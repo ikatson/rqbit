@@ -1,9 +1,9 @@
+import { useMemo } from "react";
 import { TorrentIdWithStats, STATE_INITIALIZING } from "../api-types";
 import { formatBytes } from "../helper/formatBytes";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { useTorrentStore } from "../stores/torrentStore";
 import { ProgressBar } from "./ProgressBar";
-import { Speed } from "./Speed";
 import { StatusIcon } from "./StatusIcon";
 
 export const CompactTorrentRow: React.FC<{
@@ -29,17 +29,6 @@ export const CompactTorrentRow: React.FC<{
       ? 100
       : (progressBytes / totalBytes) * 100;
 
-  const statusIcon = (className: string) => {
-    return (
-      <StatusIcon
-        className={className}
-        error={!!error}
-        live={!!statsResponse?.live}
-        finished={finished}
-      />
-    );
-  };
-
   const formatPeersString = () => {
     let peer_stats = statsResponse?.live?.snapshot.peer_stats;
     if (!peer_stats) {
@@ -48,21 +37,32 @@ export const CompactTorrentRow: React.FC<{
     return `${peer_stats.live} / ${peer_stats.seen}`;
   };
 
+  const onClick = useMemo(() => {
+    return (event: React.MouseEvent<HTMLTableRowElement>) => {
+      event.stopPropagation();
+      event.preventDefault();
+      if (event.metaKey || event.ctrlKey || event.shiftKey) {
+        toggleSelectedTorrentId(torrent.id);
+      } else {
+        setSelectedTorrentId(torrent.id);
+      }
+    };
+  }, [torrent.id]);
+
   return (
     <tr
       className={`cursor-pointer ${selected ? "bg-gray-200 dark:bg-slate-700" : ""}`}
-      onClick={(event) => {
-        event.stopPropagation();
-        event.preventDefault();
-        if (event.metaKey || event.ctrlKey || event.shiftKey) {
-          toggleSelectedTorrentId(torrent.id);
-        } else {
-          setSelectedTorrentId(torrent.id);
-        }
-      }}
+      onClick={onClick}
     >
       <td className="px-2 py-1 whitespace-nowrap text-xs">{torrent.id}</td>
-      <td className="px-2 py-1 whitespace-nowrap">{statusIcon("w-4 h-4")}</td>
+      <td className="px-2 py-1 whitespace-nowrap">
+        <StatusIcon
+          className="w-4 h-4"
+          error={!!error}
+          live={!!statsResponse?.live}
+          finished={finished}
+        />
+      </td>
       <td className="px-2 py-1 text-left text-xs text-gray-900 text-ellipsis overflow-hidden dark:text-slate-200">
         {torrent.name}
       </td>
