@@ -692,6 +692,8 @@ impl Session {
                 }
             };
 
+            let (stats, down_updater, up_updater) = SessionStats::new();
+
             let session = Arc::new(Self {
                 persistence,
                 bitv_factory,
@@ -711,7 +713,7 @@ impl Session {
                 reqwest_client,
                 connector: stream_connector,
                 root_span: opts.root_span,
-                stats: Arc::new(SessionStats::new()),
+                stats: Arc::new(stats),
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
@@ -810,7 +812,7 @@ impl Session {
                 }
             }
 
-            session.start_speed_estimator_updater();
+            session.start_speed_estimator_updater(down_updater, up_updater);
 
             Ok(session)
         }

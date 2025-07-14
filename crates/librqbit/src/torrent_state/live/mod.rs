@@ -225,8 +225,8 @@ impl TorrentStateLive {
             .upgrade()
             .context("session is dead, cannot start torrent")?;
         let session_stats = session.stats.clone();
-        let down_speed_estimator = SpeedEstimator::new(10);
-        let up_speed_estimator = SpeedEstimator::new(10);
+        let (down_speed_estimator, mut down_se_updater) = SpeedEstimator::new(10);
+        let (up_speed_estimator, mut up_se_updater) = SpeedEstimator::new(10);
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
@@ -308,12 +308,8 @@ impl TorrentStateLive {
                         let stats = state.stats_snapshot();
                         let fetched = stats.fetched_bytes;
                         let remaining = state.locked.read().get_chunks()?.get_remaining_bytes();
-                        state
-                            .down_speed_estimator
-                            .add_snapshot(fetched, Some(remaining), now);
-                        state
-                            .up_speed_estimator
-                            .add_snapshot(stats.uploaded_bytes, None, now);
+                        down_se_updater.add_snapshot(fetched, Some(remaining), now);
+                        up_se_updater.add_snapshot(stats.uploaded_bytes, None, now);
                         tokio::time::sleep(Duration::from_secs(500)).await;
                     }
                 }
