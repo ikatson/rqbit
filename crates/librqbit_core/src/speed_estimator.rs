@@ -14,7 +14,7 @@ struct ProgressSnapshot {
 
 /// Estimates download/upload speed in a sliding time window.
 pub struct SpeedEstimator {
-    latest_per_second_snapshots: Mutex<VecDeque<ProgressSnapshot>>,
+    snapshots: Mutex<VecDeque<ProgressSnapshot>>,
     bytes_per_second: AtomicU64,
     time_remaining_millis: AtomicU64,
 }
@@ -26,10 +26,10 @@ impl Default for SpeedEstimator {
 }
 
 impl SpeedEstimator {
-    pub fn new(window_seconds: usize) -> Self {
-        assert!(window_seconds > 1);
+    pub fn new(capacity: usize) -> Self {
+        assert!(capacity > 1);
         Self {
-            latest_per_second_snapshots: Mutex::new(VecDeque::with_capacity(window_seconds)),
+            snapshots: Mutex::new(VecDeque::with_capacity(capacity)),
             bytes_per_second: Default::default(),
             time_remaining_millis: Default::default(),
         }
@@ -58,7 +58,7 @@ impl SpeedEstimator {
         instant: Instant,
     ) {
         let first = {
-            let mut g = self.latest_per_second_snapshots.lock();
+            let mut g = self.snapshots.lock();
 
             let current = ProgressSnapshot {
                 progress_bytes,
