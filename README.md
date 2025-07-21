@@ -88,13 +88,20 @@ I've got a report that rqbit can saturate a 20Gbps link, although I don't have t
 ## Installation
 
 There are pre-built binaries in [Releases](https://github.com/ikatson/rqbit/releases).
-If someone wants to put rqbit into e.g. homebrew, PRs welcome :)
 
 [![](https://repology.org/badge/vertical-allrepos/rqbit.svg)](https://repology.org/project/rqbit/versions)
 
-If you have rust toolchain installed, this should work:
+### Homebrew
 
+**rqbit** can be installed using Homebrew.
+```sh
+brew install rqbit
 ```
+
+### Cargo
+
+If you have the Rust toolchain installed then you can use the following.
+```sh
 cargo install rqbit
 ```
 
