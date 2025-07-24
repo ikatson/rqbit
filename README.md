@@ -62,7 +62,7 @@ rqbit supports IPv6. By default it listens on all interfaces in dualstack mode. 
 Assuming bash, add this to your `~/.bashrc`. Modify for your shell of choice.
 
 ```
-eval "$(rqbit completion bash)"
+eval "$(rqbit completions bash)"
 ```
 
 ## Socks proxy support
