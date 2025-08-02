@@ -54,7 +54,7 @@ export const CompactTorrentRow: React.FC<{
       className={`cursor-pointer ${selected ? "bg-gray-200 dark:bg-slate-700" : ""}`}
       onClick={onClick}
     >
-      <td className="px-2 py-1 whitespace-nowrap text-xs">{torrent.id}</td>
+      <td className="px-2 py-1 whitespace-nowrap  text-xs">{torrent.id}</td>
       <td className="px-2 py-1 whitespace-nowrap">
         <StatusIcon
           className="w-4 h-4"
