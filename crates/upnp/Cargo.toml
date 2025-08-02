@@ -23,8 +23,8 @@ network-interface = { version = "2" }
 httparse = "1.9.4"
 bstr = "1.10.0"
 quick-xml = { version = "0.37.1", features = ["serialize"] }
-librqbit-dualstack-sockets = "0.6.10"
-socket2 = "0.5.10"
+librqbit-dualstack-sockets = "0.6.11"
+socket2 = "0.6"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
