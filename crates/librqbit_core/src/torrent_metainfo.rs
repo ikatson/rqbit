@@ -144,7 +144,7 @@ where
             if idx > 0 {
                 write!(f, "{}", std::path::MAIN_SEPARATOR)?;
             }
-            write!(f, "{}", bit)?;
+            write!(f, "{bit}")?;
         }
         Ok(())
     }

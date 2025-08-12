@@ -49,7 +49,7 @@ fn create_usn(opts: &UpnpServerOptions) -> anyhow::Result<String> {
     let uuid = uuid::Builder::from_slice(&uuid)
         .context("error generating UUID")?
         .into_uuid();
-    Ok(format!("uuid:{}", uuid))
+    Ok(format!("uuid:{uuid}"))
 }
 
 impl UpnpServer {

@@ -49,8 +49,7 @@ impl<'de> Deserialize<'de> for OnlyFiles {
                     Ok(acc)
                 }
                 Err(_) => Err(D::Error::custom(format!(
-                    "only_files: failed to parse {:?} as integer",
-                    c
+                    "only_files: failed to parse {c:?} as integer"
                 ))),
             })?;
         if list.is_empty() {

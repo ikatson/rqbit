@@ -970,7 +970,7 @@ async fn stats_printer(session: Arc<Session>) -> Result<(), &'static str> {
                     };
                     let time_remaining = down_speed.time_remaining();
                     let eta = match &time_remaining {
-                        Some(d) => format!(", ETA: {:?}", d),
+                        Some(d) => format!(", ETA: {d:?}"),
                         None => String::new()
                     };
                     let peer_stats = &live_stats.snapshot.peer_stats;

@@ -67,7 +67,7 @@ impl<const N: usize> Default for Id<N> {
 impl<const N: usize> std::fmt::Debug for Id<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
-            write!(f, "{:02x?}", byte)?;
+            write!(f, "{byte:02x?}")?;
         }
         Ok(())
     }
@@ -125,7 +125,7 @@ impl<'de, const N: usize> Deserialize<'de> for Id<N> {
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter
                     .write_str("a byte array of length ")
-                    .and_then(|_| formatter.write_fmt(format_args!("{}", N)))
+                    .and_then(|_| formatter.write_fmt(format_args!("{N}")))
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>

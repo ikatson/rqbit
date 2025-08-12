@@ -137,7 +137,7 @@ impl TorrentFileTree {
 
         let root_node = TorrentFileTreeNode {
             title: info
-                .name_or_else(|| format!("torrent {}", torent_id))
+                .name_or_else(|| format!("torrent {torent_id}"))
                 .into_owned(),
             parent_id: None,
             children: vec![],

@@ -141,11 +141,11 @@ fn format_seconds_to_time(seconds: u64, f: &mut core::fmt::Formatter<'_>) -> cor
     let seconds = seconds % 60;
 
     if hours > 0 {
-        write!(f, "{}h {}m", hours, minutes)
+        write!(f, "{hours}h {minutes}m")
     } else if minutes > 0 {
-        write!(f, "{}m {}s", minutes, seconds)
+        write!(f, "{minutes}m {seconds}s")
     } else {
-        write!(f, "{}s", seconds)
+        write!(f, "{seconds}s")
     }
 }
 
@@ -159,7 +159,7 @@ impl core::fmt::Display for DurationWithHumanReadable {
 
 impl core::fmt::Debug for DurationWithHumanReadable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 
@@ -175,7 +175,7 @@ impl Serialize for DurationWithHumanReadable {
         }
         Tmp {
             duration: self.0,
-            human_readable: format!("{}", self),
+            human_readable: self.to_string(),
         }
         .serialize(serializer)
     }
@@ -211,7 +211,7 @@ impl core::fmt::Display for Speed {
 
 impl core::fmt::Debug for Speed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 
@@ -227,7 +227,7 @@ impl Serialize for Speed {
         }
         Tmp {
             mbps: self.mbps,
-            human_readable: format!("{}", self),
+            human_readable: self.to_string(),
         }
         .serialize(serializer)
     }

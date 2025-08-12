@@ -66,10 +66,10 @@ async fn create_torrent_raw<'a>(
     options: CreateTorrentOptions<'a>,
 ) -> anyhow::Result<CreateTorrentRawResult> {
     path.try_exists()
-        .with_context(|| format!("path {:?} doesn't exist", path))?;
+        .with_context(|| format!("path {path:?} doesn't exist"))?;
     let basename = path
         .file_name()
-        .ok_or_else(|| anyhow::anyhow!("cannot determine basename of {:?}", path))?;
+        .ok_or_else(|| anyhow::anyhow!("cannot determine basename of {path:?}"))?;
     let is_dir = path.is_dir();
     let single_file_mode = !is_dir;
     let name: ByteBufOwned = match options.name {
@@ -82,7 +82,7 @@ async fn create_torrent_raw<'a>(
     if is_dir {
         output_folder = path.to_owned();
         walk_dir_find_paths(path, &mut input_files)
-            .with_context(|| format!("error walking {:?}", path))?;
+            .with_context(|| format!("error walking {path:?}"))?;
     } else {
         output_folder = path
             .canonicalize()?
@@ -112,14 +112,14 @@ async fn create_torrent_raw<'a>(
         let filename = &*file;
         length = 0;
         let mut fd = std::io::BufReader::new(
-            std::fs::File::open(&file).with_context(|| format!("error opening {:?}", filename))?,
+            std::fs::File::open(&file).with_context(|| format!("error opening {filename:?}"))?,
         );
 
         loop {
             let max_bytes_to_read = remaining_piece_length.min(READ_SIZE) as usize;
             let size = spawner
                 .spawn_block_in_place(|| fd.read(&mut read_buf[..max_bytes_to_read]))
-                .with_context(|| format!("error reading {:?}", filename))?;
+                .with_context(|| format!("error reading {filename:?}"))?;
 
             // EOF: swap file
             if size == 0 {

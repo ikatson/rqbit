@@ -43,10 +43,7 @@ impl JsonSessionPersistenceStore {
         tokio::fs::create_dir_all(&output_folder)
             .await
             .with_context(|| {
-                format!(
-                    "couldn't create directory {:?} for session storage",
-                    output_folder
-                )
+                format!("couldn't create directory {output_folder:?} for session storage")
             })?;
 
         let db = match tokio::fs::File::open(&db_filename).await {
@@ -59,7 +56,7 @@ impl JsonSessionPersistenceStore {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
             Err(e) => {
-                return Err(e).context(format!("error opening session file {:?}", db_filename));
+                return Err(e).context(format!("error opening session file {db_filename:?}"));
             }
         };
 
@@ -94,7 +91,7 @@ impl JsonSessionPersistenceStore {
             .write(true)
             .open(&tmp_filename)
             .await
-            .with_context(|| format!("error opening {:?}", tmp_filename))?;
+            .with_context(|| format!("error opening {tmp_filename:?}"))?;
         trace!(?tmp_filename, "opened temp file");
 
         let mut buf = Vec::new();
@@ -114,11 +111,11 @@ impl JsonSessionPersistenceStore {
     }
 
     fn torrent_bytes_filename(&self, info_hash: &Id20) -> PathBuf {
-        self.output_folder.join(format!("{:?}.torrent", info_hash))
+        self.output_folder.join(format!("{info_hash:?}.torrent"))
     }
 
     fn bitv_filename(&self, info_hash: &Id20) -> PathBuf {
-        self.output_folder.join(format!("{:?}.bitv", info_hash))
+        self.output_folder.join(format!("{info_hash:?}.bitv"))
     }
 
     async fn update_db(

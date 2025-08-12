@@ -625,7 +625,7 @@ impl Session {
             let proxy_config = match proxy_url {
                 Some(pu) => Some(
                     SocksProxyConfig::parse(pu)
-                        .with_context(|| format!("error parsing proxy url {}", pu))?,
+                        .with_context(|| format!("error parsing proxy url {pu}"))?,
                 ),
                 None => None,
             };
@@ -1338,7 +1338,7 @@ impl Session {
             .write()
             .torrents
             .remove(&id)
-            .with_context(|| format!("torrent with id {} did not exist", id))?;
+            .with_context(|| format!("torrent with id {id} did not exist"))?;
 
         if let Err(e) = removed.pause() {
             debug!("error pausing torrent before deletion: {e:#}")

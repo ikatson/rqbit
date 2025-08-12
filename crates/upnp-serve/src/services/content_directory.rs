@@ -111,7 +111,7 @@ pub mod browse {
 
                 fn container(item: &Container) -> String {
                     let child_count_tag = match item.children_count {
-                        Some(cc) => format!("childCount=\"{}\"", cc),
+                        Some(cc) => format!("childCount=\"{cc}\""),
                         None => String::new(),
                     };
                     format!(

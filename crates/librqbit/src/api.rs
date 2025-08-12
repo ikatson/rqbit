@@ -131,8 +131,8 @@ impl<'de> Deserialize<'de> for TorrentIdOrHash {
 impl std::fmt::Display for TorrentIdOrHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TorrentIdOrHash::Id(id) => write!(f, "{}", id),
-            TorrentIdOrHash::Hash(h) => write!(f, "{:?}", h),
+            TorrentIdOrHash::Id(id) => write!(f, "{id}"),
+            TorrentIdOrHash::Hash(h) => write!(f, "{h:?}"),
         }
     }
 }

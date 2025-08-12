@@ -193,7 +193,7 @@ pub async fn h_peer_stats_prometheus(
     const NAME: &str = "rqbit_peer_fetched_bytes";
 
     use core::fmt::Write;
-    writeln!(&mut buf, "# TYPE {} counter", NAME).unwrap();
+    writeln!(&mut buf, "# TYPE {NAME} counter").unwrap();
     for (addr, stats) in peer_stats.peers.iter() {
         // Filter out useless peers that never sent us much.
         const THRESHOLD: u64 = 1024 * 1024;
@@ -343,7 +343,7 @@ pub async fn h_create_torrent(
             );
 
             if let Ok(h) =
-                HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
+                HeaderValue::from_str(&format!("attachment; filename=\"{name}.torrent\""))
             {
                 headers.insert(CONTENT_DISPOSITION, h);
             }
