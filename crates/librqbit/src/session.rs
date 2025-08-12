@@ -1,3 +1,5 @@
+mod user_agent;
+
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -71,6 +73,8 @@ use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 use tracker_comms::{TrackerComms, UdpTrackerClient};
+
+pub use user_agent::UserAgent;
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -412,6 +416,9 @@ pub struct SessionOptions {
 
     /// The peer ID to use. If not specified, a random one will be generated.
     pub peer_id: Option<Id20>,
+
+    /// Replace the default user agent with a custom value (display to other peers)
+    pub user_agent: UserAgent,
 
     /// Options for listening on TCP and/or uTP for incoming connections.
     pub listen: Option<ListenerOptions>,

@@ -538,8 +538,6 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
         // This will be overriden by "server start" below if needed.
-        persistence: None,
-        peer_id: None,
         listen,
         connect: Some(ConnectionOptions {
             proxy_url: opts.socks_url.take(),
@@ -572,7 +570,6 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             }
         }),
         concurrent_init_limit: Some(opts.concurrent_init_limit),
-        root_span: None,
         fastresume: false,
         cancellation_token: Some(cancel.clone()),
         #[cfg(feature = "disable-upload")]
@@ -585,6 +582,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
         trackers,
+        ..SessionOptions::default()
     };
 
     #[allow(clippy::needless_update)]
