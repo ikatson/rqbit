@@ -70,8 +70,7 @@ pub async fn h_resolve_magnet(
     );
 
     if let Some(name) = info.name() {
-        if let Ok(h) = HeaderValue::from_str(&format!("attachment; filename=\"{}.torrent\"", name))
-        {
+        if let Ok(h) = HeaderValue::from_str(&format!("attachment; filename=\"{name}.torrent\"")) {
             headers.insert("Content-Disposition", h);
         }
     }

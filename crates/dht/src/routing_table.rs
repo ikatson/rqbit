@@ -158,30 +158,15 @@ fn compute_split_start_end(
     };
     debug_assert!(
         start < new_left_end,
-        "expected start({:?}) < new_left_end({:?}); start={:?}, end={:?}, bits={}",
-        start,
-        new_left_end,
-        start,
-        end_inclusive,
-        bits
+        "expected start({start:?}) < new_left_end({new_left_end:?}); start={start:?}, end={end_inclusive:?}, bits={bits}",
     );
     debug_assert!(
         new_left_end < new_right_start,
-        "expected new_left_end({:?}) < new_right_start({:?}); start={:?}, end={:?}, bits={}",
-        new_left_end,
-        new_right_start,
-        start,
-        end_inclusive,
-        bits
+        "expected new_left_end({new_left_end:?}) < new_right_start({new_right_start:?}); start={start:?}, end={end_inclusive:?}, bits={bits}",
     );
     debug_assert!(
         new_right_start < end_inclusive,
-        "expected new_right_start({:?}) < end_inclusive({:?}); start={:?}, end={:?}, bits={}",
-        new_right_start,
-        end_inclusive,
-        start,
-        end_inclusive,
-        bits
+        "expected new_right_start({new_right_start:?}) < end_inclusive({end_inclusive:?}); start={start:?}, end={end_inclusive:?}, bits={bits}",
     );
     ((start, new_left_end), (new_right_start, end_inclusive))
 }

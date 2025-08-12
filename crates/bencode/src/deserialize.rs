@@ -150,9 +150,9 @@ impl std::fmt::Display for ErrorWithContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (id, ctx_key) in self.ctx.iter().copied().enumerate() {
             if id > 0 {
-                write!(f, " -> {:?}", ctx_key)?;
+                write!(f, " -> {ctx_key:?}")?;
             } else {
-                write!(f, "{:?}", ctx_key)?;
+                write!(f, "{ctx_key:?}")?;
             }
         }
         if !self.ctx.is_empty() {

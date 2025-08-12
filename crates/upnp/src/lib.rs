@@ -112,7 +112,7 @@ async fn forward_port(
         .header("Content-Type", "text/xml")
         .header(
             "SOAPAction",
-            format!("\"{}#AddPortMapping\"", SERVICE_TYPE_WAN_IP_CONNECTION),
+            format!("\"{SERVICE_TYPE_WAN_IP_CONNECTION}#AddPortMapping\""),
         )
         .body(request_body)
         .send()

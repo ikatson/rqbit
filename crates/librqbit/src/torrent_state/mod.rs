@@ -520,7 +520,7 @@ impl ManagedTorrent {
                 }
                 ManagedTorrentState::Error(e) => {
                     resp.state = S::Error;
-                    resp.error = Some(format!("{:?}", e))
+                    resp.error = Some(format!("{e:?}"))
                 }
                 ManagedTorrentState::None => {
                     resp.state = S::Error;

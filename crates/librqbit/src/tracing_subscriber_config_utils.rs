@@ -111,7 +111,7 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 .create(true)
                 .append(true)
                 .open(&log_file)
-                .with_context(|| format!("error opening log file {:?}", log_file))?,
+                .with_context(|| format!("error opening log file {log_file:?}"))?,
         ));
         layered
             .with(
@@ -139,11 +139,11 @@ pub fn init_logging(opts: InitLoggingOptions) -> anyhow::Result<InitLoggingResul
                 let stderr_env_filter = match EnvFilter::builder().parse(&rust_log) {
                     Ok(f) => f,
                     Err(e) => {
-                        eprintln!("can't parse env filter {:?}: {:#?}", rust_log, e);
+                        eprintln!("can't parse env filter {rust_log:?}: {e:#?}");
                         continue;
                     }
                 };
-                eprintln!("setting RUST_LOG to {:?}", rust_log);
+                eprintln!("setting RUST_LOG to {rust_log:?}");
                 let _ = reload_stderr_filter.reload(stderr_env_filter);
             }
             Ok(())
