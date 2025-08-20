@@ -8,9 +8,12 @@ mod torrents;
 
 use std::sync::Arc;
 
+#[cfg(feature = "webui")]
+use axum::response::Redirect;
+
 use axum::{
     Router,
-    response::{IntoResponse, Redirect},
+    response::IntoResponse,
     routing::{get, post},
 };
 use http::request::Parts;
@@ -18,6 +21,7 @@ use http::request::Parts;
 use super::HttpApi;
 type ApiState = Arc<HttpApi>;
 
+#[allow(unused_variables)]
 async fn h_api_root(parts: Parts) -> impl IntoResponse {
     // If browser, and webui enabled, redirect to web
     #[cfg(feature = "webui")]

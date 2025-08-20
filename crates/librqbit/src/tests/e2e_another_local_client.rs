@@ -19,6 +19,7 @@ const OUTPUT_FOLDER: &str = "/tmp/utptest";
 
 // It's hard to find the binary in target/.../deps/librqbit*, so symlink itself
 // here for easy profiling.
+#[cfg(unix)]
 const BINARY_SYMLINK: &str = "/tmp/rtest";
 
 const DEFAULT_LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 57318);

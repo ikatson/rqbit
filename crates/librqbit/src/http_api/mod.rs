@@ -2,6 +2,7 @@ use anyhow::Context;
 use axum::extract::{ConnectInfo, Request};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
+#[cfg(any(feature = "webui", feature = "prometheus"))]
 use axum::routing::get;
 use base64::Engine;
 use futures::FutureExt;
@@ -86,7 +87,7 @@ impl HttpApi {
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
     pub fn make_http_api_and_run(
-        mut self,
+        #[allow(unused_mut)] mut self,
         listener: TcpListener,
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {

@@ -634,13 +634,13 @@ impl TorrentStateLive {
     pub(crate) fn lock_read(
         &self,
         reason: &'static str,
-    ) -> TimedExistence<RwLockReadGuard<TorrentStateLocked>> {
+    ) -> TimedExistence<RwLockReadGuard<'_, TorrentStateLocked>> {
         TimedExistence::new(timeit(reason, || self.locked.read()), reason)
     }
     pub(crate) fn lock_write(
         &self,
         reason: &'static str,
-    ) -> TimedExistence<RwLockWriteGuard<TorrentStateLocked>> {
+    ) -> TimedExistence<RwLockWriteGuard<'_, TorrentStateLocked>> {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 

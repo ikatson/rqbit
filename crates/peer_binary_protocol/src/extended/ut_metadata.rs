@@ -96,7 +96,7 @@ pub enum UtMetadata<ByteBuf> {
 }
 
 impl UtMetadata<ByteBufOwned> {
-    pub fn as_borrowed(&self) -> UtMetadata<ByteBuf> {
+    pub fn as_borrowed(&self) -> UtMetadata<ByteBuf<'_>> {
         match self {
             UtMetadata::Request(req) => UtMetadata::Request(*req),
             UtMetadata::Data(d) => UtMetadata::Data(UtMetadataData {
