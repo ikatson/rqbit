@@ -636,6 +636,7 @@ impl Session {
                         .context("error creating socks5 proxy for HTTP")?;
                     reqwest::Client::builder().proxy(proxy)
                 } else {
+                    #[allow(unused_mut)]
                     let mut b = reqwest::Client::builder();
                     #[cfg(not(windows))]
                     if let Some(bd) = opts.bind_device_name.as_ref() {
