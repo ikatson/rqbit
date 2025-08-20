@@ -87,7 +87,7 @@ impl HttpApi {
     /// If read_only is passed, no state-modifying methods will be exposed.
     #[inline(never)]
     pub fn make_http_api_and_run(
-        self,
+        #[allow(unused_mut)] mut self,
         listener: TcpListener,
         upnp_router: Option<Router>,
     ) -> BoxFuture<'static, anyhow::Result<()>> {
