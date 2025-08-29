@@ -222,7 +222,7 @@ impl TorrentStateInitializing {
             SF::new(hns.selected_bytes)
         );
 
-        // Ensure file lenghts are correct, and reopen read-only.
+        // Ensure file lengths are correct, and reopen read-only.
         self.shared.spawner.spawn_block_in_place(|| {
             for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
                 if self

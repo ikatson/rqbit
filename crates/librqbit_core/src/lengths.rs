@@ -115,7 +115,7 @@ impl Lengths {
     }
     pub fn try_validate_piece_index(&self, index: u32) -> crate::Result<ValidPieceIndex> {
         self.validate_piece_index(index)
-            .ok_or(Error::InvalidPieceInex(index))
+            .ok_or(Error::InvalidPieceIndex(index))
     }
     pub const fn default_piece_length(&self) -> u32 {
         self.piece_length

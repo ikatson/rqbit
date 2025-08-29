@@ -831,7 +831,7 @@ impl TorrentStateLive {
             if !self.has_active_streams_unfinished_files(locked) {
                 // prevent deadlocks.
                 drop(g);
-                // There is not poing being connected to peers that have all the torrent, when
+                // There is not point being connected to peers that have all the torrent, when
                 // we don't need anything from them, and they don't need anything from us.
                 self.disconnect_all_peers_that_have_full_torrent();
             }
@@ -1028,7 +1028,7 @@ impl PeerConnectionHandler for PeerHandler {
                     warn!(
                         id = self.state.shared.id,
                         info_hash = ?self.state.shared.info_hash,
-                        "recieved noncompliant ut_metadata message from {}, ignoring",
+                        "received noncompliant ut_metadata message from {}, ignoring",
                         self.addr
                     );
                 } else {
@@ -1043,7 +1043,7 @@ impl PeerConnectionHandler for PeerHandler {
                     warn!(
                         id = self.state.shared.id,
                         info_hash = ?self.state.shared.info_hash,
-                        "recieved noncompliant PEX message from {}, ignoring",
+                        "received noncompliant PEX message from {}, ignoring",
                         self.addr
                     );
                 } else {
@@ -1570,7 +1570,7 @@ impl PeerHandler {
             update_interest(self, true)?;
             aframe!(self.wait_for_unchoke()).await;
 
-            // Try steal a pice from a very slow peer first. Otherwise we might wait too long
+            // Try steal a piece from a very slow peer first. Otherwise we might wait too long
             // to download early pieces.
             // Then try get the next one in queue.
             // Afterwards means we are close to completion, try stealing more aggressively.
@@ -1887,7 +1887,7 @@ impl PeerHandler {
                         id = state.shared.id,
                         info_hash = ?state.shared.info_hash,
                         ?addr,
-                        "checksum for piece={} did not validate. disconecting peer.", index
+                        "checksum for piece={} did not validate. disconnecting peer.", index
                     );
                     state
                         .lock_write("mark_piece_broken")

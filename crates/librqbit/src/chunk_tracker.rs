@@ -69,7 +69,7 @@ impl HaveNeededSelected {
     }
 }
 
-// Comput the have-status of chunks.
+// Compute the have-status of chunks.
 //
 // Save as "have_pieces", but there's one bit per chunk (not per piece).
 fn compute_chunk_have_status(lengths: &Lengths, have_pieces: &BS) -> anyhow::Result<BF> {
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_compute_chunk_status() {
-        // Create the most obnoxious lenghts, and ensure it doesn't break in that case.
+        // Create the most obnoxious lengths, and ensure it doesn't break in that case.
         let piece_length = CHUNK_SIZE * 2 + 1;
         let l = Lengths::new(piece_length as u64 * 2 + 1, piece_length).unwrap();
 

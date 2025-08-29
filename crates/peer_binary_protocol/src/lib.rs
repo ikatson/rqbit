@@ -99,7 +99,7 @@ pub enum MessageDeserializeError {
         expected: u32,
         msg_id: MsgIdDebug,
     },
-    #[error("ut_metadata:data recieved {received_len} >= total_size is {total_size}")]
+    #[error("ut_metadata:data received {received_len} >= total_size is {total_size}")]
     UtMetadataBufLargerThanTotalSize { total_size: u32, received_len: u32 },
     #[error("ut_metadata:data length must be <= {CHUNK_SIZE} but received {0} bytes")]
     UtMetadataTooLarge(u32),
@@ -114,7 +114,7 @@ pub enum MessageDeserializeError {
         total_pieces: u32,
         received_piece: u32,
     },
-    #[error("ut_meatadata: expected size {expected_size} != received size {received_size}")]
+    #[error("ut_metadata: expected size {expected_size} != received size {received_size}")]
     UtMetadataSizeMismatch {
         expected_size: u32,
         received_size: u32,

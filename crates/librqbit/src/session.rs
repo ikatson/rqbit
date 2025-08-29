@@ -483,7 +483,7 @@ struct InternalAddResult {
 
 impl Session {
     /// Create a new session with default options.
-    /// The passed in folder will be used as a default unless overriden per torrent.
+    /// The passed in folder will be used as a default unless overridden per torrent.
     /// It will run a DHT server/client, a TCP listener and .
     #[inline(never)]
     pub fn new(default_output_folder: PathBuf) -> BoxFuture<'static, anyhow::Result<Arc<Self>>> {

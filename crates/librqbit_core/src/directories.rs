@@ -26,7 +26,7 @@ pub fn get_configuration_directory_linux(
                 warn!(
                     ?old,
                     ?new,
-                    "can't migrate configuraiton as both directories exist, not sure what to do"
+                    "can't migrate configuration as both directories exist, not sure what to do"
                 )
             }
             (true, false) => {

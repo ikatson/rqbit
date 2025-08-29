@@ -365,7 +365,7 @@ impl ManagedTorrent {
                                     if let ManagedTorrentState::Initializing(_) = &g.state {
                                     } else {
                                         debug!(
-                                            "no need to start torrent anymore, as it switched state from initilizing"
+                                            "no need to start torrent anymore, as it switched state from initializing"
                                         );
                                         return Ok(());
                                     }

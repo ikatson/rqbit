@@ -800,7 +800,7 @@ impl DhtState {
                     Ok(_) => {}
                     Err(e) => {
                         debug!(
-                            "recieved response, but the receiver task is closed: {:?}",
+                            "received response, but the receiver task is closed: {:?}",
                             e
                         );
                     }
@@ -1224,7 +1224,7 @@ impl DhtWorker {
                 Err(Error::DhtDead)
             }
         }
-        .instrument(debug_span!("dht_responese_reader"));
+        .instrument(debug_span!("dht_response_reader"));
 
         let pinger_v4 = self.pinger(true).instrument(debug_span!("pinger_v4"));
         let bucket_refresher_v4 = self
