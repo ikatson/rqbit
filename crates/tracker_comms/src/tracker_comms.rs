@@ -156,7 +156,7 @@ impl TrackerComms {
                 "http" | "https" => Some(SupportedTracker::Http(t)),
                 "udp" => Some(SupportedTracker::Udp(t)),
                 _ => {
-                    debug!("unsuppoted tracker URL: {}", t);
+                    debug!("unsupported tracker URL: {}", t);
                     None
                 }
             })

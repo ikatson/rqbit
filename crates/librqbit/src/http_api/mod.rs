@@ -71,7 +71,7 @@ async fn simple_basic_auth(
     // TODO: constant time compare
     match user_pass.split_once(':') {
         Some((u, p)) if u == expected_user && p == expected_pass => Ok(next.run(request).await),
-        _ => Err(ApiError::unathorized()),
+        _ => Err(ApiError::unauthorized()),
     }
 }
 

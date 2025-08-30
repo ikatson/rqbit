@@ -245,7 +245,7 @@ Content-Length: 0\r\n\r\n"
             let (sz, addr) = match self.socket.recv_from(&mut buf).await {
                 Ok((sz, addr)) => (sz, addr),
                 Err(e) => {
-                    warn!(error=?e, "error receving");
+                    warn!(error=?e, "error receiving");
                     return;
                 }
             };

@@ -79,7 +79,7 @@ impl ApiError {
         }
     }
 
-    pub const fn unathorized() -> Self {
+    pub const fn unauthorized() -> Self {
         Self {
             status: Some(StatusCode::UNAUTHORIZED),
             kind: ApiErrorKind::Unauthorized,
@@ -135,7 +135,7 @@ impl Serialize for ApiError {
             error_kind: match self.kind {
                 ApiErrorKind::TorrentNotFound(_) => "torrent_not_found",
                 ApiErrorKind::DhtDisabled => "dht_disabled",
-                ApiErrorKind::Unauthorized => "unathorized",
+                ApiErrorKind::Unauthorized => "unauthorized",
                 ApiErrorKind::OtherAnyhow(_) => "internal_error",
                 ApiErrorKind::OtherError(_) => "internal_error",
                 ApiErrorKind::OtherCore(_) => "internal_error",

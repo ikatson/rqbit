@@ -537,7 +537,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
         dht_config: None,
-        // This will be overriden by "server start" below if needed.
+        // This will be overridden by "server start" below if needed.
         persistence: None,
         peer_id: None,
         listen,

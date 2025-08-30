@@ -8,12 +8,12 @@ pub enum Error {
     BadTorrentBothSingleAndMultiFile,
     #[error("path traversal detected, \"..\" in filename")]
     BadTorrentPathTraversal,
-    #[error("suspicios separator in filename")]
+    #[error("suspicious separator in filename")]
     BadTorrentSeparatorInName,
     #[error("torrent with 0 length is useless")]
     BadTorrentZeroLength,
     #[error("invalid piece index {0}")]
-    InvalidPieceInex(u32),
+    InvalidPieceIndex(u32),
     #[error("no files in torrent")]
     BadTorrentNoFiles,
     #[error("duplicate filenames in torrent")]

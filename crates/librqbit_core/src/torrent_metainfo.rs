@@ -169,7 +169,7 @@ where
     }
 
     /// Iterate path components as strings. Will decode using the detected encoding, replacing
-    /// uknown characters with a placeholder.
+    /// unknown characters with a placeholder.
     pub fn iter_components(&self) -> impl Iterator<Item = Cow<'a, str>> + use<'a, BufType> {
         let encoding = self.encoding;
         self.iter_components_bytes()
@@ -286,7 +286,7 @@ impl<BufType: AsRef<[u8]>> ValidatedTorrentMetaV1Info<BufType> {
         self.iter_file_details().map(|d| d.len)
     }
 
-    // Iterate file details with additional compuations for offsets.
+    // Iterate file details with additional computations for offsets.
     pub fn iter_file_details_ext<'a>(
         &'a self,
     ) -> impl Iterator<Item = FileDetailsExt<'a, BufType>> + 'a {
