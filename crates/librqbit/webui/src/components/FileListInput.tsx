@@ -25,13 +25,13 @@ type FileTree = {
 
 const newFileTree = (
   torrentDetails: TorrentDetails,
-  stats: TorrentStats | null
+  stats: TorrentStats | null,
 ): FileTree => {
   const newFileTreeInner = (
     name: string,
     id: string,
     files: TorrentFileForCheckbox[],
-    depth: number
+    depth: number,
   ): FileTree => {
     let directFiles: TorrentFileForCheckbox[] = [];
     let groups: FileTree[] = [];
@@ -54,7 +54,7 @@ const newFileTree = (
 
     let sortedGroupsByName = sortBy(
       Object.entries(groupsByName),
-      ([k, _]) => k
+      ([k, _]) => k,
     );
 
     let childId = 0;
@@ -87,7 +87,7 @@ const newFileTree = (
         };
       })
       .filter((f) => f !== null),
-    0
+    0,
   );
 };
 
@@ -177,7 +177,7 @@ const FileTreeComponent: React.FC<{
           label={`${
             tree.name ? tree.name + ", " : ""
           } ${getTotalSelectedFiles()} files, ${formatBytes(
-            getTotalSelectedBytes()
+            getTotalSelectedBytes(),
           )}`}
           name={tree.id}
           onChange={handleToggleTree}
@@ -253,7 +253,7 @@ export const FileListInput: React.FC<{
 }) => {
   let fileTree = useMemo(
     () => newFileTree(torrentDetails, torrentStats),
-    [torrentDetails, torrentStats]
+    [torrentDetails, torrentStats],
   );
 
   return (

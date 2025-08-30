@@ -1,8 +1,8 @@
 import { useContext, useState } from "react";
-import { TorrentDetails, TorrentStats } from "../../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../../context";
-import { IconButton } from "./IconButton";
-import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
+import { TorrentDetails, TorrentIdWithStats, TorrentStats } from "../api-types";
+import { APIContext } from "../context";
+import { IconButton } from "./buttons/IconButton";
+import { DeleteTorrentModal } from "./modal/DeleteTorrentModal";
 import {
   FaCog,
   FaPause,
@@ -10,22 +10,23 @@ import {
   FaTrash,
   FaClipboardList,
 } from "react-icons/fa";
-import { useErrorStore } from "../../stores/errorStore";
-import { ErrorComponent } from "../ErrorComponent";
+import { useErrorStore } from "../stores/errorStore";
+import { ErrorComponent } from "./ErrorComponent";
+import { useTorrentStore } from "../stores/torrentStore";
+import { ViewModeContext } from "../stores/viewMode";
 
 export const TorrentActions: React.FC<{
-  id: number;
-  statsResponse: TorrentStats;
-  detailsResponse: TorrentDetails | null;
+  torrent: TorrentIdWithStats;
   extendedView: boolean;
   setExtendedView: (extendedView: boolean) => void;
-}> = ({ id, statsResponse, detailsResponse, extendedView, setExtendedView }) => {
-  let state = statsResponse.state;
+}> = ({ torrent, extendedView, setExtendedView }) => {
+  const { compact } = useContext(ViewModeContext);
+  let state = torrent.stats.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
 
-  let refreshCtx = useContext(RefreshTorrentStatsContext);
+  let refresh = useTorrentStore((s) => s.refreshTorrents);
 
   const canPause = state == "live";
   const canUnpause = state == "paused" || state == "error";
@@ -37,14 +38,14 @@ export const TorrentActions: React.FC<{
 
   const unpause = () => {
     setDisabled(true);
-    API.start(id)
+    API.start(torrent.id)
       .then(
         () => {
-          refreshCtx.refresh();
+          refresh();
         },
         (e) => {
           setCloseableError({
-            text: `Error starting torrent id=${id}`,
+            text: `Error starting torrent id=${torrent.id} name=${torrent.name}`,
             details: e,
           });
         },
@@ -54,14 +55,14 @@ export const TorrentActions: React.FC<{
 
   const pause = () => {
     setDisabled(true);
-    API.pause(id)
+    API.pause(torrent.id)
       .then(
         () => {
-          refreshCtx.refresh();
+          refresh();
         },
         (e) => {
           setCloseableError({
-            text: `Error pausing torrent id=${id}`,
+            text: `Error pausing torrent id=${torrent.id} name=${torrent.name}`,
             details: e,
           });
         },
@@ -79,7 +80,7 @@ export const TorrentActions: React.FC<{
     setDeleting(false);
   };
 
-  const playlistUrl = API.getPlaylistUrl(id);
+  const playlistUrl = API.getPlaylistUrl(torrent.id);
 
   const setAlert = useErrorStore((state) => state.setAlert);
 
@@ -118,7 +119,7 @@ export const TorrentActions: React.FC<{
   };
 
   return (
-    <div className="flex w-full justify-center gap-2 dark:text-slate-300">
+    <div className="flex gap-2 dark:text-slate-300">
       {canUnpause && (
         <IconButton onClick={unpause} disabled={disabled}>
           <FaPlay className="hover:text-green-600" />
@@ -129,7 +130,7 @@ export const TorrentActions: React.FC<{
           <FaPause className="hover:text-amber-500" />
         </IconButton>
       )}
-      {canConfigure && (
+      {canConfigure && !compact && (
         <IconButton
           onClick={() => setExtendedView(!extendedView)}
           disabled={disabled}
@@ -147,10 +148,9 @@ export const TorrentActions: React.FC<{
         <FaClipboardList className="hover:text-green-500" />
       </IconButton>
       <DeleteTorrentModal
-        id={id}
         show={deleting}
         onHide={cancelDeleting}
-        torrent={detailsResponse}
+        torrent={torrent}
       />
     </div>
   );

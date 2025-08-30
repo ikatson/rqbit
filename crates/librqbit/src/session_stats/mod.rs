@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use librqbit_core::speed_estimator::SpeedEstimator;
+use librqbit_core::speed_estimator::{SpeedEstimator, Updater};
 use snapshot::SessionStatsSnapshot;
 use tracing::debug_span;
 
@@ -28,25 +28,29 @@ pub struct SessionStats {
 }
 
 impl SessionStats {
-    pub fn new() -> Self {
-        SessionStats {
-            counters: Default::default(),
-            peers: Default::default(),
-            down_speed_estimator: SpeedEstimator::new(5),
-            up_speed_estimator: SpeedEstimator::new(5),
-            startup_time: Instant::now(),
-        }
-    }
-}
-
-impl Default for SessionStats {
-    fn default() -> Self {
-        Self::new()
+    pub fn new() -> (Self, Updater, Updater) {
+        let (down, down_upd) = SpeedEstimator::new(5);
+        let (up, up_upd) = SpeedEstimator::new(5);
+        (
+            SessionStats {
+                counters: Default::default(),
+                peers: Default::default(),
+                down_speed_estimator: down,
+                up_speed_estimator: up,
+                startup_time: Instant::now(),
+            },
+            down_upd,
+            up_upd,
+        )
     }
 }
 
 impl Session {
-    pub(crate) fn start_speed_estimator_updater(self: &Arc<Self>) {
+    pub(crate) fn start_speed_estimator_updater(
+        self: &Arc<Self>,
+        mut down_upd: Updater,
+        mut up_upd: Updater,
+    ) {
         self.spawn(
             debug_span!(parent: self.rs(), "speed_estimator"),
             "speed_estimator",
@@ -61,10 +65,8 @@ impl Session {
                         let now = Instant::now();
                         let fetched = s.stats.counters.fetched_bytes.load(Ordering::Relaxed);
                         let uploaded = s.stats.counters.uploaded_bytes.load(Ordering::Relaxed);
-                        s.stats
-                            .down_speed_estimator
-                            .add_snapshot(fetched, None, now);
-                        s.stats.up_speed_estimator.add_snapshot(uploaded, None, now);
+                        down_upd.add_snapshot(fetched, None, now);
+                        up_upd.add_snapshot(uploaded, None, now);
                     }
                 }
             },

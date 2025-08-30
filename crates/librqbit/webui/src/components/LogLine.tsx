@@ -83,7 +83,9 @@ export const LogLine: React.FC<{ line: JSONLogLine }> = React.memo(
         </span>
 
         <span className="m-1">
-          {parsed.spans?.map((span, i) => <LogSpan key={i} span={span} />)}
+          {parsed.spans?.map((span, i) => (
+            <LogSpan key={i} span={span} />
+          ))}
         </span>
         <span className="m-1 text-slate-500 dark:text-slate-400">
           {parsed.target}
@@ -91,5 +93,5 @@ export const LogLine: React.FC<{ line: JSONLogLine }> = React.memo(
         <Fields fields={parsed.fields} />
       </p>
     );
-  }
+  },
 );
