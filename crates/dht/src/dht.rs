@@ -1314,7 +1314,7 @@ impl DhtState {
 
             let peer_id = config
                 .peer_id
-                .unwrap_or_else(|| (generate_azereus_style(*b"rQ", crate_version!())));
+                .unwrap_or_else(|| generate_azereus_style(*b"rQ", crate_version!()));
             info!("starting up DHT with peer id {:?}", peer_id);
             let bootstrap_addrs = config
                 .bootstrap_addrs

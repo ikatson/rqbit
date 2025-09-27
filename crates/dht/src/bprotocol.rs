@@ -363,18 +363,6 @@ pub struct AnnouncePeer<BufT> {
     pub token: BufT,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GetPeersResponse<BufT: ByteBufT> {
-    pub id: Id20,
-    pub token: BufT,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub values: Option<Vec<CompactSocketAddr>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nodes: Option<CompactNodeInfo<BufT, SocketAddrV4>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nodes6: Option<CompactNodeInfo<BufT, SocketAddrV6>>,
-}
-
 #[derive(Debug)]
 pub struct Message<BufT: ByteBufT> {
     pub kind: MessageKind<BufT>,

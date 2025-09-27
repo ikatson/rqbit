@@ -37,16 +37,16 @@ impl Magnet {
 
     /// Parse a magnet link.
     pub fn parse(url: &str) -> anyhow::Result<Magnet> {
-        if url.len() == 40 {
-            if let Ok(id20) = Id20::from_str(url) {
-                return Ok(Magnet {
-                    id20: Some(id20),
-                    id32: None,
-                    name: None,
-                    trackers: vec![],
-                    select_only: None,
-                });
-            }
+        if url.len() == 40
+            && let Ok(id20) = Id20::from_str(url)
+        {
+            return Ok(Magnet {
+                id20: Some(id20),
+                id32: None,
+                name: None,
+                trackers: vec![],
+                select_only: None,
+            });
         }
         let url = url::Url::parse(url).context("magnet link must be a valid URL")?;
         if url.scheme() != "magnet" {
@@ -146,16 +146,16 @@ impl std::fmt::Display for Magnet {
             write_ampersand(f)?;
             write!(f, "tr={tracker}")?;
         }
-        if let Some(select_only) = &self.select_only {
-            if !select_only.is_empty() {
-                write_ampersand(f)?;
-                write!(f, "so=")?;
-                for (index, file) in select_only.iter().enumerate() {
-                    if index > 0 {
-                        write!(f, ",")?; // Add a comma before all but the first index
-                    }
-                    write!(f, "{file}")?;
+        if let Some(select_only) = &self.select_only
+            && !select_only.is_empty()
+        {
+            write_ampersand(f)?;
+            write!(f, "so=")?;
+            for (index, file) in select_only.iter().enumerate() {
+                if index > 0 {
+                    write!(f, ",")?; // Add a comma before all but the first index
                 }
+                write!(f, "{file}")?;
             }
         }
         Ok(())

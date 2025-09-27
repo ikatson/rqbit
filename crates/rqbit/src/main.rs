@@ -541,10 +541,10 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
-        dht_bootstrap_addrs: match opts.dht_bootstrap_addrs {
-            None => None,
-            Some(ref s) => Some(s.split(",").map(|v| v.to_string()).collect()),
-        },
+        dht_bootstrap_addrs: opts
+            .dht_bootstrap_addrs
+            .as_ref()
+            .map(|s| s.split(",").map(|v| v.to_string()).collect()),
         dht_config: None,
         // This will be overridden by "server start" below if needed.
         persistence: None,
@@ -628,10 +628,10 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
                 // If the listen port wasn't set, default to 4240
-                if let Some(l) = sopts.listen.as_mut() {
-                    if l.listen_addr.port() == 0 {
-                        l.listen_addr.set_port(4240);
-                    }
+                if let Some(l) = sopts.listen.as_mut()
+                    && l.listen_addr.port() == 0
+                {
+                    l.listen_addr.set_port(4240);
                 }
 
                 if !start_opts.disable_persistence {

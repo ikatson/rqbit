@@ -105,15 +105,15 @@ impl TorrentStreams {
         lengths: &Lengths,
     ) {
         for mut w in self.streams.iter_mut() {
-            if w.value().current_piece(lengths).map(|p| p.id) == Some(piece_id) {
-                if let Some(waker) = w.value_mut().waker.take() {
-                    trace!(
-                        stream_id = *w.key(),
-                        piece_id = piece_id.get(),
-                        "waking stream"
-                    );
-                    waker.wake();
-                }
+            if w.value().current_piece(lengths).map(|p| p.id) == Some(piece_id)
+                && let Some(waker) = w.value_mut().waker.take()
+            {
+                trace!(
+                    stream_id = *w.key(),
+                    piece_id = piece_id.get(),
+                    "waking stream"
+                );
+                waker.wake();
             }
         }
     }

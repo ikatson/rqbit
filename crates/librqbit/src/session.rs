@@ -761,16 +761,16 @@ impl Session {
                         },
                     );
                 }
-                if let Some(announce_port) = listen.announce_port {
-                    if listen.enable_upnp_port_forwarding {
-                        info!(port = announce_port, "starting UPnP port forwarder");
-                        let bind_device = bind_device.clone();
-                        session.spawn(
-                            debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
-                            "upnp_forward",
-                            Self::task_upnp_port_forwarder(announce_port, bind_device),
-                        );
-                    }
+                if listen.enable_upnp_port_forwarding
+                    && let Some(announce_port) = listen.announce_port
+                {
+                    info!(port = announce_port, "starting UPnP port forwarder");
+                    let bind_device = bind_device.clone();
+                    session.spawn(
+                        debug_span!(parent: session.rs(), "upnp_forward", port = announce_port),
+                        "upnp_forward",
+                        Self::task_upnp_port_forwarder(announce_port, bind_device),
+                    );
                 }
             }
 
@@ -1096,12 +1096,12 @@ impl Session {
             Ok(())
         }
 
-        if let Some(name) = info.name() {
-            if !name.is_empty() {
-                let pb = PathBuf::from(name.as_ref());
-                check_valid(&pb)?;
-                return Ok(Some(pb));
-            }
+        if let Some(name) = info.name()
+            && !name.is_empty()
+        {
+            let pb = PathBuf::from(name.as_ref());
+            check_valid(&pb)?;
+            return Ok(Some(pb));
         };
         if let Some(name) = magnet_name {
             let pb = PathBuf::from(name);
@@ -1287,11 +1287,11 @@ impl Session {
             (handle, metadata)
         };
 
-        if let Some(p) = self.persistence.as_ref() {
-            if let Err(e) = p.store(id, &managed_torrent).await {
-                self.db.write().torrents.remove(&id);
-                return Err(e);
-            }
+        if let Some(p) = self.persistence.as_ref()
+            && let Err(e) = p.store(id, &managed_torrent).await
+        {
+            self.db.write().torrents.remove(&id);
+            return Err(e);
         }
 
         let _e = managed_torrent.shared.span.clone().entered();
@@ -1389,14 +1389,14 @@ impl Session {
             (Ok(storage), true) => {
                 debug!("will delete files");
                 remove_files_and_dirs(&metadata.file_infos, &storage);
-                if removed.shared().options.output_folder != self.output_folder {
-                    if let Err(e) = storage.remove_directory_if_empty(Path::new("")) {
-                        warn!(
-                            ?id,
-                            "error removing {:?}: {e:#}",
-                            removed.shared().options.output_folder
-                        )
-                    }
+                if removed.shared().options.output_folder != self.output_folder
+                    && let Err(e) = storage.remove_directory_if_empty(Path::new(""))
+                {
+                    warn!(
+                        ?id,
+                        "error removing {:?}: {e:#}",
+                        removed.shared().options.output_folder
+                    )
                 }
             }
             (_, false) => {
@@ -1494,10 +1494,10 @@ impl Session {
     }
 
     async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
-        if let Some(p) = self.persistence.as_ref() {
-            if let Err(e) = p.update_metadata(handle.id(), handle).await {
-                warn!(storage=?p, error=?e, "error updating metadata")
-            }
+        if let Some(p) = self.persistence.as_ref()
+            && let Err(e) = p.update_metadata(handle.id(), handle).await
+        {
+            warn!(storage=?p, error=?e, "error updating metadata")
         }
     }
 
