@@ -119,6 +119,11 @@ struct Opts {
     )]
     disable_dht_persistence: bool,
 
+    /// Set DHT bootstrap addrs
+    /// A comma separated list of host:port or ip:port
+    #[arg(long = "dht-bootstrap-addrs", env = "RQBIT_DHT_BOOTSTRAP")]
+    dht_bootstrap_addrs: Option<String>,
+
     /// The connect timeout, e.g. 1s, 1.5s, 100ms etc.
     #[arg(long = "peer-connect-timeout", value_parser = parse_duration::parse, default_value="2s", env="RQBIT_PEER_CONNECT_TIMEOUT")]
     peer_connect_timeout: Duration,
@@ -536,6 +541,10 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
     let mut sopts = SessionOptions {
         disable_dht: opts.disable_dht,
         disable_dht_persistence: opts.disable_dht_persistence,
+        dht_bootstrap_addrs: match opts.dht_bootstrap_addrs {
+            None => None,
+            Some(ref s) => Some(s.split(",").map(|v| v.to_string()).collect()),
+        },
         dht_config: None,
         // This will be overridden by "server start" below if needed.
         persistence: None,

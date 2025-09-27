@@ -395,6 +395,8 @@ pub struct SessionOptions {
     /// Pass in to configure DHT persistence filename. This can be used to run multiple
     /// librqbit instances at a time.
     pub dht_config: Option<PersistentDhtConfig>,
+    /// A list o DHT bootstrap nodes as strings of the form host:port or ip:port
+    pub dht_bootstrap_addrs: Option<Vec<String>>,
 
     /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
     /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
@@ -539,6 +541,7 @@ impl Session {
             } else {
                 let dht = if opts.disable_dht_persistence {
                     DhtBuilder::with_config(DhtConfig {
+                        bootstrap_addrs: opts.dht_bootstrap_addrs.clone(),
                         cancellation_token: Some(token.child_token()),
                         bind_device: bind_device.as_ref(),
                         ..Default::default()
