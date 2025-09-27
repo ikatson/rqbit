@@ -113,10 +113,10 @@ impl RqbitDesktopConfigPersistence {
         if self.folder != Path::new("") {
             return;
         }
-        if self.filename != Path::new("") {
-            if let Some(parent) = self.filename.parent() {
-                self.folder = parent.to_owned();
-            }
+        if self.filename != Path::new("")
+            && let Some(parent) = self.filename.parent()
+        {
+            self.folder = parent.to_owned();
         }
     }
 }

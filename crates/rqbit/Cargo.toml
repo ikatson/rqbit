@@ -52,7 +52,7 @@ size_format = "1"
 bytes = "1.5.0"
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 upnp-serve = { path = "../upnp-serve", default-features = false, version = "1", package = "librqbit-upnp-serve" }
-metrics-exporter-prometheus = { version = "0.16", optional = true, default-features = false }
+metrics-exporter-prometheus = { version = "0.17", optional = true, default-features = false }
 libc = "0.2.158"
 signal-hook = "0.3.17"
 tokio-util = "0.7.11"

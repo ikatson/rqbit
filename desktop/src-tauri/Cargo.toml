@@ -22,18 +22,18 @@ librqbit = { path = "../../crates/librqbit", features = [
     "upnp-serve-adapter",
     "prometheus",
 ] }
-tokio = { version = "1.34.0", features = ["rt-multi-thread"] }
+tokio = { version = "1.47.0", features = ["rt-multi-thread"] }
 anyhow = "1.0.75"
 base64 = "0.22"
 http = "1.0.0"
 directories = "6"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 tracing = "0.1"
 serde_with = "3.4.0"
 parking_lot = "0.12.1"
 gethostname = "1"
 tauri-plugin-shell = "2"
-metrics-exporter-prometheus = { version = "0.16", default-features = false }
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
 librqbit-dualstack-sockets = "0.6.11"
 
 [features]

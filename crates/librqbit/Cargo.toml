@@ -108,12 +108,12 @@ dashmap = "6"
 base64 = "0.22"
 serde_with = "3.4.0"
 tokio-util = { version = "0.7.10", features = ["io"] }
-metrics-exporter-prometheus = { version = "0.16", optional = true, default-features = false }
+metrics-exporter-prometheus = { version = "0.17", optional = true, default-features = false }
 bytes = "1.5.0"
 rlimit = "0.10.1"
 async-stream = "0.3.5"
 memmap2 = { version = "0.9.4" }
-lru = { version = "0.14", optional = true }
+lru = { version = "0.16", optional = true }
 mime_guess = { version = "2.0.5", default-features = false }
 tokio-socks = "0.5.2"
 async-trait = "0.1.81"
@@ -131,7 +131,7 @@ nix = { version = "0.30.1", features = ["uio"] }
 thiserror = "2.0.12"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61.1", features = [
+windows = { version = "0.62.1", features = [
     "Win32",
     "Win32_System",
     "Win32_System_IO",

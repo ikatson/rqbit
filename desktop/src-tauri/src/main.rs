@@ -217,11 +217,12 @@ impl State {
     async fn configure(&self, config: RqbitDesktopConfig) -> Result<(), ApiError> {
         {
             let g = self.shared.read();
-            if let Some(shared) = g.as_ref() {
-                if shared.api.is_some() && shared.config == config {
-                    // The config didn't change, and the API is running, nothing to do.
-                    return Ok(());
-                }
+            if let Some(shared) = g.as_ref()
+                && shared.api.is_some()
+                && shared.config == config
+            {
+                // The config didn't change, and the API is running, nothing to do.
+                return Ok(());
             }
         }
 

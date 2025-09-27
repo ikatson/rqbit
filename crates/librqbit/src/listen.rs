@@ -165,7 +165,7 @@ impl Accept for TcpListener {
         SocketAddr,
         (
             impl AsyncReadVectored + Send + 'static,
-            (impl AsyncWrite + Send + 'static),
+            impl AsyncWrite + Send + 'static,
         ),
     )> {
         let (stream, addr) = self.accept().await.context("error accepting TCP")?;

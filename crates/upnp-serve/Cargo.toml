@@ -26,14 +26,14 @@ url = { version = "2", default-features = false }
 parking_lot = "0.12.3"
 tokio-util = "0.7.11"
 reqwest = { version = "0.12.7", default-features = false }
-quick-xml = { version = "0.37.1", features = ["serialize"] }
+quick-xml = { version = "0.38.3", features = ["serialize"] }
 network-interface = "2.0.0"
 futures = "0.3.30"
 librqbit-dualstack-sockets = "0.6.11"
 rand = "0.9.1"
 
 [dev-dependencies]
-tracing-subscriber = "0.3.18"
+tracing-subscriber = "0.3.20"
 tower-http = { version = "0.6.2", features = ["trace"] }
 
 [[example]]

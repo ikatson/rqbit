@@ -331,10 +331,10 @@ impl UdpTrackerClient {
     }
 
     async fn get_connection_id(&self, addr: SocketAddr) -> anyhow::Result<ConnectionId> {
-        if let Some(m) = self.state.locked.read().connections.get(&addr) {
-            if m.created.elapsed() < Duration::from_secs(60) {
-                return Ok(m.id);
-            }
+        if let Some(m) = self.state.locked.read().connections.get(&addr)
+            && m.created.elapsed() < Duration::from_secs(60)
+        {
+            return Ok(m.id);
         }
 
         let response = self.request(addr, Request::Connect).await?;

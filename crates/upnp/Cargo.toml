@@ -22,7 +22,7 @@ url = { version = "2", default-features = false }
 network-interface = { version = "2" }
 httparse = "1.9.4"
 bstr = "1.10.0"
-quick-xml = { version = "0.37.1", features = ["serialize"] }
+quick-xml = { version = "0.38.3", features = ["serialize"] }
 librqbit-dualstack-sockets = "0.6.11"
 socket2 = "0.6"
 

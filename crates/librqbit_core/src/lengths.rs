@@ -406,12 +406,15 @@ mod tests {
                 if a {
                     assert_eq!(l.total_length() % l.default_piece_length() as u64, 0);
                 } else {
-                    assert!(l.total_length() % l.default_piece_length() as u64 > 0);
+                    assert!(
+                        !l.total_length()
+                            .is_multiple_of(l.default_piece_length() as u64)
+                    );
                 }
                 if b {
                     assert_eq!(l.default_piece_length() % CHUNK_SIZE, 0)
                 } else {
-                    assert!(l.default_piece_length() % CHUNK_SIZE > 0)
+                    assert!(!l.default_piece_length().is_multiple_of(CHUNK_SIZE))
                 }
                 if c {
                     assert!(l.total_length().div_ceil(l.default_piece_length() as u64) > 1);
