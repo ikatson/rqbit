@@ -67,6 +67,7 @@ impl TorrentStorage for FilesystemStorage {
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let of = self.opened_files.get(file_id).context("no such file")?;
+        of.ensure_writeable()?;
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all(offset, buf);
         #[cfg(not(windows))]
@@ -137,17 +138,33 @@ impl TorrentStorage for FilesystemStorage {
                 continue;
             };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let f = if shared.options.allow_overwrite {
+            if shared.options.allow_overwrite {
+                let (file, writeable) = match
                 OpenOptions::new()
                     .create(true)
                     .truncate(false)
                     .read(true)
                     .write(true)
                     .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+                {
+                    Ok(file) => (file, true),
+                    Err(e) => {
+                        warn!(?full_path, "error opening file in create+write mode: {e:?}");
+                        // open the file in read-only mode, will reopen in write mode later.
+                        (
+                            OpenOptions::new()
+                                .create(false)
+                                .read(true)
+                                .open(&full_path)
+                                .with_context(|| format!("error opening {full_path:?}"))?,
+                            false,
+                        )
+                    }
+                };
+                files.push(OpenedFile::new(full_path.clone(), file, writeable));
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
+                let file = OpenOptions::new()
                     .create_new(true)
                     .write(true)
                     .open(&full_path)
@@ -157,9 +174,10 @@ impl TorrentStorage for FilesystemStorage {
                             &full_path
                         )
                     })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
+                OpenOptions::new().read(true).write(true).open(&full_path)?;
+                let writeable = true;
+                files.push(OpenedFile::new(full_path.clone(), file, writeable));
             };
-            files.push(OpenedFile::new(full_path.clone(), f));
         }
 
         self.opened_files = files;
