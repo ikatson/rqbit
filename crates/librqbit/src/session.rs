@@ -74,6 +74,9 @@ use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
+#[cfg(feature = "storage_middleware")]
+use crate::storage::middleware::remotefs::{RemoteFsStorageFactory, REMOTEFS_PROTOCOLS};
+
 pub type TorrentId = usize;
 
 struct ParsedTorrentFile {
@@ -1210,11 +1213,29 @@ impl Session {
             }));
         }
 
+        #[cfg(not(feature = "storage_middleware"))]
         let storage_factory = opts
             .storage_factory
             .take()
             .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
             .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
+        #[cfg(feature = "storage_middleware")]
+        let storage_factory = if let Some(folder_str) = output_folder.to_str() {
+            if REMOTEFS_PROTOCOLS.iter().any(|p| folder_str.starts_with(p)) {
+                Box::new(RemoteFsStorageFactory::new(folder_str.to_string()))
+                    as BoxStorageFactory
+            } else {
+                opts.storage_factory
+                    .take()
+                    .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
+                    .unwrap_or_else(|| FilesystemStorageFactory::default().boxed())
+            }
+        } else {
+            opts.storage_factory
+                .take()
+                .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
+                .unwrap_or_else(|| FilesystemStorageFactory::default().boxed())
+        };
 
         let id = if let Some(id) = opts.preferred_id {
             id
