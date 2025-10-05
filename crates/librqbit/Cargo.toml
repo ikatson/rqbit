@@ -129,16 +129,8 @@ librqbit-dualstack-sockets = { version = "0.6.11", features = ["axum"] }
 socket2 = "0.6"
 nix = { version = "0.30.1", features = ["uio"] }
 thiserror = "2.0.12"
-# https://lib.rs/crates/remotefs
-remotefs = "0.3.1"
-remotefs-ftp = { version = "0.3.0", features = [ "native-tls" ] }
-# remotefs-ssh = "0.4.0"
-# NOTE the "open" method is not supported by these backends
-# remotefs-smb = "0.3.1"
-# remotefs-webdav = "0.2.0"
-# NOTE these backends dont exist
-# remotefs-nfs = "0.3.1"
-# remotefs-http = "0.3.1"
+# https://lib.rs/crates/async_ftp
+async_ftp = { version = "6.0.0", features = ["secure"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.1", features = [
