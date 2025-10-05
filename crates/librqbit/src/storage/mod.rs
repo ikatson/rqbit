@@ -17,6 +17,7 @@ use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
 
+#[async_trait]
 pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
 
@@ -30,11 +31,7 @@ pub trait StorageFactory: Send + Sync + Any {
         Self::type_id(self) == type_id
     }
     fn clone_box(&self) -> BoxStorageFactory;
-}
 
-/// Extension trait for async methods on StorageFactory.
-#[async_trait]
-pub trait StorageFactoryAsyncExt: StorageFactory {
     async fn create_and_init(
         &self,
         shared: &ManagedTorrentShared,

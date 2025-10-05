@@ -28,7 +28,7 @@ use crate::{
     session_stats::SessionStats,
     spawn_utils::BlockingSpawner,
     storage::{
-        BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
+        BoxStorageFactory, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
     stream_connect::{
         ConnectionKind, ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs,
@@ -39,6 +39,8 @@ use crate::{
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
 };
+
+use crate::storage::StorageFactoryExt;
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
 use bencode::bencode_serialize_to_writer;
@@ -75,7 +77,7 @@ use tracker_comms::{TrackerComms, UdpTrackerClient};
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 #[cfg(feature = "storage_middleware")]
-use crate::storage::middleware::remotefs::{RemoteFsStorageFactory, REMOTEFS_PROTOCOLS};
+use crate::storage::middleware::ftp::{FtpStorageFactory, FTP_PROTOCOLS};
 
 pub type TorrentId = usize;
 
@@ -1220,21 +1222,21 @@ impl Session {
             .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
             .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
         #[cfg(feature = "storage_middleware")]
-        let storage_factory = if let Some(folder_str) = output_folder.to_str() {
-            if REMOTEFS_PROTOCOLS.iter().any(|p| folder_str.starts_with(p)) {
-                Box::new(RemoteFsStorageFactory::new(folder_str.to_string()))
-                    as BoxStorageFactory
-            } else {
-                opts.storage_factory
-                    .take()
-                    .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
-                    .unwrap_or_else(|| FilesystemStorageFactory::default().boxed())
-            }
-        } else {
+        let mut get_default_factory = || {
             opts.storage_factory
                 .take()
                 .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
                 .unwrap_or_else(|| FilesystemStorageFactory::default().boxed())
+        };
+        #[cfg(feature = "storage_middleware")]
+        let storage_factory = if let Some(folder_str) = output_folder.to_str() {
+            if FTP_PROTOCOLS.iter().any(|p| folder_str.starts_with(p)) {
+                Box::new(FtpStorageFactory::new(folder_str.to_string())) as BoxStorageFactory
+            } else {
+                get_default_factory()
+            }
+        } else {
+            get_default_factory()
         };
 
         let id = if let Some(id) = opts.preferred_id {
@@ -1290,7 +1292,7 @@ impl Session {
                 minfo.clone(),
                 metadata.clone(),
                 only_files.clone(),
-                minfo.storage_factory.create_and_init(&minfo, &metadata)?,
+                minfo.storage_factory.create_and_init(&minfo, &metadata).await?,
                 false,
             ));
             let handle = Arc::new(ManagedTorrent {
@@ -1371,28 +1373,36 @@ impl Session {
 
         let metadata = removed.metadata.load_full().expect("TODO");
 
-        let storage = removed
-            .with_state_mut(|s| match s.take() {
-                ManagedTorrentState::Initializing(p) => p.files.take().ok(),
-                ManagedTorrentState::Paused(p) => Some(p.files),
-                ManagedTorrentState::Live(l) => l
-                    .pause()
-                    // inspect_err not available in 1.75
-                    .map_err(|e| {
-                        warn!(?id, "error pausing torrent: {e:#}");
-                        e
-                    })
-                    .ok()
-                    .map(|p| p.files),
-                _ => None,
-            })
-            .map(Ok)
-            .unwrap_or_else(|| {
+        let storage_result = removed.with_state_mut(|s| {
+            let id = id;
+            async move {
+                match s.take() {
+                    ManagedTorrentState::Initializing(p) => p.files.take().await.ok(),
+                    ManagedTorrentState::Paused(p) => Some(p.files),
+                    ManagedTorrentState::Live(l) => l
+                        .pause()
+                        // inspect_err not available in 1.75
+                        .map_err(|e| {
+                            warn!(?id, "error pausing torrent: {e:#}");
+                            e
+                        })
+                        .ok()
+                        .map(|p| p.files),
+                    _ => None,
+                }
+            }
+        }).await;
+
+        let storage: Result<Option<_>, _> = match storage_result {
+            Ok(opt) => opt,
+            Err(_) => Ok(
                 removed
                     .shared
                     .storage_factory
                     .create(removed.shared(), &metadata)
-            });
+                    .map(Some)?
+            ),
+        };
 
         if let Some(p) = self.persistence.as_ref() {
             if let Err(e) = p.delete(id).await {
@@ -1407,7 +1417,7 @@ impl Session {
 
         match (storage, delete_files) {
             (Err(e), true) => return Err(e).context("torrent deleted, but could not delete files"),
-            (Ok(storage), true) => {
+            (Ok(Some(storage)), true) => {
                 debug!("will delete files");
                 remove_files_and_dirs(&metadata.file_infos, &storage);
                 if removed.shared().options.output_folder != self.output_folder
@@ -1419,6 +1429,9 @@ impl Session {
                         removed.shared().options.output_folder
                     )
                 }
+            }
+            (Ok(None), true) => {
+                warn!("no storage found to delete files");
             }
             (_, false) => {
                 debug!("not deleting files")
