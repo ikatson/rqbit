@@ -607,7 +607,7 @@ impl TorrentStateLive {
             if session
                 .whitelist
                 .as_ref()
-                .is_some_and(|l| l.is_allowed(addr.ip()))
+                .is_some_and(|l| !l.is_allowed(addr.ip()))
             {
                 session
                     .stats

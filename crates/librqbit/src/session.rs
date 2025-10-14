@@ -851,7 +851,7 @@ impl Session {
         if self
             .whitelist
             .as_ref()
-            .is_some_and(|l| l.is_allowed(incoming_ip))
+            .is_some_and(|l| !l.is_allowed(incoming_ip))
         {
             self.stats
                 .counters
