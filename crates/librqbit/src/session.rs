@@ -38,6 +38,7 @@ use crate::{
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
+    whitelist,
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -140,6 +141,7 @@ pub struct Session {
     pub ratelimits: Limits,
 
     pub blocklist: blocklist::Blocklist,
+    pub whitelist: Option<whitelist::Whitelist>,
 
     // Monitoring / tracing / logging
     pub(crate) stats: Arc<SessionStats>,
@@ -435,6 +437,7 @@ pub struct SessionOptions {
     pub ratelimits: LimitsConfig,
 
     pub blocklist_url: Option<String>,
+    pub whitelist_url: Option<String>,
 
     // The list of tracker URLs to always use for each torrent.
     pub trackers: HashSet<url::Url>,
@@ -658,7 +661,7 @@ impl Session {
                 .context("error creating stream connector")?,
             );
 
-            let blocklist: blocklist::Blocklist = if let Some(blocklist_url) = opts.blocklist_url {
+            let blocklist = if let Some(blocklist_url) = opts.blocklist_url {
                 info!(url = blocklist_url, "loading p2p blocklist");
                 let bl = blocklist::Blocklist::load_from_url(&blocklist_url)
                     .await
@@ -667,6 +670,17 @@ impl Session {
                 bl
             } else {
                 blocklist::Blocklist::empty()
+            };
+
+            let whitelist = if let Some(whitelist_url) = opts.whitelist_url {
+                info!(url = whitelist_url, "loading p2p whitelist");
+                let wl = whitelist::Whitelist::load_from_url(&whitelist_url)
+                    .await
+                    .with_context(|| format!("error reading whitelist from {whitelist_url}"))?;
+                info!(len = wl.len(), "loaded whitelist");
+                Some(wl)
+            } else {
+                None
             };
 
             let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
@@ -719,6 +733,7 @@ impl Session {
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
+                whitelist,
                 lsd,
             });
 
@@ -832,6 +847,17 @@ impl Session {
                 .blocked_incoming
                 .fetch_add(1, Ordering::Relaxed);
             bail!("Incoming ip {incoming_ip} is in blocklist");
+        }
+        if self
+            .whitelist
+            .as_ref()
+            .is_some_and(|l| l.is_allowed(incoming_ip))
+        {
+            self.stats
+                .counters
+                .blocked_incoming
+                .fetch_add(1, Ordering::Relaxed);
+            bail!("Incoming ip {incoming_ip} is not in whitelist");
         }
 
         let mut read_buf = ReadBuf::new();
