@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: rustup toolchain install ${{ matrix.rust_version }}
         run: |
-          rustup toolchain install ${{ matrix.rust_version }}
+          rustup toolchain install ${{ matrix.rust_version }} clippy
 
       - uses: actions/checkout@v4
 
