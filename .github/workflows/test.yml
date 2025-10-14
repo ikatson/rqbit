@@ -24,13 +24,16 @@ jobs:
 
       - run: rustup override set ${{ matrix.rust_version }}
 
-      - run: rustup component add rustfmt
+      - run: rustup component add rustfmt clippy
 
       - name: cargo check
         run: cargo check
 
-      - name: cargo fmt --check
-        run: cargo fmt --check
+      - name: fmt check
+        run: cargo fmt --all -- --check
+
+      - name: clippy check
+        run: cargo clippy --all-targets
 
   test:
     strategy:
