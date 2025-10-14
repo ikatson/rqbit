@@ -41,12 +41,10 @@ macro_rules! aframe {
 #[macro_use]
 mod stat_gen;
 
-mod allowlist;
 pub mod api;
 mod api_error;
 mod bitv;
 mod bitv_factory;
-mod blocklist;
 mod chunk_tracker;
 mod create_torrent_file;
 mod dht_utils;
@@ -60,6 +58,7 @@ pub mod http_api_client;
 #[cfg(any(feature = "http-api", feature = "http-api-client"))]
 pub mod http_api_types;
 pub mod limits;
+mod list;
 mod listen;
 mod merge_streams;
 mod peer_connection;

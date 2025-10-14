@@ -12,14 +12,15 @@ use std::{
 };
 
 use crate::{
-    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared, allowlist,
+    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
-    blocklist, create_torrent,
+    create_torrent,
     create_torrent_file::CreateTorrentResult,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
     limits::{Limits, LimitsConfig},
+    list::List,
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
@@ -139,8 +140,8 @@ pub struct Session {
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
     pub ratelimits: Limits,
 
-    pub blocklist: blocklist::Blocklist,
-    pub allowlist: Option<allowlist::Allowlist>,
+    pub blocklist: List,
+    pub allowlist: Option<List>,
 
     // Monitoring / tracing / logging
     pub(crate) stats: Arc<SessionStats>,
@@ -662,18 +663,18 @@ impl Session {
 
             let blocklist = if let Some(blocklist_url) = opts.blocklist_url {
                 info!(url = blocklist_url, "loading p2p blocklist");
-                let bl = blocklist::Blocklist::load_from_url(&blocklist_url)
+                let bl = List::load_from_url(&blocklist_url)
                     .await
                     .with_context(|| format!("error reading blocklist from {blocklist_url}"))?;
                 info!(len = bl.len(), "loaded blocklist");
                 bl
             } else {
-                blocklist::Blocklist::empty()
+                List::empty()
             };
 
             let allowlist = if let Some(allowlist_url) = opts.allowlist_url {
                 info!(url = allowlist_url, "loading p2p allowlist");
-                let al = allowlist::Allowlist::load_from_url(&allowlist_url)
+                let al = List::load_from_url(&allowlist_url)
                     .await
                     .with_context(|| format!("error reading allowlist from {allowlist_url}"))?;
                 info!(len = al.len(), "loaded allowlist");
@@ -840,18 +841,14 @@ impl Session {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         let incoming_ip = addr.ip();
-        if self.blocklist.is_blocked(incoming_ip) {
+        if self.blocklist.has(incoming_ip) {
             self.stats
                 .counters
                 .blocked_incoming
                 .fetch_add(1, Ordering::Relaxed);
             bail!("Incoming ip {incoming_ip} is in blocklist");
         }
-        if self
-            .allowlist
-            .as_ref()
-            .is_some_and(|l| !l.is_allowed(incoming_ip))
-        {
+        if self.allowlist.as_ref().is_some_and(|l| !l.has(incoming_ip)) {
             self.stats
                 .counters
                 .blocked_incoming
