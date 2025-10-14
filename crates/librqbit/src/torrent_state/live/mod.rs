@@ -594,7 +594,7 @@ impl TorrentStateLive {
                 .upgrade()
                 .ok_or(Error::SessionDestroyed)?;
 
-            if session.blocklist.has(addr.ip()) {
+            if session.blocklist.as_ref().is_some_and(|l| l.has(addr.ip())) {
                 session
                     .stats
                     .counters

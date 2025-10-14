@@ -140,7 +140,7 @@ pub struct Session {
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
     pub ratelimits: Limits,
 
-    pub blocklist: IpRanges,
+    pub blocklist: Option<IpRanges>,
     pub allowlist: Option<IpRanges>,
 
     // Monitoring / tracing / logging
@@ -671,9 +671,9 @@ impl Session {
                     .await
                     .with_context(|| format!("error reading blocklist from {blocklist_url}"))?;
                 info!(len = bl.len(), "loaded blocklist");
-                bl
+                Some(bl)
             } else {
-                IpRanges::default()
+                None
             };
 
             let allowlist = if let Some(allowlist_url) = opts.allowlist_url {
@@ -845,7 +845,7 @@ impl Session {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         let incoming_ip = addr.ip();
-        if self.blocklist.has(incoming_ip) {
+        if self.blocklist.as_ref().is_some_and(|l| l.has(incoming_ip)) {
             self.stats
                 .counters
                 .blocked_incoming
