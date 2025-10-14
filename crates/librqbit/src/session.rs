@@ -669,7 +669,7 @@ impl Session {
                 info!(len = bl.len(), "loaded blocklist");
                 bl
             } else {
-                List::empty()
+                List::default()
             };
 
             let allowlist = if let Some(allowlist_url) = opts.allowlist_url {

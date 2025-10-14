@@ -20,6 +20,15 @@ pub struct List {
     v6: IntervalTreeWithSize<Ipv6Addr>,
 }
 
+impl Default for List {
+    fn default() -> Self {
+        Self {
+            v4: interval_tree(empty()),
+            v6: interval_tree(empty()),
+        }
+    }
+}
+
 struct IntervalTreeWithSize<T> {
     t: IntervalTree<T, ()>,
     len: usize,
@@ -35,13 +44,6 @@ fn interval_tree<T: Clone + Ord>(it: impl Iterator<Item = Range<T>>) -> Interval
 }
 
 impl List {
-    pub fn empty() -> Self {
-        Self {
-            v4: interval_tree(empty()),
-            v6: interval_tree(empty()),
-        }
-    }
-
     pub fn new(
         v4_ranges: impl IntoIterator<Item = Range<Ipv4Addr>>,
         v6_ranges: impl IntoIterator<Item = Range<Ipv6Addr>>,
@@ -240,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_list_empty() {
-        let list = List::empty();
+        let list = List::default();
         assert!(!list.has("127.0.0.1".parse().unwrap()));
         assert!(!list.has("::1".parse().unwrap()));
     }
