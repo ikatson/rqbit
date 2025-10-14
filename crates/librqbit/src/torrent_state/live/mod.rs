@@ -594,14 +594,27 @@ impl TorrentStateLive {
                 .upgrade()
                 .ok_or(Error::SessionDestroyed)?;
 
-            let is_in_blocklist = session.blocklist.is_blocked(addr.ip());
-            if is_in_blocklist {
+            if session.blocklist.has(addr.ip()) {
                 session
                     .stats
                     .counters
                     .blocked_outgoing
                     .fetch_add(1, Ordering::Relaxed);
-                debug!(?addr, "blocked outgoing connection");
+                debug!(?addr, "blocked outgoing connection (by the blacklist)");
+                continue;
+            }
+
+            if session
+                .allowlist
+                .as_ref()
+                .is_some_and(|l| !l.has(addr.ip()))
+            {
+                session
+                    .stats
+                    .counters
+                    .blocked_outgoing
+                    .fetch_add(1, Ordering::Relaxed);
+                debug!(?addr, "blocked outgoing connection (by the allowlist)");
                 continue;
             }
 
@@ -1159,6 +1172,7 @@ impl PeerConnectionHandler for PeerHandler {
         {
             handshake.metadata_size = Some(len);
         }
+
         Ok(())
     }
 }

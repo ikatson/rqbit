@@ -13,13 +13,6 @@ use tokio_util::io::StreamReader;
 use tracing::trace;
 use url::Url;
 
-pub struct Blocklist {
-    // We could store only one interval tree, but splitting them takes less memory,
-    // as IpAddr is 17 bytes, Ipv4Addr is only 4 bytes (the majority of ranges).
-    v4: IntervalTreeWithSize<Ipv4Addr>,
-    v6: IntervalTreeWithSize<Ipv6Addr>,
-}
-
 struct IntervalTreeWithSize<T> {
     t: IntervalTree<T, ()>,
     len: usize,
@@ -34,14 +27,23 @@ fn interval_tree<T: Clone + Ord>(it: impl Iterator<Item = Range<T>>) -> Interval
     IntervalTreeWithSize { t, len }
 }
 
-impl Blocklist {
-    pub fn empty() -> Self {
+pub struct IpRanges {
+    // We could store only one interval tree, but splitting them takes less memory,
+    // as IpAddr is 17 bytes, Ipv4Addr is only 4 bytes (the majority of ranges).
+    v4: IntervalTreeWithSize<Ipv4Addr>,
+    v6: IntervalTreeWithSize<Ipv6Addr>,
+}
+
+impl Default for IpRanges {
+    fn default() -> Self {
         Self {
             v4: interval_tree(empty()),
             v6: interval_tree(empty()),
         }
     }
+}
 
+impl IpRanges {
     pub fn new(
         v4_ranges: impl IntoIterator<Item = Range<Ipv4Addr>>,
         v6_ranges: impl IntoIterator<Item = Range<Ipv6Addr>>,
@@ -69,9 +71,9 @@ impl Blocklist {
 
         let response = reqwest::get(parsed_url)
             .await
-            .context("error fetching blocklist")?;
+            .context("error fetching list")?;
         if !response.status().is_success() {
-            anyhow::bail!("error fetching blocklist: HTTP {}", response.status());
+            anyhow::bail!("error fetching list: HTTP {}", response.status());
         }
 
         let mut reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
@@ -134,7 +136,7 @@ impl Blocklist {
         Ok(Self::new(v4, v6))
     }
 
-    pub fn is_blocked(&self, ip: IpAddr) -> bool {
+    pub fn has(&self, ip: IpAddr) -> bool {
         match ip {
             IpAddr::V4(a) => self.v4.t.query_point(a).next().is_some(),
             IpAddr::V6(a) => self.v6.t.query_point(a).next().is_some(),
@@ -185,64 +187,64 @@ mod tests {
     use async_compression::tokio::write::GzipEncoder;
     use tokio::io::AsyncWriteExt;
 
-    const BLOCKLIST: &[u8] = br#"
+    const LIST: &[u8] = br#"
     # test
     local:192.168.1.1-192.168.1.255
     localv6:2001:db8::1-2001:db8::ffff
     "#;
 
     #[tokio::test]
-    async fn test_blocklist_gzipped() -> Result<()> {
-        let mut gzipped_blocklist = Vec::new();
+    async fn test_list_gzipped() -> Result<()> {
+        let mut gzipped_list = Vec::new();
         {
-            let mut encoder = GzipEncoder::new(&mut gzipped_blocklist);
-            encoder.write_all(BLOCKLIST).await.unwrap();
+            let mut encoder = GzipEncoder::new(&mut gzipped_list);
+            encoder.write_all(LIST).await.unwrap();
             encoder.flush().await.unwrap();
             encoder.shutdown().await.unwrap();
         }
-        let blocklist = Blocklist::create_from_stream(&mut Cursor::new(gzipped_blocklist)).await?;
-        assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("8.8.8.8".parse().unwrap()));
+        let list = IpRanges::create_from_stream(&mut Cursor::new(gzipped_list)).await?;
+        assert!(list.has("192.168.1.1".parse().unwrap()));
+        assert!(!list.has("8.8.8.8".parse().unwrap()));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_blocklist_plaintext() -> Result<()> {
-        let blocklist = Blocklist::create_from_stream(&mut Cursor::new(BLOCKLIST)).await?;
-        assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("8.8.8.8".parse().unwrap()));
+    async fn test_list_plaintext() -> Result<()> {
+        let list = IpRanges::create_from_stream(&mut Cursor::new(LIST)).await?;
+        assert!(list.has("192.168.1.1".parse().unwrap()));
+        assert!(!list.has("8.8.8.8".parse().unwrap()));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_blocklist_from_plaintext_file() -> Result<()> {
+    async fn test_list_from_plaintext_file() -> Result<()> {
         // Create a temporary file
-        let mut temp_file = tokio::fs::File::create("temp_blocklist.txt").await?;
-        tokio::io::AsyncWriteExt::write_all(&mut temp_file, BLOCKLIST).await?;
+        let mut temp_file = tokio::fs::File::create("temp_list.txt").await?;
+        tokio::io::AsyncWriteExt::write_all(&mut temp_file, LIST).await?;
         drop(temp_file); // Close the file
 
-        // Load the blocklist from the file
-        let blocklist = Blocklist::load_from_file("temp_blocklist.txt").await?;
+        // Load the list from the file
+        let list = IpRanges::load_from_file("temp_list.txt").await?;
 
-        // Verify the blocklist
-        assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("8.8.8.8".parse().unwrap()));
-        assert!(blocklist.is_blocked("2001:db8::1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("2001:4860:4860::8888".parse().unwrap()));
+        // Verify the list
+        assert!(list.has("192.168.1.1".parse().unwrap()));
+        assert!(!list.has("8.8.8.8".parse().unwrap()));
+        assert!(list.has("2001:db8::1".parse().unwrap()));
+        assert!(!list.has("2001:4860:4860::8888".parse().unwrap()));
 
         // Clean up the temporary file
-        tokio::fs::remove_file("temp_blocklist.txt").await?;
+        tokio::fs::remove_file("temp_list.txt").await?;
 
         Ok(())
     }
 
     #[test]
-    fn test_blocklist_empty() {
-        let blocklist = Blocklist::empty();
-        assert!(!blocklist.is_blocked("127.0.0.1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("::1".parse().unwrap()));
+    fn test_list_empty() {
+        let list = IpRanges::default();
+        assert!(!list.has("127.0.0.1".parse().unwrap()));
+        assert!(!list.has("::1".parse().unwrap()));
     }
 
     #[test]
@@ -257,21 +259,21 @@ mod tests {
         let end_v6: Ipv6Addr = "2001:db8::ffff".parse().unwrap();
         let ipv6_range = start_v6..end_v6;
 
-        let blocklist = Blocklist::new(Some(ipv4_range), Some(ipv6_range));
+        let list = IpRanges::new(Some(ipv4_range), Some(ipv6_range));
         // Test IPv4 addresses
-        assert!(blocklist.is_blocked("192.168.1.1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("10.0.0.1".parse().unwrap()));
+        assert!(list.has("192.168.1.1".parse().unwrap()));
+        assert!(!list.has("10.0.0.1".parse().unwrap()));
 
         // Test IPv6 addresses
-        assert!(blocklist.is_blocked("2001:db8::1".parse().unwrap()));
-        assert!(!blocklist.is_blocked("2001:db9::1".parse().unwrap()));
+        assert!(list.has("2001:db8::1".parse().unwrap()));
+        assert!(!list.has("2001:db9::1".parse().unwrap()));
     }
 
     #[ignore]
     #[tokio::test]
-    async fn test_blocklist_real_url() {
+    async fn test_list_real_url() {
         setup_test_logging();
-        let _ = Blocklist::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
+        let _ = IpRanges::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
             .await
             .unwrap();
     }
