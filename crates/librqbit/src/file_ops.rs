@@ -19,7 +19,7 @@ use crate::{
     type_aliases::{BF, FileInfos, PeerHandle},
 };
 
-pub fn update_hash_from_file<Sha1: ISha1>(
+pub async fn update_hash_from_file<Sha1: ISha1>(
     file_id: usize,
     file_info: &FileInfo,
     mut pos: u64,
@@ -35,7 +35,7 @@ pub fn update_hash_from_file<Sha1: ISha1>(
             buf[..chunk].fill(0);
         } else {
             files
-                .pread_exact(file_id, pos, &mut buf[..chunk])
+                .pread_exact(file_id, pos, &mut buf[..chunk]).await
                 .with_context(|| {
                     format!("failed reading chunk of size {chunk}, read so far {read}")
                 })?;
@@ -70,7 +70,7 @@ impl<'a> FileOps<'a> {
     }
 
     // Returns the bitvector with pieces we have.
-    pub fn initial_check(&self, progress: &AtomicU64) -> anyhow::Result<BF> {
+    pub async fn initial_check(&self, progress: &AtomicU64) -> anyhow::Result<BF> {
         let mut have_pieces =
             BF::from_boxed_slice(vec![0u8; self.torrent.lengths().piece_bitfield_bytes()].into());
         let mut piece_files = Vec::<usize>::new();
@@ -144,7 +144,7 @@ impl<'a> FileOps<'a> {
                     &mut computed_hash,
                     &mut read_buffer,
                     to_read_in_file,
-                ) {
+                ).await {
                     debug!(
                         "error reading from file {} ({:?}) at {}: {:#}",
                         current_file.index, current_file.fi.relative_filename, pos, &err
@@ -175,7 +175,7 @@ impl<'a> FileOps<'a> {
         Ok(have_pieces)
     }
 
-    pub fn check_piece(&self, piece_index: ValidPieceIndex) -> anyhow::Result<bool> {
+    pub async fn check_piece(&self, piece_index: ValidPieceIndex) -> anyhow::Result<bool> {
         if cfg!(feature = "_disable_disk_write_net_benchmark") {
             return Ok(true);
         }
@@ -209,7 +209,7 @@ impl<'a> FileOps<'a> {
                 &mut h,
                 &mut buf,
                 to_read_in_file,
-            )
+            ).await
             .with_context(|| {
                 format!(
                     "error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{:?}\")",
@@ -252,7 +252,7 @@ impl<'a> FileOps<'a> {
         }
     }
 
-    pub fn read_chunk(
+    pub async fn read_chunk(
         &self,
         who_sent: PeerHandle,
         chunk_info: &ChunkInfo,
@@ -282,6 +282,7 @@ impl<'a> FileOps<'a> {
             } else {
                 self.files
                     .pread_exact(file_idx, absolute_offset, &mut buf[..to_read_in_file])
+                    .await
                     .with_context(|| {
                         format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
                     })?;
@@ -299,7 +300,7 @@ impl<'a> FileOps<'a> {
         Ok(())
     }
 
-    pub fn write_chunk(
+    pub async fn write_chunk(
         &self,
         who_sent: PeerHandle,
         data: &Piece<ByteBuf<'a>>,
@@ -334,6 +335,7 @@ impl<'a> FileOps<'a> {
                 let written = self
                     .files
                     .pwrite_all_vectored(file_idx, absolute_offset, slices)
+                    .await
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",

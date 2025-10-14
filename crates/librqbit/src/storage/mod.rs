@@ -12,10 +12,12 @@ use std::{
     path::Path,
 };
 
+use async_trait::async_trait;
 use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
 
+#[async_trait]
 pub trait StorageFactory: Send + Sync + Any {
     type Storage: TorrentStorage;
 
@@ -24,21 +26,24 @@ pub trait StorageFactory: Send + Sync + Any {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<Self::Storage>;
-    fn create_and_init(
-        &self,
-        shared: &ManagedTorrentShared,
-        metadata: &TorrentMetadata,
-    ) -> anyhow::Result<Self::Storage> {
-        let mut storage = self.create(shared, metadata)?;
-        storage.init(shared, metadata)?;
-        Ok(storage)
-    }
 
     fn is_type_id(&self, type_id: TypeId) -> bool {
         Self::type_id(self) == type_id
     }
     fn clone_box(&self) -> BoxStorageFactory;
+
+    async fn create_and_init(
+        &self,
+        shared: &ManagedTorrentShared,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<Self::Storage> {
+        let mut storage = self.create(shared, metadata)?;
+        storage.init(shared, metadata).await?;
+        Ok(storage)
+    }
 }
+
+impl<T: StorageFactory + ?Sized> StorageFactoryAsyncExt for T {}
 
 pub type BoxStorageFactory = Box<dyn StorageFactory<Storage = Box<dyn TorrentStorage>>>;
 
@@ -93,9 +98,10 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
     }
 }
 
+#[async_trait]
 pub trait TorrentStorage: Send + Sync {
     // Create/open files etc.
-    fn init(
+    async fn init(
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
@@ -103,13 +109,13 @@ pub trait TorrentStorage: Send + Sync {
 
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// read buf.len() bytes into buf at offset.
-    fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
+    async fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
     /// write buf.len() bytes into the file at offset.
-    fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()>;
+    async fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()>;
 
-    fn pwrite_all_vectored(
+    async fn pwrite_all_vectored(
         &self,
         file_id: usize,
         offset: u64,
@@ -119,7 +125,7 @@ pub trait TorrentStorage: Send + Sync {
         let mut size = 0;
 
         for ioslice in bufs {
-            self.pwrite_all(file_id, offset, &ioslice)?;
+            self.pwrite_all(file_id, offset, &ioslice).await?;
             offset += ioslice.len() as u64;
             size += ioslice.len();
         }
@@ -128,58 +134,59 @@ pub trait TorrentStorage: Send + Sync {
     }
 
     /// Remove a file from the storage. If not supported, or it doesn't matter, just return Ok(())
-    fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()>;
+    async fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()>;
 
-    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()>;
+    async fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()>;
 
     /// E.g. for filesystem backend ensure that the file has a certain length, and grow/shrink as needed.
-    fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
+    async fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()>;
 
     /// Replace the current storage with a dummy, and return a new one that should be used instead.
     /// This is used to make the underlying object useless when e.g. pausing the torrent.
-    fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
+    async fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
 
     /// Callback called every time a piece has completed and has been validated.
     /// Default implementation does nothing, but can be override in trait implementations.
-    fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
+    async fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         Ok(())
     }
 }
 
+#[async_trait]
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
-    fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        (**self).pread_exact(file_id, offset, buf)
+    async fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        (**self).pread_exact(file_id, offset, buf).await
     }
 
-    fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        (**self).pwrite_all(file_id, offset, buf)
+    async fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
+        (**self).pwrite_all(file_id, offset, buf).await
     }
 
-    fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
-        (**self).remove_file(file_id, filename)
+    async fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
+        (**self).remove_file(file_id, filename).await
     }
 
-    fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
-        (**self).ensure_file_length(file_id, length)
+    async fn ensure_file_length(&self, file_id: usize, length: u64) -> anyhow::Result<()> {
+        (**self).ensure_file_length(file_id, length).await
     }
 
-    fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        (**self).take()
+    async fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
+        (**self).take().await
     }
 
-    fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
-        (**self).remove_directory_if_empty(path)
+    async fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
+        (**self).remove_directory_if_empty(path).await
     }
 
-    fn init(
+    async fn init(
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
-        (**self).init(shared, metadata)
+        (**self).init(shared, metadata).await
     }
 
-    fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
-        (**self).on_piece_completed(piece_id)
+    async fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
+        (**self).on_piece_completed(piece_id).await
     }
 }

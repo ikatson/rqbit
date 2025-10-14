@@ -12,7 +12,7 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["default-tls", "postgres", "webui", "prometheus"]
+default = ["default-tls", "postgres", "webui", "prometheus", "librqbit/storage_middleware"]
 openssl-vendored = ["openssl/vendored"]
 tokio-console = ["librqbit/tokio-console"]
 webui = ["librqbit/webui"]
