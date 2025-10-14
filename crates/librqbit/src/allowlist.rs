@@ -13,7 +13,7 @@ use tokio_util::io::StreamReader;
 use tracing::trace;
 use url::Url;
 
-pub struct Whitelist {
+pub struct Allowlist {
     // We could store only one interval tree, but splitting them takes less memory,
     // as IpAddr is 17 bytes, Ipv4Addr is only 4 bytes (the majority of ranges).
     v4: IntervalTreeWithSize<Ipv4Addr>,
@@ -34,7 +34,7 @@ fn interval_tree<T: Clone + Ord>(it: impl Iterator<Item = Range<T>>) -> Interval
     IntervalTreeWithSize { t, len }
 }
 
-impl Whitelist {
+impl Allowlist {
     pub fn empty() -> Self {
         Self {
             v4: interval_tree(empty()),
@@ -69,9 +69,9 @@ impl Whitelist {
 
         let response = reqwest::get(parsed_url)
             .await
-            .context("error fetching whitelist")?;
+            .context("error fetching allowlist")?;
         if !response.status().is_success() {
-            anyhow::bail!("error fetching whitelist: HTTP {}", response.status());
+            anyhow::bail!("error fetching allowlist: HTTP {}", response.status());
         }
 
         let mut reader = StreamReader::new(response.bytes_stream().map_err(std::io::Error::other));
@@ -185,64 +185,64 @@ mod tests {
     use async_compression::tokio::write::GzipEncoder;
     use tokio::io::AsyncWriteExt;
 
-    const WHITELIST: &[u8] = br#"
+    const ALLOWLIST: &[u8] = br#"
     # test
     local:192.168.1.1-192.168.1.255
     localv6:2001:db8::1-2001:db8::ffff
     "#;
 
     #[tokio::test]
-    async fn test_whitelist_gzipped() -> Result<()> {
-        let mut gzipped_whitelist = Vec::new();
+    async fn test_allowlist_gzipped() -> Result<()> {
+        let mut gzipped_allowlist = Vec::new();
         {
-            let mut encoder = GzipEncoder::new(&mut gzipped_whitelist);
-            encoder.write_all(WHITELIST).await.unwrap();
+            let mut encoder = GzipEncoder::new(&mut gzipped_allowlist);
+            encoder.write_all(ALLOWLIST).await.unwrap();
             encoder.flush().await.unwrap();
             encoder.shutdown().await.unwrap();
         }
-        let whitelist = Whitelist::create_from_stream(&mut Cursor::new(gzipped_whitelist)).await?;
-        assert!(whitelist.is_allowed("192.168.1.1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("8.8.8.8".parse().unwrap()));
+        let allowlist = Allowlist::create_from_stream(&mut Cursor::new(gzipped_allowlist)).await?;
+        assert!(allowlist.is_allowed("192.168.1.1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("8.8.8.8".parse().unwrap()));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_whitelist_plaintext() -> Result<()> {
-        let whitelist = Whitelist::create_from_stream(&mut Cursor::new(WHITELIST)).await?;
-        assert!(whitelist.is_allowed("192.168.1.1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("8.8.8.8".parse().unwrap()));
+    async fn test_allowlist_plaintext() -> Result<()> {
+        let allowlist = Allowlist::create_from_stream(&mut Cursor::new(ALLOWLIST)).await?;
+        assert!(allowlist.is_allowed("192.168.1.1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("8.8.8.8".parse().unwrap()));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_whitelist_from_plaintext_file() -> Result<()> {
+    async fn test_allowlist_from_plaintext_file() -> Result<()> {
         // Create a temporary file
-        let mut temp_file = tokio::fs::File::create("temp_whitelist.txt").await?;
-        tokio::io::AsyncWriteExt::write_all(&mut temp_file, WHITELIST).await?;
+        let mut temp_file = tokio::fs::File::create("temp_allowlist.txt").await?;
+        tokio::io::AsyncWriteExt::write_all(&mut temp_file, ALLOWLIST).await?;
         drop(temp_file); // Close the file
 
-        // Load the whitelist from the file
-        let whitelist = Whitelist::load_from_file("temp_whitelist.txt").await?;
+        // Load the allowlist from the file
+        let allowlist = Allowlist::load_from_file("temp_allowlist.txt").await?;
 
-        // Verify the whitelist
-        assert!(whitelist.is_allowed("192.168.1.1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("8.8.8.8".parse().unwrap()));
-        assert!(whitelist.is_allowed("2001:db8::1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("2001:4860:4860::8888".parse().unwrap()));
+        // Verify the allowlist
+        assert!(allowlist.is_allowed("192.168.1.1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("8.8.8.8".parse().unwrap()));
+        assert!(allowlist.is_allowed("2001:db8::1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("2001:4860:4860::8888".parse().unwrap()));
 
         // Clean up the temporary file
-        tokio::fs::remove_file("temp_whitelist.txt").await?;
+        tokio::fs::remove_file("temp_allowlist.txt").await?;
 
         Ok(())
     }
 
     #[test]
-    fn test_whitelist_empty() {
-        let whitelist = Whitelist::empty();
-        assert!(!whitelist.is_allowed("127.0.0.1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("::1".parse().unwrap()));
+    fn test_allowlist_empty() {
+        let allowlist = Allowlist::empty();
+        assert!(!allowlist.is_allowed("127.0.0.1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("::1".parse().unwrap()));
     }
 
     #[test]
@@ -257,21 +257,21 @@ mod tests {
         let end_v6: Ipv6Addr = "2001:db8::ffff".parse().unwrap();
         let ipv6_range = start_v6..end_v6;
 
-        let whitelist = Whitelist::new(Some(ipv4_range), Some(ipv6_range));
+        let allowlist = Allowlist::new(Some(ipv4_range), Some(ipv6_range));
         // Test IPv4 addresses
-        assert!(whitelist.is_allowed("192.168.1.1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("10.0.0.1".parse().unwrap()));
+        assert!(allowlist.is_allowed("192.168.1.1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("10.0.0.1".parse().unwrap()));
 
         // Test IPv6 addresses
-        assert!(whitelist.is_allowed("2001:db8::1".parse().unwrap()));
-        assert!(!whitelist.is_allowed("2001:db9::1".parse().unwrap()));
+        assert!(allowlist.is_allowed("2001:db8::1".parse().unwrap()));
+        assert!(!allowlist.is_allowed("2001:db9::1".parse().unwrap()));
     }
 
     #[ignore]
     #[tokio::test]
-    async fn test_whitelist_real_url() {
+    async fn test_allowlist_real_url() {
         setup_test_logging();
-        let _ = Whitelist::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
+        let _ = Allowlist::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
             .await
             .unwrap();
     }

@@ -605,7 +605,7 @@ impl TorrentStateLive {
             }
 
             if session
-                .whitelist
+                .allowlist
                 .as_ref()
                 .is_some_and(|l| !l.is_allowed(addr.ip()))
             {
@@ -614,7 +614,7 @@ impl TorrentStateLive {
                     .counters
                     .blocked_outgoing
                     .fetch_add(1, Ordering::Relaxed);
-                debug!(?addr, "blocked outgoing connection (by the whitelist)");
+                debug!(?addr, "blocked outgoing connection (by the allowlist)");
                 continue;
             }
 

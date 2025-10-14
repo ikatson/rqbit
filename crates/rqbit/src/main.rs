@@ -254,11 +254,11 @@ struct Opts {
     #[arg(long, env = "RQBIT_BLOCKLIST_URL")]
     blocklist_url: Option<String>,
 
-    /// Downloads a p2p whitelist from this url and blocks ALL connections BUT from/to those peers.
+    /// Downloads a p2p allowlist from this url and blocks ALL connections BUT from/to those peers.
     /// Supports file:/// and http(s):// URLs. Format is newline-delimited "name:start_ip-end_ip"
     /// E.g. https://github.com/Naunter/BT_BlockLists/raw/refs/heads/master/bt_blocklists.gz
-    #[arg(long, env = "RQBIT_WHITELIST_URL")]
-    whitelist_url: Option<String>,
+    #[arg(long, env = "RQBIT_ALLOW_URL")]
+    allowlist_url: Option<String>,
 
     /// The filename with tracker URLs to always use for each torrent. Newline-delimited.
     #[arg(long, env = "RQBIT_TRACKERS_FILENAME")]
@@ -588,7 +588,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             download_bps: opts.ratelimit_download_bps,
         },
         blocklist_url: opts.blocklist_url.take(),
-        whitelist_url: opts.whitelist_url.take(),
+        allowlist_url: opts.allowlist_url.take(),
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
         trackers,

@@ -41,6 +41,7 @@ macro_rules! aframe {
 #[macro_use]
 mod stat_gen;
 
+mod allowlist;
 pub mod api;
 mod api_error;
 mod bitv;
@@ -68,7 +69,6 @@ mod session;
 mod session_persistence;
 pub mod session_stats;
 mod spawn_utils;
-mod whitelist;
 
 pub mod storage;
 mod stream_connect;

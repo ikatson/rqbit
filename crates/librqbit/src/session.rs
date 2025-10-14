@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
+    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared, allowlist,
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
@@ -38,7 +38,6 @@ use crate::{
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
-    whitelist,
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -141,7 +140,7 @@ pub struct Session {
     pub ratelimits: Limits,
 
     pub blocklist: blocklist::Blocklist,
-    pub whitelist: Option<whitelist::Whitelist>,
+    pub allowlist: Option<allowlist::Allowlist>,
 
     // Monitoring / tracing / logging
     pub(crate) stats: Arc<SessionStats>,
@@ -437,7 +436,7 @@ pub struct SessionOptions {
     pub ratelimits: LimitsConfig,
 
     pub blocklist_url: Option<String>,
-    pub whitelist_url: Option<String>,
+    pub allowlist_url: Option<String>,
 
     // The list of tracker URLs to always use for each torrent.
     pub trackers: HashSet<url::Url>,
@@ -672,13 +671,13 @@ impl Session {
                 blocklist::Blocklist::empty()
             };
 
-            let whitelist = if let Some(whitelist_url) = opts.whitelist_url {
-                info!(url = whitelist_url, "loading p2p whitelist");
-                let wl = whitelist::Whitelist::load_from_url(&whitelist_url)
+            let allowlist = if let Some(allowlist_url) = opts.allowlist_url {
+                info!(url = allowlist_url, "loading p2p allowlist");
+                let al = allowlist::Allowlist::load_from_url(&allowlist_url)
                     .await
-                    .with_context(|| format!("error reading whitelist from {whitelist_url}"))?;
-                info!(len = wl.len(), "loaded whitelist");
-                Some(wl)
+                    .with_context(|| format!("error reading allowlist from {allowlist_url}"))?;
+                info!(len = al.len(), "loaded allowlist");
+                Some(al)
             } else {
                 None
             };
@@ -733,7 +732,7 @@ impl Session {
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
-                whitelist,
+                allowlist,
                 lsd,
             });
 
@@ -849,7 +848,7 @@ impl Session {
             bail!("Incoming ip {incoming_ip} is in blocklist");
         }
         if self
-            .whitelist
+            .allowlist
             .as_ref()
             .is_some_and(|l| !l.is_allowed(incoming_ip))
         {
@@ -857,7 +856,7 @@ impl Session {
                 .counters
                 .blocked_incoming
                 .fetch_add(1, Ordering::Relaxed);
-            bail!("Incoming ip {incoming_ip} is not in whitelist");
+            bail!("Incoming ip {incoming_ip} is not in allowlist");
         }
 
         let mut read_buf = ReadBuf::new();
