@@ -647,13 +647,13 @@ impl TorrentStateLive {
     pub(crate) fn lock_read(
         &self,
         reason: &'static str,
-    ) -> TimedExistence<RwLockReadGuard<TorrentStateLocked>> {
+    ) -> TimedExistence<RwLockReadGuard<'_, TorrentStateLocked>> {
         TimedExistence::new(timeit(reason, || self.locked.read()), reason)
     }
     pub(crate) fn lock_write(
         &self,
         reason: &'static str,
-    ) -> TimedExistence<RwLockWriteGuard<TorrentStateLocked>> {
+    ) -> TimedExistence<RwLockWriteGuard<'_, TorrentStateLocked>> {
         TimedExistence::new(timeit(reason, || self.locked.write()), reason)
     }
 
@@ -854,15 +854,15 @@ impl TorrentStateLive {
 
     fn disconnect_all_peers_that_have_full_torrent(&self) {
         for mut pe in self.peers.states.iter_mut() {
-            if let PeerState::Live(l) = pe.value().get_state() {
-                if l.has_full_torrent(self.lengths.total_pieces() as usize) {
-                    let prev = pe.value_mut().set_not_needed(&self.peers);
-                    let _ = prev
-                        .take_live_no_counters()
-                        .unwrap()
-                        .tx
-                        .send(WriterRequest::Disconnect(Ok(())));
-                }
+            if let PeerState::Live(l) = pe.value().get_state()
+                && l.has_full_torrent(self.lengths.total_pieces() as usize)
+            {
+                let prev = pe.value_mut().set_not_needed(&self.peers);
+                let _ = prev
+                    .take_live_no_counters()
+                    .unwrap()
+                    .tx
+                    .send(WriterRequest::Disconnect(Ok(())));
             }
         }
     }
@@ -1125,16 +1125,16 @@ impl PeerConnectionHandler for PeerHandler {
             );
         }
         // Lets update outgoing Socket address for incoming connection
-        if self.incoming {
-            if let Some(port) = hs.port() {
-                let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
-                let outgoing_addr = SocketAddr::new(peer_ip, port);
-                self.state
-                    .peers
-                    .with_peer_mut(self.addr, "update outgoing addr", |peer| {
-                        peer.outgoing_address = Some(outgoing_addr)
-                    });
-            }
+        if self.incoming
+            && let Some(port) = hs.port()
+        {
+            let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
+            let outgoing_addr = SocketAddr::new(peer_ip, port);
+            self.state
+                .peers
+                .with_peer_mut(self.addr, "update outgoing addr", |peer| {
+                    peer.outgoing_address = Some(outgoing_addr)
+                });
         }
         Ok(())
     }
@@ -1166,11 +1166,12 @@ impl PeerConnectionHandler for PeerHandler {
         handshake: &mut ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()> {
         let info_bytes = &self.state.metadata.info_bytes;
-        if !info_bytes.is_empty() {
-            if let Ok(len) = info_bytes.len().try_into() {
-                handshake.metadata_size = Some(len);
-            }
+        if !info_bytes.is_empty()
+            && let Ok(len) = info_bytes.len().try_into()
+        {
+            handshake.metadata_size = Some(len);
         }
+
         Ok(())
     }
 }

@@ -243,10 +243,10 @@ impl BucketTree {
         match &mut self.data[idx].data {
             BucketTreeNodeData::Leaf(leaf) => {
                 let r = leaf.nodes.iter_mut().find(|b| b.id == *id);
-                if r.is_some() {
-                    if let Some(refresh) = refresh {
-                        leaf.last_refreshed = refresh;
-                    }
+                if r.is_some()
+                    && let Some(refresh) = refresh
+                {
+                    leaf.last_refreshed = refresh;
                 }
                 r
             }

@@ -123,7 +123,7 @@ impl ReadBuf {
     }
 
     /// Get a part of the buffer for reading into.
-    fn unfilled_ioslices(&mut self) -> [IoSliceMut; 2] {
+    fn unfilled_ioslices(&mut self) -> [IoSliceMut<'_>; 2] {
         let write_start = (self.start.saturating_add(self.len)) % BUFLEN;
         let available_len = BUFLEN.saturating_sub(self.len);
         let first_len = (BUFLEN.saturating_sub(write_start)).min(available_len);

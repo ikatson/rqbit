@@ -626,10 +626,10 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         SubCommand::Server(server_opts) => match &server_opts.subcommand {
             ServerSubcommand::Start(start_opts) => {
                 // If the listen port wasn't set, default to 4240
-                if let Some(l) = sopts.listen.as_mut() {
-                    if l.listen_addr.port() == 0 {
-                        l.listen_addr.set_port(4240);
-                    }
+                if let Some(l) = sopts.listen.as_mut()
+                    && l.listen_addr.port() == 0
+                {
+                    l.listen_addr.set_port(4240);
                 }
 
                 if !start_opts.disable_persistence {
