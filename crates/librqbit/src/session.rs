@@ -772,8 +772,8 @@ impl Session {
                         },
                     );
                 }
-                if let Some(announce_port) = listen.announce_port
-                    && listen.enable_upnp_port_forwarding
+                if listen.enable_upnp_port_forwarding
+                    && let Some(announce_port) = listen.announce_port
                 {
                     info!(port = announce_port, "starting UPnP port forwarder");
                     let bind_device = bind_device.clone();

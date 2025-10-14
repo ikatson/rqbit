@@ -155,7 +155,7 @@ impl std::fmt::Display for Magnet {
                 if index > 0 {
                     write!(f, ",")?; // Add a comma before all but the first index
                 }
-                write!(f, "{}", file)?;
+                write!(f, "{file}")?;
             }
         }
         Ok(())
