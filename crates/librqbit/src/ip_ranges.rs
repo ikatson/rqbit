@@ -13,22 +13,6 @@ use tokio_util::io::StreamReader;
 use tracing::trace;
 use url::Url;
 
-pub struct List {
-    // We could store only one interval tree, but splitting them takes less memory,
-    // as IpAddr is 17 bytes, Ipv4Addr is only 4 bytes (the majority of ranges).
-    v4: IntervalTreeWithSize<Ipv4Addr>,
-    v6: IntervalTreeWithSize<Ipv6Addr>,
-}
-
-impl Default for List {
-    fn default() -> Self {
-        Self {
-            v4: interval_tree(empty()),
-            v6: interval_tree(empty()),
-        }
-    }
-}
-
 struct IntervalTreeWithSize<T> {
     t: IntervalTree<T, ()>,
     len: usize,
@@ -43,7 +27,23 @@ fn interval_tree<T: Clone + Ord>(it: impl Iterator<Item = Range<T>>) -> Interval
     IntervalTreeWithSize { t, len }
 }
 
-impl List {
+pub struct IpRanges {
+    // We could store only one interval tree, but splitting them takes less memory,
+    // as IpAddr is 17 bytes, Ipv4Addr is only 4 bytes (the majority of ranges).
+    v4: IntervalTreeWithSize<Ipv4Addr>,
+    v6: IntervalTreeWithSize<Ipv6Addr>,
+}
+
+impl Default for IpRanges {
+    fn default() -> Self {
+        Self {
+            v4: interval_tree(empty()),
+            v6: interval_tree(empty()),
+        }
+    }
+}
+
+impl IpRanges {
     pub fn new(
         v4_ranges: impl IntoIterator<Item = Range<Ipv4Addr>>,
         v6_ranges: impl IntoIterator<Item = Range<Ipv6Addr>>,
@@ -202,7 +202,7 @@ mod tests {
             encoder.flush().await.unwrap();
             encoder.shutdown().await.unwrap();
         }
-        let list = List::create_from_stream(&mut Cursor::new(gzipped_list)).await?;
+        let list = IpRanges::create_from_stream(&mut Cursor::new(gzipped_list)).await?;
         assert!(list.has("192.168.1.1".parse().unwrap()));
         assert!(!list.has("8.8.8.8".parse().unwrap()));
 
@@ -211,7 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_plaintext() -> Result<()> {
-        let list = List::create_from_stream(&mut Cursor::new(LIST)).await?;
+        let list = IpRanges::create_from_stream(&mut Cursor::new(LIST)).await?;
         assert!(list.has("192.168.1.1".parse().unwrap()));
         assert!(!list.has("8.8.8.8".parse().unwrap()));
 
@@ -226,7 +226,7 @@ mod tests {
         drop(temp_file); // Close the file
 
         // Load the list from the file
-        let list = List::load_from_file("temp_list.txt").await?;
+        let list = IpRanges::load_from_file("temp_list.txt").await?;
 
         // Verify the list
         assert!(list.has("192.168.1.1".parse().unwrap()));
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_list_empty() {
-        let list = List::default();
+        let list = IpRanges::default();
         assert!(!list.has("127.0.0.1".parse().unwrap()));
         assert!(!list.has("::1".parse().unwrap()));
     }
@@ -259,7 +259,7 @@ mod tests {
         let end_v6: Ipv6Addr = "2001:db8::ffff".parse().unwrap();
         let ipv6_range = start_v6..end_v6;
 
-        let list = List::new(Some(ipv4_range), Some(ipv6_range));
+        let list = IpRanges::new(Some(ipv4_range), Some(ipv6_range));
         // Test IPv4 addresses
         assert!(list.has("192.168.1.1".parse().unwrap()));
         assert!(!list.has("10.0.0.1".parse().unwrap()));
@@ -273,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_real_url() {
         setup_test_logging();
-        let _ = List::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
+        let _ = IpRanges::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
             .await
             .unwrap();
     }

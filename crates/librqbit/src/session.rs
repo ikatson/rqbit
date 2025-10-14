@@ -19,8 +19,8 @@ use crate::{
     create_torrent,
     create_torrent_file::CreateTorrentResult,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
+    ip_ranges::IpRanges,
     limits::{Limits, LimitsConfig},
-    list::List,
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
@@ -140,8 +140,8 @@ pub struct Session {
     pub(crate) concurrent_initialize_semaphore: Arc<tokio::sync::Semaphore>,
     pub ratelimits: Limits,
 
-    pub blocklist: List,
-    pub allowlist: Option<List>,
+    pub blocklist: IpRanges,
+    pub allowlist: Option<IpRanges>,
 
     // Monitoring / tracing / logging
     pub(crate) stats: Arc<SessionStats>,
@@ -663,18 +663,18 @@ impl Session {
 
             let blocklist = if let Some(blocklist_url) = opts.blocklist_url {
                 info!(url = blocklist_url, "loading p2p blocklist");
-                let bl = List::load_from_url(&blocklist_url)
+                let bl = IpRanges::load_from_url(&blocklist_url)
                     .await
                     .with_context(|| format!("error reading blocklist from {blocklist_url}"))?;
                 info!(len = bl.len(), "loaded blocklist");
                 bl
             } else {
-                List::default()
+                IpRanges::default()
             };
 
             let allowlist = if let Some(allowlist_url) = opts.allowlist_url {
                 info!(url = allowlist_url, "loading p2p allowlist");
-                let al = List::load_from_url(&allowlist_url)
+                let al = IpRanges::load_from_url(&allowlist_url)
                     .await
                     .with_context(|| format!("error reading allowlist from {allowlist_url}"))?;
                 info!(len = al.len(), "loaded allowlist");
