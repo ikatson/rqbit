@@ -262,7 +262,7 @@ struct Opts {
     /// Downloads a p2p allowlist from this url and blocks ALL connections BUT from/to those peers.
     /// Supports file:/// and http(s):// URLs. Format is newline-delimited "name:start_ip-end_ip"
     /// E.g. https://github.com/Naunter/BT_BlockLists/raw/refs/heads/master/bt_blocklists.gz
-    #[arg(long, env = "RQBIT_ALLOW_URL")]
+    #[arg(long, env = "RQBIT_ALLOWLIST_URL")]
     allowlist_url: Option<String>,
 
     /// The filename with tracker URLs to always use for each torrent. Newline-delimited.
