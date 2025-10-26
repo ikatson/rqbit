@@ -2,6 +2,8 @@
 name = "librqbit-core"
 version = "5.0.0"
 edition = "2024"
+# https://github.com/rust-lang/rust/issues/53667
+rust-version = "1.88"
 description = "Important utilities used throughout librqbit useful for working with torrents."
 license = "Apache-2.0"
 documentation = "https://docs.rs/librqbit-core"
