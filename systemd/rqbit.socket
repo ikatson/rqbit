@@ -1,0 +1,8 @@
+[Unit]
+Description=rqbit Bittorrent client socket
+
+[Socket]
+ListenStream=127.0.0.1:3030
+
+[Install]
+WantedBy=sockets.target
