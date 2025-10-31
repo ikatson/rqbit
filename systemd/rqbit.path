@@ -1,0 +1,8 @@
+[Unit]
+Description=Automatically start rqbit after downloading a torrent file
+
+[Path]
+PathExistsGlob=$XDG_DOWNLOAD_DIR/*.torrent
+
+[Install]
+WantedBy=paths.target
