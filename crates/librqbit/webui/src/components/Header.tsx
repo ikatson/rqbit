@@ -1,5 +1,7 @@
 import { FileInput } from "./buttons/FileInput";
 import { MagnetInput } from "./buttons/MagnetInput";
+import { PauseButton } from "./buttons/PauseButton";
+import { ResumeButton } from "./buttons/ResumeButton";
 
 // @ts-ignore
 import Logo from "../../assets/logo.svg?react";
@@ -23,6 +25,8 @@ export const Header = ({
         </h1>
       </div>
       <div className="flex flex-wrap gap-1 m-2">
+        <PauseButton className="flex-grow justify-center dark:text-white" />
+        <ResumeButton className="flex-grow justify-center dark:text-white" />
         <MagnetInput className="flex-grow justify-center dark:text-white" />
         <FileInput className="flex-grow justify-center dark:text-white" />
       </div>
