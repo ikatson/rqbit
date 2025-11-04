@@ -22,7 +22,8 @@ anyhow = "1"
 url = { version = "2", default-features = false }
 rand = "0.9"
 parking_lot = "0.12"
-serde = { version = "1", features = ["derive"] }
+serde = "1"
+serde_derive = "1"
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
