@@ -15,7 +15,8 @@ readme = "README.md"
 tracing = "0.1"
 anyhow = "1"
 reqwest = { version = "0.12", default-features = false }
-serde = { version = "1", features = ["derive"] }
+serde = "1"
+serde_derive = "1"
 tokio = { version = "1", features = ["macros"] }
 futures = "0.3"
 url = { version = "2", default-features = false }
