@@ -48,3 +48,119 @@ lto = false
 [profile.release-debug]
 inherits = "release"
 debug = true
+
+[workspace.dependencies]
+anyhow = "1"
+arc-swap = "1.7.1"
+arrayvec = "0.7.6"
+assert_cfg = "0.1.0"
+async-backtrace = "0.2"
+async-compression = { version = "0.4.18", features = ["tokio", "gzip"] }
+async-stream = "0.3.5"
+async-trait = "0.1.81"
+atoi = "2.0.0"
+aws-lc-rs = "1.12"
+axum = { version = "0.8", features = ["tokio"] }
+# axum = { version = "0.8", optional = true }
+axum-extra = { version = "0.10.1", features = ["query"] }
+backon = { version = "1.5", features = ["tokio-sleep"] }
+base64 = "0.22"
+bencode = { path = "crates/bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
+bincode = "2"
+bitvec = "1"
+bstr = "1.12.0"
+buffers = { path = "crates/buffers", package = "librqbit-buffers", version = "4.2" }
+byteorder = "1"
+bytes = "1"
+chardetng = "0.1.17"
+chrono = { version = "0.4.31", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "deprecated", "env"] }
+clap_complete = "4.5"
+clone_to_owned = { path = "crates/clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
+console-subscriber = "0.5"
+criterion = "0.7.0"
+crypto-hash = "0.3"
+dashmap = { version = "6", features = ["serde"] }
+data-encoding = "2.6.0"
+dht = { path = "crates/dht", package = "librqbit-dht", default-features = false, version = "5.3.0" }
+directories = "6"
+encoding_rs = "0.8.35"
+futures = "0.3"
+gethostname = "1"
+governor = "0.10"
+hex = "0.4"
+http = "1"
+httparse = "1.10.1"
+indexmap = "2"
+intervaltree = "0.2.7"
+itertools = "0.14"
+leaky-bucket = "1.1"
+libc = "0.2.158"
+librqbit = { version = "9.0.0-beta.1", path = "crates/librqbit", default-features = false, features = [ "http-api", "http-api-client", "tracing-subscriber-utils", "upnp-serve-adapter", "watch", ] }
+librqbit-buffers = { path = "crates/buffers", version = "4.2.0" }
+librqbit-core = { path = "crates/librqbit_core", default-features = false, version = "5" }
+# librqbit-dualstack-sockets = "0.6.11"
+librqbit-dualstack-sockets = { version = "0.6.11", features = ["axum"] }
+librqbit-lsd = { path = "crates/librqbit_lsd", default-features = false, package = "librqbit-lsd", version = "0.1.0" }
+# librqbit-sha1-wrapper = { path = "crates/sha1w", version = "4", default-features = false }
+librqbit-upnp = { path = "crates/upnp", version = "1" }
+librqbit-utp = { version = "0.6.2", features = ["export-metrics"] }
+lru = "0.16"
+memchr = "2.7.5"
+memmap2 = { version = "0.9.4" }
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+mime_guess = { version = "2.0.5", default-features = false }
+network-interface = "2"
+nix = { version = "0.30.1", features = ["uio"] }
+notify = "8"
+openssl = { version = "0.10" }
+parking_lot = "0.12"
+parse_duration = "2"
+peer_binary_protocol = { path = "crates/peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.3" }
+quick-xml = { version = "0.38.3", features = ["serialize"] }
+rand = "0.9"
+regex = "1"
+# reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = [ "json", "socks", "stream", ] }
+# reqwest = { version = "0.12", default-features = false, features = ["json"] }
+rlimit = "0.10.1"
+serde = { version = "1", features = ["derive", "rc"] }
+# serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+serde_with = "3.13.0"
+sha1w = { path = "crates/sha1w", package = "librqbit-sha1-wrapper", version = "4.1" }
+# sha1w = { path = "crates/sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
+# sha1w = { path = "crates/sha1w", package = "librqbit-sha1-wrapper", version = "4.1", default-features = false, optional = true }
+signal-hook = "0.3.17"
+size_format = "1"
+socket2 = "0.6"
+tempfile = "3"
+thiserror = "2.0.12"
+tokio = { version = "1", default-features = false }
+tokio-socks = "0.5.2"
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-test = "0.4"
+tokio-util = { version = "0.7.15", features = ["io"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+# tower-http = { version = "0.6.2", features = ["trace"] }
+tracing = "0.1"
+# tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", default-features = false, features = [ "json", "fmt", "env-filter", ] }
+# tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracker_comms = { path = "crates/tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "3" }
+upnp-serve = { path = "crates/upnp-serve", default-features = false, version = "1", package = "librqbit-upnp-serve" }
+# upnp-serve = { path = "crates/upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "1", optional = true }
+# url = "2"
+# url = { version = "2", default-features = false }
+urlencoding = "2"
+uuid = { version = "1.10.0", features = ["v4"] }
+# uuid = { version = "1.2", features = ["v4"] }
+walkdir = "2.5.0"
+
+# sqlx and home are pinned so that we can compile on older Rusts
+sqlx = { version = "0.8", features = [ "runtime-tokio", "macros", "postgres", ], default-features = false }
+home = "0.5"
+url = { version = "^2.5.2", default-features = false, features = [
+    "serde",
+] } # can't upgrade yet until min version is Rust 1.81, see https://github.com/servo/rust-url/issues/992

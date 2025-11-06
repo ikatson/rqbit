@@ -9,32 +9,33 @@ repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
 [dependencies]
-anyhow = "1.0.86"
-axum = { version = "0.8", features = ["tokio"] }
-tokio = { version = "1", features = ["full"] }
-tracing = "0.1.40"
-bstr = "1.10.0"
-serde = { version = "1", features = ["derive"] }
-http = "1.1.0"
-httparse = "1.9.4"
-uuid = { version = "1.10.0", features = ["v4"] }
-librqbit-upnp = { version = "1", path = "../upnp", default-features = false }
-gethostname = "1"
-librqbit-core = { version = "5", path = "../librqbit_core", default-features = false }
-mime_guess = "2.0.5"
-url = { version = "2", default-features = false }
-parking_lot = "0.12.3"
-tokio-util = "0.7.11"
-reqwest = { version = "0.12.7", default-features = false }
-quick-xml = { version = "0.38.3", features = ["serialize"] }
-network-interface = "2.0.0"
-futures = "0.3.30"
-librqbit-dualstack-sockets = "0.6.11"
-rand = "0.9.1"
+librqbit-core.workspace = true
+librqbit-upnp.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+bstr.workspace = true
+futures.workspace = true
+gethostname.workspace = true
+http.workspace = true
+httparse.workspace = true
+librqbit-dualstack-sockets.workspace = true
+mime_guess.workspace = true
+network-interface.workspace = true
+parking_lot.workspace = true
+quick-xml.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util"] }
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = "0.3.20"
-tower-http = { version = "0.6.2", features = ["trace"] }
+tracing-subscriber.workspace = true
+tower-http.workspace = true
 
 [[example]]
 name = "upnp-stub-server"
