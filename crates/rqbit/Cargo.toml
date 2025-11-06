@@ -9,14 +9,12 @@ documentation = "https://github.com/ikatson/rqbit"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [features]
 default = ["default-tls", "postgres", "webui", "prometheus"]
 openssl-vendored = ["openssl/vendored"]
 tokio-console = ["librqbit/tokio-console"]
 webui = ["librqbit/webui"]
-prometheus = ["librqbit/prometheus", "metrics-exporter-prometheus"]
+prometheus = ["librqbit/prometheus", "dep:metrics-exporter-prometheus"]
 timed_existence = ["librqbit/timed_existence"]
 default-tls = ["librqbit/default-tls"]
 rust-tls = ["librqbit/rust-tls"]
@@ -28,37 +26,32 @@ _disable_disk_write_net_benchmark = [
 ]
 
 [dependencies]
-librqbit = { version = "9.0.0-beta.1", path = "../librqbit", default-features = false, features = [
-    "http-api",
-    "http-api-client",
-    "tracing-subscriber-utils",
-    "upnp-serve-adapter",
-    "watch",
-] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-console-subscriber = { version = "0.4", optional = true }
-anyhow = "1"
-clap = { version = "4.5", features = ["derive", "deprecated", "env"] }
-clap_complete = "4.5"
-tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-regex = "1"
-futures = "0.3"
-parse_duration = "2"
-parking_lot = { version = "0.12" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-size_format = "1"
-bytes = "1.5.0"
-openssl = { version = "0.10", features = ["vendored"], optional = true }
-upnp-serve = { path = "../upnp-serve", default-features = false, version = "1", package = "librqbit-upnp-serve" }
-metrics-exporter-prometheus = { version = "0.17", optional = true, default-features = false }
-libc = "0.2.158"
-signal-hook = "0.3.17"
-tokio-util = "0.7.11"
-gethostname = "1"
-url = "2"
-librqbit-dualstack-sockets = "0.6.11"
+librqbit.workspace = true
+
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+console-subscriber.workspace = true
+futures.workspace = true
+gethostname.workspace = true
+libc.workspace = true
+librqbit-dualstack-sockets.workspace = true
+metrics-exporter-prometheus = { workspace = true, optional = true }
+openssl.workspace = true
+parking_lot.workspace = true
+parse_duration.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+signal-hook.workspace = true
+size_format.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
+upnp-serve.workspace = true
+url.workspace = true
 
 [dev-dependencies]
-futures = { version = "0.3" }
+futures.workspace = true

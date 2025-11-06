@@ -7,9 +7,7 @@ license = "Apache-2.0"
 documentation = "https://docs.rs/librqbit-buffers"
 readme = "README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-bytes = "1"
+bytes.workspace = true 
+clone_to_owned.workspace = true
+serde.workspace = true
