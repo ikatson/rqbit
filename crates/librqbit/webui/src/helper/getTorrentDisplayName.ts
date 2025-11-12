@@ -7,13 +7,13 @@ function getLargestFileName(torrentDetails: TorrentDetails): string | null {
   const largestFile = torrentDetails.files
     .filter((f) => f.included)
     .reduce((prev: any, current: any) =>
-      prev.length > current.length ? prev : current
+      prev.length > current.length ? prev : current,
     );
   return largestFile.name;
 }
 
 export function torrentDisplayName(
-  torrentDetails: TorrentDetails | null
+  torrentDetails: TorrentDetails | null,
 ): string {
   if (!torrentDetails) {
     return "";

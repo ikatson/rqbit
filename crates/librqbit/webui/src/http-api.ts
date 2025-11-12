@@ -6,6 +6,7 @@ import {
   SessionStats,
   TorrentDetails,
   TorrentStats,
+  PeerStatsSnapshot,
 } from "./api-types";
 
 // Define API URL and base path
@@ -17,7 +18,8 @@ const apiUrl = (() => {
 
   // assume Vite devserver
   if (url.port == "3031") {
-    return `${url.protocol}//${url.hostname}:3030`;
+    return "http://router.lan:3030";
+    // return `${url.protocol}//${url.hostname}:3030`;
   }
 
   // Remove "/web" or "/web/" from the end and also ending slash.
@@ -29,7 +31,7 @@ const makeRequest = async (
   method: string,
   path: string,
   data?: any,
-  isJson?: boolean
+  isJson?: boolean,
 ): Promise<any> => {
   console.log(method, path);
   const url = apiUrl + path;
@@ -87,12 +89,23 @@ const makeRequest = async (
 export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getStreamLogsUrl: () => apiUrl + "/stream_logs",
   listTorrents: (): Promise<ListTorrentsResponse> =>
-    makeRequest("GET", "/torrents"),
+    makeRequest("GET", "/torrents?with_stats=true"),
   getTorrentDetails: (index: number): Promise<TorrentDetails> => {
     return makeRequest("GET", `/torrents/${index}`);
   },
   getTorrentStats: (index: number): Promise<TorrentStats> => {
     return makeRequest("GET", `/torrents/${index}/stats/v1`);
+  },
+
+  getTorrentPeerStats: (
+    index: number,
+    state?: "all" | "live",
+  ): Promise<PeerStatsSnapshot> => {
+    let url = `/torrents/${index}/peer_stats`;
+    if (state) {
+      url += `?state=${state}`;
+    }
+    return makeRequest("GET", url);
   },
   stats: (): Promise<SessionStats> => {
     return makeRequest("GET", "/stats");
@@ -132,7 +145,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
       {
         only_files: files,
       },
-      true
+      true,
     );
   },
 
@@ -158,7 +171,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
-    filename?: string | null
+    filename?: string | null,
   ) => {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {

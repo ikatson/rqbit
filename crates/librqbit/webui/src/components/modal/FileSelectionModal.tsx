@@ -46,8 +46,8 @@ export const FileSelectionModal = (props: {
           } else {
             return [idx];
           }
-        })
-      )
+        }),
+      ),
     );
     setOutputFolder(listTorrentResponse?.output_folder || "");
   }, [listTorrentResponse]);
@@ -87,7 +87,7 @@ export const FileSelectionModal = (props: {
         },
         (e) => {
           setUploadError({ text: "Error starting torrent", details: e });
-        }
+        },
       )
       .finally(() => setUploading(false));
   };
