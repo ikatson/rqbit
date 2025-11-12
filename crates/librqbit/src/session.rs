@@ -251,6 +251,9 @@ pub struct AddTorrentOptions {
     pub only_files: Option<Vec<usize>>,
     /// Allow writing on top of existing files, including when resuming a torrent.
     /// You probably want to set it, however for safety it's not default.
+    ///
+    /// Even when all the torrent pieces have been written, `overwrite` needs to
+    /// be enabled in order to resume/seed the torrent.
     #[serde(default)]
     pub overwrite: bool,
     /// Only list the files in the torrent without starting it.
