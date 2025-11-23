@@ -9,7 +9,8 @@ repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = "1"
+serde_derive = "1"
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
 bytes = "1.7.1"
