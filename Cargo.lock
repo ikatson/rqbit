@@ -2908,6 +2908,7 @@ dependencies = [
  "reqwest",
  "rlimit",
  "serde",
+ "serde_derive",
  "serde_json",
  "serde_urlencoded",
  "serde_with",
@@ -2942,6 +2943,7 @@ dependencies = [
  "librqbit-buffers",
  "librqbit-clone-to-owned",
  "serde",
+ "serde_derive",
  "thiserror 2.0.17",
 ]
 
@@ -2952,6 +2954,7 @@ dependencies = [
  "bytes",
  "librqbit-clone-to-owned",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -2981,6 +2984,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.2",
  "serde",
+ "serde_derive",
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
@@ -3009,6 +3013,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.2",
  "serde",
+ "serde_derive",
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
@@ -3070,6 +3075,7 @@ dependencies = [
  "librqbit-clone-to-owned",
  "librqbit-core",
  "serde",
+ "serde_derive",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -3101,6 +3107,7 @@ dependencies = [
  "rand 0.9.2",
  "reqwest",
  "serde",
+ "serde_derive",
  "serde_with",
  "tokio",
  "tokio-util",
@@ -3122,6 +3129,7 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "serde",
+ "serde_derive",
  "socket2",
  "tokio",
  "tracing",
@@ -3150,6 +3158,7 @@ dependencies = [
  "rand 0.9.2",
  "reqwest",
  "serde",
+ "serde_derive",
  "tokio",
  "tokio-util",
  "tower-http",
@@ -4909,6 +4918,7 @@ dependencies = [
  "parse_duration",
  "regex",
  "serde",
+ "serde_derive",
  "serde_json",
  "signal-hook",
  "size_format",
@@ -4933,6 +4943,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "parking_lot",
  "serde",
+ "serde_derive",
  "serde_json",
  "serde_with",
  "tauri",

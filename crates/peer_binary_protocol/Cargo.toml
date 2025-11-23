@@ -10,7 +10,8 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = "1"
+serde_derive = "1"
 byteorder = "1"
 buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
 bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
