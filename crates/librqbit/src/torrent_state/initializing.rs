@@ -178,6 +178,21 @@ impl TorrentStateInitializing {
 
         let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
 
+        // treat any pieces missing from bitfield as none so we can do initial checksum validation and
+        // find out what pieces are valid and on-disk before downloading missing pieces
+        let have_pieces = have_pieces
+            .map(|h| {
+                let any_missing = h
+                    .as_slice()
+                    .iter()
+                    .take(usize::try_from(self.metadata.lengths().total_pieces()).unwrap())
+                    // short circuit to true if any are missing
+                    .any(|i| !i);
+
+                if any_missing { None } else { Some(h) }
+            })
+            .flatten();
+
         let have_pieces = match have_pieces {
             Some(h) => h,
             None => {
