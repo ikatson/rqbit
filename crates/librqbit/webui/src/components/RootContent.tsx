@@ -1,16 +1,39 @@
+import { useContext } from "react";
 import { TorrentsList } from "./TorrentsList";
 import { ErrorComponent } from "./ErrorComponent";
 import { useTorrentStore } from "../stores/torrentStore";
 import { useErrorStore } from "../stores/errorStore";
+import { ViewModeContext } from "../stores/viewMode";
+import { TorrentDetailsPane } from "./TorrentDetailsPane";
+import { APIContext } from "../context";
+import { ResizablePanes } from "./ResizablePanes";
 
 export const RootContent = (props: {}) => {
+  const { compact } = useContext(ViewModeContext);
+
   let closeableError = useErrorStore((state) => state.closeableError);
   let setCloseableError = useErrorStore((state) => state.setCloseableError);
   let otherError = useErrorStore((state) => state.otherError);
   let torrents = useTorrentStore((state) => state.torrents);
   let torrentsInitiallyLoading = useTorrentStore(
-    (state) => state.torrentsInitiallyLoading
+    (state) => state.torrentsInitiallyLoading,
   );
+
+  const API = useContext(APIContext);
+
+  if (compact) {
+    return (
+      <ResizablePanes
+        top={
+          <TorrentsList
+            torrents={torrents}
+            loading={torrentsInitiallyLoading}
+          />
+        }
+        bottom={<TorrentDetailsPane />}
+      />
+    );
+  }
 
   return (
     <div className="container mx-auto">
