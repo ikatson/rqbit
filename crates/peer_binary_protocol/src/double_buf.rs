@@ -39,6 +39,20 @@ impl<'a> DoubleBufHelper<'a> {
     /// Read N bytes and advance the buffer by N if successful.
     /// Error returns how many missing bytes are there.
     pub fn consume<const N: usize>(&mut self) -> Result<[u8; N], usize> {
+        match (self.buf_0.len(), self.buf_1.len()) {
+            (l, _) if l >= N => {
+                let (chunk, rem) = self.buf_0.split_at(N);
+                self.buf_0 = rem;
+                return Ok(chunk.try_into().unwrap());
+            }
+            (0, l) if l >= N => {
+                let (chunk, rem) = self.buf_1.split_at(N);
+                self.buf_1 = rem;
+                return Ok(chunk.try_into().unwrap());
+            }
+            _ => {}
+        }
+
         let mut res = [0u8; N];
 
         let first = self.buf_0.len().min(N);
@@ -51,10 +65,8 @@ impl<'a> DoubleBufHelper<'a> {
 
         res[..first].copy_from_slice(&self.buf_0[..first]);
         res[first..].copy_from_slice(&self.buf_1[..second]);
-
         self.buf_0 = &self.buf_0[first..];
         self.buf_1 = &self.buf_1[second..];
-
         Ok(res)
     }
 
