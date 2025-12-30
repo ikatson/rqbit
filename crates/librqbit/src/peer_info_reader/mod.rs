@@ -53,7 +53,7 @@ pub(crate) async fn read_metainfo_from_peer(
         addr,
         info_hash,
         peer_id,
-        &handler,
+        handler,
         peer_connection_options,
         spawner,
         connector,
@@ -177,7 +177,7 @@ impl PeerConnectionHandler for Handler {
         Ok(())
     }
 
-    fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()> {
+    async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()> {
         trace!("{}: received message: {:?}", self.addr, msg);
 
         if let Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Data(utdata))) = msg {

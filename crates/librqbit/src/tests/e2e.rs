@@ -13,6 +13,7 @@ use crate::{
     AddTorrentOptions, AddTorrentResponse, ConnectionOptions, ListenerMode, Session,
     SessionOptions, SessionPersistenceConfig, create_torrent,
     listen::ListenerOptions,
+    spawn_utils::BlockingSpawner,
     tests::test_util::{
         DropChecks, TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging,
         wait_until_i_am_the_last_task,
@@ -74,6 +75,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
             piece_length: Some(piece_length),
             ..Default::default()
         },
+        &BlockingSpawner::new(1),
     )
     .await
     .unwrap();

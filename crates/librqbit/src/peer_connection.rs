@@ -42,7 +42,7 @@ pub trait PeerConnectionHandler {
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
     ) -> anyhow::Result<()>;
-    fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
+    async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
@@ -76,8 +76,8 @@ pub struct PeerConnectionOptions {
     pub keep_alive_interval: Option<Duration>,
 }
 
-pub(crate) struct PeerConnection<'a> {
-    handler: &'a (dyn PeerConnectionHandler + Send + Sync),
+pub(crate) struct PeerConnection<H> {
+    handler: H,
     addr: SocketAddr,
     info_hash: Id20,
     peer_id: Id20,
@@ -107,12 +107,12 @@ struct ManagePeerArgs {
     have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
 }
 
-impl<'a> PeerConnection<'a> {
+impl<H: PeerConnectionHandler> PeerConnection<H> {
     pub fn new(
         addr: SocketAddr,
         info_hash: Id20,
         peer_id: Id20,
-        handler: &'a (dyn PeerConnectionHandler + Send + Sync),
+        handler: H,
         options: Option<PeerConnectionOptions>,
         spawner: BlockingSpawner,
         connector: Arc<StreamConnector>,
@@ -418,10 +418,11 @@ impl<'a> PeerConnection<'a> {
                         let full_len = preamble_len + chunk.size as usize;
                         if !skip_reading_for_e2e_tests {
                             self.spawner
-                                .spawn_block_in_place(|| {
+                                .block_in_place_with_semaphore(|| {
                                     self.handler
                                         .read_chunk(&chunk, &mut write_buf[preamble_len..])
                                 })
+                                .await
                                 .map_err(Error::ReadChunk)?;
                         }
 
@@ -469,6 +470,7 @@ impl<'a> PeerConnection<'a> {
                 } else {
                     self.handler
                         .on_received_message(message)
+                        .await
                         .map_err(Error::Anyhow)?;
                 }
             }

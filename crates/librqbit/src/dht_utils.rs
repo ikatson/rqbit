@@ -50,7 +50,9 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
                 peer_id,
                 info_hash,
                 peer_connection_options,
-                BlockingSpawner::new(true),
+                // This shouldn't be called anyway as we aren't reading/writing to disk, so it's
+                // ok not to use a shared one.
+                BlockingSpawner::new(1),
                 connector,
             )
             .instrument(debug_span!("read_metainfo_from_peer", ?addr))

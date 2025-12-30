@@ -474,7 +474,7 @@ impl TorrentStateLive {
             self.shared.peer_id,
             &handler,
             Some(options),
-            self.shared.spawner,
+            self.shared.spawner.clone(),
             self.shared.connector.clone(),
         );
         let requester = handler.task_peer_chunk_requester();
@@ -538,7 +538,7 @@ impl TorrentStateLive {
             state.shared.peer_id,
             &handler,
             Some(options),
-            state.shared.spawner,
+            state.shared.spawner.clone(),
             state.shared.connector.clone(),
         );
         let requester = aframe!(
@@ -992,7 +992,7 @@ struct PeerHandler {
     cancel_token: CancellationToken,
 }
 
-impl PeerConnectionHandler for PeerHandler {
+impl PeerConnectionHandler for &'_ PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
             .outgoing_connections
@@ -1003,7 +1003,7 @@ impl PeerConnectionHandler for PeerHandler {
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);
     }
 
-    fn on_received_message(&self, message: Message<'_>) -> anyhow::Result<()> {
+    async fn on_received_message(&self, message: Message<'_>) -> anyhow::Result<()> {
         // The first message must be "bitfield", but if it's not sent,
         // assume the bitfield is all zeroes and was sent.
         if !matches!(&message, Message::Bitfield(..))
@@ -1023,7 +1023,10 @@ impl PeerConnectionHandler for PeerHandler {
             Message::Choke => self.on_i_am_choked(),
             Message::Unchoke => self.on_i_am_unchoked(),
             Message::Interested => self.on_peer_interested(),
-            Message::Piece(piece) => self.on_received_piece(piece).context("on_received_piece")?,
+            Message::Piece(piece) => self
+                .on_received_piece(piece)
+                .await
+                .context("on_received_piece")?,
             Message::KeepAlive => {
                 trace!("keepalive received");
             }
@@ -1700,7 +1703,7 @@ impl PeerHandler {
         self.requests_sem.add_permits(128);
     }
 
-    fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
+    async fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
         let piece_index = self
             .state
             .lengths
@@ -1939,9 +1942,10 @@ impl PeerHandler {
             self.state
                 .shared
                 .spawner
-                .spawn_block_in_place(|| {
+                .block_in_place_with_semaphore(|| {
                     write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
                 })
+                .await
                 .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         }
 
