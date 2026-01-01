@@ -214,7 +214,7 @@ impl BitV for PgBitfield {
         self.inmem.as_raw_slice()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
+    fn flush(&mut self, _flush_async: bool) -> anyhow::Result<()> {
         // TODO: make flush async, and don't spawn this, to avoid allocations and capture the result.
         spawn(
             debug_span!("pg_update_bitfield", id=?self.torrent_id),
@@ -315,7 +315,7 @@ impl BitVFactory for PostgresSessionStorage {
             inmem: b,
             pool: self.pool.clone(),
         };
-        bf.flush()?;
+        bf.flush(false)?;
         Ok(bf.into_dyn())
     }
 

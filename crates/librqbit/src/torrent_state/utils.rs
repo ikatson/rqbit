@@ -50,7 +50,7 @@ mod timed_existence {
     use std::time::{Duration, Instant};
     use tracing::warn;
 
-    const MAX: Duration = Duration::from_millis(1);
+    const MAX: Duration = Duration::from_millis(50);
 
     // Prints if the object exists for too long.
     // This is used to track long-lived locks for debugging.

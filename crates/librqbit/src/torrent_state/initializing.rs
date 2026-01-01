@@ -73,71 +73,75 @@ impl TorrentStateInitializing {
             return None;
         }
 
-        let is_broken = self.shared.spawner.spawn_block_in_place(|| {
-            let fo = crate::file_ops::FileOps::new(
-                &self.metadata.info,
-                &self.files,
-                &self.metadata.file_infos,
-            );
+        let is_broken = self
+            .shared
+            .spawner
+            .block_in_place_with_semaphore(|| {
+                let fo = crate::file_ops::FileOps::new(
+                    &self.metadata.info,
+                    &self.files,
+                    &self.metadata.file_infos,
+                );
 
-            use rand::seq::SliceRandom;
+                use rand::seq::SliceRandom;
 
-            let mut to_validate = BF::from_boxed_slice(
-                vec![0u8; self.metadata.lengths().piece_bitfield_bytes()].into_boxed_slice(),
-            );
-            let mut queue = hp.as_slice().to_owned();
+                let mut to_validate = BF::from_boxed_slice(
+                    vec![0u8; self.metadata.lengths().piece_bitfield_bytes()].into_boxed_slice(),
+                );
+                let mut queue = hp.as_slice().to_owned();
 
-            // Validate at least one piece from each file, if we claim we have it.
-            for fi in self.metadata.file_infos.iter() {
-                let prange = fi.piece_range_usize();
-                let offset = prange.start;
-                for piece_id in hp
-                    .as_slice()
-                    .get(fi.piece_range_usize())
-                    .into_iter()
-                    .flat_map(|s| s.iter_ones())
-                    .map(|pid| pid + offset)
-                    .take(1)
+                // Validate at least one piece from each file, if we claim we have it.
+                for fi in self.metadata.file_infos.iter() {
+                    let prange = fi.piece_range_usize();
+                    let offset = prange.start;
+                    for piece_id in hp
+                        .as_slice()
+                        .get(fi.piece_range_usize())
+                        .into_iter()
+                        .flat_map(|s| s.iter_ones())
+                        .map(|pid| pid + offset)
+                        .take(1)
+                    {
+                        to_validate.set(piece_id, true);
+                        queue.set(piece_id, false);
+                    }
+                }
+
+                // For all the remaining pieces we claim we have, validate them with decreasing probability.
+                let mut queue = queue.iter_ones().collect_vec();
+                queue.shuffle(&mut rand::rng());
+                for (tmp_id, piece_id) in queue.into_iter().enumerate() {
+                    let denom: u32 = (tmp_id + 1).min(50).try_into().unwrap();
+                    if rand::rng().random_ratio(1, denom) {
+                        to_validate.set(piece_id, true);
+                    }
+                }
+
+                let to_validate_count = to_validate.count_ones();
+                for (id, piece_id) in to_validate
+                    .iter_ones()
+                    .filter_map(|id| {
+                        self.metadata
+                            .lengths()
+                            .validate_piece_index(id.try_into().ok()?)
+                    })
+                    .enumerate()
                 {
-                    to_validate.set(piece_id, true);
-                    queue.set(piece_id, false);
-                }
-            }
+                    if fo.check_piece(piece_id).is_err() {
+                        return true;
+                    }
 
-            // For all the remaining pieces we claim we have, validate them with decreasing probability.
-            let mut queue = queue.iter_ones().collect_vec();
-            queue.shuffle(&mut rand::rng());
-            for (tmp_id, piece_id) in queue.into_iter().enumerate() {
-                let denom: u32 = (tmp_id + 1).min(50).try_into().unwrap();
-                if rand::rng().random_ratio(1, denom) {
-                    to_validate.set(piece_id, true);
-                }
-            }
-
-            let to_validate_count = to_validate.count_ones();
-            for (id, piece_id) in to_validate
-                .iter_ones()
-                .filter_map(|id| {
-                    self.metadata
-                        .lengths()
-                        .validate_piece_index(id.try_into().ok()?)
-                })
-                .enumerate()
-            {
-                if fo.check_piece(piece_id).is_err() {
-                    return true;
+                    #[allow(clippy::cast_possible_truncation)]
+                    let progress = (self.metadata.lengths().total_length() as f64
+                        / to_validate_count as f64
+                        * (id + 1) as f64) as u64;
+                    let progress = progress.min(self.metadata.lengths().total_length());
+                    self.checked_bytes.store(progress, Ordering::Relaxed);
                 }
 
-                #[allow(clippy::cast_possible_truncation)]
-                let progress = (self.metadata.lengths().total_length() as f64
-                    / to_validate_count as f64
-                    * (id + 1) as f64) as u64;
-                let progress = progress.min(self.metadata.lengths().total_length());
-                self.checked_bytes.store(progress, Ordering::Relaxed);
-            }
-
-            false
-        });
+                false
+            })
+            .await;
 
         if is_broken {
             warn!(
@@ -182,10 +186,14 @@ impl TorrentStateInitializing {
             Some(h) => h,
             None => {
                 info!("Doing initial checksum validation, this might take a while...");
-                let have_pieces = self.shared.spawner.spawn_block_in_place(|| {
-                    FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
-                        .initial_check(&self.checked_bytes)
-                })?;
+                let have_pieces = self
+                    .shared
+                    .spawner
+                    .block_in_place_with_semaphore(|| {
+                        FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
+                            .initial_check(&self.checked_bytes)
+                    })
+                    .await?;
                 bitv_factory
                     .store_initial_check(id, have_pieces)
                     .await
@@ -223,36 +231,39 @@ impl TorrentStateInitializing {
         );
 
         // Ensure file lengths are correct, and reopen read-only.
-        self.shared.spawner.spawn_block_in_place(|| {
-            for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
-                if self
-                    .only_files
-                    .as_ref()
-                    .map(|v| v.contains(&idx))
-                    .unwrap_or(true)
-                {
-                    let now = Instant::now();
-                    if fi.attrs.padding {
-                        continue;
-                    }
-                    if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
-                        warn!(
-                            id=?self.shared.id, info_hash = ?self.shared.info_hash,
-                            "Error setting length for file {:?} to {}: {:#?}",
-                            fi.relative_filename, fi.len, err
-                        );
-                    } else {
-                        trace!(
-                            "Set length for file {:?} to {} in {:?}",
-                            fi.relative_filename,
-                            SF::new(fi.len),
-                            now.elapsed()
-                        );
+        self.shared
+            .spawner
+            .block_in_place_with_semaphore(|| {
+                for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
+                    if self
+                        .only_files
+                        .as_ref()
+                        .map(|v| v.contains(&idx))
+                        .unwrap_or(true)
+                    {
+                        let now = Instant::now();
+                        if fi.attrs.padding {
+                            continue;
+                        }
+                        if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
+                            warn!(
+                                id=?self.shared.id, info_hash = ?self.shared.info_hash,
+                                "Error setting length for file {:?} to {}: {:#?}",
+                                fi.relative_filename, fi.len, err
+                            );
+                        } else {
+                            trace!(
+                                "Set length for file {:?} to {} in {:?}",
+                                fi.relative_filename,
+                                SF::new(fi.len),
+                                now.elapsed()
+                            );
+                        }
                     }
                 }
-            }
-            Ok::<_, anyhow::Error>(())
-        })?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .await?;
 
         let paused = TorrentStatePaused {
             shared: self.shared.clone(),

@@ -15,7 +15,7 @@ pub trait BitV: Send + Sync {
     fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0>;
     fn into_dyn(self) -> Box<dyn BitV>;
     fn as_bytes(&self) -> &[u8];
-    fn flush(&mut self) -> anyhow::Result<()>;
+    fn flush(&mut self, flush_async: bool) -> anyhow::Result<()>;
 }
 
 pub type BoxBitV = Box<dyn BitV>;
@@ -53,7 +53,7 @@ impl BitV for BitVec<u8, Msb0> {
         self.as_raw_slice()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
+    fn flush(&mut self, _flush_async: bool) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -76,7 +76,7 @@ impl BitV for BitBox<u8, Msb0> {
         self.as_raw_slice()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
+    fn flush(&mut self, _flush_async: bool) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -98,8 +98,12 @@ impl BitV for MmapBitV {
         &self.mmap
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
-        Ok(self.mmap.flush()?)
+    fn flush(&mut self, flush_async: bool) -> anyhow::Result<()> {
+        if flush_async {
+            Ok(self.mmap.flush_async()?)
+        } else {
+            Ok(self.mmap.flush()?)
+        }
     }
 
     fn into_dyn(self) -> Box<dyn BitV> {
@@ -120,8 +124,8 @@ impl BitV for Box<dyn BitV> {
         (**self).as_bytes()
     }
 
-    fn flush(&mut self) -> anyhow::Result<()> {
-        (**self).flush()
+    fn flush(&mut self, flush_async: bool) -> anyhow::Result<()> {
+        (**self).flush(flush_async)
     }
 
     fn into_dyn(self) -> Box<dyn BitV> {

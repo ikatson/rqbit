@@ -154,7 +154,7 @@ impl TorrentStateLocked {
         self.chunks.as_mut().ok_or(Error::ChunkTrackerEmpty)
     }
 
-    fn try_flush_bitv(&mut self, shared: &ManagedTorrentShared) {
+    fn try_flush_bitv(&mut self, shared: &ManagedTorrentShared, flush_async: bool) {
         if self.unflushed_bitv_bytes == 0 {
             return;
         }
@@ -162,7 +162,7 @@ impl TorrentStateLocked {
         if let Some(Err(e)) = self
             .chunks
             .as_mut()
-            .map(|ct| ct.get_have_pieces_mut().flush())
+            .map(|ct| ct.get_have_pieces_mut().flush(flush_async))
         {
             warn!(id=?shared.id, info_hash = ?shared.info_hash, "error flushing bitfield: {e:#}");
         } else {
@@ -178,7 +178,7 @@ pub struct TorrentStateLive {
     peers: PeerStates,
     pub(crate) shared: Arc<ManagedTorrentShared>,
     metadata: Arc<TorrentMetadata>,
-    locked: RwLock<TorrentStateLocked>,
+    _locked: RwLock<TorrentStateLocked>,
 
     pub(crate) files: FileStorage,
 
@@ -262,7 +262,7 @@ impl TorrentStateLive {
                 states: Default::default(),
                 live_outgoing_peers: Default::default(),
             },
-            locked: RwLock::new(TorrentStateLocked {
+            _locked: RwLock::new(TorrentStateLocked {
                 chunks: Some(paused.chunk_tracker),
                 // TODO: move under per_piece_locks?
                 inflight_pieces: Default::default(),
@@ -307,7 +307,10 @@ impl TorrentStateLive {
                         let now = Instant::now();
                         let stats = state.stats_snapshot();
                         let fetched = stats.fetched_bytes;
-                        let remaining = state.locked.read().get_chunks()?.get_remaining_bytes();
+                        let remaining = state
+                            .lock_read("get_remaining_bytes")
+                            .get_chunks()?
+                            .get_remaining_bytes();
                         state
                             .down_speed_estimator
                             .add_snapshot(fetched, Some(remaining), now);
@@ -455,7 +458,7 @@ impl TorrentStateLive {
             incoming: true,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
-            locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
+            _locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
             requests_sem: Semaphore::new(0),
             state: self.clone(),
             tx,
@@ -474,7 +477,7 @@ impl TorrentStateLive {
             self.shared.peer_id,
             &handler,
             Some(options),
-            self.shared.spawner,
+            self.shared.spawner.clone(),
             self.shared.connector.clone(),
         );
         let requester = handler.task_peer_chunk_requester();
@@ -519,7 +522,7 @@ impl TorrentStateLive {
             incoming: false,
             on_bitfield_notify: Default::default(),
             unchoke_notify: Default::default(),
-            locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
+            _locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
             requests_sem: Semaphore::new(0),
             state: state.clone(),
             tx,
@@ -538,7 +541,7 @@ impl TorrentStateLive {
             state.shared.peer_id,
             &handler,
             Some(options),
-            state.shared.spawner,
+            state.shared.spawner.clone(),
             state.shared.connector.clone(),
         );
         let requester = aframe!(
@@ -648,13 +651,13 @@ impl TorrentStateLive {
         &self,
         reason: &'static str,
     ) -> TimedExistence<RwLockReadGuard<'_, TorrentStateLocked>> {
-        TimedExistence::new(timeit(reason, || self.locked.read()), reason)
+        TimedExistence::new(timeit(reason, || self._locked.read()), reason)
     }
     pub(crate) fn lock_write(
         &self,
         reason: &'static str,
     ) -> TimedExistence<RwLockWriteGuard<'_, TorrentStateLocked>> {
-        TimedExistence::new(timeit(reason, || self.locked.write()), reason)
+        TimedExistence::new(timeit(reason, || self._locked.write()), reason)
     }
 
     fn set_peer_live(&self, handle: PeerHandle, h: Handshake, connection_kind: ConnectionKind) {
@@ -735,7 +738,7 @@ impl TorrentStateLive {
     pub fn pause(&self) -> anyhow::Result<TorrentStatePaused> {
         self.cancellation_token.cancel();
 
-        let mut g = self.locked.write();
+        let mut g = self.lock_write("pause");
 
         // It should be impossible to make a fatal error after pausing.
         g.fatal_errors_tx.take();
@@ -830,13 +833,13 @@ impl TorrentStateLive {
 
         locked.unflushed_bitv_bytes += self.metadata.lengths().piece_length(id) as u64;
         if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
-            locked.try_flush_bitv(&self.shared)
+            locked.try_flush_bitv(&self.shared, true)
         }
 
         let chunks = locked.get_chunks()?;
         if chunks.is_finished() {
             if chunks.get_selected_pieces()[id.get_usize()] {
-                locked.try_flush_bitv(&self.shared);
+                locked.try_flush_bitv(&self.shared, false);
                 info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
@@ -971,7 +974,7 @@ struct PeerHandler {
     //
     // However as PeerConnectionHandler takes &self everywhere, we need shared mutability.
     // RefCell would do, but tokio is unhappy when we use it.
-    locked: RwLock<PeerHandlerLocked>,
+    _locked: RwLock<PeerHandlerLocked>,
 
     // This is used to unpause chunk requester once the bitfield
     // is received.
@@ -992,7 +995,7 @@ struct PeerHandler {
     cancel_token: CancellationToken,
 }
 
-impl PeerConnectionHandler for PeerHandler {
+impl PeerConnectionHandler for &'_ PeerHandler {
     fn on_connected(&self, connection_time: Duration) {
         self.counters
             .outgoing_connections
@@ -1003,7 +1006,7 @@ impl PeerConnectionHandler for PeerHandler {
             .fetch_add(connection_time.as_millis() as u64, Ordering::Relaxed);
     }
 
-    fn on_received_message(&self, message: Message<'_>) -> anyhow::Result<()> {
+    async fn on_received_message(&self, message: Message<'_>) -> anyhow::Result<()> {
         // The first message must be "bitfield", but if it's not sent,
         // assume the bitfield is all zeroes and was sent.
         if !matches!(&message, Message::Bitfield(..))
@@ -1023,7 +1026,10 @@ impl PeerConnectionHandler for PeerHandler {
             Message::Choke => self.on_i_am_choked(),
             Message::Unchoke => self.on_i_am_unchoked(),
             Message::Interested => self.on_peer_interested(),
-            Message::Piece(piece) => self.on_received_piece(piece).context("on_received_piece")?,
+            Message::Piece(piece) => self
+                .on_received_piece(piece)
+                .await
+                .context("on_received_piece")?,
             Message::KeepAlive => {
                 trace!("keepalive received");
             }
@@ -1314,7 +1320,7 @@ impl PeerHandler {
         self.state
             .peers
             .with_live_mut(self.addr, "reserve_next_needed_piece", |live| {
-                if self.locked.read().i_am_choked {
+                if self.lock_read("i am choked").i_am_choked {
                     debug!("we are choked, can't reserve next piece");
                     return Ok(None);
                 }
@@ -1526,8 +1532,10 @@ impl PeerHandler {
     }
 
     async fn wait_for_unchoke(&self) {
-        self.wait_for_any_notify(&self.unchoke_notify, || !self.locked.read().i_am_choked)
-            .await;
+        self.wait_for_any_notify(&self.unchoke_notify, || {
+            !self.lock_read("wait_for_unchoke:i_am_choked").i_am_choked
+        })
+        .await;
     }
 
     // The job of this is to request chunks and also to keep peer alive.
@@ -1682,7 +1690,7 @@ impl PeerHandler {
     }
 
     fn on_i_am_choked(&self) {
-        self.locked.write().i_am_choked = true;
+        self.lock_write("i_am_choked = true").i_am_choked = true;
     }
 
     fn on_peer_interested(&self) {
@@ -1692,7 +1700,7 @@ impl PeerHandler {
 
     fn on_i_am_unchoked(&self) {
         trace!("we are unchoked");
-        self.locked.write().i_am_choked = false;
+        self.lock_write("i_am_choked = false").i_am_choked = false;
         self.unchoke_notify.notify_waiters();
         // 128 should be more than enough to maintain 100mbps
         // for a single peer that has 100ms ping
@@ -1700,7 +1708,7 @@ impl PeerHandler {
         self.requests_sem.add_permits(128);
     }
 
-    fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
+    async fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
         let piece_index = self
             .state
             .lengths
@@ -1939,9 +1947,10 @@ impl PeerHandler {
             self.state
                 .shared
                 .spawner
-                .spawn_block_in_place(|| {
+                .block_in_place_with_semaphore(|| {
                     write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
                 })
+                .await
                 .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
         }
 
@@ -1995,5 +2004,18 @@ impl PeerHandler {
                     })
                     .ok();
             });
+    }
+
+    fn lock_read(
+        &self,
+        reason: &'static str,
+    ) -> TimedExistence<RwLockReadGuard<'_, PeerHandlerLocked>> {
+        TimedExistence::new(timeit(reason, || self._locked.read()), reason)
+    }
+    fn lock_write(
+        &self,
+        reason: &'static str,
+    ) -> TimedExistence<RwLockWriteGuard<'_, PeerHandlerLocked>> {
+        TimedExistence::new(timeit(reason, || self._locked.write()), reason)
     }
 }

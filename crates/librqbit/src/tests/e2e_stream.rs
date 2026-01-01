@@ -7,6 +7,7 @@ use tracing::info;
 
 use crate::{
     AddTorrent, CreateTorrentOptions, Session, create_torrent,
+    spawn_utils::BlockingSpawner,
     tests::test_util::{TestPeerMetadata, setup_test_logging},
 };
 
@@ -22,6 +23,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
             piece_length: Some(1024),
             ..Default::default()
         },
+        &BlockingSpawner::new(1),
     )
     .await?;
 

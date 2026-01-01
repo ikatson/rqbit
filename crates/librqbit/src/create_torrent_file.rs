@@ -64,6 +64,7 @@ struct CreateTorrentRawResult {
 async fn create_torrent_raw<'a>(
     path: &'a Path,
     options: CreateTorrentOptions<'a>,
+    spawner: &BlockingSpawner,
 ) -> anyhow::Result<CreateTorrentRawResult> {
     path.try_exists()
         .with_context(|| format!("path {path:?} doesn't exist"))?;
@@ -100,13 +101,13 @@ async fn create_torrent_raw<'a>(
     const READ_SIZE: u32 = 8192; // todo: twea
     let mut read_buf = vec![0; READ_SIZE as usize];
 
+    let _permit = spawner.semaphore().acquire_owned().await?;
+
     let mut length = 0;
     let mut remaining_piece_length = piece_length;
     let mut piece_checksum = sha1w::Sha1::new();
     let mut piece_hashes = Vec::<u8>::new();
     let mut output_files: Vec<TorrentMetaV1File<ByteBufOwned>> = Vec::new();
-
-    let spawner = BlockingSpawner::default();
 
     'outer: for file in input_files {
         let filename = &*file;
@@ -117,8 +118,9 @@ async fn create_torrent_raw<'a>(
 
         loop {
             let max_bytes_to_read = remaining_piece_length.min(READ_SIZE) as usize;
+            // NOTE: we can't use the semaphore as Sha1 isn't Send at least on OSX.
             let size = spawner
-                .spawn_block_in_place(|| fd.read(&mut read_buf[..max_bytes_to_read]))
+                .block_in_place(|| fd.read(&mut read_buf[..max_bytes_to_read]))
                 .with_context(|| format!("error reading {filename:?}"))?;
 
             // EOF: swap file
@@ -210,13 +212,14 @@ impl CreateTorrentResult {
 pub async fn create_torrent<'a>(
     path: &'a Path,
     options: CreateTorrentOptions<'a>,
+    spawner: &BlockingSpawner,
 ) -> anyhow::Result<CreateTorrentResult> {
     let trackers = options
         .trackers
         .iter()
         .map(|t| ByteBufOwned::from(t.as_bytes()))
         .collect();
-    let res = create_torrent_raw(path, options).await?;
+    let res = create_torrent_raw(path, options, spawner).await?;
     let (info_hash, bytes) = compute_info_hash(&res.info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
@@ -242,7 +245,7 @@ pub async fn create_torrent<'a>(
 mod tests {
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
-    use crate::create_torrent;
+    use crate::{create_torrent, spawn_utils::BlockingSpawner};
 
     #[tokio::test]
     async fn test_create_torrent() {
@@ -253,7 +256,7 @@ mod tests {
             1000 * 1000,
             Some("rqbit_test_create_torrent"),
         );
-        let torrent = create_torrent(dir.path(), Default::default())
+        let torrent = create_torrent(dir.path(), Default::default(), &BlockingSpawner::new(1))
             .await
             .unwrap();
 
