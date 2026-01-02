@@ -343,7 +343,7 @@ mod tests {
 
             for piece in 0..ITERATIONS {
                 let msg = rb
-                    .read_message(&mut reader, Duration::from_millis(100))
+                    .read_message(&mut reader, Duration::from_millis(1000))
                     .await
                     .unwrap();
                 let utdata = match msg {

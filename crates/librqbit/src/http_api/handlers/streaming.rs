@@ -9,7 +9,7 @@ use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, StatusCode};
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
-use tracing::trace;
+use tracing::{debug, trace};
 
 use super::ApiState;
 use crate::{
@@ -30,7 +30,8 @@ pub async fn h_torrent_stream_file(
     Path(StreamPathParams { id, file_id, .. }): Path<StreamPathParams>,
     headers: http::HeaderMap,
 ) -> Result<impl IntoResponse> {
-    let mut stream = state.api.api_stream(id, file_id)?;
+    trace!(?id, ?file_id, "acquiring stream");
+    let mut stream = state.api.api_stream(id, file_id).await?;
     let mut status = StatusCode::OK;
     let mut output_headers = HeaderMap::new();
     output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
@@ -63,7 +64,7 @@ pub async fn h_torrent_stream_file(
     }
 
     let range_header = headers.get(http::header::RANGE);
-    trace!(torrent_id=%id, file_id=file_id, range=?range_header, "request for HTTP stream");
+    debug!(torrent_id=%id, file_id=file_id, range=?range_header, "request for HTTP stream");
 
     let range = range_header
         .and_then(|v| v.to_str().ok())
