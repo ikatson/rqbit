@@ -2,9 +2,10 @@ use std::{any::TypeId, collections::HashMap, path::PathBuf};
 
 use crate::{
     api::TorrentIdOrHash,
-    bitv::{BitV, MmapBitV},
+    bitv::{BitV, DiskBackedBitV},
     bitv_factory::BitVFactory,
     session::TorrentId,
+    spawn_utils::BlockingSpawner,
     storage::filesystem::FilesystemStorageFactory,
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
@@ -29,6 +30,7 @@ pub struct JsonSessionPersistenceStore {
     output_folder: PathBuf,
     db_filename: PathBuf,
     db_content: tokio::sync::RwLock<SerializedSessionDatabase>,
+    spawner: BlockingSpawner,
 }
 
 impl std::fmt::Debug for JsonSessionPersistenceStore {
@@ -38,7 +40,7 @@ impl std::fmt::Debug for JsonSessionPersistenceStore {
 }
 
 impl JsonSessionPersistenceStore {
-    pub async fn new(output_folder: PathBuf) -> anyhow::Result<Self> {
+    pub async fn new(output_folder: PathBuf, spawner: BlockingSpawner) -> anyhow::Result<Self> {
         let db_filename = output_folder.join("session.json");
         tokio::fs::create_dir_all(&output_folder)
             .await
@@ -64,6 +66,7 @@ impl JsonSessionPersistenceStore {
             db_filename,
             output_folder,
             db_content: tokio::sync::RwLock::new(db),
+            spawner,
         })
     }
 
@@ -186,18 +189,17 @@ impl BitVFactory for JsonSessionPersistenceStore {
     async fn load(&self, id: TorrentIdOrHash) -> anyhow::Result<Option<Box<dyn BitV>>> {
         let h = self.to_hash(id).await?;
         let filename = self.bitv_filename(&h);
-        let f = match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&filename)
-        {
-            Ok(f) => f,
-            Err(e) => match e.kind() {
-                std::io::ErrorKind::NotFound => return Ok(None),
-                _ => return Err(e).with_context(|| format!("error opening {filename:?}")),
-            },
-        };
-        Ok(Some(MmapBitV::new(f)?.into_dyn()))
+        match DiskBackedBitV::new(filename, self.spawner.clone()).await {
+            Ok(bitv) => Ok(Some(bitv.into_dyn())),
+            Err(e) => {
+                if let Some(e) = e.downcast_ref::<std::io::Error>()
+                    && matches!(e.kind(), std::io::ErrorKind::NotFound)
+                {
+                    return Ok(None);
+                }
+                return Err(e);
+            }
+        }
     }
 
     async fn clear(&self, id: TorrentIdOrHash) -> anyhow::Result<()> {
@@ -229,13 +231,9 @@ impl BitVFactory for JsonSessionPersistenceStore {
         tokio::fs::rename(&tmp_filename, &filename)
             .await
             .with_context(|| format!("error renaming {tmp_filename:?} to {filename:?}"))?;
-        let f = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&filename)
-            .with_context(|| format!("error opening {filename:?}"))?;
         trace!(?filename, "stored initial check bitfield");
-        Ok(MmapBitV::new(f)
+        Ok(DiskBackedBitV::new(filename.clone(), self.spawner.clone())
+            .await
             .with_context(|| format!("error constructing MmapBitV from file {filename:?}"))?
             .into_dyn())
     }

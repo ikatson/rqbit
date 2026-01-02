@@ -10,7 +10,7 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::Error;
 
-pub(crate) trait OurFileExt {
+pub trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
     fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()>;
     fn pwrite_all(&self, offset: u64, buf: &[u8]) -> anyhow::Result<()>;
