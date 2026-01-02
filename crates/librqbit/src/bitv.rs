@@ -1,14 +1,10 @@
-use std::fs::File;
+use std::path::PathBuf;
 
 use anyhow::Context;
-use bitvec::{
-    boxed::BitBox,
-    order::Msb0,
-    slice::BitSlice,
-    vec::BitVec,
-    view::{AsBits, AsMutBits},
-};
-use tracing::trace;
+use bitvec::{boxed::BitBox, order::Msb0, slice::BitSlice, vec::BitVec};
+use tracing::debug_span;
+
+use crate::{spawn_utils::BlockingSpawner, storage::filesystem::OurFileExt};
 
 pub trait BitV: Send + Sync {
     fn as_slice(&self) -> &BitSlice<u8, Msb0>;
@@ -20,45 +16,89 @@ pub trait BitV: Send + Sync {
 
 pub type BoxBitV = Box<dyn BitV>;
 
-pub struct MmapBitV {
-    _file: File,
-    mmap: memmap2::MmapMut,
+struct DiskFlushRequest {
+    snapshot: BitBox<u8, Msb0>,
 }
 
-impl Drop for MmapBitV {
+pub struct DiskBackedBitV {
+    bv: BitBox<u8, Msb0>,
+    flush_tx: tokio::sync::mpsc::UnboundedSender<DiskFlushRequest>,
+}
+
+impl Drop for DiskBackedBitV {
     fn drop(&mut self) {
-        trace!("dropping MmapBitV, this should unmap the .bitv file")
+        if self
+            .flush_tx
+            .send(DiskFlushRequest {
+                snapshot: self.bv.clone(),
+            })
+            .is_err()
+        {
+            tracing::warn!("error flushing bitv on drop: flusher task is dead")
+        }
     }
 }
 
-impl MmapBitV {
-    pub fn new(file: File) -> anyhow::Result<Self> {
-        let mmap =
-            unsafe { memmap2::MmapOptions::new().map_mut(&file) }.context("error mmapping file")?;
-        Ok(Self { mmap, _file: file })
-    }
-}
+// NOTE on mmap. rqbit used it for a while, but it has issues on slow disks.
+// We want writes to bitv to be instant in RAM. However when disk is slow, occasionally
+// the writes stall which blocks the executor.
+// Thus this separate "thread" of flushing was implemented.
+impl DiskBackedBitV {
+    pub async fn new(filename: PathBuf, spawner: BlockingSpawner) -> anyhow::Result<Self> {
+        let buf = tokio::fs::read(&filename)
+            .await
+            .with_context(|| format!("error reading {filename:?}"))?;
+        let bv = BitVec::from_vec(buf).into_boxed_bitslice();
 
-#[async_trait::async_trait]
-impl BitV for BitVec<u8, Msb0> {
-    fn as_slice(&self) -> &BitSlice<u8, Msb0> {
-        self.as_bitslice()
-    }
+        // blocking file to avoid double-buffering and double-memcpy
+        let file = spawner
+            .block_in_place_with_semaphore(|| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(false)
+                    .open(&filename)
+            })
+            .await
+            .with_context(|| format!("error opening {filename:?}"))?;
 
-    fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0> {
-        self.as_mut_bitslice()
-    }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DiskFlushRequest>();
+        librqbit_core::spawn_utils::spawn(
+            debug_span!("diskbitv-flusher", ?filename),
+            format!("DiskBackedBitV::flusher {filename:?}"),
+            async move {
+                loop {
+                    let Some(mut req) = rx.recv().await else {
+                        break;
+                    };
+                    while let Ok(r) = rx.try_recv() {
+                        req = r;
+                    }
 
-    fn as_bytes(&self) -> &[u8] {
-        self.as_raw_slice()
-    }
+                    if let Err(e) = spawner
+                        .block_in_place_with_semaphore(|| {
+                            file.pwrite_all(0, req.snapshot.as_raw_slice())
+                        })
+                        .await
+                    {
+                        tracing::error!(?filename, "error writing to bitv: {e:#}");
+                        if let Err(e) = tokio::fs::remove_file(&filename).await {
+                            tracing::error!(?filename, "error removing bitv: {e:#}");
+                        }
+                        break;
+                    }
 
-    fn flush(&mut self, _flush_async: bool) -> anyhow::Result<()> {
-        Ok(())
-    }
+                    if let Err(e) = spawner
+                        .block_in_place_with_semaphore(|| file.sync_all())
+                        .await
+                    {
+                        tracing::error!(?filename, "error fsyncing bitv: {e:#}");
+                    }
+                }
 
-    fn into_dyn(self) -> Box<dyn BitV> {
-        Box::new(self)
+                Ok::<_, anyhow::Error>(())
+            },
+        );
+        Ok(Self { bv, flush_tx: tx })
     }
 }
 
@@ -85,25 +125,24 @@ impl BitV for BitBox<u8, Msb0> {
     }
 }
 
-impl BitV for MmapBitV {
+impl BitV for DiskBackedBitV {
     fn as_slice(&self) -> &BitSlice<u8, Msb0> {
-        self.mmap.as_bits()
+        self.bv.as_bitslice()
     }
 
     fn as_slice_mut(&mut self) -> &mut BitSlice<u8, Msb0> {
-        self.mmap.as_mut_bits()
+        self.bv.as_mut_bitslice()
     }
 
     fn as_bytes(&self) -> &[u8] {
-        &self.mmap
+        self.bv.as_raw_slice()
     }
 
-    fn flush(&mut self, flush_async: bool) -> anyhow::Result<()> {
-        if flush_async {
-            Ok(self.mmap.flush_async()?)
-        } else {
-            Ok(self.mmap.flush()?)
-        }
+    fn flush(&mut self, _flush_async: bool) -> anyhow::Result<()> {
+        let req = DiskFlushRequest {
+            snapshot: self.bv.clone(),
+        };
+        self.flush_tx.send(req).context("flusher task is dead")
     }
 
     fn into_dyn(self) -> Box<dyn BitV> {

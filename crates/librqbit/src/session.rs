@@ -579,6 +579,7 @@ impl Session {
 
             async fn persistence_factory(
                 opts: &SessionOptions,
+                spawner: BlockingSpawner,
             ) -> anyhow::Result<(
                 Option<Arc<dyn SessionPersistenceStore>>,
                 Arc<dyn BitVFactory>,
@@ -601,7 +602,7 @@ impl Session {
                         };
 
                         let s = Arc::new(
-                            JsonSessionPersistenceStore::new(folder)
+                            JsonSessionPersistenceStore::new(folder, spawner)
                                 .await
                                 .context("error initializing JsonSessionPersistenceStore")?,
                         );
@@ -618,15 +619,15 @@ impl Session {
                 }
             }
 
-            let (persistence, bitv_factory) = persistence_factory(&opts)
-                .await
-                .context("error initializing session persistence store")?;
-
             const DEFAULT_BLOCKING_THREADS_IF_NOT_SET: usize = 8;
             let spawner = BlockingSpawner::new(
                 opts.runtime_worker_threads
                     .unwrap_or(DEFAULT_BLOCKING_THREADS_IF_NOT_SET),
             );
+
+            let (persistence, bitv_factory) = persistence_factory(&opts, spawner.clone())
+                .await
+                .context("error initializing session persistence store")?;
 
             let (disk_write_tx, disk_write_rx) = opts
                 .defer_writes_up_to
