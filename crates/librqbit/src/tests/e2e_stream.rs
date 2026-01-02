@@ -104,7 +104,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
     info!("client torrent initialized, starting stream");
 
-    let mut stream = client_handle.stream(0)?;
+    let mut stream = client_handle.stream(0).await?;
     let mut buf = Vec::<u8>::with_capacity(8192);
     stream.read_to_end(&mut buf).await?;
 
