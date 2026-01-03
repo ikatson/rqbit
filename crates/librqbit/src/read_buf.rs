@@ -140,49 +140,61 @@ impl ReadBuf {
     }
 
     /// Read a message into the buffer, try to deserialize it and call the callback on it.
-    pub async fn read_message(
-        &mut self,
+    pub async fn read_message<'a>(
+        &'a mut self,
         conn: &mut BoxAsyncReadVectored,
         timeout: Duration,
-    ) -> Result<Message<'_>> {
+    ) -> Result<Message<'a>> {
         loop {
-            let (first, second) = as_slices!(self);
-            let (mut need_additional_bytes, ne) = match Message::deserialize(first, second) {
-                Err(ne @ MessageDeserializeError::NotEnoughData(d, ..)) => (d, ne),
-                Err(MessageDeserializeError::NeedContiguous) => {
+            let err: MessageDeserializeError = {
+                // The borrow checker doesn't understand our early return of msg in case it
+                // was successfully deserialized.
+                //
+                // Safety: we aren't having multiple &mut borrows at any one place, i.e. not using
+                // both "this" and "self" in this block. We aren't doing anything inherently unsafe
+                // either. When this block is over, &mut self is no longer borrowed.
+                // So this should be UB-free.
+                let this: &'a mut Self = unsafe { &mut *(self as *mut Self) };
+
+                let (first, second) = as_slices!(this);
+                match Message::deserialize(first, second) {
+                    Ok((msg, size)) => {
+                        advance!(this, size);
+                        return Ok(msg);
+                    }
+                    Err(e) => e,
+                }
+            };
+
+            match err {
+                ne @ MessageDeserializeError::NotEnoughData(mut need_additional_bytes, ..) => {
+                    while need_additional_bytes > 0 {
+                        if self.is_full() {
+                            return Err(Error::ReadBufFull {
+                                #[allow(clippy::cast_possible_truncation)]
+                                need_additional_bytes: need_additional_bytes as u16,
+                                last_error: ne,
+                            });
+                        }
+                        let size = with_timeout(
+                            "reading",
+                            timeout,
+                            conn.read_vectored(&mut self.unfilled_ioslices())
+                                .map_err(Error::Write),
+                        )
+                        .await?;
+                        if size == 0 {
+                            return Err(Error::PeerDisconnected);
+                        }
+                        self.len += size;
+                        need_additional_bytes = need_additional_bytes.saturating_sub(size)
+                    }
+                }
+                MessageDeserializeError::NeedContiguous => {
                     self.make_contiguous()?;
                     continue;
                 }
-                Ok((msg, size)) => {
-                    advance!(self, size);
-
-                    // Rust's borrow checker can't do this early return so resort to unsafe.
-                    // This erases the lifetime so that it's happy.
-                    let msg: Message<'_> = unsafe { std::mem::transmute(msg as Message<'_>) };
-                    return Ok(msg);
-                }
-                Err(e) => return Err(Error::Deserialize(e)),
-            };
-            while need_additional_bytes > 0 {
-                if self.is_full() {
-                    return Err(Error::ReadBufFull {
-                        #[allow(clippy::cast_possible_truncation)]
-                        need_additional_bytes: need_additional_bytes as u16,
-                        last_error: ne,
-                    });
-                }
-                let size = with_timeout(
-                    "reading",
-                    timeout,
-                    conn.read_vectored(&mut self.unfilled_ioslices())
-                        .map_err(Error::Write),
-                )
-                .await?;
-                if size == 0 {
-                    return Err(Error::PeerDisconnected);
-                }
-                self.len += size;
-                need_additional_bytes = need_additional_bytes.saturating_sub(size)
+                other => return Err(other.into()),
             }
         }
     }
