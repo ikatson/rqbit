@@ -1,3 +1,4 @@
+use std::cell::UnsafeCell;
 use std::{io::IoSliceMut, time::Duration};
 
 use crate::{Error, Result};
@@ -15,10 +16,14 @@ const BUFLEN: usize = 0x8000; // 32kb
 /// A ringbuffer for reading bittorrent messages from socket.
 /// Messages may thus span 2 slices (notably, Piece message and UtMetadata messages), which is reflected in their contents.
 pub struct ReadBuf {
-    buf: Box<[u8; BUFLEN]>,
+    // The UnsafeCell here is just for one place to workaround borrow-checker being stupid
+    // (early return of deserialized Message).
+    buf: UnsafeCell<Box<[u8; BUFLEN]>>,
     start: usize,
     len: usize,
 }
+
+unsafe impl Send for ReadBuf {}
 
 /// Advance by N bytes
 macro_rules! advance {
@@ -43,18 +48,18 @@ macro_rules! as_slice_ranges {
     }};
 }
 
-/// Convert into 2 slices
-macro_rules! as_slices {
-    ($self:expr) => {{
-        let (first, second) = as_slice_ranges!($self);
-        (&$self.buf[first], &$self.buf[second])
-    }};
-}
+// /// Convert into 2 slices
+// macro_rules! as_slices {
+//     ($self:expr) => {{
+//         let (first, second) = as_slice_ranges!($self);
+//         (&$self.buf[first], &$self.buf[second])
+//     }};
+// }
 
 impl ReadBuf {
     pub fn new() -> Self {
         Self {
-            buf: Box::new([0u8; BUFLEN]),
+            buf: UnsafeCell::new(Box::new([0u8; BUFLEN])),
             start: 0,
             len: 0,
         }
@@ -70,14 +75,15 @@ impl ReadBuf {
         self.len = with_timeout(
             "reading",
             timeout,
-            conn.read(&mut *self.buf).map_err(Error::ReadHandshake),
+            conn.read(&mut **self.buf.get_mut())
+                .map_err(Error::ReadHandshake),
         )
         .await?;
         if self.len == 0 {
             return Err(Error::PeerDisconnectedReadingHandshake);
         }
-        let (h, size) =
-            Handshake::deserialize(&self.buf[..self.len]).map_err(Error::DeserializeHandshake)?;
+        let (h, size) = Handshake::deserialize(&self.buf.get_mut()[..self.len])
+            .map_err(Error::DeserializeHandshake)?;
         advance!(self, size);
         Ok(h)
     }
@@ -105,10 +111,14 @@ impl ReadBuf {
         // See the source in VecDequeue::make_contiguous to see how involved it would be
         // otherwise.
         let mut new = [0u8; BUFLEN];
-        let (first, second) = as_slices!(self);
+        let (first, second) = as_slice_ranges!(self);
+        let (first, second) = {
+            let buf = &**self.buf.get_mut();
+            (&buf[first], &buf[second])
+        };
         new[..first.len()].copy_from_slice(first);
         new[first.len()..first.len() + second.len()].copy_from_slice(second);
-        *self.buf = new;
+        **self.buf.get_mut() = new;
         self.start = 0;
         Ok(())
     }
@@ -129,7 +139,7 @@ impl ReadBuf {
         let first_len = (BUFLEN.saturating_sub(write_start)).min(available_len);
         let second_len = available_len.saturating_sub(first_len);
 
-        let (second, first) = self.buf.split_at_mut(write_start);
+        let (second, first) = self.buf.get_mut().split_at_mut(write_start);
 
         let first_len = first_len.min(first.len());
         let second_len = second_len.min(second.len());
@@ -150,16 +160,18 @@ impl ReadBuf {
                 // The borrow checker doesn't understand our early return of msg in case it
                 // was successfully deserialized.
                 //
-                // Safety: we aren't having multiple &mut borrows at any one place, i.e. not using
-                // both "this" and "self" in this block. We aren't doing anything inherently unsafe
-                // either. When this block is over, &mut self is no longer borrowed.
-                // So this should be UB-free.
-                let this: &'a mut Self = unsafe { &mut *(self as *mut Self) };
-
-                let (first, second) = as_slices!(this);
+                // The whole UnsafeCell dance is for this workaround in this one place.
+                //
+                // Safety: we aren't having multiple &mut borrows at any one place, or doing
+                // anything inherently unsafe either. On the
+                let (first, second) = {
+                    let (first, second) = as_slice_ranges!(self);
+                    let buf = unsafe { &**self.buf.get() };
+                    (&buf[first], &buf[second])
+                };
                 match Message::deserialize(first, second) {
                     Ok((msg, size)) => {
-                        advance!(this, size);
+                        advance!(self, size);
                         return Ok(msg);
                     }
                     Err(e) => e,
@@ -269,17 +281,17 @@ mod tests {
             }
         }
 
-        fill(&mut b.buf[BUFLEN - 100..], 42);
-        fill(&mut b.buf[..200], 43);
+        fill(&mut b.buf.get_mut()[BUFLEN - 100..], 42);
+        fill(&mut b.buf.get_mut()[..200], 43);
         b.start = BUFLEN - 100;
         b.len = 300;
         assert!(!b.is_contiguous());
         assert!(b.make_contiguous().is_ok());
         assert_eq!(b.len, 300);
         assert_eq!(b.start, 0);
-        assert_eq!(&b.buf[..100], &[42u8; 100]);
-        assert_eq!(&b.buf[100..300], &[43u8; 200]);
-        assert_eq!(&b.buf[300..], &[0u8; BUFLEN - 300]);
+        assert_eq!(&b.buf.get_mut()[..100], &[42u8; 100]);
+        assert_eq!(&b.buf.get_mut()[100..300], &[43u8; 200]);
+        assert_eq!(&b.buf.get_mut()[300..], &[0u8; BUFLEN - 300]);
     }
 
     #[test]
@@ -290,7 +302,7 @@ mod tests {
             if len == 0 {
                 return 0..0;
             }
-            let offset = unsafe { s.byte_offset_from(buf.buf.as_ptr()) } as usize;
+            let offset = unsafe { s.byte_offset_from((*buf.buf.get()).as_ptr()) } as usize;
             offset..offset + len
         }
 
