@@ -149,8 +149,10 @@ impl<B: AsRef<[u8]>> std::fmt::Debug for Piece<B> {
         f.debug_struct("Piece")
             .field("index", &self.index)
             .field("begin", &self.begin)
-            .field("len", &self.block_0.as_ref().len())
-            .finish()
+            .field("len", &self.len())
+            .field("len_0", &self.block_0.as_ref().len())
+            .field("len_1", &self.block_1.as_ref().len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -167,34 +169,10 @@ impl CloneToOwned for Piece<ByteBuf<'_>> {
     }
 }
 
-impl Piece<ByteBufOwned> {
-    pub fn as_borrowed(&self) -> Piece<ByteBuf<'_>> {
-        Piece {
-            index: self.index,
-            begin: self.begin,
-            block_0: self.block_0.as_ref().into(),
-            block_1: self.block_1.as_ref().into(),
-        }
-    }
-}
-
-impl<'a> Piece<ByteBuf<'a>> {
+impl<B: AsRef<[u8]>> Piece<B> {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.block_0.as_ref().len() + self.block_1.as_ref().len()
-    }
-
-    pub fn from_data(index: u32, begin: u32, block: &'a [u8]) -> Self {
-        Piece {
-            index,
-            begin,
-            block_0: ByteBuf(block),
-            block_1: ByteBuf(&[]),
-        }
-    }
-
-    pub fn data(&self) -> (&'a [u8], &'a [u8]) {
-        (self.block_0.0, self.block_1.0)
     }
 
     pub fn serialize_unchecked_len(&self, mut buf: &mut [u8]) -> usize {
@@ -209,6 +187,32 @@ impl<'a> Piece<ByteBuf<'a>> {
         buf = &mut buf[b0.len()..];
         buf[..b1.len()].copy_from_slice(b1);
         8 + b0.len() + b1.len()
+    }
+}
+
+impl Piece<ByteBufOwned> {
+    pub fn as_borrowed(&self) -> Piece<ByteBuf<'_>> {
+        Piece {
+            index: self.index,
+            begin: self.begin,
+            block_0: self.block_0.as_ref().into(),
+            block_1: self.block_1.as_ref().into(),
+        }
+    }
+}
+
+impl<'a> Piece<ByteBuf<'a>> {
+    pub fn data(&self) -> (&'a [u8], &'a [u8]) {
+        (self.block_0.0, self.block_1.0)
+    }
+
+    pub fn from_data(index: u32, begin: u32, block: &'a [u8]) -> Self {
+        Piece {
+            index,
+            begin,
+            block_0: ByteBuf(block),
+            block_1: ByteBuf(&[]),
+        }
     }
 }
 

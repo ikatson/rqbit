@@ -86,6 +86,7 @@ pub(crate) struct PeerConnection<H> {
     connector: Arc<StreamConnector>,
 }
 
+#[cfg(not(feature = "miri"))]
 pub(crate) async fn with_timeout<T>(
     name: &'static str,
     timeout_value: Duration,
@@ -95,6 +96,15 @@ pub(crate) async fn with_timeout<T>(
         Ok(v) => v,
         Err(_) => Err(Error::Timeout(name)),
     }
+}
+
+#[cfg(feature = "miri")]
+pub(crate) async fn with_timeout<T>(
+    _name: &'static str,
+    _timeout_value: Duration,
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> crate::Result<T> {
+    fut.await
 }
 
 struct ManagePeerArgs {

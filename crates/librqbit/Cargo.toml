@@ -25,6 +25,7 @@ default-tls = [
     "sha1w/sha1-crypto-hash",
     "librqbit-core/sha1-crypto-hash",
 ]
+miri = []
 prometheus = ["metrics-exporter-prometheus"]
 rust-tls = ["reqwest/rustls-tls", "sha1w/sha1-ring", "librqbit-core/sha1-ring"]
 storage_middleware = ["lru"]
@@ -146,3 +147,4 @@ anyhow = "1"
 tracing-subscriber = "0.3"
 tokio-test = "0.4"
 tempfile = "3"
+pollster = "0.4.0"
