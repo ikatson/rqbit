@@ -33,29 +33,6 @@ macro_rules! advance {
     };
 }
 
-/// Convert into 2 slices (as ranges).
-macro_rules! as_slice_ranges {
-    ($self:expr) => {{
-        const BUFLEN: usize = crate::read_buf::BUFLEN;
-        // These .min() calls are for asm to be branchless and the code panicless.
-        let len = $self.len.min(BUFLEN);
-        let start = $self.start.min(BUFLEN);
-
-        let first_len = len.min(BUFLEN - start);
-        let first = start..start + first_len;
-        let second = 0..len.saturating_sub(first_len);
-        (first, second)
-    }};
-}
-
-// /// Convert into 2 slices
-// macro_rules! as_slices {
-//     ($self:expr) => {{
-//         let (first, second) = as_slice_ranges!($self);
-//         (&$self.buf[first], &$self.buf[second])
-//     }};
-// }
-
 impl ReadBuf {
     pub fn new() -> Self {
         Self {
@@ -92,6 +69,17 @@ impl ReadBuf {
         self.start + self.len == (self.start + self.len) % BUFLEN
     }
 
+    fn as_slice_ranges(&self) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+        // These .min() calls are for asm to be branchless and the code panicless.
+        let len = self.len.min(BUFLEN);
+        let start = self.start.min(BUFLEN);
+
+        let first_len = len.min(BUFLEN - start);
+        let first = start..start + first_len;
+        let second = 0..len.saturating_sub(first_len);
+        (first, second)
+    }
+
     // In rare cases, we might need to make the buffer contiguous, as the message
     // parsing code won't work with a split ringbuffer. Only "bitfield" and "extended" messages
     // need contiguous buffers.
@@ -111,7 +99,7 @@ impl ReadBuf {
         // See the source in VecDequeue::make_contiguous to see how involved it would be
         // otherwise.
         let mut new = [0u8; BUFLEN];
-        let (first, second) = as_slice_ranges!(self);
+        let (first, second) = self.as_slice_ranges();
         let (first, second) = {
             let buf = &**self.buf.get_mut();
             (&buf[first], &buf[second])
@@ -161,11 +149,13 @@ impl ReadBuf {
                 // was successfully deserialized.
                 //
                 // The whole UnsafeCell dance is for this workaround in this one place.
+                // The problem is "polonius problem case #3" i.e. conditional early return
+                // while borrow is active.
                 //
                 // Safety: we aren't having multiple &mut borrows at any one place, or doing
-                // anything inherently unsafe either. On the
+                // anything inherently unsafe either.
                 let (first, second) = {
-                    let (first, second) = as_slice_ranges!(self);
+                    let (first, second) = self.as_slice_ranges();
                     let buf = unsafe { &**self.buf.get() };
                     (&buf[first], &buf[second])
                 };
@@ -233,23 +223,23 @@ mod tests {
     #[test]
     fn test_ringbuf_ranges() {
         let mut b = ReadBuf::new();
-        assert_eq!(as_slice_ranges!(b), (0..0, 0..0));
+        assert_eq!(b.as_slice_ranges(), (0..0, 0..0));
 
         b.start = 10;
         b.len = 10;
-        assert_eq!(as_slice_ranges!(b), (10..20, 0..0));
+        assert_eq!(b.as_slice_ranges(), (10..20, 0..0));
 
         b.start = BUFLEN - 100;
         b.len = 100;
-        assert_eq!(as_slice_ranges!(b), (BUFLEN - 100..BUFLEN, 0..0));
+        assert_eq!(b.as_slice_ranges(), (BUFLEN - 100..BUFLEN, 0..0));
 
         b.start = BUFLEN - 100;
         b.len = 120;
-        assert_eq!(as_slice_ranges!(b), (BUFLEN - 100..BUFLEN, 0..20));
+        assert_eq!(b.as_slice_ranges(), (BUFLEN - 100..BUFLEN, 0..20));
 
         b.start = BUFLEN - 100;
         b.len = BUFLEN;
-        assert_eq!(as_slice_ranges!(b), (BUFLEN - 100..BUFLEN, 0..BUFLEN - 100));
+        assert_eq!(b.as_slice_ranges(), (BUFLEN - 100..BUFLEN, 0..BUFLEN - 100));
     }
 
     #[test]
@@ -258,15 +248,15 @@ mod tests {
 
         b.start = 10;
         b.len = 10;
-        assert_eq!(as_slice_ranges!(b), (10..20, 0..0));
+        assert_eq!(b.as_slice_ranges(), (10..20, 0..0));
         b.advance(5);
-        assert_eq!(as_slice_ranges!(b), (15..20, 0..0));
+        assert_eq!(b.as_slice_ranges(), (15..20, 0..0));
 
         b.start = BUFLEN - 5;
         b.len = 10;
-        assert_eq!(as_slice_ranges!(b), (BUFLEN - 5..BUFLEN, 0..5));
+        assert_eq!(b.as_slice_ranges(), (BUFLEN - 5..BUFLEN, 0..5));
         b.advance(5);
-        assert_eq!(as_slice_ranges!(b), (0..5, 0..0));
+        assert_eq!(b.as_slice_ranges(), (0..5, 0..0));
     }
 
     #[test]
