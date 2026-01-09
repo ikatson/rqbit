@@ -183,6 +183,7 @@ Use a regex here to select files by their names.
 | --persistence-location | RQBIT_SESSION_PERSISTENCE_LOCATION | | | The folder to store session data in. By default uses OS specific folder. If starts with postgres://, will use postgres as the backend instead of JSON file. |
 | --fastresume | RQBIT_FASTRESUME | | true, false | Experimental! if set, will try to resume quickly after restart and skip checksumming. |
 | --watch-folder | RQBIT_WATCH_FOLDER | | | The folder to watch for added .torrent files. All files in this folder will be automatically added to the session. |
+| | RQBIT_HTTP_BASIC_AUTH_USERPASS | | username:password | basic auth credentials should be in format username:password | 
 
 ## Features (not exhaustive)
 
