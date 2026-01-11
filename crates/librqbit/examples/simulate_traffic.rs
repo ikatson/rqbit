@@ -128,6 +128,14 @@ impl TestHarness {
 
     async fn start_peer(&self, id: usize) -> anyhow::Result<Arc<Session>> {
         let out = self.td.join(format!("peer_{}", id));
+        let listen_mode = [
+            librqbit::ListenerMode::TcpOnly,
+            librqbit::ListenerMode::UtpOnly,
+        ]
+        .choose(&mut rand::rng())
+        .copied()
+        .unwrap();
+
         let session = Session::new_with_opts(
             out.clone(),
             SessionOptions {
@@ -136,7 +144,7 @@ impl TestHarness {
                 fastresume: false,
                 persistence: None,
                 listen: Some(ListenerOptions {
-                    mode: librqbit::ListenerMode::TcpAndUtp,
+                    mode: listen_mode,
                     listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
@@ -148,7 +156,7 @@ impl TestHarness {
                 disable_local_service_discovery: false,
                 connect: Some(ConnectionOptions {
                     proxy_url: None,
-                    enable_tcp: true,
+                    enable_tcp: listen_mode.tcp_enabled(),
                     peer_opts: Some(PeerConnectionOptions {
                         connect_timeout: Some(Duration::from_secs(1)),
                         read_write_timeout: Some(Duration::from_secs(32)),
