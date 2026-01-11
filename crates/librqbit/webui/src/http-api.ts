@@ -2,6 +2,7 @@ import {
   AddTorrentResponse,
   ErrorDetails,
   ListTorrentsResponse,
+  PeerStatsSnapshot,
   RqbitAPI,
   SessionStats,
   TorrentDetails,
@@ -93,6 +94,9 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
   getTorrentStats: (index: number): Promise<TorrentStats> => {
     return makeRequest("GET", `/torrents/${index}/stats/v1`);
+  },
+  getPeerStats: (index: number): Promise<PeerStatsSnapshot> => {
+    return makeRequest("GET", `/torrents/${index}/peer_stats?state=live`);
   },
   stats: (): Promise<SessionStats> => {
     return makeRequest("GET", "/stats");

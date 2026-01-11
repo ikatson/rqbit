@@ -51,6 +51,33 @@ export interface AggregatePeerStats {
   not_needed: number;
 }
 
+export type ConnectionKind = "tcp" | "utp" | "socks";
+
+export interface PeerCounters {
+  incoming_connections: number;
+  fetched_bytes: number;
+  uploaded_bytes: number;
+  total_time_connecting_ms: number;
+  connection_attempts: number;
+  connections: number;
+  errors: number;
+  fetched_chunks: number;
+  downloaded_and_checked_pieces: number;
+  total_piece_download_ms: number;
+  times_stolen_from_me: number;
+  times_i_stole: number;
+}
+
+export interface PeerStats {
+  counters: PeerCounters;
+  state: string;
+  conn_kind: ConnectionKind | null;
+}
+
+export interface PeerStatsSnapshot {
+  peers: Record<string, PeerStats>;
+}
+
 export interface ConnectionStatSingle {
   attempts: number;
   successes: number;
@@ -208,6 +235,7 @@ export interface RqbitAPI {
   listTorrents: () => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
+  getPeerStats: (index: number) => Promise<PeerStatsSnapshot>;
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
