@@ -150,7 +150,7 @@ impl TestHarness {
                     utp_opts: None,
                 }),
                 ratelimits: LimitsConfig {
-                    upload_bps: NonZero::new(64 * 1024),
+                    upload_bps: NonZero::new(512 * 1024),
                     download_bps: Default::default(),
                 },
                 disable_local_service_discovery: false,
