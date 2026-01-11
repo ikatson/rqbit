@@ -2,6 +2,9 @@ import { TorrentsList } from "./TorrentsList";
 import { ErrorComponent } from "./ErrorComponent";
 import { useTorrentStore } from "../stores/torrentStore";
 import { useErrorStore } from "../stores/errorStore";
+import { useUIStore } from "../stores/uiStore";
+import { useIsLargeScreen } from "../hooks/useIsLargeScreen";
+import { CompactLayout } from "./compact/CompactLayout";
 
 export const RootContent = (props: {}) => {
   let closeableError = useErrorStore((state) => state.closeableError);
@@ -12,14 +15,23 @@ export const RootContent = (props: {}) => {
     (state) => state.torrentsInitiallyLoading
   );
 
+  const viewMode = useUIStore((state) => state.viewMode);
+  const isLargeScreen = useIsLargeScreen();
+
+  const useCompactLayout = viewMode === "compact" && isLargeScreen;
+
   return (
-    <div className="container mx-auto">
+    <div className={useCompactLayout ? "" : "container mx-auto"}>
       <ErrorComponent
         error={closeableError}
         remove={() => setCloseableError(null)}
       />
       <ErrorComponent error={otherError} />
-      <TorrentsList torrents={torrents} loading={torrentsInitiallyLoading} />
+      {useCompactLayout ? (
+        <CompactLayout torrents={torrents} loading={torrentsInitiallyLoading} />
+      ) : (
+        <TorrentsList torrents={torrents} loading={torrentsInitiallyLoading} />
+      )}
     </div>
   );
 };

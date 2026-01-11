@@ -13,6 +13,7 @@ import { useErrorStore } from "./stores/errorStore";
 import { AlertModal } from "./components/modal/AlertModal";
 import { useStatsStore } from "./stores/statsStore";
 import { Footer } from "./components/Footer";
+import { ViewModeToggle } from "./components/ViewModeToggle";
 
 export interface ErrorWithLabel {
   text: string;
@@ -102,6 +103,7 @@ export const RqbitWebUI = (props: {
           <IconButton onClick={DarkMode.toggle}>
             <BsMoon />
           </IconButton>
+          <ViewModeToggle />
         </div>
       </div>
 
