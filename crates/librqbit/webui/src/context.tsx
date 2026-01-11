@@ -44,5 +44,8 @@ export const APIContext = createContext<RqbitAPI>({
   stats: function (): Promise<SessionStats> {
     throw new Error("Function not implemented.");
   },
+  getTorrentHaves: function (index: number): Promise<ArrayBuffer> {
+    throw new Error("Function not implemented.");
+  },
 });
 export const RefreshTorrentStatsContext = createContext({ refresh: () => {} });

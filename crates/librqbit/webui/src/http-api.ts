@@ -26,6 +26,22 @@ const apiUrl = (() => {
   return path;
 })();
 
+const makeBinaryRequest = async (path: string): Promise<ArrayBuffer> => {
+  const url = apiUrl + path;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/octet-stream",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return response.arrayBuffer();
+};
+
 const makeRequest = async (
   method: string,
   path: string,
@@ -172,5 +188,8 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
   getPlaylistUrl: (index: number) => {
     return (apiUrl || window.origin) + `/torrents/${index}/playlist`;
+  },
+  getTorrentHaves: (index: number): Promise<ArrayBuffer> => {
+    return makeBinaryRequest(`/torrents/${index}/haves`);
   },
 };

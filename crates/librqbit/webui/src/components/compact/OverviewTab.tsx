@@ -4,6 +4,7 @@ import { formatBytes } from "../../helper/formatBytes";
 import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../../helper/getCompletionETA";
 import { FaCopy, FaCheck } from "react-icons/fa";
+import { PiecesCanvas } from "./PiecesCanvas";
 
 interface OverviewTabProps {
   torrentId: number;
@@ -91,6 +92,21 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           {progressPercentage.toFixed(1)}% ({formatBytes(progressBytes)} / {formatBytes(totalBytes)})
         </div>
       </div>
+
+      {(detailsResponse.total_pieces ?? 0) > 0 && (
+        <div className="col-span-2 lg:col-span-4">
+          <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+            Pieces ({detailsResponse.total_pieces})
+          </label>
+          <div className="mt-1">
+            <PiecesCanvas
+              torrentId={torrentId}
+              totalPieces={detailsResponse.total_pieces ?? 0}
+              stats={statsResponse}
+            />
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">Download</label>

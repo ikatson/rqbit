@@ -83,8 +83,24 @@ pub async fn h_torrent_details(
 pub async fn h_torrent_haves(
     State(state): State<ApiState>,
     Path(idx): Path<TorrentIdOrHash>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
-    state.api.api_dump_haves(idx)
+    let bf = state.api.api_dump_haves(idx)?;
+
+    // Check if binary format is requested
+    let wants_binary = headers
+        .get(http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.contains("application/octet-stream"));
+
+    if wants_binary {
+        let bytes = bf.as_raw_slice().to_vec();
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+        Ok((resp_headers, bytes).into_response())
+    } else {
+        Ok(format!("{:?}", bf.as_bitslice()).into_response())
+    }
 }
 
 pub async fn h_torrent_stats_v0(

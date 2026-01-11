@@ -24,6 +24,7 @@ export interface TorrentDetails {
   name: string | null;
   info_hash: string;
   files: Array<TorrentFile>;
+  total_pieces?: number;
 }
 
 export interface AddTorrentResponse {
@@ -235,6 +236,7 @@ export interface RqbitAPI {
   listTorrents: () => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
+  getTorrentHaves: (index: number) => Promise<ArrayBuffer>;
   getPeerStats: (index: number) => Promise<PeerStatsSnapshot>;
   getTorrentStreamUrl: (
     index: number,
