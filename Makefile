@@ -48,7 +48,7 @@ devserver-postgres:
 
 @PHONY: testserver
 testserver:
-	cargo run -p librqbit --features http-api,tracing-subscriber-utils,webui --example simulate_traffic
+	ulimit -n unlimited && cargo run -p librqbit --features http-api,tracing-subscriber-utils,webui --example simulate_traffic
 
 @PHONY: docker-build-xx-one-platform
 docker-build-xx-one-platform:
