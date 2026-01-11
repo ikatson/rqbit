@@ -37,12 +37,16 @@ cd desktop && npm install && cargo tauri build
 # Install webui dependencies first
 make webui-deps
 
-# Run dev server (downloads to /tmp/scratch by default)
-make devserver
+# Run test server that simulates traffic
+make testserver
 
 # Run webui in dev mode (hot reload)
 make webui-dev
 ```
+
+Navigate to http://localhost:3031 for the vite server (hot reload) that points at the actual API backend at http://localhost:3030.
+
+@crates/librqbit/webui/CLAUDE.md has some details on webui if needed.
 
 ## Architecture
 
