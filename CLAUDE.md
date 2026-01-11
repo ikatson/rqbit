@@ -34,17 +34,13 @@ cd desktop && npm install && cargo tauri build
 ## Development Server
 
 ```bash
-# Install webui dependencies first
-make webui-deps
-
-# Run test server that simulates traffic
+# Run test server that simulates traffic. Points to http://localhost:3030 for the main session's web UI and API.
+# If you make changes to Rust this needs to be restarted.
 make testserver
 
-# Run webui in dev mode (hot reload)
+# Run webui in dev mode (hot reload vite server). Points to http://localhost:3031.
 make webui-dev
 ```
-
-Navigate to http://localhost:3031 for the vite server (hot reload) that points at the actual API backend at http://localhost:3030.
 
 @crates/librqbit/webui/CLAUDE.md has some details on webui if needed.
 
@@ -57,7 +53,6 @@ The main library - the binary is just a thin CLI wrapper. Key components:
 - **TorrentState** (`torrent_state/`): State machine for torrent lifecycle - initializing, live (downloading/seeding), paused
 - **Storage** (`storage/`): Pluggable storage backends (filesystem, mmap) with middleware support (caching, timing)
 - **HTTP API** (`http_api/`): REST API handlers for torrent management, streaming, DHT stats
-- **Peer Connection** (`peer_connection.rs`): BitTorrent peer protocol implementation
 
 ### Supporting Crates
 - `bencode` - Bencode serialization/deserialization
@@ -67,8 +62,8 @@ The main library - the binary is just a thin CLI wrapper. Key components:
 - `upnp` - Port forwarding
 - `upnp-serve` - UPnP Media Server
 - `librqbit_core` - Shared types (magnet links, torrent metainfo, peer IDs)
-- `buffers` - Binary buffer utilities
-- `sha1w` - SHA1 wrapper (supports crypto-hash or ring backends)
+- `buffers` - Binary buffer utilities, small wrappers around bytes::Bytes and &[u8].
+- `sha1w` - SHA1 wrapper (supports crypto-hash or openssl backends)
 
 ### Web UI (`crates/librqbit/webui`)
 React + TypeScript + Tailwind CSS frontend. Shared between the HTTP API web interface and the Tauri desktop app.
@@ -76,27 +71,6 @@ React + TypeScript + Tailwind CSS frontend. Shared between the HTTP API web inte
 ### Desktop App (`desktop/`)
 Tauri wrapper around the web UI.
 
-## Feature Flags (librqbit)
-
-Key features:
-- `http-api` - REST API (axum)
-- `webui` - Embedded web UI
-- `default-tls` / `rust-tls` - TLS backend selection
-- `prometheus` - Metrics exporter
-- `postgres` - PostgreSQL persistence backend
-- `storage_middleware` - Storage middleware (caching)
-- `watch` - Directory watching for .torrent files
-
-## Environment Variables
-
-Development server uses these (see Makefile):
-- `RQBIT_HTTP_API_LISTEN_ADDR` - API listen address (default: `[::]:3030`)
-- `RQBIT_LOG_FILE` - Log file path
-- `RQBIT_LOG_FILE_RUST_LOG` - Log level for file
-- `RQBIT_HTTP_BASIC_AUTH_USERPASS` - Basic auth (`username:password`)
-
-## Testing Notes
-
-- Tests run on Windows, macOS, and Linux
-- macOS may need `ulimit -n unlimited` before running tests
-- Minimum supported Rust version: 1.90
+## Other directives
+- If you need to resort to running shell commands, always use "rg" instead of "grep".
+- Prefer using Serena MCP instead of searching / reading / writing raw files when makes sense.

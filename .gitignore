@@ -7,3 +7,4 @@
 /perf.data*
 /flamegraph.svg
 .claude
+.serena/
