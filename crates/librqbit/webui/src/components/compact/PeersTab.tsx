@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { PeerStats, PeerStatsSnapshot, TorrentStats } from "../../api-types";
 import { APIContext } from "../../context";
 import { formatBytes } from "../../helper/formatBytes";
-import { GoTriangleDown, GoTriangleUp } from "react-icons/go";
+import { SortIcon } from "../SortIcon";
 
 interface PeersTabProps {
   torrentId: number;
@@ -16,8 +16,8 @@ interface PeerWithSpeed {
   uploadSpeed: number;
 }
 
-type SortColumn = "addr" | "connKind" | "downloadSpeed" | "uploadSpeed" | "downloaded" | "uploaded";
-type SortDirection = "asc" | "desc";
+type PeerSortColumn = "addr" | "connKind" | "downloadSpeed" | "uploadSpeed" | "downloaded" | "uploaded";
+type PeerSortDirection = "asc" | "desc";
 
 interface StatBadgeProps {
   label: string;
@@ -32,21 +32,6 @@ const StatBadge: React.FC<StatBadgeProps> = ({ label, value, color }) => (
   </span>
 );
 
-const SortIcon: React.FC<{ column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }> = ({
-  column,
-  sortColumn,
-  sortDirection,
-}) => {
-  if (column !== sortColumn) {
-    return <span className="text-gray-300 dark:text-slate-600 ml-1">&#8597;</span>;
-  }
-  return sortDirection === "asc" ? (
-    <GoTriangleUp className="inline ml-1" />
-  ) : (
-    <GoTriangleDown className="inline ml-1" />
-  );
-};
-
 const formatSpeed = (bytesPerSecond: number): string => {
   if (bytesPerSecond === 0) return "-";
   return formatBytes(bytesPerSecond) + "/s";
@@ -56,8 +41,8 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
   const API = useContext(APIContext);
   const [peerSnapshot, setPeerSnapshot] = useState<PeerStatsSnapshot | null>(null);
   const [peersWithSpeed, setPeersWithSpeed] = useState<PeerWithSpeed[]>([]);
-  const [sortColumn, setSortColumn] = useState<SortColumn>("downloadSpeed");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [sortColumn, setSortColumn] = useState<PeerSortColumn>("downloadSpeed");
+  const [sortDirection, setSortDirection] = useState<PeerSortDirection>("desc");
 
   const prevSnapshotRef = useRef<{ snapshot: PeerStatsSnapshot; timestamp: number } | null>(null);
 
@@ -119,7 +104,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
     prevSnapshotRef.current = { snapshot: peerSnapshot, timestamp: now };
   }, [peerSnapshot]);
 
-  const handleSort = useCallback((column: SortColumn) => {
+  const handleSort = useCallback((column: PeerSortColumn) => {
     setSortColumn((prevColumn) => {
       if (prevColumn === column) {
         setSortDirection((d) => (d === "asc" ? "desc" : "asc"));

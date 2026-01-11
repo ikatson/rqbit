@@ -78,6 +78,9 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
           finished={finished}
         />
       </td>
+      <td className="w-12 px-2 py-2 text-center text-sm text-gray-500 dark:text-slate-500 font-mono">
+        {id}
+      </td>
       <td className="px-2 py-2 max-w-xs">
         <div className="truncate text-sm font-medium text-gray-900 dark:text-slate-200" title={name}>
           {name || "Loading..."}
