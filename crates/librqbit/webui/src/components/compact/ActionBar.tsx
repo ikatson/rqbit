@@ -5,10 +5,12 @@ import { useUIStore } from "../../stores/uiStore";
 import { useTorrentStore } from "../../stores/torrentStore";
 import { useErrorStore } from "../../stores/errorStore";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
+import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
 
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
   const clearSelection = useUIStore((state) => state.clearSelection);
+  const torrentDataCache = useUIStore((state) => state.torrentDataCache);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
 
@@ -23,16 +25,23 @@ export const ActionBar: React.FC = () => {
   const pauseSelected = async () => {
     setDisabled(true);
     try {
-      const promises = Array.from(selectedTorrentIds).map((id) =>
-        API.pause(id).catch((e) => {
+      for (const id of selectedTorrentIds) {
+        // Skip already paused torrents
+        const cachedData = torrentDataCache.get(id);
+        if (cachedData?.stats?.state === STATE_PAUSED) {
+          continue;
+        }
+        try {
+          await API.pause(id);
+          // Refresh immediately after each operation
+          refreshTorrents();
+        } catch (e) {
           setCloseableError({
             text: `Error pausing torrent id=${id}`,
-            details: e,
+            details: e as ErrorDetails,
           });
-        })
-      );
-      await Promise.all(promises);
-      refreshTorrents();
+        }
+      }
     } finally {
       setDisabled(false);
     }
@@ -41,16 +50,23 @@ export const ActionBar: React.FC = () => {
   const resumeSelected = async () => {
     setDisabled(true);
     try {
-      const promises = Array.from(selectedTorrentIds).map((id) =>
-        API.start(id).catch((e) => {
+      for (const id of selectedTorrentIds) {
+        // Skip already live torrents
+        const cachedData = torrentDataCache.get(id);
+        if (cachedData?.stats?.state === STATE_LIVE) {
+          continue;
+        }
+        try {
+          await API.start(id);
+          // Refresh immediately after each operation
+          refreshTorrents();
+        } catch (e) {
           setCloseableError({
             text: `Error starting torrent id=${id}`,
-            details: e,
+            details: e as ErrorDetails,
           });
-        })
-      );
-      await Promise.all(promises);
-      refreshTorrents();
+        }
+      }
     } finally {
       setDisabled(false);
     }

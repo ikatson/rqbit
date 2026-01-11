@@ -41,7 +41,7 @@ export const DetailPane: React.FC = () => {
 
   if (selectedCount === 0) {
     return (
-      <div className="h-48 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-center">
+      <div className="h-full border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-center">
         <p className="text-gray-400 dark:text-slate-500">Select a torrent to view details</p>
       </div>
     );
@@ -49,7 +49,7 @@ export const DetailPane: React.FC = () => {
 
   if (selectedCount > 1) {
     return (
-      <div className="h-48 border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-center">
+      <div className="h-full border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-center">
         <p className="text-gray-400 dark:text-slate-500">{selectedCount} torrents selected</p>
       </div>
     );
@@ -58,7 +58,7 @@ export const DetailPane: React.FC = () => {
   const selectedId = selectedArray[0];
 
   return (
-    <div className="h-64 border-t border-gray-200 dark:border-slate-700 flex flex-col bg-white dark:bg-slate-900">
+    <div className="h-full border-t border-gray-200 dark:border-slate-700 flex flex-col bg-white dark:bg-slate-900">
       <div className="flex border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
         <TabButton
           id="overview"

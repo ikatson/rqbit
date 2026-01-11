@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { TorrentId, TorrentDetails, TorrentStats, STATE_INITIALIZING, STATE_LIVE } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { customSetInterval } from "../../helper/customSetInterval";
@@ -12,7 +12,7 @@ import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 interface TorrentRowDataProps {
   torrent: TorrentId;
   isSelected: boolean;
-  onRowClick: () => void;
+  onRowClick: (e: React.MouseEvent) => void;
   onCheckboxChange: () => void;
 }
 
@@ -88,6 +88,8 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
   const selectTorrent = useUIStore((state) => state.selectTorrent);
   const toggleSelection = useUIStore((state) => state.toggleSelection);
+  const selectRange = useUIStore((state) => state.selectRange);
+  const selectRelative = useUIStore((state) => state.selectRelative);
   const selectAll = useUIStore((state) => state.selectAll);
   const clearSelection = useUIStore((state) => state.clearSelection);
   const sortColumn = useUIStore((state) => state.sortColumn);
@@ -175,6 +177,46 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
     setSortColumn(column);
   };
 
+  // Get ordered IDs for keyboard navigation
+  const orderedIds = useMemo(() => {
+    return sortedTorrents?.map((t) => t.id) ?? [];
+  }, [sortedTorrents]);
+
+  // Handle keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if no input is focused
+      const activeElement = document.activeElement;
+      if (activeElement && (
+        activeElement.tagName === "INPUT" ||
+        activeElement.tagName === "TEXTAREA" ||
+        activeElement.tagName === "SELECT"
+      )) {
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        selectRelative("down", orderedIds);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        selectRelative("up", orderedIds);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [orderedIds, selectRelative]);
+
+  // Row click handler with shift support
+  const handleRowClick = useCallback((id: number, e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      selectRange(id, orderedIds);
+    } else {
+      selectTorrent(id);
+    }
+  }, [orderedIds, selectRange, selectTorrent]);
+
   const headerClass =
     "px-2 py-3 font-medium text-gray-700 dark:text-slate-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 select-none";
 
@@ -247,7 +289,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
             key={torrent.id}
             torrent={torrent}
             isSelected={selectedTorrentIds.has(torrent.id)}
-            onRowClick={() => selectTorrent(torrent.id)}
+            onRowClick={(e) => handleRowClick(torrent.id, e)}
             onCheckboxChange={() => toggleSelection(torrent.id)}
           />
         ))}

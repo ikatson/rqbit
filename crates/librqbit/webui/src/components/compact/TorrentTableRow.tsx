@@ -9,7 +9,7 @@ interface TorrentTableRowProps {
   detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats | null;
   isSelected: boolean;
-  onRowClick: () => void;
+  onRowClick: (e: React.MouseEvent) => void;
   onCheckboxChange: () => void;
 }
 
@@ -52,7 +52,7 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
 
   return (
     <tr
-      onClick={onRowClick}
+      onClick={(e) => onRowClick(e)}
       className={`
         cursor-pointer border-b border-gray-100 dark:border-slate-700
         transition-colors
