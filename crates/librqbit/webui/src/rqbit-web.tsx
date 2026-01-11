@@ -3,17 +3,14 @@ import { ErrorDetails as ApiErrorDetails } from "./api-types";
 import { APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
 import { customSetInterval } from "./helper/customSetInterval";
-import { IconButton } from "./components/buttons/IconButton";
-import { BsBodyText, BsMoon } from "react-icons/bs";
 import { LogStreamModal } from "./components/modal/LogStreamModal";
 import { Header } from "./components/Header";
-import { DarkMode } from "./helper/darkMode";
 import { useTorrentStore } from "./stores/torrentStore";
 import { useErrorStore } from "./stores/errorStore";
 import { AlertModal } from "./components/modal/AlertModal";
 import { useStatsStore } from "./stores/statsStore";
 import { Footer } from "./components/Footer";
-import { ViewModeToggle } from "./components/ViewModeToggle";
+import { SettingsButtons } from "./components/SettingsButtons";
 
 export interface ErrorWithLabel {
   text: string;
@@ -91,21 +88,16 @@ export const RqbitWebUI = (props: {
 
   return (
     <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen flex flex-col">
-      <Header title={props.title} version={props.version} />
-      <div className="relative">
-        {/* Menu buttons */}
-        <div className="absolute top-0 start-0 pl-2 z-10">
-          {props.menuButtons &&
-            props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
-          <IconButton onClick={() => setLogsOpened(true)}>
-            <BsBodyText />
-          </IconButton>
-          <IconButton onClick={DarkMode.toggle}>
-            <BsMoon />
-          </IconButton>
-          <ViewModeToggle />
-        </div>
-      </div>
+      <Header
+        title={props.title}
+        version={props.version}
+        settingsSlot={
+          <SettingsButtons
+            onLogsClick={() => setLogsOpened(true)}
+            menuButtons={props.menuButtons}
+          />
+        }
+      />
 
       <div className="grow">
         <RootContent />

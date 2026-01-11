@@ -12,11 +12,13 @@ export const ViewModeToggle: React.FC = () => {
     return null;
   }
 
+  const tooltipText = viewMode === "compact"
+    ? "Switch to card view"
+    : "Switch to table view";
+
   return (
-    <span title={viewMode === "compact" ? "Switch to card view" : "Switch to table view"}>
-      <IconButton onClick={toggleViewMode}>
-        {viewMode === "compact" ? <BsGrid /> : <BsListUl />}
-      </IconButton>
-    </span>
+    <IconButton onClick={toggleViewMode} title={tooltipText}>
+      {viewMode === "compact" ? <BsGrid /> : <BsListUl />}
+    </IconButton>
   );
 };
