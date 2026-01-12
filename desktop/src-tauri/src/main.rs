@@ -285,23 +285,15 @@ fn torrents_list(state: tauri::State<State>) -> Result<TorrentListResponse, ApiE
         .api_torrent_list_ext(ApiTorrentListOpts { with_stats: true }))
 }
 
-#[derive(Serialize)]
-struct HavesResponse {
-    base64_buffer: String,
-    total_bits: u32,
-}
-
 #[tauri::command]
 fn torrent_haves(
     state: tauri::State<State>,
     id: TorrentIdOrHash,
-) -> Result<HavesResponse, ApiError> {
-    let (haves, len) = state.api()?.api_dump_haves(id)?;
-    use base64::{Engine as _, engine::general_purpose};
-    Ok(HavesResponse {
-        base64_buffer: general_purpose::STANDARD.encode(haves.as_raw_slice()),
-        total_bits: len,
-    })
+) -> Result<tauri::ipc::InvokeResponseBody, ApiError> {
+    let (haves, _len) = state.api()?.api_dump_haves(id)?;
+    Ok(tauri::ipc::InvokeResponseBody::Raw(
+        haves.into_boxed_slice().into(),
+    ))
 }
 
 #[tauri::command]

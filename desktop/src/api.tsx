@@ -101,14 +101,10 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     getTorrentStats: async function (id: number): Promise<TorrentStats> {
       return await invokeAPI<TorrentStats>("torrent_stats", { id });
     },
-    getTorrentHaves: async function (id: number): Promise<ArrayBuffer> {
-      interface Haves {
-        base64_buffer: string;
-        total_bits: number;
-      }
-      const haves = await invokeAPI<Haves>("torrent_haves", { id });
-      return Uint8Array.from(atob(haves.base64_buffer), (c) => c.charCodeAt(0))
-        .buffer;
+    getTorrentHaves: async function (id: number): Promise<Uint8Array> {
+      return new Uint8Array(
+        await invokeAPI<ArrayBuffer>("torrent_haves", { id }),
+      );
     },
     getPeerStats: async function (id: number): Promise<PeerStatsSnapshot> {
       return await invokeAPI<PeerStatsSnapshot>("torrent_peer_stats", {

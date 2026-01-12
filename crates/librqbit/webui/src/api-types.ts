@@ -249,10 +249,12 @@ export interface JSONLogLine {
 export interface RqbitAPI {
   getPlaylistUrl: (index: number) => string | null;
   getStreamLogsUrl: () => string | null;
-  listTorrents: (opts?: { withStats?: boolean }) => Promise<ListTorrentsResponse>;
+  listTorrents: (opts?: {
+    withStats?: boolean;
+  }) => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
-  getTorrentHaves: (index: number) => Promise<ArrayBuffer>;
+  getTorrentHaves: (index: number) => Promise<Uint8Array>;
   getPeerStats: (index: number) => Promise<PeerStatsSnapshot>;
   getTorrentStreamUrl: (
     index: number,

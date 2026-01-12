@@ -195,8 +195,8 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getPlaylistUrl: (index: number) => {
     return (apiUrl || window.origin) + `/torrents/${index}/playlist`;
   },
-  getTorrentHaves: (index: number): Promise<ArrayBuffer> => {
-    return makeBinaryRequest(`/torrents/${index}/haves`);
+  getTorrentHaves: async (index: number): Promise<Uint8Array> => {
+    return new Uint8Array(await makeBinaryRequest(`/torrents/${index}/haves`));
   },
   getLimits: (): Promise<LimitsConfig> => {
     return makeRequest("GET", "/torrents/limits");
