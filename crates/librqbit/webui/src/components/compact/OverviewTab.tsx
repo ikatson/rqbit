@@ -37,6 +37,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const totalBytes = statsResponse.total_bytes ?? 1;
   const progressBytes = statsResponse.progress_bytes ?? 0;
   const finished = statsResponse.finished || false;
+  const totalUploadedBytes = statsResponse.live?.snapshot.uploaded_bytes ?? 0;
 
   const progressPercentage = error
     ? 100
@@ -97,7 +98,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       )}
 
       {/* Stats row */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
         <span>
           <span className="text-text-tertiary">Status </span>
           <span className={stateDisplay.color}>{stateDisplay.text}</span>
@@ -116,7 +117,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </span>
         <span>
           <span className="text-text-tertiary">Up </span>
-          <span className="text-text">{uploadSpeed}</span>
+          <span className="text-text">
+            {uploadSpeed} (total {formatBytes(totalUploadedBytes)})
+          </span>
         </span>
         <span>
           <span className="text-text-tertiary">ETA </span>
@@ -131,7 +134,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       {/* Info hash */}
-      <div className="mt-2 flex items-center gap-1 text-sm">
+      <div className="mt-2 flex items-center gap-1">
         <span className="text-text-tertiary">Hash</span>
         <code className="font-mono text-text-tertiary truncate flex-1">
           {infoHash}

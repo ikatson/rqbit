@@ -28,8 +28,8 @@ export const FilesTab: React.FC<FilesTabProps> = ({
         detailsResponse?.files
           .map((f, id) => ({ f, id }))
           .filter(({ f }) => f.included)
-          .map(({ id }) => id) ?? []
-      )
+          .map(({ id }) => id) ?? [],
+      ),
     );
   }, [detailsResponse]);
 
@@ -46,21 +46,17 @@ export const FilesTab: React.FC<FilesTabProps> = ({
             text: "Error configuring torrent",
             details: e as ErrorDetails,
           });
-        }
+        },
       )
       .finally(() => setSavingSelectedFiles(false));
   };
 
   if (!detailsResponse) {
-    return (
-      <div className="p-4 text-text-tertiary">
-        Loading...
-      </div>
-    );
+    return <div className="p-4 text-text-tertiary">Loading...</div>;
   }
 
   return (
-    <div className="p-2">
+    <div className="p-2 text-sm">
       <FileListInput
         torrentId={torrentId}
         torrentDetails={detailsResponse}
