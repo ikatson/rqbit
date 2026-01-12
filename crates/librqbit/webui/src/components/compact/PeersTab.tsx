@@ -1,8 +1,16 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { PeerStats, PeerStatsSnapshot, TorrentStats } from "../../api-types";
 import { APIContext } from "../../context";
 import { formatBytes } from "../../helper/formatBytes";
 import { SortIcon } from "../SortIcon";
+import { customSetInterval } from "../../helper/customSetInterval";
 
 interface PeersTabProps {
   torrentId: number;
@@ -24,7 +32,13 @@ interface SpeedSample {
 
 const SPEED_AVERAGE_WINDOW_MS = 5000;
 
-type PeerSortColumn = "addr" | "connKind" | "downloadSpeed" | "uploadSpeed" | "downloaded" | "uploaded";
+type PeerSortColumn =
+  | "addr"
+  | "connKind"
+  | "downloadSpeed"
+  | "uploadSpeed"
+  | "downloaded"
+  | "uploaded";
 type PeerSortDirection = "asc" | "desc";
 
 interface StatBadgeProps {
@@ -45,14 +59,22 @@ const formatSpeed = (bytesPerSecond: number): string => {
   return formatBytes(bytesPerSecond) + "/s";
 };
 
-export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) => {
+export const PeersTab: React.FC<PeersTabProps> = ({
+  torrentId,
+  statsResponse,
+}) => {
   const API = useContext(APIContext);
-  const [peerSnapshot, setPeerSnapshot] = useState<PeerStatsSnapshot | null>(null);
+  const [peerSnapshot, setPeerSnapshot] = useState<PeerStatsSnapshot | null>(
+    null,
+  );
   const [peersWithSpeed, setPeersWithSpeed] = useState<PeerWithSpeed[]>([]);
   const [sortColumn, setSortColumn] = useState<PeerSortColumn>("downloadSpeed");
   const [sortDirection, setSortDirection] = useState<PeerSortDirection>("desc");
 
-  const prevSnapshotRef = useRef<{ snapshot: PeerStatsSnapshot; timestamp: number } | null>(null);
+  const prevSnapshotRef = useRef<{
+    snapshot: PeerStatsSnapshot;
+    timestamp: number;
+  } | null>(null);
   // Track speed samples per peer for averaging
   const speedHistoryRef = useRef<Map<string, SpeedSample[]>>(new Map());
 
@@ -60,27 +82,19 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
   useEffect(() => {
     if (!statsResponse?.live) return;
 
-    let cancelled = false;
-
-    const fetchPeerStats = async () => {
-      try {
-        const snapshot = await API.getPeerStats(torrentId);
-        if (!cancelled) {
-          setPeerSnapshot(snapshot);
-        }
-      } catch (e) {
-        // Ignore errors silently
-      }
-    };
-
-    fetchPeerStats();
-    const interval = setInterval(fetchPeerStats, 1000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [API, torrentId, statsResponse?.live]);
+    return customSetInterval(() => {
+      return API.getPeerStats(torrentId).then(
+        (stats) => {
+          setPeerSnapshot(stats);
+          return 1000;
+        },
+        (err) => {
+          console.error(err);
+          return 5000;
+        },
+      );
+    }, 0);
+  }, [torrentId, !!statsResponse?.live]);
 
   // Compute speeds when snapshot changes
   useEffect(() => {
@@ -93,43 +107,57 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
     const prev = prevSnapshotRef.current;
     const speedHistory = speedHistoryRef.current;
 
-    const newPeers: PeerWithSpeed[] = Object.entries(peerSnapshot.peers).map(([addr, stats]) => {
-      let instantDownloadSpeed = 0;
-      let instantUploadSpeed = 0;
+    const newPeers: PeerWithSpeed[] = Object.entries(peerSnapshot.peers).map(
+      ([addr, stats]) => {
+        let instantDownloadSpeed = 0;
+        let instantUploadSpeed = 0;
 
-      // Compute instantaneous speed from prev snapshot
-      if (prev && prev.snapshot.peers[addr]) {
-        const timeDiffSec = (now - prev.timestamp) / 1000;
-        if (timeDiffSec > 0) {
-          const prevStats = prev.snapshot.peers[addr];
-          const downloadedDiff = stats.counters.fetched_bytes - prevStats.counters.fetched_bytes;
-          const uploadedDiff = stats.counters.uploaded_bytes - prevStats.counters.uploaded_bytes;
-          instantDownloadSpeed = Math.max(0, downloadedDiff / timeDiffSec);
-          instantUploadSpeed = Math.max(0, uploadedDiff / timeDiffSec);
+        // Compute instantaneous speed from prev snapshot
+        if (prev && prev.snapshot.peers[addr]) {
+          const timeDiffSec = (now - prev.timestamp) / 1000;
+          if (timeDiffSec > 0) {
+            const prevStats = prev.snapshot.peers[addr];
+            const downloadedDiff =
+              stats.counters.fetched_bytes - prevStats.counters.fetched_bytes;
+            const uploadedDiff =
+              stats.counters.uploaded_bytes - prevStats.counters.uploaded_bytes;
+            instantDownloadSpeed = Math.max(0, downloadedDiff / timeDiffSec);
+            instantUploadSpeed = Math.max(0, uploadedDiff / timeDiffSec);
+          }
         }
-      }
 
-      // Add sample to history
-      let history = speedHistory.get(addr) ?? [];
-      history.push({
-        downloadSpeed: instantDownloadSpeed,
-        uploadSpeed: instantUploadSpeed,
-        timestamp: now,
-      });
-      // Remove old samples outside the averaging window
-      history = history.filter((s) => now - s.timestamp <= SPEED_AVERAGE_WINDOW_MS);
-      speedHistory.set(addr, history);
+        // Add sample to history
+        let history = speedHistory.get(addr) ?? [];
+        history.push({
+          downloadSpeed: instantDownloadSpeed,
+          uploadSpeed: instantUploadSpeed,
+          timestamp: now,
+        });
+        // Remove old samples outside the averaging window
+        history = history.filter(
+          (s) => now - s.timestamp <= SPEED_AVERAGE_WINDOW_MS,
+        );
+        speedHistory.set(addr, history);
 
-      // Compute average speed over the window
-      let avgDownloadSpeed = 0;
-      let avgUploadSpeed = 0;
-      if (history.length > 0) {
-        avgDownloadSpeed = history.reduce((sum, s) => sum + s.downloadSpeed, 0) / history.length;
-        avgUploadSpeed = history.reduce((sum, s) => sum + s.uploadSpeed, 0) / history.length;
-      }
+        // Compute average speed over the window
+        let avgDownloadSpeed = 0;
+        let avgUploadSpeed = 0;
+        if (history.length > 0) {
+          avgDownloadSpeed =
+            history.reduce((sum, s) => sum + s.downloadSpeed, 0) /
+            history.length;
+          avgUploadSpeed =
+            history.reduce((sum, s) => sum + s.uploadSpeed, 0) / history.length;
+        }
 
-      return { addr, stats, downloadSpeed: avgDownloadSpeed, uploadSpeed: avgUploadSpeed };
-    });
+        return {
+          addr,
+          stats,
+          downloadSpeed: avgDownloadSpeed,
+          uploadSpeed: avgUploadSpeed,
+        };
+      },
+    );
 
     // Clean up history for peers that are no longer present
     for (const addr of speedHistory.keys()) {
@@ -161,7 +189,9 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
           cmp = a.addr.localeCompare(b.addr);
           break;
         case "connKind":
-          cmp = (a.stats.conn_kind ?? "").localeCompare(b.stats.conn_kind ?? "");
+          cmp = (a.stats.conn_kind ?? "").localeCompare(
+            b.stats.conn_kind ?? "",
+          );
           break;
         case "downloadSpeed":
           cmp = a.downloadSpeed - b.downloadSpeed;
@@ -173,7 +203,8 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
           cmp = a.stats.counters.fetched_bytes - b.stats.counters.fetched_bytes;
           break;
         case "uploaded":
-          cmp = a.stats.counters.uploaded_bytes - b.stats.counters.uploaded_bytes;
+          cmp =
+            a.stats.counters.uploaded_bytes - b.stats.counters.uploaded_bytes;
           break;
       }
       return sortDirection === "asc" ? cmp : -cmp;
@@ -184,9 +215,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
 
   if (!statsResponse) {
     return (
-      <div className="p-4 text-gray-400 dark:text-slate-500">
-        Loading...
-      </div>
+      <div className="p-4 text-gray-400 dark:text-slate-500">Loading...</div>
     );
   }
 
@@ -206,12 +235,36 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
       {/* Aggregate Stats - Compact inline display */}
       {peerStats && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3 pb-2 border-b border-gray-200 dark:border-slate-700">
-          <StatBadge label="connected" value={peerStats.live} color="text-green-600 dark:text-green-400" />
-          <StatBadge label="connecting" value={peerStats.connecting} color="text-blue-600 dark:text-blue-400" />
-          <StatBadge label="queued" value={peerStats.queued} color="text-yellow-600 dark:text-yellow-400" />
-          <StatBadge label="seen" value={peerStats.seen} color="text-gray-600 dark:text-slate-300" />
-          <StatBadge label="dead" value={peerStats.dead} color="text-red-600 dark:text-red-400" />
-          <StatBadge label="not needed" value={peerStats.not_needed} color="text-gray-400 dark:text-slate-500" />
+          <StatBadge
+            label="connected"
+            value={peerStats.live}
+            color="text-green-600 dark:text-green-400"
+          />
+          <StatBadge
+            label="connecting"
+            value={peerStats.connecting}
+            color="text-blue-600 dark:text-blue-400"
+          />
+          <StatBadge
+            label="queued"
+            value={peerStats.queued}
+            color="text-yellow-600 dark:text-yellow-400"
+          />
+          <StatBadge
+            label="seen"
+            value={peerStats.seen}
+            color="text-gray-600 dark:text-slate-300"
+          />
+          <StatBadge
+            label="dead"
+            value={peerStats.dead}
+            color="text-red-600 dark:text-red-400"
+          />
+          <StatBadge
+            label="not needed"
+            value={peerStats.not_needed}
+            color="text-gray-400 dark:text-slate-500"
+          />
         </div>
       )}
 
@@ -222,27 +275,66 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
             <tr>
               <th className={headerClass} onClick={() => handleSort("addr")}>
                 IP Address
-                <SortIcon column="addr" sortColumn={sortColumn} sortDirection={sortDirection} />
+                <SortIcon
+                  column="addr"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
               </th>
-              <th className={headerClass} onClick={() => handleSort("connKind")}>
+              <th
+                className={headerClass}
+                onClick={() => handleSort("connKind")}
+              >
                 Type
-                <SortIcon column="connKind" sortColumn={sortColumn} sortDirection={sortDirection} />
+                <SortIcon
+                  column="connKind"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
               </th>
-              <th className={headerClass} onClick={() => handleSort("downloadSpeed")}>
+              <th
+                className={headerClass}
+                onClick={() => handleSort("downloadSpeed")}
+              >
                 Down Speed
-                <SortIcon column="downloadSpeed" sortColumn={sortColumn} sortDirection={sortDirection} />
+                <SortIcon
+                  column="downloadSpeed"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
               </th>
-              <th className={headerClass} onClick={() => handleSort("uploadSpeed")}>
+              <th
+                className={headerClass}
+                onClick={() => handleSort("uploadSpeed")}
+              >
                 Up Speed
-                <SortIcon column="uploadSpeed" sortColumn={sortColumn} sortDirection={sortDirection} />
+                <SortIcon
+                  column="uploadSpeed"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
               </th>
-              <th className={headerClass} onClick={() => handleSort("downloaded")}>
+              <th
+                className={headerClass}
+                onClick={() => handleSort("downloaded")}
+              >
                 Downloaded
-                <SortIcon column="downloaded" sortColumn={sortColumn} sortDirection={sortDirection} />
+                <SortIcon
+                  column="downloaded"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
               </th>
-              <th className={headerClass} onClick={() => handleSort("uploaded")}>
+              <th
+                className={headerClass}
+                onClick={() => handleSort("uploaded")}
+              >
                 Uploaded
-                <SortIcon column="uploaded" sortColumn={sortColumn} sortDirection={sortDirection} />
+                <SortIcon
+                  column="uploaded"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
               </th>
             </tr>
           </thead>
@@ -253,7 +345,9 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrentId, statsResponse }) 
                   colSpan={6}
                   className="px-3 py-4 text-center text-gray-400 dark:text-slate-500"
                 >
-                  {peerSnapshot === null ? "Loading peer list..." : "No connected peers"}
+                  {peerSnapshot === null
+                    ? "Loading peer list..."
+                    : "No connected peers"}
                 </td>
               </tr>
             ) : (
