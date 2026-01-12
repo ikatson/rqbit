@@ -43,7 +43,7 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
       }
       return 30000; // 30s when paused or seeding
     }, 0);
-  }, [torrentId, totalPieces, stats?.state, stats?.finished, API]);
+  }, [torrentId, totalPieces, stats?.state, stats?.finished]);
 
   // Render bitmap to canvas - single horizontal line
   useEffect(() => {
@@ -74,8 +74,7 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
       const byteIndex = Math.floor(pieceIndex / 8);
       const bitIndex = 7 - (pieceIndex % 8); // MSB0 ordering
       return (
-        byteIndex < bitmap.length &&
-        ((bitmap[byteIndex] >> bitIndex) & 1) === 1
+        byteIndex < bitmap.length && ((bitmap[byteIndex] >> bitIndex) & 1) === 1
       );
     };
 
@@ -100,7 +99,7 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
         const startPiece = Math.floor(x * piecesPerPixel);
         const endPiece = Math.min(
           Math.ceil((x + 1) * piecesPerPixel),
-          totalPieces
+          totalPieces,
         );
 
         // Count how many pieces in this column we have

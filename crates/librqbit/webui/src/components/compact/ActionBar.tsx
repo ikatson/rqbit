@@ -10,6 +10,11 @@ import {
 } from "../modal/DeleteTorrentModal";
 import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
 
+const btnBase =
+  "inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+const btnDefault = `${btnBase} bg-white dark:bg-slate-700 border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-600`;
+const btnDanger = `${btnBase} bg-white dark:bg-slate-700 border-gray-300 dark:border-slate-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20`;
+
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
   const torrents = useTorrentStore((state) => state.torrents);
@@ -24,7 +29,6 @@ export const ActionBar: React.FC = () => {
   const selectedCount = selectedTorrentIds.size;
   const hasSelection = selectedCount > 0;
 
-  // Helper to get torrent data by id
   const getTorrentById = (id: number) => torrents?.find((t) => t.id === id);
 
   const selectedTorrents = useMemo((): TorrentToDelete[] => {
@@ -44,22 +48,22 @@ export const ActionBar: React.FC = () => {
     });
   }, [selectedTorrentIds, torrents]);
 
-  const pauseSelected = async () => {
+  const runBulkAction = async (
+    action: (id: number) => Promise<void>,
+    skipState: string,
+    errorLabel: string
+  ) => {
     setDisabled(true);
     try {
       for (const id of selectedTorrentIds) {
-        // Skip already paused torrents
         const torrent = getTorrentById(id);
-        if (torrent?.stats?.state === STATE_PAUSED) {
-          continue;
-        }
+        if (torrent?.stats?.state === skipState) continue;
         try {
-          await API.pause(id);
-          // Refresh immediately after each operation
+          await action(id);
           refreshTorrents();
         } catch (e) {
           setCloseableError({
-            text: `Error pausing torrent id=${id}`,
+            text: `Error ${errorLabel} torrent id=${id}`,
             details: e as ErrorDetails,
           });
         }
@@ -69,93 +73,50 @@ export const ActionBar: React.FC = () => {
     }
   };
 
-  const resumeSelected = async () => {
-    setDisabled(true);
-    try {
-      for (const id of selectedTorrentIds) {
-        // Skip already live torrents
-        const torrent = getTorrentById(id);
-        if (torrent?.stats?.state === STATE_LIVE) {
-          continue;
-        }
-        try {
-          await API.start(id);
-          // Refresh immediately after each operation
-          refreshTorrents();
-        } catch (e) {
-          setCloseableError({
-            text: `Error starting torrent id=${id}`,
-            details: e as ErrorDetails,
-          });
-        }
-      }
-    } finally {
-      setDisabled(false);
-    }
-  };
-
-  const handleDeleteClick = () => {
-    setShowDeleteModal(true);
-  };
-
-  const handleDeleteModalHide = () => {
-    setShowDeleteModal(false);
-  };
+  const pauseSelected = () =>
+    runBulkAction((id) => API.pause(id), STATE_PAUSED, "pausing");
+  const resumeSelected = () =>
+    runBulkAction((id) => API.start(id), STATE_LIVE, "starting");
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
       <button
         onClick={resumeSelected}
         disabled={disabled || !hasSelection}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md
-          bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600
-          text-gray-700 dark:text-slate-200
-          hover:bg-gray-50 dark:hover:bg-slate-600
-          disabled:opacity-50 disabled:cursor-not-allowed
-          transition-colors"
+        className={btnDefault}
         title="Resume selected torrents"
       >
-        <FaPlay className="w-3 h-3" />
+        <FaPlay className="w-2.5 h-2.5" />
         Resume
       </button>
       <button
         onClick={pauseSelected}
         disabled={disabled || !hasSelection}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md
-          bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600
-          text-gray-700 dark:text-slate-200
-          hover:bg-gray-50 dark:hover:bg-slate-600
-          disabled:opacity-50 disabled:cursor-not-allowed
-          transition-colors"
+        className={btnDefault}
         title="Pause selected torrents"
       >
-        <FaPause className="w-3 h-3" />
+        <FaPause className="w-2.5 h-2.5" />
         Pause
       </button>
       <button
-        onClick={handleDeleteClick}
+        onClick={() => setShowDeleteModal(true)}
         disabled={disabled || !hasSelection}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md
-          bg-white dark:bg-slate-700 border border-gray-300 dark:border-slate-600
-          text-red-600 dark:text-red-400
-          hover:bg-red-50 dark:hover:bg-red-900/20
-          disabled:opacity-50 disabled:cursor-not-allowed
-          transition-colors"
+        className={btnDanger}
         title="Delete selected torrents"
       >
-        <FaTrash className="w-3 h-3" />
+        <FaTrash className="w-2.5 h-2.5" />
         Delete
       </button>
 
       {hasSelection && (
-        <span className="ml-2 text-sm text-gray-500 dark:text-slate-400">
+        <span className="ml-1.5 text-xs text-gray-500 dark:text-slate-400">
           {selectedCount} selected
         </span>
       )}
 
       <DeleteTorrentModal
         show={showDeleteModal}
-        onHide={handleDeleteModalHide}
+        onHide={() => setShowDeleteModal(false)}
         torrents={selectedTorrents}
       />
     </div>
