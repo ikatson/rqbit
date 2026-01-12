@@ -14,23 +14,21 @@ use librqbit::{
     CreateTorrentResult, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
     create_torrent,
     http_api::{HttpApi, HttpApiOptions},
-    limits::{Limits, LimitsConfig},
+    limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
 };
+use librqbit_core::constants::CHUNK_SIZE;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use rand::{RngCore, SeedableRng, seq::IndexedRandom};
-use tracing::info;
+use tracing::{Level, info};
+use tracing_subscriber::EnvFilter;
 
 struct TestHarness {
     td: PathBuf,
     torrents: Vec<FakeTorrent>,
 }
 
-fn get_root() -> PathBuf {
-    std::env::temp_dir().join("rqbit-simulate-traffic")
-}
-
-pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
+fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -49,13 +47,13 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     }
 }
 
-pub fn create_default_random_dir_with_torrents(dir: &Path, num_files: usize, file_size: usize) {
+fn create_default_random_dir_with_torrents(dir: &Path, num_files: usize, file_size: usize) {
     for f in 0..num_files {
         create_new_file_with_random_content(&dir.join(format!("{f}.data")), file_size);
     }
 }
 
-pub async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
+async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
     static TORRENT_NAMES: &[&str] = &[
         "Ubuntu 24.04 LTS Desktop amd64",
         "Arch.Linux.2026.01.01.x86_64.Rolling-RELEASE",
@@ -89,11 +87,12 @@ pub async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
         "Lubuntu.24.04.LTS.Minimal.Install.x64",
     ];
 
-    create_default_random_dir_with_torrents(path, 16, 8 * 1024 * 1024);
+    create_default_random_dir_with_torrents(path, 4, 8 * 1024 * 1024);
     create_torrent(
         path,
         CreateTorrentOptions {
             name: Some(TORRENT_NAMES.choose(&mut rand::rng()).unwrap()),
+            piece_length: Some(CHUNK_SIZE),
             ..Default::default()
         },
         &BlockingSpawner::new(1),
@@ -106,7 +105,7 @@ struct FakeTorrent {
     torrent_file: Bytes,
 }
 
-pub async fn create_torrents(td: &Path, count: usize) -> anyhow::Result<Vec<FakeTorrent>> {
+async fn create_torrents(td: &Path, count: usize) -> anyhow::Result<Vec<FakeTorrent>> {
     let mut result = Vec::new();
     for torrent in 0..count {
         let dir = td.join(&torrent.to_string());
@@ -150,7 +149,7 @@ impl TestHarness {
                     utp_opts: None,
                 }),
                 ratelimits: LimitsConfig {
-                    upload_bps: NonZero::new(512 * 1024),
+                    upload_bps: NonZero::new(64 * 1024),
                     download_bps: Default::default(),
                 },
                 disable_local_service_discovery: false,
@@ -272,6 +271,7 @@ impl TestHarness {
                 read_only: false,
                 basic_auth: None,
                 allow_create: true,
+                prometheus_handle: None,
             }),
         );
         let sock = TcpListener::bind_tcp(
@@ -289,7 +289,13 @@ impl TestHarness {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(Level::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
 
     let root = std::env::temp_dir().join("rqbit-simulate-traffic");
 
