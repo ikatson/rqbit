@@ -1,0 +1,8 @@
+{
+  "name": "rqbit-workspace",
+  "private": true,
+  "workspaces": [
+    "desktop",
+    "crates/librqbit/webui"
+  ]
+}

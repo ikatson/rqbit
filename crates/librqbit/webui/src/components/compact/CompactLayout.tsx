@@ -88,7 +88,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
       <div
         onMouseDown={handleMouseDown}
         className={`
-          h-1.5 cursor-ns-resize flex-shrink-0
+          h-1.5 cursor-ns-resize shrink-0
           bg-gray-200 dark:bg-slate-700
           hover:bg-blue-400 dark:hover:bg-blue-500
           transition-colors
@@ -100,7 +100,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
           <div className="w-8 h-0.5 bg-gray-400 dark:bg-slate-500 rounded-full" />
         </div>
       </div>
-      <div style={{ height: detailPaneHeight }} className="flex-shrink-0">
+      <div style={{ height: detailPaneHeight }} className="shrink-0">
         <DetailPane />
       </div>
     </div>

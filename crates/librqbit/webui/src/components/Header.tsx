@@ -25,8 +25,8 @@ export const Header = ({
         </h1>
       </div>
       <div className="flex flex-wrap items-center gap-1 m-2">
-        <MagnetInput className="flex-grow justify-center dark:text-white" />
-        <FileInput className="flex-grow justify-center dark:text-white" />
+        <MagnetInput className="grow justify-center dark:text-white" />
+        <FileInput className="grow justify-center dark:text-white" />
         {settingsSlot && (
           <>
             <div className="hidden lg:block w-px h-6 bg-gray-300 dark:bg-slate-600 mx-2" />

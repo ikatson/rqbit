@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { JSX, useContext, useEffect, useState } from "react";
 import { ErrorDetails as ApiErrorDetails } from "./api-types";
 import { APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
@@ -34,10 +34,10 @@ export const RqbitWebUI = (props: {
 
   const setTorrents = useTorrentStore((state) => state.setTorrents);
   const setTorrentsLoading = useTorrentStore(
-    (state) => state.setTorrentsLoading
+    (state) => state.setTorrentsLoading,
   );
   const setRefreshTorrents = useTorrentStore(
-    (state) => state.setRefreshTorrents
+    (state) => state.setRefreshTorrents,
   );
 
   const refreshTorrents = async (): Promise<number> => {
@@ -50,7 +50,7 @@ export const RqbitWebUI = (props: {
       // Determine polling interval based on torrent states
       // Fast poll (1s) if any torrent is live/initializing, slow poll (5s) otherwise
       const hasActiveTorrents = response.torrents.some(
-        (t) => t.stats?.state === "live" || t.stats?.state === "initializing"
+        (t) => t.stats?.state === "live" || t.stats?.state === "initializing",
       );
       return hasActiveTorrents ? 1000 : 5000;
     } catch (e) {
@@ -84,9 +84,9 @@ export const RqbitWebUI = (props: {
           (e) => {
             console.error(e);
             return 5000;
-          }
+          },
         ),
-      0
+      0,
     );
   }, []);
 

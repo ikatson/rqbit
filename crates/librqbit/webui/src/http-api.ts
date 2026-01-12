@@ -14,10 +14,11 @@ const apiUrl = (() => {
   if (window.origin === "null") {
     return "http://localhost:3030";
   }
+
   const url = new URL(window.location.href);
 
   // assume Vite devserver
-  if (url.port == "3031") {
+  if (url.port == "3031" || url.port == "1420") {
     return `${url.protocol}//${url.hostname}:3030`;
   }
 
@@ -46,7 +47,7 @@ const makeRequest = async (
   method: string,
   path: string,
   data?: any,
-  isJson?: boolean
+  isJson?: boolean,
 ): Promise<any> => {
   console.log(method, path);
   const url = apiUrl + path;
@@ -103,7 +104,9 @@ const makeRequest = async (
 
 export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getStreamLogsUrl: () => apiUrl + "/stream_logs",
-  listTorrents: (opts?: { withStats?: boolean }): Promise<ListTorrentsResponse> => {
+  listTorrents: (opts?: {
+    withStats?: boolean;
+  }): Promise<ListTorrentsResponse> => {
     const url = opts?.withStats ? "/torrents?with_stats=true" : "/torrents";
     return makeRequest("GET", url);
   },
@@ -154,7 +157,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
       {
         only_files: files,
       },
-      true
+      true,
     );
   },
 
@@ -180,7 +183,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
-    filename?: string | null
+    filename?: string | null,
   ) => {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {

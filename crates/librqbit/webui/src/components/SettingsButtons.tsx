@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { JSX, useState } from "react";
 import { BsBodyText, BsMoon, BsSun } from "react-icons/bs";
 import { IconButton } from "./buttons/IconButton";
 import { ViewModeToggle } from "./ViewModeToggle";
