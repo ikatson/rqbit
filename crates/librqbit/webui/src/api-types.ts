@@ -25,6 +25,7 @@ export interface TorrentDetails {
   info_hash: string;
   files: Array<TorrentFile>;
   total_pieces?: number;
+  output_folder: string;
 }
 
 // Interface for torrent list item (from bulk /torrents?with_stats=true endpoint)

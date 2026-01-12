@@ -41,6 +41,7 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
   const downloadSpeed =
     statsResponse?.live?.download_speed?.human_readable ?? "-";
   const uploadSpeed = statsResponse?.live?.upload_speed?.human_readable ?? "-";
+  const uploadedBytes = statsResponse?.live?.snapshot.uploaded_bytes ?? 0;
 
   const peerStats = statsResponse?.live?.snapshot.peer_stats;
   const peersDisplay = peerStats ? `${peerStats.live}/${peerStats.seen}` : "-";
@@ -123,6 +124,9 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
       </td>
       <td className="w-24 px-2 py-2 text-right text-text-secondary">
         {uploadSpeed}
+      </td>
+      <td className="w-24 px-2 py-2 text-right text-text-secondary">
+        {uploadedBytes > 0 && <>{formatBytes(uploadedBytes)}</>}
       </td>
       <td className="w-20 px-2 py-2 text-center text-text-secondary">
         {displayEta}

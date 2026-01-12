@@ -51,7 +51,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const eta = getCompletionETA(statsResponse);
 
   const peerStats = statsResponse.live?.snapshot.peer_stats;
-  const peersConnected = peerStats?.live ?? 0;
+  const peersLive = peerStats?.live ?? 0;
   const peersSeen = peerStats?.seen ?? 0;
 
   const getStateDisplay = () => {
@@ -99,57 +99,52 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
       {/* Stats row */}
       <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <span>
+        <div className="flex-1">
           <span className="text-text-tertiary">Status </span>
           <span className={stateDisplay.color}>{stateDisplay.text}</span>
-        </span>
-        <span>
-          <span className="text-text-tertiary">Progress </span>
-          <span className="text-text">{progressPercentage.toFixed(1)}%</span>
-          <span className="text-text-tertiary">
-            {" "}
-            ({formatBytes(progressBytes)} / {formatBytes(totalBytes)})
-          </span>
-        </span>
-        <span>
+        </div>
+        <div className="flex-1">
+          <div>
+            <span className="text-text-tertiary">Progress </span>
+            <span className="text-text">{progressPercentage.toFixed(1)}%</span>
+          </div>
+          <div className="text-text">
+            {formatBytes(progressBytes)} / {formatBytes(totalBytes)}
+          </div>
+        </div>
+        <div className="flex-1">
           <span className="text-text-tertiary">Down </span>
           <span className="text-text">{downloadSpeed}</span>
-        </span>
-        <span>
+        </div>
+        <div className="flex-1">
           <span className="text-text-tertiary">Up </span>
-          <span className="text-text">
-            {uploadSpeed} (total {formatBytes(totalUploadedBytes)})
-          </span>
-        </span>
-        <span>
+          <span className="text-text">{uploadSpeed}</span>
+          <div>Total {formatBytes(totalUploadedBytes)}</div>
+        </div>
+        <div className="flex-1">
           <span className="text-text-tertiary">ETA </span>
           <span className="text-text">{finished ? "Complete" : eta}</span>
-        </span>
-        <span>
-          <span className="text-text-tertiary">Peers </span>
+        </div>
+        <div className="flex-1">
+          <span className="text-text-tertiary">Peers Live/Seen </span>
           <span className="text-text">
-            {peersConnected}/{peersSeen}
+            {peersLive}/{peersSeen}
           </span>
-        </span>
+        </div>
       </div>
 
       {/* Info hash */}
       <div className="mt-2 flex items-center gap-1">
-        <span className="text-text-tertiary">Hash</span>
-        <code className="font-mono text-text-tertiary truncate flex-1">
-          {infoHash}
+        <span className="text-text-tertiary">Info Hash</span>
+        <code className="font-mono text-text truncate flex-1">{infoHash}</code>
+      </div>
+
+      {/* Output folder */}
+      <div className="mt-2 flex items-center gap-1">
+        <span className="text-text-tertiary">Output folder</span>
+        <code className="font-mono text-text truncate flex-1">
+          {detailsResponse.output_folder}
         </code>
-        <button
-          onClick={copyInfoHash}
-          className="p-0.5 text-text-tertiary hover:text-text transition-colors"
-          title="Copy info hash"
-        >
-          {copied ? (
-            <FaCheck className="w-3 h-3 text-success" />
-          ) : (
-            <FaCopy className="w-3 h-3" />
-          )}
-        </button>
       </div>
 
       {/* Error */}

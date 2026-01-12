@@ -33,6 +33,7 @@ const TorrentRowData: React.FC<TorrentRowDataProps> = ({
     info_hash: torrent.info_hash,
     files: [],
     total_pieces: torrent.total_pieces,
+    output_folder: torrent.output_folder,
   };
 
   return (
@@ -112,6 +113,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
           const aSpeed = a.stats?.live?.upload_speed?.mbps ?? 0;
           const bSpeed = b.stats?.live?.upload_speed?.mbps ?? 0;
           cmp = aSpeed - bSpeed;
+          break;
+        }
+        case "uploadedBytes": {
+          const aBytes = a.stats?.live?.snapshot.uploaded_bytes ?? 0;
+          const bBytes = b.stats?.live?.snapshot.uploaded_bytes ?? 0;
+          cmp = aBytes - bBytes;
           break;
         }
         case "eta": {
@@ -306,6 +313,17 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             Up
             <SortIcon
               column="upSpeed"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
+          </th>
+          <th
+            className={`w-24 ${headerClass} text-right`}
+            onClick={() => handleSort("uploadedBytes")}
+          >
+            Uploaded
+            <SortIcon
+              column="uploadedBytes"
               sortColumn={sortColumn}
               sortDirection={sortDirection}
             />

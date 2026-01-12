@@ -19,6 +19,7 @@ export type TorrentSortColumn =
   | "progress"
   | "downSpeed"
   | "upSpeed"
+  | "uploadedBytes"
   | "eta"
   | "peers";
 export type SortDirection = "asc" | "desc";
