@@ -147,10 +147,9 @@ export const TorrentActions: React.FC<{
         <FaClipboardList className="hover:text-green-500" />
       </IconButton>
       <DeleteTorrentModal
-        id={id}
         show={deleting}
         onHide={cancelDeleting}
-        torrent={detailsResponse}
+        torrents={[{ id, details: detailsResponse }]}
       />
     </div>
   );

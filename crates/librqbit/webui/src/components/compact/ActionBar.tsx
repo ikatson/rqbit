@@ -1,15 +1,17 @@
-import { useContext, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { APIContext } from "../../context";
 import { useUIStore } from "../../stores/uiStore";
 import { useTorrentStore } from "../../stores/torrentStore";
 import { useErrorStore } from "../../stores/errorStore";
-import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
+import {
+  DeleteTorrentModal,
+  TorrentToDelete,
+} from "../modal/DeleteTorrentModal";
 import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
 
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
-  const clearSelection = useUIStore((state) => state.clearSelection);
   const torrentDataCache = useUIStore((state) => state.torrentDataCache);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
@@ -21,6 +23,13 @@ export const ActionBar: React.FC = () => {
 
   const selectedCount = selectedTorrentIds.size;
   const hasSelection = selectedCount > 0;
+
+  const selectedTorrents = useMemo((): TorrentToDelete[] => {
+    return Array.from(selectedTorrentIds).map((id) => ({
+      id,
+      details: torrentDataCache.get(id)?.details ?? null,
+    }));
+  }, [selectedTorrentIds, torrentDataCache]);
 
   const pauseSelected = async () => {
     setDisabled(true);
@@ -76,28 +85,7 @@ export const ActionBar: React.FC = () => {
     setShowDeleteModal(true);
   };
 
-  const handleDeleteConfirm = async (deleteFiles: boolean) => {
-    setDisabled(true);
-    setShowDeleteModal(false);
-    try {
-      const promises = Array.from(selectedTorrentIds).map((id) => {
-        const deleteMethod = deleteFiles ? API.delete : API.forget;
-        return deleteMethod(id).catch((e) => {
-          setCloseableError({
-            text: `Error deleting torrent id=${id}`,
-            details: e,
-          });
-        });
-      });
-      await Promise.all(promises);
-      clearSelection();
-      refreshTorrents();
-    } finally {
-      setDisabled(false);
-    }
-  };
-
-  const handleDeleteCancel = () => {
+  const handleDeleteModalHide = () => {
     setShowDeleteModal(false);
   };
 
@@ -152,68 +140,11 @@ export const ActionBar: React.FC = () => {
         </span>
       )}
 
-      {showDeleteModal && (
-        <BulkDeleteModal
-          count={selectedCount}
-          onConfirm={handleDeleteConfirm}
-          onCancel={handleDeleteCancel}
-        />
-      )}
-    </div>
-  );
-};
-
-interface BulkDeleteModalProps {
-  count: number;
-  onConfirm: (deleteFiles: boolean) => void;
-  onCancel: () => void;
-}
-
-const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
-  count,
-  onConfirm,
-  onCancel,
-}) => {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-slate-100 mb-4">
-          Delete {count} torrent{count > 1 ? "s" : ""}?
-        </h3>
-        <p className="text-sm text-gray-600 dark:text-slate-400 mb-6">
-          Choose whether to also delete the downloaded files.
-        </p>
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={() => onConfirm(false)}
-            className="w-full px-4 py-2 text-sm font-medium rounded-md
-              bg-gray-100 dark:bg-slate-700
-              text-gray-700 dark:text-slate-200
-              hover:bg-gray-200 dark:hover:bg-slate-600
-              transition-colors"
-          >
-            Remove from list only
-          </button>
-          <button
-            onClick={() => onConfirm(true)}
-            className="w-full px-4 py-2 text-sm font-medium rounded-md
-              bg-red-600 text-white
-              hover:bg-red-700
-              transition-colors"
-          >
-            Delete with files
-          </button>
-          <button
-            onClick={onCancel}
-            className="w-full px-4 py-2 text-sm font-medium rounded-md
-              text-gray-500 dark:text-slate-400
-              hover:text-gray-700 dark:hover:text-slate-200
-              transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
+      <DeleteTorrentModal
+        show={showDeleteModal}
+        onHide={handleDeleteModalHide}
+        torrents={selectedTorrents}
+      />
     </div>
   );
 };
