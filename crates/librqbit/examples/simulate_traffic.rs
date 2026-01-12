@@ -87,7 +87,11 @@ async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
         "Lubuntu.24.04.LTS.Minimal.Install.x64",
     ];
 
-    create_default_random_dir_with_torrents(path, 4, 8 * 1024 * 1024);
+    create_default_random_dir_with_torrents(
+        path,
+        rand::random_range(2..10),
+        rand::random_range(1..8) * 1024 * 1024,
+    );
     create_torrent(
         path,
         CreateTorrentOptions {

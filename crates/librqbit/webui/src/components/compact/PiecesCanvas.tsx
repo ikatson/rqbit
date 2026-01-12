@@ -134,7 +134,7 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
       <canvas
         ref={canvasRef}
         className="w-full rounded"
-        style={{ height: `${CANVAS_HEIGHT}px` }}
+        style={{ height: `${CANVAS_HEIGHT}px`, imageRendering: "pixelated" }}
       />
     </div>
   );
