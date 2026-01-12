@@ -62,7 +62,6 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
 
     // Colors
     const haveColor = "#22c55e"; // green-500
-    const partialColor = "#86efac"; // green-300 for partial
     const missingColor = "#374151"; // gray-700
 
     // Fill background with missing color
@@ -78,50 +77,28 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
       );
     };
 
-    if (totalPieces <= canvasWidth) {
-      // Few pieces: each piece gets a rectangle
-      const pieceWidth = canvasWidth / totalPieces;
+    const pieceWidth = canvasWidth / totalPieces;
+    ctx.fillStyle = haveColor;
 
-      for (let i = 0; i < totalPieces; i++) {
-        if (hasPiece(i)) {
-          const x = Math.floor(i * pieceWidth);
-          const nextX = Math.floor((i + 1) * pieceWidth);
-          const width = nextX - x;
-          ctx.fillStyle = haveColor;
+    let runStart = -1;
+
+    for (let i = 0; i < totalPieces; i++) {
+      if (hasPiece(i)) {
+        if (runStart === -1) runStart = i;
+      } else {
+        if (runStart !== -1) {
+          const x = runStart * pieceWidth;
+          const width = (i - runStart) * pieceWidth;
           ctx.fillRect(x, 0, width, CANVAS_HEIGHT);
+          runStart = -1;
         }
       }
-    } else {
-      // Many pieces: aggregate multiple pieces per pixel column
-      const piecesPerPixel = totalPieces / canvasWidth;
+    }
 
-      for (let x = 0; x < canvasWidth; x++) {
-        const startPiece = Math.floor(x * piecesPerPixel);
-        const endPiece = Math.min(
-          Math.ceil((x + 1) * piecesPerPixel),
-          totalPieces,
-        );
-
-        // Count how many pieces in this column we have
-        let haveCount = 0;
-        const totalCount = endPiece - startPiece;
-
-        for (let p = startPiece; p < endPiece; p++) {
-          if (hasPiece(p)) {
-            haveCount++;
-          }
-        }
-
-        // Color based on completion ratio
-        if (haveCount === totalCount) {
-          ctx.fillStyle = haveColor;
-          ctx.fillRect(x, 0, 1, CANVAS_HEIGHT);
-        } else if (haveCount > 0) {
-          ctx.fillStyle = partialColor;
-          ctx.fillRect(x, 0, 1, CANVAS_HEIGHT);
-        }
-        // Missing pieces keep the background color
-      }
+    if (runStart !== -1) {
+      const x = runStart * pieceWidth;
+      const width = (totalPieces - runStart) * pieceWidth;
+      ctx.fillRect(x, 0, width, CANVAS_HEIGHT);
     }
   }, [bitmap, totalPieces]);
 
