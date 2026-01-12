@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { TorrentId } from "../../api-types";
+import { TorrentListItem } from "../../api-types";
 import { ActionBar } from "./ActionBar";
 import { TorrentTable } from "./TorrentTable";
 import { DetailPane } from "./DetailPane";
@@ -29,7 +29,7 @@ function getStoredDetailPaneHeight(): number {
 }
 
 interface CompactLayoutProps {
-  torrents: TorrentId[] | null;
+  torrents: TorrentListItem[] | null;
   loading: boolean;
 }
 

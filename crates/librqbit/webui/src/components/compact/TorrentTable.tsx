@@ -1,22 +1,18 @@
-import { useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import {
-  TorrentId,
-  TorrentDetails,
-  TorrentStats,
+  TorrentListItem,
   STATE_INITIALIZING,
-  STATE_LIVE,
 } from "../../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../../context";
-import { customSetInterval } from "../../helper/customSetInterval";
-import { loopUntilSuccess } from "../../helper/loopUntilSuccess";
+import { RefreshTorrentStatsContext } from "../../context";
 import { TorrentTableRow } from "./TorrentTableRow";
 import { TorrentSortColumn, useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
 import { SortIcon } from "../SortIcon";
 import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
+import { useTorrentStore } from "../../stores/torrentStore";
 
 interface TorrentRowDataProps {
-  torrent: TorrentId;
+  torrent: TorrentListItem;
   isSelected: boolean;
   onRowClick: (e: React.MouseEvent) => void;
   onCheckboxChange: () => void;
@@ -28,55 +24,19 @@ const TorrentRowData: React.FC<TorrentRowDataProps> = ({
   onRowClick,
   onCheckboxChange,
 }) => {
-  const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(
-    null,
-  );
-  const [statsResponse, setStatsResponse] = useState<TorrentStats | null>(null);
-  const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
-  const API = useContext(APIContext);
-  const updateTorrentDataCache = useUIStore(
-    (state) => state.updateTorrentDataCache,
-  );
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
   const forceStatsRefreshCallback = () => {
-    setForceStatsRefresh((prev) => prev + 1);
+    refreshTorrents();
   };
 
-  useEffect(() => {
-    return loopUntilSuccess(async () => {
-      await API.getTorrentDetails(torrent.id).then((details) => {
-        setDetailsResponse(details);
-        updateTorrentDataCache(torrent.id, { details });
-      });
-    }, 1000);
-  }, [forceStatsRefresh, torrent.id, updateTorrentDataCache]);
-
-  useEffect(() => {
-    return customSetInterval(async () => {
-      const errorInterval = 10000;
-      const liveInterval = 1000;
-      const nonLiveInterval = 10000;
-
-      return API.getTorrentStats(torrent.id)
-        .then((stats) => {
-          setStatsResponse(stats);
-          updateTorrentDataCache(torrent.id, { stats });
-          return stats;
-        })
-        .then(
-          (stats) => {
-            if (
-              stats.state === STATE_INITIALIZING ||
-              stats.state === STATE_LIVE
-            ) {
-              return liveInterval;
-            }
-            return nonLiveInterval;
-          },
-          () => errorInterval,
-        );
-    }, 0);
-  }, [forceStatsRefresh, torrent.id, updateTorrentDataCache]);
+  // Create synthetic details for display (files not included in list response)
+  const syntheticDetails = {
+    name: torrent.name,
+    info_hash: torrent.info_hash,
+    files: [],
+    total_pieces: torrent.total_pieces,
+  };
 
   return (
     <RefreshTorrentStatsContext.Provider
@@ -84,8 +44,8 @@ const TorrentRowData: React.FC<TorrentRowDataProps> = ({
     >
       <TorrentTableRow
         id={torrent.id}
-        detailsResponse={detailsResponse}
-        statsResponse={statsResponse}
+        detailsResponse={syntheticDetails}
+        statsResponse={torrent.stats ?? null}
         isSelected={isSelected}
         onRowClick={onRowClick}
         onCheckboxChange={onCheckboxChange}
@@ -95,7 +55,7 @@ const TorrentRowData: React.FC<TorrentRowDataProps> = ({
 };
 
 interface TorrentTableProps {
-  torrents: TorrentId[] | null;
+  torrents: TorrentListItem[] | null;
   loading: boolean;
 }
 
@@ -113,78 +73,70 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const sortColumn = useUIStore((state) => state.sortColumn);
   const sortDirection = useUIStore((state) => state.sortDirection);
   const setSortColumn = useUIStore((state) => state.setSortColumn);
-  const torrentDataCache = useUIStore((state) => state.torrentDataCache);
 
   const sortedTorrents = useMemo(() => {
     if (!torrents) return null;
 
     return [...torrents].sort((a, b) => {
-      const aData = torrentDataCache.get(a.id);
-      const bData = torrentDataCache.get(b.id);
-
       let cmp = 0;
       switch (sortColumn) {
         case "id":
           cmp = a.id - b.id;
           break;
         case "name": {
-          const aName = torrentDisplayName(
-            aData?.details ?? null,
-          ).toLowerCase();
-          const bName = torrentDisplayName(
-            bData?.details ?? null,
-          ).toLowerCase();
+          const aName = (a.name ?? "").toLowerCase();
+          const bName = (b.name ?? "").toLowerCase();
           cmp = aName.localeCompare(bName);
           break;
         }
         case "progress": {
-          const aProgress = aData?.stats?.total_bytes
-            ? (aData.stats.progress_bytes ?? 0) / aData.stats.total_bytes
+          const aProgress = a.stats?.total_bytes
+            ? (a.stats.progress_bytes ?? 0) / a.stats.total_bytes
             : 0;
-          const bProgress = bData?.stats?.total_bytes
-            ? (bData.stats.progress_bytes ?? 0) / bData.stats.total_bytes
+          const bProgress = b.stats?.total_bytes
+            ? (b.stats.progress_bytes ?? 0) / b.stats.total_bytes
             : 0;
           cmp = aProgress - bProgress;
           break;
         }
         case "downSpeed": {
-          const aSpeed = aData?.stats?.live?.download_speed?.mbps ?? 0;
-          const bSpeed = bData?.stats?.live?.download_speed?.mbps ?? 0;
+          const aSpeed = a.stats?.live?.download_speed?.mbps ?? 0;
+          const bSpeed = b.stats?.live?.download_speed?.mbps ?? 0;
           cmp = aSpeed - bSpeed;
           break;
         }
         case "upSpeed": {
-          const aSpeed = aData?.stats?.live?.upload_speed?.mbps ?? 0;
-          const bSpeed = bData?.stats?.live?.upload_speed?.mbps ?? 0;
+          const aSpeed = a.stats?.live?.upload_speed?.mbps ?? 0;
+          const bSpeed = b.stats?.live?.upload_speed?.mbps ?? 0;
           cmp = aSpeed - bSpeed;
           break;
         }
         case "eta": {
           // ETA: lower is "better" (finishing sooner), Infinity for no ETA
-          const getEta = (data: typeof aData) => {
-            if (!data?.stats?.live) return Infinity;
+          const getEta = (t: TorrentListItem) => {
+            if (!t.stats?.live) return Infinity;
             const remaining =
-              (data.stats.total_bytes ?? 0) - (data.stats.progress_bytes ?? 0);
-            const speed = data.stats.live.download_speed?.mbps ?? 0;
+              (t.stats.total_bytes ?? 0) - (t.stats.progress_bytes ?? 0);
+            const speed = t.stats.live.download_speed?.mbps ?? 0;
             if (speed <= 0 || remaining <= 0)
               return remaining <= 0 ? 0 : Infinity;
             return remaining / (speed * 1024 * 1024);
           };
-          const aEta = getEta(aData);
-          const bEta = getEta(bData);
+          const aEta = getEta(a);
+          const bEta = getEta(b);
           cmp = aEta - bEta;
           break;
         }
         case "peers": {
-          const aPeers = aData?.stats?.live?.snapshot.peer_stats?.live ?? 0;
-          const bPeers = bData?.stats?.live?.snapshot.peer_stats?.live ?? 0;
+          const aPeers = a.stats?.live?.snapshot.peer_stats?.live ?? 0;
+          const bPeers = b.stats?.live?.snapshot.peer_stats?.live ?? 0;
           cmp = aPeers - bPeers;
           break;
         }
       }
       return sortDirection === "asc" ? cmp : -cmp;
     });
-  }, [torrents, sortColumn, sortDirection, torrentDataCache]);
+  }, [torrents, sortColumn, sortDirection]);
 
   const allSelected = !!(
     torrents &&

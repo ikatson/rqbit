@@ -1,9 +1,9 @@
 import { useContext, useEffect, useState } from "react";
-import { TorrentDetails, TorrentStats, STATE_INITIALIZING, STATE_LIVE } from "../../api-types";
+import { TorrentDetails } from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
-import { customSetInterval } from "../../helper/customSetInterval";
 import { loopUntilSuccess } from "../../helper/loopUntilSuccess";
 import { useUIStore } from "../../stores/uiStore";
+import { useTorrentStore } from "../../stores/torrentStore";
 import { OverviewTab } from "./OverviewTab";
 import { FilesTab } from "./FilesTab";
 import { PeersTab } from "./PeersTab";
@@ -93,50 +93,42 @@ interface DetailPaneContentProps {
 
 const DetailPaneContent: React.FC<DetailPaneContentProps> = ({ torrentId, activeTab }) => {
   const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(null);
-  const [statsResponse, setStatsResponse] = useState<TorrentStats | null>(null);
-  const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
+  const [fetchDetails, setFetchDetails] = useState(true);
   const API = useContext(APIContext);
 
-  const forceStatsRefreshCallback = () => {
-    setForceStatsRefresh((prev) => prev + 1);
+  // Get torrent data from the store
+  const torrent = useTorrentStore((state) =>
+    state.torrents?.find((t) => t.id === torrentId)
+  );
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
+
+  const forceRefreshCallback = () => {
+    refreshTorrents();
+    setFetchDetails(true);
   };
 
+  // Reset details when torrent changes
   useEffect(() => {
     setDetailsResponse(null);
-    setStatsResponse(null);
+    setFetchDetails(true);
   }, [torrentId]);
 
+  // Fetch full details (with files) when needed
   useEffect(() => {
+    if (!fetchDetails) return;
     return loopUntilSuccess(async () => {
-      await API.getTorrentDetails(torrentId).then(setDetailsResponse);
+      await API.getTorrentDetails(torrentId).then((details) => {
+        setDetailsResponse(details);
+        setFetchDetails(false);
+      });
     }, 1000);
-  }, [forceStatsRefresh, torrentId]);
+  }, [fetchDetails, torrentId]);
 
-  useEffect(() => {
-    return customSetInterval(async () => {
-      const errorInterval = 10000;
-      const liveInterval = 1000;
-      const nonLiveInterval = 10000;
-
-      return API.getTorrentStats(torrentId)
-        .then((stats) => {
-          setStatsResponse(stats);
-          return stats;
-        })
-        .then(
-          (stats) => {
-            if (stats.state === STATE_INITIALIZING || stats.state === STATE_LIVE) {
-              return liveInterval;
-            }
-            return nonLiveInterval;
-          },
-          () => errorInterval
-        );
-    }, 0);
-  }, [forceStatsRefresh, torrentId]);
+  // Use stats from store, fall back to details response if store doesn't have it yet
+  const statsResponse = torrent?.stats ?? null;
 
   return (
-    <RefreshTorrentStatsContext.Provider value={{ refresh: forceStatsRefreshCallback }}>
+    <RefreshTorrentStatsContext.Provider value={{ refresh: forceRefreshCallback }}>
       {activeTab === "overview" && (
         <OverviewTab
           torrentId={torrentId}

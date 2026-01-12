@@ -40,33 +40,37 @@ export const RqbitWebUI = (props: {
     (state) => state.setRefreshTorrents
   );
 
-  const refreshTorrents = async () => {
+  const refreshTorrents = async (): Promise<number> => {
     setTorrentsLoading(true);
-    let torrents = await API.listTorrents().finally(() =>
-      setTorrentsLoading(false)
-    );
-    setTorrents(torrents.torrents);
+    try {
+      const response = await API.listTorrents({ withStats: true });
+      setTorrents(response.torrents);
+      setOtherError(null);
+
+      // Determine polling interval based on torrent states
+      // Fast poll (1s) if any torrent is live/initializing, slow poll (5s) otherwise
+      const hasActiveTorrents = response.torrents.some(
+        (t) => t.stats?.state === "live" || t.stats?.state === "initializing"
+      );
+      return hasActiveTorrents ? 1000 : 5000;
+    } catch (e) {
+      setOtherError({ text: "Error refreshing torrents", details: e as any });
+      console.error(e);
+      return 5000;
+    } finally {
+      setTorrentsLoading(false);
+    }
   };
-  setRefreshTorrents(refreshTorrents);
 
   const setStats = useStatsStore((state) => state.setStats);
 
+  // Register the refresh callback
   useEffect(() => {
-    return customSetInterval(
-      async () =>
-        refreshTorrents().then(
-          () => {
-            setOtherError(null);
-            return 5000;
-          },
-          (e) => {
-            setOtherError({ text: "Error refreshing torrents", details: e });
-            console.error(e);
-            return 5000;
-          }
-        ),
-      0
-    );
+    setRefreshTorrents(refreshTorrents as unknown as () => void);
+  }, []);
+
+  useEffect(() => {
+    return customSetInterval(async () => refreshTorrents(), 0);
   }, []);
 
   useEffect(() => {

@@ -103,8 +103,10 @@ const makeRequest = async (
 
 export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getStreamLogsUrl: () => apiUrl + "/stream_logs",
-  listTorrents: (): Promise<ListTorrentsResponse> =>
-    makeRequest("GET", "/torrents"),
+  listTorrents: (opts?: { withStats?: boolean }): Promise<ListTorrentsResponse> => {
+    const url = opts?.withStats ? "/torrents?with_stats=true" : "/torrents";
+    return makeRequest("GET", url);
+  },
   getTorrentDetails: (index: number): Promise<TorrentDetails> => {
     return makeRequest("GET", `/torrents/${index}`);
   },

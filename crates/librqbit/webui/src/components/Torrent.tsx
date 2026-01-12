@@ -1,78 +1,67 @@
 import { useContext, useEffect, useState } from "react";
 import {
   TorrentDetails,
-  TorrentId,
-  TorrentStats,
-  STATE_INITIALIZING,
-  STATE_LIVE,
+  TorrentListItem,
 } from "../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../context";
-import { customSetInterval } from "../helper/customSetInterval";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
 import { TorrentRow } from "./TorrentRow";
+import { useTorrentStore } from "../stores/torrentStore";
 
 export const Torrent: React.FC<{
-  id: number;
-  torrent: TorrentId;
-}> = ({ id, torrent }) => {
+  torrent: TorrentListItem;
+}> = ({ torrent }) => {
+  // Fetch full details (with files) only when needed for extended view
   const [detailsResponse, updateDetailsResponse] =
     useState<TorrentDetails | null>(null);
-  const [statsResponse, updateStatsResponse] = useState<TorrentStats | null>(
-    null,
-  );
-  const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
+  const [fetchDetails, setFetchDetails] = useState(false);
   const API = useContext(APIContext);
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
-  const forceStatsRefreshCallback = () => {
-    setForceStatsRefresh(forceStatsRefresh + 1);
+  // Create a synthetic TorrentDetails from TorrentListItem for display
+  // (without files - those are fetched separately when extended view is opened)
+  const syntheticDetails: TorrentDetails = {
+    name: torrent.name,
+    info_hash: torrent.info_hash,
+    files: detailsResponse?.files ?? [],
+    total_pieces: torrent.total_pieces,
   };
 
-  // Update details once then when asked for.
+  const forceRefreshCallback = () => {
+    // Trigger a global refresh of all torrents
+    refreshTorrents();
+    // Also re-fetch details if we had them
+    if (detailsResponse) {
+      setFetchDetails(true);
+    }
+  };
+
+  // Fetch details only when requested (for extended view with files)
   useEffect(() => {
+    if (!fetchDetails) return;
     return loopUntilSuccess(async () => {
-      await API.getTorrentDetails(torrent.id).then(updateDetailsResponse);
+      await API.getTorrentDetails(torrent.id).then((details) => {
+        updateDetailsResponse(details);
+        setFetchDetails(false);
+      });
     }, 1000);
-  }, [forceStatsRefresh]);
+  }, [fetchDetails, torrent.id]);
 
-  // Update stats once then forever.
-  useEffect(
-    () =>
-      customSetInterval(async () => {
-        const errorInterval = 10000;
-        const liveInterval = 1000;
-        const nonLiveInterval = 10000;
-
-        return API.getTorrentStats(torrent.id)
-          .then((stats) => {
-            updateStatsResponse(stats);
-            return stats;
-          })
-          .then(
-            (stats) => {
-              if (
-                stats.state == STATE_INITIALIZING ||
-                stats.state == STATE_LIVE
-              ) {
-                return liveInterval;
-              }
-              return nonLiveInterval;
-            },
-            () => {
-              return errorInterval;
-            },
-          );
-      }, 0),
-    [forceStatsRefresh],
-  );
+  const onExtendedViewOpen = () => {
+    if (!detailsResponse) {
+      setFetchDetails(true);
+    }
+  };
 
   return (
     <RefreshTorrentStatsContext.Provider
-      value={{ refresh: forceStatsRefreshCallback }}
+      value={{ refresh: forceRefreshCallback }}
     >
       <TorrentRow
-        id={id}
-        detailsResponse={detailsResponse}
-        statsResponse={statsResponse}
+        id={torrent.id}
+        detailsResponse={syntheticDetails}
+        statsResponse={torrent.stats ?? null}
+        onExtendedViewOpen={onExtendedViewOpen}
       />
     </RefreshTorrentStatsContext.Provider>
   );

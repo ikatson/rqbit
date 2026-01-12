@@ -12,7 +12,7 @@ import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
 
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
-  const torrentDataCache = useUIStore((state) => state.torrentDataCache);
+  const torrents = useTorrentStore((state) => state.torrents);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
 
@@ -24,20 +24,33 @@ export const ActionBar: React.FC = () => {
   const selectedCount = selectedTorrentIds.size;
   const hasSelection = selectedCount > 0;
 
+  // Helper to get torrent data by id
+  const getTorrentById = (id: number) => torrents?.find((t) => t.id === id);
+
   const selectedTorrents = useMemo((): TorrentToDelete[] => {
-    return Array.from(selectedTorrentIds).map((id) => ({
-      id,
-      details: torrentDataCache.get(id)?.details ?? null,
-    }));
-  }, [selectedTorrentIds, torrentDataCache]);
+    return Array.from(selectedTorrentIds).map((id) => {
+      const torrent = getTorrentById(id);
+      return {
+        id,
+        details: torrent
+          ? {
+              name: torrent.name,
+              info_hash: torrent.info_hash,
+              files: [],
+              total_pieces: torrent.total_pieces,
+            }
+          : null,
+      };
+    });
+  }, [selectedTorrentIds, torrents]);
 
   const pauseSelected = async () => {
     setDisabled(true);
     try {
       for (const id of selectedTorrentIds) {
         // Skip already paused torrents
-        const cachedData = torrentDataCache.get(id);
-        if (cachedData?.stats?.state === STATE_PAUSED) {
+        const torrent = getTorrentById(id);
+        if (torrent?.stats?.state === STATE_PAUSED) {
           continue;
         }
         try {
@@ -61,8 +74,8 @@ export const ActionBar: React.FC = () => {
     try {
       for (const id of selectedTorrentIds) {
         // Skip already live torrents
-        const cachedData = torrentDataCache.get(id);
-        if (cachedData?.stats?.state === STATE_LIVE) {
+        const torrent = getTorrentById(id);
+        if (torrent?.stats?.state === STATE_LIVE) {
           continue;
         }
         try {

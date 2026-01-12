@@ -21,7 +21,8 @@ export const TorrentRow: React.FC<{
   id: number;
   detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats | null;
-}> = ({ id, detailsResponse, statsResponse }) => {
+  onExtendedViewOpen?: () => void;
+}> = ({ id, detailsResponse, statsResponse, onExtendedViewOpen }) => {
   const state = statsResponse?.state ?? "";
   const error = statsResponse?.error ?? null;
   const totalBytes = statsResponse?.total_bytes ?? 1;
@@ -92,7 +93,13 @@ export const TorrentRow: React.FC<{
       .finally(() => setSavingSelectedFiles(false));
   };
 
-  const [extendedView, setExtendedView] = useState(false);
+  const [extendedView, setExtendedViewState] = useState(false);
+  const setExtendedView = (value: boolean) => {
+    if (value && !extendedView && onExtendedViewOpen) {
+      onExtendedViewOpen();
+    }
+    setExtendedViewState(value);
+  };
 
   return (
     <div className="flex flex-col border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">

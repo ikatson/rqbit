@@ -19,12 +19,23 @@ export interface TorrentFileAttributes {
   executable: boolean;
 }
 
-// Interface for the Torrent Details API response
+// Interface for the Torrent Details API response (with files, from individual endpoint)
 export interface TorrentDetails {
   name: string | null;
   info_hash: string;
   files: Array<TorrentFile>;
   total_pieces?: number;
+}
+
+// Interface for torrent list item (from bulk /torrents?with_stats=true endpoint)
+// This matches TorrentDetailsResponse from the backend, but files are not included in the list
+export interface TorrentListItem {
+  id: number;
+  info_hash: string;
+  name: string | null;
+  output_folder: string;
+  total_pieces: number;
+  stats?: TorrentStats;
 }
 
 export interface AddTorrentResponse {
@@ -35,7 +46,7 @@ export interface AddTorrentResponse {
 }
 
 export interface ListTorrentsResponse {
-  torrents: Array<TorrentId>;
+  torrents: Array<TorrentListItem>;
 }
 
 export interface Speed {
@@ -233,7 +244,7 @@ export interface JSONLogLine {
 export interface RqbitAPI {
   getPlaylistUrl: (index: number) => string | null;
   getStreamLogsUrl: () => string | null;
-  listTorrents: () => Promise<ListTorrentsResponse>;
+  listTorrents: (opts?: { withStats?: boolean }) => Promise<ListTorrentsResponse>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
   getTorrentHaves: (index: number) => Promise<ArrayBuffer>;

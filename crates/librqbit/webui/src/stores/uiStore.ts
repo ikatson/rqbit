@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { TorrentDetails, TorrentStats } from "../api-types";
 
 const STORAGE_KEY = "rqbit-view-mode";
 const SORT_STORAGE_KEY = "rqbit-torrent-sort";
@@ -43,11 +42,6 @@ function getDefaultSort(): StoredSort {
   return { column: "id", direction: "desc" };
 }
 
-export interface TorrentDataCache {
-  details: TorrentDetails | null;
-  stats: TorrentStats | null;
-}
-
 export interface UIStore {
   viewMode: "full" | "compact";
   setViewMode: (mode: "full" | "compact") => void;
@@ -67,11 +61,6 @@ export interface UIStore {
   sortColumn: TorrentSortColumn;
   sortDirection: SortDirection;
   setSortColumn: (column: TorrentSortColumn) => void;
-
-  // Torrent data cache for sorting
-  torrentDataCache: Map<number, TorrentDataCache>;
-  updateTorrentDataCache: (id: number, data: Partial<TorrentDataCache>) => void;
-  clearTorrentDataCache: (id: number) => void;
 }
 
 const defaultSort = getDefaultSort();
@@ -223,25 +212,5 @@ export const useUIStore = create<UIStore>((set, get) => ({
       JSON.stringify({ column, direction: newDirection }),
     );
     set({ sortColumn: column, sortDirection: newDirection });
-  },
-
-  // Torrent data cache
-  torrentDataCache: new Map(),
-
-  updateTorrentDataCache: (id, data) => {
-    const cache = get().torrentDataCache;
-    const existing = cache.get(id) ?? { details: null, stats: null };
-    const updated = new Map(cache);
-    updated.set(id, { ...existing, ...data });
-    set({ torrentDataCache: updated });
-  },
-
-  clearTorrentDataCache: (id) => {
-    const cache = get().torrentDataCache;
-    if (cache.has(id)) {
-      const updated = new Map(cache);
-      updated.delete(id);
-      set({ torrentDataCache: updated });
-    }
   },
 }));
