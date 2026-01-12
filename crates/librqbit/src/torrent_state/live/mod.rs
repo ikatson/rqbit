@@ -597,6 +597,16 @@ impl TorrentStateLive {
                 .upgrade()
                 .ok_or(Error::SessionDestroyed)?;
 
+            if session.ipv4_only && addr.is_ipv6() {
+                debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
+                continue;
+            }
+
+            if addr.port() == 0 {
+                debug!(?addr, "skipping peer with port 0");
+                continue;
+            }
+
             if session.blocklist.has(addr.ip()) {
                 session
                     .stats

@@ -51,6 +51,8 @@ pub struct ListenerOptions {
     pub listen_addr: SocketAddr,
     pub enable_upnp_port_forwarding: bool,
     pub utp_opts: Option<librqbit_utp::SocketOpts>,
+    pub announce_port: Option<u16>,
+    pub ipv4_only: bool,
 }
 
 impl Default for ListenerOptions {
@@ -61,6 +63,8 @@ impl Default for ListenerOptions {
             listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
             enable_upnp_port_forwarding: false,
             utp_opts: None,
+            announce_port: None,
+            ipv4_only: false,
         }
     }
 }
@@ -77,13 +81,22 @@ impl ListenerOptions {
         utp_opts.parent_span = parent_span;
         utp_opts.dont_wait_for_lastack = true;
 
-        let mut listen_addr = self.listen_addr;
+        let mut listen_addr = if self.ipv4_only {
+            if self.listen_addr.is_ipv6() && self.listen_addr.ip().is_unspecified() {
+                // Force to IPv4 unspecified if IPv6 unspecified was requested but we are v4 only
+                SocketAddr::from(([0, 0, 0, 0], self.listen_addr.port()))
+            } else {
+                self.listen_addr
+            }
+        } else {
+            self.listen_addr
+        };
 
         let tcp_socket = if self.mode.tcp_enabled() {
             let listener = TcpListener::bind_tcp(
-                self.listen_addr,
+                listen_addr,
                 BindOpts {
-                    request_dualstack: true,
+                    request_dualstack: !self.ipv4_only,
                     reuseport: false,
                     device: bind_device,
                 },
@@ -128,7 +141,9 @@ impl ListenerOptions {
             None
         };
 
-        let announce_port = if listen_addr.ip().is_loopback() {
+        let announce_port = if let Some(p) = self.announce_port {
+            Some(p)
+        } else if listen_addr.ip().is_loopback() {
             None
         } else {
             Some(listen_addr.port())

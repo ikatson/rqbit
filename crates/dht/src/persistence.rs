@@ -24,6 +24,8 @@ use crate::{Dht, DhtConfig, DhtState};
 pub struct PersistentDhtConfig {
     pub dump_interval: Option<Duration>,
     pub config_filename: Option<PathBuf>,
+    pub port: Option<u16>,
+    pub ipv4_only: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -112,11 +114,16 @@ impl PersistentDht {
                     ) {
                         Ok(mut r) => {
                             info!(filename=?config_filename, "loaded DHT routing table from");
-                            if r.addr.ip() == Ipv4Addr::UNSPECIFIED {
+                            if config.ipv4_only {
+                                // Force IPv4 if requested
+                                let port = r.addr.port();
+                                r.addr = SocketAddr::from(([0, 0, 0, 0], port));
+                            } else if r.addr.ip() == Ipv4Addr::UNSPECIFIED {
                                 warn!(
                                     "patching DHT listen IP address for rqbit 9 upgrade: 0.0.0.0 -> [::]"
                                 );
-                                r.addr.set_ip(Ipv6Addr::UNSPECIFIED.into());
+                                let port = r.addr.port();
+                                r.addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
                             }
 
                             Some(r)
@@ -139,9 +146,17 @@ impl PersistentDht {
                     }
                 },
             };
-            let (listen_addr, routing_table, peer_store) = de
+            let (mut listen_addr, routing_table, peer_store) = de
                 .map(|de| (Some(de.addr), Some(de.table), de.peer_store))
                 .unwrap_or((None, None, None));
+
+            if let Some(port) = config.port {
+                if let Some(ref mut addr) = listen_addr {
+                    addr.set_port(port);
+                } else {
+                    listen_addr = Some(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)));
+                }
+            }
             let peer_id = routing_table.as_ref().map(|r| r.id());
 
             let dht_config = DhtConfig {
