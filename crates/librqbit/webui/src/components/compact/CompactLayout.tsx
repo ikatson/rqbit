@@ -14,7 +14,11 @@ function getStoredDetailPaneHeight(): number {
     const stored = localStorage.getItem(DETAIL_PANE_STORAGE_KEY);
     if (stored) {
       const height = parseInt(stored, 10);
-      if (!isNaN(height) && height >= DETAIL_PANE_MIN_HEIGHT && height <= DETAIL_PANE_MAX_HEIGHT) {
+      if (
+        !isNaN(height) &&
+        height >= DETAIL_PANE_MIN_HEIGHT &&
+        height <= DETAIL_PANE_MAX_HEIGHT
+      ) {
         return height;
       }
     }
@@ -29,8 +33,13 @@ interface CompactLayoutProps {
   loading: boolean;
 }
 
-export const CompactLayout: React.FC<CompactLayoutProps> = ({ torrents, loading }) => {
-  const [detailPaneHeight, setDetailPaneHeight] = useState(getStoredDetailPaneHeight);
+export const CompactLayout: React.FC<CompactLayoutProps> = ({
+  torrents,
+  loading,
+}) => {
+  const [detailPaneHeight, setDetailPaneHeight] = useState(
+    getStoredDetailPaneHeight,
+  );
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -49,7 +58,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({ torrents, loading 
       const newHeight = containerRect.bottom - e.clientY;
       const clampedHeight = Math.max(
         DETAIL_PANE_MIN_HEIGHT,
-        Math.min(DETAIL_PANE_MAX_HEIGHT, newHeight)
+        Math.min(DETAIL_PANE_MAX_HEIGHT, newHeight),
       );
       setDetailPaneHeight(clampedHeight);
     };
@@ -70,7 +79,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({ torrents, loading 
   }, [isDragging, detailPaneHeight]);
 
   return (
-    <div ref={containerRef} className="flex flex-col h-[calc(100vh-100px)]">
+    <div ref={containerRef} className="flex flex-col h-[calc(100vh-90px)]">
       <ActionBar />
       <div className="flex-1 overflow-auto min-h-0">
         <TorrentTable torrents={torrents} loading={loading} />

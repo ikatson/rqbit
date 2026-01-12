@@ -1,4 +1,8 @@
-import { TorrentDetails, TorrentStats, STATE_INITIALIZING } from "../../api-types";
+import {
+  TorrentDetails,
+  TorrentStats,
+  STATE_INITIALIZING,
+} from "../../api-types";
 import { StatusIcon } from "../StatusIcon";
 import { formatBytes } from "../../helper/formatBytes";
 import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
@@ -34,7 +38,8 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
       ? 100
       : Math.round((progressBytes / totalBytes) * 100);
 
-  const downloadSpeed = statsResponse?.live?.download_speed?.human_readable ?? "-";
+  const downloadSpeed =
+    statsResponse?.live?.download_speed?.human_readable ?? "-";
   const uploadSpeed = statsResponse?.live?.upload_speed?.human_readable ?? "-";
 
   const peerStats = statsResponse?.live?.snapshot.peer_stats;
@@ -52,13 +57,14 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
 
   return (
     <tr
-      onClick={(e) => onRowClick(e)}
+      onMouseDown={(e) => onRowClick(e)}
       className={`
         cursor-pointer border-b border-gray-100 dark:border-slate-700
         transition-colors
-        ${isSelected
-          ? "bg-blue-50 dark:bg-slate-700"
-          : "hover:bg-gray-50 dark:hover:bg-slate-800"
+        ${
+          isSelected
+            ? "bg-blue-50 dark:bg-slate-700"
+            : "hover:bg-gray-50 dark:hover:bg-slate-800"
         }
       `}
     >
@@ -82,7 +88,10 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
         {id}
       </td>
       <td className="px-2 py-2 max-w-xs">
-        <div className="truncate text-sm font-medium text-gray-900 dark:text-slate-200" title={name}>
+        <div
+          className="truncate text-sm font-medium text-gray-900 dark:text-slate-200"
+          title={name}
+        >
           {name || "Loading..."}
         </div>
         {error && (

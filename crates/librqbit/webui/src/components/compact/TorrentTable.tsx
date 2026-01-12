@@ -1,5 +1,11 @@
 import { useContext, useEffect, useMemo, useState, useCallback } from "react";
-import { TorrentId, TorrentDetails, TorrentStats, STATE_INITIALIZING, STATE_LIVE } from "../../api-types";
+import {
+  TorrentId,
+  TorrentDetails,
+  TorrentStats,
+  STATE_INITIALIZING,
+  STATE_LIVE,
+} from "../../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../../context";
 import { customSetInterval } from "../../helper/customSetInterval";
 import { loopUntilSuccess } from "../../helper/loopUntilSuccess";
@@ -22,11 +28,15 @@ const TorrentRowData: React.FC<TorrentRowDataProps> = ({
   onRowClick,
   onCheckboxChange,
 }) => {
-  const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(null);
+  const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(
+    null,
+  );
   const [statsResponse, setStatsResponse] = useState<TorrentStats | null>(null);
   const [forceStatsRefresh, setForceStatsRefresh] = useState(0);
   const API = useContext(APIContext);
-  const updateTorrentDataCache = useUIStore((state) => state.updateTorrentDataCache);
+  const updateTorrentDataCache = useUIStore(
+    (state) => state.updateTorrentDataCache,
+  );
 
   const forceStatsRefreshCallback = () => {
     setForceStatsRefresh((prev) => prev + 1);
@@ -55,18 +65,23 @@ const TorrentRowData: React.FC<TorrentRowDataProps> = ({
         })
         .then(
           (stats) => {
-            if (stats.state === STATE_INITIALIZING || stats.state === STATE_LIVE) {
+            if (
+              stats.state === STATE_INITIALIZING ||
+              stats.state === STATE_LIVE
+            ) {
               return liveInterval;
             }
             return nonLiveInterval;
           },
-          () => errorInterval
+          () => errorInterval,
         );
     }, 0);
   }, [forceStatsRefresh, torrent.id, updateTorrentDataCache]);
 
   return (
-    <RefreshTorrentStatsContext.Provider value={{ refresh: forceStatsRefreshCallback }}>
+    <RefreshTorrentStatsContext.Provider
+      value={{ refresh: forceStatsRefreshCallback }}
+    >
       <TorrentTableRow
         id={torrent.id}
         detailsResponse={detailsResponse}
@@ -84,7 +99,10 @@ interface TorrentTableProps {
   loading: boolean;
 }
 
-export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading }) => {
+export const TorrentTable: React.FC<TorrentTableProps> = ({
+  torrents,
+  loading,
+}) => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
   const selectTorrent = useUIStore((state) => state.selectTorrent);
   const toggleSelection = useUIStore((state) => state.toggleSelection);
@@ -110,8 +128,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
           cmp = a.id - b.id;
           break;
         case "name": {
-          const aName = torrentDisplayName(aData?.details ?? null).toLowerCase();
-          const bName = torrentDisplayName(bData?.details ?? null).toLowerCase();
+          const aName = torrentDisplayName(
+            aData?.details ?? null,
+          ).toLowerCase();
+          const bName = torrentDisplayName(
+            bData?.details ?? null,
+          ).toLowerCase();
           cmp = aName.localeCompare(bName);
           break;
         }
@@ -141,9 +163,11 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
           // ETA: lower is "better" (finishing sooner), Infinity for no ETA
           const getEta = (data: typeof aData) => {
             if (!data?.stats?.live) return Infinity;
-            const remaining = (data.stats.total_bytes ?? 0) - (data.stats.progress_bytes ?? 0);
+            const remaining =
+              (data.stats.total_bytes ?? 0) - (data.stats.progress_bytes ?? 0);
             const speed = data.stats.live.download_speed?.mbps ?? 0;
-            if (speed <= 0 || remaining <= 0) return remaining <= 0 ? 0 : Infinity;
+            if (speed <= 0 || remaining <= 0)
+              return remaining <= 0 ? 0 : Infinity;
             return remaining / (speed * 1024 * 1024);
           };
           const aEta = getEta(aData);
@@ -162,8 +186,14 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
     });
   }, [torrents, sortColumn, sortDirection, torrentDataCache]);
 
-  const allSelected = !!(torrents && torrents.length > 0 && torrents.every((t) => selectedTorrentIds.has(t.id)));
-  const someSelected = !!(torrents && torrents.some((t) => selectedTorrentIds.has(t.id)));
+  const allSelected = !!(
+    torrents &&
+    torrents.length > 0 &&
+    torrents.every((t) => selectedTorrentIds.has(t.id))
+  );
+  const someSelected = !!(
+    torrents && torrents.some((t) => selectedTorrentIds.has(t.id))
+  );
 
   const handleHeaderCheckbox = () => {
     if (allSelected) {
@@ -187,11 +217,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle if no input is focused
       const activeElement = document.activeElement;
-      if (activeElement && (
-        activeElement.tagName === "INPUT" ||
-        activeElement.tagName === "TEXTAREA" ||
-        activeElement.tagName === "SELECT"
-      )) {
+      if (
+        activeElement &&
+        (activeElement.tagName === "INPUT" ||
+          activeElement.tagName === "TEXTAREA" ||
+          activeElement.tagName === "SELECT")
+      ) {
         return;
       }
 
@@ -209,13 +240,18 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
   }, [orderedIds, selectRelative]);
 
   // Row click handler with shift support
-  const handleRowClick = useCallback((id: number, e: React.MouseEvent) => {
-    if (e.shiftKey) {
-      selectRange(id, orderedIds);
-    } else {
-      selectTorrent(id);
-    }
-  }, [orderedIds, selectRange, selectTorrent]);
+  const handleRowClick = useCallback(
+    (id: number, e: React.MouseEvent) => {
+      if (e.shiftKey) {
+        e.preventDefault();
+
+        selectRange(id, orderedIds);
+      } else {
+        selectTorrent(id);
+      }
+    },
+    [orderedIds, selectRange, selectTorrent],
+  );
 
   const headerClass =
     "px-2 py-3 font-medium text-gray-700 dark:text-slate-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 select-none";
@@ -253,33 +289,82 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({ torrents, loading })
             />
           </th>
           <th className="w-8 px-1 py-3"></th>
-          <th className={`w-12 ${headerClass} text-center`} onClick={() => handleSort("id")}>
+          <th
+            className={`w-12 ${headerClass} text-center`}
+            onClick={() => handleSort("id")}
+          >
             ID
-            <SortIcon column="id" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="id"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
-          <th className={`${headerClass} text-left`} onClick={() => handleSort("name")}>
+          <th
+            className={`${headerClass} text-left`}
+            onClick={() => handleSort("name")}
+          >
             Name
-            <SortIcon column="name" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="name"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
-          <th className={`w-24 ${headerClass} text-center`} onClick={() => handleSort("progress")}>
+          <th
+            className={`w-24 ${headerClass} text-center`}
+            onClick={() => handleSort("progress")}
+          >
             Progress
-            <SortIcon column="progress" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="progress"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
-          <th className={`w-24 ${headerClass} text-right`} onClick={() => handleSort("downSpeed")}>
+          <th
+            className={`w-24 ${headerClass} text-right`}
+            onClick={() => handleSort("downSpeed")}
+          >
             Down
-            <SortIcon column="downSpeed" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="downSpeed"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
-          <th className={`w-24 ${headerClass} text-right`} onClick={() => handleSort("upSpeed")}>
+          <th
+            className={`w-24 ${headerClass} text-right`}
+            onClick={() => handleSort("upSpeed")}
+          >
             Up
-            <SortIcon column="upSpeed" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="upSpeed"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
-          <th className={`w-20 ${headerClass} text-center`} onClick={() => handleSort("eta")}>
+          <th
+            className={`w-20 ${headerClass} text-center`}
+            onClick={() => handleSort("eta")}
+          >
             ETA
-            <SortIcon column="eta" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="eta"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
-          <th className={`w-16 ${headerClass} text-center`} onClick={() => handleSort("peers")}>
+          <th
+            className={`w-16 ${headerClass} text-center`}
+            onClick={() => handleSort("peers")}
+          >
             Peers
-            <SortIcon column="peers" sortColumn={sortColumn} sortDirection={sortDirection} />
+            <SortIcon
+              column="peers"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
           </th>
         </tr>
       </thead>

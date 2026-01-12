@@ -222,7 +222,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({
   if (!statsResponse.live) {
     return (
       <div className="p-4 text-gray-400 dark:text-slate-500">
-        No peer information available (torrent may be paused)
+        No live peer information available (torrent is not live)
       </div>
     );
   }

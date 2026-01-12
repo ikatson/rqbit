@@ -13,7 +13,14 @@ function getDefaultViewMode(): "full" | "compact" {
   return window.innerWidth >= LARGE_SCREEN_BREAKPOINT ? "compact" : "full";
 }
 
-export type TorrentSortColumn = "id" | "name" | "progress" | "downSpeed" | "upSpeed" | "eta" | "peers";
+export type TorrentSortColumn =
+  | "id"
+  | "name"
+  | "progress"
+  | "downSpeed"
+  | "upSpeed"
+  | "eta"
+  | "peers";
 export type SortDirection = "asc" | "desc";
 
 interface StoredSort {
@@ -109,6 +116,13 @@ export const useUIStore = create<UIStore>((set, get) => ({
       return;
     }
 
+    if (selectedTorrentIds.has(id)) {
+      let next = new Set(selectedTorrentIds);
+      next.delete(id);
+      set({ selectedTorrentIds: next });
+      return;
+    }
+
     const anchorIdx = orderedIds.indexOf(lastSelectedId);
     const targetIdx = orderedIds.indexOf(id);
 
@@ -155,7 +169,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
     if (selectedTorrentIds.size === 0) {
       // Nothing selected, select first or last based on direction
-      const newId = direction === "down" ? orderedIds[0] : orderedIds[orderedIds.length - 1];
+      const newId =
+        direction === "down"
+          ? orderedIds[0]
+          : orderedIds[orderedIds.length - 1];
       set({ selectedTorrentIds: new Set([newId]), lastSelectedId: newId });
       return;
     }
@@ -170,7 +187,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
         currentIdx = orderedIds.indexOf(lastSelectedId);
       } else {
         // Find first selected in order
-        currentIdx = orderedIds.findIndex(id => selectedTorrentIds.has(id));
+        currentIdx = orderedIds.findIndex((id) => selectedTorrentIds.has(id));
       }
     }
 
@@ -181,9 +198,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
       return;
     }
 
-    const newIdx = direction === "down"
-      ? Math.min(currentIdx + 1, orderedIds.length - 1)
-      : Math.max(currentIdx - 1, 0);
+    const newIdx =
+      direction === "down"
+        ? Math.min(currentIdx + 1, orderedIds.length - 1)
+        : Math.max(currentIdx - 1, 0);
 
     const newId = orderedIds[newIdx];
     set({ selectedTorrentIds: new Set([newId]), lastSelectedId: newId });
@@ -200,7 +218,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
       // Toggle direction if same column
       newDirection = current.sortDirection === "asc" ? "desc" : "asc";
     }
-    localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ column, direction: newDirection }));
+    localStorage.setItem(
+      SORT_STORAGE_KEY,
+      JSON.stringify({ column, direction: newDirection }),
+    );
     set({ sortColumn: column, sortDirection: newDirection });
   },
 
