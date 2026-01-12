@@ -14,7 +14,7 @@ export const Header = ({
   settingsSlot?: React.ReactNode;
 }) => {
   return (
-    <header className="bg-slate-50 drop-shadow-lg flex flex-wrap justify-center lg:justify-between items-center dark:bg-slate-800 mb-3">
+    <header className="bg-slate-50 drop-shadow-lg flex flex-wrap justify-center lg:justify-between items-center dark:bg-slate-800">
       <div className="flex flex-nowrap items-center justify-between m-2">
         <Logo className="w-10 h-10 p-1" alt="logo" />
         <h1 className="flex items-center dark:text-white">

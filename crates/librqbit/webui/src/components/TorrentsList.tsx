@@ -7,7 +7,7 @@ export const TorrentsList = (props: {
   loading: boolean;
 }) => {
   return (
-    <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7">
+    <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7 mt-3">
       {props.torrents === null ? (
         props.loading ? (
           <Spinner
