@@ -27,8 +27,8 @@ cargo test -p librqbit <test_name>   # test in specific crate
 cargo fmt --all -- --check
 cargo clippy --all-targets
 
-# Desktop app
-cd desktop && npm install && cargo tauri build
+# Desktop app. You cannot test it or see it, so don't bother running expensive "cargo tauri build"
+cd desktop && npm install && tsc --noEmit
 ```
 
 ## Development Server
