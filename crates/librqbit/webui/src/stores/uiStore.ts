@@ -15,6 +15,7 @@ function getDefaultViewMode(): "full" | "compact" {
 export type TorrentSortColumn =
   | "id"
   | "name"
+  | "size"
   | "progress"
   | "downSpeed"
   | "upSpeed"

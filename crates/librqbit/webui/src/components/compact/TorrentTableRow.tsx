@@ -103,6 +103,9 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
           </div>
         )}
       </td>
+      <td className="w-20 px-2 py-2 text-right text-sm text-gray-600 dark:text-slate-400">
+        {formatBytes(totalBytes)}
+      </td>
       <td className="w-24 px-2 py-2 text-center">
         <div className="flex items-center gap-2">
           <div className="flex-1 h-1.5 bg-gray-200 dark:bg-slate-600 rounded-full overflow-hidden">

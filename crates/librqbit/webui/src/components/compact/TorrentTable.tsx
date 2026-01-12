@@ -89,6 +89,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
           cmp = aName.localeCompare(bName);
           break;
         }
+        case "size": {
+          const aSize = a.stats?.total_bytes ?? 0;
+          const bSize = b.stats?.total_bytes ?? 0;
+          cmp = aSize - bSize;
+          break;
+        }
         case "progress": {
           const aProgress = a.stats?.total_bytes
             ? (a.stats.progress_bytes ?? 0) / a.stats.total_bytes
@@ -259,6 +265,17 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             Name
             <SortIcon
               column="name"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+            />
+          </th>
+          <th
+            className={`w-20 ${headerClass} text-right`}
+            onClick={() => handleSort("size")}
+          >
+            Size
+            <SortIcon
+              column="size"
               sortColumn={sortColumn}
               sortDirection={sortDirection}
             />
