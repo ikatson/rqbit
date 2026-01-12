@@ -62,8 +62,8 @@ export const TorrentRow: React.FC<{
         detailsResponse?.files
           .map((f, id) => ({ f, id }))
           .filter(({ f }) => f.included)
-          .map(({ id }) => id) ?? []
-      )
+          .map(({ id }) => id) ?? [],
+      ),
     );
   }, [detailsResponse]);
 
@@ -88,7 +88,7 @@ export const TorrentRow: React.FC<{
             text: "Error configuring torrent",
             details: e as ErrorDetails,
           });
-        }
+        },
       )
       .finally(() => setSavingSelectedFiles(false));
   };
@@ -111,13 +111,13 @@ export const TorrentRow: React.FC<{
           {detailsResponse && (
             <div className="flex items-center gap-2">
               <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-              <div className="text-left text-sm lg:text-lg text-text text-ellipsis break-all">
+              <div className="text-left lg:text-lg text-text text-ellipsis break-all">
                 {torrentDisplayName(detailsResponse)}
               </div>
             </div>
           )}
           {error ? (
-            <p className="text-error text-sm">
+            <p className="text-error">
               <strong>Error:</strong> {error}
             </p>
           ) : (
@@ -135,7 +135,7 @@ export const TorrentRow: React.FC<{
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-text-secondary">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-nowrap font-medium text-text-secondary">
                 <div className="flex gap-2 items-center">
                   <GoPeople /> {formatPeersString().toString()}
                 </div>

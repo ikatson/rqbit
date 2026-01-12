@@ -16,9 +16,7 @@ export const AlertModal: React.FC<{}> = () => {
           {alert.details?.statusText && (
             <div className="pb-2 text-md">{alert.details?.statusText}</div>
           )}
-          <div className="whitespace-pre-wrap text-sm">
-            {alert.details?.text}
-          </div>
+          <div className="whitespace-pre-wrap">{alert.details?.text}</div>
         </ModalBody>
         <ModalFooter>
           <Button variant="cancel" onClick={removeAlert}>

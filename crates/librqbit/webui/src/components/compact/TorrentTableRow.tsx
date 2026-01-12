@@ -59,9 +59,7 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
     <tr
       onMouseDown={(e) => onRowClick(e)}
       className={`cursor-pointer border-b border-border transition-colors ${
-        isSelected
-          ? "bg-primary/10"
-          : "hover:bg-surface-raised"
+        isSelected ? "bg-primary/10" : "hover:bg-surface-raised"
       }`}
     >
       <td
@@ -83,23 +81,20 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
           finished={finished}
         />
       </td>
-      <td className="w-12 px-2 py-2 text-center text-sm text-text-tertiary font-mono">
+      <td className="w-12 px-2 py-2 text-center text-text-tertiary font-mono">
         {id}
       </td>
       <td className="px-2 py-2 max-w-xs">
-        <div
-          className="truncate text-text"
-          title={name}
-        >
+        <div className="truncate text-text" title={name}>
           {name || "Loading..."}
         </div>
         {error && (
-          <div className="truncate text-xs text-error" title={error}>
+          <div className="truncate text-sm text-error" title={error}>
             {error}
           </div>
         )}
       </td>
-      <td className="w-20 px-2 py-2 text-right text-sm text-text-secondary">
+      <td className="w-20 px-2 py-2 text-right ext-text-secondary">
         {formatBytes(totalBytes)}
       </td>
       <td className="w-24 px-2 py-2 text-center">
@@ -118,21 +113,21 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
               style={{ width: `${progressPercentage}%` }}
             />
           </div>
-          <span className="text-xs text-text-secondary w-8 text-right">
+          <span className="text-sm text-text-secondary w-8 text-right">
             {progressPercentage}%
           </span>
         </div>
       </td>
-      <td className="w-24 px-2 py-2 text-right text-sm text-text-secondary">
+      <td className="w-24 px-2 py-2 text-right text-text-secondary">
         {downloadSpeed}
       </td>
-      <td className="w-24 px-2 py-2 text-right text-sm text-text-secondary">
+      <td className="w-24 px-2 py-2 text-right text-text-secondary">
         {uploadSpeed}
       </td>
-      <td className="w-20 px-2 py-2 text-center text-sm text-text-secondary">
+      <td className="w-20 px-2 py-2 text-center text-text-secondary">
         {displayEta}
       </td>
-      <td className="w-16 px-2 py-2 text-center text-sm text-text-secondary">
+      <td className="w-16 px-2 py-2 text-center text-text-secondary">
         {peersDisplay}
       </td>
     </tr>

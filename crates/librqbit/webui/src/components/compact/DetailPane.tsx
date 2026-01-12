@@ -17,10 +17,15 @@ interface TabButtonProps {
   onClick: () => void;
 }
 
-const TabButton: React.FC<TabButtonProps> = ({ id, label, active, onClick }) => (
+const TabButton: React.FC<TabButtonProps> = ({
+  id,
+  label,
+  active,
+  onClick,
+}) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+    className={`px-4 py-2 font-medium border-b-2 transition-colors ${
       active
         ? "border-primary text-primary"
         : "border-transparent text-text-secondary hover:text-text hover:border-border"
@@ -89,14 +94,19 @@ interface DetailPaneContentProps {
   activeTab: TabId;
 }
 
-const DetailPaneContent: React.FC<DetailPaneContentProps> = ({ torrentId, activeTab }) => {
-  const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(null);
+const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
+  torrentId,
+  activeTab,
+}) => {
+  const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(
+    null,
+  );
   const [fetchDetails, setFetchDetails] = useState(true);
   const API = useContext(APIContext);
 
   // Get torrent data from the store
   const torrent = useTorrentStore((state) =>
-    state.torrents?.find((t) => t.id === torrentId)
+    state.torrents?.find((t) => t.id === torrentId),
   );
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
@@ -126,7 +136,9 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({ torrentId, active
   const statsResponse = torrent?.stats ?? null;
 
   return (
-    <RefreshTorrentStatsContext.Provider value={{ refresh: forceRefreshCallback }}>
+    <RefreshTorrentStatsContext.Provider
+      value={{ refresh: forceRefreshCallback }}
+    >
       {activeTab === "overview" && (
         <OverviewTab
           torrentId={torrentId}
@@ -142,10 +154,7 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({ torrentId, active
         />
       )}
       {activeTab === "peers" && (
-        <PeersTab
-          torrentId={torrentId}
-          statsResponse={statsResponse}
-        />
+        <PeersTab torrentId={torrentId} statsResponse={statsResponse} />
       )}
     </RefreshTorrentStatsContext.Provider>
   );

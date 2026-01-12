@@ -9,8 +9,8 @@ export const Button: React.FC<{
   children: ReactNode;
 }> = ({ onClick, children, className, disabled, variant, size }) => {
   const sizeClassNames = {
-    sm: "text-xs px-2 py-1",
-    default: "text-sm px-3 py-1.5",
+    sm: "text-sm px-2 py-1",
+    default: "px-3 py-1.5",
   }[size ?? "default"];
 
   const variantClassNames = {

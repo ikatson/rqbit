@@ -1,8 +1,5 @@
 import { useMemo, useCallback, useEffect } from "react";
-import {
-  TorrentListItem,
-  STATE_INITIALIZING,
-} from "../../api-types";
+import { TorrentListItem, STATE_INITIALIZING } from "../../api-types";
 import { RefreshTorrentStatsContext } from "../../context";
 import { TorrentTableRow } from "./TorrentTableRow";
 import { TorrentSortColumn, useUIStore } from "../../stores/uiStore";
@@ -226,14 +223,14 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     return (
       <div className="flex flex-col items-center justify-center h-64 text-text-tertiary">
         <p className="text-lg">No torrents</p>
-        <p className="text-sm">Add a torrent to get started</p>
+        <p className="">Add a torrent to get started</p>
       </div>
     );
   }
 
   return (
-    <table className="w-full text-sm">
-      <thead className="bg-surface-raised sticky top-0 z-10">
+    <table className="w-full">
+      <thead className="bg-surface-raised sticky top-0 z-10 text-sm">
         <tr className="border-b border-border">
           <th className="w-8 px-2 py-3">
             <input
@@ -337,7 +334,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
           </th>
         </tr>
       </thead>
-      <tbody>
+      <tbody className="text-sm">
         {sortedTorrents?.map((torrent) => (
           <TorrentRowData
             key={torrent.id}

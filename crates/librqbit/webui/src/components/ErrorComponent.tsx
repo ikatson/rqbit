@@ -11,7 +11,10 @@ const AlertDanger: React.FC<{
       <div className="flex justify-between mb-2">
         <h2 className="text-lg font-semibold text-error">{title}</h2>
         {onClose && (
-          <button onClick={onClose} className="text-error hover:text-error/80 transition-colors">
+          <button
+            onClick={onClose}
+            className="text-error hover:text-error/80 transition-colors"
+          >
             <BsX />
           </button>
         )}
@@ -34,9 +37,13 @@ export const ErrorComponent = (props: {
   return (
     <AlertDanger onClose={remove} title={error.text}>
       {error.details?.statusText && (
-        <div className="pb-2 text-md text-text">{error.details?.statusText}</div>
+        <div className="pb-2 text-md text-text">
+          {error.details?.statusText}
+        </div>
       )}
-      <div className="whitespace-pre-wrap text-sm text-text-secondary">{error.details?.text}</div>
+      <div className="whitespace-pre-wrap text-text-secondary">
+        {error.details?.text}
+      </div>
     </AlertDanger>
   );
 };

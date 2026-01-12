@@ -42,7 +42,12 @@ export const TabbedConfigModal: React.FC<TabbedConfigModalProps> = ({
   const [currentTab, setCurrentTab] = useState(initialTab || tabs[0]?.id);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} className="max-w-4xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={title}
+      className="max-w-4xl"
+    >
       <ModalBody>
         <ErrorComponent error={error ?? null} />
         {tabs.length > 1 && (
@@ -52,7 +57,7 @@ export const TabbedConfigModal: React.FC<TabbedConfigModalProps> = ({
               return (
                 <button
                   key={tab.id}
-                  className={`px-3 py-1.5 text-sm ${
+                  className={`px-3 py-1.5 ${
                     isActive
                       ? "text-text border-b-2 border-primary -mb-px"
                       : "text-text-tertiary hover:text-text-secondary"

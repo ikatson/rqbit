@@ -27,9 +27,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const [copied, setCopied] = useState(false);
 
   if (!detailsResponse || !statsResponse) {
-    return (
-      <div className="p-4 text-text-tertiary">Loading...</div>
-    );
+    return <div className="p-4 text-text-tertiary">Loading...</div>;
   }
 
   const name = torrentDisplayName(detailsResponse);
@@ -81,7 +79,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   };
 
   return (
-    <div className="p-3 text-sm">
+    <div className="p-3">
       {/* Name */}
       <div className="truncate text-text mb-2" title={name}>
         {name}
@@ -99,7 +97,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       )}
 
       {/* Stats row */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
         <span>
           <span className="text-text-tertiary">Status </span>
           <span className={stateDisplay.color}>{stateDisplay.text}</span>
@@ -107,7 +105,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <span>
           <span className="text-text-tertiary">Progress </span>
           <span className="text-text">{progressPercentage.toFixed(1)}%</span>
-          <span className="text-text-tertiary"> ({formatBytes(progressBytes)} / {formatBytes(totalBytes)})</span>
+          <span className="text-text-tertiary">
+            {" "}
+            ({formatBytes(progressBytes)} / {formatBytes(totalBytes)})
+          </span>
         </span>
         <span>
           <span className="text-text-tertiary">Down </span>
@@ -123,12 +124,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </span>
         <span>
           <span className="text-text-tertiary">Peers </span>
-          <span className="text-text">{peersConnected}/{peersSeen}</span>
+          <span className="text-text">
+            {peersConnected}/{peersSeen}
+          </span>
         </span>
       </div>
 
       {/* Info hash */}
-      <div className="mt-2 flex items-center gap-1 text-xs">
+      <div className="mt-2 flex items-center gap-1 text-sm">
         <span className="text-text-tertiary">Hash</span>
         <code className="font-mono text-text-tertiary truncate flex-1">
           {infoHash}
@@ -147,9 +150,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="mt-2 text-xs text-error">{error}</div>
-      )}
+      {error && <div className="mt-2 text-sm text-error">{error}</div>}
     </div>
   );
 };

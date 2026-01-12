@@ -93,11 +93,12 @@ export const DeleteTorrentModal: React.FC<{
             {torrents.map((torrent) => (
               <li
                 key={torrent.id}
-                className="text-sm text-gray-800 dark:text-slate-200 truncate"
+                className="text-gray-800 dark:text-slate-200 truncate"
                 title={torrentDisplayName(torrent.details)}
               >
                 <span className="font-medium">
-                  {torrentDisplayName(torrent.details) || `Torrent #${torrent.id}`}
+                  {torrentDisplayName(torrent.details) ||
+                    `Torrent #${torrent.id}`}
                 </span>
               </li>
             ))}

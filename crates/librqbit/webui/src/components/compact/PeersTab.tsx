@@ -214,9 +214,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({
   const peerStats = statsResponse?.live?.snapshot.peer_stats;
 
   if (!statsResponse) {
-    return (
-      <div className="p-4 text-text-tertiary">Loading...</div>
-    );
+    return <div className="p-4 text-text-tertiary">Loading...</div>;
   }
 
   if (!statsResponse.live) {
@@ -228,19 +226,35 @@ export const PeersTab: React.FC<PeersTabProps> = ({
   }
 
   const headerClass =
-    "px-2 py-1.5 text-left text-xs text-text-secondary cursor-pointer hover:text-text select-none";
+    "px-2 py-1.5 text-left text-sm text-text-secondary cursor-pointer hover:text-text select-none";
 
   return (
     <div className="p-3">
       {/* Aggregate Stats */}
       {peerStats && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-xs">
-          <StatBadge label="connected" value={peerStats.live} color="text-success" />
-          <StatBadge label="connecting" value={peerStats.connecting} color="text-primary" />
-          <StatBadge label="queued" value={peerStats.queued} color="text-warning" />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-sm">
+          <StatBadge
+            label="connected"
+            value={peerStats.live}
+            color="text-success"
+          />
+          <StatBadge
+            label="connecting"
+            value={peerStats.connecting}
+            color="text-primary"
+          />
+          <StatBadge
+            label="queued"
+            value={peerStats.queued}
+            color="text-warning"
+          />
           <StatBadge label="seen" value={peerStats.seen} color="text-text" />
           <StatBadge label="dead" value={peerStats.dead} color="text-error" />
-          <StatBadge label="not needed" value={peerStats.not_needed} color="text-text-tertiary" />
+          <StatBadge
+            label="not needed"
+            value={peerStats.not_needed}
+            color="text-text-tertiary"
+          />
         </div>
       )}
 
@@ -317,19 +331,36 @@ export const PeersTab: React.FC<PeersTabProps> = ({
           <tbody>
             {sortedPeers.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-2 py-3 text-center text-xs text-text-tertiary">
-                  {peerSnapshot === null ? "Loading peer list..." : "No connected peers"}
+                <td
+                  colSpan={6}
+                  className="px-2 py-3 text-center text-sm text-text-tertiary"
+                >
+                  {peerSnapshot === null
+                    ? "Loading peer list..."
+                    : "No connected peers"}
                 </td>
               </tr>
             ) : (
               sortedPeers.map((peer) => (
                 <tr key={peer.addr} className="hover:bg-surface-raised">
-                  <td className="px-2 py-1 text-xs font-mono text-text">{peer.addr}</td>
-                  <td className="px-2 py-1 text-xs text-text-secondary">{peer.stats.conn_kind ?? "-"}</td>
-                  <td className="px-2 py-1 text-xs text-success">{formatSpeed(peer.downloadSpeed)}</td>
-                  <td className="px-2 py-1 text-xs text-primary">{formatSpeed(peer.uploadSpeed)}</td>
-                  <td className="px-2 py-1 text-xs text-text-secondary">{formatBytes(peer.stats.counters.fetched_bytes)}</td>
-                  <td className="px-2 py-1 text-xs text-text-secondary">{formatBytes(peer.stats.counters.uploaded_bytes)}</td>
+                  <td className="px-2 py-1 text-sm font-mono text-text">
+                    {peer.addr}
+                  </td>
+                  <td className="px-2 py-1 text-sm text-text-secondary">
+                    {peer.stats.conn_kind ?? "-"}
+                  </td>
+                  <td className="px-2 py-1 text-sm text-success">
+                    {formatSpeed(peer.downloadSpeed)}
+                  </td>
+                  <td className="px-2 py-1 text-sm text-primary">
+                    {formatSpeed(peer.uploadSpeed)}
+                  </td>
+                  <td className="px-2 py-1 text-sm text-text-secondary">
+                    {formatBytes(peer.stats.counters.fetched_bytes)}
+                  </td>
+                  <td className="px-2 py-1 text-sm text-text-secondary">
+                    {formatBytes(peer.stats.counters.uploaded_bytes)}
+                  </td>
                 </tr>
               ))
             )}

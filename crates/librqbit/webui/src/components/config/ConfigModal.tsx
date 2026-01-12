@@ -13,7 +13,10 @@ export interface ConfigModalProps {
   onClose: () => void;
 }
 
-export const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose }) => {
+export const ConfigModal: React.FC<ConfigModalProps> = ({
+  isOpen,
+  onClose,
+}) => {
   const [limits, setLimits] = useState<LimitsConfig>({
     upload_bps: null,
     download_bps: null,
@@ -90,15 +93,21 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose }) => 
           id: "other",
           label: "Other",
           content: (
-            <div className="text-text-secondary py-2 text-sm">
+            <div className="text-text-secondary py-2">
               <p>
-                All other parameters (DHT, connections, persistence, etc.) can be
-                configured via <code className="bg-surface-sunken px-1 rounded text-xs">rqbit</code> CLI
-                arguments when starting the server.
+                All other parameters (DHT, connections, persistence, etc.) can
+                be configured via{" "}
+                <code className="bg-surface-sunken px-1 rounded text-sm">
+                  rqbit
+                </code>{" "}
+                CLI arguments when starting the server.
               </p>
               <p className="mt-2">
-                Run <code className="bg-surface-sunken px-1 rounded text-xs">rqbit --help</code> to
-                see all available options.
+                Run{" "}
+                <code className="bg-surface-sunken px-1 rounded text-sm">
+                  rqbit --help
+                </code>{" "}
+                to see all available options.
               </p>
             </div>
           ),

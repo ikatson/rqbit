@@ -47,7 +47,7 @@ export const ActionBar: React.FC = () => {
   const runBulkAction = async (
     action: (id: number) => Promise<void>,
     skipState: string,
-    errorLabel: string
+    errorLabel: string,
   ) => {
     setDisabled(true);
     try {
@@ -80,7 +80,6 @@ export const ActionBar: React.FC = () => {
         onClick={resumeSelected}
         disabled={disabled || !hasSelection}
         variant="secondary"
-        size="sm"
       >
         <FaPlay className="w-2.5 h-2.5" />
         Resume
@@ -89,7 +88,6 @@ export const ActionBar: React.FC = () => {
         onClick={pauseSelected}
         disabled={disabled || !hasSelection}
         variant="secondary"
-        size="sm"
       >
         <FaPause className="w-2.5 h-2.5" />
         Pause
@@ -98,14 +96,13 @@ export const ActionBar: React.FC = () => {
         onClick={() => setShowDeleteModal(true)}
         disabled={disabled || !hasSelection}
         variant="danger"
-        size="sm"
       >
         <FaTrash className="w-2.5 h-2.5" />
         Delete
       </Button>
 
       {hasSelection && (
-        <span className="ml-1.5 text-xs text-text-secondary">
+        <span className="ml-1.5 text-text-secondary">
           {selectedCount} selected
         </span>
       )}
