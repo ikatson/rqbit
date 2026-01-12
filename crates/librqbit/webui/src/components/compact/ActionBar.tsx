@@ -9,11 +9,7 @@ import {
   TorrentToDelete,
 } from "../modal/DeleteTorrentModal";
 import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
-
-const btnBase =
-  "inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
-const btnDefault = `${btnBase} bg-white dark:bg-slate-700 border-gray-300 dark:border-slate-600 text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-600`;
-const btnDanger = `${btnBase} bg-white dark:bg-slate-700 border-gray-300 dark:border-slate-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20`;
+import { Button } from "../buttons/Button";
 
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
@@ -79,37 +75,37 @@ export const ActionBar: React.FC = () => {
     runBulkAction((id) => API.start(id), STATE_LIVE, "starting");
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
-      <button
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised border-b border-border">
+      <Button
         onClick={resumeSelected}
         disabled={disabled || !hasSelection}
-        className={btnDefault}
-        title="Resume selected torrents"
+        variant="secondary"
+        size="sm"
       >
         <FaPlay className="w-2.5 h-2.5" />
         Resume
-      </button>
-      <button
+      </Button>
+      <Button
         onClick={pauseSelected}
         disabled={disabled || !hasSelection}
-        className={btnDefault}
-        title="Pause selected torrents"
+        variant="secondary"
+        size="sm"
       >
         <FaPause className="w-2.5 h-2.5" />
         Pause
-      </button>
-      <button
+      </Button>
+      <Button
         onClick={() => setShowDeleteModal(true)}
         disabled={disabled || !hasSelection}
-        className={btnDanger}
-        title="Delete selected torrents"
+        variant="danger"
+        size="sm"
       >
         <FaTrash className="w-2.5 h-2.5" />
         Delete
-      </button>
+      </Button>
 
       {hasSelection && (
-        <span className="ml-1.5 text-xs text-gray-500 dark:text-slate-400">
+        <span className="ml-1.5 text-xs text-text-secondary">
           {selectedCount} selected
         </span>
       )}

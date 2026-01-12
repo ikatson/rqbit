@@ -102,7 +102,7 @@ export const TorrentRow: React.FC<{
   };
 
   return (
-    <div className="flex flex-col border p-2 border-gray-200 rounded-xl shadow-xs hover:drop-shadow-sm dark:bg-slate-800 dark:border-slate-900">
+    <div className="flex flex-col border p-2 border-border rounded-xl shadow-xs hover:drop-shadow-sm bg-surface-raised">
       <section className="flex flex-col lg:flex-row items-center gap-2">
         {/* Icon */}
         <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
@@ -111,13 +111,13 @@ export const TorrentRow: React.FC<{
           {detailsResponse && (
             <div className="flex items-center gap-2">
               <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-              <div className="text-left text-sm lg:text-lg text-gray-900 text-ellipsis break-all dark:text-slate-200">
+              <div className="text-left text-sm lg:text-lg text-text text-ellipsis break-all">
                 {torrentDisplayName(detailsResponse)}
               </div>
             </div>
           )}
           {error ? (
-            <p className="text-red-500 text-sm">
+            <p className="text-error text-sm">
               <strong>Error:</strong> {error}
             </p>
           ) : (
@@ -135,7 +135,7 @@ export const TorrentRow: React.FC<{
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-gray-500">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-sm text-nowrap font-medium text-text-secondary">
                 <div className="flex gap-2 items-center">
                   <GoPeople /> {formatPeersString().toString()}
                 </div>

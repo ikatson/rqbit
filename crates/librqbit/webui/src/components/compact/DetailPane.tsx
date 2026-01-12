@@ -20,13 +20,11 @@ interface TabButtonProps {
 const TabButton: React.FC<TabButtonProps> = ({ id, label, active, onClick }) => (
   <button
     onClick={onClick}
-    className={`
-      px-4 py-2 text-sm font-medium border-b-2 transition-colors
-      ${active
-        ? "border-blue-500 text-blue-600 dark:text-blue-400"
-        : "border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300"
-      }
-    `}
+    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+      active
+        ? "border-primary text-primary"
+        : "border-transparent text-text-secondary hover:text-text hover:border-border"
+    }`}
   >
     {label}
   </button>
@@ -41,16 +39,16 @@ export const DetailPane: React.FC = () => {
 
   if (selectedCount === 0) {
     return (
-      <div className="h-full border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-center">
-        <p className="text-gray-400 dark:text-slate-500">Select a torrent to view details</p>
+      <div className="h-full border-t border-border bg-surface-raised flex items-center justify-center">
+        <p className="text-text-tertiary">Select a torrent to view details</p>
       </div>
     );
   }
 
   if (selectedCount > 1) {
     return (
-      <div className="h-full border-t border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 flex items-center justify-center">
-        <p className="text-gray-400 dark:text-slate-500">{selectedCount} torrents selected</p>
+      <div className="h-full border-t border-border bg-surface-raised flex items-center justify-center">
+        <p className="text-text-tertiary">{selectedCount} torrents selected</p>
       </div>
     );
   }
@@ -58,8 +56,8 @@ export const DetailPane: React.FC = () => {
   const selectedId = selectedArray[0];
 
   return (
-    <div className="h-full border-t border-gray-200 dark:border-slate-700 flex flex-col bg-white dark:bg-slate-900">
-      <div className="flex border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800">
+    <div className="h-full border-t border-border flex flex-col bg-surface">
+      <div className="flex border-b border-border bg-surface-raised">
         <TabButton
           id="overview"
           label="Overview"

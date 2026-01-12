@@ -91,17 +91,11 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
           {/* Draggable divider */}
           <div
             onMouseDown={handleMouseDown}
-            className={`
-            h-1.5 cursor-ns-resize shrink-0
-            bg-gray-200 dark:bg-slate-700
-            hover:bg-blue-400 dark:hover:bg-blue-500
-            transition-colors
-            ${isDragging ? "bg-blue-500 dark:bg-blue-400" : ""}
-          `}
+            className={`h-1.5 cursor-ns-resize shrink-0 bg-border hover:bg-primary transition-colors ${isDragging ? "bg-primary" : ""}`}
             title="Drag to resize"
           >
             <div className="h-full w-12 mx-auto flex items-center justify-center">
-              <div className="w-8 h-0.5 bg-gray-400 dark:bg-slate-500 rounded-full" />
+              <div className="w-8 h-0.5 bg-text-secondary rounded-full" />
             </div>
           </div>
           <div style={{ height: detailPaneHeight }} className="shrink-0">

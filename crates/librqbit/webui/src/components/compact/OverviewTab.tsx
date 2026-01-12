@@ -28,7 +28,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   if (!detailsResponse || !statsResponse) {
     return (
-      <div className="p-4 text-gray-400 dark:text-slate-500">Loading...</div>
+      <div className="p-4 text-text-tertiary">Loading...</div>
     );
   }
 
@@ -56,16 +56,16 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const peersSeen = peerStats?.seen ?? 0;
 
   const getStateDisplay = () => {
-    if (error) return { text: "Error", color: "text-red-500" };
+    if (error) return { text: "Error", color: "text-error" };
     if (state === STATE_INITIALIZING)
-      return { text: "Initializing", color: "text-yellow-500" };
+      return { text: "Initializing", color: "text-warning" };
     if (state === STATE_PAUSED)
-      return { text: "Paused", color: "text-gray-500" };
+      return { text: "Paused", color: "text-text-secondary" };
     if (state === STATE_LIVE && finished)
-      return { text: "Seeding", color: "text-green-500" };
+      return { text: "Seeding", color: "text-success" };
     if (state === STATE_LIVE)
-      return { text: "Downloading", color: "text-blue-500" };
-    return { text: state, color: "text-gray-500" };
+      return { text: "Downloading", color: "text-primary" };
+    return { text: state, color: "text-text-secondary" };
   };
 
   const stateDisplay = getStateDisplay();
@@ -83,11 +83,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   return (
     <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-2 text-sm">
       <div className="col-span-2 lg:col-span-4">
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Name
         </label>
         <div
-          className="font-medium text-gray-900 dark:text-slate-100 truncate"
+          className="font-medium text-text truncate"
           title={name}
         >
           {name}
@@ -95,7 +95,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Status
         </label>
         <div className={`font-medium ${stateDisplay.color}`}>
@@ -104,10 +104,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       </div>
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Progress
         </label>
-        <div className="font-medium text-gray-900 dark:text-slate-100">
+        <div className="font-medium text-text">
           {progressPercentage.toFixed(1)}% ({formatBytes(progressBytes)} /{" "}
           {formatBytes(totalBytes)})
         </div>
@@ -115,7 +115,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
       {(detailsResponse.total_pieces ?? 0) > 0 && (
         <div className="col-span-2 lg:col-span-4">
-          <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+          <label className="text-xs text-text-secondary uppercase tracking-wide">
             Pieces ({detailsResponse.total_pieces})
           </label>
           <div className="mt-1">
@@ -129,56 +129,56 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       )}
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Download
         </label>
-        <div className="font-medium text-gray-900 dark:text-slate-100">
+        <div className="font-medium text-text">
           {downloadSpeed}
         </div>
       </div>
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Upload
         </label>
-        <div className="font-medium text-gray-900 dark:text-slate-100">
+        <div className="font-medium text-text">
           {uploadSpeed}
         </div>
       </div>
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           ETA
         </label>
-        <div className="font-medium text-gray-900 dark:text-slate-100">
+        <div className="font-medium text-text">
           {finished ? "Complete" : eta}
         </div>
       </div>
 
       <div>
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Peers
         </label>
-        <div className="font-medium text-gray-900 dark:text-slate-100">
+        <div className="font-medium text-text">
           {peersConnected} connected / {peersSeen} seen
         </div>
       </div>
 
       <div className="col-span-2">
-        <label className="text-xs text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+        <label className="text-xs text-text-secondary uppercase tracking-wide">
           Info Hash
         </label>
         <div className="flex items-center gap-2">
-          <code className="font-mono text-xs text-gray-700 dark:text-slate-300 truncate flex-1">
+          <code className="font-mono text-xs text-text-secondary truncate flex-1">
             {infoHash}
           </code>
           <button
             onClick={copyInfoHash}
-            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+            className="p-1 text-text-tertiary hover:text-text transition-colors"
             title="Copy info hash"
           >
             {copied ? (
-              <FaCheck className="w-3 h-3 text-green-500" />
+              <FaCheck className="w-3 h-3 text-success" />
             ) : (
               <FaCopy className="w-3 h-3" />
             )}
@@ -188,10 +188,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
       {error && (
         <div className="col-span-2 lg:col-span-4">
-          <label className="text-xs text-red-500 uppercase tracking-wide">
+          <label className="text-xs text-error uppercase tracking-wide">
             Error
           </label>
-          <div className="text-red-500">{error}</div>
+          <div className="text-error">{error}</div>
         </div>
       )}
     </div>

@@ -91,7 +91,7 @@ export const RqbitWebUI = (props: {
   }, []);
 
   return (
-    <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen flex flex-col">
+    <div className="bg-surface text-text min-h-screen flex flex-col">
       <Header
         title={props.title}
         version={props.version}

@@ -14,7 +14,7 @@ export const Fieldset = ({
   return (
     <fieldset className={`mb-4 ${className}`}>
       {label && (
-        <label className="text-md font-md mb-3 block pb-1 border-b">
+        <label className="text-sm font-medium mb-3 block pb-1 border-b border-border">
           {label}
         </label>
       )}

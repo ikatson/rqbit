@@ -50,7 +50,7 @@ interface StatBadgeProps {
 const StatBadge: React.FC<StatBadgeProps> = ({ label, value, color }) => (
   <span className="inline-flex items-center gap-1 text-xs">
     <span className={`font-semibold ${color}`}>{value}</span>
-    <span className="text-gray-500 dark:text-slate-500">{label}</span>
+    <span className="text-text-tertiary">{label}</span>
   </span>
 );
 
@@ -215,63 +215,63 @@ export const PeersTab: React.FC<PeersTabProps> = ({
 
   if (!statsResponse) {
     return (
-      <div className="p-4 text-gray-400 dark:text-slate-500">Loading...</div>
+      <div className="p-4 text-text-tertiary">Loading...</div>
     );
   }
 
   if (!statsResponse.live) {
     return (
-      <div className="p-4 text-gray-400 dark:text-slate-500">
+      <div className="p-4 text-text-tertiary">
         No live peer information available (torrent is not live)
       </div>
     );
   }
 
   const headerClass =
-    "px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 select-none";
+    "px-3 py-2 text-left text-xs font-medium text-text-secondary uppercase tracking-wider cursor-pointer hover:bg-surface-sunken select-none";
 
   return (
     <div className="p-4">
       {/* Aggregate Stats - Compact inline display */}
       {peerStats && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3 pb-2 border-b border-gray-200 dark:border-slate-700">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3 pb-2 border-b border-border">
           <StatBadge
             label="connected"
             value={peerStats.live}
-            color="text-green-600 dark:text-green-400"
+            color="text-success"
           />
           <StatBadge
             label="connecting"
             value={peerStats.connecting}
-            color="text-blue-600 dark:text-blue-400"
+            color="text-primary"
           />
           <StatBadge
             label="queued"
             value={peerStats.queued}
-            color="text-yellow-600 dark:text-yellow-400"
+            color="text-warning"
           />
           <StatBadge
             label="seen"
             value={peerStats.seen}
-            color="text-gray-600 dark:text-slate-300"
+            color="text-text"
           />
           <StatBadge
             label="dead"
             value={peerStats.dead}
-            color="text-red-600 dark:text-red-400"
+            color="text-error"
           />
           <StatBadge
             label="not needed"
             value={peerStats.not_needed}
-            color="text-gray-400 dark:text-slate-500"
+            color="text-text-tertiary"
           />
         </div>
       )}
 
       {/* Peer List Table */}
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
-          <thead className="bg-gray-50 dark:bg-slate-800">
+        <table className="min-w-full divide-y divide-border">
+          <thead className="bg-surface-raised">
             <tr>
               <th className={headerClass} onClick={() => handleSort("addr")}>
                 IP Address
@@ -338,12 +338,12 @@ export const PeersTab: React.FC<PeersTabProps> = ({
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-slate-700">
+          <tbody className="bg-surface divide-y divide-border">
             {sortedPeers.length === 0 ? (
               <tr>
                 <td
                   colSpan={6}
-                  className="px-3 py-4 text-center text-gray-400 dark:text-slate-500"
+                  className="px-3 py-4 text-center text-text-tertiary"
                 >
                   {peerSnapshot === null
                     ? "Loading peer list..."
@@ -354,24 +354,24 @@ export const PeersTab: React.FC<PeersTabProps> = ({
               sortedPeers.map((peer) => (
                 <tr
                   key={peer.addr}
-                  className="hover:bg-gray-50 dark:hover:bg-slate-800"
+                  className="hover:bg-surface-raised"
                 >
-                  <td className="px-3 py-2 text-sm font-mono text-gray-900 dark:text-slate-200">
+                  <td className="px-3 py-2 text-sm font-mono text-text">
                     {peer.addr}
                   </td>
-                  <td className="px-3 py-2 text-sm text-gray-600 dark:text-slate-400 uppercase">
+                  <td className="px-3 py-2 text-sm text-text-secondary uppercase">
                     {peer.stats.conn_kind ?? "-"}
                   </td>
-                  <td className="px-3 py-2 text-sm text-green-600 dark:text-green-400">
+                  <td className="px-3 py-2 text-sm text-success">
                     {formatSpeed(peer.downloadSpeed)}
                   </td>
-                  <td className="px-3 py-2 text-sm text-blue-600 dark:text-blue-400">
+                  <td className="px-3 py-2 text-sm text-primary">
                     {formatSpeed(peer.uploadSpeed)}
                   </td>
-                  <td className="px-3 py-2 text-sm text-gray-600 dark:text-slate-400">
+                  <td className="px-3 py-2 text-sm text-text-secondary">
                     {formatBytes(peer.stats.counters.fetched_bytes)}
                   </td>
-                  <td className="px-3 py-2 text-sm text-gray-600 dark:text-slate-400">
+                  <td className="px-3 py-2 text-sm text-text-secondary">
                     {formatBytes(peer.stats.counters.uploaded_bytes)}
                   </td>
                 </tr>

@@ -58,15 +58,11 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
   return (
     <tr
       onMouseDown={(e) => onRowClick(e)}
-      className={`
-        cursor-pointer border-b border-gray-100 dark:border-slate-700
-        transition-colors
-        ${
-          isSelected
-            ? "bg-blue-50 dark:bg-slate-700"
-            : "hover:bg-gray-50 dark:hover:bg-slate-800"
-        }
-      `}
+      className={`cursor-pointer border-b border-border transition-colors ${
+        isSelected
+          ? "bg-primary/10"
+          : "hover:bg-surface-raised"
+      }`}
     >
       <td
         className="w-8 px-2 py-2 text-center"
@@ -76,7 +72,7 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
           type="checkbox"
           checked={isSelected}
           onChange={() => {}}
-          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+          className="w-4 h-4 rounded border-border-strong bg-surface text-primary focus:ring-primary"
         />
       </td>
       <td className="w-8 px-1 py-2">
@@ -87,56 +83,56 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
           finished={finished}
         />
       </td>
-      <td className="w-12 px-2 py-2 text-center text-sm text-gray-500 dark:text-slate-500 font-mono">
+      <td className="w-12 px-2 py-2 text-center text-sm text-text-tertiary font-mono">
         {id}
       </td>
       <td className="px-2 py-2 max-w-xs">
         <div
-          className="truncate text-sm font-medium text-gray-900 dark:text-slate-200"
+          className="truncate text-sm font-medium text-text"
           title={name}
         >
           {name || "Loading..."}
         </div>
         {error && (
-          <div className="truncate text-xs text-red-500" title={error}>
+          <div className="truncate text-xs text-error" title={error}>
             {error}
           </div>
         )}
       </td>
-      <td className="w-20 px-2 py-2 text-right text-sm text-gray-600 dark:text-slate-400">
+      <td className="w-20 px-2 py-2 text-right text-sm text-text-secondary">
         {formatBytes(totalBytes)}
       </td>
       <td className="w-24 px-2 py-2 text-center">
         <div className="flex items-center gap-2">
-          <div className="flex-1 h-1.5 bg-gray-200 dark:bg-slate-600 rounded-full overflow-hidden">
+          <div className="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full ${
                 error
-                  ? "bg-red-500"
+                  ? "bg-error-bg"
                   : finished
-                    ? "bg-green-500"
+                    ? "bg-success-bg"
                     : state === STATE_INITIALIZING
-                      ? "bg-yellow-500"
-                      : "bg-blue-500"
+                      ? "bg-warning-bg"
+                      : "bg-primary-bg"
               }`}
               style={{ width: `${progressPercentage}%` }}
             />
           </div>
-          <span className="text-xs text-gray-600 dark:text-slate-400 w-8 text-right">
+          <span className="text-xs text-text-secondary w-8 text-right">
             {progressPercentage}%
           </span>
         </div>
       </td>
-      <td className="w-24 px-2 py-2 text-right text-sm text-gray-600 dark:text-slate-400">
+      <td className="w-24 px-2 py-2 text-right text-sm text-text-secondary">
         {downloadSpeed}
       </td>
-      <td className="w-24 px-2 py-2 text-right text-sm text-gray-600 dark:text-slate-400">
+      <td className="w-24 px-2 py-2 text-right text-sm text-text-secondary">
         {uploadSpeed}
       </td>
-      <td className="w-20 px-2 py-2 text-center text-sm text-gray-600 dark:text-slate-400">
+      <td className="w-20 px-2 py-2 text-center text-sm text-text-secondary">
         {displayEta}
       </td>
-      <td className="w-16 px-2 py-2 text-center text-sm text-gray-600 dark:text-slate-400">
+      <td className="w-16 px-2 py-2 text-center text-sm text-text-secondary">
         {peersDisplay}
       </td>
     </tr>

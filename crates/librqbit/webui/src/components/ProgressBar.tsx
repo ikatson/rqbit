@@ -1,8 +1,8 @@
 const variantClassNames = {
-  warn: "bg-amber-500 text-white",
-  info: "bg-blue-500 text-white",
-  success: "bg-green-700 text-white",
-  error: "bg-red-500 text-white",
+  warn: "bg-warning-bg text-white",
+  info: "bg-primary-bg text-white",
+  success: "bg-success-bg text-white",
+  error: "bg-error-bg text-white",
 };
 
 export const ProgressBar: React.FC<{
@@ -18,7 +18,7 @@ export const ProgressBar: React.FC<{
 
   return (
     <div
-      className={`w-full bg-gray-200 rounded-full mb-1 dark:bg-gray-500 ${classNames}`}
+      className={`w-full bg-border rounded-full mb-1 ${classNames}`}
     >
       <div
         className={`text-xs font-medium transition-all text-center leading-none py-0.5 px-2 rounded-full ${variantClassName} ${

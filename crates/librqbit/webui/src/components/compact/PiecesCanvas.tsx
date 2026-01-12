@@ -60,9 +60,10 @@ export const PiecesCanvas: React.FC<PiecesCanvasProps> = ({
     canvas.width = canvasWidth;
     canvas.height = CANVAS_HEIGHT;
 
-    // Colors
-    const haveColor = "#22c55e"; // green-500
-    const missingColor = "#374151"; // gray-700
+    // Get colors from CSS custom properties
+    const computedStyle = getComputedStyle(document.documentElement);
+    const haveColor = computedStyle.getPropertyValue("--color-success-bg").trim() || "#22c55e";
+    const missingColor = computedStyle.getPropertyValue("--color-border").trim() || "#374151";
 
     // Fill background with missing color
     ctx.fillStyle = missingColor;

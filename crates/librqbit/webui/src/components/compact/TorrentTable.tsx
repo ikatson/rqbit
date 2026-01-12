@@ -212,7 +212,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   );
 
   const headerClass =
-    "px-2 py-3 font-medium text-gray-700 dark:text-slate-300 cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 select-none";
+    "px-2 py-3 font-medium text-text cursor-pointer hover:bg-surface-sunken select-none";
 
   if (loading) {
     return (
@@ -224,7 +224,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
 
   if (!torrents || torrents.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-gray-400 dark:text-slate-500">
+      <div className="flex flex-col items-center justify-center h-64 text-text-tertiary">
         <p className="text-lg">No torrents</p>
         <p className="text-sm">Add a torrent to get started</p>
       </div>
@@ -233,8 +233,8 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
 
   return (
     <table className="w-full text-sm">
-      <thead className="bg-gray-50 dark:bg-slate-800 sticky top-0 z-10">
-        <tr className="border-b border-gray-200 dark:border-slate-700">
+      <thead className="bg-surface-raised sticky top-0 z-10">
+        <tr className="border-b border-border">
           <th className="w-8 px-2 py-3">
             <input
               type="checkbox"
@@ -243,7 +243,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
                 if (el) el.indeterminate = someSelected && !allSelected;
               }}
               onChange={handleHeaderCheckbox}
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800"
+              className="w-4 h-4 rounded border-border-strong bg-surface text-primary focus:ring-primary"
             />
           </th>
           <th className="w-8 px-1 py-3"></th>
