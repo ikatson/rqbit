@@ -7,7 +7,7 @@ use axum::{
 };
 use bytes::Bytes;
 use http::{
-    HeaderMap, HeaderValue, StatusCode,
+    HeaderMap, HeaderName, HeaderValue, StatusCode,
     header::{CONTENT_DISPOSITION, CONTENT_TYPE},
 };
 use librqbit_core::magnet::Magnet;
@@ -21,6 +21,7 @@ use crate::{
     http_api::timeout::Timeout,
     http_api_types::TorrentAddQueryParams,
     torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsFilterState},
+    type_aliases::BF,
 };
 
 pub async fn h_torrents_list(
@@ -85,7 +86,52 @@ pub async fn h_torrent_haves(
     Path(idx): Path<TorrentIdOrHash>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse> {
-    let bf = state.api.api_dump_haves(idx)?;
+    fn generate_svg(bits: &BF, len: u32) -> String {
+        if len == 0 {
+            return r#"<svg width="100%" height="100" xmlns="http://www.w3.org/2000/svg"></svg>"#
+                .to_string();
+        }
+
+        const HAVE_COLOR: &str = "#22c55e";
+        const MISSING_COLOR: &str = "#374151";
+
+        let bit_width = 100.0 / len as f64;
+        let mut svg_segments = String::new();
+
+        let mut bits_iter = bits.iter().map(|b| *b).enumerate().peekable();
+
+        while let Some((i, value)) = bits_iter.next() {
+            let mut count = 1;
+
+            // Peek ahead to find how many subsequent bits have the same value
+            while let Some((_, next_value)) = bits_iter.peek() {
+                if *next_value == value {
+                    count += 1;
+                    bits_iter.next();
+                } else {
+                    break;
+                }
+            }
+
+            let color = if value { HAVE_COLOR } else { MISSING_COLOR };
+            let x_pos = i as f64 * bit_width;
+            let segment_width = count as f64 * bit_width;
+
+            svg_segments.push_str(&format!(
+                r#"<rect x="{:.4}%" y="0" width="{:.4}%" height="100%" fill="{}" />"#,
+                x_pos, segment_width, color
+            ));
+        }
+
+        format!(
+            r#"<svg width="100%" height="20" viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                {}
+            </svg>"#,
+            svg_segments
+        )
+    }
+
+    let (bf, len) = state.api.api_dump_haves(idx)?;
 
     // Check if binary format is requested
     let wants_binary = headers
@@ -94,12 +140,28 @@ pub async fn h_torrent_haves(
         .is_some_and(|s| s.contains("application/octet-stream"));
 
     if wants_binary {
-        let bytes = bf.as_raw_slice().to_vec();
-        let mut resp_headers = HeaderMap::new();
-        resp_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-        Ok((resp_headers, bytes).into_response())
+        let bytes = bf.into_boxed_slice();
+        Ok((
+            [
+                (
+                    CONTENT_TYPE,
+                    HeaderValue::from_static("application/octet-stream"),
+                ),
+                (
+                    HeaderName::from_static("x-bitfield-len"),
+                    HeaderValue::from_str(&len.to_string()).unwrap(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response())
     } else {
-        Ok(format!("{:?}", bf.as_bitslice()).into_response())
+        let svg = generate_svg(&bf, len);
+        Ok((
+            [(CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"))],
+            svg,
+        )
+            .into_response())
     }
 }
 

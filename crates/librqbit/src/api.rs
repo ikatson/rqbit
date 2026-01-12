@@ -498,9 +498,13 @@ impl Api {
         Ok(mgr.stats())
     }
 
-    pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<BF> {
+    pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<(BF, u32)> {
         let mgr = self.mgr_handle(idx)?;
-        Ok(mgr.with_chunk_tracker(|chunks| BF::from_bitslice(chunks.get_have_pieces().as_slice()))?)
+        Ok(mgr.with_chunk_tracker(|chunks| {
+            let bf = BF::from_bitslice(chunks.get_have_pieces().as_slice());
+            let len = chunks.get_lengths().total_pieces();
+            (bf, len)
+        })?)
     }
 
     pub async fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {
