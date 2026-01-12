@@ -1,6 +1,7 @@
 import {
   AddTorrentResponse,
   ErrorDetails,
+  LimitsConfig,
   ListTorrentsResponse,
   PeerStatsSnapshot,
   RqbitAPI,
@@ -196,5 +197,11 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
   getTorrentHaves: (index: number): Promise<ArrayBuffer> => {
     return makeBinaryRequest(`/torrents/${index}/haves`);
+  },
+  getLimits: (): Promise<LimitsConfig> => {
+    return makeRequest("GET", "/torrents/limits");
+  },
+  setLimits: (limits: LimitsConfig): Promise<void> => {
+    return makeRequest("POST", "/torrents/limits", limits, true);
   },
 };

@@ -79,7 +79,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
   }, [isDragging, detailPaneHeight]);
 
   return (
-    <div ref={containerRef} className="flex flex-col h-[calc(100vh-90px)]">
+    <div ref={containerRef} className="flex flex-col h-[calc(100vh-95px)]">
       <ActionBar />
       <div className="flex-1 overflow-auto min-h-0">
         <TorrentTable torrents={torrents} loading={loading} />

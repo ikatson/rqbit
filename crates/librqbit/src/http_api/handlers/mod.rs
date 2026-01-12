@@ -104,7 +104,8 @@ pub fn make_api_router(state: ApiState) -> Router {
         .route(
             "/torrents/{id}/stream/{file_id}/{*filename}",
             get(streaming::h_torrent_stream_file),
-        );
+        )
+        .route("/torrents/limits", get(configure::h_get_session_ratelimits));
 
     if !state.opts.read_only {
         api_router = api_router

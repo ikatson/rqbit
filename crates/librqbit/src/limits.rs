@@ -12,7 +12,10 @@ pub struct LimitsConfig {
     pub download_bps: Option<NonZeroU32>,
 }
 
-struct Limit(ArcSwapOption<RateLimiter>);
+struct Limit {
+    limiter: ArcSwapOption<RateLimiter>,
+    current_bps: std::sync::atomic::AtomicU32,
+}
 
 impl Limit {
     fn new_inner(bps: Option<NonZeroU32>) -> Option<Arc<RateLimiter>> {
@@ -21,11 +24,15 @@ impl Limit {
     }
 
     fn new(bps: Option<NonZeroU32>) -> Self {
-        Self(ArcSwapOption::new(Self::new_inner(bps)))
+        use std::sync::atomic::AtomicU32;
+        Self {
+            limiter: ArcSwapOption::new(Self::new_inner(bps)),
+            current_bps: AtomicU32::new(bps.map(|v| v.get()).unwrap_or(0)),
+        }
     }
 
     async fn acquire(&self, size: NonZeroU32) -> crate::Result<()> {
-        let lim = self.0.load().clone();
+        let lim = self.limiter.load().clone();
         if let Some(rl) = lim.as_ref() {
             rl.until_n_ready(size).await?;
         }
@@ -33,8 +40,16 @@ impl Limit {
     }
 
     fn set(&self, limit: Option<NonZeroU32>) {
+        use std::sync::atomic::Ordering;
         let new = Self::new_inner(limit);
-        self.0.swap(new);
+        self.limiter.swap(new);
+        self.current_bps
+            .store(limit.map(|v| v.get()).unwrap_or(0), Ordering::Relaxed);
+    }
+
+    fn get(&self) -> Option<NonZeroU32> {
+        use std::sync::atomic::Ordering;
+        NonZeroU32::new(self.current_bps.load(Ordering::Relaxed))
     }
 }
 
@@ -65,5 +80,20 @@ impl Limits {
 
     pub fn set_download_bps(&self, bps: Option<NonZeroU32>) {
         self.down.set(bps);
+    }
+
+    pub fn get_upload_bps(&self) -> Option<NonZeroU32> {
+        self.up.get()
+    }
+
+    pub fn get_download_bps(&self) -> Option<NonZeroU32> {
+        self.down.get()
+    }
+
+    pub fn get_config(&self) -> LimitsConfig {
+        LimitsConfig {
+            upload_bps: self.get_upload_bps(),
+            download_bps: self.get_download_bps(),
+        }
     }
 }

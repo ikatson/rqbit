@@ -121,6 +121,11 @@ export interface SessionStats {
   uptime_seconds: number;
 }
 
+export interface LimitsConfig {
+  upload_bps?: number | null;
+  download_bps?: number | null;
+}
+
 // Interface for the Torrent Stats API response
 export interface LiveTorrentStats {
   snapshot: {
@@ -265,4 +270,6 @@ export interface RqbitAPI {
   forget: (index: number) => Promise<void>;
   delete: (index: number) => Promise<void>;
   stats: () => Promise<SessionStats>;
+  getLimits: () => Promise<LimitsConfig>;
+  setLimits: (limits: LimitsConfig) => Promise<void>;
 }

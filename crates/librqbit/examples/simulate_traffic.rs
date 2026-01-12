@@ -108,7 +108,7 @@ struct FakeTorrent {
 async fn create_torrents(td: &Path, count: usize) -> anyhow::Result<Vec<FakeTorrent>> {
     let mut result = Vec::new();
     for torrent in 0..count {
-        let dir = td.join(&torrent.to_string());
+        let dir = td.join(torrent.to_string());
         tokio::fs::create_dir_all(&dir).await?;
         let res = create_one(&dir).await?;
         result.push(FakeTorrent {

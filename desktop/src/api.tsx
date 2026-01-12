@@ -1,6 +1,7 @@
 import { RqbitDesktopConfig } from "./configuration";
 import {
   AddTorrentResponse,
+  LimitsConfig,
   ListTorrentsResponse,
   RqbitAPI,
   TorrentDetails,
@@ -157,6 +158,14 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     },
     stats: () => {
       return invokeAPI<SessionStats>("stats");
+    },
+    getLimits: () => {
+      // Desktop manages rate limits via config, not separate API
+      return Promise.resolve({ upload_bps: null, download_bps: null });
+    },
+    setLimits: (_limits: LimitsConfig) => {
+      // Desktop manages rate limits via config change, not this API
+      return Promise.resolve();
     },
   };
 };
