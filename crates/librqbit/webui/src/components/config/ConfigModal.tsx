@@ -90,14 +90,14 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose }) => 
           id: "other",
           label: "Other",
           content: (
-            <div className="text-gray-600 dark:text-gray-400 py-4">
+            <div className="text-text-secondary py-2 text-sm">
               <p>
                 All other parameters (DHT, connections, persistence, etc.) can be
-                configured via <code className="bg-gray-100 dark:bg-slate-700 px-1 rounded">rqbit</code> CLI
+                configured via <code className="bg-surface-sunken px-1 rounded text-xs">rqbit</code> CLI
                 arguments when starting the server.
               </p>
               <p className="mt-2">
-                Run <code className="bg-gray-100 dark:bg-slate-700 px-1 rounded">rqbit --help</code> to
+                Run <code className="bg-surface-sunken px-1 rounded text-xs">rqbit --help</code> to
                 see all available options.
               </p>
             </div>

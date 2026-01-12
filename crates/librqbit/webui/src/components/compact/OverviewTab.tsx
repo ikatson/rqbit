@@ -81,118 +81,74 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   };
 
   return (
-    <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-2 text-sm">
-      <div className="col-span-2 lg:col-span-4">
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Name
-        </label>
-        <div
-          className="font-medium text-text truncate"
-          title={name}
-        >
-          {name}
-        </div>
+    <div className="p-3 text-sm">
+      {/* Name */}
+      <div className="truncate text-text mb-2" title={name}>
+        {name}
       </div>
 
-      <div>
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Status
-        </label>
-        <div className={`font-medium ${stateDisplay.color}`}>
-          {stateDisplay.text}
-        </div>
-      </div>
-
-      <div>
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Progress
-        </label>
-        <div className="font-medium text-text">
-          {progressPercentage.toFixed(1)}% ({formatBytes(progressBytes)} /{" "}
-          {formatBytes(totalBytes)})
-        </div>
-      </div>
-
+      {/* Pieces canvas */}
       {(detailsResponse.total_pieces ?? 0) > 0 && (
-        <div className="col-span-2 lg:col-span-4">
-          <label className="text-xs text-text-secondary uppercase tracking-wide">
-            Pieces ({detailsResponse.total_pieces})
-          </label>
-          <div className="mt-1">
-            <PiecesCanvas
-              torrentId={torrentId}
-              totalPieces={detailsResponse.total_pieces ?? 0}
-              stats={statsResponse}
-            />
-          </div>
+        <div className="mb-2">
+          <PiecesCanvas
+            torrentId={torrentId}
+            totalPieces={detailsResponse.total_pieces ?? 0}
+            stats={statsResponse}
+          />
         </div>
       )}
 
-      <div>
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Download
-        </label>
-        <div className="font-medium text-text">
-          {downloadSpeed}
-        </div>
+      {/* Stats row */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        <span>
+          <span className="text-text-tertiary">Status </span>
+          <span className={stateDisplay.color}>{stateDisplay.text}</span>
+        </span>
+        <span>
+          <span className="text-text-tertiary">Progress </span>
+          <span className="text-text">{progressPercentage.toFixed(1)}%</span>
+          <span className="text-text-tertiary"> ({formatBytes(progressBytes)} / {formatBytes(totalBytes)})</span>
+        </span>
+        <span>
+          <span className="text-text-tertiary">Down </span>
+          <span className="text-text">{downloadSpeed}</span>
+        </span>
+        <span>
+          <span className="text-text-tertiary">Up </span>
+          <span className="text-text">{uploadSpeed}</span>
+        </span>
+        <span>
+          <span className="text-text-tertiary">ETA </span>
+          <span className="text-text">{finished ? "Complete" : eta}</span>
+        </span>
+        <span>
+          <span className="text-text-tertiary">Peers </span>
+          <span className="text-text">{peersConnected}/{peersSeen}</span>
+        </span>
       </div>
 
-      <div>
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Upload
-        </label>
-        <div className="font-medium text-text">
-          {uploadSpeed}
-        </div>
+      {/* Info hash */}
+      <div className="mt-2 flex items-center gap-1 text-xs">
+        <span className="text-text-tertiary">Hash</span>
+        <code className="font-mono text-text-tertiary truncate flex-1">
+          {infoHash}
+        </code>
+        <button
+          onClick={copyInfoHash}
+          className="p-0.5 text-text-tertiary hover:text-text transition-colors"
+          title="Copy info hash"
+        >
+          {copied ? (
+            <FaCheck className="w-3 h-3 text-success" />
+          ) : (
+            <FaCopy className="w-3 h-3" />
+          )}
+        </button>
       </div>
 
-      <div>
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          ETA
-        </label>
-        <div className="font-medium text-text">
-          {finished ? "Complete" : eta}
-        </div>
-      </div>
-
-      <div>
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Peers
-        </label>
-        <div className="font-medium text-text">
-          {peersConnected} connected / {peersSeen} seen
-        </div>
-      </div>
-
-      <div className="col-span-2">
-        <label className="text-xs text-text-secondary uppercase tracking-wide">
-          Info Hash
-        </label>
-        <div className="flex items-center gap-2">
-          <code className="font-mono text-xs text-text-secondary truncate flex-1">
-            {infoHash}
-          </code>
-          <button
-            onClick={copyInfoHash}
-            className="p-1 text-text-tertiary hover:text-text transition-colors"
-            title="Copy info hash"
-          >
-            {copied ? (
-              <FaCheck className="w-3 h-3 text-success" />
-            ) : (
-              <FaCopy className="w-3 h-3" />
-            )}
-          </button>
-        </div>
-      </div>
-
+      {/* Error */}
       {error && (
-        <div className="col-span-2 lg:col-span-4">
-          <label className="text-xs text-error uppercase tracking-wide">
-            Error
-          </label>
-          <div className="text-error">{error}</div>
-        </div>
+        <div className="mt-2 text-xs text-error">{error}</div>
       )}
     </div>
   );

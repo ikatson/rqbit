@@ -46,18 +46,17 @@ export const TabbedConfigModal: React.FC<TabbedConfigModalProps> = ({
       <ModalBody>
         <ErrorComponent error={error ?? null} />
         {tabs.length > 1 && (
-          <div className="mb-4 flex border-b">
+          <div className="mb-4 flex border-b border-border">
             {tabs.map((tab) => {
               const isActive = tab.id === currentTab;
-              let classNames = "text-slate-300";
-              if (isActive) {
-                classNames =
-                  "text-slate-800 border-b-2 border-blue-800 dark:border-blue-200 dark:text-white";
-              }
               return (
                 <button
                   key={tab.id}
-                  className={`p-2 ${classNames}`}
+                  className={`px-3 py-1.5 text-sm ${
+                    isActive
+                      ? "text-text border-b-2 border-primary -mb-px"
+                      : "text-text-tertiary hover:text-text-secondary"
+                  }`}
                   onClick={() => setCurrentTab(tab.id)}
                 >
                   {tab.label}

@@ -212,7 +212,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   );
 
   const headerClass =
-    "px-2 py-3 font-medium text-text cursor-pointer hover:bg-surface-sunken select-none";
+    "px-2 py-2 text-text-secondary cursor-pointer hover:text-text select-none";
 
   if (loading) {
     return (
