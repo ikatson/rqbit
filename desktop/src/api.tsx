@@ -111,7 +111,10 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
         .buffer;
     },
     getPeerStats: async function (id: number): Promise<PeerStatsSnapshot> {
-      return await invokeAPI<PeerStatsSnapshot>("torrent_peer_stats", { id });
+      return await invokeAPI<PeerStatsSnapshot>("torrent_peer_stats", {
+        id,
+        filter: { state: "live" },
+      });
     },
     uploadTorrent: async function (data, opts): Promise<AddTorrentResponse> {
       if (data instanceof File) {

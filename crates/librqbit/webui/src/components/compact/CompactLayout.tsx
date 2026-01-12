@@ -78,31 +78,37 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
     };
   }, [isDragging, detailPaneHeight]);
 
+  const hasTorrents = (torrents?.length ?? 0) > 0;
+
   return (
     <div ref={containerRef} className="flex flex-col h-[calc(100vh-95px)]">
-      <ActionBar />
+      {hasTorrents && <ActionBar />}
       <div className="flex-1 overflow-auto min-h-0">
         <TorrentTable torrents={torrents} loading={loading} />
       </div>
-      {/* Draggable divider */}
-      <div
-        onMouseDown={handleMouseDown}
-        className={`
-          h-1.5 cursor-ns-resize shrink-0
-          bg-gray-200 dark:bg-slate-700
-          hover:bg-blue-400 dark:hover:bg-blue-500
-          transition-colors
-          ${isDragging ? "bg-blue-500 dark:bg-blue-400" : ""}
-        `}
-        title="Drag to resize"
-      >
-        <div className="h-full w-12 mx-auto flex items-center justify-center">
-          <div className="w-8 h-0.5 bg-gray-400 dark:bg-slate-500 rounded-full" />
-        </div>
-      </div>
-      <div style={{ height: detailPaneHeight }} className="shrink-0">
-        <DetailPane />
-      </div>
+      {hasTorrents && (
+        <>
+          {/* Draggable divider */}
+          <div
+            onMouseDown={handleMouseDown}
+            className={`
+            h-1.5 cursor-ns-resize shrink-0
+            bg-gray-200 dark:bg-slate-700
+            hover:bg-blue-400 dark:hover:bg-blue-500
+            transition-colors
+            ${isDragging ? "bg-blue-500 dark:bg-blue-400" : ""}
+          `}
+            title="Drag to resize"
+          >
+            <div className="h-full w-12 mx-auto flex items-center justify-center">
+              <div className="w-8 h-0.5 bg-gray-400 dark:bg-slate-500 rounded-full" />
+            </div>
+          </div>
+          <div style={{ height: detailPaneHeight }} className="shrink-0">
+            <DetailPane />
+          </div>
+        </>
+      )}
     </div>
   );
 };
