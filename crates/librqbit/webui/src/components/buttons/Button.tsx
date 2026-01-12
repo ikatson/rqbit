@@ -25,7 +25,7 @@ export const Button: React.FC<{
         e.preventDefault();
         onClick();
       }}
-      className={`inline-flex items-center gap-1 border rounded-lg  disabled:cursor-not-allowed px-2 py-1 dark:border-slate-700 ${variantClassNames} ${className}`}
+      className={`inline-flex items-center gap-1 border rounded-lg disabled:cursor-not-allowed px-2 py-1 dark:border-slate-700 border-slate-300 ${variantClassNames} ${className}`}
     >
       {children}
     </button>
