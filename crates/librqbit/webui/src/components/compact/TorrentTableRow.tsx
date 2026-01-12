@@ -68,7 +68,10 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
         }
       `}
     >
-      <td className="w-8 px-2 py-2 text-center" onClick={handleCheckboxClick}>
+      <td
+        className="w-8 px-2 py-2 text-center"
+        onMouseDown={handleCheckboxClick}
+      >
         <input
           type="checkbox"
           checked={isSelected}
