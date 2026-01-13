@@ -1,16 +1,13 @@
-import { useState } from "react";
 import {
   TorrentDetails,
   TorrentStats,
   STATE_INITIALIZING,
   STATE_LIVE,
   STATE_PAUSED,
-  STATE_ERROR,
 } from "../../api-types";
 import { formatBytes } from "../../helper/formatBytes";
 import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../../helper/getCompletionETA";
-import { FaCopy, FaCheck } from "react-icons/fa";
 import { PiecesCanvas } from "./PiecesCanvas";
 
 interface OverviewTabProps {
@@ -19,15 +16,25 @@ interface OverviewTabProps {
   statsResponse: TorrentStats | null;
 }
 
+// Labeled value - the building block for all stats
+const LV: React.FC<{
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}> = ({ label, value, mono }) => (
+  <>
+    <span className="text-text-tertiary">{label} </span>
+    <span className={mono ? "font-mono" : ""}>{value}</span>
+  </>
+);
+
 export const OverviewTab: React.FC<OverviewTabProps> = ({
   torrentId,
   detailsResponse,
   statsResponse,
 }) => {
-  const [copied, setCopied] = useState(false);
-
   if (!detailsResponse || !statsResponse) {
-    return <div className="p-4 text-text-tertiary">Loading...</div>;
+    return <div className="p-3 text-text-tertiary">Loading...</div>;
   }
 
   const name = torrentDisplayName(detailsResponse);
@@ -37,24 +44,28 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const totalBytes = statsResponse.total_bytes ?? 1;
   const progressBytes = statsResponse.progress_bytes ?? 0;
   const finished = statsResponse.finished || false;
+
+  const totalPieces = detailsResponse.total_pieces ?? 0;
+  const downloadedPieces =
+    statsResponse.live?.snapshot.downloaded_and_checked_pieces ?? 0;
+  const pieceSize = totalPieces > 0 ? totalBytes / totalPieces : 0;
+
   const totalUploadedBytes = statsResponse.live?.snapshot.uploaded_bytes ?? 0;
 
-  const progressPercentage = error
+  const progressPct = error
     ? 100
     : totalBytes === 0
       ? 100
       : (progressBytes / totalBytes) * 100;
 
-  const downloadSpeed =
+  const downSpeed =
     statsResponse.live?.download_speed?.human_readable ?? "-";
-  const uploadSpeed = statsResponse.live?.upload_speed?.human_readable ?? "-";
+  const upSpeed = statsResponse.live?.upload_speed?.human_readable ?? "-";
   const eta = getCompletionETA(statsResponse);
 
-  const peerStats = statsResponse.live?.snapshot.peer_stats;
-  const peersLive = peerStats?.live ?? 0;
-  const peersSeen = peerStats?.seen ?? 0;
+  const peers = statsResponse.live?.snapshot.peer_stats;
 
-  const getStateDisplay = () => {
+  const stateDisplay = (() => {
     if (error) return { text: "Error", color: "text-error" };
     if (state === STATE_INITIALIZING)
       return { text: "Initializing", color: "text-warning" };
@@ -65,90 +76,89 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     if (state === STATE_LIVE)
       return { text: "Downloading", color: "text-primary" };
     return { text: state, color: "text-text-secondary" };
-  };
-
-  const stateDisplay = getStateDisplay();
-
-  const copyInfoHash = async () => {
-    try {
-      await navigator.clipboard.writeText(infoHash);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (e) {
-      console.error("Failed to copy info hash", e);
-    }
-  };
+  })();
 
   return (
-    <div className="p-3">
-      {/* Name */}
-      <div className="truncate text-text mb-2" title={name}>
-        {name}
+    <div className="p-3 flex flex-col gap-3 text-sm">
+      {/* Header: Name + Status */}
+      <div className="flex items-center gap-3">
+        <span className="truncate text-text font-medium flex-1" title={name}>
+          {name}
+        </span>
+        <span className={`shrink-0 ${stateDisplay.color}`}>
+          {stateDisplay.text}
+        </span>
       </div>
 
-      {/* Pieces canvas */}
-      {(detailsResponse.total_pieces ?? 0) > 0 && (
-        <div className="mb-2">
+      {/* Pieces visualization */}
+      {totalPieces > 0 && (
+        <div>
           <PiecesCanvas
             torrentId={torrentId}
-            totalPieces={detailsResponse.total_pieces ?? 0}
+            totalPieces={totalPieces}
             stats={statsResponse}
           />
         </div>
       )}
 
-      {/* Stats row */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <div className="flex-1">
-          <span className="text-text-tertiary">Status </span>
-          <span className={stateDisplay.color}>{stateDisplay.text}</span>
-        </div>
-        <div className="flex-1">
-          <div>
-            <span className="text-text-tertiary">Progress </span>
-            <span className="text-text">{progressPercentage.toFixed(1)}%</span>
-          </div>
-          <div className="text-text">
-            {formatBytes(progressBytes)} / {formatBytes(totalBytes)}
-          </div>
-        </div>
-        <div className="flex-1">
-          <span className="text-text-tertiary">Down </span>
-          <span className="text-text">{downloadSpeed}</span>
-        </div>
-        <div className="flex-1">
-          <span className="text-text-tertiary">Up </span>
-          <span className="text-text">{uploadSpeed}</span>
-          <div>Total {formatBytes(totalUploadedBytes)}</div>
-        </div>
-        <div className="flex-1">
-          <span className="text-text-tertiary">ETA </span>
-          <span className="text-text">{finished ? "Complete" : eta}</span>
-        </div>
-        <div className="flex-1">
-          <span className="text-text-tertiary">Peers Live/Seen </span>
-          <span className="text-text">
-            {peersLive}/{peersSeen}
+      {/* Main stats line */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-text">
+        <span>
+          <LV label="Progress" value={`${progressPct.toFixed(1)}%`} />
+          <span className="text-text-tertiary">
+            {" "}({formatBytes(progressBytes)}/{formatBytes(totalBytes)})
           </span>
+        </span>
+        <span><LV label="Down" value={downSpeed} /></span>
+        <span>
+          <LV label="Up" value={upSpeed} />
+          <span className="text-text-tertiary"> ({formatBytes(totalUploadedBytes)} total)</span>
+        </span>
+        <span><LV label="ETA" value={finished ? "Complete" : eta} /></span>
+      </div>
+
+      {/* Pieces + Peers line */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-text">
+        {totalPieces > 0 && (
+          <span>
+            <LV
+              label="Pieces"
+              value={`${downloadedPieces.toLocaleString()}/${totalPieces.toLocaleString()}`}
+            />
+            {pieceSize > 0 && (
+              <span className="text-text-tertiary"> ({formatBytes(pieceSize)} each)</span>
+            )}
+          </span>
+        )}
+        {peers && (
+          <span>
+            <LV label="Peers" value="" />
+            <span className="text-success">{peers.live}</span>
+            <span className="text-text-tertiary"> live, </span>
+            <span className="text-primary">{peers.connecting}</span>
+            <span className="text-text-tertiary"> connecting, </span>
+            <span className="text-warning">{peers.queued}</span>
+            <span className="text-text-tertiary"> queued, </span>
+            <span className="text-text">{peers.seen}</span>
+            <span className="text-text-tertiary"> seen, </span>
+            <span className="text-error">{peers.dead}</span>
+            <span className="text-text-tertiary"> dead</span>
+          </span>
+        )}
+      </div>
+
+      {/* Metadata */}
+      <div className="flex flex-col gap-1 text-text">
+        <div className="truncate">
+          <LV label="Hash" value={infoHash} mono />
         </div>
-      </div>
-
-      {/* Info hash */}
-      <div className="mt-2 flex items-center gap-1">
-        <span className="text-text-tertiary">Info Hash</span>
-        <code className="font-mono text-text truncate flex-1">{infoHash}</code>
-      </div>
-
-      {/* Output folder */}
-      <div className="mt-2 flex items-center gap-1">
-        <span className="text-text-tertiary">Output folder</span>
-        <code className="font-mono text-text truncate flex-1">
-          {detailsResponse.output_folder}
-        </code>
+        <div className="truncate">
+          <LV label="Output" value={detailsResponse.output_folder} mono />
+        </div>
       </div>
 
       {/* Error */}
-      {error && <div className="mt-2 text-sm text-error">{error}</div>}
+      {error && <div className="text-error">{error}</div>}
     </div>
   );
 };
