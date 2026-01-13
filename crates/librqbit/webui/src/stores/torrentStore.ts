@@ -1,9 +1,42 @@
 import { create } from "zustand";
 import { TorrentListItem } from "../api-types";
 
-// Deep compare two torrents using JSON serialization
+function deepEqual(obj1: any, obj2: any): boolean {
+  // 1. Same reference or same primitive value
+  if (obj1 === obj2) return true;
+
+  // 2. Handle nulls and different types
+  if (
+    obj1 === null ||
+    obj2 === null ||
+    typeof obj1 !== "object" ||
+    typeof obj2 !== "object"
+  ) {
+    return false;
+  }
+
+  // 3. Handle Arrays specifically
+  if (Array.isArray(obj1) !== Array.isArray(obj2)) return false;
+
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+
+  // 4. Optimization: different number of properties means they aren't equal
+  if (keys1.length !== keys2.length) return false;
+
+  // 5. Recursive check for every key
+  for (const key of keys1) {
+    if (!keys2.includes(key) || !deepEqual(obj1[key], obj2[key])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Deep compare two torrents
 function torrentsEqual(a: TorrentListItem, b: TorrentListItem): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return deepEqual(a, b);
 }
 
 export interface TorrentStore {
