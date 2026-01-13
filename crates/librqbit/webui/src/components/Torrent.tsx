@@ -25,6 +25,7 @@ export const Torrent: React.FC<{
     info_hash: torrent.info_hash,
     files: detailsResponse?.files ?? [],
     total_pieces: torrent.total_pieces,
+    output_folder: torrent.output_folder,
   };
 
   const forceRefreshCallback = () => {

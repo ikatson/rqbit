@@ -120,6 +120,9 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
         </div>
       </td>
       <td className="w-24 px-2 py-2 text-right text-text-secondary">
+        {formatBytes(progressBytes)}
+      </td>
+      <td className="w-24 px-2 py-2 text-right text-text-secondary">
         {downloadSpeed}
       </td>
       <td className="w-24 px-2 py-2 text-right text-text-secondary">

@@ -41,19 +41,6 @@ type PeerSortColumn =
   | "uploaded";
 type PeerSortDirection = "asc" | "desc";
 
-interface StatBadgeProps {
-  label: string;
-  value: number;
-  color: string;
-}
-
-const StatBadge: React.FC<StatBadgeProps> = ({ label, value, color }) => (
-  <span className="inline-flex items-center gap-0.5">
-    <span className={color}>{value}</span>
-    <span className="text-text-tertiary">{label}</span>
-  </span>
-);
-
 const formatSpeed = (bytesPerSecond: number): string => {
   if (bytesPerSecond === 0) return "-";
   return formatBytes(bytesPerSecond) + "/s";
@@ -211,8 +198,6 @@ export const PeersTab: React.FC<PeersTabProps> = ({
     });
   }, [peersWithSpeed, sortColumn, sortDirection]);
 
-  const peerStats = statsResponse?.live?.snapshot.peer_stats;
-
   if (!statsResponse) {
     return <div className="p-4 text-text-tertiary">Loading...</div>;
   }
@@ -230,35 +215,6 @@ export const PeersTab: React.FC<PeersTabProps> = ({
 
   return (
     <div className="p-3">
-      {/* Aggregate Stats */}
-      {peerStats && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-sm">
-          <StatBadge
-            label="connected"
-            value={peerStats.live}
-            color="text-success"
-          />
-          <StatBadge
-            label="connecting"
-            value={peerStats.connecting}
-            color="text-primary"
-          />
-          <StatBadge
-            label="queued"
-            value={peerStats.queued}
-            color="text-warning"
-          />
-          <StatBadge label="seen" value={peerStats.seen} color="text-text" />
-          <StatBadge label="dead" value={peerStats.dead} color="text-error" />
-          <StatBadge
-            label="not needed"
-            value={peerStats.not_needed}
-            color="text-text-tertiary"
-          />
-        </div>
-      )}
-
-      {/* Peer List Table */}
       <div className="overflow-x-auto">
         <table className="min-w-full">
           <thead>

@@ -4,7 +4,7 @@ import { RefreshTorrentStatsContext } from "../../context";
 import { TorrentTableRow } from "./TorrentTableRow";
 import { TorrentSortColumn, useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
-import { SortIcon } from "../SortIcon";
+import { TableHeader } from "./TableHeader";
 import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { useTorrentStore } from "../../stores/torrentStore";
 
@@ -101,6 +101,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             ? (b.stats.progress_bytes ?? 0) / b.stats.total_bytes
             : 0;
           cmp = aProgress - bProgress;
+          break;
+        }
+        case "downloadedBytes": {
+          const aBytes = a.stats?.progress_bytes ?? 0;
+          const bBytes = b.stats?.progress_bytes ?? 0;
+          cmp = aBytes - bBytes;
           break;
         }
         case "downSpeed": {
@@ -215,9 +221,6 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     [orderedIds, selectRange, selectTorrent],
   );
 
-  const headerClass =
-    "px-2 py-2 text-text-secondary cursor-pointer hover:text-text select-none";
-
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -251,105 +254,95 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             />
           </th>
           <th className="w-8 px-1 py-3"></th>
-          <th
-            className={`w-12 ${headerClass} text-center`}
-            onClick={() => handleSort("id")}
-          >
-            ID
-            <SortIcon
-              column="id"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`${headerClass} text-left`}
-            onClick={() => handleSort("name")}
-          >
-            Name
-            <SortIcon
-              column="name"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-20 ${headerClass} text-right`}
-            onClick={() => handleSort("size")}
-          >
-            Size
-            <SortIcon
-              column="size"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-24 ${headerClass} text-center`}
-            onClick={() => handleSort("progress")}
-          >
-            Progress
-            <SortIcon
-              column="progress"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-24 ${headerClass} text-right`}
-            onClick={() => handleSort("downSpeed")}
-          >
-            Down
-            <SortIcon
-              column="downSpeed"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-24 ${headerClass} text-right`}
-            onClick={() => handleSort("upSpeed")}
-          >
-            Up
-            <SortIcon
-              column="upSpeed"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-24 ${headerClass} text-right`}
-            onClick={() => handleSort("uploadedBytes")}
-          >
-            Uploaded
-            <SortIcon
-              column="uploadedBytes"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-20 ${headerClass} text-center`}
-            onClick={() => handleSort("eta")}
-          >
-            ETA
-            <SortIcon
-              column="eta"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
-          <th
-            className={`w-16 ${headerClass} text-center`}
-            onClick={() => handleSort("peers")}
-          >
-            Peers
-            <SortIcon
-              column="peers"
-              sortColumn={sortColumn}
-              sortDirection={sortDirection}
-            />
-          </th>
+          <TableHeader
+            column="id"
+            label="ID"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-12"
+            align="center"
+          />
+          <TableHeader
+            column="name"
+            label="Name"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            align="left"
+          />
+          <TableHeader
+            column="size"
+            label="Size"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-20"
+            align="right"
+          />
+          <TableHeader
+            column="progress"
+            label="Progress"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-24"
+            align="center"
+          />
+          <TableHeader
+            column="downloadedBytes"
+            label="Downloaded"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-24"
+            align="right"
+          />
+          <TableHeader
+            column="downSpeed"
+            label="Down"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-24"
+            align="right"
+          />
+          <TableHeader
+            column="upSpeed"
+            label="Up"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-24"
+            align="right"
+          />
+          <TableHeader
+            column="uploadedBytes"
+            label="Uploaded"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-24"
+            align="right"
+          />
+          <TableHeader
+            column="eta"
+            label="ETA"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-20"
+            align="center"
+          />
+          <TableHeader
+            column="peers"
+            label="Peers"
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            className="w-16"
+            align="center"
+          />
         </tr>
       </thead>
       <tbody className="text-sm">

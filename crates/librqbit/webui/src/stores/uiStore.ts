@@ -17,6 +17,7 @@ export type TorrentSortColumn =
   | "name"
   | "size"
   | "progress"
+  | "downloadedBytes"
   | "downSpeed"
   | "upSpeed"
   | "uploadedBytes"

@@ -38,6 +38,7 @@ export const ActionBar: React.FC = () => {
               info_hash: torrent.info_hash,
               files: [],
               total_pieces: torrent.total_pieces,
+              output_folder: torrent.output_folder,
             }
           : null,
       };
