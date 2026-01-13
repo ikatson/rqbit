@@ -2,6 +2,7 @@ import { TorrentListItem, STATE_INITIALIZING } from "../../api-types";
 import { StatusIcon } from "../StatusIcon";
 import { formatBytes } from "../../helper/formatBytes";
 import { getCompletionETA } from "../../helper/getCompletionETA";
+import { memo } from "react";
 
 interface TorrentTableRowProps {
   torrent: TorrentListItem;
@@ -10,7 +11,7 @@ interface TorrentTableRowProps {
   onCheckboxChange: (id: number) => void;
 }
 
-export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
+const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
   torrent,
   isSelected,
   onRowClick,
@@ -135,3 +136,5 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
     </tr>
   );
 };
+
+export const TorrentTableRow = memo(TorrentTableRowUnmemoized);
