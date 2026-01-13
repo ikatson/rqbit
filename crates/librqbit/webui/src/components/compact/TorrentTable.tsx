@@ -291,38 +291,38 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
           />
           <TableHeader
             column="downloadedBytes"
-            label="Downloaded"
+            label="Recv"
             sortColumn={sortColumn}
             sortDirection={sortDirection}
             onSort={handleSort}
-            className="w-24"
+            className="w-20"
             align="right"
           />
           <TableHeader
             column="downSpeed"
-            label="Down"
+            label="↓ Speed"
             sortColumn={sortColumn}
             sortDirection={sortDirection}
             onSort={handleSort}
-            className="w-24"
+            className="w-20"
             align="right"
           />
           <TableHeader
             column="upSpeed"
-            label="Up"
+            label="↑ Speed"
             sortColumn={sortColumn}
             sortDirection={sortDirection}
             onSort={handleSort}
-            className="w-24"
+            className="w-20"
             align="right"
           />
           <TableHeader
             column="uploadedBytes"
-            label="Uploaded"
+            label="Sent"
             sortColumn={sortColumn}
             sortDirection={sortDirection}
             onSort={handleSort}
-            className="w-24"
+            className="w-20"
             align="right"
           />
           <TableHeader
