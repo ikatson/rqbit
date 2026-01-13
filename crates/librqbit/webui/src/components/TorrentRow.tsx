@@ -9,7 +9,6 @@ import { TorrentActions } from "./buttons/TorrentActions";
 import { ProgressBar } from "./ProgressBar";
 import { Speed } from "./Speed";
 import { formatBytes } from "../helper/formatBytes";
-import { torrentDisplayName } from "../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
 import { FileListInput } from "./FileListInput";
@@ -112,7 +111,7 @@ export const TorrentRow: React.FC<{
             <div className="flex items-center gap-2">
               <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
               <div className="text-left lg:text-lg text-text text-ellipsis break-all">
-                {torrentDisplayName(detailsResponse)}
+                detailsResponse.name
               </div>
             </div>
           )}

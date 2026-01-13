@@ -32,15 +32,7 @@ export const ActionBar: React.FC = () => {
       const torrent = getTorrentById(id);
       return {
         id,
-        details: torrent
-          ? {
-              name: torrent.name,
-              info_hash: torrent.info_hash,
-              files: [],
-              total_pieces: torrent.total_pieces,
-              output_folder: torrent.output_folder,
-            }
-          : null,
+        name: torrent?.name ?? null,
       };
     });
   }, [selectedTorrentIds, torrents]);

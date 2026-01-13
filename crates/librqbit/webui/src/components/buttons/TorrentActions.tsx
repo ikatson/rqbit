@@ -19,7 +19,13 @@ export const TorrentActions: React.FC<{
   detailsResponse: TorrentDetails | null;
   extendedView: boolean;
   setExtendedView: (extendedView: boolean) => void;
-}> = ({ id, statsResponse, detailsResponse, extendedView, setExtendedView }) => {
+}> = ({
+  id,
+  statsResponse,
+  detailsResponse,
+  extendedView,
+  setExtendedView,
+}) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
@@ -149,7 +155,7 @@ export const TorrentActions: React.FC<{
       <DeleteTorrentModal
         show={deleting}
         onHide={cancelDeleting}
-        torrents={[{ id, details: detailsResponse }]}
+        torrents={[{ id, name: detailsResponse?.name ?? null }]}
       />
     </div>
   );

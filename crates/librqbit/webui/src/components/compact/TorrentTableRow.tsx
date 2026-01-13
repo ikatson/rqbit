@@ -1,36 +1,28 @@
-import {
-  TorrentDetails,
-  TorrentStats,
-  STATE_INITIALIZING,
-} from "../../api-types";
+import { TorrentListItem, STATE_INITIALIZING } from "../../api-types";
 import { StatusIcon } from "../StatusIcon";
 import { formatBytes } from "../../helper/formatBytes";
-import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../../helper/getCompletionETA";
 
 interface TorrentTableRowProps {
-  id: number;
-  detailsResponse: TorrentDetails | null;
-  statsResponse: TorrentStats | null;
+  torrent: TorrentListItem;
   isSelected: boolean;
-  onRowClick: (e: React.MouseEvent) => void;
-  onCheckboxChange: () => void;
+  onRowClick: (id: number, e: React.MouseEvent) => void;
+  onCheckboxChange: (id: number) => void;
 }
 
 export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
-  id,
-  detailsResponse,
-  statsResponse,
+  torrent,
   isSelected,
   onRowClick,
   onCheckboxChange,
 }) => {
-  const state = statsResponse?.state ?? "";
-  const error = statsResponse?.error ?? null;
-  const totalBytes = statsResponse?.total_bytes ?? 1;
-  const progressBytes = statsResponse?.progress_bytes ?? 0;
-  const finished = statsResponse?.finished || false;
-  const live = !!statsResponse?.live;
+  const stats = torrent.stats;
+  const state = stats?.state ?? "";
+  const error = stats?.error ?? null;
+  const totalBytes = stats?.total_bytes ?? 1;
+  const progressBytes = stats?.progress_bytes ?? 0;
+  const finished = stats?.finished || false;
+  const live = !!stats?.live;
 
   const progressPercentage = error
     ? 100
@@ -38,27 +30,30 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
       ? 100
       : Math.round((progressBytes / totalBytes) * 100);
 
-  const downloadSpeed =
-    statsResponse?.live?.download_speed?.human_readable ?? "-";
-  const uploadSpeed = statsResponse?.live?.upload_speed?.human_readable ?? "-";
-  const uploadedBytes = statsResponse?.live?.snapshot.uploaded_bytes ?? 0;
+  const downloadSpeed = stats?.live?.download_speed?.human_readable ?? "-";
+  const uploadSpeed = stats?.live?.upload_speed?.human_readable ?? "-";
+  const uploadedBytes = stats?.live?.snapshot.uploaded_bytes ?? 0;
 
-  const peerStats = statsResponse?.live?.snapshot.peer_stats;
+  const peerStats = stats?.live?.snapshot.peer_stats;
   const peersDisplay = peerStats ? `${peerStats.live}/${peerStats.seen}` : "-";
 
-  const eta = statsResponse ? getCompletionETA(statsResponse) : "-";
+  const eta = stats ? getCompletionETA(stats) : "-";
   const displayEta = finished ? "Done" : eta;
 
-  const name = torrentDisplayName(detailsResponse);
+  const name = torrent.name ?? "";
+
+  const handleRowClick = (e: React.MouseEvent) => {
+    onRowClick(torrent.id, e);
+  };
 
   const handleCheckboxClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onCheckboxChange();
+    onCheckboxChange(torrent.id);
   };
 
   return (
     <tr
-      onMouseDown={(e) => onRowClick(e)}
+      onMouseDown={handleRowClick}
       className={`cursor-pointer border-b border-border transition-colors ${
         isSelected ? "bg-primary/10" : "hover:bg-surface-raised"
       }`}
@@ -83,7 +78,7 @@ export const TorrentTableRow: React.FC<TorrentTableRowProps> = ({
         />
       </td>
       <td className="w-12 px-2 py-2 text-center text-text-tertiary font-mono">
-        {id}
+        {torrent.id}
       </td>
       <td className="px-2 py-2 max-w-xs">
         <div className="truncate text-text" title={name}>

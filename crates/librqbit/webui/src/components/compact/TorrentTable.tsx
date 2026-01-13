@@ -1,56 +1,9 @@
 import { useMemo, useCallback, useEffect } from "react";
 import { TorrentListItem, STATE_INITIALIZING } from "../../api-types";
-import { RefreshTorrentStatsContext } from "../../context";
 import { TorrentTableRow } from "./TorrentTableRow";
 import { TorrentSortColumn, useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
 import { TableHeader } from "./TableHeader";
-import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
-import { useTorrentStore } from "../../stores/torrentStore";
-
-interface TorrentRowDataProps {
-  torrent: TorrentListItem;
-  isSelected: boolean;
-  onRowClick: (e: React.MouseEvent) => void;
-  onCheckboxChange: () => void;
-}
-
-const TorrentRowData: React.FC<TorrentRowDataProps> = ({
-  torrent,
-  isSelected,
-  onRowClick,
-  onCheckboxChange,
-}) => {
-  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
-
-  const forceStatsRefreshCallback = () => {
-    refreshTorrents();
-  };
-
-  // Create synthetic details for display (files not included in list response)
-  const syntheticDetails = {
-    name: torrent.name,
-    info_hash: torrent.info_hash,
-    files: [],
-    total_pieces: torrent.total_pieces,
-    output_folder: torrent.output_folder,
-  };
-
-  return (
-    <RefreshTorrentStatsContext.Provider
-      value={{ refresh: forceStatsRefreshCallback }}
-    >
-      <TorrentTableRow
-        id={torrent.id}
-        detailsResponse={syntheticDetails}
-        statsResponse={torrent.stats ?? null}
-        isSelected={isSelected}
-        onRowClick={onRowClick}
-        onCheckboxChange={onCheckboxChange}
-      />
-    </RefreshTorrentStatsContext.Provider>
-  );
-};
 
 interface TorrentTableProps {
   torrents: TorrentListItem[] | null;
@@ -212,7 +165,6 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     (id: number, e: React.MouseEvent) => {
       if (e.shiftKey) {
         e.preventDefault();
-
         selectRange(id, orderedIds);
       } else {
         selectTorrent(id);
@@ -347,12 +299,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
       </thead>
       <tbody className="text-sm">
         {sortedTorrents?.map((torrent) => (
-          <TorrentRowData
+          <TorrentTableRow
             key={torrent.id}
             torrent={torrent}
             isSelected={selectedTorrentIds.has(torrent.id)}
-            onRowClick={(e) => handleRowClick(torrent.id, e)}
-            onCheckboxChange={() => toggleSelection(torrent.id)}
+            onRowClick={handleRowClick}
+            onCheckboxChange={toggleSelection}
           />
         ))}
       </tbody>

@@ -1,7 +1,5 @@
 import { useContext, useState } from "react";
-import { TorrentDetails } from "../../api-types";
 import { APIContext } from "../../context";
-import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { useTorrentStore } from "../../stores/torrentStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -14,7 +12,7 @@ import { ModalFooter } from "./ModalFooter";
 
 export interface TorrentToDelete {
   id: number;
-  details: TorrentDetails | null;
+  name: string | null;
 }
 
 export const DeleteTorrentModal: React.FC<{
@@ -52,7 +50,7 @@ export const DeleteTorrentModal: React.FC<{
       try {
         await deleteMethod(torrent.id);
       } catch (e) {
-        const name = torrentDisplayName(torrent.details) || `id=${torrent.id}`;
+        const name = torrent.name || `id=${torrent.id}`;
         errors.push(`${name}: ${e}`);
       }
     }
@@ -94,11 +92,10 @@ export const DeleteTorrentModal: React.FC<{
               <li
                 key={torrent.id}
                 className="text-gray-800 dark:text-slate-200 truncate"
-                title={torrentDisplayName(torrent.details)}
+                title={torrent.name ?? undefined}
               >
                 <span className="font-medium">
-                  {torrentDisplayName(torrent.details) ||
-                    `Torrent #${torrent.id}`}
+                  {torrent.name || `Torrent #${torrent.id}`}
                 </span>
               </li>
             ))}
