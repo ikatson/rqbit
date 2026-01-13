@@ -188,7 +188,9 @@ struct Opts {
         env = "RQBIT_UPNP_SERVER_FRIENDLY_NAME"
     )]
     upnp_server_friendly_name: Option<String>,
-
+    /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
+    /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
+    ///
     /// Not supported on Windows (will error if you try to use it).
     #[arg(long = "bind-device", env = "RQBIT_BIND_DEVICE")]
     bind_device_name: Option<String>,
