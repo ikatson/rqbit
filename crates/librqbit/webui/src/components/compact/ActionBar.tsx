@@ -1,5 +1,7 @@
-import { useContext, useMemo, useState } from "react";
+import { useContext, useMemo, useState, useCallback } from "react";
 import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
+import { GoSearch, GoX } from "react-icons/go";
+import debounce from "lodash.debounce";
 import { APIContext } from "../../context";
 import { useUIStore } from "../../stores/uiStore";
 import { useTorrentStore } from "../../stores/torrentStore";
@@ -13,12 +15,33 @@ import { Button } from "../buttons/Button";
 
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
+  const searchQuery = useUIStore((state) => state.searchQuery);
+  const setSearchQuery = useUIStore((state) => state.setSearchQuery);
   const torrents = useTorrentStore((state) => state.torrents);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
 
   const [disabled, setDisabled] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [localSearch, setLocalSearch] = useState(searchQuery);
+
+  // Debounced update to store
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const debouncedSetSearch = useCallback(
+    debounce((value: string) => setSearchQuery(value), 150),
+    [setSearchQuery]
+  );
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setLocalSearch(value);
+    debouncedSetSearch(value);
+  };
+
+  const clearSearch = () => {
+    setLocalSearch("");
+    setSearchQuery("");
+  };
 
   const API = useContext(APIContext);
 
@@ -99,6 +122,29 @@ export const ActionBar: React.FC = () => {
           {selectedCount} selected
         </span>
       )}
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Search input */}
+      <div className="relative">
+        <GoSearch className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-tertiary" />
+        <input
+          type="text"
+          value={localSearch}
+          onChange={handleSearchChange}
+          placeholder="Search..."
+          className="pl-7 pr-7 py-1 w-48 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary placeholder:text-tertiary"
+        />
+        {localSearch && (
+          <button
+            onClick={clearSearch}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-tertiary hover:text-secondary rounded"
+          >
+            <GoX className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
 
       <DeleteTorrentModal
         show={showDeleteModal}

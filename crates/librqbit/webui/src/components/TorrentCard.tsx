@@ -7,7 +7,8 @@ import { useTorrentStore } from "../stores/torrentStore";
 
 export const TorrentCard: React.FC<{
   torrent: TorrentListItem;
-}> = ({ torrent }) => {
+  hidden?: boolean;
+}> = ({ torrent, hidden }) => {
   const API = useContext(APIContext);
   const [fetchDetails, setFetchDetails] = useState(false);
 
@@ -40,11 +41,13 @@ export const TorrentCard: React.FC<{
   };
 
   return (
-    <TorrentCardContent
-      torrent={torrent}
-      detailsResponse={cachedDetails}
-      onExtendedViewOpen={onExtendedViewOpen}
-      onRefresh={forceRefreshCallback}
-    />
+    <div className={hidden ? "hidden" : ""}>
+      <TorrentCardContent
+        torrent={torrent}
+        detailsResponse={cachedDetails}
+        onExtendedViewOpen={onExtendedViewOpen}
+        onRefresh={forceRefreshCallback}
+      />
+    </div>
   );
 };

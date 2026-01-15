@@ -5,6 +5,11 @@ import { useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
 import { TableHeader } from "./TableHeader";
 
+function matchesSearch(name: string | null, query: string): boolean {
+  if (!query) return true;
+  return (name ?? "").toLowerCase().includes(query);
+}
+
 export type TorrentSortColumn =
   | "id"
   | "name"
@@ -92,6 +97,9 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const selectRelative = useUIStore((state) => state.selectRelative);
   const selectAll = useUIStore((state) => state.selectAll);
   const clearSelection = useUIStore((state) => state.clearSelection);
+  const searchQuery = useUIStore((state) => state.searchQuery);
+
+  const normalizedQuery = searchQuery.toLowerCase().trim();
 
   // Local sorting state
   const [sortColumn, setSortColumnState] = useState<TorrentSortColumn>(
@@ -130,20 +138,27 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     });
   }, [torrents, sortColumn, sortDirection]);
 
+  // Compute visible IDs for keyboard navigation (only visible torrents)
+  const visibleTorrentIds = useMemo(() => {
+    if (!sortedTorrents) return [];
+    return sortedTorrents
+      .filter((t) => matchesSearch(t.name, normalizedQuery))
+      .map((t) => t.id);
+  }, [sortedTorrents, normalizedQuery]);
+
   const allSelected = !!(
-    torrents &&
-    torrents.length > 0 &&
-    torrents.every((t) => selectedTorrentIds.has(t.id))
+    visibleTorrentIds.length > 0 &&
+    visibleTorrentIds.every((id) => selectedTorrentIds.has(id))
   );
-  const someSelected = !!(
-    torrents && torrents.some((t) => selectedTorrentIds.has(t.id))
+  const someSelected = visibleTorrentIds.some((id) =>
+    selectedTorrentIds.has(id)
   );
 
   const handleHeaderCheckbox = () => {
     if (allSelected) {
       clearSelection();
-    } else if (torrents) {
-      selectAll(torrents.map((t) => t.id));
+    } else {
+      selectAll(visibleTorrentIds);
     }
   };
 
@@ -152,8 +167,9 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   };
 
   // Store orderedIds in a ref so handleRowClick doesn't need it as a dependency
+  // Use visibleTorrentIds for navigation (skips hidden rows)
   const orderedIdsRef = useRef<number[]>([]);
-  orderedIdsRef.current = sortedTorrents?.map((t) => t.id) ?? [];
+  orderedIdsRef.current = visibleTorrentIds;
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -325,6 +341,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             key={torrent.id}
             torrent={torrent}
             isSelected={selectedTorrentIds.has(torrent.id)}
+            hidden={!matchesSearch(torrent.name, normalizedQuery)}
             onRowClick={handleRowClick}
             onCheckboxChange={toggleSelection}
           />

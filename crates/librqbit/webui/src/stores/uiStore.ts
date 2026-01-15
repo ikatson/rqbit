@@ -16,6 +16,9 @@ export interface UIStore {
   setViewMode: (mode: "full" | "compact") => void;
   toggleViewMode: () => void;
 
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+
   selectedTorrentIds: Set<number>;
   lastSelectedId: number | null;
   selectTorrent: (id: number) => void;
@@ -40,6 +43,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
     localStorage.setItem(STORAGE_KEY, newMode);
     set({ viewMode: newMode });
   },
+
+  searchQuery: "",
+  setSearchQuery: (query) => set({ searchQuery: query }),
 
   selectedTorrentIds: new Set<number>(),
   lastSelectedId: null,

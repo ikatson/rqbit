@@ -7,6 +7,7 @@ import { memo } from "react";
 interface TorrentTableRowProps {
   torrent: TorrentListItem;
   isSelected: boolean;
+  hidden: boolean;
   onRowClick: (id: number, e: React.MouseEvent) => void;
   onCheckboxChange: (id: number) => void;
 }
@@ -14,6 +15,7 @@ interface TorrentTableRowProps {
 const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
   torrent,
   isSelected,
+  hidden,
   onRowClick,
   onCheckboxChange,
 }) => {
@@ -57,7 +59,7 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
       onMouseDown={handleRowClick}
       className={`cursor-pointer border-b border-divider transition-colors ${
         isSelected ? "bg-primary/10" : "hover:bg-surface-raised"
-      }`}
+      } ${hidden ? "hidden" : ""}`}
     >
       <td className="px-2 py-2 text-center" onMouseDown={handleCheckboxClick}>
         <input
