@@ -1,4 +1,2 @@
-@import "tailwindcss";
+@import "../../../crates/librqbit/webui/src/globals.css";
 @source "../../../crates/librqbit/webui/";
-
-@variant dark (&:where(.dark, .dark *));
