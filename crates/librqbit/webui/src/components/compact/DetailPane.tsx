@@ -98,10 +98,11 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
   torrentId,
   activeTab,
 }) => {
-  const [detailsResponse, setDetailsResponse] = useState<TorrentDetails | null>(
-    null,
+  // Cache of full details (with files) by torrent ID
+  const [detailsCache, setDetailsCache] = useState<Map<number, TorrentDetails>>(
+    new Map(),
   );
-  const [fetchDetails, setFetchDetails] = useState(true);
+  const [fetchDetails, setFetchDetails] = useState(false);
   const API = useContext(APIContext);
 
   // Get torrent data from the store
@@ -110,44 +111,41 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
   );
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
+  // Cached full details for current torrent (null if not fetched yet)
+  const cachedDetails = detailsCache.get(torrentId) ?? null;
+
   const forceRefreshCallback = () => {
     refreshTorrents();
     setFetchDetails(true);
   };
 
-  // Reset details when torrent changes
+  // Fetch full details (with files) only when Files tab is active and we don't have cached details
   useEffect(() => {
-    setDetailsResponse(null);
+    if (activeTab !== "files") return;
+    if (cachedDetails) return;
     setFetchDetails(true);
-  }, [torrentId]);
+  }, [activeTab, torrentId, cachedDetails]);
 
-  // Fetch full details (with files) when needed
+  // Fetch full details when requested
   useEffect(() => {
     if (!fetchDetails) return;
     return loopUntilSuccess(async () => {
       await API.getTorrentDetails(torrentId).then((details) => {
-        setDetailsResponse(details);
+        setDetailsCache((prev) => new Map(prev).set(torrentId, details));
         setFetchDetails(false);
       });
     }, 1000);
   }, [fetchDetails, torrentId]);
 
-  // Use stats from store, fall back to details response if store doesn't have it yet
   const statsResponse = torrent?.stats ?? null;
 
   return (
     <>
-      {activeTab === "overview" && (
-        <OverviewTab
-          torrentId={torrentId}
-          detailsResponse={detailsResponse}
-          statsResponse={statsResponse}
-        />
-      )}
+      {activeTab === "overview" && <OverviewTab torrent={torrent ?? null} />}
       {activeTab === "files" && (
         <FilesTab
           torrentId={torrentId}
-          detailsResponse={detailsResponse}
+          detailsResponse={cachedDetails}
           statsResponse={statsResponse}
           onRefresh={forceRefreshCallback}
         />

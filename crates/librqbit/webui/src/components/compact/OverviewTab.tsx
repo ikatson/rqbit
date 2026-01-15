@@ -1,6 +1,5 @@
 import {
-  TorrentDetails,
-  TorrentStats,
+  TorrentListItem,
   STATE_INITIALIZING,
   STATE_LIVE,
   STATE_PAUSED,
@@ -10,9 +9,7 @@ import { getCompletionETA } from "../../helper/getCompletionETA";
 import { PiecesCanvas } from "./PiecesCanvas";
 
 interface OverviewTabProps {
-  torrentId: number;
-  detailsResponse: TorrentDetails | null;
-  statsResponse: TorrentStats | null;
+  torrent: TorrentListItem | null;
 }
 
 // Labeled value - the building block for all stats
@@ -27,24 +24,22 @@ const LV: React.FC<{
   </>
 );
 
-export const OverviewTab: React.FC<OverviewTabProps> = ({
-  torrentId,
-  detailsResponse,
-  statsResponse,
-}) => {
-  if (!detailsResponse || !statsResponse) {
+export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
+  const statsResponse = torrent?.stats ?? null;
+
+  if (!torrent || !statsResponse) {
     return <div className="p-3 text-text-tertiary">Loading...</div>;
   }
 
-  const name = detailsResponse.name ?? "";
-  const infoHash = detailsResponse.info_hash;
+  const name = torrent.name ?? "";
+  const infoHash = torrent.info_hash;
   const state = statsResponse.state;
   const error = statsResponse.error;
   const totalBytes = statsResponse.total_bytes ?? 1;
   const progressBytes = statsResponse.progress_bytes ?? 0;
   const finished = statsResponse.finished || false;
 
-  const totalPieces = detailsResponse.total_pieces ?? 0;
+  const totalPieces = torrent.total_pieces ?? 0;
   const downloadedPieces =
     statsResponse.live?.snapshot.downloaded_and_checked_pieces ?? 0;
   const pieceSize = totalPieces > 0 ? totalBytes / totalPieces : 0;
@@ -93,7 +88,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       {totalPieces > 0 && (
         <div>
           <PiecesCanvas
-            torrentId={torrentId}
+            torrentId={torrent.id}
             totalPieces={totalPieces}
             stats={statsResponse}
           />
@@ -152,7 +147,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           <LV label="Hash" value={infoHash} mono />
         </div>
         <div className="truncate">
-          <LV label="Output" value={detailsResponse.output_folder} mono />
+          <LV label="Output" value={torrent.output_folder} mono />
         </div>
       </div>
 
