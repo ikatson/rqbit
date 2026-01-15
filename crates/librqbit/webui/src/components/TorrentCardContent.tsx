@@ -1,7 +1,7 @@
 import { GoClock, GoFile, GoPeople } from "react-icons/go";
 import {
   TorrentDetails,
-  TorrentStats,
+  TorrentListItem,
   STATE_INITIALIZING,
   ErrorDetails,
 } from "../api-types";
@@ -17,12 +17,13 @@ import { APIContext } from "../context";
 import { useErrorStore } from "../stores/errorStore";
 
 export const TorrentCardContent: React.FC<{
-  id: number;
+  torrent: TorrentListItem;
   detailsResponse: TorrentDetails | null;
-  statsResponse: TorrentStats | null;
   onExtendedViewOpen?: () => void;
   onRefresh?: () => void;
-}> = ({ id, detailsResponse, statsResponse, onExtendedViewOpen, onRefresh }) => {
+}> = ({ torrent, detailsResponse, onExtendedViewOpen, onRefresh }) => {
+  const id = torrent.id;
+  const statsResponse = torrent.stats ?? null;
   const state = statsResponse?.state ?? "";
   const error = statsResponse?.error ?? null;
   const totalBytes = statsResponse?.total_bytes ?? 1;
@@ -106,14 +107,12 @@ export const TorrentCardContent: React.FC<{
         <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
         {/* Name, progress, stats */}
         <div className="w-full flex flex-col gap-2">
-          {detailsResponse && (
-            <div className="flex items-center gap-2">
-              <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-              <div className="text-left lg:text-lg text-text text-ellipsis break-all">
-                {detailsResponse.name}
-              </div>
+          <div className="flex items-center gap-2">
+            <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
+            <div className="text-left lg:text-lg text-text text-ellipsis break-all">
+              {torrent.name}
             </div>
-          )}
+          </div>
           {error ? (
             <p className="text-error">
               <strong>Error:</strong> {error}

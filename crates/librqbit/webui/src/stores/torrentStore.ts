@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TorrentListItem } from "../api-types";
+import { TorrentDetails, TorrentListItem } from "../api-types";
 
 function deepEqual(obj1: any, obj2: any): boolean {
   // 1. Same reference or same primitive value
@@ -49,9 +49,14 @@ export interface TorrentStore {
 
   refreshTorrents: () => void;
   setRefreshTorrents: (callback: () => void) => void;
+
+  // TorrentDetails cache (keyed by torrent id)
+  detailsCache: Map<number, TorrentDetails>;
+  getDetails: (id: number) => TorrentDetails | null;
+  setDetails: (id: number, details: TorrentDetails) => void;
 }
 
-export const useTorrentStore = create<TorrentStore>((set) => ({
+export const useTorrentStore = create<TorrentStore>((set, get) => ({
   torrents: null,
   torrentsLoading: false,
   torrentsInitiallyLoading: false,
@@ -89,4 +94,12 @@ export const useTorrentStore = create<TorrentStore>((set) => ({
     }),
   refreshTorrents: () => {},
   setRefreshTorrents: (callback) => set({ refreshTorrents: callback }),
+
+  // TorrentDetails cache
+  detailsCache: new Map(),
+  getDetails: (id) => get().detailsCache.get(id) ?? null,
+  setDetails: (id, details) =>
+    set((prev) => ({
+      detailsCache: new Map(prev.detailsCache).set(id, details),
+    })),
 }));

@@ -1,5 +1,4 @@
 import { useContext, useEffect, useState } from "react";
-import { TorrentDetails } from "../../api-types";
 import { APIContext } from "../../context";
 import { loopUntilSuccess } from "../../helper/loopUntilSuccess";
 import { useUIStore } from "../../stores/uiStore";
@@ -98,44 +97,38 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
   torrentId,
   activeTab,
 }) => {
-  // Cache of full details (with files) by torrent ID
-  const [detailsCache, setDetailsCache] = useState<Map<number, TorrentDetails>>(
-    new Map(),
-  );
-  const [fetchDetails, setFetchDetails] = useState(false);
   const API = useContext(APIContext);
+  const [fetchDetails, setFetchDetails] = useState(false);
 
-  // Get torrent data from the store
+  // Get torrent and details from store
   const torrent = useTorrentStore((state) =>
     state.torrents?.find((t) => t.id === torrentId),
   );
+  const cachedDetails = useTorrentStore((state) => state.getDetails(torrentId));
+  const setDetails = useTorrentStore((state) => state.setDetails);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
-  // Cached full details for current torrent (null if not fetched yet)
-  const cachedDetails = detailsCache.get(torrentId) ?? null;
-
-  const forceRefreshCallback = () => {
-    refreshTorrents();
-    setFetchDetails(true);
-  };
-
-  // Fetch full details (with files) only when Files tab is active and we don't have cached details
+  // Trigger fetch when Files tab is active and not cached
   useEffect(() => {
     if (activeTab !== "files") return;
     if (cachedDetails) return;
     setFetchDetails(true);
   }, [activeTab, torrentId, cachedDetails]);
 
-  // Fetch full details when requested
+  // Fetch details when requested
   useEffect(() => {
     if (!fetchDetails) return;
     return loopUntilSuccess(async () => {
-      await API.getTorrentDetails(torrentId).then((details) => {
-        setDetailsCache((prev) => new Map(prev).set(torrentId, details));
-        setFetchDetails(false);
-      });
+      const details = await API.getTorrentDetails(torrentId);
+      setDetails(torrentId, details);
+      setFetchDetails(false);
     }, 1000);
   }, [fetchDetails, torrentId]);
+
+  const forceRefreshCallback = () => {
+    refreshTorrents();
+    setFetchDetails(true);
+  };
 
   const statsResponse = torrent?.stats ?? null;
 
