@@ -1,4 +1,7 @@
 import { useMemo, useCallback, useEffect, useState, useRef } from "react";
+import { FixedSizeList as List } from "react-window";
+import type { ListChildComponentProps } from "react-window";
+import AutoSizer from "react-virtualized-auto-sizer";
 import { TorrentListItem } from "../../api-types";
 import { TorrentTableRow } from "./TorrentTableRow";
 import { useUIStore } from "../../stores/uiStore";
@@ -23,6 +26,7 @@ export type TableSortColumn =
   | "peers";
 
 const SORT_STORAGE_KEY = "rqbit-table-sort";
+const ROW_HEIGHT = 41; // pixels - height of each table row
 
 function getDefaultSort(): { column: TableSortColumn; direction: SortDirection } {
   try {
@@ -119,27 +123,28 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     });
   }, []);
 
-  const sortedTorrents = useMemo(() => {
+  // Sort and filter torrents for virtualization
+  const filteredTorrents = useMemo(() => {
     if (!torrents) return null;
 
-    return [...torrents].sort((a, b) => {
-      const aVal = getTableSortValue(a, sortColumn);
-      const bVal = getTableSortValue(b, sortColumn);
-      const cmp =
-        typeof aVal === "string"
-          ? aVal.localeCompare(bVal as string)
-          : (aVal as number) - (bVal as number);
-      return sortDirection === "asc" ? cmp : -cmp;
-    });
-  }, [torrents, sortColumn, sortDirection]);
-
-  // Compute visible IDs for keyboard navigation (only visible torrents)
-  const visibleTorrentIds = useMemo(() => {
-    if (!sortedTorrents) return [];
-    return sortedTorrents
+    return [...torrents]
       .filter((t) => isTorrentVisible(t, normalizedQuery, statusFilter))
-      .map((t) => t.id);
-  }, [sortedTorrents, normalizedQuery, statusFilter]);
+      .sort((a, b) => {
+        const aVal = getTableSortValue(a, sortColumn);
+        const bVal = getTableSortValue(b, sortColumn);
+        const cmp =
+          typeof aVal === "string"
+            ? aVal.localeCompare(bVal as string)
+            : (aVal as number) - (bVal as number);
+        return sortDirection === "asc" ? cmp : -cmp;
+      });
+  }, [torrents, normalizedQuery, statusFilter, sortColumn, sortDirection]);
+
+  // Compute visible IDs for keyboard navigation
+  const visibleTorrentIds = useMemo(() => {
+    if (!filteredTorrents) return [];
+    return filteredTorrents.map((t) => t.id);
+  }, [filteredTorrents]);
 
   const allSelected = !!(
     visibleTorrentIds.length > 0 &&
@@ -206,6 +211,35 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     [selectRange, selectTorrent],
   );
 
+  // Data passed to each row via itemData - avoids recreating Row on selection change
+  const itemData = useMemo(
+    () => ({
+      torrents: filteredTorrents,
+      selectedTorrentIds,
+      onRowClick: handleRowClick,
+      onCheckboxChange: toggleSelection,
+    }),
+    [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection]
+  );
+
+  // Row renderer for react-window - stable function, data comes via itemData
+  const Row = useCallback(
+    ({ index, style, data }: ListChildComponentProps<typeof itemData>) => {
+      const torrent = data.torrents![index];
+      return (
+        <TorrentTableRow
+          key={torrent.id}
+          torrent={torrent}
+          isSelected={data.selectedTorrentIds.has(torrent.id)}
+          style={style}
+          onRowClick={data.onRowClick}
+          onCheckboxChange={data.onCheckboxChange}
+        />
+      );
+    },
+    [] // No dependencies - all data comes via itemData prop
+  );
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -224,124 +258,131 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   }
 
   return (
-    <table className="w-full">
-      <thead className="bg-surface-raised sticky top-0 z-10 text-sm">
-        <tr className="border-b border-divider">
-          <th className="w-8 px-2 py-3">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              ref={(el) => {
-                if (el) el.indeterminate = someSelected && !allSelected;
-              }}
-              onChange={handleHeaderCheckbox}
-              className="w-4 h-4 rounded border-divider-strong bg-surface text-primary focus:ring-primary"
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <table className="w-full table-fixed">
+        <thead className="bg-surface-raised text-sm">
+          <tr className="border-b border-divider">
+            <th className="w-8 px-2 py-3">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected && !allSelected;
+                }}
+                onChange={handleHeaderCheckbox}
+                className="w-4 h-4 rounded border-divider-strong bg-surface text-primary focus:ring-primary"
+              />
+            </th>
+            <th className="w-8 px-1 py-3"></th>
+            <TableHeader
+              column="id"
+              label="ID"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-12"
+              align="center"
             />
-          </th>
-          <th className="w-8 px-1 py-3"></th>
-          <TableHeader
-            column="id"
-            label="ID"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-12"
-            align="center"
-          />
-          <TableHeader
-            column="name"
-            label="Name"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            align="left"
-          />
-          <TableHeader
-            column="size"
-            label="Size"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-20"
-            align="right"
-          />
-          <TableHeader
-            column="progress"
-            label="Progress"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-24"
-            align="center"
-          />
-          <TableHeader
-            column="downloadedBytes"
-            label="Recv"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-20"
-            align="right"
-          />
-          <TableHeader
-            column="downSpeed"
-            label="↓ Speed"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-20"
-            align="right"
-          />
-          <TableHeader
-            column="upSpeed"
-            label="↑ Speed"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-20"
-            align="right"
-          />
-          <TableHeader
-            column="uploadedBytes"
-            label="Sent"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-20"
-            align="right"
-          />
-          <TableHeader
-            column="eta"
-            label="ETA"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-20"
-            align="center"
-          />
-          <TableHeader
-            column="peers"
-            label="Peers"
-            sortColumn={sortColumn}
-            sortDirection={sortDirection}
-            onSort={handleSort}
-            className="w-16"
-            align="center"
-          />
-        </tr>
-      </thead>
-      <tbody className="text-sm">
-        {sortedTorrents?.map((torrent) => (
-          <TorrentTableRow
-            key={torrent.id}
-            torrent={torrent}
-            isSelected={selectedTorrentIds.has(torrent.id)}
-            hidden={!isTorrentVisible(torrent, normalizedQuery, statusFilter)}
-            onRowClick={handleRowClick}
-            onCheckboxChange={toggleSelection}
-          />
-        ))}
-      </tbody>
-    </table>
+            <TableHeader
+              column="name"
+              label="Name"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              align="left"
+            />
+            <TableHeader
+              column="size"
+              label="Size"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-20"
+              align="right"
+            />
+            <TableHeader
+              column="progress"
+              label="Progress"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-24"
+              align="center"
+            />
+            <TableHeader
+              column="downloadedBytes"
+              label="Recv"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-20"
+              align="right"
+            />
+            <TableHeader
+              column="downSpeed"
+              label="↓ Speed"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-20"
+              align="right"
+            />
+            <TableHeader
+              column="upSpeed"
+              label="↑ Speed"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-20"
+              align="right"
+            />
+            <TableHeader
+              column="uploadedBytes"
+              label="Sent"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-20"
+              align="right"
+            />
+            <TableHeader
+              column="eta"
+              label="ETA"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-20"
+              align="center"
+            />
+            <TableHeader
+              column="peers"
+              label="Peers"
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              className="w-16"
+              align="center"
+            />
+          </tr>
+        </thead>
+      </table>
+      {/* Virtualized body */}
+      <div className="flex-1 min-h-0">
+        <AutoSizer>
+          {({ height, width }: { height: number; width: number }) => (
+            <List
+              height={height}
+              width={width}
+              itemCount={filteredTorrents?.length ?? 0}
+              itemSize={ROW_HEIGHT}
+              itemData={itemData}
+            >
+              {Row}
+            </List>
+          )}
+        </AutoSizer>
+      </div>
+    </div>
   );
 };

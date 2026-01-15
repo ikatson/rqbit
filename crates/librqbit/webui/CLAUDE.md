@@ -183,30 +183,19 @@ Use this to test UI performance, layout with many torrents, or develop without r
 
 ## Performance Guidelines
 
-When working with large lists (1000+ torrents), follow these patterns to avoid re-render issues:
+When working with large lists (1000+ torrents), follow these patterns:
 
-### Visibility-Based Filtering (Not Array Filtering)
-**DON'T** filter arrays to hide items - this causes massive re-renders when filter changes:
-```typescript
-// BAD: Filtered items unmount, then remount when filter clears
-const filtered = torrents.filter(t => matchesSearch(t.name, query));
-return filtered.map(t => <TorrentCard key={t.id} torrent={t} />);
-```
+### Virtualization
+Both card and table views use `react-window` for virtualization - only visible items are rendered to the DOM. See `architecture/virtualization.md` for full details.
 
-**DO** keep all items in DOM and use CSS visibility:
-```typescript
-// GOOD: Items stay mounted, just hidden/shown via CSS
-return torrents.map(t => (
-  <TorrentCard
-    key={t.id}
-    torrent={t}
-    hidden={!matchesSearch(t.name, query)}
-  />
-));
+**Key requirements:**
+- Parent container chain must have explicit height (use `h-full`, `flex-1 min-h-0`)
+- Must filter array before passing to List (can't use CSS hidden)
+- Item height must be fixed and match `itemSize` prop
 
-// In TorrentCard: use CSS hidden class
-<div className={hidden ? "hidden" : ""}>{content}</div>
-```
+**Trade-offs:**
+- Items can't have variable heights (expanded state resets on scroll)
+- DOM stays small (~500 elements vs 44,000), initial render is 8x faster
 
 ### Memoization
 - Use `memo()` for row/card components that receive torrent data
@@ -229,3 +218,27 @@ Common filtering/sorting logic is in `helper/torrentFilters.ts`:
 - `isTorrentVisible(t, query, statusFilter)` - combined visibility check
 - `compareTorrents(a, b, column, direction)` - sorting comparison
 - Type definitions: `TorrentSortColumn`, `SortDirection`, `StatusFilter`
+
+## Code Style
+
+### Avoid Repetitive CSS Classes
+When the same Tailwind class combination appears 3+ times, extract it into a variable:
+
+```typescript
+// BAD - repetitive, hard to maintain
+<td className="w-20 px-2 text-right text-secondary whitespace-nowrap align-middle">...</td>
+<td className="w-20 px-2 text-right text-secondary whitespace-nowrap align-middle">...</td>
+<td className="w-20 px-2 text-right text-secondary whitespace-nowrap align-middle">...</td>
+
+// GOOD - extracted into variable
+const numericCell = "w-20 px-2 text-right text-secondary whitespace-nowrap align-middle";
+<td className={numericCell}>...</td>
+<td className={numericCell}>...</td>
+<td className={numericCell}>...</td>
+```
+
+For more complex cases, consider a small component or use template literal composition:
+```typescript
+const cellBase = "px-2 align-middle";
+const numericCell = `w-20 ${cellBase} text-right text-secondary whitespace-nowrap`;
+```

@@ -21,7 +21,7 @@ export const RootContent = (props: {}) => {
   const useCompactLayout = viewMode === "compact" && isLargeScreen;
 
   return (
-    <div className={useCompactLayout ? "" : "container mx-auto"}>
+    <div className={useCompactLayout ? "" : "container mx-auto h-full flex flex-col"}>
       <ErrorComponent
         error={closeableError}
         remove={() => setCloseableError(null)}
@@ -30,7 +30,9 @@ export const RootContent = (props: {}) => {
       {useCompactLayout ? (
         <CompactLayout torrents={torrents} loading={torrentsInitiallyLoading} />
       ) : (
-        <CardLayout torrents={torrents} loading={torrentsInitiallyLoading} />
+        <div className="flex-1 min-h-0">
+          <CardLayout torrents={torrents} loading={torrentsInitiallyLoading} />
+        </div>
       )}
     </div>
   );

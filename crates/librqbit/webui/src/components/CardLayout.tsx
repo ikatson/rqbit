@@ -1,4 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
+import { FixedSizeList as List } from "react-window";
+import type { ListChildComponentProps } from "react-window";
+import AutoSizer from "react-virtualized-auto-sizer";
 import { GoSearch, GoX } from "react-icons/go";
 import debounce from "lodash.debounce";
 import { TorrentListItem } from "../api-types";
@@ -17,6 +20,7 @@ import {
 
 const SEARCH_THRESHOLD = 10;
 const CARD_SORT_STORAGE_KEY = "rqbit-card-sort";
+const CARD_HEIGHT = 120; // Card height (~110px) + gap (8px) + buffer
 
 function getDefaultCardSort(): { column: TorrentSortColumn; direction: SortDirection } {
   try {
@@ -78,16 +82,29 @@ export const CardLayout = (props: {
   const totalCount = props.torrents?.length ?? 0;
   const showFilters = totalCount > SEARCH_THRESHOLD;
 
-  // Sort torrents (but don't filter - filtering is done via visibility)
-  const sortedTorrents = useMemo(() => {
+  // Sort and filter torrents for virtualization
+  const filteredTorrents = useMemo(() => {
     if (!props.torrents) return null;
-    return [...props.torrents].sort((a, b) =>
-      compareTorrents(a, b, sortColumn, sortDirection)
-    );
-  }, [props.torrents, sortColumn, sortDirection]);
+    return [...props.torrents]
+      .filter((t) => isTorrentVisible(t, normalizedQuery, statusFilter))
+      .sort((a, b) => compareTorrents(a, b, sortColumn, sortDirection));
+  }, [props.torrents, normalizedQuery, statusFilter, sortColumn, sortDirection]);
+
+  // Row renderer for react-window
+  const Row = useCallback(
+    ({ index, style }: ListChildComponentProps) => {
+      const torrent = filteredTorrents![index];
+      return (
+        <div style={style} className="pb-2">
+          <TorrentCard key={torrent.id} torrent={torrent} />
+        </div>
+      );
+    },
+    [filteredTorrents]
+  );
 
   return (
-    <div className="flex flex-col gap-2 mx-2 pb-3 sm:px-7 mt-3">
+    <div className="flex flex-col h-full mx-2 pb-3 sm:px-7 mt-3">
       {showFilters && (
         <div className="flex flex-wrap items-center gap-2 w-full max-w-2xl mx-auto mb-2">
           {/* Search input */}
@@ -140,23 +157,31 @@ export const CardLayout = (props: {
           </select>
         </div>
       )}
-      {sortedTorrents === null ? (
+      {filteredTorrents === null ? (
         props.loading ? (
           <Spinner
             className="justify-center m-5"
             label="Loading torrent list"
           />
         ) : null
-      ) : sortedTorrents.length === 0 ? (
+      ) : filteredTorrents.length === 0 ? (
         <p className="text-center">No existing torrents found.</p>
       ) : (
-        sortedTorrents.map((t: TorrentListItem) => (
-          <TorrentCard
-            key={t.id}
-            torrent={t}
-            hidden={!isTorrentVisible(t, normalizedQuery, statusFilter)}
-          />
-        ))
+        <div className="flex-1 min-h-0 hide-scrollbar">
+          <AutoSizer>
+            {({ height, width }: { height: number; width: number }) => (
+              <List
+                height={height}
+                width={width}
+                itemCount={filteredTorrents.length}
+                itemSize={CARD_HEIGHT}
+                className="hide-scrollbar"
+              >
+                {Row}
+              </List>
+            )}
+          </AutoSizer>
+        </div>
       )}
     </div>
   );

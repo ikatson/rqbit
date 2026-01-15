@@ -91,7 +91,7 @@ export const RqbitWebUI = (props: {
   }, []);
 
   return (
-    <div className="bg-surface min-h-screen flex flex-col">
+    <div className="bg-surface h-screen flex flex-col overflow-hidden">
       <Header
         title={props.title}
         version={props.version}
@@ -103,7 +103,7 @@ export const RqbitWebUI = (props: {
         }
       />
 
-      <div className="grow">
+      <div className="grow min-h-0">
         <RootContent />
       </div>
 
