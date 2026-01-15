@@ -75,7 +75,7 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
           finished={finished}
         />
       </td>
-      <td className="px-2 py-2 text-center text-tertiary font-mono">
+      <td className="px-2 py-2 text-center text-tertiary font-mono whitespace-nowrap">
         {torrent.id}
       </td>
       <td className="px-2 py-2 max-w-xs">
@@ -88,7 +88,7 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
           </div>
         )}
       </td>
-      <td className="px-2 py-2 text-right text-secondary">
+      <td className="px-2 py-2 text-right text-secondary whitespace-nowrap">
         {formatBytes(totalBytes)}
       </td>
       <td className="px-2 py-2 text-center">
@@ -124,8 +124,8 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
       <td className="px-2 py-2 text-right text-secondary whitespace-nowrap">
         {uploadedBytes > 0 && <>{formatBytes(uploadedBytes)}</>}
       </td>
-      <td className="px-2 py-2 text-center text-secondary">{displayEta}</td>
-      <td className="px-2 py-2 text-center text-secondary">{peersDisplay}</td>
+      <td className="px-2 py-2 text-center text-secondary whitespace-nowrap">{displayEta}</td>
+      <td className="px-2 py-2 text-center text-secondary whitespace-nowrap">{peersDisplay}</td>
     </tr>
   );
 };

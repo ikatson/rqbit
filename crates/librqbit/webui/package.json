@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --port 3032 --open /mock.html",
     "build": "tsc --noEmit && vite build && node post-build",
     "preview": "vite preview"
   },

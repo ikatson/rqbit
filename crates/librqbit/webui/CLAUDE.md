@@ -161,3 +161,22 @@ npm run build
 ```
 
 Dev server runs at http://localhost:3031/, connects to backend at :3030.
+
+## Mock Mode (No Backend Required)
+
+For UI testing without a real rqbit server, use mock mode:
+
+```bash
+npm run dev:mock
+```
+
+This starts the dev server on port 3032 and opens http://localhost:3032/mock.html with:
+- 1000 generated torrents (Linux distro names)
+- ~30 active (live/initializing), rest paused
+- Simulated download progress for live torrents
+- Stable peer IPs with incrementing counters (for speed calculations)
+- Working pause/start/forget/delete actions
+
+Mock code (`mock-api.ts`, `main-mock.tsx`, `mock.html`) is excluded from production builds.
+
+Use this to test UI performance, layout with many torrents, or develop without running the full stack.
