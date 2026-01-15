@@ -6,7 +6,6 @@ import {
   STATE_PAUSED,
 } from "../../api-types";
 import { formatBytes } from "../../helper/formatBytes";
-import { torrentDisplayName } from "../../helper/getTorrentDisplayName";
 import { getCompletionETA } from "../../helper/getCompletionETA";
 import { PiecesCanvas } from "./PiecesCanvas";
 
@@ -37,7 +36,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     return <div className="p-3 text-text-tertiary">Loading...</div>;
   }
 
-  const name = torrentDisplayName(detailsResponse);
+  const name = detailsResponse.name ?? "";
   const infoHash = detailsResponse.info_hash;
   const state = statsResponse.state;
   const error = statsResponse.error;

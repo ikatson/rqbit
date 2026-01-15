@@ -111,7 +111,7 @@ export const TorrentRow: React.FC<{
             <div className="flex items-center gap-2">
               <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
               <div className="text-left lg:text-lg text-text text-ellipsis break-all">
-                detailsResponse.name
+                {detailsResponse.name}
               </div>
             </div>
           )}
