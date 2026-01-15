@@ -1,6 +1,7 @@
 import { GoChevronDown, GoChevronUp } from "react-icons/go";
-import { SortDirection } from "../stores/uiStore";
 import { JSX } from "react";
+
+type SortDirection = "asc" | "desc";
 
 interface SortIconProps<T extends string> {
   column: T;

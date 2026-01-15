@@ -1,5 +1,5 @@
 import { SortIcon } from "../SortIcon";
-import { TorrentSortColumn, SortDirection } from "../../stores/uiStore";
+import { TorrentSortColumn, SortDirection } from "./TorrentTable";
 
 interface TableHeaderProps {
   column: TorrentSortColumn;

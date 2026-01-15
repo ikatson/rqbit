@@ -1,9 +1,44 @@
-import { useMemo, useCallback, useEffect } from "react";
-import { TorrentListItem, STATE_INITIALIZING } from "../../api-types";
+import { useMemo, useCallback, useEffect, useState, useRef } from "react";
+import { TorrentListItem } from "../../api-types";
 import { TorrentTableRow } from "./TorrentTableRow";
-import { TorrentSortColumn, useUIStore } from "../../stores/uiStore";
+import { useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
 import { TableHeader } from "./TableHeader";
+
+export type TorrentSortColumn =
+  | "id"
+  | "name"
+  | "size"
+  | "progress"
+  | "downloadedBytes"
+  | "downSpeed"
+  | "upSpeed"
+  | "uploadedBytes"
+  | "eta"
+  | "peers";
+export type SortDirection = "asc" | "desc";
+
+const SORT_STORAGE_KEY = "rqbit-torrent-sort";
+
+interface StoredSort {
+  column: TorrentSortColumn;
+  direction: SortDirection;
+}
+
+function getDefaultSort(): StoredSort {
+  try {
+    const stored = localStorage.getItem(SORT_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as StoredSort;
+      if (parsed.column && parsed.direction) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { column: "id", direction: "desc" };
+}
 
 interface TorrentTableProps {
   torrents: TorrentListItem[] | null;
@@ -21,9 +56,29 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const selectRelative = useUIStore((state) => state.selectRelative);
   const selectAll = useUIStore((state) => state.selectAll);
   const clearSelection = useUIStore((state) => state.clearSelection);
-  const sortColumn = useUIStore((state) => state.sortColumn);
-  const sortDirection = useUIStore((state) => state.sortDirection);
-  const setSortColumn = useUIStore((state) => state.setSortColumn);
+
+  // Local sorting state
+  const [sortColumn, setSortColumnState] = useState<TorrentSortColumn>(
+    () => getDefaultSort().column
+  );
+  const [sortDirection, setSortDirectionState] = useState<SortDirection>(
+    () => getDefaultSort().direction
+  );
+
+  const setSortColumn = useCallback((column: TorrentSortColumn) => {
+    setSortColumnState((prevColumn) => {
+      setSortDirectionState((prevDir) => {
+        const newDir: SortDirection =
+          prevColumn === column ? (prevDir === "asc" ? "desc" : "asc") : "desc";
+        localStorage.setItem(
+          SORT_STORAGE_KEY,
+          JSON.stringify({ column, direction: newDir })
+        );
+        return newDir;
+      });
+      return column;
+    });
+  }, []);
 
   const sortedTorrents = useMemo(() => {
     if (!torrents) return null;
@@ -128,10 +183,9 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     setSortColumn(column);
   };
 
-  // Get ordered IDs for keyboard navigation
-  const orderedIds = useMemo(() => {
-    return sortedTorrents?.map((t) => t.id) ?? [];
-  }, [sortedTorrents]);
+  // Store orderedIds in a ref so handleRowClick doesn't need it as a dependency
+  const orderedIdsRef = useRef<number[]>([]);
+  orderedIdsRef.current = sortedTorrents?.map((t) => t.id) ?? [];
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -149,28 +203,28 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        selectRelative("down", orderedIds);
+        selectRelative("down", orderedIdsRef.current);
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        selectRelative("up", orderedIds);
+        selectRelative("up", orderedIdsRef.current);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [orderedIds, selectRelative]);
+  }, [selectRelative]);
 
-  // Row click handler with shift support
+  // Row click handler - stable because it reads from ref
   const handleRowClick = useCallback(
     (id: number, e: React.MouseEvent) => {
       if (e.shiftKey) {
         e.preventDefault();
-        selectRange(id, orderedIds);
+        selectRange(id, orderedIdsRef.current);
       } else {
         selectTorrent(id);
       }
     },
-    [orderedIds, selectRange, selectTorrent],
+    [selectRange, selectTorrent]
   );
 
   if (loading) {

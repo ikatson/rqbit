@@ -1,7 +1,6 @@
 import { create } from "zustand";
 
 const STORAGE_KEY = "rqbit-view-mode";
-const SORT_STORAGE_KEY = "rqbit-torrent-sort";
 const LARGE_SCREEN_BREAKPOINT = 1024;
 
 function getDefaultViewMode(): "full" | "compact" {
@@ -10,39 +9,6 @@ function getDefaultViewMode(): "full" | "compact" {
     return stored;
   }
   return window.innerWidth >= LARGE_SCREEN_BREAKPOINT ? "compact" : "full";
-}
-
-export type TorrentSortColumn =
-  | "id"
-  | "name"
-  | "size"
-  | "progress"
-  | "downloadedBytes"
-  | "downSpeed"
-  | "upSpeed"
-  | "uploadedBytes"
-  | "eta"
-  | "peers";
-export type SortDirection = "asc" | "desc";
-
-interface StoredSort {
-  column: TorrentSortColumn;
-  direction: SortDirection;
-}
-
-function getDefaultSort(): StoredSort {
-  try {
-    const stored = localStorage.getItem(SORT_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored) as StoredSort;
-      if (parsed.column && parsed.direction) {
-        return parsed;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return { column: "id", direction: "desc" };
 }
 
 export interface UIStore {
@@ -59,14 +25,7 @@ export interface UIStore {
   clearSelection: () => void;
   selectAll: (ids: number[]) => void;
   selectRelative: (direction: "up" | "down", orderedIds: number[]) => void;
-
-  // Sorting state
-  sortColumn: TorrentSortColumn;
-  sortDirection: SortDirection;
-  setSortColumn: (column: TorrentSortColumn) => void;
 }
-
-const defaultSort = getDefaultSort();
 
 export const useUIStore = create<UIStore>((set, get) => ({
   viewMode: getDefaultViewMode(),
@@ -197,23 +156,5 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
     const newId = orderedIds[newIdx];
     set({ selectedTorrentIds: new Set([newId]), lastSelectedId: newId });
-  },
-
-  // Sorting state
-  sortColumn: defaultSort.column,
-  sortDirection: defaultSort.direction,
-
-  setSortColumn: (column) => {
-    const current = get();
-    let newDirection: SortDirection = "desc";
-    if (current.sortColumn === column) {
-      // Toggle direction if same column
-      newDirection = current.sortDirection === "asc" ? "desc" : "asc";
-    }
-    localStorage.setItem(
-      SORT_STORAGE_KEY,
-      JSON.stringify({ column, direction: newDirection }),
-    );
-    set({ sortColumn: column, sortDirection: newDirection });
   },
 }));
