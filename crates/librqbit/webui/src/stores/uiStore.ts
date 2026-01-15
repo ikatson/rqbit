@@ -1,6 +1,12 @@
 import { create } from "zustand";
+import {
+  TorrentSortColumn,
+  SortDirection,
+  StatusFilter,
+} from "../helper/torrentFilters";
 
 const STORAGE_KEY = "rqbit-view-mode";
+const STATUS_FILTER_KEY = "rqbit-status-filter";
 const LARGE_SCREEN_BREAKPOINT = 1024;
 
 function getDefaultViewMode(): "full" | "compact" {
@@ -11,6 +17,20 @@ function getDefaultViewMode(): "full" | "compact" {
   return window.innerWidth >= LARGE_SCREEN_BREAKPOINT ? "compact" : "full";
 }
 
+function getDefaultStatusFilter(): StatusFilter {
+  const stored = localStorage.getItem(STATUS_FILTER_KEY);
+  if (
+    stored === "all" ||
+    stored === "downloading" ||
+    stored === "seeding" ||
+    stored === "paused" ||
+    stored === "error"
+  ) {
+    return stored;
+  }
+  return "all";
+}
+
 export interface UIStore {
   viewMode: "full" | "compact";
   setViewMode: (mode: "full" | "compact") => void;
@@ -18,6 +38,9 @@ export interface UIStore {
 
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+
+  statusFilter: StatusFilter;
+  setStatusFilter: (filter: StatusFilter) => void;
 
   selectedTorrentIds: Set<number>;
   lastSelectedId: number | null;
@@ -46,6 +69,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   searchQuery: "",
   setSearchQuery: (query) => set({ searchQuery: query }),
+
+  statusFilter: getDefaultStatusFilter(),
+  setStatusFilter: (filter) => {
+    localStorage.setItem(STATUS_FILTER_KEY, filter);
+    set({ statusFilter: filter });
+  },
 
   selectedTorrentIds: new Set<number>(),
   lastSelectedId: null,

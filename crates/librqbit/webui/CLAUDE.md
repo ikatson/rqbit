@@ -180,3 +180,52 @@ This starts the dev server on port 3032 and opens http://localhost:3032/mock.htm
 Mock code (`mock-api.ts`, `main-mock.tsx`, `mock.html`) is excluded from production builds.
 
 Use this to test UI performance, layout with many torrents, or develop without running the full stack.
+
+## Performance Guidelines
+
+When working with large lists (1000+ torrents), follow these patterns to avoid re-render issues:
+
+### Visibility-Based Filtering (Not Array Filtering)
+**DON'T** filter arrays to hide items - this causes massive re-renders when filter changes:
+```typescript
+// BAD: Filtered items unmount, then remount when filter clears
+const filtered = torrents.filter(t => matchesSearch(t.name, query));
+return filtered.map(t => <TorrentCard key={t.id} torrent={t} />);
+```
+
+**DO** keep all items in DOM and use CSS visibility:
+```typescript
+// GOOD: Items stay mounted, just hidden/shown via CSS
+return torrents.map(t => (
+  <TorrentCard
+    key={t.id}
+    torrent={t}
+    hidden={!matchesSearch(t.name, query)}
+  />
+));
+
+// In TorrentCard: use CSS hidden class
+<div className={hidden ? "hidden" : ""}>{content}</div>
+```
+
+### Memoization
+- Use `memo()` for row/card components that receive torrent data
+- Use `useMemo()` for expensive computations (sorting, filtering for navigation)
+- Use `useCallback()` for handlers passed to child components
+
+### Debouncing
+- Always debounce search input (150ms is good)
+- Use local state for instant feedback, debounced update to store:
+```typescript
+const [localSearch, setLocalSearch] = useState(searchQuery);
+const debouncedSetSearch = useCallback(
+  debounce((value: string) => setSearchQuery(value), 150),
+  [setSearchQuery]
+);
+```
+
+### Shared Utilities
+Common filtering/sorting logic is in `helper/torrentFilters.ts`:
+- `isTorrentVisible(t, query, statusFilter)` - combined visibility check
+- `compareTorrents(a, b, column, direction)` - sorting comparison
+- Type definitions: `TorrentSortColumn`, `SortDirection`, `StatusFilter`

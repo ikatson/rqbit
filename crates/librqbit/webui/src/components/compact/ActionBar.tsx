@@ -12,11 +12,17 @@ import {
 } from "../modal/DeleteTorrentModal";
 import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
 import { Button } from "../buttons/Button";
+import {
+  StatusFilter,
+  STATUS_FILTER_LABELS,
+} from "../../helper/torrentFilters";
 
 export const ActionBar: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
   const searchQuery = useUIStore((state) => state.searchQuery);
   const setSearchQuery = useUIStore((state) => state.setSearchQuery);
+  const statusFilter = useUIStore((state) => state.statusFilter);
+  const setStatusFilter = useUIStore((state) => state.setStatusFilter);
   const torrents = useTorrentStore((state) => state.torrents);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
@@ -125,6 +131,19 @@ export const ActionBar: React.FC = () => {
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {/* Status filter */}
+      <select
+        value={statusFilter}
+        onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+        className="py-1 px-2 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary"
+      >
+        {(Object.keys(STATUS_FILTER_LABELS) as StatusFilter[]).map((status) => (
+          <option key={status} value={status}>
+            {STATUS_FILTER_LABELS[status]}
+          </option>
+        ))}
+      </select>
 
       {/* Search input */}
       <div className="relative">

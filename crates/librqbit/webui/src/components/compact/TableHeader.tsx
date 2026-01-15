@@ -1,12 +1,13 @@
 import { SortIcon } from "../SortIcon";
-import { TorrentSortColumn, SortDirection } from "./TorrentTable";
+import { TableSortColumn } from "./TorrentTable";
+import { SortDirection } from "../../helper/torrentFilters";
 
 interface TableHeaderProps {
-  column: TorrentSortColumn;
+  column: TableSortColumn;
   label: string;
-  sortColumn: TorrentSortColumn;
+  sortColumn: TableSortColumn;
   sortDirection: SortDirection;
-  onSort: (column: TorrentSortColumn) => void;
+  onSort: (column: TableSortColumn) => void;
   className?: string;
   align?: "left" | "center" | "right";
 }

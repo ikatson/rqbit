@@ -4,13 +4,13 @@ import { TorrentTableRow } from "./TorrentTableRow";
 import { useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
 import { TableHeader } from "./TableHeader";
+import {
+  isTorrentVisible,
+  SortDirection,
+} from "../../helper/torrentFilters";
 
-function matchesSearch(name: string | null, query: string): boolean {
-  if (!query) return true;
-  return (name ?? "").toLowerCase().includes(query);
-}
-
-export type TorrentSortColumn =
+// Extended sort columns for table view (includes columns not in card view)
+export type TableSortColumn =
   | "id"
   | "name"
   | "size"
@@ -21,20 +21,14 @@ export type TorrentSortColumn =
   | "uploadedBytes"
   | "eta"
   | "peers";
-export type SortDirection = "asc" | "desc";
 
-const SORT_STORAGE_KEY = "rqbit-torrent-sort";
+const SORT_STORAGE_KEY = "rqbit-table-sort";
 
-interface StoredSort {
-  column: TorrentSortColumn;
-  direction: SortDirection;
-}
-
-function getDefaultSort(): StoredSort {
+function getDefaultSort(): { column: TableSortColumn; direction: SortDirection } {
   try {
     const stored = localStorage.getItem(SORT_STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored) as StoredSort;
+      const parsed = JSON.parse(stored);
       if (parsed.column && parsed.direction) {
         return parsed;
       }
@@ -45,9 +39,9 @@ function getDefaultSort(): StoredSort {
   return { column: "id", direction: "desc" };
 }
 
-function getSortValue(
+function getTableSortValue(
   t: TorrentListItem,
-  column: TorrentSortColumn,
+  column: TableSortColumn
 ): number | string {
   switch (column) {
     case "id":
@@ -98,18 +92,19 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const selectAll = useUIStore((state) => state.selectAll);
   const clearSelection = useUIStore((state) => state.clearSelection);
   const searchQuery = useUIStore((state) => state.searchQuery);
+  const statusFilter = useUIStore((state) => state.statusFilter);
 
   const normalizedQuery = searchQuery.toLowerCase().trim();
 
   // Local sorting state
-  const [sortColumn, setSortColumnState] = useState<TorrentSortColumn>(
+  const [sortColumn, setSortColumnState] = useState<TableSortColumn>(
     () => getDefaultSort().column,
   );
   const [sortDirection, setSortDirectionState] = useState<SortDirection>(
     () => getDefaultSort().direction,
   );
 
-  const setSortColumn = useCallback((column: TorrentSortColumn) => {
+  const setSortColumn = useCallback((column: TableSortColumn) => {
     setSortColumnState((prevColumn) => {
       setSortDirectionState((prevDir) => {
         const newDir: SortDirection =
@@ -128,8 +123,8 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     if (!torrents) return null;
 
     return [...torrents].sort((a, b) => {
-      const aVal = getSortValue(a, sortColumn);
-      const bVal = getSortValue(b, sortColumn);
+      const aVal = getTableSortValue(a, sortColumn);
+      const bVal = getTableSortValue(b, sortColumn);
       const cmp =
         typeof aVal === "string"
           ? aVal.localeCompare(bVal as string)
@@ -142,9 +137,9 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const visibleTorrentIds = useMemo(() => {
     if (!sortedTorrents) return [];
     return sortedTorrents
-      .filter((t) => matchesSearch(t.name, normalizedQuery))
+      .filter((t) => isTorrentVisible(t, normalizedQuery, statusFilter))
       .map((t) => t.id);
-  }, [sortedTorrents, normalizedQuery]);
+  }, [sortedTorrents, normalizedQuery, statusFilter]);
 
   const allSelected = !!(
     visibleTorrentIds.length > 0 &&
@@ -162,7 +157,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     }
   };
 
-  const handleSort = (column: TorrentSortColumn) => {
+  const handleSort = (column: TableSortColumn) => {
     setSortColumn(column);
   };
 
@@ -341,7 +336,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             key={torrent.id}
             torrent={torrent}
             isSelected={selectedTorrentIds.has(torrent.id)}
-            hidden={!matchesSearch(torrent.name, normalizedQuery)}
+            hidden={!isTorrentVisible(torrent, normalizedQuery, statusFilter)}
             onRowClick={handleRowClick}
             onCheckboxChange={toggleSelection}
           />
