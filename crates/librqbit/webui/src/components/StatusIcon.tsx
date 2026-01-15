@@ -19,5 +19,5 @@ export const StatusIcon = ({ className, finished, live, error }: Props) => {
   if (isSeeding) return <MdOutlineUpload className={`text-success ${className}`} />;
   if (finished) return <MdCheckCircle className={`text-success ${className}`} />;
   if (live) return <MdDownload className={`text-primary ${className}`} />;
-  else return <MdOutlineMotionPhotosPaused className={`text-text-secondary ${className}`} />;
+  else return <MdOutlineMotionPhotosPaused className={`text-secondary ${className}`} />;
 };

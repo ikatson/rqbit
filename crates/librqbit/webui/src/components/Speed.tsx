@@ -11,7 +11,7 @@ export const Speed: React.FC<{ statsResponse: TorrentStats }> = ({
 }) => {
   switch (statsResponse.state) {
     case STATE_PAUSED:
-      return <span className="text-text-secondary">Paused</span>;
+      return <span className="text-secondary">Paused</span>;
     case STATE_INITIALIZING:
       return <span className="text-warning">Checking files</span>;
     case STATE_ERROR:
@@ -19,7 +19,7 @@ export const Speed: React.FC<{ statsResponse: TorrentStats }> = ({
   }
   // Unknown state
   if (statsResponse.state != "live" || statsResponse.live === null) {
-    return <span className="text-text-secondary">{statsResponse.state}</span>;
+    return <span className="text-secondary">{statsResponse.state}</span>;
   }
 
   return (
@@ -32,7 +32,7 @@ export const Speed: React.FC<{ statsResponse: TorrentStats }> = ({
       <span className="text-primary">
         ↑ {statsResponse.live.upload_speed?.human_readable}
         {statsResponse.live.snapshot.uploaded_bytes > 0 && (
-          <span className="text-text-secondary">
+          <span className="text-secondary">
             ({formatBytes(statsResponse.live.snapshot.uploaded_bytes)})
           </span>
         )}

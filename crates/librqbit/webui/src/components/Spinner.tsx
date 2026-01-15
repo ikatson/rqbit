@@ -24,7 +24,7 @@ export const Spinner = ({
         />
       </svg>
       {label ? (
-        <span className="text-text">{label} ...</span>
+        <span>{label} ...</span>
       ) : (
         <span className="sr-only">Loading...</span>
       )}

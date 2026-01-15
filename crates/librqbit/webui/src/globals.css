@@ -17,12 +17,14 @@
 
   /* Text */
   --color-text: theme(colors.slate.900);
-  --color-text-secondary: theme(colors.slate.500);
-  --color-text-tertiary: theme(colors.slate.400);
+  --color-secondary: theme(colors.slate.500);
+  --color-tertiary: theme(colors.slate.400);
 
-  /* Borders */
+  /* Borders / Dividers */
   --color-border: theme(colors.slate.200);
   --color-border-strong: theme(colors.slate.300);
+  --color-divider: theme(colors.slate.200);
+  --color-divider-strong: theme(colors.slate.300);
 
   /* Interactive (primary) */
   --color-primary: theme(colors.blue.600);
@@ -51,12 +53,14 @@
 
   /* Text */
   --color-text: theme(colors.slate.100);
-  --color-text-secondary: theme(colors.slate.400);
-  --color-text-tertiary: theme(colors.slate.500);
+  --color-secondary: theme(colors.slate.400);
+  --color-tertiary: theme(colors.slate.500);
 
-  /* Borders */
+  /* Borders / Dividers */
   --color-border: theme(colors.slate.700);
   --color-border-strong: theme(colors.slate.600);
+  --color-divider: theme(colors.slate.700);
+  --color-divider-strong: theme(colors.slate.600);
 
   /* Interactive (primary) */
   --color-primary: theme(colors.blue.400);
@@ -83,10 +87,10 @@
   --color-surface-raised: var(--color-surface-raised);
   --color-surface-sunken: var(--color-surface-sunken);
   --color-text: var(--color-text);
-  --color-text-secondary: var(--color-text-secondary);
-  --color-text-tertiary: var(--color-text-tertiary);
-  --color-border: var(--color-border);
-  --color-border-strong: var(--color-border-strong);
+  --color-secondary: var(--color-secondary);
+  --color-tertiary: var(--color-tertiary);
+  --color-divider: var(--color-divider);
+  --color-divider-strong: var(--color-divider-strong);
   --color-primary: var(--color-primary);
   --color-primary-hover: var(--color-primary-hover);
   --color-primary-bg: var(--color-primary-bg);
@@ -99,7 +103,18 @@
   --color-error-bg: var(--color-error-bg);
 }
 
-/* Base typography - text-sm (14px) as default */
+/* Base styles */
 html {
   font-size: 14px;
+}
+
+/* Default text color - needs to be on body since .dark class is on html */
+body {
+  color: var(--color-text);
+}
+
+*,
+::before,
+::after {
+  border-color: var(--color-border);
 }

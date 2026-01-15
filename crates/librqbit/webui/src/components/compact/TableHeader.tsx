@@ -29,7 +29,7 @@ export const TableHeader: React.FC<TableHeaderProps> = ({
 
   return (
     <th
-      className={`px-2 py-2 text-text-secondary cursor-pointer hover:text-text select-none whitespace-nowrap ${alignClass} ${className}`}
+      className={`px-2 py-2 text-secondary cursor-pointer hover:text-text select-none whitespace-nowrap ${alignClass} ${className}`}
       onClick={() => onSort(column)}
     >
       {label}

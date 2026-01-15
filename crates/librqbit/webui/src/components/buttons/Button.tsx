@@ -15,13 +15,13 @@ export const Button: React.FC<{
 
   const variantClassNames = {
     secondary:
-      "bg-surface-raised text-text border-border hover:bg-primary hover:text-white transition-colors",
+      "bg-surface-raised border-divider hover:bg-primary hover:text-white transition-colors",
     danger:
       "bg-error-bg text-white border-transparent hover:bg-red-600 transition-colors",
     primary:
       "bg-primary-bg text-white border-transparent hover:bg-primary-bg-hover disabled:opacity-50 transition-colors",
     cancel:
-      "bg-surface-raised text-text-secondary border-border hover:bg-surface-sunken transition-colors",
+      "bg-surface-raised text-secondary border-divider hover:bg-surface-sunken transition-colors",
     none: "",
   }[variant ?? "secondary"];
 

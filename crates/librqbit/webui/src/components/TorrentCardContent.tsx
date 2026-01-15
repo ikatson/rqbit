@@ -101,7 +101,7 @@ export const TorrentCardContent: React.FC<{
   };
 
   return (
-    <div className="flex flex-col border p-2 border-border rounded-xl shadow-xs hover:drop-shadow-sm bg-surface-raised">
+    <div className="flex flex-col border p-2 border-divider rounded-xl shadow-xs hover:drop-shadow-sm bg-surface-raised">
       <section className="flex flex-col lg:flex-row items-center gap-2">
         {/* Icon */}
         <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
@@ -109,7 +109,7 @@ export const TorrentCardContent: React.FC<{
         <div className="w-full flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-            <div className="text-left lg:text-lg text-text text-ellipsis break-all">
+            <div className="text-left lg:text-lg text-ellipsis break-all">
               {torrent.name}
             </div>
           </div>
@@ -132,7 +132,7 @@ export const TorrentCardContent: React.FC<{
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-nowrap font-medium text-text-secondary">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-nowrap font-medium text-secondary">
                 <div className="flex gap-2 items-center">
                   <GoPeople /> {formatPeersString().toString()}
                 </div>

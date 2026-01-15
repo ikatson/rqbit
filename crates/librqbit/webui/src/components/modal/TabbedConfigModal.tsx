@@ -51,7 +51,7 @@ export const TabbedConfigModal: React.FC<TabbedConfigModalProps> = ({
       <ModalBody>
         <ErrorComponent error={error ?? null} />
         {tabs.length > 1 && (
-          <div className="mb-4 flex border-b border-border">
+          <div className="mb-4 flex border-b border-divider">
             {tabs.map((tab) => {
               const isActive = tab.id === currentTab;
               return (
@@ -59,8 +59,8 @@ export const TabbedConfigModal: React.FC<TabbedConfigModalProps> = ({
                   key={tab.id}
                   className={`px-3 py-1.5 ${
                     isActive
-                      ? "text-text border-b-2 border-primary -mb-px"
-                      : "text-text-tertiary hover:text-text-secondary"
+                      ? "border-b-2 border-primary -mb-px"
+                      : "text-tertiary hover:text-secondary"
                   }`}
                   onClick={() => setCurrentTab(tab.id)}
                 >

@@ -27,7 +27,7 @@ const TabButton: React.FC<TabButtonProps> = ({
     className={`px-4 py-2 font-medium border-b-2 transition-colors ${
       active
         ? "border-primary text-primary"
-        : "border-transparent text-text-secondary hover:text-text hover:border-border"
+        : "border-transparent text-secondary hover:text-text hover:border-divider"
     }`}
   >
     {label}
@@ -43,16 +43,16 @@ export const DetailPane: React.FC = () => {
 
   if (selectedCount === 0) {
     return (
-      <div className="h-full border-t border-border bg-surface-raised flex items-center justify-center">
-        <p className="text-text-tertiary">Select a torrent to view details</p>
+      <div className="h-full border-t border-divider bg-surface-raised flex items-center justify-center">
+        <p className="text-tertiary">Select a torrent to view details</p>
       </div>
     );
   }
 
   if (selectedCount > 1) {
     return (
-      <div className="h-full border-t border-border bg-surface-raised flex items-center justify-center">
-        <p className="text-text-tertiary">{selectedCount} torrents selected</p>
+      <div className="h-full border-t border-divider bg-surface-raised flex items-center justify-center">
+        <p className="text-tertiary">{selectedCount} torrents selected</p>
       </div>
     );
   }
@@ -60,8 +60,8 @@ export const DetailPane: React.FC = () => {
   const selectedId = selectedArray[0];
 
   return (
-    <div className="h-full border-t border-border flex flex-col bg-surface">
-      <div className="flex border-b border-border bg-surface-raised">
+    <div className="h-full border-t border-divider flex flex-col bg-surface">
+      <div className="flex border-b border-divider bg-surface-raised">
         <TabButton
           id="overview"
           label="Overview"

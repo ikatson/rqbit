@@ -25,13 +25,13 @@ export const FormInput: React.FC<{
 }) => {
   return (
     <div className="flex flex-col gap-2 mb-2">
-      <label htmlFor={name} className="text-text">
+      <label htmlFor={name}>
         {label}
       </label>
       <input
         autoFocus={autoFocus}
         type={inputType}
-        className="block border border-border rounded bg-transparent py-1.5 pl-2 text-text focus:ring-0 focus:border-primary sm:leading-6"
+        className="block border border-divider rounded bg-transparent py-1.5 pl-2 focus:ring-0 focus:border-primary sm:leading-6"
         id={name}
         name={name}
         disabled={disabled}
@@ -40,7 +40,7 @@ export const FormInput: React.FC<{
         onKeyDown={onKeyDown}
         onChange={onChange}
       />
-      {help && <div className="text-sm text-text-secondary">{help}</div>}
+      {help && <div className="text-sm text-secondary">{help}</div>}
     </div>
   );
 };

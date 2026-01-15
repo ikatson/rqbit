@@ -93,7 +93,7 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
           id: "other",
           label: "Other",
           content: (
-            <div className="text-text-secondary py-2">
+            <div className="text-secondary py-2">
               <p>
                 All other parameters (DHT, connections, persistence, etc.) can
                 be configured via{" "}

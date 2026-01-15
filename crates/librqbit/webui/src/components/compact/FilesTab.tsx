@@ -53,7 +53,7 @@ export const FilesTab: React.FC<FilesTabProps> = ({
   };
 
   if (!detailsResponse) {
-    return <div className="p-4 text-text-tertiary">Loading...</div>;
+    return <div className="p-4 text-tertiary">Loading...</div>;
   }
 
   return (

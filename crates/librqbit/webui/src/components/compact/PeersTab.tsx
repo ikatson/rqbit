@@ -199,26 +199,26 @@ export const PeersTab: React.FC<PeersTabProps> = ({
   }, [peersWithSpeed, sortColumn, sortDirection]);
 
   if (!statsResponse) {
-    return <div className="p-4 text-text-tertiary">Loading...</div>;
+    return <div className="p-4 text-tertiary">Loading...</div>;
   }
 
   if (!statsResponse.live) {
     return (
-      <div className="p-4 text-text-tertiary">
+      <div className="p-4 text-tertiary">
         No live peer information available (torrent is not live)
       </div>
     );
   }
 
   const headerClass =
-    "px-2 py-1.5 text-left text-sm text-text-secondary cursor-pointer hover:text-text select-none";
+    "px-2 py-1.5 text-left text-sm text-secondary cursor-pointer hover:text-text select-none";
 
   return (
     <div className="p-3">
       <div className="overflow-x-auto">
         <table className="min-w-full">
           <thead>
-            <tr className="border-b border-border">
+            <tr className="border-b border-divider">
               <th className={headerClass} onClick={() => handleSort("addr")}>
                 IP Address
                 <SortIcon
@@ -289,7 +289,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({
               <tr>
                 <td
                   colSpan={6}
-                  className="px-2 py-3 text-center text-sm text-text-tertiary"
+                  className="px-2 py-3 text-center text-sm text-tertiary"
                 >
                   {peerSnapshot === null
                     ? "Loading peer list..."
@@ -299,10 +299,10 @@ export const PeersTab: React.FC<PeersTabProps> = ({
             ) : (
               sortedPeers.map((peer) => (
                 <tr key={peer.addr} className="hover:bg-surface-raised">
-                  <td className="px-2 py-1 text-sm font-mono text-text">
+                  <td className="px-2 py-1 text-sm font-mono">
                     {peer.addr}
                   </td>
-                  <td className="px-2 py-1 text-sm text-text-secondary">
+                  <td className="px-2 py-1 text-sm text-secondary">
                     {peer.stats.conn_kind ?? "-"}
                   </td>
                   <td className="px-2 py-1 text-sm text-success">
@@ -311,10 +311,10 @@ export const PeersTab: React.FC<PeersTabProps> = ({
                   <td className="px-2 py-1 text-sm text-primary">
                     {formatSpeed(peer.uploadSpeed)}
                   </td>
-                  <td className="px-2 py-1 text-sm text-text-secondary">
+                  <td className="px-2 py-1 text-sm text-secondary">
                     {formatBytes(peer.stats.counters.fetched_bytes)}
                   </td>
-                  <td className="px-2 py-1 text-sm text-text-secondary">
+                  <td className="px-2 py-1 text-sm text-secondary">
                     {formatBytes(peer.stats.counters.uploaded_bytes)}
                   </td>
                 </tr>

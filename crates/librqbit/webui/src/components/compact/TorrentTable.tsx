@@ -40,6 +40,42 @@ function getDefaultSort(): StoredSort {
   return { column: "id", direction: "desc" };
 }
 
+function getSortValue(
+  t: TorrentListItem,
+  column: TorrentSortColumn,
+): number | string {
+  switch (column) {
+    case "id":
+      return t.id;
+    case "name":
+      return (t.name ?? "").toLowerCase();
+    case "size":
+      return t.stats?.total_bytes ?? 0;
+    case "progress":
+      return t.stats?.total_bytes
+        ? (t.stats.progress_bytes ?? 0) / t.stats.total_bytes
+        : 0;
+    case "downloadedBytes":
+      return t.stats?.progress_bytes ?? 0;
+    case "downSpeed":
+      return t.stats?.live?.download_speed?.mbps ?? 0;
+    case "upSpeed":
+      return t.stats?.live?.upload_speed?.mbps ?? 0;
+    case "uploadedBytes":
+      return t.stats?.live?.snapshot.uploaded_bytes ?? 0;
+    case "eta": {
+      if (!t.stats?.live) return Infinity;
+      const remaining =
+        (t.stats.total_bytes ?? 0) - (t.stats.progress_bytes ?? 0);
+      const speed = t.stats.live.download_speed?.mbps ?? 0;
+      if (speed <= 0 || remaining <= 0) return remaining <= 0 ? 0 : Infinity;
+      return remaining / (speed * 1024 * 1024);
+    }
+    case "peers":
+      return t.stats?.live?.snapshot.peer_stats?.live ?? 0;
+  }
+}
+
 interface TorrentTableProps {
   torrents: TorrentListItem[] | null;
   loading: boolean;
@@ -59,10 +95,10 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
 
   // Local sorting state
   const [sortColumn, setSortColumnState] = useState<TorrentSortColumn>(
-    () => getDefaultSort().column
+    () => getDefaultSort().column,
   );
   const [sortDirection, setSortDirectionState] = useState<SortDirection>(
-    () => getDefaultSort().direction
+    () => getDefaultSort().direction,
   );
 
   const setSortColumn = useCallback((column: TorrentSortColumn) => {
@@ -72,7 +108,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
           prevColumn === column ? (prevDir === "asc" ? "desc" : "asc") : "desc";
         localStorage.setItem(
           SORT_STORAGE_KEY,
-          JSON.stringify({ column, direction: newDir })
+          JSON.stringify({ column, direction: newDir }),
         );
         return newDir;
       });
@@ -84,80 +120,12 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     if (!torrents) return null;
 
     return [...torrents].sort((a, b) => {
-      let cmp = 0;
-      switch (sortColumn) {
-        case "id":
-          cmp = a.id - b.id;
-          break;
-        case "name": {
-          const aName = (a.name ?? "").toLowerCase();
-          const bName = (b.name ?? "").toLowerCase();
-          cmp = aName.localeCompare(bName);
-          break;
-        }
-        case "size": {
-          const aSize = a.stats?.total_bytes ?? 0;
-          const bSize = b.stats?.total_bytes ?? 0;
-          cmp = aSize - bSize;
-          break;
-        }
-        case "progress": {
-          const aProgress = a.stats?.total_bytes
-            ? (a.stats.progress_bytes ?? 0) / a.stats.total_bytes
-            : 0;
-          const bProgress = b.stats?.total_bytes
-            ? (b.stats.progress_bytes ?? 0) / b.stats.total_bytes
-            : 0;
-          cmp = aProgress - bProgress;
-          break;
-        }
-        case "downloadedBytes": {
-          const aBytes = a.stats?.progress_bytes ?? 0;
-          const bBytes = b.stats?.progress_bytes ?? 0;
-          cmp = aBytes - bBytes;
-          break;
-        }
-        case "downSpeed": {
-          const aSpeed = a.stats?.live?.download_speed?.mbps ?? 0;
-          const bSpeed = b.stats?.live?.download_speed?.mbps ?? 0;
-          cmp = aSpeed - bSpeed;
-          break;
-        }
-        case "upSpeed": {
-          const aSpeed = a.stats?.live?.upload_speed?.mbps ?? 0;
-          const bSpeed = b.stats?.live?.upload_speed?.mbps ?? 0;
-          cmp = aSpeed - bSpeed;
-          break;
-        }
-        case "uploadedBytes": {
-          const aBytes = a.stats?.live?.snapshot.uploaded_bytes ?? 0;
-          const bBytes = b.stats?.live?.snapshot.uploaded_bytes ?? 0;
-          cmp = aBytes - bBytes;
-          break;
-        }
-        case "eta": {
-          // ETA: lower is "better" (finishing sooner), Infinity for no ETA
-          const getEta = (t: TorrentListItem) => {
-            if (!t.stats?.live) return Infinity;
-            const remaining =
-              (t.stats.total_bytes ?? 0) - (t.stats.progress_bytes ?? 0);
-            const speed = t.stats.live.download_speed?.mbps ?? 0;
-            if (speed <= 0 || remaining <= 0)
-              return remaining <= 0 ? 0 : Infinity;
-            return remaining / (speed * 1024 * 1024);
-          };
-          const aEta = getEta(a);
-          const bEta = getEta(b);
-          cmp = aEta - bEta;
-          break;
-        }
-        case "peers": {
-          const aPeers = a.stats?.live?.snapshot.peer_stats?.live ?? 0;
-          const bPeers = b.stats?.live?.snapshot.peer_stats?.live ?? 0;
-          cmp = aPeers - bPeers;
-          break;
-        }
-      }
+      const aVal = getSortValue(a, sortColumn);
+      const bVal = getSortValue(b, sortColumn);
+      const cmp =
+        typeof aVal === "string"
+          ? aVal.localeCompare(bVal as string)
+          : (aVal as number) - (bVal as number);
       return sortDirection === "asc" ? cmp : -cmp;
     });
   }, [torrents, sortColumn, sortDirection]);
@@ -224,7 +192,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
         selectTorrent(id);
       }
     },
-    [selectRange, selectTorrent]
+    [selectRange, selectTorrent],
   );
 
   if (loading) {
@@ -237,7 +205,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
 
   if (!torrents || torrents.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-text-tertiary">
+      <div className="flex flex-col items-center justify-center h-64 text-tertiary">
         <p className="text-lg">No torrents</p>
         <p className="">Add a torrent to get started</p>
       </div>
@@ -247,7 +215,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   return (
     <table className="w-full">
       <thead className="bg-surface-raised sticky top-0 z-10 text-sm">
-        <tr className="border-b border-border">
+        <tr className="border-b border-divider">
           <th className="w-8 px-2 py-3">
             <input
               type="checkbox"
@@ -256,7 +224,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
                 if (el) el.indeterminate = someSelected && !allSelected;
               }}
               onChange={handleHeaderCheckbox}
-              className="w-4 h-4 rounded border-border-strong bg-surface text-primary focus:ring-primary"
+              className="w-4 h-4 rounded border-divider-strong bg-surface text-primary focus:ring-primary"
             />
           </th>
           <th className="w-8 px-1 py-3"></th>

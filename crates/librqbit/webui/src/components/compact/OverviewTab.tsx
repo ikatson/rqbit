@@ -19,7 +19,7 @@ const LV: React.FC<{
   mono?: boolean;
 }> = ({ label, value, mono }) => (
   <>
-    <span className="text-text-tertiary">{label} </span>
+    <span className="text-tertiary">{label} </span>
     <span className={mono ? "font-mono" : ""}>{value}</span>
   </>
 );
@@ -28,7 +28,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
   const statsResponse = torrent?.stats ?? null;
 
   if (!torrent || !statsResponse) {
-    return <div className="p-3 text-text-tertiary">Loading...</div>;
+    return <div className="p-3 text-tertiary">Loading...</div>;
   }
 
   const name = torrent.name ?? "";
@@ -64,19 +64,19 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
     if (state === STATE_INITIALIZING)
       return { text: "Initializing", color: "text-warning" };
     if (state === STATE_PAUSED)
-      return { text: "Paused", color: "text-text-secondary" };
+      return { text: "Paused", color: "text-secondary" };
     if (state === STATE_LIVE && finished)
       return { text: "Seeding", color: "text-success" };
     if (state === STATE_LIVE)
       return { text: "Downloading", color: "text-primary" };
-    return { text: state, color: "text-text-secondary" };
+    return { text: state, color: "text-secondary" };
   })();
 
   return (
     <div className="p-3 flex flex-col gap-3 text-sm">
       {/* Header: Name + Status */}
       <div className="flex items-center gap-3">
-        <span className="truncate text-text font-medium flex-1" title={name}>
+        <span className="truncate font-medium flex-1" title={name}>
           {name}
         </span>
         <span className={`shrink-0 ${stateDisplay.color}`}>
@@ -96,23 +96,23 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
       )}
 
       {/* Main stats line */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-text">
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
         <span>
           <LV label="Progress" value={`${progressPct.toFixed(1)}%`} />
-          <span className="text-text-tertiary">
+          <span className="text-tertiary">
             {" "}({formatBytes(progressBytes)}/{formatBytes(totalBytes)})
           </span>
         </span>
         <span><LV label="Down" value={downSpeed} /></span>
         <span>
           <LV label="Up" value={upSpeed} />
-          <span className="text-text-tertiary"> ({formatBytes(totalUploadedBytes)} total)</span>
+          <span className="text-tertiary"> ({formatBytes(totalUploadedBytes)} total)</span>
         </span>
         <span><LV label="ETA" value={finished ? "Complete" : eta} /></span>
       </div>
 
       {/* Pieces + Peers line */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-text">
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
         {totalPieces > 0 && (
           <span>
             <LV
@@ -120,7 +120,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
               value={`${downloadedPieces.toLocaleString()}/${totalPieces.toLocaleString()}`}
             />
             {pieceSize > 0 && (
-              <span className="text-text-tertiary"> ({formatBytes(pieceSize)} each)</span>
+              <span className="text-tertiary"> ({formatBytes(pieceSize)} each)</span>
             )}
           </span>
         )}
@@ -128,21 +128,21 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
           <span>
             <LV label="Peers" value="" />
             <span className="text-success">{peers.live}</span>
-            <span className="text-text-tertiary"> live, </span>
+            <span className="text-tertiary"> live, </span>
             <span className="text-primary">{peers.connecting}</span>
-            <span className="text-text-tertiary"> connecting, </span>
+            <span className="text-tertiary"> connecting, </span>
             <span className="text-warning">{peers.queued}</span>
-            <span className="text-text-tertiary"> queued, </span>
-            <span className="text-text">{peers.seen}</span>
-            <span className="text-text-tertiary"> seen, </span>
+            <span className="text-tertiary"> queued, </span>
+            <span>{peers.seen}</span>
+            <span className="text-tertiary"> seen, </span>
             <span className="text-error">{peers.dead}</span>
-            <span className="text-text-tertiary"> dead</span>
+            <span className="text-tertiary"> dead</span>
           </span>
         )}
       </div>
 
       {/* Metadata */}
-      <div className="flex flex-col gap-1 text-text">
+      <div className="flex flex-col gap-1">
         <div className="truncate">
           <LV label="Hash" value={infoHash} mono />
         </div>

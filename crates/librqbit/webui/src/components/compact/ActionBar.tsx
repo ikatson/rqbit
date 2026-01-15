@@ -68,7 +68,7 @@ export const ActionBar: React.FC = () => {
     runBulkAction((id) => API.start(id), STATE_LIVE, "starting");
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised border-b border-border">
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-raised border-b border-divider">
       <Button
         onClick={resumeSelected}
         disabled={disabled || !hasSelection}
@@ -95,7 +95,7 @@ export const ActionBar: React.FC = () => {
       </Button>
 
       {hasSelection && (
-        <span className="ml-1.5 text-text-secondary">
+        <span className="ml-1.5 text-secondary">
           {selectedCount} selected
         </span>
       )}

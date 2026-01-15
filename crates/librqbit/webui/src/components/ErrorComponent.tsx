@@ -37,11 +37,11 @@ export const ErrorComponent = (props: {
   return (
     <AlertDanger onClose={remove} title={error.text}>
       {error.details?.statusText && (
-        <div className="pb-2 text-md text-text">
+        <div className="pb-2 text-md">
           {error.details?.statusText}
         </div>
       )}
-      <div className="whitespace-pre-wrap text-text-secondary">
+      <div className="whitespace-pre-wrap text-secondary">
         {error.details?.text}
       </div>
     </AlertDanger>
