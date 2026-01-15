@@ -13,7 +13,7 @@ import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
 import { FileListInput } from "./FileListInput";
 import { useContext, useEffect, useState } from "react";
-import { APIContext, RefreshTorrentStatsContext } from "../context";
+import { APIContext } from "../context";
 import { useErrorStore } from "../stores/errorStore";
 
 export const TorrentCardContent: React.FC<{
@@ -21,7 +21,8 @@ export const TorrentCardContent: React.FC<{
   detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats | null;
   onExtendedViewOpen?: () => void;
-}> = ({ id, detailsResponse, statsResponse, onExtendedViewOpen }) => {
+  onRefresh?: () => void;
+}> = ({ id, detailsResponse, statsResponse, onExtendedViewOpen, onRefresh }) => {
   const state = statsResponse?.state ?? "";
   const error = statsResponse?.error ?? null;
   const totalBytes = statsResponse?.total_bytes ?? 1;
@@ -68,8 +69,6 @@ export const TorrentCardContent: React.FC<{
 
   const API = useContext(APIContext);
 
-  const refreshCtx = useContext(RefreshTorrentStatsContext);
-
   const [savingSelectedFiles, setSavingSelectedFiles] = useState(false);
 
   let setCloseableError = useErrorStore((state) => state.setCloseableError);
@@ -79,7 +78,7 @@ export const TorrentCardContent: React.FC<{
     API.updateOnlyFiles(id, Array.from(selectedFiles))
       .then(
         () => {
-          refreshCtx.refresh();
+          onRefresh?.();
           setCloseableError(null);
         },
         (e) => {

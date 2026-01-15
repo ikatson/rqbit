@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { TorrentDetails, TorrentStats, ErrorDetails } from "../../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../../context";
+import { APIContext } from "../../context";
 import { FileListInput } from "../FileListInput";
 import { useErrorStore } from "../../stores/errorStore";
 
@@ -8,18 +8,19 @@ interface FilesTabProps {
   torrentId: number;
   detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats | null;
+  onRefresh?: () => void;
 }
 
 export const FilesTab: React.FC<FilesTabProps> = ({
   torrentId,
   detailsResponse,
   statsResponse,
+  onRefresh,
 }) => {
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
   const [savingSelectedFiles, setSavingSelectedFiles] = useState(false);
 
   const API = useContext(APIContext);
-  const refreshCtx = useContext(RefreshTorrentStatsContext);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
 
   useEffect(() => {
@@ -38,7 +39,7 @@ export const FilesTab: React.FC<FilesTabProps> = ({
     API.updateOnlyFiles(torrentId, Array.from(selectedFiles))
       .then(
         () => {
-          refreshCtx.refresh();
+          onRefresh?.();
           setCloseableError(null);
         },
         (e) => {

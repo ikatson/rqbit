@@ -1,6 +1,6 @@
 import { useContext, useState } from "react";
 import { TorrentDetails, TorrentStats } from "../../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../../context";
+import { APIContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
 import {
@@ -11,7 +11,7 @@ import {
   FaClipboardList,
 } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
-import { ErrorComponent } from "../ErrorComponent";
+import { useTorrentStore } from "../../stores/torrentStore";
 
 export const TorrentActions: React.FC<{
   id: number;
@@ -31,7 +31,7 @@ export const TorrentActions: React.FC<{
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
 
-  let refreshCtx = useContext(RefreshTorrentStatsContext);
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
 
   const canPause = state == "live";
   const canUnpause = state == "paused" || state == "error";
@@ -46,7 +46,7 @@ export const TorrentActions: React.FC<{
     API.start(id)
       .then(
         () => {
-          refreshCtx.refresh();
+          refreshTorrents();
         },
         (e) => {
           setCloseableError({
@@ -63,7 +63,7 @@ export const TorrentActions: React.FC<{
     API.pause(id)
       .then(
         () => {
-          refreshCtx.refresh();
+          refreshTorrents();
         },
         (e) => {
           setCloseableError({

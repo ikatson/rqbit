@@ -3,7 +3,7 @@ import {
   TorrentDetails,
   TorrentListItem,
 } from "../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../context";
+import { APIContext } from "../context";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
 import { TorrentCardContent } from "./TorrentCardContent";
 import { useTorrentStore } from "../stores/torrentStore";
@@ -55,15 +55,12 @@ export const TorrentCard: React.FC<{
   };
 
   return (
-    <RefreshTorrentStatsContext.Provider
-      value={{ refresh: forceRefreshCallback }}
-    >
-      <TorrentCardContent
-        id={torrent.id}
-        detailsResponse={syntheticDetails}
-        statsResponse={torrent.stats ?? null}
-        onExtendedViewOpen={onExtendedViewOpen}
-      />
-    </RefreshTorrentStatsContext.Provider>
+    <TorrentCardContent
+      id={torrent.id}
+      detailsResponse={syntheticDetails}
+      statsResponse={torrent.stats ?? null}
+      onExtendedViewOpen={onExtendedViewOpen}
+      onRefresh={forceRefreshCallback}
+    />
   );
 };

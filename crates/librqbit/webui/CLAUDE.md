@@ -14,7 +14,7 @@ This document helps Claude work efficiently on the rqbit webui codebase.
 src/
 ├── api-types.ts        # TypeScript types matching backend API
 ├── http-api.ts         # API client (all backend calls)
-├── context.tsx         # React contexts (APIContext, RefreshTorrentStatsContext)
+├── context.tsx         # React contexts (APIContext)
 ├── rqbit-web.tsx       # App shell, header, menu buttons
 ├── main.tsx            # Entry point
 ├── stores/             # Zustand stores
@@ -137,8 +137,8 @@ setCloseableError({ text: "Error message", details: error });
 
 ### Refresh torrent data
 ```typescript
-const refreshCtx = useContext(RefreshTorrentStatsContext);
-refreshCtx.refresh();
+const refreshTorrents = useTorrentStore(state => state.refreshTorrents);
+refreshTorrents();
 ```
 
 ### Format display values

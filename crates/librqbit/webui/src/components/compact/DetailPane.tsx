@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { TorrentDetails } from "../../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../../context";
+import { APIContext } from "../../context";
 import { loopUntilSuccess } from "../../helper/loopUntilSuccess";
 import { useUIStore } from "../../stores/uiStore";
 import { useTorrentStore } from "../../stores/torrentStore";
@@ -136,9 +136,7 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
   const statsResponse = torrent?.stats ?? null;
 
   return (
-    <RefreshTorrentStatsContext.Provider
-      value={{ refresh: forceRefreshCallback }}
-    >
+    <>
       {activeTab === "overview" && (
         <OverviewTab
           torrentId={torrentId}
@@ -151,11 +149,12 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
           torrentId={torrentId}
           detailsResponse={detailsResponse}
           statsResponse={statsResponse}
+          onRefresh={forceRefreshCallback}
         />
       )}
       {activeTab === "peers" && (
         <PeersTab torrentId={torrentId} statsResponse={statsResponse} />
       )}
-    </RefreshTorrentStatsContext.Provider>
+    </>
   );
 };
