@@ -16,7 +16,7 @@ import { useContext, useEffect, useState } from "react";
 import { APIContext, RefreshTorrentStatsContext } from "../context";
 import { useErrorStore } from "../stores/errorStore";
 
-export const TorrentRow: React.FC<{
+export const TorrentCardContent: React.FC<{
   id: number;
   detailsResponse: TorrentDetails | null;
   statsResponse: TorrentStats | null;

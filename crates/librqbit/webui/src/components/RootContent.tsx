@@ -1,4 +1,4 @@
-import { TorrentsList } from "./TorrentsList";
+import { CardLayout } from "./CardLayout";
 import { ErrorComponent } from "./ErrorComponent";
 import { useTorrentStore } from "../stores/torrentStore";
 import { useErrorStore } from "../stores/errorStore";
@@ -30,7 +30,7 @@ export const RootContent = (props: {}) => {
       {useCompactLayout ? (
         <CompactLayout torrents={torrents} loading={torrentsInitiallyLoading} />
       ) : (
-        <TorrentsList torrents={torrents} loading={torrentsInitiallyLoading} />
+        <CardLayout torrents={torrents} loading={torrentsInitiallyLoading} />
       )}
     </div>
   );

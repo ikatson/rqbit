@@ -25,11 +25,11 @@ src/
 ├── hooks/              # Custom React hooks
 ├── helper/             # Utility functions (formatBytes, etc.)
 └── components/
-    ├── RootContent.tsx    # Main content area, layout switching
-    ├── TorrentsList.tsx   # Card view torrent list
-    ├── Torrent.tsx        # Data fetching wrapper per torrent
-    ├── TorrentRow.tsx     # Card view single torrent
-    ├── compact/           # Compact/table view components
+    ├── RootContent.tsx         # Main content area, layout switching
+    ├── CardLayout.tsx          # Card view layout (list of cards)
+    ├── TorrentCard.tsx         # Card view data wrapper per torrent
+    ├── TorrentCardContent.tsx  # Card view single torrent content
+    ├── compact/                # Compact/table view components
     │   ├── CompactLayout.tsx    # Table view layout
     │   ├── TorrentTable.tsx     # Table with headers
     │   ├── TorrentTableRow.tsx  # Single table row
@@ -44,7 +44,7 @@ src/
 ## Key Patterns
 
 ### Data Fetching (per-torrent)
-Each torrent fetches its own data independently. Pattern from `Torrent.tsx`:
+Each torrent fetches its own data independently. Pattern from `TorrentCard.tsx`:
 ```typescript
 // Details: fetch once, retry on error
 useEffect(() => {

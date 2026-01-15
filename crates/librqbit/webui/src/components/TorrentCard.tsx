@@ -5,10 +5,10 @@ import {
 } from "../api-types";
 import { APIContext, RefreshTorrentStatsContext } from "../context";
 import { loopUntilSuccess } from "../helper/loopUntilSuccess";
-import { TorrentRow } from "./TorrentRow";
+import { TorrentCardContent } from "./TorrentCardContent";
 import { useTorrentStore } from "../stores/torrentStore";
 
-export const Torrent: React.FC<{
+export const TorrentCard: React.FC<{
   torrent: TorrentListItem;
 }> = ({ torrent }) => {
   // Fetch full details (with files) only when needed for extended view
@@ -58,7 +58,7 @@ export const Torrent: React.FC<{
     <RefreshTorrentStatsContext.Provider
       value={{ refresh: forceRefreshCallback }}
     >
-      <TorrentRow
+      <TorrentCardContent
         id={torrent.id}
         detailsResponse={syntheticDetails}
         statsResponse={torrent.stats ?? null}

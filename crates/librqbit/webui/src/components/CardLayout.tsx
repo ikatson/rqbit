@@ -1,8 +1,8 @@
 import { TorrentListItem } from "../api-types";
 import { Spinner } from "./Spinner";
-import { Torrent } from "./Torrent";
+import { TorrentCard } from "./TorrentCard";
 
-export const TorrentsList = (props: {
+export const CardLayout = (props: {
   torrents: Array<TorrentListItem> | null;
   loading: boolean;
 }) => {
@@ -19,7 +19,7 @@ export const TorrentsList = (props: {
         <p className="text-center">No existing torrents found.</p>
       ) : (
         props.torrents.map((t: TorrentListItem) => (
-          <Torrent key={t.id} torrent={t} />
+          <TorrentCard key={t.id} torrent={t} />
         ))
       )}
     </div>
