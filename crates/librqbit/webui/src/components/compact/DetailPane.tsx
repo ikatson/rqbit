@@ -6,33 +6,9 @@ import { useTorrentStore } from "../../stores/torrentStore";
 import { OverviewTab } from "./OverviewTab";
 import { FilesTab } from "./FilesTab";
 import { PeersTab } from "./PeersTab";
+import { TabButton, TabList } from "../Tabs";
 
 type TabId = "overview" | "files" | "peers";
-
-interface TabButtonProps {
-  id: TabId;
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}
-
-const TabButton: React.FC<TabButtonProps> = ({
-  id,
-  label,
-  active,
-  onClick,
-}) => (
-  <button
-    onClick={onClick}
-    className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-      active
-        ? "border-primary text-primary"
-        : "border-transparent text-secondary hover:text-text hover:border-divider"
-    }`}
-  >
-    {label}
-  </button>
-);
 
 export const DetailPane: React.FC = () => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
@@ -61,7 +37,7 @@ export const DetailPane: React.FC = () => {
 
   return (
     <div className="h-full border-t border-divider flex flex-col bg-surface">
-      <div className="flex border-b border-divider bg-surface-raised">
+      <TabList className="bg-surface-raised">
         <TabButton
           id="overview"
           label="Overview"
@@ -80,7 +56,7 @@ export const DetailPane: React.FC = () => {
           active={activeTab === "peers"}
           onClick={() => setActiveTab("peers")}
         />
-      </div>
+      </TabList>
       <div className="flex-1 overflow-auto">
         <DetailPaneContent torrentId={selectedId} activeTab={activeTab} />
       </div>

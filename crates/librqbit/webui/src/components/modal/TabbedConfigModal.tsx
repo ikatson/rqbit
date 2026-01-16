@@ -5,6 +5,7 @@ import { ModalFooter } from "./ModalFooter";
 import { Button } from "../buttons/Button";
 import { ErrorComponent } from "../ErrorComponent";
 import { ErrorWithLabel } from "../../rqbit-web";
+import { TabButton, TabList } from "../Tabs";
 
 export interface ConfigTab {
   id: string;
@@ -51,24 +52,17 @@ export const TabbedConfigModal: React.FC<TabbedConfigModalProps> = ({
       <ModalBody>
         <ErrorComponent error={error ?? null} />
         {tabs.length > 1 && (
-          <div className="mb-4 flex border-b border-divider">
-            {tabs.map((tab) => {
-              const isActive = tab.id === currentTab;
-              return (
-                <button
-                  key={tab.id}
-                  className={`px-3 py-1.5 ${
-                    isActive
-                      ? "border-b-2 border-primary -mb-px"
-                      : "text-tertiary hover:text-secondary"
-                  }`}
-                  onClick={() => setCurrentTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
+          <TabList className="mb-4">
+            {tabs.map((tab) => (
+              <TabButton
+                key={tab.id}
+                id={tab.id}
+                label={tab.label}
+                active={tab.id === currentTab}
+                onClick={() => setCurrentTab(tab.id)}
+              />
+            ))}
+          </TabList>
         )}
         {tabs.map((tab) => (
           <div key={tab.id} className={tab.id === currentTab ? "" : "hidden"}>
