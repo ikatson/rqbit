@@ -19,7 +19,6 @@ import {
   isTorrentVisible,
 } from "../helper/torrentFilters";
 
-const SEARCH_THRESHOLD = 10;
 const CARD_SORT_STORAGE_KEY = "rqbit-card-sort";
 const CARD_HEIGHT = 120; // Card height (~110px) + gap (8px) + buffer
 
@@ -82,8 +81,6 @@ export const CardLayout = (props: {
   };
 
   const normalizedQuery = searchQuery.toLowerCase().trim();
-  const totalCount = props.torrents?.length ?? 0;
-  const showFilters = totalCount > SEARCH_THRESHOLD;
 
   // Sort and filter torrents for virtualization
   const filteredTorrents = useMemo(() => {
@@ -108,8 +105,7 @@ export const CardLayout = (props: {
 
   return (
     <div className="flex flex-col h-full mx-2 pb-3 sm:px-7 mt-3">
-      {showFilters && (
-        <div className="flex flex-wrap items-center gap-2 w-full max-w-2xl mx-auto mb-2">
+      <div className="flex flex-wrap items-center gap-2 w-full max-w-2xl mx-auto mb-2">
           {/* Search input */}
           <div className="relative flex-1 min-w-48">
             <GoSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-tertiary" />
@@ -158,8 +154,7 @@ export const CardLayout = (props: {
               </option>,
             ])}
           </select>
-        </div>
-      )}
+      </div>
       {filteredTorrents === null ? (
         props.loading ? (
           <Spinner
