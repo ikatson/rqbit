@@ -51,6 +51,10 @@ export interface UIStore {
   clearSelection: () => void;
   selectAll: (ids: number[]) => void;
   selectRelative: (direction: "up" | "down", orderedIds: number[]) => void;
+
+  detailsModalTorrentId: number | null;
+  openDetailsModal: (id: number) => void;
+  closeDetailsModal: () => void;
 }
 
 export const useUIStore = create<UIStore>((set, get) => ({
@@ -192,4 +196,13 @@ export const useUIStore = create<UIStore>((set, get) => ({
     const newId = orderedIds[newIdx];
     set({ selectedTorrentIds: new Set([newId]), lastSelectedId: newId });
   },
+
+  detailsModalTorrentId: null,
+  openDetailsModal: (id) =>
+    set({
+      detailsModalTorrentId: id,
+      selectedTorrentIds: new Set([id]),
+      lastSelectedId: id,
+    }),
+  closeDetailsModal: () => set({ detailsModalTorrentId: null }),
 }));

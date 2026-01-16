@@ -3,7 +3,6 @@ import {
   TorrentDetails,
   TorrentListItem,
   STATE_INITIALIZING,
-  ErrorDetails,
 } from "../api-types";
 import { TorrentActions } from "./buttons/TorrentActions";
 import { ProgressBar } from "./ProgressBar";
@@ -11,17 +10,11 @@ import { Speed } from "./Speed";
 import { formatBytes } from "../helper/formatBytes";
 import { getCompletionETA } from "../helper/getCompletionETA";
 import { StatusIcon } from "./StatusIcon";
-import { FileListInput } from "./FileListInput";
-import { useContext, useEffect, useState } from "react";
-import { APIContext } from "../context";
-import { useErrorStore } from "../stores/errorStore";
 
 export const TorrentCardContent: React.FC<{
   torrent: TorrentListItem;
   detailsResponse: TorrentDetails | null;
-  onExtendedViewOpen?: () => void;
-  onRefresh?: () => void;
-}> = ({ torrent, detailsResponse, onExtendedViewOpen, onRefresh }) => {
+}> = ({ torrent, detailsResponse }) => {
   const id = torrent.id;
   const statsResponse = torrent.stats ?? null;
   const state = statsResponse?.state ?? "";
@@ -52,52 +45,6 @@ export const TorrentCardContent: React.FC<{
         finished={finished}
       />
     );
-  };
-
-  const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
-
-  // Update selected files whenever details are updated.
-  useEffect(() => {
-    setSelectedFiles(
-      new Set<number>(
-        detailsResponse?.files
-          .map((f, id) => ({ f, id }))
-          .filter(({ f }) => f.included)
-          .map(({ id }) => id) ?? [],
-      ),
-    );
-  }, [detailsResponse]);
-
-  const API = useContext(APIContext);
-
-  const [savingSelectedFiles, setSavingSelectedFiles] = useState(false);
-
-  let setCloseableError = useErrorStore((state) => state.setCloseableError);
-
-  const updateSelectedFiles = (selectedFiles: Set<number>) => {
-    setSavingSelectedFiles(true);
-    API.updateOnlyFiles(id, Array.from(selectedFiles))
-      .then(
-        () => {
-          onRefresh?.();
-          setCloseableError(null);
-        },
-        (e) => {
-          setCloseableError({
-            text: "Error configuring torrent",
-            details: e as ErrorDetails,
-          });
-        },
-      )
-      .finally(() => setSavingSelectedFiles(false));
-  };
-
-  const [extendedView, setExtendedViewState] = useState(false);
-  const setExtendedView = (value: boolean) => {
-    if (value && !extendedView && onExtendedViewOpen) {
-      onExtendedViewOpen();
-    }
-    setExtendedViewState(value);
   };
 
   return (
@@ -164,28 +111,10 @@ export const TorrentCardContent: React.FC<{
               id={id}
               statsResponse={statsResponse}
               detailsResponse={detailsResponse}
-              extendedView={extendedView}
-              setExtendedView={setExtendedView}
             />
           </div>
         )}
       </section>
-
-      {/* extended view */}
-      {detailsResponse && extendedView && (
-        <div className="">
-          <FileListInput
-            torrentId={id}
-            torrentDetails={detailsResponse}
-            torrentStats={statsResponse}
-            selectedFiles={selectedFiles}
-            setSelectedFiles={updateSelectedFiles}
-            disabled={savingSelectedFiles}
-            allowStream
-            showProgressBar
-          />
-        </div>
-      )}
     </div>
   );
 };

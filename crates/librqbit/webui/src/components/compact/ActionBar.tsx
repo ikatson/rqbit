@@ -17,7 +17,12 @@ import {
   STATUS_FILTER_LABELS,
 } from "../../helper/torrentFilters";
 
-export const ActionBar: React.FC = () => {
+interface ActionBarProps {
+  // When true, hides search/filter/selection count (for use in modal)
+  hideFilters?: boolean;
+}
+
+export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
   const selectedTorrentIds = useUIStore((state) => state.selectedTorrentIds);
   const searchQuery = useUIStore((state) => state.searchQuery);
   const setSearchQuery = useUIStore((state) => state.setSearchQuery);
@@ -123,47 +128,51 @@ export const ActionBar: React.FC = () => {
         Delete
       </Button>
 
-      {hasSelection && (
-        <span className="ml-1.5 text-secondary">
-          {selectedCount} selected
-        </span>
-      )}
+      {!hideFilters && (
+        <>
+          {hasSelection && (
+            <span className="ml-1.5 text-secondary">
+              {selectedCount} selected
+            </span>
+          )}
 
-      {/* Spacer */}
-      <div className="flex-1" />
+          {/* Spacer */}
+          <div className="flex-1" />
 
-      {/* Status filter */}
-      <select
-        value={statusFilter}
-        onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-        className="py-1 px-2 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary"
-      >
-        {(Object.keys(STATUS_FILTER_LABELS) as StatusFilter[]).map((status) => (
-          <option key={status} value={status}>
-            {STATUS_FILTER_LABELS[status]}
-          </option>
-        ))}
-      </select>
-
-      {/* Search input */}
-      <div className="relative">
-        <GoSearch className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-tertiary" />
-        <input
-          type="text"
-          value={localSearch}
-          onChange={handleSearchChange}
-          placeholder="Search..."
-          className="pl-7 pr-7 py-1 w-48 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary placeholder:text-tertiary"
-        />
-        {localSearch && (
-          <button
-            onClick={clearSearch}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-tertiary hover:text-secondary rounded"
+          {/* Status filter */}
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            className="py-1 px-2 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary"
           >
-            <GoX className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
+            {(Object.keys(STATUS_FILTER_LABELS) as StatusFilter[]).map((status) => (
+              <option key={status} value={status}>
+                {STATUS_FILTER_LABELS[status]}
+              </option>
+            ))}
+          </select>
+
+          {/* Search input */}
+          <div className="relative">
+            <GoSearch className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-tertiary" />
+            <input
+              type="text"
+              value={localSearch}
+              onChange={handleSearchChange}
+              placeholder="Search..."
+              className="pl-7 pr-7 py-1 w-48 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary placeholder:text-tertiary"
+            />
+            {localSearch && (
+              <button
+                onClick={clearSearch}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-tertiary hover:text-secondary rounded"
+              >
+                <GoX className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       <DeleteTorrentModal
         show={showDeleteModal}

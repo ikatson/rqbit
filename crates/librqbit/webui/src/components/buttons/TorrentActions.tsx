@@ -3,35 +3,23 @@ import { TorrentDetails, TorrentStats } from "../../api-types";
 import { APIContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
-import {
-  FaCog,
-  FaPause,
-  FaPlay,
-  FaTrash,
-  FaClipboardList,
-} from "react-icons/fa";
+import { FaCog, FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
 import { useTorrentStore } from "../../stores/torrentStore";
+import { useUIStore } from "../../stores/uiStore";
 
 export const TorrentActions: React.FC<{
   id: number;
   statsResponse: TorrentStats;
   detailsResponse: TorrentDetails | null;
-  extendedView: boolean;
-  setExtendedView: (extendedView: boolean) => void;
-}> = ({
-  id,
-  statsResponse,
-  detailsResponse,
-  extendedView,
-  setExtendedView,
-}) => {
+}> = ({ id, statsResponse, detailsResponse }) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
 
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
+  const openDetailsModal = useUIStore((state) => state.openDetailsModal);
 
   const canPause = state == "live";
   const canUnpause = state == "paused" || state == "error";
@@ -53,7 +41,7 @@ export const TorrentActions: React.FC<{
             text: `Error starting torrent id=${id}`,
             details: e,
           });
-        },
+        }
       )
       .finally(() => setDisabled(false));
   };
@@ -70,7 +58,7 @@ export const TorrentActions: React.FC<{
             text: `Error pausing torrent id=${id}`,
             details: e,
           });
-        },
+        }
       )
       .finally(() => setDisabled(false));
   };
@@ -83,44 +71,6 @@ export const TorrentActions: React.FC<{
   const cancelDeleting = () => {
     setDisabled(false);
     setDeleting(false);
-  };
-
-  const playlistUrl = API.getPlaylistUrl(id);
-
-  const setAlert = useErrorStore((state) => state.setAlert);
-
-  const copyPlaylistUrlToClipboard = async () => {
-    if (!playlistUrl) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(playlistUrl);
-    } catch (e) {
-      setAlert({
-        text: "Copy playlist URL",
-        details: {
-          text: (
-            <>
-              <p>
-                Copy{" "}
-                <a href={playlistUrl} className="text-blue-500">
-                  playlist URL
-                </a>{" "}
-                to clipboard and paste into e.g. VLC to play.
-              </p>
-            </>
-          ),
-        },
-      });
-      return;
-    }
-
-    setAlert({
-      text: "Copied",
-      details: {
-        text: "Playlist URL copied to clipboard. Paste into e.g. VLC to play.",
-      },
-    });
   };
 
   return (
@@ -136,21 +86,12 @@ export const TorrentActions: React.FC<{
         </IconButton>
       )}
       {canConfigure && (
-        <IconButton
-          onClick={() => setExtendedView(!extendedView)}
-          disabled={disabled}
-        >
+        <IconButton onClick={() => openDetailsModal(id)} disabled={disabled}>
           <FaCog className="hover:text-green-600" />
         </IconButton>
       )}
       <IconButton onClick={startDeleting} disabled={disabled}>
         <FaTrash className="hover:text-red-500" />
-      </IconButton>
-      <IconButton
-        href={playlistUrl ?? "#"}
-        onClick={copyPlaylistUrlToClipboard}
-      >
-        <FaClipboardList className="hover:text-green-500" />
       </IconButton>
       <DeleteTorrentModal
         show={deleting}
