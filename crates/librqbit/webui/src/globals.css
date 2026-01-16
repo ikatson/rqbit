@@ -26,6 +26,11 @@
   --color-divider: theme(colors.slate.200);
   --color-divider-strong: theme(colors.slate.300);
 
+  /* Border colors for Tailwind utilities */
+  --border-color-primary: theme(colors.blue.600);
+  --border-color-divider: theme(colors.slate.200);
+  --border-color-divider-strong: theme(colors.slate.300);
+
   /* Interactive (primary) */
   --color-primary: theme(colors.blue.600);
   --color-primary-hover: theme(colors.blue.700);
@@ -61,6 +66,11 @@
   --color-border-strong: theme(colors.slate.600);
   --color-divider: theme(colors.slate.700);
   --color-divider-strong: theme(colors.slate.600);
+
+  /* Border colors for Tailwind utilities */
+  --border-color-primary: theme(colors.blue.400);
+  --border-color-divider: theme(colors.slate.700);
+  --border-color-divider-strong: theme(colors.slate.600);
 
   /* Interactive (primary) */
   --color-primary: theme(colors.blue.400);
@@ -101,6 +111,12 @@
   --color-warning-bg: var(--color-warning-bg);
   --color-error: var(--color-error);
   --color-error-bg: var(--color-error-bg);
+
+  /* Explicit border color utilities (reference CSS vars defined in :root/.dark) */
+  --border-color-primary: var(--border-color-primary);
+  --border-color-divider: var(--border-color-divider);
+  --border-color-divider-strong: var(--border-color-divider-strong);
+  --border-color-transparent: transparent;
 }
 
 /* Base styles */
@@ -113,11 +129,6 @@ body {
   color: var(--color-text);
 }
 
-*,
-::before,
-::after {
-  border-color: var(--color-border);
-}
 
 /* Hide scrollbar while maintaining scroll functionality */
 .hide-scrollbar {
