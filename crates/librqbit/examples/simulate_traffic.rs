@@ -16,12 +16,12 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
+    tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
 };
 use librqbit_core::constants::CHUNK_SIZE;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use rand::{RngCore, SeedableRng, seq::IndexedRandom};
-use tracing::{Level, info};
-use tracing_subscriber::EnvFilter;
+use tracing::info;
 
 struct TestHarness {
     td: PathBuf,
@@ -297,18 +297,23 @@ impl TestHarness {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(Level::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
-
     let root = std::env::temp_dir().join("rqbit-simulate-traffic");
 
-    tokio::fs::remove_dir_all(&root).await?;
-    tokio::fs::create_dir_all(&root).await?;
+    // Clean up before creating log file
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root)?;
+
+    let log_file = std::env::var("TESTSERVER_LOG_FILE")
+        .unwrap_or_else(|_| root.join("testserver.log").to_string_lossy().into_owned());
+    let log_file_rust_log = std::env::var("TESTSERVER_LOG_FILE_RUST_LOG").ok();
+
+    let _logging = init_logging(InitLoggingOptions {
+        default_rust_log_value: Some("info"),
+        log_file: Some(&log_file),
+        log_file_rust_log: Some(log_file_rust_log.as_deref().unwrap_or("debug")),
+    })?;
+
+    info!("logging to file: {}", log_file);
 
     TestHarness {
         torrents: create_torrents(&root.join("torrents"), 10).await?,
