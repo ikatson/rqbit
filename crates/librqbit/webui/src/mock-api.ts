@@ -59,6 +59,20 @@ const TORRENT_NAMES = [
   "Puppy-Linux-{version}-bionicpup64",
 ];
 
+// Very long torrent names (realistic naming patterns with legitimate content)
+const LONG_TORRENT_NAMES = [
+  "Big.Buck.Bunny.2008.4K.Remastered.2160p.UHD.BluRay.x265.10bit.HDR.DTS-HD.MA.7.1-Blender",
+  "Sintel.2010.Open.Movie.Project.Directors.Cut.1080p.BluRay.x264.DTS-HD.MA.5.1-BlenderFoundation",
+  "Tears.of.Steel.2012.Creative.Commons.1080p.BluRay.x264.FLAC.5.1-Mango",
+  "LibreOffice.Fresh.v24.8.3.Full.Multilingual.x64.Portable-DocumentFoundation",
+  "Blender.Studio.Open.Movies.Complete.Collection.2008-2024.4K.UHD.x265.10bit.HDR-BlenderCloud",
+  "Cosmos.Laundromat.2015.First.Cycle.Open.Movie.2160p.UHD.HDR.x265.DTS-HD.MA.7.1.Atmos-Gooseberry",
+  "Spring.2019.Open.Movie.Blender.Animation.Studio.2160p.UHD.BluRay.x265.10bit.HDR.FLAC.5.1-BlenderStudio",
+  "Agent.327.Operation.Barbershop.2017.Blender.Institute.1080p.BluRay.x264.DTS-HD.MA.5.1-BlenderFoundation",
+  "Wikipedia.Offline.Complete.English.2024.Compressed.Archive.Split.Parts.001-100-Kiwix",
+  "Internet.Archive.Public.Domain.Movies.Collection.Vol.42.1080p.Restored.x264-ArchiveOrg",
+];
+
 // File name templates
 const FILE_EXTENSIONS = [".iso", ".img", ".tar.gz", ".zip", ".qcow2"];
 
@@ -84,6 +98,10 @@ function generateInfoHash(id: number): string {
 // Generate torrent name from id
 function generateTorrentName(id: number): string {
   const rand = seededRandom(id);
+  // Every ~10th torrent gets a long name
+  if (rand() < 0.1) {
+    return LONG_TORRENT_NAMES[Math.floor(rand() * LONG_TORRENT_NAMES.length)];
+  }
   const template = TORRENT_NAMES[Math.floor(rand() * TORRENT_NAMES.length)];
   const version = `${Math.floor(rand() * 30) + 1}.${Math.floor(rand() * 12)}.${Math.floor(rand() * 20)}`;
   return template.replace("{version}", version);

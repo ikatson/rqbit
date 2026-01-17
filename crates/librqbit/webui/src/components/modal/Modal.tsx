@@ -16,15 +16,15 @@ const ModalHeader: React.FC<{
   title: string;
 }> = ({ onClose, title }) => {
   return (
-    <div className="flex p-3 justify-between items-center border-b border-divider">
-      <h2 className="text-xl font-semibold">{title}</h2>
+    <div className="flex p-3 justify-between items-center border-b border-divider gap-2">
+      <h2 className="text-xl font-semibold truncate min-w-0">{title}</h2>
       {onClose && (
         <button
-          className="text-secondary hover:text-text transition-colors"
+          className="flex-shrink-0 p-1 -m-1 text-secondary hover:text-text transition-colors"
           onClick={onClose}
           aria-label="Close modal"
         >
-          <BsX className="w-5 h-5" />
+          <BsX className="w-6 h-6" />
         </button>
       )}
     </div>
@@ -51,7 +51,7 @@ export const Modal: React.FC<ModalProps> = ({
       className="fixed z-301 top-0 left-0 w-full h-full block overflow-x-hidden overflow-y-auto"
     >
       <div
-        className={`bg-surface-raised shadow-lg my-8 mx-auto max-w-2xl rounded ${className}`}
+        className={`bg-surface-raised shadow-lg my-4 mx-4 sm:my-8 sm:mx-auto sm:max-w-2xl rounded ${className}`}
       >
         <ModalHeader onClose={onClose} title={title} />
         {children}
