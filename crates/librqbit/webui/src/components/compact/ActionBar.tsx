@@ -1,4 +1,4 @@
-import { useContext, useMemo, useState, useCallback } from "react";
+import { useContext, useState, useCallback } from "react";
 import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { GoSearch, GoX } from "react-icons/go";
 import debounce from "lodash.debounce";
@@ -34,6 +34,9 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
 
   const [disabled, setDisabled] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [torrentsToDelete, setTorrentsToDelete] = useState<TorrentToDelete[]>(
+    [],
+  );
   const [localSearch, setLocalSearch] = useState(searchQuery);
 
   // Debounced update to store
@@ -61,15 +64,18 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
 
   const getTorrentById = (id: number) => torrents?.find((t) => t.id === id);
 
-  const selectedTorrents = useMemo((): TorrentToDelete[] => {
-    return Array.from(selectedTorrentIds).map((id) => {
+  const openDeleteModal = () => {
+    // Capture current selection when opening modal (stable snapshot)
+    const torrents = Array.from(selectedTorrentIds).map((id) => {
       const torrent = getTorrentById(id);
       return {
         id,
         name: torrent?.name ?? null,
       };
     });
-  }, [selectedTorrentIds, torrents]);
+    setTorrentsToDelete(torrents);
+    setShowDeleteModal(true);
+  };
 
   const runBulkAction = async (
     action: (id: number) => Promise<void>,
@@ -120,7 +126,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
         Pause
       </Button>
       <Button
-        onClick={() => setShowDeleteModal(true)}
+        onClick={openDeleteModal}
         disabled={disabled || !hasSelection}
         variant="danger"
       >
@@ -179,7 +185,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
       <DeleteTorrentModal
         show={showDeleteModal}
         onHide={() => setShowDeleteModal(false)}
-        torrents={selectedTorrents}
+        torrents={torrentsToDelete}
       />
     </div>
   );
