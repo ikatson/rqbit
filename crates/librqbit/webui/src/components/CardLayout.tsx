@@ -111,7 +111,7 @@ export const CardLayout = (props: {
           {localSearch && (
             <button
               onClick={clearSearch}
-              className="absolute right-1.5 sm:right-2 top-1/2 -translate-y-1/2 p-1 text-tertiary hover:text-secondary rounded"
+              className="absolute right-1.5 sm:right-2 top-1/2 -translate-y-1/2 p-1 text-tertiary hover:text-secondary rounded cursor-pointer"
             >
               <GoX className="w-4 h-4" />
             </button>

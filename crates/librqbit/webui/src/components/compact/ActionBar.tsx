@@ -173,7 +173,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
             {localSearch && (
               <button
                 onClick={clearSearch}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-tertiary hover:text-secondary rounded"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-tertiary hover:text-secondary rounded cursor-pointer"
               >
                 <GoX className="w-3.5 h-3.5" />
               </button>

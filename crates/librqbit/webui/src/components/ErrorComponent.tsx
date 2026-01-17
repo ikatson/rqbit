@@ -13,7 +13,7 @@ const AlertDanger: React.FC<{
         {onClose && (
           <button
             onClick={onClose}
-            className="text-error hover:text-error/80 transition-colors"
+            className="text-error hover:text-error/80 transition-colors cursor-pointer"
           >
             <BsX />
           </button>

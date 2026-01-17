@@ -14,7 +14,7 @@ export const TabButton: React.FC<TabButtonProps> = ({
 }) => (
   <button
     onClick={onClick}
-    className={`px-3 py-1.5 font-medium transition-colors ${
+    className={`px-3 py-1.5 font-medium transition-colors cursor-pointer ${
       active
         ? "border-b-2 border-primary text-primary -mb-px"
         : "text-tertiary hover:text-secondary"

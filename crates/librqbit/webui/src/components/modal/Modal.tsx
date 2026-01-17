@@ -20,7 +20,7 @@ const ModalHeader: React.FC<{
       <h2 className="text-xl font-semibold truncate min-w-0">{title}</h2>
       {onClose && (
         <button
-          className="flex-shrink-0 p-1 -m-1 text-secondary hover:text-text transition-colors"
+          className="flex-shrink-0 p-1 -m-1 text-secondary hover:text-text transition-colors cursor-pointer"
           onClick={onClose}
           aria-label="Close modal"
         >
