@@ -12,7 +12,7 @@ export const RootContent = (props: {}) => {
   let otherError = useErrorStore((state) => state.otherError);
   let torrents = useTorrentStore((state) => state.torrents);
   let torrentsInitiallyLoading = useTorrentStore(
-    (state) => state.torrentsInitiallyLoading
+    (state) => state.torrentsInitiallyLoading,
   );
 
   const viewMode = useUIStore((state) => state.viewMode);

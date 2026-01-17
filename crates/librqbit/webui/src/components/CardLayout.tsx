@@ -34,8 +34,11 @@ export const CardLayout = (props: {
   const closeDetailsModal = useUIStore((state) => state.closeDetailsModal);
 
   const [localSearch, setLocalSearch] = useState(searchQuery);
-  const [sortColumn, setSortColumn] = useState<TorrentSortColumn>(DEFAULT_SORT_COLUMN);
-  const [sortDirection, setSortDirection] = useState<SortDirection>(DEFAULT_SORT_DIRECTION);
+  const [sortColumn, setSortColumn] =
+    useState<TorrentSortColumn>(DEFAULT_SORT_COLUMN);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(
+    DEFAULT_SORT_DIRECTION,
+  );
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const debouncedSetSearch = useCallback(

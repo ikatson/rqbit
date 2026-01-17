@@ -15,7 +15,12 @@ export type TorrentSortColumn =
 export type SortDirection = "asc" | "desc";
 
 // Status filter types
-export type StatusFilter = "all" | "downloading" | "seeding" | "paused" | "error";
+export type StatusFilter =
+  | "all"
+  | "downloading"
+  | "seeding"
+  | "paused"
+  | "error";
 
 // Sort column display labels
 export const SORT_COLUMN_LABELS: Record<TorrentSortColumn, string> = {
@@ -40,7 +45,7 @@ export const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
 // Get sort value for a torrent
 export function getSortValue(
   t: TorrentListItem,
-  column: TorrentSortColumn
+  column: TorrentSortColumn,
 ): number | string {
   switch (column) {
     case "id":
@@ -73,7 +78,7 @@ export function compareTorrents(
   a: TorrentListItem,
   b: TorrentListItem,
   column: TorrentSortColumn,
-  direction: SortDirection
+  direction: SortDirection,
 ): number {
   const aVal = getSortValue(a, column);
   const bVal = getSortValue(b, column);
@@ -91,7 +96,10 @@ export function matchesSearch(name: string | null, query: string): boolean {
 }
 
 // Check if torrent matches status filter
-export function matchesStatus(t: TorrentListItem, filter: StatusFilter): boolean {
+export function matchesStatus(
+  t: TorrentListItem,
+  filter: StatusFilter,
+): boolean {
   if (filter === "all") return true;
 
   const state = t.stats?.state;
@@ -113,7 +121,7 @@ export function matchesStatus(t: TorrentListItem, filter: StatusFilter): boolean
 export function isTorrentVisible(
   t: TorrentListItem,
   searchQuery: string,
-  statusFilter: StatusFilter
+  statusFilter: StatusFilter,
 ): boolean {
   return matchesSearch(t.name, searchQuery) && matchesStatus(t, statusFilter);
 }

@@ -9,8 +9,16 @@ export const IconButton: React.FC<{
   href?: string;
   title?: string;
 }> = (props) => {
-  const { onClick, disabled, color, children, className, href, title, ...otherProps } =
-    props;
+  const {
+    onClick,
+    disabled,
+    color,
+    children,
+    className,
+    href,
+    title,
+    ...otherProps
+  } = props;
   const onClickStopPropagation: MouseEventHandler<HTMLAnchorElement> = (e) => {
     e.stopPropagation();
     e.preventDefault();

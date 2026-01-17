@@ -67,7 +67,10 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
             isSelected ? "bg-primary/10" : "hover:bg-surface-raised"
           }`}
         >
-          <td className={`w-8 ${cellBase} text-center`} onMouseDown={handleCheckboxClick}>
+          <td
+            className={`w-8 ${cellBase} text-center`}
+            onMouseDown={handleCheckboxClick}
+          >
             <input
               type="checkbox"
               checked={isSelected}
@@ -83,7 +86,9 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
               finished={finished}
             />
           </td>
-          <td className={`w-12 ${cellBase} text-center text-tertiary font-mono whitespace-nowrap`}>
+          <td
+            className={`w-12 ${cellBase} text-center text-tertiary font-mono whitespace-nowrap`}
+          >
             {torrent.id}
           </td>
           <td className={cellBase}>
@@ -125,7 +130,11 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
             {uploadedBytes > 0 && <>{formatBytes(uploadedBytes)}</>}
           </td>
           <td className={centeredCell}>{displayEta}</td>
-          <td className={`w-16 ${cellBase} text-center text-secondary whitespace-nowrap`}>{peersDisplay}</td>
+          <td
+            className={`w-16 ${cellBase} text-center text-secondary whitespace-nowrap`}
+          >
+            {peersDisplay}
+          </td>
         </tr>
       </tbody>
     </table>

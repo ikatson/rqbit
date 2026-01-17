@@ -41,7 +41,7 @@ export const TorrentActions: React.FC<{
             text: `Error starting torrent id=${id}`,
             details: e,
           });
-        }
+        },
       )
       .finally(() => setDisabled(false));
   };
@@ -58,7 +58,7 @@ export const TorrentActions: React.FC<{
             text: `Error pausing torrent id=${id}`,
             details: e,
           });
-        }
+        },
       )
       .finally(() => setDisabled(false));
   };

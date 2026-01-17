@@ -40,7 +40,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const debouncedSetSearch = useCallback(
     debounce((value: string) => setSearchQuery(value), 150),
-    [setSearchQuery]
+    [setSearchQuery],
   );
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -145,11 +145,13 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
             onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
             className="py-1 px-2 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary"
           >
-            {(Object.keys(STATUS_FILTER_LABELS) as StatusFilter[]).map((status) => (
-              <option key={status} value={status}>
-                {STATUS_FILTER_LABELS[status]}
-              </option>
-            ))}
+            {(Object.keys(STATUS_FILTER_LABELS) as StatusFilter[]).map(
+              (status) => (
+                <option key={status} value={status}>
+                  {STATUS_FILTER_LABELS[status]}
+                </option>
+              ),
+            )}
           </select>
 
           {/* Search input */}

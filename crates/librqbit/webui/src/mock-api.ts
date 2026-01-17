@@ -184,7 +184,8 @@ function generateFiles(id: number, totalBytes: number): TorrentFile[] {
     remainingBytes -= fileSize;
 
     const ext = FILE_EXTENSIONS[Math.floor(rand() * FILE_EXTENSIONS.length)];
-    const fileName = numFiles === 1 ? `${name}${ext}` : `${name}.part${i + 1}${ext}`;
+    const fileName =
+      numFiles === 1 ? `${name}${ext}` : `${name}.part${i + 1}${ext}`;
 
     files.push({
       name: fileName,
@@ -209,12 +210,12 @@ function generateLiveStats(
   progressBytes: number,
   totalBytes: number,
 ): LiveTorrentStats {
-  const rand = seededRandom(id * 8737 + Date.now() % 10000);
+  const rand = seededRandom(id * 8737 + (Date.now() % 10000));
   const remainingBytes = totalBytes - progressBytes;
   const downloadSpeed = Math.random() * 50; // 0-50 Mbps
   const uploadSpeed = Math.random() * 10; // 0-10 Mbps
 
-  const downloadBytesPerSec = downloadSpeed * 1024 * 1024 / 8;
+  const downloadBytesPerSec = (downloadSpeed * 1024 * 1024) / 8;
   const etaSecs =
     downloadBytesPerSec > 0 ? remainingBytes / downloadBytesPerSec : null;
 
@@ -291,12 +292,18 @@ function generateTorrentStats(id: number): TorrentStats {
     progress_bytes: progressBytes,
     finished,
     total_bytes: totalBytes,
-    live: state === "live" ? generateLiveStats(id, progressBytes, totalBytes) : null,
+    live:
+      state === "live"
+        ? generateLiveStats(id, progressBytes, totalBytes)
+        : null,
   };
 }
 
 // Generate torrent list item
-function generateTorrentListItem(id: number, withStats: boolean): TorrentListItem {
+function generateTorrentListItem(
+  id: number,
+  withStats: boolean,
+): TorrentListItem {
   const totalBytes = generateTotalBytes(id);
   const totalPieces = Math.ceil(totalBytes / (256 * 1024)); // 256KB pieces
 
@@ -376,7 +383,9 @@ function updatePeerCounters(torrentId: number): void {
     const fetchVariance = 0.5 + Math.random();
     const uploadVariance = 0.5 + Math.random();
     peer.fetchedBytes += Math.floor(peer.fetchRate * elapsed * fetchVariance);
-    peer.uploadedBytes += Math.floor(peer.uploadRate * elapsed * uploadVariance);
+    peer.uploadedBytes += Math.floor(
+      peer.uploadRate * elapsed * uploadVariance,
+    );
   }
 }
 
@@ -386,7 +395,9 @@ const TOTAL_TORRENTS = 1000;
 export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
   getStreamLogsUrl: () => null,
 
-  listTorrents: async (opts?: { withStats?: boolean }): Promise<ListTorrentsResponse> => {
+  listTorrents: async (opts?: {
+    withStats?: boolean;
+  }): Promise<ListTorrentsResponse> => {
     // Simulate network delay
     await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
 
@@ -560,7 +571,8 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
     const haves = new Uint8Array(bytes);
 
     const rand = seededRandom(index * 6173);
-    const progress = getProgressBytes(index, totalBytes, generateState(index)) / totalBytes;
+    const progress =
+      getProgressBytes(index, totalBytes, generateState(index)) / totalBytes;
 
     for (let i = 0; i < bytes; i++) {
       let byte = 0;

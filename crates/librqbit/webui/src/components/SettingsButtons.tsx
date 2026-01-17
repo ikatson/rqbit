@@ -28,13 +28,18 @@ export const SettingsButtons: React.FC<SettingsButtonsProps> = ({
 
   return (
     <div className="flex items-center gap-1">
-      {menuButtons?.map((b, i) => <span key={i}>{b}</span>)}
+      {menuButtons?.map((b, i) => (
+        <span key={i}>{b}</span>
+      ))}
       {showBuiltInConfigButton && (
         <>
           <IconButton onClick={() => setConfigOpen(true)} title="Configure">
             <BsSliders2 />
           </IconButton>
-          <ConfigModal isOpen={configOpen} onClose={() => setConfigOpen(false)} />
+          <ConfigModal
+            isOpen={configOpen}
+            onClose={() => setConfigOpen(false)}
+          />
         </>
       )}
       <IconButton onClick={onLogsClick} title="View logs">

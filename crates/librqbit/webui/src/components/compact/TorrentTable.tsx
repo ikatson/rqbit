@@ -5,10 +5,7 @@ import { TorrentTableRow } from "./TorrentTableRow";
 import { useUIStore } from "../../stores/uiStore";
 import { Spinner } from "../Spinner";
 import { TableHeader } from "./TableHeader";
-import {
-  isTorrentVisible,
-  SortDirection,
-} from "../../helper/torrentFilters";
+import { isTorrentVisible, SortDirection } from "../../helper/torrentFilters";
 
 // Extended sort columns for table view (includes columns not in card view)
 export type TableSortColumn =
@@ -28,7 +25,7 @@ const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
 
 function getTableSortValue(
   t: TorrentListItem,
-  column: TableSortColumn
+  column: TableSortColumn,
 ): number | string {
   switch (column) {
     case "id":
@@ -84,8 +81,11 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const normalizedQuery = searchQuery.toLowerCase().trim();
 
   // Local sorting state
-  const [sortColumn, setSortColumnState] = useState<TableSortColumn>(DEFAULT_SORT_COLUMN);
-  const [sortDirection, setSortDirectionState] = useState<SortDirection>(DEFAULT_SORT_DIRECTION);
+  const [sortColumn, setSortColumnState] =
+    useState<TableSortColumn>(DEFAULT_SORT_COLUMN);
+  const [sortDirection, setSortDirectionState] = useState<SortDirection>(
+    DEFAULT_SORT_DIRECTION,
+  );
 
   const setSortColumn = useCallback((column: TableSortColumn) => {
     setSortColumnState((prevColumn) => {
@@ -126,7 +126,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     visibleTorrentIds.every((id) => selectedTorrentIds.has(id))
   );
   const someSelected = visibleTorrentIds.some((id) =>
-    selectedTorrentIds.has(id)
+    selectedTorrentIds.has(id),
   );
 
   const handleHeaderCheckbox = () => {
@@ -200,7 +200,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
         />
       );
     },
-    [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection]
+    [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection],
   );
 
   if (loading) {

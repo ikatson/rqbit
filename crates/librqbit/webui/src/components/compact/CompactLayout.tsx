@@ -17,7 +17,9 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
   torrents,
   loading,
 }) => {
-  const [detailPaneHeight, setDetailPaneHeight] = useState(DETAIL_PANE_DEFAULT_HEIGHT);
+  const [detailPaneHeight, setDetailPaneHeight] = useState(
+    DETAIL_PANE_DEFAULT_HEIGHT,
+  );
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 

@@ -10,7 +10,10 @@ export interface RateLimitsTabProps {
   onUploadBpsChange: (value: number | null) => void;
 }
 
-const formatLimitHelp = (bps: number | null | undefined, label: string): string => {
+const formatLimitHelp = (
+  bps: number | null | undefined,
+  label: string,
+): string => {
   const value = bps ?? 0;
   if (value > 0) {
     return `Limit total ${label} speed to this number of bytes per second (current ${formatBytes(value)} per second)`;

@@ -24,6 +24,6 @@ export const useErrorStore = create<{
   setOtherError: (otherError) => set(() => ({ otherError })),
 
   alert: null,
-  setAlert: (alert) => set(() => ({alert})),
-  removeAlert: () => set(() => ({alert: null}))
+  setAlert: (alert) => set(() => ({ alert })),
+  removeAlert: () => set(() => ({ alert: null })),
 }));

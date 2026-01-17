@@ -27,6 +27,10 @@ cargo test -p librqbit <test_name>   # test in specific crate
 cargo fmt --all -- --check
 cargo clippy --all-targets
 
+# Format webui/desktop TypeScript (run from repo root)
+npm run format           # format all
+npm run format:check     # check only
+
 # Desktop app. You cannot test it or see it, so don't bother running expensive "cargo tauri build"
 cd desktop && npm install && tsc --noEmit
 ```
@@ -75,3 +79,4 @@ Tauri wrapper around the web UI.
 - If you need to resort to running shell commands, always use "rg" instead of "grep".
 - Prefer using Serena MCP instead of searching / reading / writing raw files when makes sense.
 - `sed` on this machine is GNU sed (not BSD sed). Use `sed -i 's/foo/bar/g'` NOT `sed -i '' 's/foo/bar/g'`.
+- **Always run `npm run format` after modifying webui or desktop TypeScript/TSX files.**

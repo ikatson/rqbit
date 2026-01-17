@@ -15,7 +15,7 @@ export const TorrentDetailsModal: React.FC<TorrentDetailsModalProps> = ({
   onClose,
 }) => {
   const torrent = useTorrentStore((state) =>
-    state.torrents?.find((t) => t.id === torrentId)
+    state.torrents?.find((t) => t.id === torrentId),
   );
 
   const title = torrent?.name ?? `Torrent #${torrentId}`;

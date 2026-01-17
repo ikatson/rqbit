@@ -6,14 +6,13 @@ export const TorrentCard: React.FC<{
   torrent: TorrentListItem;
   hidden?: boolean;
 }> = ({ torrent, hidden }) => {
-  const cachedDetails = useTorrentStore((state) => state.getDetails(torrent.id));
+  const cachedDetails = useTorrentStore((state) =>
+    state.getDetails(torrent.id),
+  );
 
   return (
     <div className={hidden ? "hidden" : ""}>
-      <TorrentCardContent
-        torrent={torrent}
-        detailsResponse={cachedDetails}
-      />
+      <TorrentCardContent torrent={torrent} detailsResponse={cachedDetails} />
     </div>
   );
 };

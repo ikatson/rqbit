@@ -299,9 +299,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({
             ) : (
               sortedPeers.map((peer) => (
                 <tr key={peer.addr} className="hover:bg-surface-raised">
-                  <td className="px-2 py-1 text-sm font-mono">
-                    {peer.addr}
-                  </td>
+                  <td className="px-2 py-1 text-sm font-mono">{peer.addr}</td>
                   <td className="px-2 py-1 text-sm text-secondary">
                     {peer.stats.conn_kind ?? "-"}
                   </td>

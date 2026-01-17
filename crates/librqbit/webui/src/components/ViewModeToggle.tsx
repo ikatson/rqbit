@@ -12,9 +12,8 @@ export const ViewModeToggle: React.FC = () => {
     return null;
   }
 
-  const tooltipText = viewMode === "compact"
-    ? "Switch to card view"
-    : "Switch to table view";
+  const tooltipText =
+    viewMode === "compact" ? "Switch to card view" : "Switch to table view";
 
   return (
     <IconButton onClick={toggleViewMode} title={tooltipText}>

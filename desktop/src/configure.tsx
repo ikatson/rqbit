@@ -54,7 +54,6 @@ const FormInput: React.FC<{
   );
 };
 
-
 export const ConfigModal: React.FC<{
   show: boolean;
   handleStartReconfigure: () => void;
@@ -98,7 +97,9 @@ export const ConfigModal: React.FC<{
     }
   };
 
-  const handleToggleChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
+  const handleToggleChange: React.ChangeEventHandler<HTMLInputElement> = (
+    e,
+  ) => {
     const name: string = e.target.name;
     const [mainField, subField] = name.split(".", 2);
 

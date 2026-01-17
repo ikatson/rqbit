@@ -155,9 +155,14 @@ npm run dev  # or: make webui-dev from repo root
 # Type check
 npx tsc --noEmit
 
+# Format code (run from repo root)
+npm run format
+
 # Build
 npm run build
 ```
+
+**Always run `npm run format` from the repo root after modifying TypeScript/TSX files.**
 
 Dev server runs at http://localhost:3031/, connects to backend at :3030.
 

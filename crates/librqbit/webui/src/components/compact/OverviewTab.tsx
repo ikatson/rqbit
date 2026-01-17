@@ -52,8 +52,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
       ? 100
       : (progressBytes / totalBytes) * 100;
 
-  const downSpeed =
-    statsResponse.live?.download_speed?.human_readable ?? "-";
+  const downSpeed = statsResponse.live?.download_speed?.human_readable ?? "-";
   const upSpeed = statsResponse.live?.upload_speed?.human_readable ?? "-";
   const eta = getCompletionETA(statsResponse);
 
@@ -100,15 +99,23 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
         <span>
           <LV label="Progress" value={`${progressPct.toFixed(1)}%`} />
           <span className="text-tertiary">
-            {" "}({formatBytes(progressBytes)}/{formatBytes(totalBytes)})
+            {" "}
+            ({formatBytes(progressBytes)}/{formatBytes(totalBytes)})
           </span>
         </span>
-        <span><LV label="Down" value={downSpeed} /></span>
+        <span>
+          <LV label="Down" value={downSpeed} />
+        </span>
         <span>
           <LV label="Up" value={upSpeed} />
-          <span className="text-tertiary"> ({formatBytes(totalUploadedBytes)} total)</span>
+          <span className="text-tertiary">
+            {" "}
+            ({formatBytes(totalUploadedBytes)} total)
+          </span>
         </span>
-        <span><LV label="ETA" value={finished ? "Complete" : eta} /></span>
+        <span>
+          <LV label="ETA" value={finished ? "Complete" : eta} />
+        </span>
       </div>
 
       {/* Pieces + Peers line */}
@@ -120,7 +127,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
               value={`${downloadedPieces.toLocaleString()}/${totalPieces.toLocaleString()}`}
             />
             {pieceSize > 0 && (
-              <span className="text-tertiary"> ({formatBytes(pieceSize)} each)</span>
+              <span className="text-tertiary">
+                {" "}
+                ({formatBytes(pieceSize)} each)
+              </span>
             )}
           </span>
         )}
