@@ -97,21 +97,21 @@ export const CardLayout = (props: {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-2 w-full max-w-2xl mx-auto mb-2 mt-3 px-2 sm:px-7">
+      <div className="flex items-center gap-1.5 sm:gap-2 w-full max-w-2xl mx-auto mb-2 mt-3 px-2 sm:px-7">
         {/* Search input */}
-        <div className="relative flex-1 min-w-48">
-          <GoSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-tertiary" />
+        <div className="relative flex-1 min-w-0">
+          <GoSearch className="absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-tertiary" />
           <input
             type="text"
             value={localSearch}
             onChange={handleSearchChange}
-            placeholder="Search torrents..."
-            className="w-full pl-9 pr-9 py-2 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary placeholder:text-tertiary"
+            placeholder="Search..."
+            className="w-full pl-8 sm:pl-9 pr-8 sm:pr-9 py-1.5 sm:py-2 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary placeholder:text-tertiary"
           />
           {localSearch && (
             <button
               onClick={clearSearch}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-tertiary hover:text-secondary rounded"
+              className="absolute right-1.5 sm:right-2 top-1/2 -translate-y-1/2 p-1 text-tertiary hover:text-secondary rounded"
             >
               <GoX className="w-4 h-4" />
             </button>
@@ -122,7 +122,7 @@ export const CardLayout = (props: {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-          className="py-2 px-3 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary"
+          className="py-1.5 sm:py-2 px-2 sm:px-3 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary"
         >
           {(Object.keys(STATUS_FILTER_LABELS) as StatusFilter[]).map(
             (status) => (
@@ -137,7 +137,7 @@ export const CardLayout = (props: {
         <select
           value={`${sortColumn}:${sortDirection}`}
           onChange={handleSortChange}
-          className="py-2 px-3 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary"
+          className="py-1.5 sm:py-2 px-2 sm:px-3 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary"
         >
           {(Object.keys(SORT_COLUMN_LABELS) as TorrentSortColumn[]).flatMap(
             (col) => [
