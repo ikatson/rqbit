@@ -186,15 +186,16 @@ Use this to test UI performance, layout with many torrents, or develop without r
 When working with large lists (1000+ torrents), follow these patterns:
 
 ### Virtualization
-Both card and table views use `react-window` for virtualization - only visible items are rendered to the DOM. See `architecture/virtualization.md` for full details.
+Both card and table views use `react-virtuoso` for virtualization - only visible items are rendered to the DOM. See `architecture/virtualization.md` for full details.
 
 **Key requirements:**
 - Parent container chain must have explicit height (use `h-full`, `flex-1 min-h-0`)
-- Must filter array before passing to List (can't use CSS hidden)
-- Item height must be fixed and match `itemSize` prop
+- Must filter array before passing to Virtuoso (can't use CSS hidden)
 
-**Trade-offs:**
-- Items can't have variable heights (expanded state resets on scroll)
+**Benefits:**
+- Variable height items work automatically (no fixed `itemSize` needed)
+- No `AutoSizer` wrapper required
+- Simpler API: just `totalCount` and `itemContent` props
 - DOM stays small (~500 elements vs 44,000), initial render is 8x faster
 
 ### Memoization

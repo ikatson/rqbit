@@ -26,7 +26,7 @@ This causes:
 - High memory usage
 - Slow filter/search updates (all nodes re-rendered)
 
-## The Solution - react-window
+## The Solution - react-virtuoso
 
 Virtualization renders **only the visible items**. If your viewport shows 6 cards, only those 6 cards exist in the DOM.
 
@@ -46,10 +46,10 @@ Virtualization renders **only the visible items**. If your viewport shows 6 card
 └─────────────────────────────────┘
 ```
 
-As you scroll, react-window:
+As you scroll, react-virtuoso:
 1. Removes items that scroll out of view (unmounts React components)
 2. Creates items that scroll into view (mounts new components)
-3. Positions them using absolute positioning + CSS transforms
+3. **Measures item heights dynamically** - no fixed height required!
 
 ## Implementation
 
@@ -57,43 +57,30 @@ As you scroll, react-window:
 
 ```json
 {
-  "react-window": "^1.8.10",
-  "react-virtualized-auto-sizer": "^1.0.24"
+  "react-virtuoso": "^4.12.5"
 }
 ```
 
-**Warning**: react-window v2.x has a different API (no `FixedSizeList` export). Stick with v1.x.
+### Why react-virtuoso over react-window?
 
-### Key Components
-
-1. **FixedSizeList** - The virtualized list container
-   - Needs explicit height and width
-   - Needs to know item height (`itemSize` prop)
-   - Renders only visible items + overscan buffer
-
-2. **AutoSizer** - Measures parent container dimensions
-   - Wraps the List component
-   - Provides `height` and `width` to its children
-   - Requires parent to have explicit dimensions
-
-3. **Row renderer** - Function component that renders a single item
-   - Receives `index` and `style` props
-   - Must apply `style` to the outer element (for positioning)
+| Feature | react-window | react-virtuoso |
+|---------|--------------|----------------|
+| Variable height items | Requires `VariableSizeList` + height function | Automatic measurement |
+| Container sizing | Requires `AutoSizer` wrapper | Automatic |
+| API complexity | `itemSize`, `itemData`, `style` prop | Just `totalCount` + `itemContent` |
+| Mobile experience | Poor (fixed heights don't adapt) | Great (measures actual content) |
 
 ### Card View Implementation
 
 ```typescript
-import { FixedSizeList as List } from "react-window";
-import type { ListChildComponentProps } from "react-window";
-import AutoSizer from "react-virtualized-auto-sizer";
+import { Virtuoso } from "react-virtuoso";
 
-const CARD_HEIGHT = 120; // Must match actual card height + gap
-
-const Row = useCallback(
-  ({ index, style }: ListChildComponentProps) => {
+// Item renderer - receives index, returns JSX
+const itemContent = useCallback(
+  (index: number) => {
     const torrent = filteredTorrents![index];
     return (
-      <div style={style} className="pb-2">
+      <div className="pb-2">
         <TorrentCard torrent={torrent} />
       </div>
     );
@@ -102,61 +89,81 @@ const Row = useCallback(
 );
 
 return (
-  <div className="flex-1 min-h-0 hide-scrollbar">
-    <AutoSizer>
-      {({ height, width }) => (
-        <List
-          height={height}
-          width={width}
-          itemCount={filteredTorrents.length}
-          itemSize={CARD_HEIGHT}
-          className="hide-scrollbar"
-        >
-          {Row}
-        </List>
-      )}
-    </AutoSizer>
+  <div className="flex-1 min-h-0">
+    <Virtuoso
+      totalCount={filteredTorrents.length}
+      itemContent={itemContent}
+    />
   </div>
 );
 ```
+
+That's it! No `AutoSizer`, no `itemSize`, no `style` prop to pass through.
 
 ### Table View Implementation
 
-Table view is more complex because each row needs to match header column widths.
-
-**Key difference**: Each row wraps a `<table>` inside the positioned `<div>` to maintain column alignment with the header.
+Table view uses the same pattern. Each row wraps a `<table>` to maintain column alignment with the header.
 
 ```typescript
-// TorrentTableRow.tsx - Row receives style prop for positioning
+// TorrentTable.tsx
+const itemContent = useCallback(
+  (index: number) => {
+    const torrent = filteredTorrents![index];
+    return (
+      <TorrentTableRow
+        torrent={torrent}
+        isSelected={selectedTorrentIds.has(torrent.id)}
+        onRowClick={handleRowClick}
+        onCheckboxChange={toggleSelection}
+      />
+    );
+  },
+  [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection]
+);
+
 return (
-  <div style={style}>
-    <table className="w-full table-fixed h-full">
-      <tbody>
-        <tr className="h-[40px]">  {/* Explicit height! */}
-          <td className="w-8 align-middle">...</td>
-          <td className="w-12 align-middle">...</td>
-          {/* ... more cells with explicit widths */}
-        </tr>
-      </tbody>
+  <div className="flex flex-col h-full">
+    {/* Fixed header */}
+    <table className="w-full table-fixed">
+      <thead>...</thead>
     </table>
+    {/* Virtualized body */}
+    <div className="flex-1 min-h-0">
+      <Virtuoso
+        totalCount={filteredTorrents?.length ?? 0}
+        itemContent={itemContent}
+      />
+    </div>
   </div>
 );
 ```
 
-**Why nested tables?** react-window positions items using absolute positioning on a wrapper div. We can't make the `<tr>` the positioned element directly, so we wrap each row in `<div style={style}><table>...</table></div>`.
+```typescript
+// TorrentTableRow.tsx - No style prop needed!
+return (
+  <table className="w-full table-fixed">
+    <tbody>
+      <tr className="h-[40px]">
+        <td className="w-8 align-middle">...</td>
+        <td className="w-12 align-middle">...</td>
+        {/* ... more cells with explicit widths */}
+      </tr>
+    </tbody>
+  </table>
+);
+```
 
 ### Parent Height Chain
 
-AutoSizer needs explicit height from its parent chain. This is the most common gotcha.
+react-virtuoso still needs a parent with explicit height. This is the most common gotcha.
 
 **Required CSS chain:**
 ```
 html, body: height: 100%
   └─ App container: h-screen flex flex-col
        └─ Content area: flex-1 min-h-0 (or grow min-h-0)
-            └─ AutoSizer container: h-full or flex-1 min-h-0
-                 └─ AutoSizer (measures and provides height/width)
-                      └─ List (uses the measured dimensions)
+            └─ Virtuoso container: flex-1 min-h-0
+                 └─ Virtuoso (fills container automatically)
 ```
 
 Key classes:
@@ -168,66 +175,9 @@ Without `min-h-0`, flex children have implicit `min-height: auto` which prevents
 
 ## Hacks and Fixes
 
-### 1. Row Flickering on Selection (Table View)
+### 1. Hidden Scrollbar
 
-**Problem**: When the Row callback depends on changing state (like `selectedTorrentIds`), it gets recreated on every state change. react-window sees a new function and re-renders ALL visible rows.
-
-**Solution**: Use the `itemData` prop to pass changing data. Keep the Row callback stable with empty dependencies.
-
-```typescript
-// Data passed via itemData - changes don't recreate Row function
-const itemData = useMemo(
-  () => ({
-    torrents: filteredTorrents,
-    selectedTorrentIds,
-    onRowClick: handleRowClick,
-    onCheckboxChange: toggleSelection,
-  }),
-  [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection]
-);
-
-// Row renderer - STABLE function, all data via itemData
-const Row = useCallback(
-  ({ index, style, data }: ListChildComponentProps<typeof itemData>) => {
-    const torrent = data.torrents![index];
-    return (
-      <TorrentTableRow
-        torrent={torrent}
-        isSelected={data.selectedTorrentIds.has(torrent.id)}
-        style={style}
-        onRowClick={data.onRowClick}
-        onCheckboxChange={data.onCheckboxChange}
-      />
-    );
-  },
-  [] // Empty deps! Data comes via itemData prop
-);
-
-// Pass itemData to List
-<List itemData={itemData}>{Row}</List>
-```
-
-### 2. Table Row Height Glitch
-
-**Problem**: Using `py-2` padding on table cells caused inconsistent row heights and visual gaps between rows.
-
-**Solution**: Use explicit row height + vertical alignment instead of padding.
-
-```typescript
-// Before - padding causes height inconsistency
-<tr><td className="py-2">...</td></tr>
-
-// After - explicit height + align-middle
-<tr className="h-[40px]">
-  <td className="align-middle">...</td>
-</tr>
-```
-
-The `ROW_HEIGHT` constant (41px) = 40px row + 1px border.
-
-### 3. Hidden Scrollbar
-
-**Problem**: react-window creates a scrollable container with visible scrollbar, which looked bad in card view.
+**Problem**: Virtuoso creates a scrollable container with visible scrollbar, which looked bad in card view.
 
 **Solution**: CSS to hide scrollbar while preserving scroll functionality.
 
@@ -242,54 +192,37 @@ The `ROW_HEIGHT` constant (41px) = 40px row + 1px border.
 }
 ```
 
-Apply to both the container and the List: `className="hide-scrollbar"`
+Apply to the Virtuoso: `className="hide-scrollbar"`
 
-### 4. Card Height Mismatch
+### 2. Table Row Height Consistency
 
-**Problem**: `CARD_HEIGHT` was set to 156px but actual cards were ~110px, causing huge gaps.
+**Problem**: Variable padding on table cells can cause inconsistent row heights.
 
-**Solution**: Measure actual card height and set `CARD_HEIGHT` to match (including gap).
+**Solution**: Use explicit row height + vertical alignment.
 
 ```typescript
-const CARD_HEIGHT = 120; // ~110px card + 8px pb-2 gap + buffer
+<tr className="h-[40px]">
+  <td className="align-middle">...</td>
+</tr>
 ```
-
-If cards have variable heights (e.g., error messages), you need to either:
-- Use the maximum possible height
-- Use `VariableSizeList` with a height estimator function
-- Accept that some content may be clipped
 
 ## Trade-offs and Downsides
 
-### 1. Fixed Height Items
-All items must be the same height. The list pre-calculates positions based on `itemSize`.
+### 1. Parent Height Required
+If any parent in the chain lacks explicit height, Virtuoso may not render correctly.
 
-**Workarounds:**
-- `VariableSizeList` - allows different heights but you must provide a function
-- Collapse expanded state when item scrolls out of view
+**Debugging:** Check if the container has height using browser dev tools.
 
-### 2. Parent Height Required
-If any parent in the chain lacks explicit height, AutoSizer reports 0 and nothing renders.
-
-**Debugging:**
-```javascript
-<AutoSizer>
-  {({ height, width }) => {
-    console.log('AutoSizer dimensions:', { height, width });
-    // If both are 0, check parent heights
-  }}
-</AutoSizer>
-```
-
-### 3. Array Filtering Required
-Unlike CSS `hidden` approach, you MUST filter the array before passing to the virtualized list.
+### 2. Array Filtering Required
+Unlike CSS `hidden` approach, you MUST filter the array before passing to Virtuoso.
 
 ```typescript
 // With virtualization - filter first
 const filtered = items.filter(item => matchesSearch(item));
-<List itemCount={filtered.length}>
-  {({ index }) => <Item data={filtered[index]} />}
-</List>
+<Virtuoso
+  totalCount={filtered.length}
+  itemContent={(index) => <Item data={filtered[index]} />}
+/>
 
 // Without virtualization - CSS hidden (doesn't work with virtualization!)
 items.map(item => (
@@ -297,25 +230,25 @@ items.map(item => (
 ))
 ```
 
-### 4. Component State Resets on Scroll
+### 3. Component State Resets on Scroll
 When an item scrolls out of view, its React component unmounts. Local state is lost.
 
 **Workarounds:**
 - Lift state up to parent or global store
 - Accept that expanded/selected state resets on scroll
 
-### 5. Keyboard Navigation
+### 4. Keyboard Navigation
 Focus management needs extra work since items mount/unmount. We track focused index via store state, not DOM focus.
 
 ## Files Modified
 
 - `src/components/CardLayout.tsx` - Card view virtualization
-- `src/components/compact/TorrentTable.tsx` - Table view virtualization with itemData pattern
-- `src/components/compact/TorrentTableRow.tsx` - Row with style prop, nested table structure
-- `src/rqbit-web.tsx` - Changed to `h-screen` for proper height chain
-- `src/components/RootContent.tsx` - Added height classes for card view
-- `src/globals.css` - Added `.hide-scrollbar` utility
-- `package.json` - Added react-window dependencies
+- `src/components/compact/TorrentTable.tsx` - Table view virtualization
+- `src/components/compact/TorrentTableRow.tsx` - Row component (no style prop needed)
+- `src/rqbit-web.tsx` - `h-screen` for proper height chain
+- `src/components/RootContent.tsx` - Height classes for card view
+- `src/globals.css` - `.hide-scrollbar` utility
+- `package.json` - react-virtuoso dependency
 
 ## Testing
 
