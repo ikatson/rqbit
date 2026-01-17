@@ -21,7 +21,7 @@ export const RootContent = (props: {}) => {
   const useCompactLayout = viewMode === "compact" && isLargeScreen;
 
   return (
-    <div className={useCompactLayout ? "" : "h-full flex flex-col"}>
+    <div className={useCompactLayout ? "h-full" : "h-full flex flex-col"}>
       <ErrorComponent
         error={closeableError}
         remove={() => setCloseableError(null)}
