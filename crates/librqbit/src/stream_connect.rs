@@ -212,11 +212,17 @@ impl StreamConnector {
         addr: SocketAddr,
     ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
         if addr.port() == 0 {
-            return Err(Error::Anyhow(anyhow::anyhow!("invalid peer address (port 0): {}", addr)));
+            return Err(Error::Anyhow(anyhow::anyhow!(
+                "invalid peer address (port 0): {}",
+                addr
+            )));
         }
 
         if self.ipv4_only && addr.is_ipv6() {
-            return Err(Error::Anyhow(anyhow::anyhow!("ipv6 disabled, skipping connection to {}", addr)));
+            return Err(Error::Anyhow(anyhow::anyhow!(
+                "ipv6 disabled, skipping connection to {}",
+                addr
+            )));
         }
 
         if let Some(proxy) = self.proxy_config.as_ref() {
