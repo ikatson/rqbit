@@ -1,7 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { FixedSizeList as List } from "react-window";
-import type { ListChildComponentProps } from "react-window";
-import AutoSizer from "react-virtualized-auto-sizer";
+import { Virtuoso } from "react-virtuoso";
 import { GoSearch, GoX } from "react-icons/go";
 import debounce from "lodash.debounce";
 import { TorrentListItem } from "../api-types";
@@ -20,7 +18,6 @@ import {
 } from "../helper/torrentFilters";
 
 const CARD_SORT_STORAGE_KEY = "rqbit-card-sort";
-const CARD_HEIGHT = 120; // Card height (~110px) + gap (8px) + buffer
 
 function getDefaultCardSort(): { column: TorrentSortColumn; direction: SortDirection } {
   try {
@@ -90,12 +87,12 @@ export const CardLayout = (props: {
       .sort((a, b) => compareTorrents(a, b, sortColumn, sortDirection));
   }, [props.torrents, normalizedQuery, statusFilter, sortColumn, sortDirection]);
 
-  // Row renderer for react-window
-  const Row = useCallback(
-    ({ index, style }: ListChildComponentProps) => {
+  // Item renderer for react-virtuoso
+  const itemContent = useCallback(
+    (index: number) => {
       const torrent = filteredTorrents![index];
       return (
-        <div style={style} className="pb-2">
+        <div className="pb-2">
           <TorrentCard key={torrent.id} torrent={torrent} />
         </div>
       );
@@ -166,19 +163,11 @@ export const CardLayout = (props: {
         <p className="text-center">No existing torrents found.</p>
       ) : (
         <div className="flex-1 min-h-0 hide-scrollbar">
-          <AutoSizer>
-            {({ height, width }: { height: number; width: number }) => (
-              <List
-                height={height}
-                width={width}
-                itemCount={filteredTorrents.length}
-                itemSize={CARD_HEIGHT}
-                className="hide-scrollbar"
-              >
-                {Row}
-              </List>
-            )}
-          </AutoSizer>
+          <Virtuoso
+            totalCount={filteredTorrents.length}
+            itemContent={itemContent}
+            className="hide-scrollbar"
+          />
         </div>
       )}
       {detailsModalTorrentId !== null && (

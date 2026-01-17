@@ -15,8 +15,7 @@
     "react": "^19",
     "react-dom": "^19",
     "react-icons": "^5.3.0",
-    "react-virtualized-auto-sizer": "^1.0.24",
-    "react-window": "^1.8.10",
+    "react-virtuoso": "^4.18.1",
     "zustand": "^5"
   },
   "devDependencies": {
@@ -25,8 +24,6 @@
     "@types/lodash.sortby": "^4.7.9",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/react-virtualized-auto-sizer": "^1.0.4",
-    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^5",
     "autoprefixer": "^10.4.16",
     "prettier": "^3.7",

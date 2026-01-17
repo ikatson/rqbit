@@ -1,7 +1,5 @@
 import { useMemo, useCallback, useEffect, useState, useRef } from "react";
-import { FixedSizeList as List } from "react-window";
-import type { ListChildComponentProps } from "react-window";
-import AutoSizer from "react-virtualized-auto-sizer";
+import { Virtuoso } from "react-virtuoso";
 import { TorrentListItem } from "../../api-types";
 import { TorrentTableRow } from "./TorrentTableRow";
 import { useUIStore } from "../../stores/uiStore";
@@ -26,7 +24,6 @@ export type TableSortColumn =
   | "peers";
 
 const SORT_STORAGE_KEY = "rqbit-table-sort";
-const ROW_HEIGHT = 41; // pixels - height of each table row
 
 function getDefaultSort(): { column: TableSortColumn; direction: SortDirection } {
   try {
@@ -211,33 +208,21 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     [selectRange, selectTorrent],
   );
 
-  // Data passed to each row via itemData - avoids recreating Row on selection change
-  const itemData = useMemo(
-    () => ({
-      torrents: filteredTorrents,
-      selectedTorrentIds,
-      onRowClick: handleRowClick,
-      onCheckboxChange: toggleSelection,
-    }),
-    [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection]
-  );
-
-  // Row renderer for react-window - stable function, data comes via itemData
-  const Row = useCallback(
-    ({ index, style, data }: ListChildComponentProps<typeof itemData>) => {
-      const torrent = data.torrents![index];
+  // Item renderer for react-virtuoso
+  const itemContent = useCallback(
+    (index: number) => {
+      const torrent = filteredTorrents![index];
       return (
         <TorrentTableRow
           key={torrent.id}
           torrent={torrent}
-          isSelected={data.selectedTorrentIds.has(torrent.id)}
-          style={style}
-          onRowClick={data.onRowClick}
-          onCheckboxChange={data.onCheckboxChange}
+          isSelected={selectedTorrentIds.has(torrent.id)}
+          onRowClick={handleRowClick}
+          onCheckboxChange={toggleSelection}
         />
       );
     },
-    [] // No dependencies - all data comes via itemData prop
+    [filteredTorrents, selectedTorrentIds, handleRowClick, toggleSelection]
   );
 
   if (loading) {
@@ -369,19 +354,10 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
       </table>
       {/* Virtualized body */}
       <div className="flex-1 min-h-0">
-        <AutoSizer>
-          {({ height, width }: { height: number; width: number }) => (
-            <List
-              height={height}
-              width={width}
-              itemCount={filteredTorrents?.length ?? 0}
-              itemSize={ROW_HEIGHT}
-              itemData={itemData}
-            >
-              {Row}
-            </List>
-          )}
-        </AutoSizer>
+        <Virtuoso
+          totalCount={filteredTorrents?.length ?? 0}
+          itemContent={itemContent}
+        />
       </div>
     </div>
   );
