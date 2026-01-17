@@ -63,7 +63,7 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
       <tbody>
         <tr
           onMouseDown={handleRowClick}
-          className={`cursor-pointer border-b border-divider text-sm h-[40px] ${
+          className={`cursor-pointer border-b border-divider text-sm h-8 ${
             isSelected ? "bg-primary/10" : "hover:bg-surface-raised"
           }`}
         >
