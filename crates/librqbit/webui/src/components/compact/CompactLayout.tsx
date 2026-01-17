@@ -59,7 +59,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
   const hasTorrents = (torrents?.length ?? 0) > 0;
 
   return (
-    <div ref={containerRef} className="flex flex-col h-[calc(100vh-95px)]">
+    <div ref={containerRef} className="flex flex-col h-[calc(100dvh-95px)]">
       {hasTorrents && <ActionBar />}
       <div className="flex-1 overflow-auto min-h-0">
         <TorrentTable torrents={torrents} loading={loading} />
