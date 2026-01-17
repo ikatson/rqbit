@@ -118,6 +118,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub disk_write_queue: Option<DiskWorkQueueSender>,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
+    pub peer_limit: Option<usize>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

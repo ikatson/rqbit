@@ -276,7 +276,9 @@ impl TorrentStateLive {
                 ..Default::default()
             },
             lengths,
-            peer_semaphore: Arc::new(Semaphore::new(128)),
+            peer_semaphore: Arc::new(Semaphore::new(
+                paused.shared.options.peer_limit.unwrap_or(128),
+            )),
             new_pieces_notify: Notify::new(),
             peer_queue_tx,
             finished_notify: Notify::new(),
@@ -598,6 +600,16 @@ impl TorrentStateLive {
                 .session
                 .upgrade()
                 .ok_or(Error::SessionDestroyed)?;
+
+            if session.ipv4_only && addr.is_ipv6() {
+                debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
+                continue;
+            }
+
+            if addr.port() == 0 {
+                debug!(?addr, "skipping peer with port 0");
+                continue;
+            }
 
             if session.blocklist.has(addr.ip()) {
                 session

@@ -151,6 +151,8 @@ impl TestHarness {
                     listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
+                    announce_port: None,
+                    ipv4_only: false,
                 }),
                 ratelimits: LimitsConfig {
                     upload_bps: NonZero::new(64 * 1024),
@@ -235,6 +237,8 @@ impl TestHarness {
                     listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
+                    announce_port: None,
+                    ipv4_only: false,
                 }),
                 disable_local_service_discovery: false,
                 connect: Some(ConnectionOptions {

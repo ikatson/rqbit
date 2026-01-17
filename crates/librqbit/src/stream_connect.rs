@@ -64,6 +64,7 @@ pub(crate) struct StreamConnectorArgs {
     pub socks_proxy_config: Option<SocksProxyConfig>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub bind_device: Option<BindDevice>,
+    pub ipv4_only: bool,
 }
 
 impl SocksProxyConfig {
@@ -131,6 +132,7 @@ pub(crate) struct StreamConnector {
     bind_device: Option<BindDevice>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
     stats: ConnectStatsAtomic,
+    ipv4_only: bool,
 }
 
 impl StreamConnector {
@@ -155,6 +157,7 @@ impl StreamConnector {
             utp_socket: config.utp_socket,
             bind_device: config.bind_device,
             stats: Default::default(),
+            ipv4_only: config.ipv4_only,
         })
     }
 
@@ -208,6 +211,20 @@ impl StreamConnector {
         &self,
         addr: SocketAddr,
     ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
+        if addr.port() == 0 {
+            return Err(Error::Anyhow(anyhow::anyhow!(
+                "invalid peer address (port 0): {}",
+                addr
+            )));
+        }
+
+        if self.ipv4_only && addr.is_ipv6() {
+            return Err(Error::Anyhow(anyhow::anyhow!(
+                "ipv6 disabled, skipping connection to {}",
+                addr
+            )));
+        }
+
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = self
                 .with_stat(ConnectionKind::Socks, addr.is_ipv6(), proxy.connect(addr))
