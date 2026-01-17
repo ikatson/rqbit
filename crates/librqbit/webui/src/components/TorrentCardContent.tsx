@@ -48,15 +48,17 @@ export const TorrentCardContent: React.FC<{
   };
 
   return (
-    <div className="flex flex-col border p-2 border-divider rounded-xl shadow-xs hover:drop-shadow-sm bg-surface-raised">
-      <section className="flex flex-col lg:flex-row items-center gap-2">
+    <div className="flex flex-col border p-1.5 sm:p-2 border-divider rounded-xl shadow-xs hover:drop-shadow-sm bg-surface-raised">
+      <section className="flex flex-col lg:flex-row items-center gap-1.5 sm:gap-2">
         {/* Icon */}
         <div className="hidden md:block">{statusIcon("w-10 h-10")}</div>
         {/* Name, progress, stats */}
-        <div className="w-full flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <div className="md:hidden">{statusIcon("w-5 h-5")}</div>
-            <div className="text-left lg:text-lg text-ellipsis break-all">
+        <div className="w-full flex flex-col gap-1 sm:gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="md:hidden">
+              {statusIcon("w-4 h-4 sm:w-5 sm:h-5")}
+            </div>
+            <div className="text-left text-sm sm:text-base lg:text-lg text-ellipsis break-all line-clamp-2 sm:line-clamp-none">
               {torrent.name}
             </div>
           </div>
@@ -79,23 +81,24 @@ export const TorrentCardContent: React.FC<{
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:flex-wrap items-center text-nowrap font-medium text-secondary">
-                <div className="flex gap-2 items-center">
-                  <GoPeople /> {formatPeersString().toString()}
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 sm:gap-x-4 sm:gap-y-1 items-center text-nowrap text-xs sm:text-sm font-medium text-secondary">
+                <div className="flex gap-1 sm:gap-2 items-center">
+                  <GoPeople className="w-3 h-3 sm:w-4 sm:h-4" />{" "}
+                  {formatPeersString().toString()}
                 </div>
-                <div className="flex gap-2 items-center">
-                  <GoFile />
+                <div className="flex gap-1 sm:gap-2 items-center">
+                  <GoFile className="w-3 h-3 sm:w-4 sm:h-4" />
                   <div>
                     {formatBytes(progressBytes)}/{formatBytes(totalBytes)}
                   </div>
                 </div>
                 {statsResponse && (
                   <>
-                    <div className="flex gap-2 items-center">
-                      <GoClock />
+                    <div className="flex gap-1 sm:gap-2 items-center">
+                      <GoClock className="w-3 h-3 sm:w-4 sm:h-4" />
                       {getCompletionETA(statsResponse)}
                     </div>
-                    <div className="flex gap-2 items-center">
+                    <div className="flex gap-1 sm:gap-2 items-center">
                       <Speed statsResponse={statsResponse} />
                     </div>
                   </>

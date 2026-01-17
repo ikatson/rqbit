@@ -87,7 +87,7 @@ export const CardLayout = (props: {
     (index: number) => {
       const torrent = filteredTorrents![index];
       return (
-        <div className="pb-2 px-2 sm:px-7 max-w-4xl mx-auto w-full">
+        <div className="pb-1.5 sm:pb-2 px-2 sm:px-7 max-w-4xl mx-auto w-full">
           <TorrentCard key={torrent.id} torrent={torrent} />
         </div>
       );

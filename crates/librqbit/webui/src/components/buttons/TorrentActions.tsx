@@ -74,7 +74,7 @@ export const TorrentActions: React.FC<{
   };
 
   return (
-    <div className="flex w-full justify-center gap-2 dark:text-slate-300">
+    <div className="flex w-full justify-center gap-1 sm:gap-2 dark:text-slate-300">
       {canUnpause && (
         <IconButton onClick={unpause} disabled={disabled}>
           <FaPlay className="hover:text-green-600" />
