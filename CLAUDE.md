@@ -78,5 +78,4 @@ Tauri wrapper around the web UI.
 ## Other directives
 - If you need to resort to running shell commands, always use "rg" instead of "grep".
 - Prefer using Serena MCP instead of searching / reading / writing raw files when makes sense.
-- `sed` on this machine is GNU sed (not BSD sed). Use `sed -i 's/foo/bar/g'` NOT `sed -i '' 's/foo/bar/g'`.
 - **Always run `npm run format` after modifying webui or desktop TypeScript/TSX files.**
