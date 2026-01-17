@@ -124,7 +124,8 @@ html {
   font-size: 14px;
 }
 
-/* Default text color - needs to be on body since .dark class is on html */
+/* Default text color and background - needs to be on body since .dark class is on body */
 body {
   color: var(--color-text);
+  background-color: var(--color-surface);
 }
