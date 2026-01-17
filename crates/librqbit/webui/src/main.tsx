@@ -12,10 +12,15 @@ const RootWithVersion = () => {
     const refreshVersion = () =>
       API.getVersion().then(
         (version) => {
-          setVersion(version);
-          const title = `rqbit web - v${version}`;
-          document.title = title;
-          return 10000;
+          setVersion((prev) => {
+            if (prev == version) {
+              return prev;
+            }
+            const title = `rqbit web - v${version}`;
+            document.title = title;
+            return version;
+          });
+          return 60000;
         },
         (e) => {
           return 1000;

@@ -3,21 +3,28 @@ import { ReactNode } from "react";
 export const Button: React.FC<{
   onClick: () => void;
   variant?: "cancel" | "primary" | "secondary" | "danger" | "none";
+  size?: "sm" | "default";
   className?: string;
   disabled?: boolean;
   children: ReactNode;
-}> = ({ onClick, children, className, disabled, variant }) => {
-  let variantClassNames = {
+}> = ({ onClick, children, className, disabled, variant, size }) => {
+  const sizeClassNames = {
+    sm: "text-sm px-2 py-1",
+    default: "px-3 py-1.5",
+  }[size ?? "default"];
+
+  const variantClassNames = {
     secondary:
-      "hover:bg-blue-500 transition-colors hover:text-white dark:hover:bg-blue-900/50",
+      "bg-surface-raised border-divider hover:bg-primary hover:text-white transition-colors",
     danger:
-      "bg-red-400 text-white border-green-50 hover:border-red-700 hover:bg-red-600 dark:bg-red-800 dark:border-none dark:hover:bg-red-900",
+      "bg-error-bg text-white border-transparent hover:bg-red-600 transition-colors",
     primary:
-      "bg-blue-600 text-white hover:bg-blue-800 disabled:bg-blue-200 dark:disabled:bg-slate-600 dark:disabled:text-slate-300 dark:border-none",
+      "bg-primary-bg text-white border-transparent hover:bg-primary-bg-hover disabled:opacity-50 transition-colors",
     cancel:
-      "hover:bg-slate-200 dark:bg-slate-600 dark:hover:bg-slate-700 dark:border-none",
+      "bg-surface-raised text-secondary border-divider hover:bg-surface-sunken transition-colors",
     none: "",
   }[variant ?? "secondary"];
+
   return (
     <button
       disabled={disabled}
@@ -25,7 +32,7 @@ export const Button: React.FC<{
         e.preventDefault();
         onClick();
       }}
-      className={`inline-flex items-center gap-1 border rounded-lg  disabled:cursor-not-allowed px-2 py-1 dark:border-slate-700 ${variantClassNames} ${className}`}
+      className={`inline-flex items-center gap-1 border rounded font-medium cursor-pointer disabled:cursor-not-allowed ${sizeClassNames} ${variantClassNames} ${className ?? ""}`}
     >
       {children}
     </button>

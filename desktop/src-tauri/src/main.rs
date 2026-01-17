@@ -17,10 +17,11 @@ use librqbit::{
     AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
     SessionPersistenceConfig, WithStatusError,
     api::{
-        ApiAddTorrentResponse, EmptyJsonResponse, TorrentDetailsResponse, TorrentIdOrHash,
-        TorrentListResponse, TorrentStats,
+        ApiAddTorrentResponse, ApiTorrentListOpts, EmptyJsonResponse, TorrentDetailsResponse,
+        TorrentIdOrHash, TorrentListResponse, TorrentStats,
     },
     dht::PersistentDhtConfig,
+    http_api_types::{PeerStatsFilter, PeerStatsSnapshot},
     session_stats::snapshot::SessionStatsSnapshot,
     tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
 };
@@ -279,7 +280,29 @@ async fn config_change(
 
 #[tauri::command]
 fn torrents_list(state: tauri::State<State>) -> Result<TorrentListResponse, ApiError> {
-    Ok(state.api()?.api_torrent_list())
+    Ok(state
+        .api()?
+        .api_torrent_list_ext(ApiTorrentListOpts { with_stats: true }))
+}
+
+#[tauri::command]
+fn torrent_haves(
+    state: tauri::State<State>,
+    id: TorrentIdOrHash,
+) -> Result<tauri::ipc::InvokeResponseBody, ApiError> {
+    let (haves, _len) = state.api()?.api_dump_haves(id)?;
+    Ok(tauri::ipc::InvokeResponseBody::Raw(
+        haves.into_boxed_slice().into(),
+    ))
+}
+
+#[tauri::command]
+fn torrent_peer_stats(
+    state: tauri::State<State>,
+    id: TorrentIdOrHash,
+    filter: PeerStatsFilter,
+) -> Result<PeerStatsSnapshot, ApiError> {
+    state.api()?.api_peer_stats(id, filter)
 }
 
 #[tauri::command]
@@ -400,21 +423,23 @@ async fn start() {
         .plugin(tauri_plugin_shell::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
-            torrents_list,
-            torrent_details,
-            torrent_stats,
-            torrent_create_from_url,
-            torrent_action_delete,
-            torrent_action_pause,
-            torrent_action_forget,
-            torrent_action_start,
-            torrent_action_configure,
-            torrent_create_from_base64_file,
-            stats,
-            get_version,
-            config_default,
-            config_current,
             config_change,
+            config_current,
+            config_default,
+            get_version,
+            stats,
+            torrent_action_configure,
+            torrent_action_delete,
+            torrent_action_forget,
+            torrent_action_pause,
+            torrent_action_start,
+            torrent_create_from_base64_file,
+            torrent_create_from_url,
+            torrent_details,
+            torrent_haves,
+            torrent_peer_stats,
+            torrent_stats,
+            torrents_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

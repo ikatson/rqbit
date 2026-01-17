@@ -9,7 +9,7 @@ export const Spinner = ({
     <div className={`flex gap-2 items-center ${className}`}>
       <svg
         aria-hidden="true"
-        className="w-8 h-8 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600"
+        className="w-8 h-8 text-border animate-spin fill-primary"
         viewBox="0 0 100 101"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
@@ -24,7 +24,7 @@ export const Spinner = ({
         />
       </svg>
       {label ? (
-        <span className="text-sm">{label} ...</span>
+        <span>{label} ...</span>
       ) : (
         <span className="sr-only">Loading...</span>
       )}

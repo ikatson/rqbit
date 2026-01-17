@@ -19,6 +19,7 @@ use crate::{
         FileStream, ManagedTorrentHandle,
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
     },
+    type_aliases::BF,
 };
 
 #[cfg(feature = "tracing-subscriber-utils")]
@@ -206,6 +207,12 @@ impl Api {
         let items = self.session.with_torrents(|torrents| {
             torrents
                 .map(|(id, mgr)| {
+                    let total_pieces = mgr
+                        .metadata
+                        .load()
+                        .as_ref()
+                        .map(|m| m.info.lengths().total_pieces())
+                        .unwrap_or(0);
                     let mut r = TorrentDetailsResponse {
                         id: Some(id),
                         info_hash: mgr.shared().info_hash.as_string(),
@@ -216,6 +223,7 @@ impl Api {
                             .output_folder
                             .to_string_lossy()
                             .into_owned(),
+                        total_pieces,
 
                         // These will be filled in /details and /stats endpoints
                         files: None,
@@ -490,9 +498,13 @@ impl Api {
         Ok(mgr.stats())
     }
 
-    pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<String> {
+    pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<(BF, u32)> {
         let mgr = self.mgr_handle(idx)?;
-        Ok(mgr.with_chunk_tracker(|chunks| format!("{:?}", chunks.get_have_pieces().as_slice()))?)
+        Ok(mgr.with_chunk_tracker(|chunks| {
+            let bf = BF::from_bitslice(chunks.get_have_pieces().as_slice());
+            let len = chunks.get_lengths().total_pieces();
+            (bf, len)
+        })?)
     }
 
     pub async fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {
@@ -525,6 +537,9 @@ pub struct TorrentDetailsResponse {
     pub info_hash: String,
     pub name: Option<String>,
     pub output_folder: String,
+
+    #[serde(default)]
+    pub total_pieces: u32,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<TorrentDetailsResponseFile>>,
@@ -567,6 +582,7 @@ fn make_torrent_details(
             .collect(),
         None => Default::default(),
     };
+    let total_pieces = info.map(|i| i.lengths().total_pieces()).unwrap_or(0);
     Ok(TorrentDetailsResponse {
         id,
         info_hash: info_hash.as_string(),
@@ -575,6 +591,7 @@ fn make_torrent_details(
             .or_else(|| info.and_then(|i| i.name().map(|n| n.into_owned()))),
         files: Some(files),
         output_folder,
+        total_pieces,
         stats: None,
     })
 }

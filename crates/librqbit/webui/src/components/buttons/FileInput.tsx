@@ -5,7 +5,9 @@ import { APIContext } from "../../context";
 import { useTorrentStore } from "../../stores/torrentStore";
 
 export const FileInput = ({ className }: { className?: string }) => {
-  const inputRef = useRef<HTMLInputElement>() as RefObject<HTMLInputElement>;
+  const inputRef = useRef<HTMLInputElement>(
+    null,
+  ) as RefObject<HTMLInputElement>;
   const [file, setFile] = useState<File | null>(null);
 
   const API = useContext(APIContext);
@@ -30,7 +32,7 @@ export const FileInput = ({ className }: { className?: string }) => {
           },
           (err) => {
             console.error("error uploading file", err);
-          }
+          },
         );
       }
       reset();

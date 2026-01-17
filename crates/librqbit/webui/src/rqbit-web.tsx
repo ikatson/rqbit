@@ -1,18 +1,16 @@
-import { useContext, useEffect, useState } from "react";
+import { JSX, useContext, useEffect, useState } from "react";
 import { ErrorDetails as ApiErrorDetails } from "./api-types";
 import { APIContext } from "./context";
 import { RootContent } from "./components/RootContent";
 import { customSetInterval } from "./helper/customSetInterval";
-import { IconButton } from "./components/buttons/IconButton";
-import { BsBodyText, BsMoon } from "react-icons/bs";
 import { LogStreamModal } from "./components/modal/LogStreamModal";
 import { Header } from "./components/Header";
-import { DarkMode } from "./helper/darkMode";
 import { useTorrentStore } from "./stores/torrentStore";
 import { useErrorStore } from "./stores/errorStore";
 import { AlertModal } from "./components/modal/AlertModal";
 import { useStatsStore } from "./stores/statsStore";
 import { Footer } from "./components/Footer";
+import { SettingsButtons } from "./components/SettingsButtons";
 
 export interface ErrorWithLabel {
   text: string;
@@ -36,39 +34,43 @@ export const RqbitWebUI = (props: {
 
   const setTorrents = useTorrentStore((state) => state.setTorrents);
   const setTorrentsLoading = useTorrentStore(
-    (state) => state.setTorrentsLoading
+    (state) => state.setTorrentsLoading,
   );
   const setRefreshTorrents = useTorrentStore(
-    (state) => state.setRefreshTorrents
+    (state) => state.setRefreshTorrents,
   );
 
-  const refreshTorrents = async () => {
+  const refreshTorrents = async (): Promise<number> => {
     setTorrentsLoading(true);
-    let torrents = await API.listTorrents().finally(() =>
-      setTorrentsLoading(false)
-    );
-    setTorrents(torrents.torrents);
+    try {
+      const response = await API.listTorrents({ withStats: true });
+      setTorrents(response.torrents);
+      setOtherError(null);
+
+      // Determine polling interval based on torrent states
+      // Fast poll (1s) if any torrent is live/initializing, slow poll (5s) otherwise
+      const hasActiveTorrents = response.torrents.some(
+        (t) => t.stats?.state === "live" || t.stats?.state === "initializing",
+      );
+      return hasActiveTorrents ? 1000 : 5000;
+    } catch (e) {
+      setOtherError({ text: "Error refreshing torrents", details: e as any });
+      console.error(e);
+      return 5000;
+    } finally {
+      setTorrentsLoading(false);
+    }
   };
-  setRefreshTorrents(refreshTorrents);
 
   const setStats = useStatsStore((state) => state.setStats);
 
+  // Register the refresh callback
   useEffect(() => {
-    return customSetInterval(
-      async () =>
-        refreshTorrents().then(
-          () => {
-            setOtherError(null);
-            return 5000;
-          },
-          (e) => {
-            setOtherError({ text: "Error refreshing torrents", details: e });
-            console.error(e);
-            return 5000;
-          }
-        ),
-      0
-    );
+    setRefreshTorrents(refreshTorrents as unknown as () => void);
+  }, []);
+
+  useEffect(() => {
+    return customSetInterval(async () => refreshTorrents(), 0);
   }, []);
 
   useEffect(() => {
@@ -82,30 +84,26 @@ export const RqbitWebUI = (props: {
           (e) => {
             console.error(e);
             return 5000;
-          }
+          },
         ),
-      0
+      0,
     );
   }, []);
 
   return (
-    <div className="dark:bg-gray-900 dark:text-gray-200 min-h-screen flex flex-col">
-      <Header title={props.title} version={props.version} />
-      <div className="relative">
-        {/* Menu buttons */}
-        <div className="absolute top-0 start-0 pl-2 z-10">
-          {props.menuButtons &&
-            props.menuButtons.map((b, i) => <span key={i}>{b}</span>)}
-          <IconButton onClick={() => setLogsOpened(true)}>
-            <BsBodyText />
-          </IconButton>
-          <IconButton onClick={DarkMode.toggle}>
-            <BsMoon />
-          </IconButton>
-        </div>
-      </div>
+    <div className="bg-surface h-dvh flex flex-col overflow-hidden">
+      <Header
+        title={props.title}
+        version={props.version}
+        settingsSlot={
+          <SettingsButtons
+            onLogsClick={() => setLogsOpened(true)}
+            menuButtons={props.menuButtons}
+          />
+        }
+      />
 
-      <div className="grow">
+      <div className="grow min-h-0">
         <RootContent />
       </div>
 

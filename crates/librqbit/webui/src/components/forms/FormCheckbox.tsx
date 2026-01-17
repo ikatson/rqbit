@@ -35,7 +35,7 @@ export const FormCheckbox: React.FC<{
           onChange={onChange}
         />
       </div>
-      <div className="text-sm flex flex-col gap-1">
+      <div className="flex flex-col gap-1">
         {labelLink ? (
           <a
             href={labelLink}
@@ -49,7 +49,7 @@ export const FormCheckbox: React.FC<{
         )}
 
         {help && (
-          <div className="text-xs text-slate-500 dark:text-slate-300 mb-3">
+          <div className="text-sm text-slate-500 dark:text-slate-300 mb-3">
             {help}
           </div>
         )}

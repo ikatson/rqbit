@@ -15,19 +15,20 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-icons": "^5.5.0",
-    "rqbit-webui": "file:../crates/librqbit/webui"
+    "rqbit-webui": "*"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
     "@tauri-apps/cli": "2.8.4",
     "@types/lodash.debounce": "^4.0.9",
-    "@types/react": "^19.1.14",
+    "@types/react": "^19.2.8",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
     "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.13",
+    "prettier": "^3.7",
+    "tailwindcss": "^4.1.18",
     "typescript": "^5.9.2",
-    "vite": "^7.1.7",
+    "vite": "^7.3.1",
     "vite-plugin-svgr": "^4.5.0"
   }
 }
