@@ -23,22 +23,8 @@ export type TableSortColumn =
   | "eta"
   | "peers";
 
-const SORT_STORAGE_KEY = "rqbit-table-sort";
-
-function getDefaultSort(): { column: TableSortColumn; direction: SortDirection } {
-  try {
-    const stored = localStorage.getItem(SORT_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed.column && parsed.direction) {
-        return parsed;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return { column: "id", direction: "desc" };
-}
+const DEFAULT_SORT_COLUMN: TableSortColumn = "id";
+const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
 
 function getTableSortValue(
   t: TorrentListItem,
@@ -98,22 +84,14 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const normalizedQuery = searchQuery.toLowerCase().trim();
 
   // Local sorting state
-  const [sortColumn, setSortColumnState] = useState<TableSortColumn>(
-    () => getDefaultSort().column,
-  );
-  const [sortDirection, setSortDirectionState] = useState<SortDirection>(
-    () => getDefaultSort().direction,
-  );
+  const [sortColumn, setSortColumnState] = useState<TableSortColumn>(DEFAULT_SORT_COLUMN);
+  const [sortDirection, setSortDirectionState] = useState<SortDirection>(DEFAULT_SORT_DIRECTION);
 
   const setSortColumn = useCallback((column: TableSortColumn) => {
     setSortColumnState((prevColumn) => {
       setSortDirectionState((prevDir) => {
         const newDir: SortDirection =
           prevColumn === column ? (prevDir === "asc" ? "desc" : "asc") : "desc";
-        localStorage.setItem(
-          SORT_STORAGE_KEY,
-          JSON.stringify({ column, direction: newDir }),
-        );
         return newDir;
       });
       return column;

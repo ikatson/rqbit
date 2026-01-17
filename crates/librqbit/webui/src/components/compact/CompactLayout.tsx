@@ -7,26 +7,6 @@ import { DetailPane } from "./DetailPane";
 const DETAIL_PANE_MIN_HEIGHT = 100;
 const DETAIL_PANE_MAX_HEIGHT = 600;
 const DETAIL_PANE_DEFAULT_HEIGHT = 256;
-const DETAIL_PANE_STORAGE_KEY = "rqbit-detail-pane-height";
-
-function getStoredDetailPaneHeight(): number {
-  try {
-    const stored = localStorage.getItem(DETAIL_PANE_STORAGE_KEY);
-    if (stored) {
-      const height = parseInt(stored, 10);
-      if (
-        !isNaN(height) &&
-        height >= DETAIL_PANE_MIN_HEIGHT &&
-        height <= DETAIL_PANE_MAX_HEIGHT
-      ) {
-        return height;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return DETAIL_PANE_DEFAULT_HEIGHT;
-}
 
 interface CompactLayoutProps {
   torrents: TorrentListItem[] | null;
@@ -37,9 +17,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
   torrents,
   loading,
 }) => {
-  const [detailPaneHeight, setDetailPaneHeight] = useState(
-    getStoredDetailPaneHeight,
-  );
+  const [detailPaneHeight, setDetailPaneHeight] = useState(DETAIL_PANE_DEFAULT_HEIGHT);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -65,8 +43,6 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
 
     const handleMouseUp = () => {
       setIsDragging(false);
-      // Save to localStorage
-      localStorage.setItem(DETAIL_PANE_STORAGE_KEY, String(detailPaneHeight));
     };
 
     document.addEventListener("mousemove", handleMouseMove);
@@ -76,7 +52,7 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDragging, detailPaneHeight]);
+  }, [isDragging]);
 
   const hasTorrents = (torrents?.length ?? 0) > 0;
 

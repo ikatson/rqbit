@@ -116,7 +116,6 @@ API.updateOnlyFiles(id, fileIds[])  // POST /torrents/{id}/update_only_files
 ### New Store State
 1. Add to existing store or create new in `stores/`
 2. Follow Zustand pattern: `create<StoreType>((set, get) => ({...}))`
-3. For persistence, use `localStorage` in actions
 
 ### New API Call
 1. Add type to `api-types.ts`

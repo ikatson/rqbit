@@ -5,30 +5,10 @@ import {
   StatusFilter,
 } from "../helper/torrentFilters";
 
-const STORAGE_KEY = "rqbit-view-mode";
-const STATUS_FILTER_KEY = "rqbit-status-filter";
 const LARGE_SCREEN_BREAKPOINT = 1024;
 
 function getDefaultViewMode(): "full" | "compact" {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === "full" || stored === "compact") {
-    return stored;
-  }
   return window.innerWidth >= LARGE_SCREEN_BREAKPOINT ? "compact" : "full";
-}
-
-function getDefaultStatusFilter(): StatusFilter {
-  const stored = localStorage.getItem(STATUS_FILTER_KEY);
-  if (
-    stored === "all" ||
-    stored === "downloading" ||
-    stored === "seeding" ||
-    stored === "paused" ||
-    stored === "error"
-  ) {
-    return stored;
-  }
-  return "all";
 }
 
 export interface UIStore {
@@ -61,22 +41,19 @@ export const useUIStore = create<UIStore>((set, get) => ({
   viewMode: getDefaultViewMode(),
 
   setViewMode: (mode) => {
-    localStorage.setItem(STORAGE_KEY, mode);
     set({ viewMode: mode });
   },
 
   toggleViewMode: () => {
     const newMode = get().viewMode === "compact" ? "full" : "compact";
-    localStorage.setItem(STORAGE_KEY, newMode);
     set({ viewMode: newMode });
   },
 
   searchQuery: "",
   setSearchQuery: (query) => set({ searchQuery: query }),
 
-  statusFilter: getDefaultStatusFilter(),
+  statusFilter: "all",
   setStatusFilter: (filter) => {
-    localStorage.setItem(STATUS_FILTER_KEY, filter);
     set({ statusFilter: filter });
   },
 

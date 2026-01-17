@@ -17,25 +17,8 @@ import {
   isTorrentVisible,
 } from "../helper/torrentFilters";
 
-const CARD_SORT_STORAGE_KEY = "rqbit-card-sort";
-
-function getDefaultCardSort(): {
-  column: TorrentSortColumn;
-  direction: SortDirection;
-} {
-  try {
-    const stored = localStorage.getItem(CARD_SORT_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed.column && parsed.direction) {
-        return parsed;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return { column: "id", direction: "desc" };
-}
+const DEFAULT_SORT_COLUMN: TorrentSortColumn = "id";
+const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
 
 export const CardLayout = (props: {
   torrents: Array<TorrentListItem> | null;
@@ -51,12 +34,8 @@ export const CardLayout = (props: {
   const closeDetailsModal = useUIStore((state) => state.closeDetailsModal);
 
   const [localSearch, setLocalSearch] = useState(searchQuery);
-  const [sortColumn, setSortColumn] = useState<TorrentSortColumn>(
-    () => getDefaultCardSort().column,
-  );
-  const [sortDirection, setSortDirection] = useState<SortDirection>(
-    () => getDefaultCardSort().direction,
-  );
+  const [sortColumn, setSortColumn] = useState<TorrentSortColumn>(DEFAULT_SORT_COLUMN);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(DEFAULT_SORT_DIRECTION);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const debouncedSetSearch = useCallback(
@@ -82,10 +61,6 @@ export const CardLayout = (props: {
     ];
     setSortColumn(col);
     setSortDirection(dir);
-    localStorage.setItem(
-      CARD_SORT_STORAGE_KEY,
-      JSON.stringify({ column: col, direction: dir }),
-    );
   };
 
   const normalizedQuery = searchQuery.toLowerCase().trim();
