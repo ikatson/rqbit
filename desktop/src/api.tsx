@@ -1,12 +1,14 @@
 import { RqbitDesktopConfig } from "./configuration";
 import {
   AddTorrentResponse,
+  LimitsConfig,
   ListTorrentsResponse,
   RqbitAPI,
   TorrentDetails,
   TorrentStats,
   ErrorDetails,
   SessionStats,
+  PeerStatsSnapshot,
 } from "rqbit-webui/src/api-types";
 
 import { InvokeArgs, invoke } from "@tauri-apps/api/core";
@@ -19,7 +21,7 @@ interface InvokeErrorResponse {
 }
 
 function errorToUIError(
-  path: string
+  path: string,
 ): (e: InvokeErrorResponse) => Promise<never> {
   return (e: InvokeErrorResponse) => {
     console.log(e);
@@ -36,11 +38,11 @@ function errorToUIError(
 
 export async function invokeAPI<Response>(
   name: string,
-  params?: InvokeArgs
+  params?: InvokeArgs,
 ): Promise<Response> {
   console.log("invoking", name, params);
   const result = await invoke<Response>(name, params).catch(
-    errorToUIError(name)
+    errorToUIError(name),
   );
   console.log(result);
   return result;
@@ -99,6 +101,17 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     getTorrentStats: async function (id: number): Promise<TorrentStats> {
       return await invokeAPI<TorrentStats>("torrent_stats", { id });
     },
+    getTorrentHaves: async function (id: number): Promise<Uint8Array> {
+      return new Uint8Array(
+        await invokeAPI<ArrayBuffer>("torrent_haves", { id }),
+      );
+    },
+    getPeerStats: async function (id: number): Promise<PeerStatsSnapshot> {
+      return await invokeAPI<PeerStatsSnapshot>("torrent_peer_stats", {
+        id,
+        filter: { state: "live" },
+      });
+    },
     uploadTorrent: async function (data, opts): Promise<AddTorrentResponse> {
       if (data instanceof File) {
         let contents = await readFileAsBase64(data);
@@ -107,7 +120,7 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
           {
             contents,
             opts: opts ?? {},
-          }
+          },
         );
       }
       return await invokeAPI<AddTorrentResponse>("torrent_create_from_url", {
@@ -144,6 +157,14 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
     },
     stats: () => {
       return invokeAPI<SessionStats>("stats");
+    },
+    getLimits: () => {
+      // Desktop manages rate limits via config, not separate API
+      return Promise.resolve({ upload_bps: null, download_bps: null });
+    },
+    setLimits: (_limits: LimitsConfig) => {
+      // Desktop manages rate limits via config change, not this API
+      return Promise.resolve();
     },
   };
 };

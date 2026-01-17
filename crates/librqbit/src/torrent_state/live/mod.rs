@@ -454,7 +454,6 @@ impl TorrentStateLive {
         rx: PeerRx,
         permit: OwnedSemaphorePermit,
     ) -> crate::Result<()> {
-        // TODO: bump counters for incoming
         let handler = PeerHandler {
             addr: checked_peer.addr,
             incoming: true,
@@ -468,6 +467,7 @@ impl TorrentStateLive {
             first_message_received: AtomicBool::new(false),
             cancel_token: self.cancellation_token.child_token(),
         };
+        let _token_guard = handler.cancel_token.clone().drop_guard();
         let options = PeerConnectionOptions {
             connect_timeout: self.shared.options.peer_connect_timeout,
             read_write_timeout: self.shared.options.peer_read_write_timeout,
@@ -532,6 +532,8 @@ impl TorrentStateLive {
             first_message_received: AtomicBool::new(false),
             cancel_token: state.cancellation_token.child_token(),
         };
+        let _token_guard = handler.cancel_token.clone().drop_guard();
+
         let options = PeerConnectionOptions {
             connect_timeout: state.shared.options.peer_connect_timeout,
             read_write_timeout: state.shared.options.peer_read_write_timeout,
@@ -914,6 +916,11 @@ impl TorrentStateLive {
 
         loop {
             interval.tick().await;
+
+            // This task should die with the cancellation token, but check defensively just in case.
+            if tx.is_closed() {
+                return Ok(());
+            }
 
             {
                 let live_peers = self.peers.live_outgoing_peers.read();

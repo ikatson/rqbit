@@ -1,31 +1,25 @@
 import { useContext, useState } from "react";
 import { TorrentDetails, TorrentStats } from "../../api-types";
-import { APIContext, RefreshTorrentStatsContext } from "../../context";
+import { APIContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
-import {
-  FaCog,
-  FaPause,
-  FaPlay,
-  FaTrash,
-  FaClipboardList,
-} from "react-icons/fa";
+import { FaCog, FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
-import { ErrorComponent } from "../ErrorComponent";
+import { useTorrentStore } from "../../stores/torrentStore";
+import { useUIStore } from "../../stores/uiStore";
 
 export const TorrentActions: React.FC<{
   id: number;
   statsResponse: TorrentStats;
   detailsResponse: TorrentDetails | null;
-  extendedView: boolean;
-  setExtendedView: (extendedView: boolean) => void;
-}> = ({ id, statsResponse, detailsResponse, extendedView, setExtendedView }) => {
+}> = ({ id, statsResponse, detailsResponse }) => {
   let state = statsResponse.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
 
-  let refreshCtx = useContext(RefreshTorrentStatsContext);
+  const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
+  const openDetailsModal = useUIStore((state) => state.openDetailsModal);
 
   const canPause = state == "live";
   const canUnpause = state == "paused" || state == "error";
@@ -40,7 +34,7 @@ export const TorrentActions: React.FC<{
     API.start(id)
       .then(
         () => {
-          refreshCtx.refresh();
+          refreshTorrents();
         },
         (e) => {
           setCloseableError({
@@ -57,7 +51,7 @@ export const TorrentActions: React.FC<{
     API.pause(id)
       .then(
         () => {
-          refreshCtx.refresh();
+          refreshTorrents();
         },
         (e) => {
           setCloseableError({
@@ -79,46 +73,8 @@ export const TorrentActions: React.FC<{
     setDeleting(false);
   };
 
-  const playlistUrl = API.getPlaylistUrl(id);
-
-  const setAlert = useErrorStore((state) => state.setAlert);
-
-  const copyPlaylistUrlToClipboard = async () => {
-    if (!playlistUrl) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(playlistUrl);
-    } catch (e) {
-      setAlert({
-        text: "Copy playlist URL",
-        details: {
-          text: (
-            <>
-              <p>
-                Copy{" "}
-                <a href={playlistUrl} className="text-blue-500">
-                  playlist URL
-                </a>{" "}
-                to clipboard and paste into e.g. VLC to play.
-              </p>
-            </>
-          ),
-        },
-      });
-      return;
-    }
-
-    setAlert({
-      text: "Copied",
-      details: {
-        text: "Playlist URL copied to clipboard. Paste into e.g. VLC to play.",
-      },
-    });
-  };
-
   return (
-    <div className="flex w-full justify-center gap-2 dark:text-slate-300">
+    <div className="flex w-full justify-center gap-1 sm:gap-2 dark:text-slate-300">
       {canUnpause && (
         <IconButton onClick={unpause} disabled={disabled}>
           <FaPlay className="hover:text-green-600" />
@@ -130,27 +86,17 @@ export const TorrentActions: React.FC<{
         </IconButton>
       )}
       {canConfigure && (
-        <IconButton
-          onClick={() => setExtendedView(!extendedView)}
-          disabled={disabled}
-        >
+        <IconButton onClick={() => openDetailsModal(id)} disabled={disabled}>
           <FaCog className="hover:text-green-600" />
         </IconButton>
       )}
       <IconButton onClick={startDeleting} disabled={disabled}>
         <FaTrash className="hover:text-red-500" />
       </IconButton>
-      <IconButton
-        href={playlistUrl ?? "#"}
-        onClick={copyPlaylistUrlToClipboard}
-      >
-        <FaClipboardList className="hover:text-green-500" />
-      </IconButton>
       <DeleteTorrentModal
-        id={id}
         show={deleting}
         onHide={cancelDeleting}
-        torrent={detailsResponse}
+        torrents={[{ id, name: detailsResponse?.name ?? null }]}
       />
     </div>
   );

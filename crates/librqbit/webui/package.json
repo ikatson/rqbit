@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --port 3032 --open /mock.html",
     "build": "tsc --noEmit && vite build && node post-build",
     "preview": "vite preview"
   },
@@ -11,23 +12,24 @@
     "@restart/ui": "^1.6.6",
     "lodash.debounce": "^4.0.8",
     "lodash.sortby": "^4.7",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^19",
+    "react-dom": "^19",
     "react-icons": "^5.3.0",
-    "zustand": "^4.4.7"
+    "react-virtuoso": "^4.18.1",
+    "zustand": "^5"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
     "@types/lodash.debounce": "^4.0.9",
     "@types/lodash.sortby": "^4.7.9",
-    "@types/react": "^18.2.38",
-    "@types/react-dom": "^18.2.16",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5",
     "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32",
-    "prettier": "3.3.3",
-    "tailwindcss": "^3.3.6",
+    "prettier": "^3.7",
+    "tailwindcss": "^4.1.18",
     "typescript": "^5.3.2",
-    "vite": "^6.3.5",
+    "vite": "^7",
     "vite-plugin-svgr": "^4.2.0"
   }
 }

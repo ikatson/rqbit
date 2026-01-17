@@ -1,3 +1,2 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "../../../crates/librqbit/webui/src/globals.css";
+@source "../../../crates/librqbit/webui/";

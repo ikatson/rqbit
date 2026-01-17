@@ -46,6 +46,10 @@ devserver-postgres:
 	cargo run $(CARGO_RUN_FLAGS) -- \
 	server start --fastresume --persistence-location $(RQBIT_POSTGRES_CONNECTION_STRING) $(RQBIT_OUTPUT_FOLDER)
 
+@PHONY: testserver
+testserver:
+	ulimit -n unlimited && cargo run -p librqbit --features http-api,tracing-subscriber-utils,webui,prometheus --example simulate_traffic
+
 @PHONY: docker-build-xx-one-platform
 docker-build-xx-one-platform:
 	docker build -f docker/Dockerfile.xx \

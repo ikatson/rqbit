@@ -1,7 +1,9 @@
 import {
   AddTorrentResponse,
   ErrorDetails,
+  LimitsConfig,
   ListTorrentsResponse,
+  PeerStatsSnapshot,
   RqbitAPI,
   SessionStats,
   TorrentDetails,
@@ -13,10 +15,11 @@ const apiUrl = (() => {
   if (window.origin === "null") {
     return "http://localhost:3030";
   }
+
   const url = new URL(window.location.href);
 
   // assume Vite devserver
-  if (url.port == "3031") {
+  if (url.port == "3031" || url.port == "1420") {
     return `${url.protocol}//${url.hostname}:3030`;
   }
 
@@ -25,11 +28,27 @@ const apiUrl = (() => {
   return path;
 })();
 
+const makeBinaryRequest = async (path: string): Promise<ArrayBuffer> => {
+  const url = apiUrl + path;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/octet-stream",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return response.arrayBuffer();
+};
+
 const makeRequest = async (
   method: string,
   path: string,
   data?: any,
-  isJson?: boolean
+  isJson?: boolean,
 ): Promise<any> => {
   console.log(method, path);
   const url = apiUrl + path;
@@ -86,13 +105,20 @@ const makeRequest = async (
 
 export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getStreamLogsUrl: () => apiUrl + "/stream_logs",
-  listTorrents: (): Promise<ListTorrentsResponse> =>
-    makeRequest("GET", "/torrents"),
+  listTorrents: (opts?: {
+    withStats?: boolean;
+  }): Promise<ListTorrentsResponse> => {
+    const url = opts?.withStats ? "/torrents?with_stats=true" : "/torrents";
+    return makeRequest("GET", url);
+  },
   getTorrentDetails: (index: number): Promise<TorrentDetails> => {
     return makeRequest("GET", `/torrents/${index}`);
   },
   getTorrentStats: (index: number): Promise<TorrentStats> => {
     return makeRequest("GET", `/torrents/${index}/stats/v1`);
+  },
+  getPeerStats: (index: number): Promise<PeerStatsSnapshot> => {
+    return makeRequest("GET", `/torrents/${index}/peer_stats?state=live`);
   },
   stats: (): Promise<SessionStats> => {
     return makeRequest("GET", "/stats");
@@ -132,7 +158,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
       {
         only_files: files,
       },
-      true
+      true,
     );
   },
 
@@ -158,7 +184,7 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   getTorrentStreamUrl: (
     index: number,
     file_id: number,
-    filename?: string | null
+    filename?: string | null,
   ) => {
     let url = apiUrl + `/torrents/${index}/stream/${file_id}`;
     if (!!filename) {
@@ -168,5 +194,14 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
   getPlaylistUrl: (index: number) => {
     return (apiUrl || window.origin) + `/torrents/${index}/playlist`;
+  },
+  getTorrentHaves: async (index: number): Promise<Uint8Array> => {
+    return new Uint8Array(await makeBinaryRequest(`/torrents/${index}/haves`));
+  },
+  getLimits: (): Promise<LimitsConfig> => {
+    return makeRequest("GET", "/torrents/limits");
+  },
+  setLimits: (limits: LimitsConfig): Promise<void> => {
+    return makeRequest("POST", "/torrents/limits", limits, true);
   },
 };

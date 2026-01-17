@@ -8,6 +8,8 @@ use crate::{AddTorrentOptions, PeerConnectionOptions};
 pub struct OnlyFiles(Vec<usize>);
 pub struct InitialPeers(pub Vec<SocketAddr>);
 
+pub use crate::torrent_state::peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot};
+
 #[derive(Serialize, Deserialize, Default)]
 pub struct TorrentAddQueryParams {
     pub overwrite: Option<bool>,

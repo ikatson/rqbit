@@ -1,3 +1,131 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+/*
+ * Semantic Color Palette
+ * ----------------------
+ * These CSS custom properties define our design system colors.
+ * Light mode values are set on :root, dark mode overrides in .dark
+ */
+
+:root {
+  /* Surfaces (backgrounds) */
+  --color-surface: theme(colors.white);
+  --color-surface-raised: theme(colors.slate.50);
+  --color-surface-sunken: theme(colors.slate.100);
+
+  /* Text */
+  --color-text: theme(colors.slate.900);
+  --color-secondary: theme(colors.slate.500);
+  --color-tertiary: theme(colors.slate.400);
+
+  /* Borders / Dividers */
+  --color-border: theme(colors.slate.200);
+  --color-border-strong: theme(colors.slate.300);
+  --color-divider: theme(colors.slate.200);
+  --color-divider-strong: theme(colors.slate.300);
+
+  /* Border colors for Tailwind utilities */
+  --border-color-primary: theme(colors.blue.600);
+  --border-color-divider: theme(colors.slate.200);
+  --border-color-divider-strong: theme(colors.slate.300);
+
+  /* Interactive (primary) */
+  --color-primary: theme(colors.blue.600);
+  --color-primary-hover: theme(colors.blue.700);
+  --color-primary-bg: theme(colors.blue.600);
+  --color-primary-bg-hover: theme(colors.blue.700);
+
+  /* Status: Success (softer green) */
+  --color-success: theme(colors.emerald.600);
+  --color-success-bg: theme(colors.emerald.600);
+
+  /* Status: Warning */
+  --color-warning: theme(colors.amber.500);
+  --color-warning-bg: theme(colors.amber.500);
+
+  /* Status: Error (softer red) */
+  --color-error: theme(colors.red.500);
+  --color-error-bg: theme(colors.red.600);
+}
+
+.dark {
+  /* Surfaces (backgrounds) */
+  --color-surface: theme(colors.slate.900);
+  --color-surface-raised: theme(colors.slate.800);
+  --color-surface-sunken: theme(colors.slate.950);
+
+  /* Text */
+  --color-text: theme(colors.slate.100);
+  --color-secondary: theme(colors.slate.400);
+  --color-tertiary: theme(colors.slate.500);
+
+  /* Borders / Dividers */
+  --color-border: theme(colors.slate.700);
+  --color-border-strong: theme(colors.slate.600);
+  --color-divider: theme(colors.slate.700);
+  --color-divider-strong: theme(colors.slate.600);
+
+  /* Border colors for Tailwind utilities */
+  --border-color-primary: theme(colors.blue.400);
+  --border-color-divider: theme(colors.slate.700);
+  --border-color-divider-strong: theme(colors.slate.600);
+
+  /* Interactive (primary) */
+  --color-primary: theme(colors.blue.400);
+  --color-primary-hover: theme(colors.blue.300);
+  --color-primary-bg: theme(colors.blue.500);
+  --color-primary-bg-hover: theme(colors.blue.400);
+
+  /* Status: Success (softer green) */
+  --color-success: theme(colors.emerald.400);
+  --color-success-bg: theme(colors.emerald.600);
+
+  /* Status: Warning */
+  --color-warning: theme(colors.amber.400);
+  --color-warning-bg: theme(colors.amber.500);
+
+  /* Status: Error (softer red) */
+  --color-error: theme(colors.red.400);
+  --color-error-bg: theme(colors.red.600);
+}
+
+/* Extend Tailwind with semantic color utilities */
+@theme {
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-text: var(--color-text);
+  --color-secondary: var(--color-secondary);
+  --color-tertiary: var(--color-tertiary);
+  --color-divider: var(--color-divider);
+  --color-divider-strong: var(--color-divider-strong);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-bg: var(--color-primary-bg);
+  --color-primary-bg-hover: var(--color-primary-bg-hover);
+  --color-success: var(--color-success);
+  --color-success-bg: var(--color-success-bg);
+  --color-warning: var(--color-warning);
+  --color-warning-bg: var(--color-warning-bg);
+  --color-error: var(--color-error);
+  --color-error-bg: var(--color-error-bg);
+
+  /* Explicit border color utilities (reference CSS vars defined in :root/.dark) */
+  --border-color-primary: var(--border-color-primary);
+  --border-color-divider: var(--border-color-divider);
+  --border-color-divider-strong: var(--border-color-divider-strong);
+  --border-color-transparent: transparent;
+}
+
+/* Base styles */
+html {
+  font-size: 14px;
+}
+
+/* Default text color and background - needs to be on body since .dark class is on body */
+body {
+  color: var(--color-text);
+  background-color: var(--color-surface);
+}

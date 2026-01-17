@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import { RqbitAPI, SessionStats } from "./api-types";
+import { LimitsConfig, RqbitAPI, SessionStats } from "./api-types";
 
 export const APIContext = createContext<RqbitAPI>({
   listTorrents: () => {
@@ -9,6 +9,9 @@ export const APIContext = createContext<RqbitAPI>({
     throw new Error("Function not implemented.");
   },
   getTorrentStats: () => {
+    throw new Error("Function not implemented.");
+  },
+  getPeerStats: () => {
     throw new Error("Function not implemented.");
   },
   uploadTorrent: () => {
@@ -41,5 +44,13 @@ export const APIContext = createContext<RqbitAPI>({
   stats: function (): Promise<SessionStats> {
     throw new Error("Function not implemented.");
   },
+  getTorrentHaves: function (index: number): Promise<Uint8Array> {
+    throw new Error("Function not implemented.");
+  },
+  getLimits: function (): Promise<LimitsConfig> {
+    throw new Error("Function not implemented.");
+  },
+  setLimits: function (limits: LimitsConfig): Promise<void> {
+    throw new Error("Function not implemented.");
+  },
 });
-export const RefreshTorrentStatsContext = createContext({ refresh: () => {} });

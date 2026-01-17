@@ -1,0 +1,15 @@
+{
+  "name": "rqbit-workspace",
+  "private": true,
+  "workspaces": [
+    "desktop",
+    "crates/librqbit/webui"
+  ],
+  "scripts": {
+    "format": "prettier --write 'desktop/src/**/*.{ts,tsx}' 'crates/librqbit/webui/src/**/*.{ts,tsx}'",
+    "format:check": "prettier --check 'desktop/src/**/*.{ts,tsx}' 'crates/librqbit/webui/src/**/*.{ts,tsx}'"
+  },
+  "devDependencies": {
+    "prettier": "^3.7"
+  }
+}

@@ -16,15 +16,15 @@ const ModalHeader: React.FC<{
   title: string;
 }> = ({ onClose, title }) => {
   return (
-    <div className="flex p-3 justify-between items-center border-b dark:border-slate-600">
-      <h2 className="text-xl font-semibold dark:slate-300">{title}</h2>
+    <div className="flex p-3 justify-between items-center border-b border-divider gap-2">
+      <h2 className="text-xl font-semibold truncate min-w-0">{title}</h2>
       {onClose && (
         <button
-          className="text-gray-500 hover:text-gray-700"
+          className="flex-shrink-0 p-1 -m-1 text-secondary hover:text-text transition-colors cursor-pointer"
           onClick={onClose}
           aria-label="Close modal"
         >
-          <BsX className="w-5 h-5" />
+          <BsX className="w-6 h-6" />
         </button>
       )}
     </div>
@@ -40,7 +40,7 @@ export const Modal: React.FC<ModalProps> = ({
 }) => {
   const renderBackdrop = () => {
     return (
-      <div className="fixed inset-0 bg-black/30 z-[300] dark:bg-black/60 backdrop-blur"></div>
+      <div className="fixed inset-0 bg-black/30 z-300 dark:bg-black/60 backdrop-blur"></div>
     );
   };
   return (
@@ -48,10 +48,10 @@ export const Modal: React.FC<ModalProps> = ({
       show={isOpen}
       onHide={onClose}
       renderBackdrop={renderBackdrop}
-      className="fixed z-[301] top-0 left-0 w-full h-full block overflow-x-hidden overflow-y-auto"
+      className="fixed z-301 top-0 left-0 w-full h-full block overflow-x-hidden overflow-y-auto"
     >
       <div
-        className={`bg-white shadow-lg my-8 mx-auto max-w-2xl rounded ${className} dark:bg-slate-800 dark:text-gray-50`}
+        className={`bg-surface-raised shadow-lg my-4 mx-4 sm:my-8 sm:mx-auto sm:max-w-2xl rounded ${className}`}
       >
         <ModalHeader onClose={onClose} title={title} />
         {children}
