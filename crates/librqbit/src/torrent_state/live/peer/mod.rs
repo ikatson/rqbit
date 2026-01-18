@@ -123,6 +123,12 @@ impl PeerState {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum IncomingConnectionResult {
+    #[error("peer already active")]
+    AlreadyActive,
+}
+
 impl Peer {
     pub fn get_state(&self) -> &PeerState {
         &self.state
@@ -196,9 +202,9 @@ impl Peer {
         tx: PeerTx,
         counters: &PeerStates,
         connection_kind: ConnectionKind,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), IncomingConnectionResult> {
         if matches!(&self.state, PeerState::Connecting(..) | PeerState::Live(..)) {
-            anyhow::bail!("peer already active");
+            return Err(IncomingConnectionResult::AlreadyActive);
         }
         match self.take_state(counters) {
             PeerState::Queued | PeerState::Dead | PeerState::NotNeeded => {

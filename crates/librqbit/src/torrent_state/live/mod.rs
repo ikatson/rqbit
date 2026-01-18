@@ -174,6 +174,12 @@ impl TorrentStateLocked {
 
 const FLUSH_BITV_EVERY_BYTES: u64 = 16 * 1024 * 1024;
 
+pub enum AddIncomingPeerResult {
+    Added,
+    AlreadyActive,
+    ConcurrencyLimitReached,
+}
+
 pub struct TorrentStateLive {
     peers: PeerStates,
     pub(crate) shared: Arc<ManagedTorrentShared>,
@@ -364,7 +370,7 @@ impl TorrentStateLive {
     pub(crate) fn add_incoming_peer(
         self: &Arc<Self>,
         checked_peer: CheckedIncomingConnection,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<AddIncomingPeerResult> {
         use dashmap::mapref::entry::Entry;
         let (tx, rx) = unbounded_channel();
         let permit = match self.peer_semaphore.clone().try_acquire_owned() {
@@ -374,20 +380,30 @@ impl TorrentStateLive {
                 self.peers.with_peer(checked_peer.addr, |p| {
                     atomic_inc(&p.stats.counters.incoming_connections);
                 });
-                return Ok(());
+                return Ok(AddIncomingPeerResult::ConcurrencyLimitReached);
             }
         };
 
         let counters = match self.peers.states.entry(checked_peer.addr) {
             Entry::Occupied(mut occ) => {
                 let peer = occ.get_mut();
-                peer.incoming_connection(
+                if let Err(e) = peer.incoming_connection(
                     checked_peer.handshake.peer_id,
                     tx.clone(),
                     &self.peers,
                     checked_peer.kind,
-                )
-                .context("peer already existed")?;
+                ) {
+                    match e {
+                        peer::IncomingConnectionResult::AlreadyActive => {
+                            debug!(
+                                addr = %checked_peer.addr,
+                                kind = %checked_peer.kind,
+                                "peer already active, ignoring incoming connection"
+                            );
+                            return Ok(AddIncomingPeerResult::AlreadyActive);
+                        }
+                    }
+                }
                 peer.stats.counters.clone()
             }
             Entry::Vacant(vac) => {
@@ -421,7 +437,7 @@ impl TorrentStateLive {
                     .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)
             ),
         );
-        Ok(())
+        Ok(AddIncomingPeerResult::Added)
     }
 
     async fn task_upload_scheduler(

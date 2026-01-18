@@ -956,8 +956,9 @@ impl Session {
                     }
                 },
                 Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                    let (addr, kind) = (checked.addr, checked.kind);
                     if let Err(e) = live.add_incoming_peer(checked) {
-                        warn!("error handing over incoming connection: {e:#}");
+                        warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
                     }
                 },
             }
