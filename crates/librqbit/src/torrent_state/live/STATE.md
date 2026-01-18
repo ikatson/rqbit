@@ -177,11 +177,45 @@ Piece state is coordinated by `PieceTracker`:
 
 ### Lock Ordering
 
-Current comment in code: "locking one inside the other in different order results in deadlocks."
+To avoid deadlocks, locks must be acquired in a consistent order:
 
-The locking hierarchy is:
-1. `peers` lock (via `with_live_mut`)
-2. `TorrentStateLive` lock (via `lock_write`)
+1. `peers` lock (via `with_live_mut` / `with_peer_mut`) - DashMap per-peer locks
+2. `TorrentStateLive` lock (via `lock_write` / `lock_read`) - global torrent state
+
+**Critical Rule: Never access other peers while holding a peer lock.**
+
+The `peers` field is a `DashMap<PeerHandle, Peer>` which uses sharded locking. When you hold
+a lock on one peer's shard via `with_live_mut` or `with_peer_mut`, you must NOT:
+- Call `with_peer`, `with_live_mut`, `with_peer_mut` on a different peer
+- Iterate over the peers DashMap
+- Call any method that internally accesses other peers (e.g., `on_steal`)
+
+This is because:
+1. Thread A holds write lock on shard S1 (peer X)
+2. Thread A tries to access peer Y which is in shard S2
+3. Thread B holds/waits for shard S2 and wants shard S1
+4. Deadlock!
+
+**Example of what NOT to do:**
+```rust
+// BAD - accessing other peers inside with_live_mut
+self.peers.with_live_mut(self.addr, "example", |live| {
+    // ... do something ...
+    self.peers.on_steal(other_peer, self.addr, piece);  // DEADLOCK RISK!
+});
+```
+
+**Correct pattern:**
+```rust
+// GOOD - collect info inside closure, process outside
+let steal_info = self.peers.with_live_mut(self.addr, "example", |live| {
+    // ... return data needed for on_steal ...
+    Some((other_peer, piece))
+});
+if let Some((from_peer, piece)) = steal_info {
+    self.peers.on_steal(from_peer, self.addr, piece);  // Safe - no peer lock held
+}
+```
 
 Care must be taken when modifying state transition logic to maintain this ordering.
 

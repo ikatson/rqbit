@@ -1373,8 +1373,11 @@ impl PeerHandler {
     ///
     /// Returns the piece index to download, or None if no pieces are available.
     fn acquire_next_piece(&self) -> crate::Result<Option<ValidPieceIndex>> {
-        // TODO: locking one inside the other in different order results in deadlocks.
-        self.state
+        // Steal info to process after releasing the peer lock
+        let mut steal_info: Option<(SocketAddr, ValidPieceIndex)> = None;
+
+        let result = self
+            .state
             .peers
             .with_live_mut(self.addr, "acquire_next_piece", |live| {
                 if self.lock_read("i am choked").i_am_choked {
@@ -1412,16 +1415,22 @@ impl PeerHandler {
                     }
                     AcquireResult::Stolen { piece, from_peer } => {
                         debug!("stole piece {} from {}", piece, from_peer);
-                        // Need to drop guard before calling on_steal to avoid deadlock
-                        drop(g);
-                        self.state.peers.on_steal(from_peer, self.addr, piece);
+                        // Store steal info to process after releasing peer lock to avoid deadlock
+                        steal_info = Some((from_peer, piece));
                         Ok(Some(piece))
                     }
                     AcquireResult::NoneAvailable => Ok(None),
                 }
             })
             .transpose()
-            .map(|r| r.flatten())
+            .map(|r| r.flatten());
+
+        // Process steal notification outside the peer lock to avoid deadlock
+        if let Some((from_peer, piece)) = steal_info {
+            self.state.peers.on_steal(from_peer, self.addr, piece);
+        }
+
+        result
     }
 
     fn on_download_request(&self, request: Request) -> anyhow::Result<()> {
