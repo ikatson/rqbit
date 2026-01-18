@@ -444,14 +444,23 @@ impl TorrentStateLive {
         )>,
     ) -> crate::Result<()> {
         while let Some((tx, ci)) = rx.recv().await {
-            self.ratelimits
-                .prepare_for_upload(NonZeroU32::new(ci.size).unwrap())
-                .await?;
+            tokio::select! {
+                _ = tx.closed() => {
+                    continue;
+                }
+                res = self.ratelimits.prepare_for_upload(NonZeroU32::new(ci.size).unwrap()) => {
+                    res?;
+                }
+            };
             if let Some(session) = self.shared.session.upgrade() {
-                session
-                    .ratelimits
-                    .prepare_for_upload(NonZeroU32::new(ci.size).unwrap())
-                    .await?;
+                tokio::select! {
+                    _ = tx.closed() => {
+                        continue;
+                    }
+                    res = session.ratelimits.prepare_for_upload(NonZeroU32::new(ci.size).unwrap()) => {
+                        res?;
+                    }
+                }
             }
             let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
         }
@@ -1879,7 +1888,8 @@ impl PeerHandler {
                 true => {
                     {
                         let mut g = state.lock_write("mark_piece_downloaded");
-                        g.get_pieces_mut()?.mark_piece_hash_ok(chunk_info.piece_index);
+                        g.get_pieces_mut()?
+                            .mark_piece_hash_ok(chunk_info.piece_index);
                     }
 
                     // Global piece counters.
