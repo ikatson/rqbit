@@ -1319,27 +1319,38 @@ impl PeerHandler {
                     trace!("waiting to reconnect again");
                     tokio::time::sleep(dur).await;
                     trace!("finished waiting");
-                    self.state
+                    let should_requeue = self
+                        .state
                         .peers
                         .with_peer_mut(handle, "dead_to_queued", |peer| {
                             match peer.get_state() {
                                 PeerState::Dead => {
-                                    peer.set_state(PeerState::Queued, &self.state.peers)
+                                    peer.set_state(PeerState::Queued, &self.state.peers);
+                                    true
                                 }
-                                other => {
-                                    return Err(Error::BugPeerExpectedDead {
-                                        state: other.name(),
-                                    });
+                                // Peer reconnected (e.g. via incoming connection) while we were
+                                // waiting. No need to queue - it's already connected or queued.
+                                PeerState::Live(_)
+                                | PeerState::Connecting(_)
+                                | PeerState::Queued => {
+                                    trace!(
+                                        state = peer.get_state().name(),
+                                        "peer is no longer dead, skipping requeue"
+                                    );
+                                    false
                                 }
-                            };
-                            Ok(())
+                                // Don't need this peer anymore.
+                                PeerState::NotNeeded => false,
+                            }
                         })
-                        .ok_or(Error::BugPeerNotFound)??;
-                    self.state
-                        .peer_queue_tx
-                        .send(handle)
-                        .ok()
-                        .ok_or(Error::TorrentIsNotLive)?;
+                        .unwrap_or(false);
+                    if should_requeue {
+                        self.state
+                            .peer_queue_tx
+                            .send(handle)
+                            .ok()
+                            .ok_or(Error::TorrentIsNotLive)?;
+                    }
                     Ok::<_, Error>(())
                 },
             );

@@ -112,9 +112,6 @@ pub enum Error {
     #[error("bug: invalid peer state")]
     BugInvalidPeerState,
 
-    #[error("peer is in unexpected state: {state}. Expected dead")]
-    BugPeerExpectedDead { state: &'static str },
-
     #[error("file is None, torrent was probably paused")]
     FsFileIsNone,
 
