@@ -1,33 +1,41 @@
 # Live Torrent State Architecture
 
-This document describes the shared state used during live torrent downloading, the invariants that should be maintained, and known issues.
+This document describes the shared state used during live torrent downloading and the invariants that are maintained.
 
 ## Key Data Structures
 
-### 1. `ChunkTracker` (in `chunk_tracker.rs`)
+### 1. `PieceTracker` (in `piece_tracker.rs`)
 
-Tracks piece/chunk download progress. Lives in `TorrentStateLive`.
+Coordinates piece download state by wrapping `ChunkTracker` and `inflight_pieces`. Lives in `TorrentStateLocked`.
+
+```rust
+pub struct PieceTracker {
+    chunks: ChunkTracker,
+    inflight: HashMap<ValidPieceIndex, InflightPiece>,
+}
+
+pub struct InflightPiece {
+    pub peer: PeerHandle,     // Which peer "owns" this piece
+    pub started: Instant,     // When download started (for steal threshold)
+}
+```
+
+Key methods that maintain invariants:
+- `acquire_piece()` - Reserve from queue or steal from slow peer
+- `take_inflight()` - Remove from inflight (before hash check)
+- `mark_piece_hash_ok()` - Mark as completed after hash verification
+- `mark_piece_hash_failed()` - Requeue after hash failure
+- `release_pieces_owned_by()` - Release all pieces owned by a dead peer
+
+### 2. `ChunkTracker` (in `chunk_tracker.rs`)
+
+Tracks piece/chunk download progress. Wrapped by `PieceTracker`.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `have` | `BitVec` | Pieces fully downloaded and verified |
 | `queue_pieces` | `BitVec` | Pieces needed but not currently being downloaded |
 | `chunk_status` | `BitVec` | Per-chunk completion status |
-
-### 2. `inflight_pieces` (in `TorrentStateLive`)
-
-```rust
-HashMap<ValidPieceIndex, InflightPiece>
-
-struct InflightPiece {
-    peer: SocketAddr,      // Which peer "owns" this piece
-    started: Instant,      // When download started (for steal threshold)
-}
-```
-
-Global tracking of which peer is responsible for downloading each piece. Used for:
-- Preventing multiple peers from downloading the same piece
-- Piece stealing (finding slow peers to steal from)
 
 ### 3. `inflight_requests` (in `LivePeerState`)
 
@@ -47,25 +55,23 @@ Per-peer tracking of which chunks have been requested from this peer. Used for:
 - Detecting unexpected data ("peer sent us a piece we did not ask")
 - Cleanup when peer dies
 
-## Intended Invariants
+## Piece State Invariant
 
-### Piece State Invariant
-
-A piece should be in exactly ONE of these states:
+A piece is in exactly ONE of these states:
 
 ```
 have[piece] = true                    → COMPLETED (verified)
-inflight_pieces.contains(piece)       → IN_FLIGHT (being downloaded)
+inflight.contains(piece)              → IN_FLIGHT (being downloaded)
 queue_pieces[piece] = true            → QUEUED (needed, waiting)
 none of the above                     → NOT_NEEDED (deprioritized)
 ```
 
-These should be **disjoint** - a piece should never be in multiple states simultaneously.
+These are **disjoint** - a piece is never in multiple states simultaneously. This invariant is maintained by `PieceTracker` methods.
 
 ### Chunk-Piece Consistency
 
 If `inflight_requests` contains chunks for piece P, then:
-- `inflight_pieces[P].peer` should equal this peer's address
+- `inflight[P].peer` should equal this peer's address
 - OR the piece was just stolen (transient state during steal)
 
 ## State Transitions
@@ -76,10 +82,11 @@ If `inflight_requests` contains chunks for piece P, then:
 QUEUED → IN_FLIGHT → COMPLETED
 ```
 
-1. `reserve_next_needed_piece()`:
-   - Finds piece in `queue_pieces`
-   - Calls `reserve_needed_piece(p)` → clears `queue_pieces[p] = false`
-   - Inserts into `inflight_pieces[p] = (self, now)`
+1. `PieceTracker::acquire_piece()`:
+   - Finds piece in `queue_pieces` (or steals from slow peer)
+   - Calls `chunks.reserve_needed_piece(p)` → clears `queue_pieces[p] = false`
+   - Inserts into `inflight[p] = (peer, now)`
+   - Returns `AcquireResult::Reserved(p)` or `AcquireResult::Stolen { piece, from_peer }`
 
 2. Chunk requesting:
    - For each chunk in piece, insert into `inflight_requests`
@@ -91,8 +98,9 @@ QUEUED → IN_FLIGHT → COMPLETED
    - If all chunks done → verify hash
 
 4. Piece completion:
-   - Remove from `inflight_pieces`
-   - Set `have[p] = true`
+   - `PieceTracker::take_inflight(piece)` → removes from `inflight`
+   - Hash check passes: `PieceTracker::mark_piece_hash_ok(piece)` → sets `have[p] = true`
+   - Hash check fails: `PieceTracker::mark_piece_hash_failed(piece)` → sets `queue_pieces[p] = true`
 
 ### Piece Stealing Flow
 
@@ -100,21 +108,21 @@ QUEUED → IN_FLIGHT → COMPLETED
 IN_FLIGHT (peer A) → IN_FLIGHT (peer B)
 ```
 
-1. `try_steal_old_slow_piece()`:
-   - Finds piece in `inflight_pieces` owned by slow peer
-   - Updates `inflight_pieces[p].peer = self`
-   - Updates `inflight_pieces[p].started = now`
-   - Calls `on_steal(from_peer, to_peer, piece)`
+`PieceTracker::acquire_piece()` with steal logic:
+1. Finds piece in `inflight` owned by slow peer (elapsed > threshold × avg_time)
+2. Updates `inflight[p].peer = self`
+3. Updates `inflight[p].started = now`
+4. Returns `AcquireResult::Stolen { piece, from_peer }`
 
-2. `on_steal()`:
+Caller then:
+5. Calls `peers.on_steal(from_peer, to_peer, piece)`:
    - Sends Cancel messages to victim peer
-   - Removes chunks from victim's `inflight_requests` (recent fix)
-
-3. Stealer requests chunks:
+   - Removes chunks from victim's `inflight_requests`
+6. Stealer requests chunks:
    - Inserts into own `inflight_requests`
    - Sends Request messages
 
-**Note:** Stealing does NOT call `reserve_needed_piece()` because the piece shouldn't be in `queue_pieces` (it was already in-flight).
+**Note:** Stealing does NOT call `reserve_needed_piece()` because the piece is already in `inflight`, not in `queue_pieces`.
 
 ### Peer Death Flow
 
@@ -122,16 +130,17 @@ IN_FLIGHT (peer A) → IN_FLIGHT (peer B)
 IN_FLIGHT → QUEUED (for pieces owned by dead peer)
 ```
 
-1. `on_peer_dead()`:
+1. `on_peer_died()`:
    - Takes `LivePeerState` (consumes it)
-   - For each chunk in `inflight_requests`:
-     - Calls `mark_piece_broken_if_not_have(piece)`
+   - Calls `PieceTracker::release_pieces_owned_by(peer_addr)`
 
-2. `mark_piece_broken_if_not_have()`:
-   - If not `have[p]`: sets `queue_pieces[p] = true`
-   - Clears `chunk_status` for piece
+2. `release_pieces_owned_by()`:
+   - Removes all entries from `inflight` where `peer == dead_peer_addr`
+   - For each removed piece, calls `chunks.mark_piece_broken_if_not_have(piece)`
+   - This sets `queue_pieces[p] = true` and clears `chunk_status` for piece
+   - Returns count of released pieces
 
-**BUG:** `inflight_pieces` is NOT cleaned up! Pieces remain "owned" by dead peer.
+This maintains the invariant: pieces transition cleanly from IN_FLIGHT → QUEUED.
 
 ### Checksum Failure Flow
 
@@ -140,90 +149,48 @@ IN_FLIGHT → QUEUED
 ```
 
 1. All chunks received, hash verification fails
-2. `inflight_pieces.remove(piece)` ← happens first
-3. `mark_piece_broken_if_not_have(piece)` → sets `queue_pieces[p] = true`
+2. `PieceTracker::take_inflight(piece)` → removes from `inflight`
+3. `PieceTracker::mark_piece_hash_failed(piece)` → calls `mark_piece_broken_if_not_have(piece)` → sets `queue_pieces[p] = true`
 
-This flow is correct because `inflight_pieces` is cleaned up before adding to `queue_pieces`.
+### Pause Flow
 
-## Known Bug: Invariant Violation on Peer Death
-
-### Sequence
-
-1. Peer A owns pieces 115-117 in `inflight_pieces`
-2. Peer A has chunks in `inflight_requests`
-3. Peer A dies
-4. `mark_piece_broken_if_not_have(115-117)` → `queue_pieces[115-117] = true`
-5. **BUT** `inflight_pieces` still has 115-117 owned by dead peer A!
-6. **INVARIANT VIOLATED:** pieces in both `queue_pieces` AND `inflight_pieces`
-
-### Consequence
-
-7. Peer B steals piece 115 from dead peer A
-8. `inflight_pieces[115].peer = B`, inserts chunks into B's `inflight_requests`
-9. Stealing doesn't call `reserve_needed_piece()` (assumes piece not in `queue_pieces`)
-10. `queue_pieces[115]` still true!
-11. Next iteration: `reserve_next_needed_piece()` returns 115 again
-12. B tries to insert chunks → already in `inflight_requests` → warning
-
-### Root Cause
-
-`on_peer_dead()` cleans up per-peer state (`inflight_requests`) but not global state (`inflight_pieces`). This breaks the invariant that `queue_pieces` and `inflight_pieces` are disjoint.
-
-## Potential Fixes
-
-### Option A: Clean up `inflight_pieces` on peer death (semantically correct)
-
-In `on_peer_dead()`, before marking pieces broken:
-```rust
-g.inflight_pieces.retain(|_, info| info.peer != dead_peer_addr);
+```
+IN_FLIGHT → QUEUED (for all in-flight pieces)
 ```
 
-This maintains the invariant: pieces transition cleanly from IN_FLIGHT → QUEUED.
-
-### Option B: Call `reserve_needed_piece` when stealing
-
-After stealing, clear from `queue_pieces`:
-```rust
-g.get_chunks_mut()?.reserve_needed_piece(stolen_idx);
-```
-
-This is defensive but treats the symptom, not the cause.
-
-### Option C: Filter `inflight_pieces` in `reserve_next_needed_piece`
-
-Add filter to `natural_order_pieces`:
-```rust
-.filter(|pid| !g.inflight_pieces.contains_key(pid))
-```
-
-Also defensive, doesn't fix the underlying invariant violation.
+1. `pause()`:
+   - Calls `PieceTracker::into_chunks()` which:
+     - For each piece in `inflight`, calls `mark_piece_broken_if_not_have(piece)`
+     - Returns the inner `ChunkTracker`
+   - Stores the `ChunkTracker` for resume
 
 ## Architectural Notes
 
-### State Fragmentation
+### State Encapsulation
 
-The piece state is split across multiple structures:
-- `ChunkTracker`: `have`, `queue_pieces`, `chunk_status`
-- `TorrentStateLive`: `inflight_pieces`
-- `LivePeerState`: `inflight_requests`
+Piece state is coordinated by `PieceTracker`:
+- `ChunkTracker`: `have`, `queue_pieces`, `chunk_status` (wrapped)
+- `PieceTracker`: `inflight` (owned)
+- `LivePeerState`: `inflight_requests` (per-peer, separate)
 
-This fragmentation makes it hard to maintain invariants. State transitions require coordinated updates across multiple structures.
-
-### Potential Refactoring
-
-Consider consolidating piece state into `ChunkTracker`:
-- Add `inflight_pieces` to `ChunkTracker`
-- Provide atomic state transition methods
-- Encapsulate invariant maintenance
-
-This would make illegal states unrepresentable and simplify reasoning about state transitions.
+`PieceTracker` methods ensure atomic state transitions that maintain invariants. Direct access to `ChunkTracker` is read-only via `chunks()`.
 
 ### Lock Ordering
 
 Current comment in code: "locking one inside the other in different order results in deadlocks."
 
-The locking hierarchy appears to be:
+The locking hierarchy is:
 1. `peers` lock (via `with_live_mut`)
 2. `TorrentStateLive` lock (via `lock_write`)
 
 Care must be taken when modifying state transition logic to maintain this ordering.
+
+### Acquire Strategy
+
+`PieceTracker::acquire_piece()` uses a three-phase strategy:
+
+1. **Try steal (10x threshold)** - Very slow peers get pieces stolen first
+2. **Try reserve** - Check priority pieces, then queue_pieces
+3. **Try steal (3x threshold)** - Moderately slow peers as fallback
+
+This balances fairness with efficiency - we prefer reserving new pieces but will steal from slow peers to avoid bottlenecks.
