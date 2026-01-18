@@ -6,11 +6,13 @@ import { APIContext } from "../../context";
 import { useUIStore } from "../../stores/uiStore";
 import { useTorrentStore } from "../../stores/torrentStore";
 import { useErrorStore } from "../../stores/errorStore";
+import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
 import {
-  DeleteTorrentModal,
-  TorrentToDelete,
-} from "../modal/DeleteTorrentModal";
-import { ErrorDetails, STATE_LIVE, STATE_PAUSED } from "../../api-types";
+  ErrorDetails,
+  STATE_LIVE,
+  STATE_PAUSED,
+  TorrentListItem,
+} from "../../api-types";
 import { Button } from "../buttons/Button";
 import {
   StatusFilter,
@@ -34,9 +36,9 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
 
   const [disabled, setDisabled] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [torrentsToDelete, setTorrentsToDelete] = useState<TorrentToDelete[]>(
-    [],
-  );
+  const [torrentsToDelete, setTorrentsToDelete] = useState<
+    Pick<TorrentListItem, "id" | "name">[]
+  >([]);
   const [localSearch, setLocalSearch] = useState(searchQuery);
 
   // Debounced update to store
