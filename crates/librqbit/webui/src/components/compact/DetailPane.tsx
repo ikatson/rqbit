@@ -119,9 +119,7 @@ const DetailPaneContent: React.FC<DetailPaneContentProps> = ({
           onRefresh={forceRefreshCallback}
         />
       )}
-      {activeTab === "peers" && (
-        <PeersTab torrentId={torrentId} statsResponse={statsResponse} />
-      )}
+      {activeTab === "peers" && <PeersTab torrent={torrent ?? null} />}
     </>
   );
 };

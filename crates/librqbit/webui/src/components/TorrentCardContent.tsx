@@ -1,9 +1,5 @@
 import { GoClock, GoFile, GoPeople } from "react-icons/go";
-import {
-  TorrentDetails,
-  TorrentListItem,
-  STATE_INITIALIZING,
-} from "../api-types";
+import { TorrentListItem, STATE_INITIALIZING } from "../api-types";
 import { TorrentActions } from "./buttons/TorrentActions";
 import { ProgressBar } from "./ProgressBar";
 import { Speed } from "./Speed";
@@ -13,8 +9,7 @@ import { StatusIcon } from "./StatusIcon";
 
 export const TorrentCardContent: React.FC<{
   torrent: TorrentListItem;
-  detailsResponse: TorrentDetails | null;
-}> = ({ torrent, detailsResponse }) => {
+}> = ({ torrent }) => {
   const id = torrent.id;
   const statsResponse = torrent.stats ?? null;
   const state = statsResponse?.state ?? "";
@@ -110,11 +105,7 @@ export const TorrentCardContent: React.FC<{
         {/* Actions */}
         {statsResponse && (
           <div className="">
-            <TorrentActions
-              id={id}
-              statsResponse={statsResponse}
-              detailsResponse={detailsResponse}
-            />
+            <TorrentActions torrent={{ ...torrent, stats: statsResponse }} />
           </div>
         )}
       </section>

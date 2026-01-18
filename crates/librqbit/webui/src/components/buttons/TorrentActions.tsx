@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import { TorrentDetails, TorrentStats } from "../../api-types";
+import { TorrentListItem, TorrentStats } from "../../api-types";
 import { APIContext } from "../../context";
 import { IconButton } from "./IconButton";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
@@ -9,11 +9,10 @@ import { useTorrentStore } from "../../stores/torrentStore";
 import { useUIStore } from "../../stores/uiStore";
 
 export const TorrentActions: React.FC<{
-  id: number;
-  statsResponse: TorrentStats;
-  detailsResponse: TorrentDetails | null;
-}> = ({ id, statsResponse, detailsResponse }) => {
-  let state = statsResponse.state;
+  torrent: TorrentListItem & { stats: TorrentStats };
+}> = ({ torrent }) => {
+  const { id, name, stats } = torrent;
+  const state = stats.state;
 
   let [disabled, setDisabled] = useState<boolean>(false);
   let [deleting, setDeleting] = useState<boolean>(false);
@@ -96,7 +95,7 @@ export const TorrentActions: React.FC<{
       <DeleteTorrentModal
         show={deleting}
         onHide={cancelDeleting}
-        torrents={[{ id, name: detailsResponse?.name ?? null }]}
+        torrents={[{ id, name }]}
       />
     </div>
   );

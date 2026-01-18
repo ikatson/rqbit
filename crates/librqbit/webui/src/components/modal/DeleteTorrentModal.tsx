@@ -1,4 +1,5 @@
 import { useContext, useState } from "react";
+import { TorrentListItem } from "../../api-types";
 import { APIContext } from "../../context";
 import { ErrorWithLabel } from "../../rqbit-web";
 import { useTorrentStore } from "../../stores/torrentStore";
@@ -10,15 +11,10 @@ import { Modal } from "./Modal";
 import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 
-export interface TorrentToDelete {
-  id: number;
-  name: string | null;
-}
-
 export const DeleteTorrentModal: React.FC<{
   show: boolean;
   onHide: () => void;
-  torrents: TorrentToDelete[];
+  torrents: Pick<TorrentListItem, "id" | "name">[];
 }> = ({ show, onHide, torrents }) => {
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [error, setError] = useState<ErrorWithLabel | null>(null);

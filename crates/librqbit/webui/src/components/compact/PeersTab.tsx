@@ -6,15 +6,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { PeerStats, PeerStatsSnapshot, TorrentStats } from "../../api-types";
+import { PeerStats, PeerStatsSnapshot, TorrentListItem } from "../../api-types";
 import { APIContext } from "../../context";
 import { formatBytes } from "../../helper/formatBytes";
 import { SortIcon } from "../SortIcon";
 import { customSetInterval } from "../../helper/customSetInterval";
 
 interface PeersTabProps {
-  torrentId: number;
-  statsResponse: TorrentStats | null;
+  torrent: TorrentListItem | null;
 }
 
 interface PeerWithSpeed {
@@ -46,10 +45,9 @@ const formatSpeed = (bytesPerSecond: number): string => {
   return formatBytes(bytesPerSecond) + "/s";
 };
 
-export const PeersTab: React.FC<PeersTabProps> = ({
-  torrentId,
-  statsResponse,
-}) => {
+export const PeersTab: React.FC<PeersTabProps> = ({ torrent }) => {
+  const torrentId = torrent?.id;
+  const statsResponse = torrent?.stats ?? null;
   const API = useContext(APIContext);
   const [peerSnapshot, setPeerSnapshot] = useState<PeerStatsSnapshot | null>(
     null,
@@ -67,7 +65,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({
 
   // Fetch peer stats periodically
   useEffect(() => {
-    if (!statsResponse?.live) return;
+    if (!torrentId || !statsResponse?.live) return;
 
     return customSetInterval(() => {
       return API.getPeerStats(torrentId).then(

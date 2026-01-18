@@ -12,16 +12,19 @@ use bytes::Bytes;
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, ConnectionOptions, CreateTorrentOptions,
     CreateTorrentResult, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
-    create_torrent,
+    create_torrent, generate_azereus_style,
     http_api::{HttpApi, HttpApiOptions},
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
+    tracing_subscriber_config_utils::{InitLoggingOptions, init_logging},
 };
 use librqbit_core::constants::CHUNK_SIZE;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use rand::{RngCore, SeedableRng, seq::IndexedRandom};
-use tracing::{Level, info};
-use tracing_subscriber::EnvFilter;
+use tracing::info;
+
+/// Base port for test sessions. Main uses 50000, peers use 50001+.
+const BASE_PORT: u16 = 50000;
 
 struct TestHarness {
     td: PathBuf,
@@ -53,7 +56,7 @@ fn create_default_random_dir_with_torrents(dir: &Path, num_files: usize, file_si
     }
 }
 
-async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
+fn generate_unique_torrent_name(index: usize) -> String {
     static TORRENT_NAMES: &[&str] = &[
         "Ubuntu 24.04 LTS Desktop amd64",
         "Arch.Linux.2026.01.01.x86_64.Rolling-RELEASE",
@@ -87,6 +90,17 @@ async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
         "Lubuntu.24.04.LTS.Minimal.Install.x64",
     ];
 
+    let base_name = TORRENT_NAMES[index % TORRENT_NAMES.len()];
+    let cycle = index / TORRENT_NAMES.len();
+
+    if cycle == 0 {
+        base_name.to_string()
+    } else {
+        format!("{} ({})", base_name, cycle + 1)
+    }
+}
+
+async fn create_one(path: &Path, index: usize) -> anyhow::Result<CreateTorrentResult> {
     create_default_random_dir_with_torrents(
         path,
         rand::random_range(2..10),
@@ -95,7 +109,7 @@ async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
     create_torrent(
         path,
         CreateTorrentOptions {
-            name: Some(TORRENT_NAMES.choose(&mut rand::rng()).unwrap()),
+            name: Some(&generate_unique_torrent_name(index)),
             piece_length: Some(CHUNK_SIZE),
             ..Default::default()
         },
@@ -114,7 +128,7 @@ async fn create_torrents(td: &Path, count: usize) -> anyhow::Result<Vec<FakeTorr
     for torrent in 0..count {
         let dir = td.join(torrent.to_string());
         tokio::fs::create_dir_all(&dir).await?;
-        let res = create_one(&dir).await?;
+        let res = create_one(&dir, torrent).await?;
         result.push(FakeTorrent {
             root: dir,
             torrent_file: res.as_bytes()?,
@@ -139,6 +153,10 @@ impl TestHarness {
         .copied()
         .unwrap();
 
+        let listen_port = BASE_PORT + 1 + id as u16; // 50001, 50002, etc.
+        let peer_id = generate_azereus_style(*b"rQ", librqbit_core::crate_version!());
+        let root_span = tracing::info_span!("peer", id, port = listen_port);
+
         let session = Session::new_with_opts(
             out.clone(),
             SessionOptions {
@@ -146,9 +164,11 @@ impl TestHarness {
                 disable_dht_persistence: true,
                 fastresume: false,
                 persistence: None,
+                peer_id: Some(peer_id),
+                root_span: Some(root_span),
                 listen: Some(ListenerOptions {
                     mode: listen_mode,
-                    listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
+                    listen_addr: (Ipv6Addr::UNSPECIFIED, listen_port).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
                     announce_port: None,
@@ -225,6 +245,10 @@ impl TestHarness {
 
     async fn run_main(&self) -> anyhow::Result<()> {
         let path = self.td.join("main");
+
+        let peer_id = generate_azereus_style(*b"rQ", librqbit_core::crate_version!());
+        let root_span = tracing::info_span!("main", port = BASE_PORT);
+
         let session = Session::new_with_opts(
             path.clone(),
             SessionOptions {
@@ -232,9 +256,11 @@ impl TestHarness {
                 disable_dht_persistence: true,
                 fastresume: false,
                 persistence: None,
+                peer_id: Some(peer_id),
+                root_span: Some(root_span),
                 listen: Some(ListenerOptions {
                     mode: librqbit::ListenerMode::TcpAndUtp,
-                    listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
+                    listen_addr: (Ipv6Addr::UNSPECIFIED, BASE_PORT).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
                     announce_port: None,
@@ -297,18 +323,23 @@ impl TestHarness {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(Level::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
-
     let root = std::env::temp_dir().join("rqbit-simulate-traffic");
 
-    tokio::fs::remove_dir_all(&root).await?;
-    tokio::fs::create_dir_all(&root).await?;
+    // Clean up before creating log file
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root)?;
+
+    let log_file = std::env::var("TESTSERVER_LOG_FILE")
+        .unwrap_or_else(|_| root.join("testserver.log").to_string_lossy().into_owned());
+    let log_file_rust_log = std::env::var("TESTSERVER_LOG_FILE_RUST_LOG").ok();
+
+    let _logging = init_logging(InitLoggingOptions {
+        default_rust_log_value: Some("info"),
+        log_file: Some(&log_file),
+        log_file_rust_log: Some(log_file_rust_log.as_deref().unwrap_or("debug")),
+    })?;
+
+    info!("logging to file: {}", log_file);
 
     TestHarness {
         torrents: create_torrents(&root.join("torrents"), 10).await?,

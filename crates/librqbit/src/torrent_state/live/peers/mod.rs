@@ -158,21 +158,19 @@ impl PeerStates {
         self.session_stats.inc_steals();
 
         self.with_live_mut(from_peer, "send_cancellations", |live| {
-            let to_remove = live
-                .inflight_requests
-                .iter()
-                .filter(|r| r.piece_index == stolen_idx)
-                .copied()
-                .collect::<Vec<_>>();
-            for req in to_remove {
-                let _ = live
-                    .tx
-                    .send(WriterRequest::Message(Message::Cancel(Request {
+            let tx = &live.tx;
+            live.inflight_requests.retain(|req| {
+                if req.piece_index == stolen_idx {
+                    let _ = tx.send(WriterRequest::Message(Message::Cancel(Request {
                         index: stolen_idx.get(),
                         begin: req.offset,
                         length: req.size,
                     })));
-            }
+                    false
+                } else {
+                    true
+                }
+            });
         });
     }
 }

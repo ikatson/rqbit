@@ -48,6 +48,19 @@ make webui-dev
 
 @crates/librqbit/webui/CLAUDE.md has some details on webui if needed.
 
+### Log Files
+
+Both devserver and testserver write DEBUG-level logs to files:
+- **devserver**: `/tmp/rqbit-log` (env: `RQBIT_LOG_FILE`, `RQBIT_LOG_FILE_RUST_LOG`)
+- **testserver**: `/tmp/rqbit-simulate-traffic/testserver.log` (env: `TESTSERVER_LOG_FILE`, `TESTSERVER_LOG_FILE_RUST_LOG`)
+
+**IMPORTANT:** NEVER read log files directly - they can grow to many gigabytes. ALWAYS filter with `rg` and limit output:
+```bash
+rg "192.168.1.100" /tmp/rqbit-log | head -50      # search for peer address
+rg "ERROR" /tmp/rqbit-log | tail -100             # recent errors
+rg "abc123" /tmp/rqbit-log | head -20             # search for torrent hash
+```
+
 ## Architecture
 
 ### Core Library (`crates/librqbit`)

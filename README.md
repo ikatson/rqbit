@@ -24,7 +24,9 @@ Assuming you are downloading to ~/Downloads. By default it'll download to curren
 
 ## Web UI
 
-Access with http://localhost:3030/web/. It looks similar to the Desktop app, see screenshot below.
+Access at http://localhost:3030/web/. See screenshot below (torrent names and speeds are simulated).
+
+<img width="1000" src="https://github.com/user-attachments/assets/d916b3d9-ebbd-462a-889d-df3916cc2681" />
 
 ## Desktop app
 
@@ -34,7 +36,7 @@ Download it in [Releases](https://github.com/ikatson/rqbit/releases) for OSX and
 
     cargo tauri build
 
-<img width="1136" alt="Rqbit desktop" src="https://github.com/ikatson/rqbit/assets/221386/51f56542-667f-4f5e-a1e0-942b1df4cd5a">
+It looks similar to the Web UI (screenshot above).
 
 ## Streaming support
 
