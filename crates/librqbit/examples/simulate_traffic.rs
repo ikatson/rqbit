@@ -23,6 +23,9 @@ use librqbit_dualstack_sockets::{BindOpts, TcpListener};
 use rand::{RngCore, SeedableRng, seq::IndexedRandom};
 use tracing::info;
 
+/// Base port for test sessions. Main uses 50000, peers use 50001+.
+const BASE_PORT: u16 = 50000;
+
 struct TestHarness {
     td: PathBuf,
     torrents: Vec<FakeTorrent>,
@@ -150,8 +153,9 @@ impl TestHarness {
         .copied()
         .unwrap();
 
+        let listen_port = BASE_PORT + 1 + id as u16; // 50001, 50002, etc.
         let peer_id = generate_azereus_style(*b"rQ", librqbit_core::crate_version!());
-        let root_span = tracing::info_span!("peer", id, peer_id = %peer_id.as_string());
+        let root_span = tracing::info_span!("peer", id, port = listen_port);
 
         let session = Session::new_with_opts(
             out.clone(),
@@ -164,7 +168,7 @@ impl TestHarness {
                 root_span: Some(root_span),
                 listen: Some(ListenerOptions {
                     mode: listen_mode,
-                    listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
+                    listen_addr: (Ipv6Addr::UNSPECIFIED, listen_port).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
                     announce_port: None,
@@ -243,7 +247,7 @@ impl TestHarness {
         let path = self.td.join("main");
 
         let peer_id = generate_azereus_style(*b"rQ", librqbit_core::crate_version!());
-        let root_span = tracing::info_span!("main", peer_id = %peer_id.as_string());
+        let root_span = tracing::info_span!("main", port = BASE_PORT);
 
         let session = Session::new_with_opts(
             path.clone(),
@@ -256,7 +260,7 @@ impl TestHarness {
                 root_span: Some(root_span),
                 listen: Some(ListenerOptions {
                     mode: librqbit::ListenerMode::TcpAndUtp,
-                    listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
+                    listen_addr: (Ipv6Addr::UNSPECIFIED, BASE_PORT).into(),
                     enable_upnp_port_forwarding: false,
                     utp_opts: None,
                     announce_port: None,
