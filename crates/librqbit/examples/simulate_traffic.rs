@@ -12,7 +12,7 @@ use bytes::Bytes;
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, ConnectionOptions, CreateTorrentOptions,
     CreateTorrentResult, ListenerOptions, PeerConnectionOptions, Session, SessionOptions,
-    create_torrent,
+    create_torrent, generate_azereus_style,
     http_api::{HttpApi, HttpApiOptions},
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
@@ -53,7 +53,7 @@ fn create_default_random_dir_with_torrents(dir: &Path, num_files: usize, file_si
     }
 }
 
-async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
+fn generate_unique_torrent_name(index: usize) -> String {
     static TORRENT_NAMES: &[&str] = &[
         "Ubuntu 24.04 LTS Desktop amd64",
         "Arch.Linux.2026.01.01.x86_64.Rolling-RELEASE",
@@ -87,6 +87,17 @@ async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
         "Lubuntu.24.04.LTS.Minimal.Install.x64",
     ];
 
+    let base_name = TORRENT_NAMES[index % TORRENT_NAMES.len()];
+    let cycle = index / TORRENT_NAMES.len();
+
+    if cycle == 0 {
+        base_name.to_string()
+    } else {
+        format!("{} ({})", base_name, cycle + 1)
+    }
+}
+
+async fn create_one(path: &Path, index: usize) -> anyhow::Result<CreateTorrentResult> {
     create_default_random_dir_with_torrents(
         path,
         rand::random_range(2..10),
@@ -95,7 +106,7 @@ async fn create_one(path: &Path) -> anyhow::Result<CreateTorrentResult> {
     create_torrent(
         path,
         CreateTorrentOptions {
-            name: Some(TORRENT_NAMES.choose(&mut rand::rng()).unwrap()),
+            name: Some(&generate_unique_torrent_name(index)),
             piece_length: Some(CHUNK_SIZE),
             ..Default::default()
         },
@@ -114,7 +125,7 @@ async fn create_torrents(td: &Path, count: usize) -> anyhow::Result<Vec<FakeTorr
     for torrent in 0..count {
         let dir = td.join(torrent.to_string());
         tokio::fs::create_dir_all(&dir).await?;
-        let res = create_one(&dir).await?;
+        let res = create_one(&dir, torrent).await?;
         result.push(FakeTorrent {
             root: dir,
             torrent_file: res.as_bytes()?,
@@ -139,6 +150,9 @@ impl TestHarness {
         .copied()
         .unwrap();
 
+        let peer_id = generate_azereus_style(*b"rQ", librqbit_core::crate_version!());
+        let root_span = tracing::info_span!("peer", id, peer_id = %peer_id.as_string());
+
         let session = Session::new_with_opts(
             out.clone(),
             SessionOptions {
@@ -146,6 +160,8 @@ impl TestHarness {
                 disable_dht_persistence: true,
                 fastresume: false,
                 persistence: None,
+                peer_id: Some(peer_id),
+                root_span: Some(root_span),
                 listen: Some(ListenerOptions {
                     mode: listen_mode,
                     listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
@@ -225,6 +241,10 @@ impl TestHarness {
 
     async fn run_main(&self) -> anyhow::Result<()> {
         let path = self.td.join("main");
+
+        let peer_id = generate_azereus_style(*b"rQ", librqbit_core::crate_version!());
+        let root_span = tracing::info_span!("main", peer_id = %peer_id.as_string());
+
         let session = Session::new_with_opts(
             path.clone(),
             SessionOptions {
@@ -232,6 +252,8 @@ impl TestHarness {
                 disable_dht_persistence: true,
                 fastresume: false,
                 persistence: None,
+                peer_id: Some(peer_id),
+                root_span: Some(root_span),
                 listen: Some(ListenerOptions {
                     mode: librqbit::ListenerMode::TcpAndUtp,
                     listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
