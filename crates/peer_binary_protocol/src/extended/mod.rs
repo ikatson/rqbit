@@ -5,8 +5,8 @@ use bencode::bencode_serialize_to_writer;
 use buffers::ByteBuf;
 use buffers::ByteBufT;
 use byteorder::WriteBytesExt;
-use serde::Deserialize;
-use serde::Serialize;
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 use ut_pex::UtPex;
 
 use crate::DoubleBufHelper;

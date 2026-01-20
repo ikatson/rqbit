@@ -4,7 +4,7 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use encoding_rs::Encoding;
 use itertools::Either;
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashSet, iter::once, path::PathBuf};
 use tracing::debug;
 

@@ -6,7 +6,8 @@
 use std::borrow::Borrow;
 
 use bytes::Bytes;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserializer, Serialize};
+use serde_derive::Deserialize;
 
 use clone_to_owned::CloneToOwned;
 
