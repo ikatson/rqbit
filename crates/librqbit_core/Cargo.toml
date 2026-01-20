@@ -15,28 +15,28 @@ sha1-crypto-hash = ["sha1w/sha1-crypto-hash"]
 sha1-ring = ["sha1w/sha1-ring"]
 
 [dependencies]
-tracing = "0.1.40"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-hex = "0.4"
-anyhow = "1"
-url = { version = "2", default-features = false }
-rand = "0.9"
-parking_lot = "0.12"
-serde = "1"
-serde_derive = "1"
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-sha1w = { path = "../sha1w", package = "librqbit-sha1-wrapper", version = "4.1", default-features = false, optional = true }
-itertools = "0.14"
-directories = "6"
-tokio-util = "0.7.10"
-data-encoding = "2.6.0"
-bytes = "1.7.1"
-memchr = "2.7.5"
-thiserror = "2.0.12"
-chardetng = "0.1.17"
-encoding_rs = "0.8.35"
+tracing.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+hex.workspace = true
+anyhow.workspace = true
+url.workspace = true
+rand.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+buffers.workspace = true
+bencode.workspace = true
+clone_to_owned.workspace = true
+sha1w = { workspace = true, optional = true }
+itertools.workspace = true
+directories.workspace = true
+tokio-util.workspace = true
+data-encoding.workspace = true
+bytes.workspace = true
+memchr.workspace = true
+thiserror.workspace = true
+chardetng.workspace = true
+encoding_rs.workspace = true
 
 [dev-dependencies]
-serde_json = "1"
+serde_json.workspace = true

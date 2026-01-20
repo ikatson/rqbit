@@ -10,23 +10,22 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-serde = "1"
-serde_derive = "1"
-byteorder = "1"
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-librqbit-core = { path = "../librqbit_core", default-features = false, version = "5" }
-bitvec = "1"
-anyhow = "1"
-bytes = "1.7.1"
-itertools = "0.14"
-thiserror = "2.0.12"
-tracing = "0.1.41"
+serde.workspace = true
+serde_derive.workspace = true
+byteorder.workspace = true
+buffers.workspace = true
+bencode.workspace = true
+clone_to_owned.workspace = true
+librqbit-core.workspace = true
+bitvec.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+itertools.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-criterion = "0.7.0"
-
+criterion.workspace = true
 
 [[bench]]
 name = "bench"

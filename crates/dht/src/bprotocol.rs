@@ -5,9 +5,9 @@ use std::{
 };
 
 use bencode::{ByteBuf, ByteBufOwned};
+use buffers::ByteBufT;
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use librqbit_buffers::ByteBufT;
 use librqbit_core::{
     compact_ip::{
         Compact, CompactListInBuffer, CompactSerialize, CompactSerializeFixedLen, CompactSocketAddr,

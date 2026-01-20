@@ -10,24 +10,24 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-tokio = "1"
-anyhow = "1"
-futures = "0.3"
-async-stream = "0.3.5"
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
-librqbit-core = { path = "../librqbit_core", default-features = false, version = "5" }
-byteorder = "1.5"
-serde = "1"
-serde_derive = "1"
-urlencoding = "2"
-rand = "0.9"
-tracing = "0.1.40"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
-url = { version = "2", default-features = false }
-parking_lot = "0.12.3"
-tokio-util = "0.7.13"
-librqbit-dualstack-sockets = "0.6.11"
-backon = "1.5.1"
-itertools = "0.14.0"
-serde_with = "3.13.0"
+tokio.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+async-stream.workspace = true
+buffers.workspace = true
+librqbit-core.workspace = true
+byteorder.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+urlencoding.workspace = true
+rand.workspace = true
+tracing.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+bencode.workspace = true
+url.workspace = true
+parking_lot.workspace = true
+tokio-util.workspace = true
+librqbit-dualstack-sockets.workspace = true
+backon.workspace = true
+itertools.workspace = true
+serde_with.workspace = true

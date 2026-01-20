@@ -9,34 +9,29 @@ repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
 [dependencies]
-tokio = { version = "1", features = [
-    "macros",
-    "rt-multi-thread",
-    "net",
-    "sync",
-] }
-tokio-stream = { version = "0.1", features = ["sync"] }
-serde = "1"
-serde_derive = "1"
-leaky-bucket = "1.1"
-serde_json = "1"
-librqbit-buffers = { path = "../buffers", version = "4.2.0" }
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
-anyhow = "1"
-parking_lot = "0.12"
-tracing = "0.1"
-backon = { version = "1.5", features = ["tokio-sleep"] }
-futures = "0.3"
-rand = "0.9"
-indexmap = "2"
-dashmap = { version = "6", features = ["serde"] }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-librqbit-core = { path = "../librqbit_core", default-features = false, version = "5" }
-chrono = { version = "0.4.31", features = ["serde"] }
-tokio-util = "0.7.10"
-bytes = "1.7.1"
-librqbit-dualstack-sockets = "0.6.11"
-thiserror = "2.0.12"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
+tokio-stream = { workspace = true, features = ["sync"] }
+serde.workspace = true
+serde_derive.workspace = true
+leaky-bucket.workspace = true
+serde_json.workspace = true
+buffers.workspace = true
+bencode.workspace = true
+anyhow.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+backon = { workspace = true, features = ["tokio-sleep"] }
+futures.workspace = true
+rand.workspace = true
+indexmap.workspace = true
+dashmap = { workspace = true, features = ["serde"] }
+clone_to_owned.workspace = true
+librqbit-core.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+tokio-util.workspace = true
+bytes.workspace = true
+librqbit-dualstack-sockets.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = "0.3"
+tracing-subscriber.workspace = true

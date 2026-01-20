@@ -4,19 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.98"
-librqbit-dualstack-sockets = "0.6.11"
-tokio = { version = "1.45.1", features = ["time"] }
-tokio-util = "0.7.15"
-librqbit-sha1-wrapper = { path = "../sha1w", version = "4", default-features = false }
-librqbit-core = { version = "5", path = "../librqbit_core", default-features = false }
-rand = "0.9.1"
-futures = "0.3.31"
-bstr = "1.12.0"
-parking_lot = "0.12.4"
-httparse = "1.10.1"
-atoi = "2.0.0"
-tracing = "0.1.41"
+anyhow.workspace = true
+librqbit-dualstack-sockets.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tokio-util.workspace = true
+sha1w.workspace = true
+librqbit-core.workspace = true
+rand.workspace = true
+futures.workspace = true
+bstr.workspace = true
+parking_lot.workspace = true
+httparse.workspace = true
+atoi.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = "0.3.19"
+tracing-subscriber.workspace = true

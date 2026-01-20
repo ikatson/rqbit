@@ -9,33 +9,33 @@ repository = ""
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build.workspace = true
 
 [dependencies]
-tauri = { version = "2", features = [] }
-serde = "1"
-serde_derive = "1"
-serde_json = "1.0"
-librqbit = { path = "../../crates/librqbit", features = [
+tauri.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+librqbit = { workspace = true, features = [
     "tracing-subscriber-utils",
     "http-api",
     "webui",
     "upnp-serve-adapter",
     "prometheus",
 ] }
-tokio = { version = "1.47.0", features = ["rt-multi-thread"] }
-anyhow = "1.0.75"
-base64 = "0.22"
-http = "1.0.0"
-directories = "6"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
-tracing = "0.1"
-serde_with = "3.4.0"
-parking_lot = "0.12.1"
-gethostname = "1"
-tauri-plugin-shell = "2"
-metrics-exporter-prometheus = { version = "0.17", default-features = false }
-librqbit-dualstack-sockets = "0.6.11"
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+anyhow.workspace = true
+base64.workspace = true
+http.workspace = true
+directories.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+tracing.workspace = true
+serde_with.workspace = true
+parking_lot.workspace = true
+gethostname.workspace = true
+tauri-plugin-shell.workspace = true
+metrics-exporter-prometheus.workspace = true
+librqbit-dualstack-sockets.workspace = true
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
