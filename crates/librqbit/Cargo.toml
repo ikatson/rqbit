@@ -42,112 +42,87 @@ _disable_reconnect_test = []
 
 [dependencies]
 # sqlx and home are pinned so that we can compile on older Rusts
-sqlx = { version = "0.8", features = [
-    "runtime-tokio",
-    "macros",
-    "postgres",
-], default-features = false, optional = true }
-home = { version = "0.5", optional = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "macros", "postgres"], optional = true }
+home = { workspace = true, optional = true }
 
-bencode = { path = "../bencode", default-features = false, package = "librqbit-bencode", version = "3.1" }
-tracker_comms = { path = "../tracker_comms", default-features = false, package = "librqbit-tracker-comms", version = "3" }
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
-librqbit-core = { path = "../librqbit_core", default-features = false, version = "5" }
-librqbit-lsd = { path = "../librqbit_lsd", default-features = false, package = "librqbit-lsd", version = "0.1.0" }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-peer_binary_protocol = { path = "../peer_binary_protocol", default-features = false, package = "librqbit-peer-protocol", version = "4.3" }
-sha1w = { path = "../sha1w", default-features = false, package = "librqbit-sha1-wrapper", version = "4.1" }
-dht = { path = "../dht", package = "librqbit-dht", default-features = false, version = "5.3.0" }
-librqbit-upnp = { path = "../upnp", version = "1" }
-upnp-serve = { path = "../upnp-serve", package = "librqbit-upnp-serve", default-features = false, version = "1", optional = true }
+bencode.workspace = true
+tracker_comms.workspace = true
+buffers.workspace = true
+librqbit-core.workspace = true
+librqbit-lsd.workspace = true
+clone_to_owned.workspace = true
+peer_binary_protocol.workspace = true
+sha1w.workspace = true
+dht.workspace = true
+librqbit-upnp.workspace = true
+upnp-serve = { workspace = true, optional = true }
 
-tokio = { version = "1", features = [
-    "macros",
-    "rt-multi-thread",
-    "fs",
-    "io-util",
-] }
-governor = "0.10"
-console-subscriber = { version = "0.5", optional = true }
-axum = { version = "0.8", optional = true }
-tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
-tokio-stream = "0.1"
-serde = { version = "1", features = ["rc"] }
-serde_derive = "1"
-serde_json = "1"
-serde_urlencoded = "0.7"
-anyhow = "1"
-itertools = "0.14"
-http = "1"
-regex = "1"
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "socks",
-    "stream",
-] }
-urlencoding = "2"
-byteorder = "1"
-bincode = "2"
-bitvec = "1"
-parking_lot = "0.12"
-tracing = "0.1.40"
-size_format = "1"
-rand = "0.9"
-tracing-subscriber = { version = "0.3", default-features = false, features = [
-    "json",
-    "fmt",
-    "env-filter",
-], optional = true }
-uuid = { version = "1.2", features = ["v4"] }
-futures = "0.3"
-url = { version = "^2.5.2", default-features = false, features = [
-    "serde",
-] } # can't upgrade yet until min version is Rust 1.81, see https://github.com/servo/rust-url/issues/992
-
-hex = "0.4"
-backon = "1.5"
-dashmap = "6"
-base64 = "0.22"
-serde_with = "3.4.0"
-tokio-util = { version = "0.7.10", features = ["io"] }
-metrics-exporter-prometheus = { version = "0.17", optional = true, default-features = false }
-bytes = "1.5.0"
-rlimit = "0.10.1"
-async-stream = "0.3.5"
-memmap2 = { version = "0.9.4" }
-lru = { version = "0.16", optional = true }
-mime_guess = { version = "2.0.5", default-features = false }
-tokio-socks = "0.5.2"
-async-trait = "0.1.81"
-async-backtrace = { version = "0.2", optional = true }
-notify = { version = "8", optional = true }
-walkdir = "2.5.0"
-arc-swap = "1.7.1"
-intervaltree = "0.2.7"
-async-compression = { version = "0.4.18", features = ["tokio", "gzip"] }
-librqbit-utp = { version = "0.6.2", features = ["export-metrics"] }
-axum-extra = { version = "0.10.1", features = ["query"] }
-librqbit-dualstack-sockets = { version = "0.6.11", features = ["axum"] }
-socket2 = "0.6"
-nix = { version = "0.30.1", features = ["uio"] }
-thiserror = "2.0.12"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util"] }
+governor.workspace = true
+console-subscriber = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, features = ["cors", "trace"], optional = true }
+tokio-stream.workspace = true
+serde = { workspace = true, features = ["rc"] }
+serde_derive.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+anyhow.workspace = true
+itertools.workspace = true
+http.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["json", "socks", "stream"] }
+urlencoding.workspace = true
+byteorder.workspace = true
+bincode.workspace = true
+bitvec.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+size_format.workspace = true
+rand.workspace = true
+tracing-subscriber = { workspace = true, features = ["json", "fmt", "env-filter"], optional = true }
+uuid = { workspace = true, features = ["v4"] }
+futures.workspace = true
+url = { workspace = true, features = ["serde"] }
+hex.workspace = true
+backon.workspace = true
+dashmap.workspace = true
+base64.workspace = true
+serde_with.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
+metrics-exporter-prometheus = { workspace = true, optional = true }
+bytes.workspace = true
+rlimit.workspace = true
+async-stream.workspace = true
+memmap2.workspace = true
+lru = { workspace = true, optional = true }
+mime_guess.workspace = true
+tokio-socks.workspace = true
+async-trait.workspace = true
+async-backtrace = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
+walkdir.workspace = true
+arc-swap.workspace = true
+intervaltree.workspace = true
+async-compression = { workspace = true, features = ["tokio", "gzip"] }
+librqbit-utp = { workspace = true, features = ["export-metrics"] }
+axum-extra = { workspace = true, features = ["query"] }
+librqbit-dualstack-sockets = { workspace = true, features = ["axum"] }
+socket2.workspace = true
+nix = { workspace = true, features = ["uio"] }
+thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.1", features = [
-    "Win32",
-    "Win32_System",
-    "Win32_System_IO",
-    "Win32_System_Ioctl",
-] }
+windows = { workspace = true, features = ["Win32", "Win32_System", "Win32_System_IO", "Win32_System_Ioctl"] }
 
 [build-dependencies]
-anyhow = "1"
+anyhow.workspace = true
 
 [dev-dependencies]
-tracing-subscriber = "0.3"
-tokio-test = "0.4"
-tempfile = "3"
-pollster = "0.4.0"
+tracing-subscriber.workspace = true
+tokio-test.workspace = true
+tempfile.workspace = true
+pollster.workspace = true
 
 [[example]]
 name = "simulate_traffic"

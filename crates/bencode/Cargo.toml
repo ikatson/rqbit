@@ -9,12 +9,12 @@ repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
 [dependencies]
-serde = "1"
-serde_derive = "1"
-buffers = { path = "../buffers", package = "librqbit-buffers", version = "4.2" }
-clone_to_owned = { path = "../clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
-bytes = "1.7.1"
-atoi = "2.0.0"
-thiserror = "2.0.12"
-arrayvec = "0.7.6"
-anyhow = "1.0.98"
+serde.workspace = true
+serde_derive.workspace = true
+buffers.workspace = true
+clone_to_owned.workspace = true
+bytes.workspace = true
+atoi.workspace = true
+thiserror.workspace = true
+arrayvec.workspace = true
+anyhow.workspace = true

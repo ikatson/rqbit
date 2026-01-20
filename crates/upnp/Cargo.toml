@@ -12,21 +12,21 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tracing = "0.1"
-anyhow = "1"
-reqwest = { version = "0.12", default-features = false }
-serde = "1"
-serde_derive = "1"
-tokio = { version = "1", features = ["macros"] }
-futures = "0.3"
-url = { version = "2", default-features = false }
-network-interface = { version = "2" }
-httparse = "1.9.4"
-bstr = "1.10.0"
-quick-xml = { version = "0.38.3", features = ["serialize"] }
-librqbit-dualstack-sockets = "0.6.11"
-socket2 = "0.6"
+tracing.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+futures.workspace = true
+url.workspace = true
+network-interface.workspace = true
+httparse.workspace = true
+bstr.workspace = true
+quick-xml = { workspace = true, features = ["serialize"] }
+librqbit-dualstack-sockets.workspace = true
+socket2.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tracing-subscriber = "0.3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber.workspace = true

@@ -48,3 +48,108 @@ lto = false
 [profile.release-debug]
 inherits = "release"
 debug = true
+
+[workspace.dependencies]
+# Internal crates - keys are import names used in source code, package is the actual crate name
+librqbit = { path = "crates/librqbit", version = "9.0.0-beta.1", default-features = false }
+bencode = { path = "crates/bencode", package = "librqbit-bencode", version = "3.1", default-features = false }
+buffers = { path = "crates/buffers", package = "librqbit-buffers", version = "4.2" }
+clone_to_owned = { path = "crates/clone_to_owned", package = "librqbit-clone-to-owned", version = "3" }
+librqbit-core = { path = "crates/librqbit_core", version = "5", default-features = false }
+dht = { path = "crates/dht", package = "librqbit-dht", version = "5.3.0", default-features = false }
+librqbit-lsd = { path = "crates/librqbit_lsd", version = "0.1.0", default-features = false }
+peer_binary_protocol = { path = "crates/peer_binary_protocol", package = "librqbit-peer-protocol", version = "4.3", default-features = false }
+sha1w = { path = "crates/sha1w", package = "librqbit-sha1-wrapper", version = "4.1", default-features = false }
+tracker_comms = { path = "crates/tracker_comms", package = "librqbit-tracker-comms", version = "3", default-features = false }
+librqbit-upnp = { path = "crates/upnp", version = "1" }
+upnp-serve = { path = "crates/upnp-serve", package = "librqbit-upnp-serve", version = "1", default-features = false }
+
+# External crates
+anyhow = "1"
+arc-swap = "1.7"
+arrayvec = "0.7"
+assert_cfg = "0.1"
+async-backtrace = "0.2"
+async-compression = "0.4"
+async-stream = "0.3"
+async-trait = "0.1"
+atoi = "2"
+aws-lc-rs = "1.12"
+axum = "0.8"
+axum-extra = "0.10"
+backon = "1.5"
+base64 = "0.22"
+bincode = "2"
+bitvec = "1"
+bstr = "1"
+byteorder = "1"
+bytes = "1"
+chardetng = "0.1"
+chrono = "0.4"
+clap = "4"
+clap_complete = "4"
+console-subscriber = "0.5"
+criterion = "0.7"
+crypto-hash = "0.3"
+dashmap = "6"
+data-encoding = "2"
+directories = "6"
+encoding_rs = "0.8"
+futures = "0.3"
+gethostname = "1"
+governor = "0.10"
+hex = "0.4"
+home = "0.5"
+http = "1"
+httparse = "1"
+indexmap = "2"
+intervaltree = "0.2"
+itertools = "0.14"
+leaky-bucket = "1.1"
+libc = "0.2"
+librqbit-dualstack-sockets = "0.6"
+librqbit-utp = "0.6"
+lru = "0.16"
+memchr = "2"
+memmap2 = "0.9"
+metrics-exporter-prometheus = { version = "0.17", default-features = false }
+mime_guess = { version = "2", default-features = false }
+network-interface = "2"
+nix = "0.30"
+notify = "8"
+openssl = "0.10"
+parking_lot = "0.12"
+parse_duration = "2"
+pollster = "0.4"
+quick-xml = "0.38"
+rand = "0.9"
+regex = "1"
+reqwest = { version = "0.12", default-features = false }
+rlimit = "0.10"
+serde = "1"
+serde_derive = "1"
+serde_json = "1"
+serde_urlencoded = "0.7"
+serde_with = "3"
+signal-hook = "0.3"
+size_format = "1"
+socket2 = "0.6"
+sqlx = { version = "0.8", default-features = false }
+tauri = "2"
+tauri-build = "2"
+tauri-plugin-shell = "2"
+tempfile = "3"
+thiserror = "2"
+tokio = "1"
+tokio-socks = "0.5"
+tokio-stream = "0.1"
+tokio-test = "0.4"
+tokio-util = "0.7"
+tower-http = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false }
+url = { version = "2", default-features = false }
+urlencoding = "2"
+uuid = "1"
+walkdir = "2"
+windows = "0.62"

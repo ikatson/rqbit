@@ -16,6 +16,6 @@ sha1-crypto-hash = ["crypto-hash"]
 sha1-ring = ["aws-lc-rs"]
 
 [dependencies]
-assert_cfg = "0.1.0"
-crypto-hash = { version = "0.3", optional = true }
-aws-lc-rs = { version = "1.12", optional = true }
+assert_cfg.workspace = true
+crypto-hash = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
