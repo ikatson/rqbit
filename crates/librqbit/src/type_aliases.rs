@@ -16,8 +16,5 @@ pub type FileInfos = Vec<FileInfo>;
 pub(crate) type FileStorage = Box<dyn TorrentStorage>;
 pub(crate) type FilePriorities = Vec<usize>;
 
-pub(crate) type DiskWorkQueueItem = Box<dyn FnOnce() + Send + Sync>;
-pub(crate) type DiskWorkQueueSender = tokio::sync::mpsc::Sender<DiskWorkQueueItem>;
-
 pub(crate) type BoxAsyncReadVectored = Box<dyn AsyncReadVectored + Unpin + Send + 'static>;
 pub(crate) type BoxAsyncWrite = Box<dyn AsyncWrite + Unpin + Send + 'static>;

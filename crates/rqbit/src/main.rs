@@ -216,13 +216,6 @@ struct Opts {
     )]
     max_blocking_threads: u16,
 
-    /// If you set this to something, all writes to disk will happen in background and be
-    /// buffered in memory up to approximately the given number of megabytes.
-    ///
-    /// Might be useful for slow disks.
-    #[arg(long = "defer-writes-up-to", env = "RQBIT_DEFER_WRITES_UP_TO")]
-    defer_writes_up_to: Option<usize>,
-
     /// Use mmap (file-backed) for storage. Any advantages are questionable and unproven.
     /// If you use it, you know what you are doing.
     #[arg(long)]
@@ -581,7 +574,6 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             }),
         }),
         bind_device_name: opts.bind_device_name.take(),
-        defer_writes_up_to: opts.defer_writes_up_to,
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
                 #[cfg(feature = "debug_slow_disk")]
