@@ -16,6 +16,7 @@ import {
   compareTorrents,
   isTorrentVisible,
 } from "../helper/torrentFilters";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 
 const DEFAULT_SORT_COLUMN: TorrentSortColumn = "id";
 const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
@@ -28,6 +29,9 @@ export const CardLayout = (props: {
   const setSearchQuery = useUIStore((state) => state.setSearchQuery);
   const statusFilter = useUIStore((state) => state.statusFilter);
   const setStatusFilter = useUIStore((state) => state.setStatusFilter);
+
+  // Keyboard shortcuts (Ctrl+A, Ctrl+F, Escape)
+  useKeyboardShortcuts();
   const detailsModalTorrentId = useUIStore(
     (state) => state.detailsModalTorrentId,
   );
@@ -103,6 +107,7 @@ export const CardLayout = (props: {
           <GoSearch className="absolute left-2.5 sm:left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-tertiary" />
           <input
             type="text"
+            data-search-input
             value={localSearch}
             onChange={handleSearchChange}
             placeholder="Search..."
