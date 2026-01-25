@@ -150,14 +150,18 @@ pub struct TrackerResponse<'a> {
     #[serde(default)]
     pub incomplete: u64,
     #[serde(borrow)]
-    pub peers: Peers<'a, SocketAddrV4>,
+    pub peers: Option<Peers<'a, SocketAddrV4>>,
     #[serde(default, borrow)]
-    pub peers6: Peers<'a, SocketAddrV6>,
+    pub peers6: Option<Peers<'a, SocketAddrV6>>,
 }
 
 impl TrackerResponse<'_> {
-    pub fn iter_peers(&self) -> impl Iterator<Item = SocketAddr> {
-        self.peers.iter().chain(self.peers6.iter())
+    pub fn iter_peers(&self) -> impl Iterator<Item = SocketAddr> + '_ {
+        self.peers
+            .as_ref()
+            .into_iter()
+            .flat_map(|p| p.iter())
+            .chain(self.peers6.as_ref().into_iter().flat_map(|p| p.iter()))
     }
 }
 
