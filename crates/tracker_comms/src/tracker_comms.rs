@@ -13,7 +13,8 @@ use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::Either;
 use futures::stream::BoxStream;
-use futures::stream::FuturesUnordered;
+use parking_lot::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing::debug;
 use tracing::debug_span;
@@ -36,6 +37,7 @@ pub struct TrackerComms {
     announce_port: u16,
     reqwest_client: reqwest::Client,
     key: u32,
+    tracker_immediate_tx: Mutex<Vec<tokio::sync::mpsc::Sender<TrackerImmediateEvent>>>,
 }
 
 #[derive(Default)]
@@ -149,7 +151,7 @@ impl TrackerComms {
         announce_port: u16,
         reqwest_client: reqwest::Client,
         udp_client: UdpTrackerClient,
-    ) -> Option<BoxStream<'static, SocketAddr>> {
+    ) -> Option<(TrackerHandle, BoxStream<'static, SocketAddr>)> {
         let trackers = trackers
             .into_iter()
             .filter_map(|t| match t.scheme() {
@@ -170,50 +172,56 @@ impl TrackerComms {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<SocketAddr>(16);
 
-        let s = async_stream::stream! {
-            use futures::StreamExt;
-            let comms = Arc::new(Self {
-                info_hash,
-                peer_id,
-                stats,
-                force_tracker_interval: force_interval,
-                tx,
-                announce_port,
-                reqwest_client,
-                key: rand::random(),
+        let comms = Arc::new(Self {
+            info_hash,
+            peer_id,
+            stats,
+            force_tracker_interval: force_interval,
+            tx,
+            announce_port,
+            reqwest_client,
+            key: rand::random(),
+            tracker_immediate_tx: Mutex::new(vec![]),
+        });
+
+        let cancel = CancellationToken::new();
+
+        let handle = TrackerHandle {
+            cancel: cancel.clone(),
+            comms: comms.clone(),
+        };
+
+        for tracker in trackers {
+            let cancel = cancel.clone();
+            let comms = comms.clone();
+            let udp = udp_client.clone();
+
+            tokio::spawn(async move {
+                comms.run_tracker(tracker, &udp, cancel).await;
             });
-            let mut futures = FuturesUnordered::new();
-            for tracker in trackers {
-                futures.push(comms.add_tracker(tracker, &udp_client))
-            }
-            while !(futures.is_empty()) {
-                tokio::select! {
-                    addr = rx.recv() => {
-                        if let Some(addr) = addr {
-                            yield addr;
-                        }
-                    }
-                    e = futures.next(), if !futures.is_empty() => {
-                        if let Some(Err(e)) = e {
-                            debug!("error: {e}");
-                        }
-                    }
-                }
+        }
+
+        let s = async_stream::stream! {
+            while let Some(addr) = rx.recv().await {
+                yield addr;
             }
         };
 
-        Some(s.boxed())
+        Some((handle, s.boxed()))
     }
 
     fn add_tracker(
         &self,
         url: SupportedTracker,
         client: &UdpTrackerClient,
+        cancel: CancellationToken,
     ) -> Either<
         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
         impl std::future::Future<Output = anyhow::Result<()>> + '_ + Send,
     > {
         let info_hash = self.info_hash;
+        let (immediate_tx, immediate_rx) = tokio::sync::mpsc::channel::<TrackerImmediateEvent>(8);
+        self.tracker_immediate_tx.lock().push(immediate_tx);
         match url {
             SupportedTracker::Udp(url) => {
                 let span = debug_span!(parent: None, "udp_tracker", tracker = %url, info_hash = ?info_hash);
@@ -228,36 +236,105 @@ impl TrackerComms {
                     tracker = %url,
                     info_hash = ?info_hash
                 );
-                self.task_single_tracker_monitor_http(url)
+                self.task_single_tracker_monitor_http(url, immediate_rx, cancel)
                     .instrument(span)
                     .left_future()
             }
         }
     }
 
-    async fn task_single_tracker_monitor_http(&self, tracker_url: Url) -> anyhow::Result<()> {
+    async fn task_single_tracker_monitor_http(
+        &self,
+        tracker_url: Url,
+        mut immediate_rx: tokio::sync::mpsc::Receiver<TrackerImmediateEvent>,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
         trace!(url=%tracker_url, "starting monitor");
-        let mut event = Some(tracker_comms_http::TrackerRequestEvent::Started);
+        let mut started = false;
+        let mut interval = Duration::from_secs(0);
 
         loop {
-            let interval = (|| self.tracker_one_request_http(&tracker_url, event))
-                .retry(
-                    ExponentialBuilder::new()
-                        .without_max_times()
-                        .with_jitter()
-                        .with_factor(2.)
-                        .with_min_delay(Duration::from_secs(10))
-                        .with_max_delay(Duration::from_secs(600)),
-                )
-                .notify(|err, retry_in| debug!(?retry_in, "error calling tracker: {err:#}"))
-                .await
-                .context("this shouldnt fail")?;
+            tokio::select! {
+                Some(ev) = immediate_rx.recv() => {
+                    match ev {
+                        TrackerImmediateEvent::Started => {
+                            if started {
+                                continue;
+                            }
 
-            event = None;
-            let interval = self.force_tracker_interval.unwrap_or(interval);
-            debug!("sleeping for {:?} after calling tracker", interval);
-            tokio::time::sleep(interval).await;
+                            let next = (|| {
+                                self.tracker_one_request_http(
+                                    &tracker_url,
+                                    Some(tracker_comms_http::TrackerRequestEvent::Started),
+                                )
+                            })
+                            .retry(
+                                ExponentialBuilder::new()
+                                    .without_max_times()
+                                    .with_jitter()
+                                    .with_min_delay(Duration::from_secs(10))
+                                    .with_max_delay(Duration::from_secs(600)),
+                            )
+                            .notify(|err, retry_in| {
+                                debug!(?retry_in, "error sending started event: {err:#}")
+                            })
+                            .await
+                            .expect("started retry is infinite");
+
+                            started = true;
+                            interval = self.force_tracker_interval.unwrap_or(next);
+                            interval = interval.max(Duration::from_secs(15));
+                        }
+
+                        TrackerImmediateEvent::Completed => {
+                            let _ = self.tracker_one_request_http(
+                                &tracker_url,
+                                Some(tracker_comms_http::TrackerRequestEvent::Completed),
+                            ).await;
+                        }
+
+                        TrackerImmediateEvent::Stopped(ack) => {
+                            let _ = self.tracker_one_request_http(
+                                &tracker_url,
+                                Some(tracker_comms_http::TrackerRequestEvent::Stopped),
+                            ).await;
+                            let _ = ack.send(());
+                            break;
+                        }
+                    }
+                }
+
+                _ = tokio::time::sleep(interval) => {
+                    if !started {
+                        continue;
+                    }
+
+                    interval = (|| self.tracker_one_request_http(&tracker_url, None))
+                        .retry(
+                            ExponentialBuilder::new()
+                                .without_max_times()
+                                .with_jitter()
+                                .with_factor(2.)
+                                .with_min_delay(Duration::from_secs(10))
+                                .with_max_delay(Duration::from_secs(600)),
+                        )
+                        .notify(|err, retry_in| debug!(?retry_in, "error calling tracker: {err:#}"))
+                        .await
+                        .context("this shouldnt fail")?;
+
+                    interval = self.force_tracker_interval.unwrap_or(interval);
+                    // Enforce a minimum interval of 15 seconds to avoid hammering trackers.
+                    interval = interval.max(Duration::from_secs(15));
+                    debug!("sleeping for {:?} after calling tracker", interval);
+                }
+
+                _ = cancel.cancelled() => {
+                    break;
+                }
+            }
         }
+
+        Ok(())
     }
 
     async fn tracker_one_request_http(
@@ -308,9 +385,7 @@ impl TrackerComms {
         for peer in response.iter_peers() {
             self.tx.send(peer).await?;
         }
-        Ok(Duration::from_secs(
-            response.min_interval.unwrap_or(response.interval),
-        ))
+        Ok(Duration::from_secs(response.interval))
     }
 
     async fn task_single_tracker_monitor_udp(
@@ -430,4 +505,81 @@ impl TrackerComms {
             }
         }
     }
+
+    async fn run_tracker(
+        &self,
+        tracker: SupportedTracker,
+        udp: &UdpTrackerClient,
+        cancel: CancellationToken,
+    ) {
+        let (immediate_tx, immediate_rx) = tokio::sync::mpsc::channel::<TrackerImmediateEvent>(8);
+
+        self.tracker_immediate_tx.lock().push(immediate_tx);
+
+        match tracker {
+            SupportedTracker::Http(url) => {
+                let _ = self
+                    .task_single_tracker_monitor_http(url, immediate_rx, cancel)
+                    .await;
+            }
+            SupportedTracker::Udp(url) => {
+                let _ = self.task_single_tracker_monitor_udp(url, udp.clone()).await;
+            }
+        }
+    }
+
+    async fn notify_started(&self) {
+        let txs = self.tracker_immediate_tx.lock().clone();
+
+        for tx in txs.iter() {
+            let _ = tx.send(TrackerImmediateEvent::Started).await;
+        }
+    }
+
+    async fn notify_completed(&self) {
+        let txs = self.tracker_immediate_tx.lock().clone();
+
+        for tx in txs.iter() {
+            let _ = tx.send(TrackerImmediateEvent::Completed).await;
+        }
+    }
+
+    async fn notify_stopped(&self) {
+        let txs = self.tracker_immediate_tx.lock().clone();
+
+        for tx in txs.iter() {
+            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+
+            let _ = tx.send(TrackerImmediateEvent::Stopped(ack_tx)).await;
+
+            let _ = ack_rx.await;
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TrackerHandle {
+    cancel: CancellationToken,
+    comms: Arc<TrackerComms>,
+}
+
+impl TrackerHandle {
+    pub async fn notify_started(&self) {
+        self.comms.notify_started().await;
+    }
+
+    pub async fn notify_completed(&self) {
+        self.comms.notify_completed().await;
+    }
+
+    pub async fn notify_stopped(&self) {
+        self.comms.notify_stopped().await;
+        self.cancel.cancel();
+    }
+}
+
+pub enum TrackerImmediateEvent {
+    Started,
+    Completed,
+    Stopped(tokio::sync::oneshot::Sender<()>),
 }

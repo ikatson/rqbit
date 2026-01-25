@@ -26,6 +26,7 @@ use librqbit_core::lengths::Lengths;
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use librqbit_core::torrent_metainfo::ValidatedTorrentMetaV1Info;
 pub use live::*;
+use parking_lot::Mutex;
 use parking_lot::RwLock;
 
 use tokio::sync::Notify;
@@ -103,6 +104,8 @@ pub(crate) struct ManagedTorrentLocked {
     //
     // This should change only on "unpause".
     pub(crate) paused: bool,
+    pub(crate) was_completed_on_start: bool,
+    pub(crate) completed_announced: bool,
     pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
 }
@@ -201,6 +204,7 @@ pub struct ManagedTorrent {
     pub metadata: ArcSwapOption<TorrentMetadata>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
+    pub tracker_handle: Mutex<Option<tracker_comms::TrackerHandle>>,
 }
 
 impl ManagedTorrent {
@@ -389,15 +393,27 @@ impl ManagedTorrent {
                         return Ok(());
                     }
                     let paused = g.state.take().assert_paused();
+                    let was_completed_on_start = paused.chunk_tracker.get_hns().finished();
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     let live = TorrentStateLive::new(paused, tx, token.clone())?;
                     g.state = ManagedTorrentState::Live(live.clone());
+                    g.was_completed_on_start = was_completed_on_start;
+
                     t.state_change_notify.notify_waiters();
 
-                    spawn_fatal_errors_receiver(t, rx, token);
+                    spawn_fatal_errors_receiver(t, rx, token.clone());
                     if let Some(peer_rx) = peer_rx {
                         spawn_peer_adder(&live, peer_rx);
                     }
+
+                    spawn_completed_watcher(t.clone(), token);
+
+                    if let Some(tracker_handle) = t.tracker_handle.lock().clone() {
+                        tokio::spawn(async move {
+                            tracker_handle.notify_started().await;
+                        });
+                    }
+
                     Ok(())
                 }
                 ManagedTorrentState::Error(_) => {
@@ -452,6 +468,13 @@ impl ManagedTorrent {
                 let paused = live.pause()?;
                 g.state = ManagedTorrentState::Paused(paused);
                 g.paused = true;
+
+                if let Some(tracker_handle) = self.tracker_handle.lock().take() {
+                    tokio::spawn(async move {
+                        tracker_handle.notify_stopped().await;
+                    });
+                }
+
                 self.state_change_notify.notify_waiters();
                 Ok(())
             }
@@ -685,4 +708,38 @@ fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
             }
         },
     );
+}
+
+fn spawn_completed_watcher(state: Arc<ManagedTorrent>, token: CancellationToken) {
+    let tracker_handle = state.tracker_handle.lock().clone();
+    let Some(tracker_handle) = tracker_handle else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = token.cancelled() => { }
+
+            res = state.wait_until_completed() => {
+                if res.is_ok() {
+                    let should_announce = {
+                        let mut g = state.locked.write();
+
+                        if g.was_completed_on_start {
+                            return;
+                        } else if g.completed_announced {
+                            false
+                        } else {
+                            g.completed_announced = true;
+                            true
+                        }
+                    };
+
+                    if should_announce {
+                        tracker_handle.notify_completed().await;
+                    }
+                }
+            }
+        }
+    });
 }
