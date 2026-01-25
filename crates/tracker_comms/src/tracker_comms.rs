@@ -308,9 +308,7 @@ impl TrackerComms {
         for peer in response.iter_peers() {
             self.tx.send(peer).await?;
         }
-        Ok(Duration::from_secs(
-            response.min_interval.unwrap_or(response.interval),
-        ))
+        Ok(Duration::from_secs(response.interval))
     }
 
     async fn task_single_tracker_monitor_udp(
