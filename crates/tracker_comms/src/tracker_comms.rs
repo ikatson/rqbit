@@ -283,7 +283,7 @@ impl TrackerComms {
         };
 
         let mut url = tracker_url.clone();
-        
+
         let mut queries = request.as_querystring();
         if let Some(url_query) = url.query() {
             queries.push_str(&format!("&{}", url_query));
