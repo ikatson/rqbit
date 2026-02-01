@@ -96,7 +96,7 @@ use crate::{
     session_stats::SessionStats,
     stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{BF, DiskWorkQueueSender, FilePriorities, FileStorage, PeerHandle},
+    type_aliases::{BF, FilePriorities, FileStorage, PeerHandle},
 };
 
 use self::{
@@ -357,10 +357,6 @@ impl TorrentStateLive {
 
     pub fn up_speed_estimator(&self) -> &SpeedEstimator {
         &self.up_speed_estimator
-    }
-
-    fn disk_work_tx(&self) -> Option<&DiskWorkQueueSender> {
-        self.shared.options.disk_write_queue.as_ref()
     }
 
     pub(crate) fn add_incoming_peer(
@@ -1966,36 +1962,14 @@ impl PeerHandler {
             Ok(())
         }
 
-        if let Some(dtx) = self.state.disk_work_tx() {
-            // TODO: shove all this into one thing to .clone() once rather than 5 times.
-            let state = self.state.clone();
-            let addr = self.addr;
-            let counters = self.counters.clone();
-            let piece = piece.clone_to_owned(None);
-            let tx = self.tx.clone();
-
-            let span = tracing::debug_span!("deferred_write");
-            let work = move || {
-                span.in_scope(|| {
-                    if let Err(e) =
-                        write_to_disk(&state, addr, &counters, &piece.as_borrowed(), &chunk_info)
-                    {
-                        let _ = tx.send(WriterRequest::Disconnect(Err(e)));
-                    }
-                })
-            };
-            // TODO: this is probably bad but this is all experimental so whatever
-            dtx.blocking_send(Box::new(work))?;
-        } else {
-            self.state
-                .shared
-                .spawner
-                .block_in_place_with_semaphore(|| {
-                    write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
-                })
-                .await
-                .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
-        }
+        self.state
+            .shared
+            .spawner
+            .block_in_place_with_semaphore(|| {
+                write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
+            })
+            .await
+            .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
 
         Ok(())
     }

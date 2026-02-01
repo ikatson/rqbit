@@ -13,7 +13,7 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use extended::PeerExtendedMessageIds;
 use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 pub use crate::double_buf::DoubleBufHelper;
 

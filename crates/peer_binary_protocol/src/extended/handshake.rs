@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use buffers::{ByteBuf, ByteBufT};
 use librqbit_core::compact_ip::{CompactIpAddr, CompactIpV4, CompactIpV6};
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 use super::PeerExtendedMessageIds;
 

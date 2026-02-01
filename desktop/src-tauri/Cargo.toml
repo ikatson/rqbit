@@ -22,6 +22,8 @@ librqbit = { workspace = true, features = [
     "webui",
     "upnp-serve-adapter",
     "prometheus",
+    "default-tls"
+
 ] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 anyhow.workspace = true

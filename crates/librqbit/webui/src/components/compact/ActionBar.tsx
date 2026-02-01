@@ -1,4 +1,4 @@
-import { useContext, useState, useCallback } from "react";
+import { useContext, useState, useCallback, useMemo } from "react";
 import { FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { GoSearch, GoX } from "react-icons/go";
 import debounce from "lodash.debounce";
@@ -7,6 +7,7 @@ import { useUIStore } from "../../stores/uiStore";
 import { useTorrentStore } from "../../stores/torrentStore";
 import { useErrorStore } from "../../stores/errorStore";
 import { DeleteTorrentModal } from "../modal/DeleteTorrentModal";
+import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import {
   ErrorDetails,
   STATE_LIVE,
@@ -66,18 +67,25 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
 
   const getTorrentById = (id: number) => torrents?.find((t) => t.id === id);
 
-  const openDeleteModal = () => {
+  const openDeleteModal = useCallback(() => {
     // Capture current selection when opening modal (stable snapshot)
-    const torrents = Array.from(selectedTorrentIds).map((id) => {
+    const torrentsList = Array.from(selectedTorrentIds).map((id) => {
       const torrent = getTorrentById(id);
       return {
         id,
         name: torrent?.name ?? null,
       };
     });
-    setTorrentsToDelete(torrents);
+    setTorrentsToDelete(torrentsList);
     setShowDeleteModal(true);
-  };
+  }, [selectedTorrentIds, torrents]);
+
+  // Keyboard shortcuts for compact view
+  const keyboardActions = useMemo(
+    () => ({ onDelete: openDeleteModal }),
+    [openDeleteModal],
+  );
+  useKeyboardShortcuts(keyboardActions);
 
   const runBulkAction = async (
     action: (id: number) => Promise<void>,
@@ -167,6 +175,7 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
             <GoSearch className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-tertiary" />
             <input
               type="text"
+              data-search-input
               value={localSearch}
               onChange={handleSearchChange}
               placeholder="Search..."

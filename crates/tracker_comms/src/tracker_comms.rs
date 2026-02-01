@@ -251,7 +251,7 @@ impl TrackerComms {
                 )
                 .notify(|err, retry_in| debug!(?retry_in, "error calling tracker: {err:#}"))
                 .await
-                .context("this shouldnt fail")?;
+                .context("this shouldn't fail")?;
 
             event = None;
             let interval = self.force_tracker_interval.unwrap_or(interval);
@@ -283,7 +283,12 @@ impl TrackerComms {
         };
 
         let mut url = tracker_url.clone();
-        url.set_query(Some(&request.as_querystring()));
+
+        let mut queries = request.as_querystring();
+        if let Some(url_query) = url.query() {
+            queries.push_str(&format!("&{}", url_query));
+        }
+        url.set_query(Some(&queries));
 
         let response: reqwest::Response = self.reqwest_client.get(url).send().await?;
         if !response.status().is_success() {

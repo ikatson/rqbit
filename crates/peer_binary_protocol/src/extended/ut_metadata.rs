@@ -5,7 +5,7 @@ use buffers::ByteBufOwned;
 use buffers::ByteBufT;
 use librqbit_core::constants::CHUNK_SIZE;
 use serde::Deserialize;
-use serde::Serialize;
+use serde_derive::Serialize;
 use std::io::Cursor;
 use std::io::Write;
 
@@ -151,7 +151,7 @@ impl<'a> UtMetadata<ByteBuf<'a>> {
     }
 
     pub fn deserialize(mut buf: DoubleBufHelper<'a>) -> Result<Self, MessageDeserializeError> {
-        #[derive(Deserialize)]
+        #[derive(serde_derive::Deserialize)]
         struct UtMetadataMsg {
             msg_type: u32,
             piece: u32,

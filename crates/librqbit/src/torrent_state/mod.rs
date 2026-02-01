@@ -46,7 +46,6 @@ use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::stream_connect::StreamConnector;
 use crate::torrent_state::stats::LiveStats;
-use crate::type_aliases::DiskWorkQueueSender;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
 
@@ -115,7 +114,6 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_read_write_timeout: Option<Duration>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
-    pub disk_write_queue: Option<DiskWorkQueueSender>,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
