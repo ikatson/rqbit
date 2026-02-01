@@ -1,5 +1,6 @@
 import { FileInput } from "./buttons/FileInput";
 import { MagnetInput } from "./buttons/MagnetInput";
+import { CreateTorrentButton } from "./buttons/CreateTorrentButton";
 
 // @ts-ignore
 import Logo from "../../assets/logo.svg?react";
@@ -27,6 +28,7 @@ export const Header = ({
       <div className="flex flex-wrap items-center gap-1 m-2">
         <MagnetInput className="grow justify-center" />
         <FileInput className="grow justify-center" />
+        <CreateTorrentButton className="grow justify-center" />
         {settingsSlot && (
           <>
             <div className="hidden lg:block w-px h-6 bg-divider mx-2" />

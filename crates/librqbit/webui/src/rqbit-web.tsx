@@ -48,11 +48,11 @@ export const RqbitWebUI = (props: {
       setOtherError(null);
 
       // Determine polling interval based on torrent states
-      // Fast poll (1s) if any torrent is live/initializing, slow poll (5s) otherwise
+      // Fast poll (2s) if any torrent is live/initializing, slow poll (5s) otherwise
       const hasActiveTorrents = response.torrents.some(
         (t) => t.stats?.state === "live" || t.stats?.state === "initializing",
       );
-      return hasActiveTorrents ? 1000 : 5000;
+      return hasActiveTorrents ? 2000 : 5000;
     } catch (e) {
       setOtherError({ text: "Error refreshing torrents", details: e as any });
       console.error(e);
@@ -79,7 +79,7 @@ export const RqbitWebUI = (props: {
         API.stats().then(
           (stats) => {
             setStats(stats);
-            return 1000;
+            return 2000;
           },
           (e) => {
             console.error(e);

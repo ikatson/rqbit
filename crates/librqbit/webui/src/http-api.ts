@@ -125,7 +125,10 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
 
   uploadTorrent: (data, opts): Promise<AddTorrentResponse> => {
-    let url = "/torrents?&overwrite=true";
+    let url = "/torrents?";
+    if (opts?.overwrite ?? true) {
+      url += "&overwrite=true";
+    }
     if (opts?.list_only) {
       url += "&list_only=true";
     }
@@ -144,10 +147,30 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     if (opts?.output_folder) {
       url += `&output_folder=${opts.output_folder}`;
     }
+    if (opts?.skip_initial_check) {
+      url += `&skip_initial_check=true`;
+    }
     if (typeof data === "string") {
       url += "&is_url=true";
     }
     return makeRequest("POST", url, data);
+  },
+
+  createTorrent: (
+    path: string,
+    opts?: {
+      name?: string;
+      trackers?: string[];
+    },
+  ): Promise<AddTorrentResponse> => {
+    let url = `/torrents/create?path=${encodeURIComponent(path)}`;
+    if (opts?.name) {
+      url += `&name=${encodeURIComponent(opts.name)}`;
+    }
+    if (opts?.trackers) {
+      opts.trackers.forEach(t => url += `&trackers=${encodeURIComponent(t)}`);
+    }
+    return makeRequest("POST", url);
   },
 
   updateOnlyFiles: (index: number, files: number[]): Promise<void> => {

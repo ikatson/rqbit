@@ -67,6 +67,34 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
     );
   }
 
+  const [autoStart, setAutoStart] = useState(false);
+  const [initAutoStart, setInitAutoStart] = useState(false);
+
+  useEffect(() => {
+    import("@tauri-apps/plugin-autostart").then(async (autostart) => {
+      if (await autostart.isEnabled()) {
+        setAutoStart(true);
+      }
+      setInitAutoStart(true);
+    });
+  }, []);
+
+  const toggleAutoStart = async () => {
+    try {
+      const autostart = await import("@tauri-apps/plugin-autostart");
+      if (autoStart) {
+        await autostart.disable();
+        setAutoStart(false);
+      } else {
+        await autostart.enable();
+        setAutoStart(true);
+      }
+    } catch (e) {
+      console.error("Failed to toggle auto start", e);
+      setError({ text: "Failed to toggle auto start", details: e as any });
+    }
+  };
+
   return (
     <TabbedConfigModal
       isOpen={isOpen}
@@ -94,6 +122,23 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
           label: "Other",
           content: (
             <div className="text-secondary py-2">
+              <div className="mb-4">
+                  <h3 className="text-lg font-medium mb-2">System</h3>
+                  <div className="flex items-center gap-2">
+                      <input
+                          type="checkbox"
+                          id="autostart"
+                          checked={autoStart}
+                          onChange={toggleAutoStart}
+                          disabled={!initAutoStart}
+                          className="w-4 h-4 rounded border-divider-strong bg-surface text-primary focus:ring-primary"
+                      />
+                      <label htmlFor="autostart" className="cursor-pointer select-none">
+                          Start at login
+                      </label>
+                  </div>
+              </div>
+
               <p>
                 All other parameters (DHT, connections, persistence, etc.) can
                 be configured via{" "}
