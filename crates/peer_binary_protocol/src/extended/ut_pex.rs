@@ -4,7 +4,7 @@ use buffers::{ByteBuf, ByteBufOwned, ByteBufT};
 use librqbit_core::compact_ip::{
     CompactListInBuffer, CompactListInBufferOwned, CompactSerialize, CompactSerializeFixedLen,
 };
-use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 
 pub struct PexPeerInfo {
     pub flags: u8,

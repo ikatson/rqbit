@@ -1,6 +1,7 @@
 use buffers::ByteBuf;
 use itertools::Either;
-use serde::{Deserialize, Deserializer};
+use serde::Deserializer;
+use serde_derive::Deserialize;
 use serde_with::serde_as;
 use std::{
     marker::PhantomData,

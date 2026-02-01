@@ -1286,8 +1286,6 @@ impl Session {
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     allow_overwrite: opts.overwrite,
                     output_folder,
-                    kill_locking_processes: opts.kill_locking_processes.unwrap_or(self.kill_locking_processes),
-                    sync_extra_files: opts.sync_extra_files.unwrap_or(self.sync_extra_files),
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),

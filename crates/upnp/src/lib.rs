@@ -4,7 +4,7 @@ use futures::{StreamExt, TryFutureExt, stream::FuturesUnordered};
 use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use reqwest::Client;
-use serde::Deserialize;
+use serde_derive::Deserialize;
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
