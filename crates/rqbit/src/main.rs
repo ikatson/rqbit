@@ -5,7 +5,6 @@ use std::{
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
-    thread,
     time::Duration,
 };
 
