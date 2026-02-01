@@ -41,6 +41,9 @@ macro_rules! aframe {
 #[macro_use]
 mod stat_gen;
 
+pub mod file_locking;
+pub mod sync_utils;
+
 pub mod api;
 mod api_error;
 mod bitv;

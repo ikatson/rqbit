@@ -113,7 +113,7 @@ nix = { workspace = true, features = ["uio"] }
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, features = ["Win32", "Win32_System", "Win32_System_IO", "Win32_System_Ioctl"] }
+windows = { workspace = true, features = ["Win32", "Win32_System", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_RestartManager"] }
 
 [build-dependencies]
 anyhow.workspace = true

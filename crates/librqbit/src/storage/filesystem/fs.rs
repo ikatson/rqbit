@@ -138,13 +138,25 @@ impl TorrentStorage for FilesystemStorage {
             };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
             let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
+                match OpenOptions::new()
                     .create(true)
                     .truncate(false)
                     .read(true)
                     .write(true)
                     .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                         // Fallback to read-only if access denied (e.g. locked file)
+                         // This allows seeding locked files if we already have them.
+                         if e.kind() == std::io::ErrorKind::PermissionDenied {
+                             warn!("error opening {:?} in read/write mode: {:#}. Trying read-only.", full_path, e);
+                             OpenOptions::new().read(true).open(&full_path).with_context(|| format!("error opening {:?} in read-only mode", full_path))?
+                         } else {
+                             return Err(e).with_context(|| format!("error opening {:?} in read/write mode", full_path));
+                         }
+                    }
+                }
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
                 OpenOptions::new()

@@ -15,8 +15,8 @@ use sha1w::ISha1;
 use crate::spawn_utils::BlockingSpawner;
 
 #[derive(Debug, Clone, Default)]
-pub struct CreateTorrentOptions<'a> {
-    pub name: Option<&'a str>,
+pub struct CreateTorrentOptions {
+    pub name: Option<String>,
     pub trackers: Vec<String>,
     pub piece_length: Option<u32>,
 }
@@ -47,9 +47,24 @@ fn compute_info_hash(t: &TorrentMetaV1Info<ByteBufOwned>) -> anyhow::Result<(Id2
     Ok((hash, bytes))
 }
 
-fn choose_piece_length(_input_files: &[Cow<'_, Path>]) -> u32 {
-    // TODO: make this smarter or smth
-    2 * 1024 * 1024
+fn choose_piece_length(input_files: &[Cow<'_, Path>]) -> u32 {
+    let mut total_size = 0u64;
+    for file in input_files {
+        if let Ok(m) = std::fs::metadata(file) {
+            total_size += m.len();
+        }
+    }
+
+    // Aim for about 1200 pieces
+    let target_piece_size = total_size / 1200;
+    
+    // Clamp to powers of 2 (next power of 2)
+    let piece_size = target_piece_size.next_power_of_two();
+    
+    // Clamp between 32 KiB and 16 MiB
+    // 32 KiB = 32768
+    // 16 MiB = 16777216
+    piece_size.clamp(32 * 1024, 16 * 1024 * 1024) as u32
 }
 
 fn osstr_to_bytes(o: &OsStr) -> Vec<u8> {
@@ -61,10 +76,11 @@ struct CreateTorrentRawResult {
     output_folder: PathBuf,
 }
 
-async fn create_torrent_raw<'a>(
-    path: &'a Path,
-    options: CreateTorrentOptions<'a>,
+async fn create_torrent_raw(
+    path: &Path,
+    options: CreateTorrentOptions,
     spawner: &BlockingSpawner,
+    on_progress: impl Fn(u64, u64) + Send + Sync + 'static,
 ) -> anyhow::Result<CreateTorrentRawResult> {
     path.try_exists()
         .with_context(|| format!("path {path:?} doesn't exist"))?;
@@ -74,12 +90,12 @@ async fn create_torrent_raw<'a>(
     let is_dir = path.is_dir();
     let single_file_mode = !is_dir;
     let name: ByteBufOwned = match options.name {
-        Some(name) => name.as_bytes().into(),
+        Some(name) => name.into_bytes().into(),
         None => osstr_to_bytes(basename).into(),
     };
     let output_folder: PathBuf;
 
-    let mut input_files: Vec<Cow<'a, Path>> = Default::default();
+    let mut input_files: Vec<Cow<'_, Path>> = Default::default();
     if is_dir {
         output_folder = path.to_owned();
         walk_dir_find_paths(path, &mut input_files)
@@ -96,6 +112,13 @@ async fn create_torrent_raw<'a>(
     let piece_length = options
         .piece_length
         .unwrap_or_else(|| choose_piece_length(&input_files));
+
+    let total_size: u64 = input_files
+        .iter()
+        .map(|f| std::fs::metadata(f).map(|m| m.len()).unwrap_or(0))
+        .sum();
+
+    on_progress(0, total_size);
 
     // Calculate hashes etc.
     const READ_SIZE: u32 = 8192; // todo: twea
@@ -143,6 +166,7 @@ async fn create_torrent_raw<'a>(
             }
 
             length += size as u64;
+            on_progress(size as u64, total_size);
             piece_checksum.update(&read_buf[..size]);
 
             remaining_piece_length -= TryInto::<u32>::try_into(size)?;
@@ -209,17 +233,18 @@ impl CreateTorrentResult {
     }
 }
 
-pub async fn create_torrent<'a>(
-    path: &'a Path,
-    options: CreateTorrentOptions<'a>,
+pub async fn create_torrent(
+    path: &Path,
+    options: CreateTorrentOptions,
     spawner: &BlockingSpawner,
+    on_progress: impl Fn(u64, u64) + Send + Sync + 'static,
 ) -> anyhow::Result<CreateTorrentResult> {
     let trackers = options
         .trackers
         .iter()
         .map(|t| ByteBufOwned::from(t.as_bytes()))
         .collect();
-    let res = create_torrent_raw(path, options, spawner).await?;
+    let res = create_torrent_raw(path, options, spawner, on_progress).await?;
     let (info_hash, bytes) = compute_info_hash(&res.info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
         meta: TorrentMetaV1Owned {
@@ -256,8 +281,13 @@ mod tests {
             1000 * 1000,
             Some("rqbit_test_create_torrent"),
         );
-        let torrent = create_torrent(dir.path(), Default::default(), &BlockingSpawner::new(1))
-            .await
+        let torrent = create_torrent(
+            dir.path(),
+            Default::default(),
+            &BlockingSpawner::new(1),
+            |_, _| {},
+        )
+        .await
             .unwrap();
 
         let bytes = torrent.as_bytes().unwrap();
@@ -265,4 +295,5 @@ mod tests {
         let deserialized = torrent_from_bytes(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
     }
+
 }

@@ -38,7 +38,7 @@ use crate::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
-    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, DiskWorkQueueSender, PeerStream},
+    type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -55,7 +55,6 @@ use futures::{
 use http::StatusCode;
 use itertools::Itertools;
 use librqbit_core::{
-    constants::CHUNK_SIZE,
     crate_version,
     directories::get_configuration_directory,
     magnet::Magnet,
@@ -131,7 +130,6 @@ pub struct Session {
     peer_opts: PeerConnectionOptions,
     default_storage_factory: Option<BoxStorageFactory>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
-    disk_write_tx: Option<DiskWorkQueueSender>,
     trackers: HashSet<url::Url>,
 
     lsd: Option<LocalServiceDiscovery>,
@@ -152,6 +150,8 @@ pub struct Session {
     _disable_upload: bool,
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
+    pub kill_locking_processes: bool,
+    pub sync_extra_files: bool,
 }
 
 async fn torrent_from_url(
@@ -290,12 +290,17 @@ pub struct AddTorrentOptions {
     #[serde(skip)]
     pub storage_factory: Option<BoxStorageFactory>,
 
-    // If true, will write to disk in separate threads. The downside is additional allocations.
-    // May be useful if the disk is slow.
-    pub defer_writes: Option<bool>,
-
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub skip_initial_check: bool,
+
+    #[serde(default)]
+    pub kill_locking_processes: Option<bool>,
+
+    #[serde(default)]
+    pub sync_extra_files: Option<bool>,
 }
 
 pub struct ListOnlyResponse {
@@ -430,10 +435,6 @@ pub struct SessionOptions {
     /// Options for connecting to peers (for outgiong connections).
     pub connect: Option<ConnectionOptions>,
 
-    // If you set this to something, all writes to disk will happen in background and be
-    // buffered in memory up to approximately the given number of megabytes.
-    pub defer_writes_up_to: Option<usize>,
-
     pub default_storage_factory: Option<BoxStorageFactory>,
 
     pub cancellation_token: Option<CancellationToken>,
@@ -467,6 +468,9 @@ pub struct SessionOptions {
 
     /// Force IPv4 only.
     pub ipv4_only: bool,
+
+    pub kill_locking_processes: bool,
+    pub sync_extra_files: bool,
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -640,16 +644,6 @@ impl Session {
                 .await
                 .context("error initializing session persistence store")?;
 
-            let (disk_write_tx, disk_write_rx) = opts
-                .defer_writes_up_to
-                .map(|mb| {
-                    const DISK_WRITE_APPROX_WORK_ITEM_SIZE: usize = CHUNK_SIZE as usize + 300;
-                    let count = mb * 1024 * 1024 / DISK_WRITE_APPROX_WORK_ITEM_SIZE;
-                    let (tx, rx) = tokio::sync::mpsc::channel(count);
-                    (Some(tx), Some(rx))
-                })
-                .unwrap_or_default();
-
             let proxy_url = opts.connect.as_ref().and_then(|s| s.proxy_url.as_ref());
             let proxy_config = match proxy_url {
                 Some(pu) => Some(
@@ -744,7 +738,6 @@ impl Session {
                 cancellation_token: token,
                 announce_port: listen_result.as_ref().and_then(|l| l.announce_port),
                 listen_addr: listen_result.as_ref().map(|l| l.addr),
-                disk_write_tx,
                 default_storage_factory: opts.default_storage_factory,
                 reqwest_client,
                 connector: stream_connector,
@@ -765,21 +758,9 @@ impl Session {
                 blocklist,
                 allowlist,
                 lsd,
+                kill_locking_processes: opts.kill_locking_processes,
+                sync_extra_files: opts.sync_extra_files,
             });
-
-            if let Some(mut disk_write_rx) = disk_write_rx {
-                session.spawn(
-                    debug_span!(parent: session.rs(), "disk_writer"),
-                    "disk_writer",
-                    async move {
-                        while let Some(work) = disk_write_rx.recv().await {
-                            trace!(disk_write_rx_queue_len = disk_write_rx.len());
-                            spawner.block_in_place_with_semaphore(work).await;
-                        }
-                        Ok(())
-                    },
-                );
-            }
 
             if let Some(mut listen) = listen_result {
                 if let Some(tcp) = listen.tcp_socket.take() {
@@ -1305,7 +1286,8 @@ impl Session {
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     allow_overwrite: opts.overwrite,
                     output_folder,
-                    disk_write_queue: self.disk_write_tx.clone(),
+                    kill_locking_processes: opts.kill_locking_processes.unwrap_or(self.kill_locking_processes),
+                    sync_extra_files: opts.sync_extra_files.unwrap_or(self.sync_extra_files),
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
@@ -1324,6 +1306,7 @@ impl Session {
                 self.spawner
                     .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
                 false,
+                opts.skip_initial_check,
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
@@ -1635,7 +1618,8 @@ impl Session {
     pub async fn create_and_serve_torrent(
         self: &Arc<Self>,
         path: &Path,
-        opts: CreateTorrentOptions<'_>,
+        opts: CreateTorrentOptions,
+        on_progress: impl Fn(u64, u64) + Send + Sync + 'static,
     ) -> Result<(CreateTorrentResult, ManagedTorrentHandle), ApiError> {
         if !path.exists() {
             return Err(ApiError::from((
@@ -1644,7 +1628,7 @@ impl Session {
             )));
         }
 
-        let torrent = create_torrent(path, opts, &self.spawner)
+        let torrent = create_torrent(path, opts, &self.spawner, on_progress)
             .await
             .with_status(StatusCode::BAD_REQUEST)?;
 
@@ -1656,6 +1640,7 @@ impl Session {
                 Some(AddTorrentOptions {
                     paused: false,
                     overwrite: true,
+                    skip_initial_check: true,
                     output_folder: Some(
                         torrent
                             .output_folder
