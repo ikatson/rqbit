@@ -619,6 +619,8 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         peer_limit: opts.peer_limit,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
+        kill_locking_processes: false,
+        sync_extra_files: false,
     };
 
     #[allow(clippy::needless_update)]
@@ -892,10 +894,11 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 .create_and_serve_torrent(
                     &path,
                     CreateTorrentOptions {
-                        name: share_opts.name.as_deref(),
+                        name: share_opts.name.clone(),
                         trackers,
                         ..Default::default()
                     },
+                    |_, _| {},
                 )
                 .await
                 .context("error creating and sharing torrent")?;
