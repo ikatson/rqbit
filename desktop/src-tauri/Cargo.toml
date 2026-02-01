@@ -12,7 +12,7 @@ repository = ""
 tauri-build.workspace = true
 
 [dependencies]
-tauri.workspace = true
+tauri = { workspace = true, features = ["tray-icon"] }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
@@ -36,6 +36,8 @@ gethostname.workspace = true
 tauri-plugin-shell.workspace = true
 metrics-exporter-prometheus.workspace = true
 librqbit-dualstack-sockets.workspace = true
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

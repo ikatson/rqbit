@@ -128,6 +128,16 @@ export const makeAPI = (configuration: RqbitDesktopConfig): RqbitAPI => {
         opts: opts ?? {},
       });
     },
+    createTorrent: async function (
+      path: string,
+      opts?: { name?: string; trackers?: string[] },
+    ): Promise<AddTorrentResponse> {
+      return await invokeAPI<AddTorrentResponse>("torrent_create", {
+        path,
+        name: opts?.name,
+        trackers: opts?.trackers,
+      });
+    },
     updateOnlyFiles: function (id, files): Promise<void> {
       return invokeAPI<void>("torrent_action_configure", {
         id: id,

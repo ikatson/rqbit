@@ -140,6 +140,7 @@ pub struct RqbitDesktopConfigHttpApi {
     pub disable: bool,
     pub listen_addr: SocketAddr,
     pub read_only: bool,
+    pub basic_auth: Option<String>,
 }
 
 impl Default for RqbitDesktopConfigHttpApi {
@@ -148,8 +149,19 @@ impl Default for RqbitDesktopConfigHttpApi {
             disable: Default::default(),
             listen_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 3030)),
             read_only: false,
+            basic_auth: None,
         }
     }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(default)]
+pub struct RqbitDesktopConfigFeatures {
+    #[serde(default)]
+    pub kill_locking_processes: bool,
+
+    #[serde(default)]
+    pub sync_extra_files: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -176,6 +188,7 @@ pub struct RqbitDesktopConfig {
     pub upnp: RqbitDesktopConfigUpnp,
     pub persistence: RqbitDesktopConfigPersistence,
     pub http_api: RqbitDesktopConfigHttpApi,
+    pub features: RqbitDesktopConfigFeatures,
 
     #[serde(default)]
     pub ratelimits: LimitsConfig,
@@ -196,6 +209,7 @@ impl Default for RqbitDesktopConfig {
             upnp: Default::default(),
             persistence: Default::default(),
             http_api: Default::default(),
+            features: Default::default(),
             ratelimits: Default::default(),
             #[cfg(feature = "disable-upload")]
             disable_upload: false,

@@ -16,13 +16,14 @@
       "icons/icon.ico"
     ]
   },
-  "productName": "rqbit-desktop",
+  "productName": "rqbit",
   "mainBinaryName": "rqbit-desktop",
   "identifier": "com.rqbit.desktop",
   "plugins": {},
   "app": {
     "windows": [
       {
+        "label": "main",
         "fullscreen": false,
         "resizable": true,
         "title": "rqbit",
