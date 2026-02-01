@@ -228,6 +228,7 @@ impl Api {
                         // These will be filled in /details and /stats endpoints
                         files: None,
                         stats: None,
+                        trackers: None,
                     };
                     if opts.with_stats {
                         r.stats = Some(mgr.stats());
@@ -250,6 +251,7 @@ impl Api {
             .to_string_lossy()
             .into_owned()
             .to_string();
+        let trackers = handle.shared().trackers.iter().map(|u| u.to_string()).collect();
         make_torrent_details(
             Some(handle.id()),
             &info_hash,
@@ -257,6 +259,7 @@ impl Api {
             handle.name().as_deref(),
             only_files.as_deref(),
             output_folder,
+            Some(trackers),
         )
     }
 
@@ -398,6 +401,7 @@ impl Api {
                         .output_folder
                         .to_string_lossy()
                         .into_owned(),
+                    Some(handle.shared().trackers.iter().map(|u| u.to_string()).collect()),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -430,6 +434,7 @@ impl Api {
                     None,
                     only_files.as_deref(),
                     output_folder.to_string_lossy().into_owned().to_string(),
+                    None
                 )
                 .context("error making torrent details")?,
             },
@@ -446,6 +451,7 @@ impl Api {
                         .output_folder
                         .to_string_lossy()
                         .into_owned(),
+                    Some(handle.shared().trackers.iter().map(|u| u.to_string()).collect()),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -545,6 +551,8 @@ pub struct TorrentDetailsResponse {
     pub files: Option<Vec<TorrentDetailsResponseFile>>,
     #[serde(skip_serializing_if = "Option::is_none", skip_deserializing)]
     pub stats: Option<TorrentStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trackers: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -562,6 +570,7 @@ fn make_torrent_details(
     name: Option<&str>,
     only_files: Option<&[usize]>,
     output_folder: String,
+    trackers: Option<Vec<String>>,
 ) -> Result<TorrentDetailsResponse> {
     let files = match info {
         Some(info) => info
@@ -593,6 +602,7 @@ fn make_torrent_details(
         output_folder,
         total_pieces,
         stats: None,
+        trackers,
     })
 }
 

@@ -119,6 +119,8 @@ pub(crate) struct ManagedTorrentOptions {
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    pub kill_locking_processes: bool,
+    pub sync_extra_files: bool,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
@@ -412,6 +414,7 @@ impl ManagedTorrent {
                             .storage_factory
                             .create_and_init(t.shared(), &metadata)?,
                         true,
+                        false,
                     ));
                     g.state = ManagedTorrentState::Initializing(initializing.clone());
                     t.state_change_notify.notify_waiters();

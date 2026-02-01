@@ -875,6 +875,28 @@ impl TorrentStateLive {
                 locked.try_flush_bitv(&self.shared, false);
                 info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
             }
+
+            if self.shared.options.sync_extra_files {
+                let info = self.metadata.clone();
+                let shared = self.shared.clone();
+                self.spawn(
+                    debug_span!(parent: shared.span.clone(), "sync_extra_files"),
+                    "sync_extra_files",
+                    async move {
+                         tokio::task::spawn_blocking(move || {
+                             use crate::sync_utils::remove_extra_files;
+                             info!("Starting auto-removal of extra files...");
+                             if let Err(e) = remove_extra_files(&info.info.info(), &shared.options.output_folder) {
+                                  warn!("Error in auto-removal: {:#}", e);
+                             } else {
+                                  info!("Auto-removal complete.");
+                             }
+                         }).await.context("spawn_blocking failed")
+                         .map_err(|e| crate::Error::Anyhow(e))
+                    }
+                );
+            }
+
             self.finished_notify.notify_waiters();
 
             if !self.has_active_streams_unfinished_files(locked) {

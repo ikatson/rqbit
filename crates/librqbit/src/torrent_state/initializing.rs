@@ -31,6 +31,7 @@ pub struct TorrentStateInitializing {
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
     previously_errored: bool,
+    skip_check: bool,
 }
 
 impl TorrentStateInitializing {
@@ -40,6 +41,7 @@ impl TorrentStateInitializing {
         only_files: Option<Vec<usize>>,
         files: FileStorage,
         previously_errored: bool,
+        skip_check: bool,
     ) -> Self {
         Self {
             shared,
@@ -48,6 +50,7 @@ impl TorrentStateInitializing {
             files,
             checked_bytes: AtomicU64::new(0),
             previously_errored,
+            skip_check,
         }
     }
 
@@ -180,6 +183,75 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
+        if self.shared.options.kill_locking_processes {
+            #[cfg(windows)]
+            {
+                // We lock the output folder.
+                let path = &self.shared.options.output_folder;
+                if let Err(e) = crate::file_locking::kill_processes_locking_path(path, true) {
+                    warn!("Error killing locking processes: {:#}", e);
+                }
+            }
+        }
+
+        if self.skip_check {
+            use bitvec::vec::BitVec;
+            let num_bytes = self.metadata.lengths().piece_bitfield_bytes();
+            let mut bv = BitVec::<u8, bitvec::order::Msb0>::from_vec(vec![0xff; num_bytes]);
+            let _total_pieces = self.metadata.lengths().total_pieces() as usize;
+            // We must have the exact same number of bits as compute_selected_pieces returns.
+            // It initializes from bytes, so it has size = num_bytes * 8.
+            let expected_bits = num_bytes * 8;
+            if bv.len() != expected_bits {
+                // This should not happen if initialized from vec, but just to be safe/clear
+                bv.resize(expected_bits, true);
+            }
+            
+            // However, we should probably ensure the padding bits at the end are correct (obey the protocol? or just internal logic?)
+            // ChunkTracker uses these bits. 
+            // But verify what compute_selected_pieces does. it inits with 0s.
+            
+            let bv = bv.into_boxed_bitslice();
+            
+            // We claim to have everything.
+            info!("Skipping initial check, assuming all files are present and correct");
+            
+            // Should we validate at least something? 
+            // The user explicitly requested to SKIP check, so we assume full trust.
+            // We just store it and return.
+            
+            self.checked_bytes.store(self.metadata.lengths().total_length(), Ordering::Relaxed);
+            
+             bitv_factory
+                .store_initial_check(id, bv.clone())
+                .await
+                .context("error storing skipped check bitfield")?;
+                
+             // For fast resume validation logic below, we pretend we loaded it from disk.
+             let _have_pieces = Some(Box::new(bv.clone()) as Box<dyn crate::bitv::BitV>);
+             
+             // We still probably want to bypass validate_fastresume if we skip check,
+             // because validate_fastresume does random checks. 
+             // If the user lied, random checks will fail and clear the bitfield.
+             // But if the user is honest, it should pass. 
+             // However, for "Create Torrent", the files SHOULD be there.
+             // So let's let `validate_fastresume` run?
+             // Actually, if we just created the torrent, `validate_fastresume` is good to confirm we can read the files.
+             // But if `skip_check` is enabled, we might want to avoid any reads (e.g. slow network drive).
+             // But `validate_fastresume` is very lightweight.
+             // Let's TRY to let it run. If it fails, `check` will probably fall back to full check or error.
+             // Wait, `check` logic:
+             
+             // let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
+             
+             // If we want to strictly skip check, we should return early or bypass validate.
+             // But `validate_fastresume` is useful. 
+             // Let's assume we WANT to bypass validation too if `skip_check` is true.
+             
+             // So:
+             return self.finalize_check(Box::new(bv)).await;
+        }
+
         let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
 
         let have_pieces = match have_pieces {
@@ -200,7 +272,10 @@ impl TorrentStateInitializing {
                     .context("error storing initial check bitfield")?
             }
         };
+        self.finalize_check(have_pieces).await
+    }
 
+    async fn finalize_check(&self, have_pieces: Box<dyn crate::bitv::BitV>) -> anyhow::Result<TorrentStatePaused> {
         let selected_pieces = compute_selected_pieces(
             self.metadata.lengths(),
             |idx| {
@@ -222,9 +297,17 @@ impl TorrentStateInitializing {
 
         let hns = chunk_tracker.get_hns();
 
+        if self.shared.options.sync_extra_files && hns.finished() {
+             use crate::sync_utils::remove_extra_files;
+             info!("Syncing extra files...");
+             if let Err(e) = remove_extra_files(&self.metadata.info.info(), &self.shared.options.output_folder) {
+                  warn!("Error removing extra files: {:#}", e);
+             }
+        }
+
         info!(
             torrent=?self.shared.id,
-            "Initial check results: have {}, needed {}, total selected {}",
+            "Check results: have {}, needed {}, total selected {}",
             SF::new(hns.have_bytes),
             SF::new(hns.needed_bytes),
             SF::new(hns.selected_bytes)

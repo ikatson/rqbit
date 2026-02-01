@@ -26,6 +26,7 @@ export interface TorrentDetails {
   files: Array<TorrentFile>;
   total_pieces?: number;
   output_folder: string;
+  trackers?: string[];
 }
 
 // Interface for torrent list item (from bulk /torrents?with_stats=true endpoint)
@@ -203,6 +204,7 @@ export interface AddTorrentOptions {
   force_tracker_interval?: Duration | null;
   initial_peers?: string[] | null; // Assuming SocketAddr is equivalent to a string in TypeScript
   preferred_id?: number | null;
+  skip_initial_check?: boolean | null;
 }
 
 export type Value = string | number | boolean;
@@ -265,6 +267,13 @@ export interface RqbitAPI {
   uploadTorrent: (
     data: string | File,
     opts?: AddTorrentOptions,
+  ) => Promise<AddTorrentResponse>;
+  createTorrent: (
+    path: string,
+    opts?: {
+      name?: string;
+      trackers?: string[];
+    },
   ) => Promise<AddTorrentResponse>;
 
   pause: (index: number) => Promise<void>;
