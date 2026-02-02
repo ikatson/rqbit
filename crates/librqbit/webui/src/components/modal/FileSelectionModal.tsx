@@ -70,9 +70,15 @@ export const FileSelectionModal = (props: {
     let initialPeers = listTorrentResponse.seen_peers
       ? listTorrentResponse.seen_peers.slice(0, 32)
       : null;
+    const allFilesCount = listTorrentResponse.details.files.filter((f) => !f.attributes.padding).length;
+    let onlyFiles = undefined;
+    if (selectedFiles.size !== allFilesCount) {
+        onlyFiles = Array.from(selectedFiles);
+    }
+
     let opts: AddTorrentOptions = {
       overwrite: overwrite,
-      only_files: Array.from(selectedFiles),
+      only_files: onlyFiles,
       initial_peers: initialPeers,
       output_folder: outputFolder,
       skip_initial_check: skipInitialCheck,
