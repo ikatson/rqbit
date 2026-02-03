@@ -9,6 +9,7 @@ import { ModalBody } from "./ModalBody";
 import { ModalFooter } from "./ModalFooter";
 import { Button } from "../buttons/Button";
 import { Fieldset } from "../forms/Fieldset";
+import { FormCheckbox } from "../forms/FormCheckbox";
 import { FormInput } from "../forms/FormInput";
 import { Form } from "../forms/Form";
 import { FileListInput } from "../FileListInput";
@@ -33,7 +34,9 @@ export const FileSelectionModal = (props: {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<ErrorWithLabel | null>(null);
   const [unpopularTorrent, setUnpopularTorrent] = useState(false);
+  const [skipInitialCheck, setSkipInitialCheck] = useState(false);
   const [outputFolder, setOutputFolder] = useState<string>("");
+  const [overwrite, setOverwrite] = useState(true);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const API = useContext(APIContext);
 
@@ -68,10 +71,11 @@ export const FileSelectionModal = (props: {
       ? listTorrentResponse.seen_peers.slice(0, 32)
       : null;
     let opts: AddTorrentOptions = {
-      overwrite: true,
+      overwrite: overwrite,
       only_files: Array.from(selectedFiles),
       initial_peers: initialPeers,
       output_folder: outputFolder,
+      skip_initial_check: skipInitialCheck,
     };
     if (unpopularTorrent) {
       opts.peer_opts = {
@@ -117,15 +121,22 @@ export const FileSelectionModal = (props: {
             />
           </Fieldset>
 
-          {/* <Fieldset label="Options">
+    <Fieldset label="Options">
             <FormCheckbox
-              label="Increase timeouts"
-              checked={unpopularTorrent}
-              onChange={() => setUnpopularTorrent(!unpopularTorrent)}
-              help="This might be useful for unpopular torrents with few peers. It will slow down fast torrents though."
-              name="increase_timeouts"
+              label="Overwrite existing files"
+              checked={overwrite}
+              onChange={() => setOverwrite(!overwrite)}
+              help="Allow writing to existing files (required for resuming)"
+              name="overwrite"
             />
-          </Fieldset> */}
+            <FormCheckbox
+              label="Skip hash check"
+              checked={skipInitialCheck}
+              onChange={() => setSkipInitialCheck(!skipInitialCheck)}
+              help="Trust that existing files are correct. Useful for large torrents."
+              name="skip_initial_check"
+            />
+          </Fieldset>
         </Form>
       );
     }

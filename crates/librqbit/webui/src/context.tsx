@@ -17,6 +17,9 @@ export const APIContext = createContext<RqbitAPI>({
   uploadTorrent: () => {
     throw new Error("Function not implemented.");
   },
+  createTorrent: () => {
+    throw new Error("Function not implemented.");
+  },
   updateOnlyFiles: () => {
     throw new Error("Function not implemented.");
   },
