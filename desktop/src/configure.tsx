@@ -168,6 +168,28 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
       ),
     },
     {
+      id: "features",
+      label: "Features",
+      content: (
+        <Fieldset>
+          <FormCheck
+            label="Kill Locking Processes (Windows only)"
+            name="features.kill_locking_processes"
+            checked={!!config.features?.kill_locking_processes}
+            onChange={handleToggleChange}
+            help="If enabled, rqbit will attempt to check for and kill processes (like File Explorer) that are locking the download directory before starting."
+          />
+          <FormCheck
+            label="Sync Extra Files"
+            name="features.sync_extra_files"
+            checked={!!config.features?.sync_extra_files}
+            onChange={handleToggleChange}
+            help="If enabled, when a torrent finishes downloading (or if skipped), rqbit will remove any files or empty directories in the output folder that are not part of the torrent."
+          />
+        </Fieldset>
+      ),
+    },
+    {
       id: "dht",
       label: "DHT",
       content: (
@@ -345,6 +367,15 @@ Might be useful e.g. if rqbit upload consumes all your upload bandwidth and inte
             disabled={config.http_api.disable}
             onChange={handleInputChange}
             help={`You'll access the API at http://${config.http_api.listen_addr}`}
+          />
+          <FormInput
+            label="Basic Auth (username:password)"
+            inputType="text"
+            name="http_api.basic_auth"
+            value={config.http_api.basic_auth ?? ""}
+            disabled={config.http_api.disable}
+            onChange={handleInputChange}
+            help="Optional. Protect the HTTP API with Basic Authentication. Format: username:password"
           />
         </Fieldset>
       ),

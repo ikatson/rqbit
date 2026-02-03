@@ -1,4 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
+// Force rebuild
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
@@ -12,6 +13,7 @@ use std::{
 
 use anyhow::Context;
 use config::RqbitDesktopConfig;
+use tauri::Emitter;
 use http::StatusCode;
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
@@ -24,6 +26,7 @@ use librqbit::{
     http_api_types::{PeerStatsFilter, PeerStatsSnapshot},
     session_stats::snapshot::SessionStatsSnapshot,
     tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
+    CreateTorrentOptions,
 };
 use librqbit_dualstack_sockets::TcpListener;
 use parking_lot::RwLock;
@@ -87,7 +90,14 @@ async fn api_from_config(
 
     let mut http_api_opts = librqbit::http_api::HttpApiOptions {
         read_only: config.http_api.read_only,
-        basic_auth: None,
+        basic_auth: if let Some(up) = &config.http_api.basic_auth {
+            let (u, p) = up
+                .split_once(":")
+                .context("basic auth credentials should be in format username:password")?;
+            Some((u.to_owned(), p.to_owned()))
+        } else {
+            None
+        },
         ..Default::default()
     };
 
@@ -119,6 +129,8 @@ async fn api_from_config(
             ratelimits: config.ratelimits,
             #[cfg(feature = "disable-upload")]
             disable_upload: config.disable_upload,
+            kill_locking_processes: config.features.kill_locking_processes,
+            sync_extra_files: config.features.sync_extra_files,
             ..Default::default()
         },
     )
@@ -176,29 +188,44 @@ async fn api_from_config(
 
 impl State {
     async fn new(init_logging: InitLoggingResult) -> Self {
-        let config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
+        let mut config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
             .expect("directories::ProjectDirs::from")
             .config_dir()
-            .join("config.json")
-            .to_str()
-            .expect("to_str()")
-            .to_owned();
+            .join("config.json");
 
-        if let Ok(config) = read_config(&config_filename) {
-            let api = api_from_config(&init_logging, &config)
-                .await
-                .map_err(|e| {
-                    warn!(error=?e, "error reading configuration");
-                    e
-                })
-                .ok();
-            let shared = Arc::new(RwLock::new(Some(StateShared { config, api })));
+        // Portable mode: check if config.json exists in the same directory as the executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let portable_config = exe_dir.join("config.json");
+                if portable_config.exists() {
+                    info!("Using portable config: {:?}", portable_config);
+                    config_filename = portable_config;
+                }
+            }
+        }
 
-            return Self {
-                config_filename,
-                shared,
-                init_logging,
-            };
+        let config_filename = config_filename.to_str().expect("to_str()").to_owned();
+
+        match read_config(&config_filename) {
+            Ok(config) => {
+                let api = api_from_config(&init_logging, &config)
+                    .await
+                    .map_err(|e| {
+                        warn!(error=?e, "error reading configuration");
+                        e
+                    })
+                    .ok();
+                let shared = Arc::new(RwLock::new(Some(StateShared { config, api })));
+
+                return Self {
+                    config_filename,
+                    shared,
+                    init_logging,
+                };
+            }
+            Err(e) => {
+                warn!("failed reading config from {:?}: {:#}, starting unconfigured", config_filename, e);
+            }
         }
 
         Self {
@@ -304,6 +331,8 @@ fn torrent_peer_stats(
 ) -> Result<PeerStatsSnapshot, ApiError> {
     state.api()?.api_peer_stats(id, filter)
 }
+
+
 
 #[tauri::command]
 async fn torrent_create_from_url(
@@ -421,6 +450,90 @@ async fn start() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
+        .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
+        .setup(|app| {
+
+
+             use tauri::menu::{Menu, MenuItem, CheckMenuItem};
+             use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+             use tauri::Manager;
+             use tauri_plugin_autostart::ManagerExt;
+
+             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>).ok();
+             let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>).ok();
+             let autostart_i = CheckMenuItem::with_id(app, "autostart", "Start at Login", true, false, None::<&str>).ok();
+             
+             if let (Some(quit_i), Some(show_i), Some(autostart_i)) = (quit_i, show_i, autostart_i) {
+                 // Check current autostart status
+                 if let Ok(true) = app.autolaunch().is_enabled() {
+                     let _ = autostart_i.set_checked(true);
+                 }
+
+                  let menu = Menu::with_items(app, &[&show_i, &autostart_i, &quit_i]);
+                  if let Ok(menu) = menu {
+                     let _ = TrayIconBuilder::new()
+                        .icon(app.default_window_icon().unwrap().clone())
+                        .tooltip("rqbit Headless")
+                        .menu(&menu)
+                        .on_menu_event(move |app, event| {
+                            match event.id().as_ref() {
+                                "quit" => {
+                                    app.exit(0);
+                                }
+                                "show" => {
+                                    if let Some(window) = app.get_webview_window("main") {
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
+                                }
+                                "autostart" => {
+                                    let enabled = app.autolaunch().is_enabled().unwrap_or(false);
+                                    if enabled {
+                                        let _ = app.autolaunch().disable();
+                                        let _ = autostart_i.set_checked(false);
+                                    } else {
+                                        let _ = app.autolaunch().enable();
+                                        let _ = autostart_i.set_checked(true);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        })
+                        .on_tray_icon_event(|tray, event| {
+                            if let TrayIconEvent::Click {
+                                button: MouseButton::Left,
+                                ..
+                            } = event
+                            {
+                                let app = tray.app_handle();
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        })
+                        .build(app);
+                  }
+             }
+             
+             // Force show window on startup
+             if let Some(window) = app.get_webview_window("main") {
+                 let _ = window.show();
+                 let _ = window.set_focus();
+             }
+
+             Ok(())
+        })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             config_change,
@@ -433,6 +546,7 @@ async fn start() {
             torrent_action_forget,
             torrent_action_pause,
             torrent_action_start,
+            torrent_create,
             torrent_create_from_base64_file,
             torrent_create_from_url,
             torrent_details,
@@ -445,6 +559,76 @@ async fn start() {
         .expect("error while running tauri application");
 }
 
+#[tauri::command]
+async fn torrent_create(
+    state: tauri::State<'_, State>,
+    window: tauri::Window,
+    path: String,
+    name: Option<String>,
+    trackers: Option<Vec<String>>,
+) -> Result<ApiAddTorrentResponse, ApiError> {
+    let opts = CreateTorrentOptions {
+        name: name,
+        trackers: trackers.unwrap_or_default(),
+        piece_length: None,
+    };
+    let path = std::path::PathBuf::from(path);
+    let api = state.api()?;
+    
+    // Accumulate bytes and time for throttling
+    use std::sync::{Arc, Mutex};
+    use std::time::{Instant, Duration};
+    // (last_emit_time, accumulated_bytes)
+    let throttle_state = Arc::new(Mutex::new((Instant::now(), 0u64)));
+    
+    let window_clone = window.clone();
+    let throttle_clone = throttle_state.clone();
+
+    let (_meta, handle) = api
+        .session()
+        .create_and_serve_torrent(&path, opts, move |chunk, total| {
+            let mut state = throttle_clone.lock().unwrap();
+            state.1 += chunk; // Accumulate bytes
+
+            // Emit if > 100ms passed OR if this is the final final chunk (approximate check, but we can't know for sure if it's the last call unless chunk==0 or similar, but total is constant).
+            // Actually, we should just emit if time passed.
+            // Also always emit if we have accumulated a significant amount? No, time is better for UI.
+            
+            if state.0.elapsed() > Duration::from_millis(2000) {
+                 let _ = window_clone.emit("create_torrent_progress", serde_json::json!({
+                    "chunk": state.1,
+                    "total": total
+                }));
+                state.0 = Instant::now();
+                state.1 = 0;
+            }
+        })
+        .await
+        .map_err(ApiError::from)?;
+        
+    // Emit any remaining bytes
+    let last_chunk = {
+         let state = throttle_state.lock().unwrap();
+         state.1
+    };
+    if last_chunk > 0 {
+         let _ = window.emit("create_torrent_progress", serde_json::json!({
+            "chunk": last_chunk,
+             // best guess for total, though frontend updates total from payload anyway
+            "total": 0 
+        }));
+    }
+
+    let details = api.api_torrent_details(librqbit::api::TorrentIdOrHash::Id(handle.id()))?;
+    
+    Ok(ApiAddTorrentResponse {
+        id: Some(handle.id()),
+        output_folder: details.output_folder.clone(),
+        details,
+        seen_peers: None,
+    })
+}
+
 fn main() {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -452,3 +636,4 @@ fn main() {
         .expect("couldn't set up tokio runtime")
         .block_on(start())
 }
+// force rebuild
