@@ -150,6 +150,8 @@ pub struct Session {
     _disable_upload: bool,
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
+    pub kill_locking_processes: bool,
+    pub sync_extra_files: bool,
 }
 
 async fn torrent_from_url(
@@ -290,6 +292,15 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    #[serde(default)]
+    pub skip_initial_check: bool,
+
+    #[serde(default)]
+    pub kill_locking_processes: Option<bool>,
+
+    #[serde(default)]
+    pub sync_extra_files: Option<bool>,
 }
 
 pub struct ListOnlyResponse {
@@ -457,6 +468,9 @@ pub struct SessionOptions {
 
     /// Force IPv4 only.
     pub ipv4_only: bool,
+
+    pub kill_locking_processes: bool,
+    pub sync_extra_files: bool,
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -744,6 +758,8 @@ impl Session {
                 blocklist,
                 allowlist,
                 lsd,
+                kill_locking_processes: opts.kill_locking_processes,
+                sync_extra_files: opts.sync_extra_files,
             });
 
             if let Some(mut listen) = listen_result {
@@ -1270,6 +1286,8 @@ impl Session {
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     allow_overwrite: opts.overwrite,
                     output_folder,
+                    kill_locking_processes: opts.kill_locking_processes.unwrap_or(self.kill_locking_processes),
+                    sync_extra_files: opts.sync_extra_files.unwrap_or(self.sync_extra_files),
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
@@ -1288,6 +1306,7 @@ impl Session {
                 self.spawner
                     .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
                 false,
+                opts.skip_initial_check,
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
@@ -1599,7 +1618,8 @@ impl Session {
     pub async fn create_and_serve_torrent(
         self: &Arc<Self>,
         path: &Path,
-        opts: CreateTorrentOptions<'_>,
+        opts: CreateTorrentOptions,
+        on_progress: impl Fn(u64, u64) + Send + Sync + 'static,
     ) -> Result<(CreateTorrentResult, ManagedTorrentHandle), ApiError> {
         if !path.exists() {
             return Err(ApiError::from((
@@ -1608,7 +1628,7 @@ impl Session {
             )));
         }
 
-        let torrent = create_torrent(path, opts, &self.spawner)
+        let torrent = create_torrent(path, opts, &self.spawner, on_progress)
             .await
             .with_status(StatusCode::BAD_REQUEST)?;
 
@@ -1620,6 +1640,7 @@ impl Session {
                 Some(AddTorrentOptions {
                     paused: false,
                     overwrite: true,
+                    skip_initial_check: true,
                     output_folder: Some(
                         torrent
                             .output_folder

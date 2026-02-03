@@ -123,10 +123,12 @@ impl DerefMut for OpenedFileLocked {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct OpenedFile {
     file: RwLock<OpenedFileLocked>,
 }
 
+#[allow(dead_code)]
 impl OpenedFile {
     pub fn new(path: PathBuf, f: File) -> Self {
         Self {

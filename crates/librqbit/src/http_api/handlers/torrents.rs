@@ -4,6 +4,7 @@ use anyhow::Context;
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
+    body::Body,
 };
 use bytes::Bytes;
 use http::{
@@ -360,6 +361,8 @@ pub struct HttpCreateTorrentOptions {
     #[serde(default)]
     trackers: Vec<String>,
     name: Option<String>,
+    #[serde(default)]
+    stream: bool,
 }
 
 pub async fn h_create_torrent(
@@ -381,15 +384,55 @@ pub async fn h_create_torrent(
     );
 
     let create_opts = CreateTorrentOptions {
-        name: opts.name.as_deref(),
+        name: opts.name.clone(),
         trackers: opts.trackers,
         piece_length: None,
     };
 
+
+
+    if opts.stream {
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+        
+        let session = state.api.session().clone();
+        let path = path.to_owned();
+        let create_opts = create_opts.clone();
+        
+        tokio::spawn(async move {
+            let tx_progress: tokio::sync::mpsc::Sender<std::result::Result<String, anyhow::Error>> = tx.clone();
+            let res = session.create_and_serve_torrent(&path, create_opts, move |chunk, total| {
+                let _ = tx_progress.try_send(Ok(serde_json::json!({
+                    "type": "progress",
+                    "chunk": chunk,
+                    "total": total
+                }).to_string() + "\n"));
+            }).await;
+            
+            match res {
+                Ok((_torrent, handle)) => {
+                     let _ = tx.send(Ok(serde_json::json!({
+                        "type": "success",
+                        "id": handle.id()
+                    }).to_string() + "\n")).await;
+                }
+                Err(e) => {
+                     let _ = tx.send(Ok(serde_json::json!({
+                        "type": "error",
+                        "error": e.to_string()
+                    }).to_string() + "\n")).await;
+                }
+            }
+        });
+        
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        let body = Body::from_stream(stream);
+        return Ok(body.into_response());
+    }
+
     let (torrent, handle) = state
         .api
         .session()
-        .create_and_serve_torrent(path, create_opts)
+        .create_and_serve_torrent(path, create_opts, |_, _| {})
         .await?;
 
     let mut headers = HeaderMap::new();

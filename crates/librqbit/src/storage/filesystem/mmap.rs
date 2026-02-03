@@ -107,12 +107,23 @@ impl TorrentStorage for MmapFilesystemStorage {
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
         self.fs.init(shared, metadata)?;
-        let mut mmaps = Vec::new();
-        for (idx, file) in self.fs.opened_files.iter().enumerate() {
-            let fg = file.lock_write()?;
-            fg.set_len(metadata.file_infos[idx].len)
-                .context("mmap storage: error setting length")?;
-            let mmap = unsafe { MmapOptions::new().map_mut(&*fg) }.context("error mapping file")?;
+        let mut mmaps: Vec<OpenedMmap> = Vec::new();
+
+        // Mmap storage is eager by definition.
+        for idx in 0..metadata.file_infos.len() {
+            if metadata.file_infos[idx].attrs.padding {
+                mmaps.push(RwLock::new(dummy_mmap()?));
+                continue;
+            }
+            // Ensure the file exists and has correct length
+            self.fs.ensure_file_length(idx, metadata.file_infos[idx].len)?;
+            
+            // Get the file handle (will open it via cache/provider)
+            let f = self.fs.get_file(idx)?;
+            
+            // Mmap it
+            let mmap = unsafe { MmapOptions::new().map_mut(&*f) }
+                .with_context(|| format!("error mapping file {}", idx))?;
             mmaps.push(RwLock::new(mmap));
         }
 
