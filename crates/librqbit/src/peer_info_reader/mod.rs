@@ -18,7 +18,7 @@ use peer_binary_protocol::{
         ut_metadata::{UtMetadata, UtMetadataData},
     },
 };
-use sha1w::{ISha1, Sha1};
+use sha1w::{ISha1, ISha256, Sha1, Sha256};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::trace;
 
@@ -132,11 +132,16 @@ impl HandlerLocked {
         self.received_pieces[piece as usize] = true;
 
         if self.received_pieces.iter().all(|p| *p) {
-            // check metadata
-            let mut hash = Sha1::new();
-            hash.update(&self.buffer);
-            if hash.finish() != info_hash.0 {
-                anyhow::bail!("info checksum invalid");
+            // check metadata: v1 uses SHA-1, v2 uses truncated SHA-256 (BEP 52)
+            let mut sha1 = Sha1::new();
+            sha1.update(&self.buffer);
+            if sha1.finish() != info_hash.0 {
+                let mut sha256 = Sha256::new();
+                sha256.update(&self.buffer);
+                let full = sha256.finish();
+                if full[..20] != info_hash.0 {
+                    anyhow::bail!("info checksum invalid");
+                }
             }
             Ok(true)
         } else {

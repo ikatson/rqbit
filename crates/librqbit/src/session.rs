@@ -55,7 +55,7 @@ use futures::{
 use http::StatusCode;
 use itertools::Itertools;
 use librqbit_core::{
-    crate_version,
+    Id32, crate_version,
     directories::get_configuration_directory,
     magnet::Magnet,
     peer_id::generate_azereus_style,
@@ -492,6 +492,7 @@ struct InternalAddResult {
     metadata: Option<TorrentMetadata>,
     trackers: Vec<url::Url>,
     name: Option<String>,
+    expected_info_hash_v2: Option<Id32>,
 }
 
 impl Session {
@@ -1013,9 +1014,15 @@ impl Session {
                 AddTorrent::Url(magnet) if magnet.starts_with("magnet:") || magnet.len() == 40 => {
                     let magnet = Magnet::parse(&magnet)
                         .context("provided path is not a valid magnet URL")?;
-                    let info_hash = magnet
-                        .as_id20()
-                        .context("magnet link didn't contain a BTv1 infohash")?;
+                    let id20 = magnet.as_id20();
+                    let id32 = magnet.as_id32();
+                    let info_hash = match (id20, id32) {
+                        (Some(id20), _) => id20,
+                        (None, Some(id32)) => id32.truncate_for_dht(),
+                        (None, None) => {
+                            bail!("magnet link didn't contain a BTv1 or BTv2 infohash")
+                        }
+                    };
                     if let Some(so) = magnet.get_select_only() {
                         // Only overwrite opts.only_files if user didn't specify
                         if opts.only_files.is_none() {
@@ -1032,6 +1039,7 @@ impl Session {
                             .collect(),
                         metadata: None,
                         name: magnet.name,
+                        expected_info_hash_v2: id32,
                     }
                 }
                 other => {
@@ -1068,18 +1076,42 @@ impl Session {
                         trackers.extend(custom_trackers);
                     }
 
+                    // Convert piece_layers from ByteBufOwned to Bytes for v2 torrents.
+                    let piece_layers = torrent.meta.piece_layers.as_ref().map(|pl| {
+                        pl.iter()
+                            .map(|(k, v)| (*k, v.0.clone()))
+                            .collect::<std::collections::BTreeMap<_, _>>()
+                    });
+
+                    let info_hash = if torrent.meta.is_v2_only() {
+                        torrent
+                            .meta
+                            .info_hash_v2
+                            .map(|h| h.truncate_for_dht())
+                            .unwrap_or(torrent.meta.info_hash)
+                    } else {
+                        torrent.meta.info_hash
+                    };
+
                     InternalAddResult {
-                        info_hash: torrent.meta.info_hash,
+                        info_hash,
                         metadata: Some(TorrentMetadata::new(
-                            torrent.meta.info.data.validate()?,
+                            torrent
+                                .meta
+                                .info
+                                .data
+                                .validate()
+                                .map_err(crate::Error::from)?,
                             torrent.torrent_bytes,
                             torrent.meta.info.raw_bytes.0,
+                            piece_layers,
                         )?),
                         trackers: trackers
                             .iter()
                             .filter_map(|t| url::Url::parse(t).ok())
                             .collect(),
                         name: None,
+                        expected_info_hash_v2: None,
                     }
                 }
             };
@@ -1143,6 +1175,7 @@ impl Session {
             metadata,
             trackers,
             name,
+            expected_info_hash_v2,
         } = add_res;
 
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
@@ -1174,7 +1207,13 @@ impl Session {
                         "no known way to resolve peers (no DHT, no trackers, no initial_peers)",
                     )?;
                     let resolved_magnet = self
-                        .resolve_magnet(info_hash, peer_rx, &trackers, opts.peer_opts)
+                        .resolve_magnet(
+                            info_hash,
+                            expected_info_hash_v2,
+                            peer_rx,
+                            &trackers,
+                            opts.peer_opts,
+                        )
                         .await?;
 
                     // Add back seen_peers into the peer stream, as we consumed some peers
@@ -1552,6 +1591,7 @@ impl Session {
     async fn resolve_magnet(
         self: &Arc<Self>,
         info_hash: Id20,
+        expected_info_hash_v2: Option<Id32>,
         peer_rx: PeerStream,
         trackers: &[url::Url],
         peer_opts: Option<PeerConnectionOptions>,
@@ -1573,12 +1613,26 @@ impl Session {
                 seen,
             } => {
                 trace!(?info, "received result from DHT");
-                let info = info.validate()?;
+                if let Some(expected) = expected_info_hash_v2 {
+                    let is_v2 = info.meta_version == Some(2) && info.file_tree.is_some();
+                    if !is_v2 {
+                        bail!("expected v2 metadata for magnet, got v1-only");
+                    }
+                    use sha1w::ISha256;
+                    let mut sha256 = sha1w::Sha256::new();
+                    sha256.update(info_bytes.as_ref());
+                    let computed = Id32::new(sha256.finish());
+                    if computed != expected {
+                        bail!("v2 info hash mismatch for magnet metadata");
+                    }
+                }
+                let info = info.validate().map_err(crate::Error::from)?;
                 Ok(ResolveMagnetResult {
                     metadata: TorrentMetadata::new(
                         info,
                         torrent_file_from_info_bytes(info_bytes.as_ref(), trackers)?,
                         info_bytes.0,
+                        None, // piece_layers obtained later for magnet links
                     )?,
                     peer_rx: rx,
                     seen_peers: {

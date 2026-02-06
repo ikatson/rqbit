@@ -105,7 +105,7 @@ struct TorrentFileTree {
 
 fn is_single_file_at_root(info: &ValidatedTorrentMetaV1Info<ByteBufOwned>) -> bool {
     info.iter_file_details()
-        .flat_map(move |fd| fd.filename.iter_components())
+        .flat_map(move |fd| fd.filename.to_vec())
         .nth(1)
         .is_none()
 }
@@ -397,7 +397,7 @@ mod tests {
             info: bencode::WithRawBytes {
                 data: TorrentMetaV1Info {
                     name: name.map(|n| n.as_bytes().into()),
-                    pieces: b""[..].into(),
+                    pieces: Some(b""[..].into()),
                     piece_length: 1,
                     length: None,
                     md5sum: None,
@@ -417,6 +417,8 @@ mod tests {
                     sha1: None,
                     symlink_path: None,
                     private: false,
+                    meta_version: None,
+                    file_tree: None,
                 },
                 raw_bytes: Default::default(),
             },
@@ -427,6 +429,8 @@ mod tests {
             publisher_url: None,
             creation_date: None,
             info_hash: Id20::default(),
+            info_hash_v2: None,
+            piece_layers: None,
         }
     }
 

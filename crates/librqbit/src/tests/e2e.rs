@@ -1,7 +1,7 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::{Context, bail};
-use librqbit_core::magnet::Magnet;
+use librqbit_core::{magnet::Magnet, torrent_metainfo::collect_v2_files};
 use rand::Rng;
 use tokio::{
     spawn,
@@ -378,4 +378,290 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
 
         info!("all good");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_v2_magnet_hash_request_flow() {
+    setup_test_logging();
+
+    let piece_length: u32 = 65536;
+    let file_length: usize = 256 * 1024;
+    let tempdir =
+        create_default_random_dir_with_torrents(1, file_length, Some("rqbit_e2e_v2_magnet"));
+
+    let torrent = create_torrent(
+        tempdir.path(),
+        crate::CreateTorrentOptions {
+            version: Some(crate::TorrentVersion::Hybrid),
+            piece_length: Some(piece_length),
+            ..Default::default()
+        },
+        &BlockingSpawner::new(1),
+    )
+    .await
+    .unwrap();
+
+    let file_tree = torrent.as_info().info.data.file_tree.as_ref().unwrap();
+    let pieces_root = collect_v2_files(file_tree)[0]
+        .entry
+        .pieces_root
+        .expect("v2-only file should have pieces_root");
+    let torrent_bytes = torrent.as_bytes().unwrap();
+    let magnet = torrent.as_magnet().to_string();
+
+    let server_session = Session::new_with_opts(
+        std::env::temp_dir().join("does_not_exist"),
+        SessionOptions {
+            disable_dht: true,
+            listen: Some(ListenerOptions {
+                mode: ListenerMode::TcpOnly,
+                listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                ..Default::default()
+            }),
+            disable_local_service_discovery: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let server_handle = server_session
+        .add_torrent(
+            crate::AddTorrent::TorrentFileBytes(torrent_bytes.clone()),
+            Some(AddTorrentOptions {
+                overwrite: true,
+                output_folder: Some(tempdir.path().to_str().unwrap().to_owned()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+
+    timeout(Duration::from_secs(10), async {
+        let mut interval = interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            let ready = server_handle
+                .with_state(|s| match s {
+                    crate::ManagedTorrentState::Initializing(_) => Ok(false),
+                    crate::ManagedTorrentState::Live(l) => {
+                        if !l.is_finished() {
+                            bail!("server torrent is not finished");
+                        }
+                        Ok(true)
+                    }
+                    crate::ManagedTorrentState::Error(e) => bail!("error: {e:#}"),
+                    _ => bail!("broken state"),
+                })
+                .unwrap();
+            if ready {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let server_addr = server_session.listen_addr().unwrap();
+
+    let client_root = tempfile::TempDir::with_prefix("rqbit_e2e_v2_client").unwrap();
+    let client_session = Session::new_with_opts(
+        client_root.path().to_path_buf(),
+        SessionOptions {
+            disable_dht: true,
+            disable_dht_persistence: true,
+            listen: None,
+            connect: Some(ConnectionOptions {
+                enable_tcp: true,
+                ..Default::default()
+            }),
+            disable_local_service_discovery: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let client_handle = client_session
+        .add_torrent(
+            crate::AddTorrent::Url((&magnet).into()),
+            Some(AddTorrentOptions {
+                initial_peers: Some(vec![server_addr]),
+                overwrite: false,
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+
+    timeout(
+        Duration::from_secs(60),
+        client_handle.wait_until_completed(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    client_handle
+        .with_state(|s| match s {
+            crate::ManagedTorrentState::Live(l) => {
+                let piece_layers = l.piece_layers();
+                let guard = piece_layers.read();
+                assert!(
+                    guard.as_ref().is_some_and(|m| m.contains_key(&pieces_root)),
+                    "piece_layers should be populated after hash request/response"
+                );
+                Ok(())
+            }
+            crate::ManagedTorrentState::Error(e) => bail!("{e:#}"),
+            _ => bail!("unexpected state after completion"),
+        })
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_v2_only_magnet_flow() {
+    setup_test_logging();
+
+    let piece_length: u32 = 65536;
+    let file_length: usize = 256 * 1024;
+    let tempdir =
+        create_default_random_dir_with_torrents(1, file_length, Some("rqbit_e2e_v2_only"));
+
+    let torrent = create_torrent(
+        tempdir.path(),
+        crate::CreateTorrentOptions {
+            version: Some(crate::TorrentVersion::V2Only),
+            piece_length: Some(piece_length),
+            ..Default::default()
+        },
+        &BlockingSpawner::new(1),
+    )
+    .await
+    .unwrap();
+
+    let file_tree = torrent.as_info().info.data.file_tree.as_ref().unwrap();
+    let pieces_root = collect_v2_files(file_tree)[0]
+        .entry
+        .pieces_root
+        .expect("v2-only file should have pieces_root");
+    let torrent_bytes = torrent.as_bytes().unwrap();
+    let magnet = torrent.as_magnet().to_string();
+
+    let server_session = Session::new_with_opts(
+        std::env::temp_dir().join("does_not_exist"),
+        SessionOptions {
+            disable_dht: true,
+            listen: Some(ListenerOptions {
+                mode: ListenerMode::TcpOnly,
+                listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                ..Default::default()
+            }),
+            disable_local_service_discovery: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let server_handle = server_session
+        .add_torrent(
+            crate::AddTorrent::TorrentFileBytes(torrent_bytes.clone()),
+            Some(AddTorrentOptions {
+                overwrite: true,
+                output_folder: Some(tempdir.path().to_str().unwrap().to_owned()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+
+    timeout(Duration::from_secs(10), async {
+        let mut interval = interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            let ready = server_handle
+                .with_state(|s| match s {
+                    crate::ManagedTorrentState::Initializing(_) => Ok(false),
+                    crate::ManagedTorrentState::Live(l) => {
+                        if !l.is_finished() {
+                            bail!("server torrent is not finished");
+                        }
+                        Ok(true)
+                    }
+                    crate::ManagedTorrentState::Error(e) => bail!("error: {e:#}"),
+                    _ => bail!("broken state"),
+                })
+                .unwrap();
+            if ready {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    let server_addr = server_session.listen_addr().unwrap();
+
+    let client_root = tempfile::TempDir::with_prefix("rqbit_e2e_v2_only_client").unwrap();
+    let client_session = Session::new_with_opts(
+        client_root.path().to_path_buf(),
+        SessionOptions {
+            disable_dht: true,
+            disable_dht_persistence: true,
+            listen: None,
+            connect: Some(ConnectionOptions {
+                enable_tcp: true,
+                ..Default::default()
+            }),
+            disable_local_service_discovery: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let client_handle = client_session
+        .add_torrent(
+            crate::AddTorrent::Url((&magnet).into()),
+            Some(AddTorrentOptions {
+                initial_peers: Some(vec![server_addr]),
+                overwrite: false,
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_handle()
+        .unwrap();
+
+    timeout(
+        Duration::from_secs(60),
+        client_handle.wait_until_completed(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    client_handle
+        .with_state(|s| match s {
+            crate::ManagedTorrentState::Live(l) => {
+                let piece_layers = l.piece_layers();
+                let guard = piece_layers.read();
+                assert!(
+                    guard.as_ref().is_some_and(|m| m.contains_key(&pieces_root)),
+                    "piece_layers should be populated after hash request/response"
+                );
+                Ok(())
+            }
+            crate::ManagedTorrentState::Error(e) => bail!("{e:#}"),
+            _ => bail!("unexpected state after completion"),
+        })
+        .unwrap();
 }

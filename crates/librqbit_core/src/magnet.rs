@@ -35,6 +35,21 @@ impl Magnet {
         }
     }
 
+    pub fn new(
+        id20: Option<Id20>,
+        id32: Option<Id32>,
+        trackers: Vec<String>,
+        select_only: Option<Vec<usize>>,
+    ) -> Self {
+        Self {
+            id20,
+            id32,
+            trackers,
+            name: None,
+            select_only,
+        }
+    }
+
     /// Parse a magnet link.
     pub fn parse(url: &str) -> anyhow::Result<Magnet> {
         if url.len() == 40

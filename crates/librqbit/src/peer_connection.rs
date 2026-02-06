@@ -19,6 +19,7 @@ use peer_binary_protocol::{
         ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake,
         ut_metadata::UtMetadata, ut_pex::UtPex,
     },
+    hash_messages::{HashHashes, HashRequest},
     serialize_piece_preamble,
 };
 use serde::{Deserialize, Serialize};
@@ -52,11 +53,30 @@ pub trait PeerConnectionHandler {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+
+    fn update_my_handshake(&self, _handshake: &mut Handshake) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Called when peer sends a BEP 52 hash request (message ID 21).
+    /// Not yet dispatched — will be wired up in integration phase.
+    #[allow(dead_code)]
+    async fn on_hash_request(&self, _req: HashRequest) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Called when peer sends BEP 52 hashes (message ID 22).
+    /// Not yet dispatched — will be wired up in integration phase.
+    #[allow(dead_code)]
+    async fn on_hash_hashes(&self, _resp: HashHashes<ByteBuf<'_>>) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
 pub enum WriterRequest {
     Message(Message<'static>),
+    HashHashes(HashHashes<ByteBufOwned>),
     UtMetadata(UtMetadata<ByteBufOwned>),
     UtPex(UtPex<ByteBufOwned>),
     ReadChunkRequest(ChunkInfo),
@@ -167,7 +187,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         );
 
         let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
-        let handshake = Handshake::new(self.info_hash, self.peer_id);
+        let mut handshake = Handshake::new(self.info_hash, self.peer_id);
+        self.handler
+            .update_my_handshake(&mut handshake)
+            .map_err(Error::Anyhow)?;
         let hlen = handshake.serialize_unchecked_len(&mut *write_buf);
         with_timeout(
             "writing handshake",
@@ -225,7 +248,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             self.handler.on_connected(now.elapsed());
 
             let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
-            let handshake = Handshake::new(self.info_hash, self.peer_id);
+            let mut handshake = Handshake::new(self.info_hash, self.peer_id);
+            self.handler
+                .update_my_handshake(&mut handshake)
+                .map_err(Error::Anyhow)?;
             let hsz = handshake.serialize_unchecked_len(&mut *write_buf);
             with_timeout(
                 "writing",
@@ -383,6 +409,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 let len = match req {
                     WriterRequest::Message(msg) => msg.serialize(&mut *write_buf, ext_msg_ids)?,
+                    WriterRequest::HashHashes(hashes) => Message::HashHashes(hashes.as_borrowed())
+                        .serialize(&mut *write_buf, ext_msg_ids)?,
                     WriterRequest::UtMetadata(utm) => {
                         Message::Extended(ExtendedMessage::UtMetadata(utm.as_borrowed()))
                             .serialize(&mut *write_buf, ext_msg_ids)?

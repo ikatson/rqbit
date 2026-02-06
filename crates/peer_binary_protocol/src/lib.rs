@@ -4,6 +4,7 @@
 
 mod double_buf;
 pub mod extended;
+pub mod hash_messages;
 
 use std::hint::unreachable_unchecked;
 
@@ -12,12 +13,20 @@ use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use extended::PeerExtendedMessageIds;
-use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
+use librqbit_core::{
+    constants::CHUNK_SIZE,
+    hash_id::{Id20, Id32},
+    lengths::ChunkInfo,
+};
 use serde_derive::{Deserialize, Serialize};
 
 pub use crate::double_buf::DoubleBufHelper;
 
 use self::extended::ExtendedMessage;
+use self::hash_messages::{
+    HASH_HASHES_MIN_PAYLOAD_LEN, HASH_REQUEST_PAYLOAD_LEN, HashHashes, HashReject, HashRequest,
+    MSG_HASH_HASHES, MSG_HASH_REJECT, MSG_HASH_REQUEST,
+};
 
 const INTEGER_LEN: usize = 4;
 const MSGID_LEN: usize = 1;
@@ -47,7 +56,6 @@ const MSGID_REQUEST: MsgId = 6;
 const MSGID_PIECE: MsgId = 7;
 const MSGID_CANCEL: MsgId = 8;
 const MSGID_EXTENDED: MsgId = 20;
-
 pub const EXTENDED_UT_METADATA_KEY: &[u8] = b"ut_metadata";
 pub const MY_EXTENDED_UT_METADATA: u8 = 3;
 
@@ -69,6 +77,9 @@ impl MsgIdDebug {
             MSGID_PIECE => "piece",
             MSGID_CANCEL => "cancel",
             MSGID_EXTENDED => "extended",
+            MSG_HASH_REQUEST => "hash_request",
+            MSG_HASH_HASHES => "hash_hashes",
+            MSG_HASH_REJECT => "hash_reject",
             _ => return None,
         };
         Some(n)
@@ -118,6 +129,15 @@ pub enum MessageDeserializeError {
     UtMetadataSizeMismatch {
         expected_size: u32,
         received_size: u32,
+    },
+    #[error("hash_hashes: hashes payload length {0} is not a multiple of 32")]
+    HashHashesMisaligned(usize),
+    #[error(
+        "hash_hashes: hashes payload length {hashes_len} != (length + proof_layers) * 32 = {expected_len}"
+    )]
+    HashHashesLengthMismatch {
+        hashes_len: usize,
+        expected_len: usize,
     },
     #[error("pstr doesn't match {PSTR_BT1:?}")]
     HandshakePstrWrongContent,
@@ -229,6 +249,9 @@ pub enum Message<'a> {
     NotInterested,
     Piece(Piece<ByteBuf<'a>>),
     Extended(ExtendedMessage<ByteBuf<'a>>),
+    HashRequest(HashRequest),
+    HashHashes(HashHashes<ByteBuf<'a>>),
+    HashReject(HashReject),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -241,6 +264,8 @@ pub enum SerializeError {
     NeedUtMetadata,
     #[error("need peer's handshake to serialize ut_pex, or peer does't support ut_pex")]
     NeedPex,
+    #[error("hash_hashes: hashes payload length {0} is not a multiple of 32")]
+    HashHashesMisaligned(usize),
 }
 
 impl From<std::io::Error> for SerializeError {
@@ -328,6 +353,35 @@ impl Message<'_> {
                 let msg_len = e.serialize(&mut out[PREAMBLE_LEN..], peer_extended_messages)?;
                 write_preamble!(msg_len as u32, MSGID_EXTENDED);
                 Ok(PREAMBLE_LEN + msg_len)
+            }
+            Message::HashRequest(req) => {
+                const TOTAL_LEN: usize = PREAMBLE_LEN + HASH_REQUEST_PAYLOAD_LEN;
+                check_len!(TOTAL_LEN);
+                write_preamble!(HASH_REQUEST_PAYLOAD_LEN as u32, MSG_HASH_REQUEST);
+                req.serialize_to(&mut out[PREAMBLE_LEN..]);
+                Ok(TOTAL_LEN)
+            }
+            Message::HashReject(reject) => {
+                const TOTAL_LEN: usize = PREAMBLE_LEN + HASH_REQUEST_PAYLOAD_LEN;
+                check_len!(TOTAL_LEN);
+                write_preamble!(HASH_REQUEST_PAYLOAD_LEN as u32, MSG_HASH_REJECT);
+                reject.serialize_to(&mut out[PREAMBLE_LEN..]);
+                Ok(TOTAL_LEN)
+            }
+            Message::HashHashes(hashes) => {
+                let hashes_len = hashes.hashes.as_ref().len();
+                if !hashes_len.is_multiple_of(32) {
+                    return Err(SerializeError::HashHashesMisaligned(hashes_len));
+                }
+                let payload_len = HASH_HASHES_MIN_PAYLOAD_LEN + hashes_len;
+                let total_len = PREAMBLE_LEN + payload_len;
+                check_len!(total_len);
+                write_preamble!(payload_len as u32, MSG_HASH_HASHES);
+                hashes.serialize_header_to(&mut out[PREAMBLE_LEN..]);
+                out[PREAMBLE_LEN + HASH_HASHES_MIN_PAYLOAD_LEN
+                    ..PREAMBLE_LEN + HASH_HASHES_MIN_PAYLOAD_LEN + hashes_len]
+                    .copy_from_slice(hashes.hashes.as_ref());
+                Ok(total_len)
             }
         }
     }
@@ -459,6 +513,53 @@ impl Message<'_> {
                 Message::Extended(ExtendedMessage::deserialize(buf.with_max_len(msg_len))?),
                 PREAMBLE_LEN + msg_len,
             )),
+            MSG_HASH_REQUEST => {
+                check_msg_len!(48);
+                let payload = buf.consume::<HASH_REQUEST_PAYLOAD_LEN>().unwrap();
+                Ok((
+                    Message::HashRequest(HashRequest::deserialize(&payload)),
+                    total_len,
+                ))
+            }
+            MSG_HASH_HASHES => {
+                check_msg_len!(min 48);
+                let hashes_len = msg_len - HASH_HASHES_MIN_PAYLOAD_LEN;
+                if !hashes_len.is_multiple_of(32) {
+                    return Err(MessageDeserializeError::HashHashesMisaligned(hashes_len));
+                }
+                let header = buf.consume::<HASH_HASHES_MIN_PAYLOAD_LEN>().unwrap();
+                let length = u32::from_be_bytes(header[40..44].try_into().unwrap());
+                let proof_layers = u32::from_be_bytes(header[44..48].try_into().unwrap());
+                let expected_len = (length as usize + proof_layers as usize) * 32;
+                if hashes_len != expected_len {
+                    return Err(MessageDeserializeError::HashHashesLengthMismatch {
+                        hashes_len,
+                        expected_len,
+                    });
+                }
+                let hashes_data = buf
+                    .get_contiguous(hashes_len)
+                    .ok_or(MessageDeserializeError::NeedContiguous)?;
+                Ok((
+                    Message::HashHashes(HashHashes {
+                        pieces_root: Id32::new(header[0..32].try_into().unwrap()),
+                        base_layer: u32::from_be_bytes(header[32..36].try_into().unwrap()),
+                        index: u32::from_be_bytes(header[36..40].try_into().unwrap()),
+                        length,
+                        proof_layers,
+                        hashes: ByteBuf::from(hashes_data),
+                    }),
+                    total_len,
+                ))
+            }
+            MSG_HASH_REJECT => {
+                check_msg_len!(48);
+                let payload = buf.consume::<HASH_REQUEST_PAYLOAD_LEN>().unwrap();
+                Ok((
+                    Message::HashReject(HashReject::deserialize(&payload)),
+                    total_len,
+                ))
+            }
             msg_id => Err(MessageDeserializeError::UnsupportedMessageId(msg_id)),
         }
     }
@@ -508,6 +609,17 @@ impl Handshake {
 
     pub fn supports_extended(&self) -> bool {
         self.reserved.to_be_bytes()[5] & 0x10 > 0
+    }
+
+    /// Set the v2 support bit in the reserved field.
+    /// BEP 52: bit 4 of reserved byte 7 (last byte).
+    pub fn set_v2_support(&mut self) {
+        self.reserved |= 1 << 4;
+    }
+
+    /// Check if peer supports v2.
+    pub fn supports_v2(&self) -> bool {
+        self.reserved.to_be_bytes()[7] & 0x10 > 0
     }
 
     #[must_use]
@@ -793,6 +905,208 @@ mod tests {
                 assert_eq!(slen, len);
                 assert_eq!(buf[..len], tmp[..len]);
             }
+        }
+    }
+
+    fn sample_pieces_root() -> Id32 {
+        let mut bytes = [0u8; 32];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        Id32::new(bytes)
+    }
+
+    #[test]
+    fn test_handshake_v2_bits() {
+        let info_hash = Id20::new([1u8; 20]);
+        let peer_id = Id20::new([2u8; 20]);
+        let mut h = Handshake::new(info_hash, peer_id);
+
+        assert!(!h.supports_v2());
+        h.set_v2_support();
+        assert!(h.supports_v2());
+
+        // Verify it round-trips through serialization
+        let mut buf = [0u8; 68];
+        let _ = h.serialize_unchecked_len(&mut buf);
+        let (h2, _) = Handshake::deserialize(&buf).unwrap();
+        assert!(h2.supports_v2());
+    }
+
+    #[test]
+    fn test_handshake_v2_coexists_with_extended() {
+        let info_hash = Id20::new([1u8; 20]);
+        let peer_id = Id20::new([2u8; 20]);
+        let mut h = Handshake::new(info_hash, peer_id);
+
+        assert!(h.supports_extended());
+        assert!(!h.supports_v2());
+
+        h.set_v2_support();
+        assert!(h.supports_extended());
+        assert!(h.supports_v2());
+    }
+
+    #[test]
+    fn test_hash_request_message_roundtrip() {
+        let req = HashRequest {
+            pieces_root: sample_pieces_root(),
+            base_layer: 0,
+            index: 5,
+            length: 8,
+            proof_layers: 2,
+        };
+        let msg = Message::HashRequest(req.clone());
+        let mut buf = [0u8; 100];
+        let len = msg.serialize(&mut buf, &|| Default::default()).unwrap();
+        assert_eq!(len, PREAMBLE_LEN + HASH_REQUEST_PAYLOAD_LEN);
+
+        let (msg2, len2) = Message::deserialize(&buf[..len], &[]).unwrap();
+        assert_eq!(len2, len);
+        match msg2 {
+            Message::HashRequest(req2) => assert_eq!(req2, req),
+            other => panic!("expected HashRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hash_reject_message_roundtrip() {
+        let reject = HashReject {
+            pieces_root: sample_pieces_root(),
+            base_layer: 1,
+            index: 10,
+            length: 4,
+            proof_layers: 3,
+        };
+        let msg = Message::HashReject(reject.clone());
+        let mut buf = [0u8; 100];
+        let len = msg.serialize(&mut buf, &|| Default::default()).unwrap();
+        assert_eq!(len, PREAMBLE_LEN + HASH_REQUEST_PAYLOAD_LEN);
+
+        let (msg2, len2) = Message::deserialize(&buf[..len], &[]).unwrap();
+        assert_eq!(len2, len);
+        match msg2 {
+            Message::HashReject(reject2) => assert_eq!(reject2, reject),
+            other => panic!("expected HashReject, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hash_hashes_message_roundtrip() {
+        // 2 hashes = 64 bytes
+        let hash_data: Vec<u8> = (0..64).collect();
+        let msg = Message::HashHashes(HashHashes {
+            pieces_root: sample_pieces_root(),
+            base_layer: 0,
+            index: 0,
+            length: 2,
+            proof_layers: 0,
+            hashes: ByteBuf(&hash_data),
+        });
+
+        let mut buf = [0u8; 200];
+        let len = msg.serialize(&mut buf, &|| Default::default()).unwrap();
+        assert_eq!(len, PREAMBLE_LEN + HASH_HASHES_MIN_PAYLOAD_LEN + 64);
+
+        let (msg2, len2) = Message::deserialize(&buf[..len], &[]).unwrap();
+        assert_eq!(len2, len);
+        match msg2 {
+            Message::HashHashes(h) => {
+                assert_eq!(h.pieces_root, sample_pieces_root());
+                assert_eq!(h.base_layer, 0);
+                assert_eq!(h.index, 0);
+                assert_eq!(h.length, 2);
+                assert_eq!(h.proof_layers, 0);
+                assert_eq!(h.hashes.as_ref(), hash_data.as_slice());
+            }
+            other => panic!("expected HashHashes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hash_hashes_zero_hashes_roundtrip() {
+        let msg = Message::HashHashes(HashHashes {
+            pieces_root: sample_pieces_root(),
+            base_layer: 0,
+            index: 0,
+            length: 0,
+            proof_layers: 0,
+            hashes: ByteBuf(&[]),
+        });
+
+        let mut buf = [0u8; 100];
+        let len = msg.serialize(&mut buf, &|| Default::default()).unwrap();
+        assert_eq!(len, PREAMBLE_LEN + HASH_HASHES_MIN_PAYLOAD_LEN);
+
+        let (msg2, len2) = Message::deserialize(&buf[..len], &[]).unwrap();
+        assert_eq!(len2, len);
+        match msg2 {
+            Message::HashHashes(h) => {
+                assert_eq!(h.hashes.as_ref(), &[]);
+            }
+            other => panic!("expected HashHashes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hash_hashes_misaligned_rejected() {
+        // Build a valid hash hashes message but with 33 bytes of hashes (not multiple of 32)
+        let mut buf = [0u8; 100];
+        let payload_len: u32 = (HASH_HASHES_MIN_PAYLOAD_LEN + 33) as u32;
+        buf[0..4].copy_from_slice(&(payload_len + 1).to_be_bytes()); // +1 for msg_id
+        buf[4] = MSG_HASH_HASHES;
+        // Fill header with zeros (valid structure)
+        // hashes region starts at offset 5 + 48 = 53, 33 bytes
+
+        let res = Message::deserialize(&buf, &[]);
+        assert!(
+            matches!(res, Err(MessageDeserializeError::HashHashesMisaligned(33))),
+            "expected HashHashesMisaligned, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn test_hash_hashes_length_mismatch_rejected() {
+        // Header claims length=2, proof_layers=1 => 3 hashes = 96 bytes, but we only send 64.
+        let mut buf = [0u8; 200];
+        let payload_len: u32 = (HASH_HASHES_MIN_PAYLOAD_LEN + 64) as u32;
+        buf[0..4].copy_from_slice(&(payload_len + 1).to_be_bytes()); // +1 for msg_id
+        buf[4] = MSG_HASH_HASHES;
+
+        let header_start = 5;
+        let header_end = header_start + HASH_HASHES_MIN_PAYLOAD_LEN;
+        let header = &mut buf[header_start..header_end];
+        header[40..44].copy_from_slice(&2u32.to_be_bytes()); // length
+        header[44..48].copy_from_slice(&1u32.to_be_bytes()); // proof_layers
+
+        let res = Message::deserialize(&buf, &[]);
+        assert!(
+            matches!(
+                res,
+                Err(MessageDeserializeError::HashHashesLengthMismatch {
+                    hashes_len: 64,
+                    expected_len: 96
+                })
+            ),
+            "expected HashHashesLengthMismatch, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn test_hash_message_ids_not_unsupported() {
+        // Ensure message IDs 21, 22, 23 are no longer UnsupportedMessageId
+        for msg_id in [MSG_HASH_REQUEST, MSG_HASH_HASHES, MSG_HASH_REJECT] {
+            let mut buf = [0u8; 100];
+            // Payload = 48 bytes for request/reject, or 48 for min hashes
+            let payload_len = HASH_REQUEST_PAYLOAD_LEN as u32;
+            buf[0..4].copy_from_slice(&(payload_len + 1).to_be_bytes());
+            buf[4] = msg_id;
+
+            let res = Message::deserialize(&buf, &[]);
+            assert!(
+                !matches!(res, Err(MessageDeserializeError::UnsupportedMessageId(_))),
+                "msg_id {msg_id} should not be UnsupportedMessageId, got {res:?}"
+            );
         }
     }
 }

@@ -384,6 +384,7 @@ pub async fn h_create_torrent(
         name: opts.name.as_deref(),
         trackers: opts.trackers,
         piece_length: None,
+        version: None,
     };
 
     let (torrent, handle) = state

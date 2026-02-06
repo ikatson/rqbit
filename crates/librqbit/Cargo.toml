@@ -119,7 +119,7 @@ windows = { workspace = true, features = ["Win32", "Win32_System", "Win32_System
 anyhow.workspace = true
 
 [dev-dependencies]
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 tokio-test.workspace = true
 tempfile.workspace = true
 pollster.workspace = true
