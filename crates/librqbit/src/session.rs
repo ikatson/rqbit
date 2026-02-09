@@ -6,10 +6,15 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::Ordering,
     },
     time::Duration,
 };
+
+#[cfg(target_pointer_width = "64")]
+use std::sync::atomic::AtomicUsize;
+#[cfg(target_pointer_width = "32")]
+use portable_atomic::AtomicUsize;
 
 use crate::{
     ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
@@ -555,12 +560,14 @@ impl Session {
                         bootstrap_addrs: opts.dht_bootstrap_addrs.clone(),
                         cancellation_token: Some(token.child_token()),
                         bind_device: bind_device.as_ref(),
+                        ipv4_only: opts.ipv4_only,
                         ..Default::default()
                     })
                     .await
                     .context("error initializing DHT")?
                 } else {
-                    let pdht_config = opts.dht_config.take().unwrap_or_default();
+                    let mut pdht_config = opts.dht_config.take().unwrap_or_default();
+                    pdht_config.ipv4_only = opts.ipv4_only;
                     PersistentDht::create(
                         Some(pdht_config),
                         Some(token.clone()),
@@ -691,7 +698,11 @@ impl Session {
                 None
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
+            let udp_tracker_client = UdpTrackerClient::new(
+                token.clone(), 
+                bind_device.as_ref(),
+                opts.ipv4_only
+            )
                 .await
                 .context("error creating UDP tracker client")?;
 
@@ -702,6 +713,7 @@ impl Session {
                     LocalServiceDiscovery::new(LocalServiceDiscoveryOptions {
                         cancel_token: token.clone(),
                         bind_device: bind_device.as_ref(),
+                        ipv4_only: opts.ipv4_only,
                         ..Default::default()
                     })
                     .await
@@ -1236,7 +1248,7 @@ impl Session {
             p.next_id().await?
         } else {
             self.next_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .fetch_add(1, Ordering::Relaxed)
         };
 
         let _permit = self.spawner.semaphore().acquire_owned().await?;

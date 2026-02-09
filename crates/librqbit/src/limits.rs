@@ -14,7 +14,7 @@ pub struct LimitsConfig {
 
 struct Limit {
     limiter: ArcSwapOption<RateLimiter>,
-    current_bps: std::sync::atomic::AtomicU32,
+    current_bps: portable_atomic::AtomicU32,
 }
 
 impl Limit {
@@ -24,7 +24,7 @@ impl Limit {
     }
 
     fn new(bps: Option<NonZeroU32>) -> Self {
-        use std::sync::atomic::AtomicU32;
+        use portable_atomic::AtomicU32;
         Self {
             limiter: ArcSwapOption::new(Self::new_inner(bps)),
             current_bps: AtomicU32::new(bps.map(|v| v.get()).unwrap_or(0)),
@@ -40,7 +40,7 @@ impl Limit {
     }
 
     fn set(&self, limit: Option<NonZeroU32>) {
-        use std::sync::atomic::Ordering;
+        use portable_atomic::Ordering;
         let new = Self::new_inner(limit);
         self.limiter.swap(new);
         self.current_bps
@@ -48,7 +48,7 @@ impl Limit {
     }
 
     fn get(&self) -> Option<NonZeroU32> {
-        use std::sync::atomic::Ordering;
+        use portable_atomic::Ordering;
         NonZeroU32::new(self.current_bps.load(Ordering::Relaxed))
     }
 }

@@ -65,7 +65,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrent }) => {
 
   // Fetch peer stats periodically
   useEffect(() => {
-    if (torrentId == null || !statsResponse?.live) return;
+    if (!torrentId || !statsResponse?.live) return;
 
     return customSetInterval(() => {
       return API.getPeerStats(torrentId).then(

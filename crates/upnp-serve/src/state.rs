@@ -1,10 +1,12 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::Ordering,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use portable_atomic::AtomicU64;
 
 use anyhow::Context;
 use axum::body::Bytes;

@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
+use portable_atomic::AtomicU32;
 
 pub fn atomic_inc(c: &AtomicU32) -> u32 {
     c.fetch_add(1, Ordering::Relaxed)

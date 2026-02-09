@@ -3,7 +3,7 @@ use std::{
     io::SeekFrom,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::Ordering,
     },
     task::{Poll, Waker},
     time::Instant,
@@ -19,6 +19,7 @@ use tokio::{
 };
 use tracing::{debug, trace};
 
+use portable_atomic::AtomicUsize;
 use crate::{ManagedTorrent, file_info::FileInfo, storage::TorrentStorage};
 
 use super::{ManagedTorrentHandle, TorrentMetadata};

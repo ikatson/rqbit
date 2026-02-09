@@ -1,8 +1,10 @@
 use std::{
     collections::VecDeque,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
+
+use portable_atomic::AtomicU64;
 
 use parking_lot::Mutex;
 

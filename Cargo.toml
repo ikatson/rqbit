@@ -14,6 +14,7 @@ members = [
     "crates/upnp",
     "crates/tracker_comms",
     "crates/upnp-serve",
+    "crates/librqbit-utp",
     "desktop/src-tauri",
 ]
 
@@ -31,6 +32,7 @@ default-members = [
     "crates/upnp",
     "crates/tracker_comms",
     "crates/upnp-serve",
+    "crates/librqbit-utp",
 ]
 
 [profile.dev]
@@ -108,7 +110,7 @@ itertools = "0.14"
 leaky-bucket = "1.1"
 libc = "0.2"
 librqbit-dualstack-sockets = "0.6"
-librqbit-utp = "0.6"
+librqbit-utp = { path = "crates/librqbit-utp", version = "0.7.0" }
 lru = "0.16"
 memchr = "2"
 memmap2 = "0.9"
@@ -119,6 +121,7 @@ nix = "0.30"
 notify = "8"
 openssl = "0.10"
 parking_lot = "0.12"
+portable-atomic = "1.6"
 parse_duration = "2"
 pollster = "0.4"
 quick-xml = "0.38"
