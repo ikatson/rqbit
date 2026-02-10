@@ -13,6 +13,12 @@ pub struct Magnet {
     select_only: Option<Vec<usize>>,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum MagnetError {
+    #[error("magnet link has neither v1 (btih) nor v2 (btmh) info hash")]
+    NoInfoHash,
+}
+
 impl Magnet {
     pub fn as_id20(&self) -> Option<Id20> {
         self.id20
@@ -33,6 +39,24 @@ impl Magnet {
             name: None,
             select_only,
         }
+    }
+
+    pub fn new(
+        id20: Option<Id20>,
+        id32: Option<Id32>,
+        trackers: Vec<String>,
+        select_only: Option<Vec<usize>>,
+    ) -> Result<Self, MagnetError> {
+        if id20.is_none() && id32.is_none() {
+            return Err(MagnetError::NoInfoHash);
+        }
+        Ok(Self {
+            id20,
+            id32,
+            trackers,
+            name: None,
+            select_only,
+        })
     }
 
     /// Parse a magnet link.
