@@ -1,3 +1,5 @@
+use bytes::Bytes;
+use clone_to_owned::CloneToOwned;
 use data_encoding::BASE32;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
@@ -61,6 +63,14 @@ impl<const N: usize> Id<N> {
 impl<const N: usize> Default for Id<N> {
     fn default() -> Self {
         Id([0; N])
+    }
+}
+
+impl<const N: usize> CloneToOwned for Id<N> {
+    type Target = Id<N>;
+
+    fn clone_to_owned(&self, _within_buffer: Option<&Bytes>) -> Self::Target {
+        *self
     }
 }
 
@@ -170,6 +180,18 @@ impl<'de, const N: usize> Deserialize<'de> for Id<N> {
 pub type Id20 = Id<20>;
 /// A 32-byte hash used in Bittorrent V2, for torrent info hashes, piece hashing, etc.
 pub type Id32 = Id<32>;
+
+impl Id32 {
+    /// Truncate to 20 bytes for DHT and tracker compatibility (BEP 52).
+    ///
+    /// DHT uses 20-byte node IDs, and BEP 3 handshakes use 20-byte info hashes.
+    /// For v2-only torrents, the SHA-256 info hash is truncated to 20 bytes.
+    pub fn truncate_for_dht(&self) -> Id20 {
+        let mut bytes = [0u8; 20];
+        bytes.copy_from_slice(&self.0[..20]);
+        Id20::new(bytes)
+    }
+}
 
 #[cfg(test)]
 mod tests {

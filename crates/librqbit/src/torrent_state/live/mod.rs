@@ -45,7 +45,7 @@ pub mod stats;
 
 use std::{
     borrow::Cow,
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     net::{IpAddr, SocketAddr},
     num::NonZeroU32,
     sync::{
@@ -57,14 +57,17 @@ use std::{
 
 use anyhow::{Context, bail};
 use buffers::{ByteBuf, ByteBufOwned};
+use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use librqbit_core::{
     constants::CHUNK_SIZE,
-    hash_id::Id20,
+    hash_id::{Id20, Id32},
     lengths::{ChunkInfo, Lengths, ValidPieceIndex},
+    merkle::{MERKLE_BLOCK_SIZE, hash_pair, zero_hash},
     spawn_utils::spawn_with_cancel,
     speed_estimator::SpeedEstimator,
     torrent_metainfo::ValidatedTorrentMetaV1Info,
+    torrent_metainfo::collect_v2_files,
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
@@ -75,6 +78,7 @@ use peer_binary_protocol::{
         ut_metadata::{UtMetadata, UtMetadataData},
         ut_pex::UtPex,
     },
+    hash_messages::{HashHashes, HashRequest},
 };
 use tokio::sync::{
     Notify, OwnedSemaphorePermit, Semaphore,
@@ -233,7 +237,7 @@ impl TorrentStateLive {
         let up_speed_estimator = SpeedEstimator::default();
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
-        let lengths = *paused.chunk_tracker.get_lengths();
+        let lengths = paused.chunk_tracker.get_lengths().clone();
 
         // TODO: make it configurable
         let file_priorities = {
@@ -256,6 +260,7 @@ impl TorrentStateLive {
             ChunkInfo,
         )>();
         let ratelimits = Limits::new(paused.shared.options.ratelimits);
+        let total_pieces = lengths.total_pieces();
 
         let state = Arc::new(TorrentStateLive {
             shared: paused.shared.clone(),
@@ -290,9 +295,7 @@ impl TorrentStateLive {
             have_broadcast_tx,
             session_stats,
             streams: paused.streams,
-            per_piece_locks: (0..lengths.total_pieces())
-                .map(|_| RwLock::new(()))
-                .collect(),
+            per_piece_locks: (0..total_pieces).map(|_| RwLock::new(())).collect(),
             ratelimit_upload_tx,
             ratelimits,
         });
@@ -675,7 +678,12 @@ impl TorrentStateLive {
         self.shared.peer_id
     }
     pub(crate) fn file_ops(&self) -> FileOps<'_> {
-        FileOps::new(&self.metadata.info, &*self.files, &self.metadata.file_infos)
+        FileOps::new(
+            &self.metadata.info,
+            &*self.files,
+            &self.metadata.file_infos,
+            self.metadata.piece_layers.clone(),
+        )
     }
 
     pub(crate) fn lock_read(
@@ -708,6 +716,11 @@ impl TorrentStateLive {
 
     pub fn get_approx_have_bytes(&self) -> u64 {
         self.stats.have_bytes.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn piece_layers(&self) -> Arc<RwLock<Option<BTreeMap<Id32, Bytes>>>> {
+        self.metadata.piece_layers.clone()
     }
 
     pub fn get_hns(&self) -> Option<HaveNeededSelected> {
@@ -1103,6 +1116,24 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                     self.on_pex_message(pex);
                 }
             }
+            Message::HashRequest(req) => {
+                self.handle_hash_request(req)
+                    .await
+                    .context("handle_hash_request")?;
+            }
+            Message::HashHashes(resp) => {
+                self.handle_hash_hashes(resp)
+                    .await
+                    .context("handle_hash_hashes")?;
+            }
+            Message::HashReject(reject) => {
+                trace!(
+                    id = self.state.shared.id,
+                    info_hash = ?self.state.shared.info_hash,
+                    ?reject,
+                    "received hash reject from peer"
+                );
+            }
             message => {
                 warn!(
                     id = self.state.shared.id,
@@ -1123,7 +1154,9 @@ impl PeerConnectionHandler for &'_ PeerHandler {
     }
 
     fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()> {
+        let supports_v2 = handshake.supports_v2();
         self.state.set_peer_live(self.addr, handshake, ckind);
+        self.maybe_request_piece_layers(supports_v2);
         Ok(())
     }
 
@@ -1213,6 +1246,13 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             handshake.metadata_size = Some(len);
         }
 
+        Ok(())
+    }
+
+    fn update_my_handshake(&self, handshake: &mut Handshake) -> anyhow::Result<()> {
+        if self.state.metadata.info.info().meta_version == Some(2) {
+            handshake.set_v2_support();
+        }
         Ok(())
     }
 }
@@ -2001,6 +2041,439 @@ impl PeerHandler {
             });
     }
 
+    fn piece_layer_base(piece_length: u32) -> Option<u32> {
+        if piece_length < MERKLE_BLOCK_SIZE || !piece_length.is_power_of_two() {
+            return None;
+        }
+        let blocks_per_piece = piece_length / MERKLE_BLOCK_SIZE;
+        Some(blocks_per_piece.trailing_zeros())
+    }
+
+    fn padding_piece_hash(blocks_per_piece: u32) -> Id32 {
+        let mut hash = zero_hash();
+        let mut levels = blocks_per_piece.trailing_zeros();
+        while levels > 0 {
+            hash = hash_pair(&hash, &hash);
+            levels -= 1;
+        }
+        hash
+    }
+
+    fn build_piece_hash_layers(piece_hashes: &[Id32], blocks_per_piece: u32) -> Vec<Vec<Id32>> {
+        let pad_hash = Self::padding_piece_hash(blocks_per_piece);
+        let mut layer = piece_hashes.to_vec();
+        let padded_len = layer.len().max(1).next_power_of_two();
+        layer.resize(padded_len, pad_hash);
+
+        let mut layers = Vec::new();
+        layers.push(layer);
+        while layers.last().unwrap().len() > 1 {
+            let prev = layers.last().unwrap();
+            let mut next = Vec::with_capacity(prev.len() / 2);
+            for pair in prev.chunks_exact(2) {
+                next.push(hash_pair(&pair[0], &pair[1]));
+            }
+            layers.push(next);
+        }
+        layers
+    }
+
+    fn is_power_of_two_u32(value: u32) -> bool {
+        value.is_power_of_two()
+    }
+
+    fn max_proof_layers(layer_len: usize, length: u32) -> Option<u32> {
+        if layer_len == 0 || !Self::is_power_of_two_u32(length) {
+            return None;
+        }
+        let layer_len_u32 = u32::try_from(layer_len).ok()?;
+        let total_layers = layer_len_u32.trailing_zeros() + 1;
+        let subtree_layer = length.trailing_zeros();
+        if subtree_layer >= total_layers {
+            return None;
+        }
+        Some(total_layers - 1 - subtree_layer)
+    }
+
+    fn maybe_request_piece_layers(&self, peer_supports_v2: bool) {
+        if !peer_supports_v2 {
+            return;
+        }
+
+        let info = self.state.metadata.info.info();
+        if info.meta_version != Some(2) {
+            return;
+        }
+        let Some(file_tree) = info.file_tree.as_ref() else {
+            return;
+        };
+        let Some(base_layer) = Self::piece_layer_base(info.piece_length) else {
+            return;
+        };
+
+        let piece_length = info.piece_length as u64;
+        let piece_layers_guard = self.state.metadata.piece_layers.read();
+        let piece_layers = piece_layers_guard.as_ref();
+
+        for file_info in collect_v2_files(file_tree) {
+            let Some(pieces_root) = file_info.entry.pieces_root else {
+                continue;
+            };
+            if file_info.entry.length <= piece_length {
+                continue;
+            }
+            if piece_layers.is_some_and(|m| m.contains_key(&pieces_root)) {
+                continue;
+            }
+
+            let num_pieces = match u32::try_from(file_info.entry.length.div_ceil(piece_length)) {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(
+                        id = self.state.shared.id,
+                        info_hash = ?self.state.shared.info_hash,
+                        file_length = file_info.entry.length,
+                        "file length too large for hash request"
+                    );
+                    continue;
+                }
+            };
+            let padded_len = num_pieces.next_power_of_two();
+            let mut index = 0u32;
+            while index < num_pieces {
+                let remaining = num_pieces - index;
+                let length = 1u32 << (31 - remaining.leading_zeros());
+                let layer_len = padded_len;
+                let proof_layers = Self::max_proof_layers(layer_len as usize, length).unwrap_or(0);
+                let req = HashRequest {
+                    pieces_root,
+                    base_layer,
+                    index,
+                    length,
+                    proof_layers,
+                };
+                let _ = self
+                    .tx
+                    .send(WriterRequest::Message(Message::HashRequest(req)));
+                index += length;
+            }
+        }
+    }
+
+    async fn handle_hash_request(&self, req: HashRequest) -> anyhow::Result<()> {
+        let info = self.state.metadata.info.info();
+        if info.meta_version != Some(2) {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+        let Some(file_tree) = info.file_tree.as_ref() else {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        };
+        let Some(base_layer) = Self::piece_layer_base(info.piece_length) else {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        };
+
+        let file_info = collect_v2_files(file_tree)
+            .into_iter()
+            .find(|file| file.entry.pieces_root.as_ref() == Some(&req.pieces_root));
+        let Some(file_info) = file_info else {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        };
+
+        let piece_length = info.piece_length as u64;
+        let num_pieces = match u32::try_from(file_info.entry.length.div_ceil(piece_length)) {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = self
+                    .tx
+                    .send(WriterRequest::Message(Message::HashReject(req.into())));
+                return Ok(());
+            }
+        };
+
+        if req.base_layer < base_layer {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+        if !Self::is_power_of_two_u32(req.length) || req.length == 0 {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+        if !req.index.is_multiple_of(req.length) {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+
+        let blocks_per_piece = info.piece_length / MERKLE_BLOCK_SIZE;
+        let base_layer_idx = req.base_layer - base_layer;
+
+        let piece_hashes: Vec<Id32> = if file_info.entry.length <= piece_length {
+            vec![req.pieces_root]
+        } else {
+            let piece_layers_guard = self.state.metadata.piece_layers.read();
+            let Some(piece_layers) = piece_layers_guard.as_ref() else {
+                let _ = self
+                    .tx
+                    .send(WriterRequest::Message(Message::HashReject(req.into())));
+                return Ok(());
+            };
+            let Some(layer) = piece_layers.get(&req.pieces_root) else {
+                let _ = self
+                    .tx
+                    .send(WriterRequest::Message(Message::HashReject(req.into())));
+                return Ok(());
+            };
+            if layer.len() != num_pieces as usize * 32 {
+                let _ = self
+                    .tx
+                    .send(WriterRequest::Message(Message::HashReject(req.into())));
+                return Ok(());
+            }
+            layer
+                .chunks_exact(32)
+                .map(|chunk| Id32::new(chunk.try_into().unwrap()))
+                .collect()
+        };
+
+        let layers = Self::build_piece_hash_layers(&piece_hashes, blocks_per_piece);
+        if base_layer_idx as usize >= layers.len() {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+        let base_layer_hashes = &layers[base_layer_idx as usize];
+        if (req.index as usize + req.length as usize) > base_layer_hashes.len() {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+        let max_proof = Self::max_proof_layers(base_layer_hashes.len(), req.length).unwrap_or(0);
+        if req.proof_layers > max_proof {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+
+        let subtree_layer_idx = base_layer_idx + req.length.trailing_zeros();
+        let mut subtree_index = req.index / req.length;
+        let mut proofs_bottom_up = Vec::with_capacity(req.proof_layers as usize);
+        let proof_end = subtree_layer_idx + req.proof_layers;
+        if proof_end as usize >= layers.len() {
+            let _ = self
+                .tx
+                .send(WriterRequest::Message(Message::HashReject(req.into())));
+            return Ok(());
+        }
+        for layer_idx in subtree_layer_idx..proof_end {
+            let sibling_index = (subtree_index ^ 1) as usize;
+            proofs_bottom_up.push(layers[layer_idx as usize][sibling_index]);
+            subtree_index >>= 1;
+        }
+
+        let mut hashes = Vec::with_capacity((req.length as usize + req.proof_layers as usize) * 32);
+        for proof in proofs_bottom_up.into_iter().rev() {
+            hashes.extend_from_slice(&proof.0);
+        }
+        let start = req.index as usize;
+        let end = start + req.length as usize;
+        for hash in &base_layer_hashes[start..end] {
+            hashes.extend_from_slice(&hash.0);
+        }
+
+        let resp = HashHashes {
+            pieces_root: req.pieces_root,
+            base_layer: req.base_layer,
+            index: req.index,
+            length: req.length,
+            proof_layers: req.proof_layers,
+            hashes: ByteBufOwned(Bytes::from(hashes)),
+        };
+        let _ = self.tx.send(WriterRequest::HashHashes(resp));
+        Ok(())
+    }
+
+    async fn handle_hash_hashes(&self, resp: HashHashes<ByteBuf<'_>>) -> anyhow::Result<()> {
+        let info = self.state.metadata.info.info();
+        if info.meta_version != Some(2) {
+            return Ok(());
+        }
+        let Some(file_tree) = info.file_tree.as_ref() else {
+            return Ok(());
+        };
+        let Some(base_layer) = Self::piece_layer_base(info.piece_length) else {
+            return Ok(());
+        };
+
+        let file_info = collect_v2_files(file_tree)
+            .into_iter()
+            .find(|file| file.entry.pieces_root.as_ref() == Some(&resp.pieces_root));
+        let Some(file_info) = file_info else {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                pieces_root = ?resp.pieces_root,
+                "received hashes for unknown pieces_root"
+            );
+            return Ok(());
+        };
+
+        let piece_length = info.piece_length as u64;
+        let num_pieces = match u32::try_from(file_info.entry.length.div_ceil(piece_length)) {
+            Ok(v) => v,
+            Err(_) => {
+                warn!(
+                    id = self.state.shared.id,
+                    info_hash = ?self.state.shared.info_hash,
+                    file_length = file_info.entry.length,
+                    "hash response file length too large"
+                );
+                return Ok(());
+            }
+        };
+
+        if resp.base_layer < base_layer {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                ?resp,
+                "hash response parameters do not match expected values"
+            );
+            return Ok(());
+        }
+        if resp.length == 0 || !Self::is_power_of_two_u32(resp.length) {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                ?resp,
+                "hash response length must be power-of-two"
+            );
+            return Ok(());
+        }
+
+        let base_layer_idx = resp.base_layer - base_layer;
+        let padded_len = num_pieces.next_power_of_two();
+        let base_layer_len = padded_len >> base_layer_idx;
+        if !resp.index.is_multiple_of(resp.length)
+            || (resp.index as usize + resp.length as usize) > base_layer_len as usize
+        {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                ?resp,
+                "hash response index/length out of range"
+            );
+            return Ok(());
+        }
+
+        let max_proof = Self::max_proof_layers(base_layer_len as usize, resp.length).unwrap_or(0);
+        if resp.proof_layers != max_proof {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                ?resp,
+                expected = max_proof,
+                "hash response proof_layers mismatch"
+            );
+            return Ok(());
+        }
+
+        let expected_len = (resp.length as usize + resp.proof_layers as usize) * 32;
+        let hashes = resp.hashes.as_ref();
+        if hashes.len() != expected_len {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                expected_len,
+                actual_len = hashes.len(),
+                "hash response length mismatch"
+            );
+            return Ok(());
+        }
+
+        let proof_hashes = hashes[..resp.proof_layers as usize * 32]
+            .chunks_exact(32)
+            .map(|chunk| Id32::new(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let base_hashes = hashes[resp.proof_layers as usize * 32..]
+            .chunks_exact(32)
+            .map(|chunk| Id32::new(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+
+        let mut subtree_layer = base_hashes.clone();
+        while subtree_layer.len() > 1 {
+            let mut next = Vec::with_capacity(subtree_layer.len() / 2);
+            for pair in subtree_layer.chunks_exact(2) {
+                next.push(hash_pair(&pair[0], &pair[1]));
+            }
+            subtree_layer = next;
+        }
+        let mut hash = subtree_layer[0];
+        let mut subtree_index = resp.index / resp.length;
+        for proof in proof_hashes.iter().rev() {
+            if subtree_index.is_multiple_of(2) {
+                hash = hash_pair(&hash, proof);
+            } else {
+                hash = hash_pair(proof, &hash);
+            }
+            subtree_index >>= 1;
+        }
+
+        if hash != resp.pieces_root {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                "hash response merkle root mismatch"
+            );
+            return Ok(());
+        }
+
+        if base_layer_idx != 0 {
+            return Ok(());
+        }
+
+        if resp.index + resp.length > num_pieces {
+            warn!(
+                id = self.state.shared.id,
+                info_hash = ?self.state.shared.info_hash,
+                ?resp,
+                "hash response range exceeds data piece count"
+            );
+            return Ok(());
+        }
+
+        let mut piece_layers_guard = self.state.metadata.piece_layers.write();
+        let map = piece_layers_guard.get_or_insert_with(BTreeMap::new);
+        let entry = map
+            .entry(resp.pieces_root)
+            .or_insert_with(|| Bytes::from(vec![0u8; num_pieces as usize * 32]));
+        let mut data = entry.to_vec();
+        let start = resp.index as usize * 32;
+        let end = start + resp.length as usize * 32;
+        data[start..end].copy_from_slice(&hashes[resp.proof_layers as usize * 32..]);
+        *entry = Bytes::from(data);
+        Ok(())
+    }
+
     fn lock_read(
         &self,
         reason: &'static str,
@@ -2012,5 +2485,77 @@ impl PeerHandler {
         reason: &'static str,
     ) -> TimedExistence<RwLockWriteGuard<'_, PeerHandlerLocked>> {
         TimedExistence::new(timeit(reason, || self._locked.write()), reason)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_hashes_partial_proof_roundtrip() {
+        let piece_hashes = vec![
+            Id32::new([1u8; 32]),
+            Id32::new([2u8; 32]),
+            Id32::new([3u8; 32]),
+            Id32::new([4u8; 32]),
+        ];
+        let blocks_per_piece = 1;
+        let layers = PeerHandler::build_piece_hash_layers(&piece_hashes, blocks_per_piece);
+        let pieces_root = layers.last().unwrap()[0];
+
+        let base_layer_len = layers[0].len();
+        let index = 0u32;
+        let length = 2u32;
+        let proof_layers =
+            PeerHandler::max_proof_layers(base_layer_len, length).expect("valid proof layers");
+
+        let subtree_layer_idx = length.trailing_zeros();
+        let mut subtree_index = index / length;
+        let mut proofs_bottom_up = Vec::with_capacity(proof_layers as usize);
+        let proof_end = subtree_layer_idx + proof_layers;
+        for layer_idx in subtree_layer_idx..proof_end {
+            let sibling_index = (subtree_index ^ 1) as usize;
+            proofs_bottom_up.push(layers[layer_idx as usize][sibling_index]);
+            subtree_index >>= 1;
+        }
+
+        let mut hashes = Vec::with_capacity((length as usize + proof_layers as usize) * 32);
+        for proof in proofs_bottom_up.into_iter().rev() {
+            hashes.extend_from_slice(&proof.0);
+        }
+        for hash in &layers[0][index as usize..(index + length) as usize] {
+            hashes.extend_from_slice(&hash.0);
+        }
+
+        let proof_hashes = hashes[..proof_layers as usize * 32]
+            .chunks_exact(32)
+            .map(|chunk| Id32::new(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let base_hashes = hashes[proof_layers as usize * 32..]
+            .chunks_exact(32)
+            .map(|chunk| Id32::new(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+
+        let mut subtree_layer = base_hashes.clone();
+        while subtree_layer.len() > 1 {
+            let mut next = Vec::with_capacity(subtree_layer.len() / 2);
+            for pair in subtree_layer.chunks_exact(2) {
+                next.push(hash_pair(&pair[0], &pair[1]));
+            }
+            subtree_layer = next;
+        }
+        let mut hash = subtree_layer[0];
+        let mut verify_index = index / length;
+        for proof in proof_hashes.iter().rev() {
+            if verify_index.is_multiple_of(2) {
+                hash = hash_pair(&hash, proof);
+            } else {
+                hash = hash_pair(proof, &hash);
+            }
+            verify_index >>= 1;
+        }
+
+        assert_eq!(hash, pieces_root);
     }
 }

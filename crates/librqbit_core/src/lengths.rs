@@ -32,7 +32,116 @@ pub struct ChunkInfo {
     pub offset: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+// ============================================================================
+// V2 piece geometry (BEP 52)
+// ============================================================================
+
+/// Per-file piece info for v2 torrents where pieces are file-aligned.
+#[derive(Debug, Clone)]
+pub struct V2FilePieceInfo {
+    pub file_index: usize,
+    pub file_length: u64,
+    pub num_pieces: u32,
+    /// Global piece index of this file's first piece.
+    pub first_piece_index: u32,
+}
+
+/// Piece geometry for v2 torrents: pieces are file-aligned, each file starts
+/// at piece boundary 0. Total pieces = sum(ceil(file_size / piece_length)) per file.
+#[derive(Debug, Clone)]
+pub struct V2Lengths {
+    piece_length: u32,
+    files: Vec<V2FilePieceInfo>,
+    total_pieces: u32,
+}
+
+impl V2Lengths {
+    pub fn new(piece_length: u32, file_lengths: &[u64]) -> Self {
+        Self::try_new(piece_length, file_lengths)
+            .expect("invalid v2 piece_length: must be power of two and >= 16384")
+    }
+
+    pub fn try_new(piece_length: u32, file_lengths: &[u64]) -> crate::Result<Self> {
+        if piece_length < crate::merkle::MERKLE_BLOCK_SIZE || !piece_length.is_power_of_two() {
+            return Err(Error::V2InvalidPieceLength(piece_length));
+        }
+        let mut files = Vec::with_capacity(file_lengths.len());
+        let mut total_pieces: u32 = 0;
+        for (file_index, &file_length) in file_lengths.iter().enumerate() {
+            let num_pieces = if file_length == 0 {
+                0
+            } else {
+                file_length.div_ceil(piece_length as u64) as u32
+            };
+            files.push(V2FilePieceInfo {
+                file_index,
+                file_length,
+                num_pieces,
+                first_piece_index: total_pieces,
+            });
+            total_pieces += num_pieces;
+        }
+        Ok(Self {
+            piece_length,
+            files,
+            total_pieces,
+        })
+    }
+
+    pub fn piece_length_val(&self) -> u32 {
+        self.piece_length
+    }
+
+    pub fn total_pieces(&self) -> u32 {
+        self.total_pieces
+    }
+
+    pub fn files(&self) -> &[V2FilePieceInfo] {
+        &self.files
+    }
+
+    /// Map a global piece index to (file_index, byte offset within that file).
+    pub fn file_for_piece(&self, piece: ValidPieceIndex) -> Option<(usize, u64)> {
+        let idx = piece.get();
+        for f in &self.files {
+            if idx >= f.first_piece_index && idx < f.first_piece_index + f.num_pieces {
+                let local_piece = idx - f.first_piece_index;
+                let offset = local_piece as u64 * self.piece_length as u64;
+                return Some((f.file_index, offset));
+            }
+        }
+        None
+    }
+
+    /// Return the length of a specific piece (may be shorter for last-of-file pieces).
+    pub fn piece_length(&self, piece: ValidPieceIndex) -> u32 {
+        let idx = piece.get();
+        for f in &self.files {
+            if idx >= f.first_piece_index && idx < f.first_piece_index + f.num_pieces {
+                let local_piece = idx - f.first_piece_index;
+                if local_piece == f.num_pieces - 1 {
+                    // Last piece of this file — may be truncated.
+                    return last_element_size(f.file_length, self.piece_length as u64) as u32;
+                }
+                return self.piece_length;
+            }
+        }
+        self.piece_length
+    }
+
+    /// Return the local piece index within its file.
+    pub fn local_piece_index(&self, piece: ValidPieceIndex) -> Option<u32> {
+        let idx = piece.get();
+        for f in &self.files {
+            if idx >= f.first_piece_index && idx < f.first_piece_index + f.num_pieces {
+                return Some(idx - f.first_piece_index);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Lengths {
     // The total length of the torrent in bytes.
     total_length: u64,
@@ -46,6 +155,9 @@ pub struct Lengths {
 
     // How many chunks are there per normal piece (except the last piece).
     chunks_per_piece: u32,
+
+    // v2 per-file piece info. Present only for v2 torrents.
+    v2_file_pieces: Option<Vec<V2FilePieceInfo>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,22 +204,60 @@ impl Lengths {
             chunks_per_piece: (piece_length as u64).div_ceil(CHUNK_SIZE as u64) as u32,
             last_piece_id: total_pieces - 1,
             last_piece_length: last_element_size(total_length, piece_length as u64) as u32,
+            v2_file_pieces: None,
         })
     }
 
+    /// Build a `Lengths` from v2 piece geometry.
+    pub fn from_v2(v2: &V2Lengths) -> crate::Result<Self> {
+        let total_length: u64 = v2.files.iter().map(|f| f.file_length).sum();
+        if total_length == 0 {
+            return Err(Error::BadTorrentZeroLength);
+        }
+        if v2.total_pieces == 0 {
+            return Err(Error::BadTorrentZeroLength);
+        }
+        let last_piece_id = v2.total_pieces - 1;
+        // Find the last file with pieces to compute last piece length.
+        let last_file_with_pieces = v2.files.iter().rev().find(|f| f.num_pieces > 0);
+        let last_piece_length = match last_file_with_pieces {
+            Some(f) => last_element_size(f.file_length, v2.piece_length as u64) as u32,
+            None => return Err(Error::BadTorrentZeroLength),
+        };
+
+        Ok(Self {
+            piece_length: v2.piece_length,
+            total_length,
+            chunks_per_piece: (v2.piece_length as u64).div_ceil(CHUNK_SIZE as u64) as u32,
+            last_piece_id,
+            last_piece_length,
+            v2_file_pieces: Some(v2.files.clone()),
+        })
+    }
+
+    /// Whether this Lengths uses v2 file-aligned piece geometry.
+    pub fn is_v2(&self) -> bool {
+        self.v2_file_pieces.is_some()
+    }
+
+    /// Get v2 file piece info, if present.
+    pub fn v2_file_pieces(&self) -> Option<&[V2FilePieceInfo]> {
+        self.v2_file_pieces.as_deref()
+    }
+
     // How many bytes are required to store a bitfield where there's one bit for each piece.
-    pub const fn piece_bitfield_bytes(&self) -> usize {
+    pub fn piece_bitfield_bytes(&self) -> usize {
         self.total_pieces().div_ceil(8) as usize
     }
 
     // How many bytes are required to store a bitfield where there's one bit for each chunk.
-    pub const fn chunk_bitfield_bytes(&self) -> usize {
+    pub fn chunk_bitfield_bytes(&self) -> usize {
         self.total_chunks().div_ceil(8) as usize
     }
     pub const fn total_length(&self) -> u64 {
         self.total_length
     }
-    pub const fn validate_piece_index(&self, index: u32) -> Option<ValidPieceIndex> {
+    pub fn validate_piece_index(&self, index: u32) -> Option<ValidPieceIndex> {
         if index > self.last_piece_id {
             return None;
         }
@@ -123,37 +273,58 @@ impl Lengths {
     pub const fn default_chunks_per_piece(&self) -> u32 {
         self.chunks_per_piece
     }
-    pub const fn total_chunks(&self) -> u32 {
-        // TODO: test
+    pub fn total_chunks(&self) -> u32 {
+        // For v2, we use default_chunks_per_piece for all pieces. This slightly
+        // overallocates for last-of-file pieces but unused chunk bits are never requested.
         self.last_piece_id * self.default_chunks_per_piece()
             + self.chunks_per_piece(self.last_piece_id())
     }
-    pub const fn last_piece_id(&self) -> ValidPieceIndex {
+    pub fn last_piece_id(&self) -> ValidPieceIndex {
         ValidPieceIndex(self.last_piece_id)
     }
-    pub const fn total_pieces(&self) -> u32 {
+    pub fn total_pieces(&self) -> u32 {
         self.last_piece_id + 1
     }
-    pub const fn piece_length(&self, index: ValidPieceIndex) -> u32 {
+    pub fn piece_length(&self, index: ValidPieceIndex) -> u32 {
+        // For v2, check if this is a last-of-file piece.
+        if let Some(ref file_pieces) = self.v2_file_pieces {
+            for f in file_pieces {
+                if f.num_pieces == 0 {
+                    continue;
+                }
+                if index.0 >= f.first_piece_index && index.0 < f.first_piece_index + f.num_pieces {
+                    let local = index.0 - f.first_piece_index;
+                    if local == f.num_pieces - 1 {
+                        // Last piece of this file.
+                        return last_element_size(f.file_length, self.piece_length as u64) as u32;
+                    }
+                    return self.piece_length;
+                }
+            }
+        }
+
         if index.0 == self.last_piece_id {
             return self.last_piece_length;
         }
         self.piece_length
     }
-    pub const fn chunk_absolute_offset(&self, chunk_info: &ChunkInfo) -> u64 {
+    pub fn chunk_absolute_offset(&self, chunk_info: &ChunkInfo) -> u64 {
+        // NOTE: For v2 torrents, this value is NOT meaningful for IO.
+        // v2 fast paths in file_ops.rs compute file-local offsets via V2Lengths::file_for_piece.
         self.piece_offset(chunk_info.piece_index) + chunk_info.offset as u64
     }
-    pub const fn piece_offset(&self, index: ValidPieceIndex) -> u64 {
+    pub fn piece_offset(&self, index: ValidPieceIndex) -> u64 {
         index.0 as u64 * self.piece_length as u64
     }
 
-    pub fn iter_piece_infos(&self) -> impl Iterator<Item = PieceInfo> + 'static {
-        let last_id = self.last_piece_id;
-        let last_len = self.last_piece_length;
-        let pl = self.piece_length;
-        (0..self.total_pieces()).map(move |idx| PieceInfo {
-            piece_index: ValidPieceIndex(idx),
-            len: if idx == last_id { last_len } else { pl },
+    pub fn iter_piece_infos(&self) -> impl Iterator<Item = PieceInfo> + '_ {
+        let total = self.total_pieces();
+        (0..total).map(move |idx| {
+            let vi = ValidPieceIndex(idx);
+            PieceInfo {
+                piece_index: vi,
+                len: self.piece_length(vi),
+            }
         })
     }
 
@@ -217,18 +388,34 @@ impl Lengths {
             absolute_index,
         })
     }
-    pub const fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
+    pub fn chunk_range(&self, index: ValidPieceIndex) -> std::ops::Range<usize> {
         let start = index.0 * self.chunks_per_piece;
         let end = start + self.chunks_per_piece(index);
         start as usize..end as usize
     }
-    pub const fn chunks_per_piece(&self, index: ValidPieceIndex) -> u32 {
+    pub fn chunks_per_piece(&self, index: ValidPieceIndex) -> u32 {
         if index.0 == self.last_piece_id {
             return self.last_piece_length.div_ceil(CHUNK_SIZE);
         }
+        // For v2, check if this is a last-of-file piece with shorter length.
+        if let Some(ref file_pieces) = self.v2_file_pieces {
+            for f in file_pieces {
+                if f.num_pieces == 0 {
+                    continue;
+                }
+                if index.0 >= f.first_piece_index && index.0 < f.first_piece_index + f.num_pieces {
+                    let local = index.0 - f.first_piece_index;
+                    if local == f.num_pieces - 1 {
+                        let pl = last_element_size(f.file_length, self.piece_length as u64) as u32;
+                        return pl.div_ceil(CHUNK_SIZE);
+                    }
+                    return self.chunks_per_piece;
+                }
+            }
+        }
         self.chunks_per_piece
     }
-    pub const fn chunk_offset_in_piece(
+    pub fn chunk_offset_in_piece(
         &self,
         piece_index: ValidPieceIndex,
         chunk_index: u32,

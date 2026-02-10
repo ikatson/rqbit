@@ -117,6 +117,30 @@ pub enum Error {
 
     #[error("session is dead")]
     SessionDestroyed,
+
+    #[error(transparent)]
+    Core(#[from] librqbit_core::Error),
+
+    #[error(transparent)]
+    V2Verify(#[from] V2VerifyError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum V2VerifyError {
+    #[error("piece_layers not available (magnet link?)")]
+    PieceLayersMissing,
+    #[error("piece index {0} out of range")]
+    PieceIndexOutOfRange(u32),
+    #[error("file mapping mismatch: {0}")]
+    FileMappingMismatch(String),
+    #[error("merkle verification failed for piece {0}")]
+    MerkleMismatch(u32),
+    #[error("storage read failed: file={file_idx} offset={offset} len={len}")]
+    StorageReadFailure {
+        file_idx: usize,
+        offset: u64,
+        len: usize,
+    },
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

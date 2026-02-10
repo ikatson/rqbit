@@ -81,6 +81,7 @@ impl TorrentStateInitializing {
                     &self.metadata.info,
                     &self.files,
                     &self.metadata.file_infos,
+                    self.metadata.piece_layers.clone(),
                 );
 
                 use rand::seq::SliceRandom;
@@ -190,8 +191,13 @@ impl TorrentStateInitializing {
                     .shared
                     .spawner
                     .block_in_place_with_semaphore(|| {
-                        FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
-                            .initial_check(&self.checked_bytes)
+                        FileOps::new(
+                            &self.metadata.info,
+                            &self.files,
+                            &self.metadata.file_infos,
+                            self.metadata.piece_layers.clone(),
+                        )
+                        .initial_check(&self.checked_bytes)
                     })
                     .await?;
                 bitv_factory
@@ -215,7 +221,7 @@ impl TorrentStateInitializing {
         let chunk_tracker = ChunkTracker::new(
             have_pieces.into_dyn(),
             selected_pieces,
-            *self.metadata.lengths(),
+            self.metadata.lengths().clone(),
             &self.metadata.file_infos,
         )
         .context("error creating chunk tracker")?;

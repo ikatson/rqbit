@@ -7,7 +7,7 @@
 // but to have one-line conversion for it into TorrentMetaInfo<Vec<u8>> so that we can store it later somewhere.
 
 use bytes::Bytes;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 pub trait CloneToOwned {
     type Target;
@@ -72,5 +72,25 @@ where
             );
         }
         result
+    }
+}
+
+impl<K, V> CloneToOwned for BTreeMap<K, V>
+where
+    K: CloneToOwned,
+    <K as CloneToOwned>::Target: Ord,
+    V: CloneToOwned,
+{
+    type Target = BTreeMap<<K as CloneToOwned>::Target, <V as CloneToOwned>::Target>;
+
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
+        self.iter()
+            .map(|(k, v)| {
+                (
+                    k.clone_to_owned(within_buffer),
+                    v.clone_to_owned(within_buffer),
+                )
+            })
+            .collect()
     }
 }

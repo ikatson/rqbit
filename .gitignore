@@ -9,3 +9,4 @@
 .claude
 .serena/
 node_modules
+/tests/large_files/

@@ -20,8 +20,10 @@ use buffers::ByteBufOwned;
 use bytes::Bytes;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use librqbit_core::Id32;
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::Lengths;
+use std::collections::BTreeMap;
 
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use librqbit_core::torrent_metainfo::ValidatedTorrentMetaV1Info;
@@ -139,6 +141,9 @@ pub struct TorrentMetadata {
     pub torrent_bytes: Bytes,
     pub info_bytes: Bytes,
     pub file_infos: FileInfos,
+    /// v2 piece layer hashes, keyed by file `pieces_root`.
+    /// None for v1-only or when magnet resolution has not yet fetched them.
+    pub piece_layers: Arc<RwLock<Option<BTreeMap<Id32, Bytes>>>>,
 }
 
 impl TorrentMetadata {
@@ -146,6 +151,7 @@ impl TorrentMetadata {
         info: ValidatedTorrentMetaV1Info<ByteBufOwned>,
         torrent_bytes: Bytes,
         info_bytes: Bytes,
+        piece_layers: Option<BTreeMap<Id32, Bytes>>,
     ) -> anyhow::Result<Self> {
         let file_infos = info
             .iter_file_details_ext()
@@ -165,6 +171,7 @@ impl TorrentMetadata {
             torrent_bytes,
             info_bytes,
             file_infos,
+            piece_layers: Arc::new(RwLock::new(piece_layers)),
         })
     }
 

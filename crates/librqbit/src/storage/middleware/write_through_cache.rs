@@ -50,7 +50,7 @@ impl<U: StorageFactory + Clone> StorageFactory for WriteThroughCacheStorageFacto
         Ok(WriteThroughCacheStorage {
             lru,
             underlying: self.underlying.create(shared, metadata)?,
-            lengths: *metadata.info.lengths(),
+            lengths: metadata.info.lengths().clone(),
             file_infos: metadata.file_infos.clone(),
         })
     }
