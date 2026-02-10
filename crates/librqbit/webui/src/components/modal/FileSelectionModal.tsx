@@ -67,9 +67,22 @@ export const FileSelectionModal = (props: {
     let initialPeers = listTorrentResponse.seen_peers
       ? listTorrentResponse.seen_peers.slice(0, 32)
       : null;
+
+    // When all non-padding files are selected, omit only_files entirely.
+    // Sending every file index in the query string causes 414 URI Too Long
+    // on torrents with thousands of files (see #366).
+    const allNonPaddingFiles = new Set(
+      listTorrentResponse.details.files.flatMap((file, idx) =>
+        file.attributes.padding ? [] : [idx],
+      ),
+    );
+    const allSelected =
+      selectedFiles.size === allNonPaddingFiles.size &&
+      [...selectedFiles].every((f) => allNonPaddingFiles.has(f));
+
     let opts: AddTorrentOptions = {
       overwrite: true,
-      only_files: Array.from(selectedFiles),
+      only_files: allSelected ? undefined : Array.from(selectedFiles),
       initial_peers: initialPeers,
       output_folder: outputFolder,
     };
