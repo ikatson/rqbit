@@ -1,3 +1,5 @@
+use bytes::Bytes;
+use clone_to_owned::CloneToOwned;
 use data_encoding::BASE32;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
@@ -55,6 +57,14 @@ impl<const N: usize> Id<N> {
         for bit in r {
             self.set_bit(bit, value)
         }
+    }
+}
+
+impl<const N: usize> CloneToOwned for Id<N> {
+    type Target = Id<N>;
+
+    fn clone_to_owned(&self, _within_buffer: Option<&Bytes>) -> Self::Target {
+        *self
     }
 }
 
@@ -171,6 +181,18 @@ pub type Id20 = Id<20>;
 /// A 32-byte hash used in Bittorrent V2, for torrent info hashes, piece hashing, etc.
 pub type Id32 = Id<32>;
 
+impl Id32 {
+    /// Truncate to 20 bytes for DHT and tracker compatibility (BEP 52).
+    ///
+    /// DHT uses 20-byte node IDs, and BEP 3 handshakes use 20-byte info hashes.
+    /// For v2-only torrents, the SHA-256 info hash is truncated to 20 bytes.
+    pub fn truncate_for_dht(&self) -> Id20 {
+        let mut bytes = [0u8; 20];
+        bytes.copy_from_slice(&self.0[..20]);
+        Id20::new(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +223,36 @@ mod tests {
         let s2 = "cfe1119f124881ca70f7306f32e292194c88c195";
         let ih2 = Id20::from_str(s2).unwrap();
         assert_eq!(ih1, ih2);
+    }
+
+    #[test]
+    fn test_id32_truncate_for_dht_uses_first_20_bytes() {
+        let id32 = Id32::new([
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x99, 0x88,
+            0x77, 0x66, 0x55, 0x44,
+        ]);
+        let truncated = id32.truncate_for_dht();
+        assert_eq!(
+            truncated,
+            Id20::new([
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+                0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+            ])
+        );
+    }
+
+    #[test]
+    fn test_clone_to_owned_id20() {
+        let id = Id20::new([1u8; 20]);
+        let owned = id.clone_to_owned(None);
+        assert_eq!(owned, id);
+    }
+
+    #[test]
+    fn test_clone_to_owned_id32() {
+        let id = Id32::new([2u8; 32]);
+        let owned = id.clone_to_owned(None);
+        assert_eq!(owned, id);
     }
 }
