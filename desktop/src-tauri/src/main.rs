@@ -28,6 +28,7 @@ use librqbit::{
 use librqbit_dualstack_sockets::TcpListener;
 use parking_lot::RwLock;
 use serde::Serialize;
+use tauri::Emitter;
 use tracing::{debug_span, error, info, warn};
 
 struct StateShared {
@@ -417,10 +418,115 @@ async fn start() {
         Err(e) => warn!("failed increasing open file limit: {:#}", e),
     };
 
+    let line_broadcast = init_logging_result.line_broadcast.clone();
     let state = State::new(init_logging_result).await;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
+        // System tray: intercept close to hide the window instead of quitting.
+        // The user can quit via the tray context menu.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
+        // System tray setup: icon with context menu (Show, Start at Login, Quit).
+        // Left-click on tray icon restores the main window.
+        .setup(move |app| {
+            use tauri::Manager;
+            use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+            use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+            use tauri_plugin_autostart::ManagerExt;
+
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>).ok();
+            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>).ok();
+            let autostart_i = CheckMenuItem::with_id(
+                app,
+                "autostart",
+                "Start at Login",
+                true,
+                false,
+                None::<&str>,
+            )
+            .ok();
+
+            if let (Some(quit_i), Some(show_i), Some(autostart_i)) = (quit_i, show_i, autostart_i) {
+                // Check current autostart status
+                if let Ok(true) = app.autolaunch().is_enabled() {
+                    let _ = autostart_i.set_checked(true);
+                }
+
+                let menu = Menu::with_items(app, &[&show_i, &autostart_i, &quit_i]);
+                if let Ok(menu) = menu {
+                    let _ = TrayIconBuilder::new()
+                        .icon(app.default_window_icon().unwrap().clone())
+                        .tooltip(format!("rqbit v{}", env!("CARGO_PKG_VERSION")))
+                        .menu(&menu)
+                        .on_menu_event(move |app, event| match event.id().as_ref() {
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "autostart" => {
+                                let enabled = app.autolaunch().is_enabled().unwrap_or(false);
+                                if enabled {
+                                    let _ = app.autolaunch().disable();
+                                    let _ = autostart_i.set_checked(false);
+                                } else {
+                                    let _ = app.autolaunch().enable();
+                                    let _ = autostart_i.set_checked(true);
+                                }
+                            }
+                            _ => {}
+                        })
+                        .on_tray_icon_event(
+                            |tray: &tauri::tray::TrayIcon, event: tauri::tray::TrayIconEvent| {
+                                if let TrayIconEvent::Click {
+                                    button: MouseButton::Left,
+                                    ..
+                                } = event
+                                {
+                                    let app = tray.app_handle();
+                                    if let Some(window) = app.get_webview_window("main") {
+                                        let _ = window.show();
+                                        let _ = window.set_focus();
+                                    }
+                                }
+                            },
+                        )
+                        .build(app);
+                }
+            }
+
+            // Force show window on startup
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+
+            // Spawn log broadcaster
+            let mut rx = line_broadcast.subscribe();
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while let Ok(line) = rx.recv().await {
+                    if let Ok(line_str) = std::str::from_utf8(&line) {
+                        let _ = app_handle.emit("log_line", line_str);
+                    }
+                }
+            });
+
+            Ok(())
+        })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             config_change,
