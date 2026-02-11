@@ -1,20 +1,26 @@
 use std::{
-    fs::OpenOptions,
+    collections::HashSet,
+    fs::{File, OpenOptions},
     io::IoSlice,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::Context;
-use tracing::warn;
+use lru::LruCache;
+use parking_lot::Mutex;
+use tracing::{debug, warn};
 
 use crate::{
+    file_info::FileInfo,
     storage::{StorageFactoryExt, filesystem::opened_file::OurFileExt},
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
 
 use crate::storage::{StorageFactory, TorrentStorage};
 
-use super::opened_file::OpenedFile;
+const DEFAULT_FILE_CACHE_CAPACITY: usize = 128;
 
 #[derive(Default, Clone, Copy)]
 pub struct FilesystemStorageFactory {}
@@ -29,7 +35,10 @@ impl StorageFactory for FilesystemStorageFactory {
     ) -> anyhow::Result<FilesystemStorage> {
         Ok(FilesystemStorage {
             output_folder: shared.options.output_folder.clone(),
-            opened_files: Default::default(),
+            file_infos: Vec::new(),
+            file_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(DEFAULT_FILE_CACHE_CAPACITY).unwrap(),
+            )),
         })
     }
 
@@ -40,37 +49,94 @@ impl StorageFactory for FilesystemStorageFactory {
 
 pub struct FilesystemStorage {
     pub(super) output_folder: PathBuf,
-    pub(super) opened_files: Vec<OpenedFile>,
+    /// File metadata from torrent. Stored during init() to compute paths lazily
+    /// from output_folder + relative_filename on cache miss, avoiding separate
+    /// path allocation per file (as suggested by @ikatson).
+    file_infos: Vec<FileInfo>,
+    /// LRU cache of open file handles, keyed by file_id.
+    file_cache: Mutex<LruCache<usize, Arc<File>>>,
 }
 
 impl FilesystemStorage {
     pub(super) fn take_fs(&self) -> anyhow::Result<Self> {
+        let capacity = {
+            let cache = self.file_cache.lock();
+            cache.cap()
+        };
         Ok(Self {
-            opened_files: self
-                .opened_files
-                .iter()
-                .map(|f| f.take_clone())
-                .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            file_infos: self.file_infos.clone(),
+            file_cache: Mutex::new(LruCache::new(capacity)),
         })
+    }
+
+    /// Get or open a file handle for the given file_id.
+    ///
+    /// Uses a two-phase approach to avoid holding the lock during file open:
+    /// 1. Check cache under lock → if hit, return Arc<File>
+    /// 2. Release lock → open file (blocking) → re-acquire lock → insert
+    pub(super) fn get_or_open(&self, file_id: usize, write: bool) -> anyhow::Result<Arc<File>> {
+        // Phase 1: check cache
+        {
+            let mut cache = self.file_cache.lock();
+            if let Some(file) = cache.get(&file_id) {
+                return Ok(Arc::clone(file));
+            }
+        }
+        // Cache miss — compute path lazily from file_infos
+        let fi = self
+            .file_infos
+            .get(file_id)
+            .context("file_id out of range")?;
+        anyhow::ensure!(!fi.attrs.padding, "cannot open padding file");
+        let path = self.output_folder.join(&fi.relative_filename);
+
+        let file = if write {
+            let f = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(&path)
+                .with_context(|| format!("error opening {path:?} in read/write mode"))?;
+            // Mark as sparse file on Windows (once per open, not per write).
+            // FSCTL_SET_SPARSE is idempotent but still a syscall — avoid calling it
+            // on every I/O operation.
+            #[cfg(windows)]
+            super::sparse::mark_file_sparse(&f);
+            f
+        } else {
+            OpenOptions::new()
+                .read(true)
+                .open(&path)
+                .with_context(|| format!("error opening {path:?} in read mode"))?
+        };
+
+        let file = Arc::new(file);
+
+        // Phase 2: insert into cache under lock
+        {
+            let mut cache = self.file_cache.lock();
+            // Another thread may have inserted while we were opening
+            if let Some(existing) = cache.get(&file_id) {
+                return Ok(Arc::clone(existing));
+            }
+            cache.put(file_id, Arc::clone(&file));
+        }
+
+        Ok(file)
     }
 }
 
 impl TorrentStorage for FilesystemStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.opened_files
-            .get(file_id)
-            .context("no such file")?
-            .lock_read()?
-            .pread_exact(offset, buf)
+        let file = self.get_or_open(file_id, false)?;
+        file.pread_exact(offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all(offset, buf);
-        #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all(offset, buf);
+        let file = self.get_or_open(file_id, true)?;
+        file.pwrite_all(offset, buf)
     }
 
     fn pwrite_all_vectored(
@@ -79,33 +145,33 @@ impl TorrentStorage for FilesystemStorage {
         offset: u64,
         bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
-        #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all_vectored(offset, bufs);
+        let file = self.get_or_open(file_id, true)?;
+        file.pwrite_all_vectored(offset, bufs)
     }
 
-    fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
+    fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
+        // Evict from cache before removing
+        {
+            let mut cache = self.file_cache.lock();
+            cache.pop(&file_id);
+        }
         Ok(std::fs::remove_file(self.output_folder.join(filename))?)
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
-        let f = &self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        f.try_mark_sparse()?;
-        Ok(f.lock_read()?.set_len(len)?)
+        let file = self.get_or_open(file_id, true)?;
+        // Skip set_len if the file already has the correct size.
+        // On Windows, File::set_len() calls SetEndOfFile which updates the
+        // modification timestamp even when the size is unchanged, causing
+        // mtime to reset on every restart for completed torrents.
+        if file.metadata()?.len() == len {
+            return Ok(());
+        }
+        Ok(file.set_len(len)?)
     }
 
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>> {
-        Ok(Box::new(Self {
-            opened_files: self
-                .opened_files
-                .iter()
-                .map(|f| f.take_clone())
-                .collect::<anyhow::Result<Vec<_>>>()?,
-            output_folder: self.output_folder.clone(),
-        }))
+        Ok(Box::new(self.take_fs()?))
     }
 
     fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
@@ -126,27 +192,27 @@ impl TorrentStorage for FilesystemStorage {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
-        let mut files = Vec::<OpenedFile>::new();
-        for file_details in metadata.file_infos.iter() {
-            let mut full_path = self.output_folder.clone();
-            let relative_path = &file_details.relative_filename;
-            full_path.push(relative_path);
+        let start = std::time::Instant::now();
+        let mut created_dirs: HashSet<PathBuf> = HashSet::new();
 
+        for file_details in metadata.file_infos.iter() {
             if file_details.attrs.padding {
-                files.push(OpenedFile::new_dummy());
                 continue;
-            };
-            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
-            } else {
-                // create_new does not seem to work with read(true), so calling this twice.
+            }
+
+            let full_path = self.output_folder.join(&file_details.relative_filename);
+
+            // Deduplicate create_dir_all calls
+            if let Some(parent) = full_path.parent() {
+                if created_dirs.insert(parent.to_path_buf()) {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+
+            // For allow_overwrite=false, use create_new to reject existing files.
+            // create_new(true) fails if the file already exists, which is the desired
+            // behavior — prevents accidental data loss.
+            if !shared.options.allow_overwrite {
                 OpenOptions::new()
                     .create_new(true)
                     .write(true)
@@ -157,12 +223,19 @@ impl TorrentStorage for FilesystemStorage {
                             &full_path
                         )
                     })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
-            };
-            files.push(OpenedFile::new(full_path.clone(), f));
+            }
         }
 
-        self.opened_files = files;
+        self.file_infos = metadata.file_infos.clone();
+
+        debug!(
+            elapsed = ?start.elapsed(),
+            files = metadata.file_infos.len(),
+            dirs_created = created_dirs.len(),
+            cache_capacity = DEFAULT_FILE_CACHE_CAPACITY,
+            "Filesystem storage initialized (lazy file opening)"
+        );
+
         Ok(())
     }
 }
