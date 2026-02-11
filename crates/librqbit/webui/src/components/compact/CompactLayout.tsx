@@ -3,6 +3,7 @@ import { TorrentListItem } from "../../api-types";
 import { ActionBar } from "./ActionBar";
 import { TorrentTable } from "./TorrentTable";
 import { DetailPane } from "./DetailPane";
+import { ErrorBoundary } from "../ErrorBoundary";
 
 const DETAIL_PANE_MIN_HEIGHT = 100;
 const DETAIL_PANE_MAX_HEIGHT = 600;
@@ -62,7 +63,9 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
     <div ref={containerRef} className="flex flex-col h-full">
       {hasTorrents && <ActionBar />}
       <div className="flex-1 overflow-auto min-h-0">
-        <TorrentTable torrents={torrents} loading={loading} />
+        <ErrorBoundary scope="TorrentTable">
+          <TorrentTable torrents={torrents} loading={loading} />
+        </ErrorBoundary>
       </div>
       {hasTorrents && (
         <>
@@ -77,7 +80,9 @@ export const CompactLayout: React.FC<CompactLayoutProps> = ({
             </div>
           </div>
           <div style={{ height: detailPaneHeight }} className="shrink-0">
-            <DetailPane />
+            <ErrorBoundary scope="DetailPane">
+              <DetailPane />
+            </ErrorBoundary>
           </div>
         </>
       )}
