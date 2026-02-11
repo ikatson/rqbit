@@ -430,3 +430,10 @@ pub async fn h_create_torrent(
         }
     }
 }
+
+pub async fn h_torrent_extra_files(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state.api.api_torrent_list_extra_files(idx).map(axum::Json)
+}

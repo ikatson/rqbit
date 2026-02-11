@@ -66,6 +66,7 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
             "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
             "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+            "GET /torrents/{id_or_infohash}/extra_files": "List files on disk not part of the torrent",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
         },
         "server": "rqbit",
@@ -105,7 +106,11 @@ pub fn make_api_router(state: ApiState) -> Router {
             "/torrents/{id}/stream/{file_id}/{*filename}",
             get(streaming::h_torrent_stream_file),
         )
-        .route("/torrents/limits", get(configure::h_get_session_ratelimits));
+        .route("/torrents/limits", get(configure::h_get_session_ratelimits))
+        .route(
+            "/torrents/{id}/extra_files",
+            get(torrents::h_torrent_extra_files),
+        );
 
     if !state.opts.read_only {
         api_router = api_router
