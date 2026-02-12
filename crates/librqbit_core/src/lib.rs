@@ -5,6 +5,8 @@ mod error;
 pub mod hash_id;
 pub mod lengths;
 pub mod magnet;
+#[cfg(any(feature = "sha1-crypto-hash", feature = "sha1-ring"))]
+pub mod merkle;
 pub mod peer_id;
 pub mod spawn_utils;
 pub mod speed_estimator;
