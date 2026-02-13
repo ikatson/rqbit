@@ -174,15 +174,41 @@ async fn api_from_config(
     Ok(api)
 }
 
+/// Resolve the config file path.
+///
+/// Supports **portable mode**: if a `config.json` exists in the same directory
+/// as the executable, that file is used instead of the system default
+/// (`%APPDATA%/rqbit/desktop` on Windows, `~/.config/rqbit/desktop` on Linux).
+///
+/// This makes it possible to run rqbit from a USB drive with self-contained
+/// configuration.
+fn get_config_path() -> std::path::PathBuf {
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let portable_config = exe_dir.join("config.json");
+            if portable_config.exists() {
+                info!(path = %portable_config.display(), "portable mode: using config next to executable");
+                return portable_config;
+            }
+        }
+    }
+
+    directories::ProjectDirs::from("com", "rqbit", "desktop")
+        .expect("directories::ProjectDirs::from")
+        .config_dir()
+        .join("config.json")
+}
+
 impl State {
     async fn new(init_logging: InitLoggingResult) -> Self {
-        let config_filename = directories::ProjectDirs::from("com", "rqbit", "desktop")
-            .expect("directories::ProjectDirs::from")
-            .config_dir()
-            .join("config.json")
-            .to_str()
-            .expect("to_str()")
-            .to_owned();
+        let config_path = get_config_path();
+        let config_filename = config_path.to_str().expect("to_str()").to_owned();
+
+        if config_path.exists() {
+            info!("Using config: {:?}", config_path);
+        } else {
+            info!("Config not found at {:?}, using defaults", config_path);
+        }
 
         if let Ok(config) = read_config(&config_filename) {
             let api = api_from_config(&init_logging, &config)
