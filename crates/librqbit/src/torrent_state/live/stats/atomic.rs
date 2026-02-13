@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicU64;
+use portable_atomic::AtomicU64;
 
 #[derive(Default, Debug)]
 pub struct AtomicStats {
