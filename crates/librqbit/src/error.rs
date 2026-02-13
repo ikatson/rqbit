@@ -117,6 +117,9 @@ pub enum Error {
 
     #[error("session is dead")]
     SessionDestroyed,
+
+    #[error(transparent)]
+    Core(#[from] librqbit_core::Error),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;

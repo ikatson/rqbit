@@ -88,6 +88,26 @@ React + TypeScript + Tailwind CSS frontend. Shared between the HTTP API web inte
 ### Desktop App (`desktop/`)
 Tauri wrapper around the web UI.
 
+## Rust Development
+
+### Warnings & Linting
+- After making code changes in Rust, always run `cargo check` and `cargo clippy`
+  before declaring work complete. Never claim compilation success without verifying.
+- When fixing compiler warnings, batch all related warnings together and fix them
+  in a single pass. Run `cargo check 2>&1` to capture the full list before editing.
+
+## General Rules
+- Never declare a task complete until tests actually pass and compilation is verified.
+  If compilation cannot be verified due to pre-existing errors, explicitly state that caveat.
+- When asked to create a plan or design document, present the plan for user review
+  BEFORE starting implementation. Do not begin coding until the user explicitly approves.
+- Prefer typed errors over anyhow for verification paths. This keeps error handling
+  consistent and allows callers to distinguish recoverable from hard errors.
+
+## Protocol & Spec Compliance
+- When working on BEP 52 / torrent-related code, always use v2 (BEP 52) structures
+  and info dicts, not v1. The spec explicitly requires BEP 52 compliance.
+
 ## Other directives
 - If you need to resort to running shell commands, always use "rg" instead of "grep".
 - Prefer using Serena MCP instead of searching / reading / writing raw files when makes sense.
