@@ -28,6 +28,7 @@ buffers.workspace = true
 bencode.workspace = true
 clone_to_owned.workspace = true
 sha1w = { workspace = true, optional = true }
+portable-atomic.workspace = true
 itertools.workspace = true
 directories.workspace = true
 tokio-util.workspace = true

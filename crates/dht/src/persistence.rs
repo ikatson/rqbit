@@ -154,7 +154,11 @@ impl PersistentDht {
                 if let Some(ref mut addr) = listen_addr {
                     addr.set_port(port);
                 } else {
-                    listen_addr = Some(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)));
+                    listen_addr = Some(if config.ipv4_only {
+                        SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))
+                    } else {
+                        SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))
+                    });
                 }
             }
             let peer_id = routing_table.as_ref().map(|r| r.id());
@@ -166,6 +170,7 @@ impl PersistentDht {
                 peer_store,
                 cancellation_token,
                 bind_device,
+                ipv4_only: config.ipv4_only,
                 ..Default::default()
             };
             let dht = DhtState::with_config(dht_config).await?;

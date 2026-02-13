@@ -28,6 +28,7 @@ dashmap = { workspace = true, features = ["serde"] }
 clone_to_owned.workspace = true
 librqbit-core.workspace = true
 chrono = { workspace = true, features = ["serde"] }
+portable-atomic.workspace = true
 tokio-util.workspace = true
 bytes.workspace = true
 librqbit-dualstack-sockets.workspace = true

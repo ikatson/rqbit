@@ -1,11 +1,12 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::Ordering,
     },
     time::Duration,
 };
 
+use portable_atomic::{AtomicU32, AtomicU64};
 use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 
 #[derive(Default, Debug)]

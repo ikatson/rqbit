@@ -1,14 +1,15 @@
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     str::{FromStr, from_utf8},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::Ordering,
     },
     time::{Duration, SystemTime},
 };
 
+use portable_atomic::AtomicU64;
 use anyhow::Context;
 use futures::Stream;
 use librqbit_core::{Id20, spawn_utils::spawn_with_cancel};
@@ -79,12 +80,18 @@ pub struct LocalServiceDiscoveryOptions<'a> {
     pub cancel_token: CancellationToken,
     pub cookie: Option<u32>,
     pub bind_device: Option<&'a BindDevice>,
+    pub ipv4_only: bool,
 }
 
 impl LocalServiceDiscovery {
     pub async fn new(opts: LocalServiceDiscoveryOptions<'_>) -> anyhow::Result<Self> {
+        let bind_addr = if opts.ipv4_only {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), LSD_PORT)
+        } else {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), LSD_PORT)
+        };
         let socket = MulticastUdpSocket::new(
-            (Ipv6Addr::UNSPECIFIED, LSD_PORT).into(),
+            bind_addr,
             LSD_IPV4,
             LSD_IPV6,
             None,

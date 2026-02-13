@@ -1,8 +1,9 @@
 use std::{
     marker::PhantomData,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::Ordering,
 };
 
+use portable_atomic::AtomicU64;
 use anyhow::Context;
 use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{

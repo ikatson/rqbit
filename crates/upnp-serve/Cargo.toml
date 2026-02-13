@@ -23,6 +23,7 @@ librqbit-upnp.workspace = true
 gethostname.workspace = true
 librqbit-core.workspace = true
 mime_guess.workspace = true
+portable-atomic.workspace = true
 url.workspace = true
 parking_lot.workspace = true
 tokio-util.workspace = true

@@ -1,9 +1,9 @@
 macro_rules! stype {
     (atomic u32) => {
-        std::sync::atomic::AtomicU32
+        portable_atomic::AtomicU32
     };
     (atomic u64) => {
-        std::sync::atomic::AtomicU64
+        portable_atomic::AtomicU64
     };
     (u32) => {
         u32
@@ -30,7 +30,7 @@ macro_rules! gen_stats {
             pub fn snapshot(&self) -> $snapshot_name {
                 $snapshot_name {
                     $(
-                        $stat_name: self.$stat_name.load(std::sync::atomic::Ordering::Relaxed),
+                        $stat_name: self.$stat_name.load(portable_atomic::Ordering::Relaxed),
                     )*
 
                     $(
@@ -42,7 +42,7 @@ macro_rules! gen_stats {
             $(
                 #[allow(unused)]
                 pub fn $stat_name(&self, value: $stat_ty) {
-                    self.$stat_name.fetch_add(value, std::sync::atomic::Ordering::Relaxed);
+                    self.$stat_name.fetch_add(value, portable_atomic::Ordering::Relaxed);
                 }
             )*
         }

@@ -1,10 +1,15 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::Ordering,
     },
     time::Instant,
 };
+
+#[cfg(target_pointer_width = "64")]
+use std::sync::atomic::AtomicU64;
+#[cfg(target_pointer_width = "32")]
+use portable_atomic::AtomicU64;
 
 use anyhow::Context;
 
@@ -53,7 +58,7 @@ impl TorrentStateInitializing {
 
     pub fn get_checked_bytes(&self) -> u64 {
         self.checked_bytes
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(Ordering::Relaxed)
     }
 
     async fn validate_fastresume(
