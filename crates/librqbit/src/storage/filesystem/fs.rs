@@ -137,27 +137,41 @@ impl TorrentStorage for FilesystemStorage {
                 continue;
             };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+
+            // On Windows, open files with FILE_SHARE_DELETE to prevent
+            // "file in use" errors from antivirus, Explorer, backup tools, etc.
+            // share_mode(7) = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+            // Standard practice in qBittorrent, Deluge, Transmission.
+            // Addresses: #369, #120, #192
+            #[cfg(windows)]
+            fn apply_share_mode(opts: &mut OpenOptions) {
+                use std::os::windows::fs::OpenOptionsExt;
+                opts.share_mode(7);
+            }
+            #[cfg(not(windows))]
+            fn apply_share_mode(_opts: &mut OpenOptions) {}
+
             let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
+                let mut opts = OpenOptions::new();
+                opts.create(true).truncate(false).read(true).write(true);
+                apply_share_mode(&mut opts);
+                opts.open(&full_path)
                     .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| {
-                        format!(
-                            "error creating a new file (because allow_overwrite = false) {:?}",
-                            &full_path
-                        )
-                    })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
+                let mut opts = OpenOptions::new();
+                opts.create_new(true).write(true);
+                apply_share_mode(&mut opts);
+                opts.open(&full_path).with_context(|| {
+                    format!(
+                        "error creating a new file (because allow_overwrite = false) {:?}",
+                        &full_path
+                    )
+                })?;
+                let mut opts = OpenOptions::new();
+                opts.read(true).write(true);
+                apply_share_mode(&mut opts);
+                opts.open(&full_path)?
             };
             files.push(OpenedFile::new(full_path.clone(), f));
         }
