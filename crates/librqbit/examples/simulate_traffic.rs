@@ -109,7 +109,7 @@ async fn create_one(path: &Path, index: usize) -> anyhow::Result<CreateTorrentRe
     create_torrent(
         path,
         CreateTorrentOptions {
-            name: Some(&generate_unique_torrent_name(index)),
+            name: Some(generate_unique_torrent_name(index)),
             piece_length: Some(CHUNK_SIZE),
             ..Default::default()
         },

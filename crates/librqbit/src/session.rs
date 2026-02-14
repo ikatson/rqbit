@@ -1599,7 +1599,7 @@ impl Session {
     pub async fn create_and_serve_torrent(
         self: &Arc<Self>,
         path: &Path,
-        opts: CreateTorrentOptions<'_>,
+        opts: CreateTorrentOptions,
     ) -> Result<(CreateTorrentResult, ManagedTorrentHandle), ApiError> {
         if !path.exists() {
             return Err(ApiError::from((

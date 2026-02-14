@@ -14,11 +14,45 @@ use sha1w::ISha1;
 
 use crate::spawn_utils::BlockingSpawner;
 
-#[derive(Debug, Clone, Default)]
-pub struct CreateTorrentOptions<'a> {
-    pub name: Option<&'a str>,
+/// Progress report for torrent creation.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct CreateTorrentProgress {
+    /// Total bytes to hash across all input files.
+    pub total_bytes: u64,
+    /// Bytes hashed so far.
+    pub hashed_bytes: u64,
+    /// Number of files discovered.
+    pub total_files: usize,
+    /// Number of files fully hashed.
+    pub hashed_files: usize,
+}
+
+impl CreateTorrentProgress {
+    pub fn progress_pct(&self) -> f64 {
+        if self.total_bytes == 0 {
+            return 0.0;
+        }
+        self.hashed_bytes as f64 / self.total_bytes as f64 * 100.0
+    }
+}
+
+/// Options for creating a torrent.
+///
+/// Uses owned `String` instead of `&str` so the struct is `'static` and can
+/// be sent across async boundaries (e.g. Tauri commands, API handlers) without
+/// needing lifetime gymnastics.
+///
+/// To monitor progress, create a `tokio::sync::watch::channel()` and pass the
+/// `Sender` here. The caller keeps the `Receiver` and can poll it before
+/// `create_torrent()` returns.
+#[derive(Default)]
+pub struct CreateTorrentOptions {
+    pub name: Option<String>,
     pub trackers: Vec<String>,
     pub piece_length: Option<u32>,
+    /// Optional progress sender. If provided, progress updates are sent at
+    /// each piece boundary and after each file completes.
+    pub on_progress: Option<tokio::sync::watch::Sender<CreateTorrentProgress>>,
 }
 
 fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Result<()> {
@@ -61,11 +95,12 @@ struct CreateTorrentRawResult {
     output_folder: PathBuf,
 }
 
-async fn create_torrent_raw<'a>(
-    path: &'a Path,
-    options: CreateTorrentOptions<'a>,
+async fn create_torrent_raw(
+    path: &Path,
+    options: CreateTorrentOptions,
     spawner: &BlockingSpawner,
 ) -> anyhow::Result<CreateTorrentRawResult> {
+    let progress_tx = options.on_progress;
     path.try_exists()
         .with_context(|| format!("path {path:?} doesn't exist"))?;
     let basename = path
@@ -73,13 +108,13 @@ async fn create_torrent_raw<'a>(
         .ok_or_else(|| anyhow::anyhow!("cannot determine basename of {path:?}"))?;
     let is_dir = path.is_dir();
     let single_file_mode = !is_dir;
-    let name: ByteBufOwned = match options.name {
+    let name: ByteBufOwned = match options.name.as_deref() {
         Some(name) => name.as_bytes().into(),
         None => osstr_to_bytes(basename).into(),
     };
     let output_folder: PathBuf;
 
-    let mut input_files: Vec<Cow<'a, Path>> = Default::default();
+    let mut input_files: Vec<Cow<'_, Path>> = Default::default();
     if is_dir {
         output_folder = path.to_owned();
         walk_dir_find_paths(path, &mut input_files)
@@ -97,6 +132,21 @@ async fn create_torrent_raw<'a>(
         .piece_length
         .unwrap_or_else(|| choose_piece_length(&input_files));
 
+    // Pre-compute total size for progress reporting
+    let total_bytes: u64 = input_files
+        .iter()
+        .filter_map(|f| std::fs::metadata(f.as_ref()).ok())
+        .map(|m| m.len())
+        .sum();
+    let total_files = input_files.len();
+
+    if let Some(ref tx) = progress_tx {
+        tx.send_modify(|p| {
+            p.total_bytes = total_bytes;
+            p.total_files = total_files;
+        });
+    }
+
     // Calculate hashes etc.
     const READ_SIZE: u32 = 8192; // todo: twea
     let mut read_buf = vec![0; READ_SIZE as usize];
@@ -108,6 +158,7 @@ async fn create_torrent_raw<'a>(
     let mut piece_checksum = sha1w::Sha1::new();
     let mut piece_hashes = Vec::<u8>::new();
     let mut output_files: Vec<TorrentMetaV1File<ByteBufOwned>> = Vec::new();
+    let mut global_hashed: u64 = 0;
 
     'outer: for file in input_files {
         let filename = &*file;
@@ -139,10 +190,17 @@ async fn create_torrent_raw<'a>(
                     sha1: None,
                     symlink_path: None,
                 });
+                // Update progress: file completed
+                if let Some(ref tx) = progress_tx {
+                    tx.send_modify(|p| {
+                        p.hashed_files += 1;
+                    });
+                }
                 continue 'outer;
             }
 
             length += size as u64;
+            global_hashed += size as u64;
             piece_checksum.update(&read_buf[..size]);
 
             remaining_piece_length -= TryInto::<u32>::try_into(size)?;
@@ -150,8 +208,23 @@ async fn create_torrent_raw<'a>(
                 remaining_piece_length = piece_length;
                 piece_hashes.extend_from_slice(&piece_checksum.finish());
                 piece_checksum = sha1w::Sha1::new();
+
+                // Update progress every piece
+                if let Some(ref tx) = progress_tx {
+                    tx.send_modify(|p| {
+                        p.hashed_bytes = global_hashed;
+                    });
+                }
             }
         }
+    }
+
+    // Final progress update
+    if let Some(ref tx) = progress_tx {
+        tx.send_modify(|p| {
+            p.hashed_bytes = global_hashed;
+            p.hashed_files = total_files;
+        });
     }
 
     if remaining_piece_length > 0 && length > 0 {
@@ -209,9 +282,17 @@ impl CreateTorrentResult {
     }
 }
 
-pub async fn create_torrent<'a>(
-    path: &'a Path,
-    options: CreateTorrentOptions<'a>,
+/// Create a torrent file from the given path.
+///
+/// To monitor progress, set `options.on_progress` with a `watch::Sender`.
+/// The caller keeps the corresponding `Receiver` to poll progress before
+/// this function returns.
+///
+/// Cancellation is handled by dropping the returned future (standard tokio
+/// pattern).
+pub async fn create_torrent(
+    path: &Path,
+    options: CreateTorrentOptions,
     spawner: &BlockingSpawner,
 ) -> anyhow::Result<CreateTorrentResult> {
     let trackers = options
