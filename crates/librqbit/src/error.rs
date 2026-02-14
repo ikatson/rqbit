@@ -106,8 +106,8 @@ pub enum Error {
         AcquireError,
     ),
 
-    #[error("bug: peer not found")]
-    BugPeerNotFound,
+    #[error("peer not found (may have been pruned)")]
+    PeerNotFound,
 
     #[error("bug: invalid peer state")]
     BugInvalidPeerState,

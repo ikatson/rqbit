@@ -1,4 +1,6 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc, sync::atomic::Ordering};
+
+use tracing::debug;
 
 use dashmap::DashMap;
 use librqbit_core::lengths::ValidPieceIndex;
@@ -125,7 +127,7 @@ impl PeerStates {
                 peer.idle_to_connecting(self)
                     .ok_or(Error::BugInvalidPeerState)
             })
-            .ok_or(Error::BugPeerNotFound)??;
+            .ok_or(Error::PeerNotFound)??;
         Ok(rx)
     }
 
@@ -172,5 +174,179 @@ impl PeerStates {
                 }
             });
         });
+    }
+
+    /// Remove excess peers when the count exceeds `max_peers`.
+    ///
+    /// Removal priority:
+    /// 1. NotNeeded peers — outright delete (kept only for statistics, no value)
+    /// 2. Dead / Queued peers — scored by worst connection history
+    ///
+    /// Live peers are never pruned — they are already bounded by the
+    /// per-torrent connection limit and represent active data transfer.
+    ///
+    /// Score heuristic for Dead/Queued:
+    ///   score = (errors × 100 + connection_attempts × 10) / max(fetched_kb, 1)
+    /// Higher score = worse peer = pruned first.
+    pub fn prune_peers(&self, max_peers: usize) -> usize {
+        let total = self.states.len();
+        if total <= max_peers {
+            return 0;
+        }
+        let to_remove = total - max_peers;
+        let mut removed = 0;
+
+        // Phase 1: Delete NotNeeded peers outright (statistics only, no value).
+        // Re-check state before removal to avoid races — a peer may have
+        // transitioned out of NotNeeded between the iteration and the removal.
+        let not_needed: Vec<PeerHandle> = self
+            .states
+            .iter()
+            .filter(|entry| matches!(entry.value().get_state(), PeerState::NotNeeded))
+            .map(|entry| *entry.key())
+            .collect();
+
+        for handle in not_needed {
+            if removed >= to_remove {
+                break;
+            }
+            // Re-check: only drop if still NotNeeded
+            let still_not_needed = self
+                .states
+                .get(&handle)
+                .map(|e| matches!(e.value().get_state(), PeerState::NotNeeded))
+                .unwrap_or(false);
+            if still_not_needed {
+                if self.drop_peer(handle).is_some() {
+                    removed += 1;
+                }
+            }
+        }
+
+        if removed >= to_remove {
+            if removed > 0 {
+                debug!(removed, "pruned peers");
+            }
+            return removed;
+        }
+
+        // Phase 2: Score Dead and Queued peers by worst connection history.
+        // Peers that never connected, never uploaded, or have high error rates
+        // are pruned first. Live peers are never touched.
+        let mut scored: Vec<(PeerHandle, u64)> = self
+            .states
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.value().get_state(),
+                    PeerState::Dead | PeerState::Queued
+                )
+            })
+            .map(|entry| {
+                let counters = &entry.value().stats.counters;
+                let errors = counters.errors.load(Ordering::Relaxed) as u64;
+                let attempts = counters
+                    .outgoing_connection_attempts
+                    .load(Ordering::Relaxed) as u64;
+                let fetched_kb = counters.fetched_bytes.load(Ordering::Relaxed) / 1024;
+                // Higher score = worse peer (more errors, fewer bytes transferred)
+                let score = (errors * 100 + attempts * 10) / fetched_kb.max(1);
+                (*entry.key(), score)
+            })
+            .collect();
+
+        // Sort by score descending (worst peers first).
+        // Unstable sort is sufficient — peer handle order doesn't matter for ties.
+        scored.sort_unstable_by_key(|&(_, score)| std::cmp::Reverse(score));
+
+        for (handle, _score) in scored {
+            if removed >= to_remove {
+                break;
+            }
+            // Re-check: only drop if still Dead or Queued
+            let still_prunable = self
+                .states
+                .get(&handle)
+                .map(|e| matches!(e.value().get_state(), PeerState::Dead | PeerState::Queued))
+                .unwrap_or(false);
+            if still_prunable {
+                if self.drop_peer(handle).is_some() {
+                    removed += 1;
+                }
+            }
+        }
+
+        if removed > 0 {
+            debug!(removed, "pruned peers");
+        }
+        removed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    /// Helper to compute the pruning score for a peer, matching the production formula.
+    fn compute_score(errors: u64, attempts: u64, fetched_bytes: u64) -> u64 {
+        let fetched_kb = fetched_bytes / 1024;
+        (errors * 100 + attempts * 10) / fetched_kb.max(1)
+    }
+
+    #[test]
+    fn test_score_zero_bytes_peer_is_worst() {
+        // A peer with errors but no data fetched should score highest (worst).
+        let score_no_data = compute_score(5, 10, 0);
+        let score_with_data = compute_score(5, 10, 1024 * 1024); // 1 MB
+        assert!(
+            score_no_data > score_with_data,
+            "peer with no data should score worse: {} vs {}",
+            score_no_data,
+            score_with_data
+        );
+    }
+
+    #[test]
+    fn test_score_more_errors_is_worse() {
+        let score_few = compute_score(1, 5, 50 * 1024);
+        let score_many = compute_score(10, 5, 50 * 1024);
+        assert!(
+            score_many > score_few,
+            "more errors should score worse: {} vs {}",
+            score_many,
+            score_few
+        );
+    }
+
+    #[test]
+    fn test_score_more_data_is_better() {
+        let score_little = compute_score(3, 5, 10 * 1024);
+        let score_lots = compute_score(3, 5, 10 * 1024 * 1024);
+        assert!(
+            score_little > score_lots,
+            "less data should score worse: {} vs {}",
+            score_little,
+            score_lots
+        );
+    }
+
+    #[test]
+    fn test_sort_order_worst_first() {
+        // Simulate scored peers and verify sort order.
+        let mut scored = vec![
+            (addr(1), compute_score(1, 1, 1024 * 1024)), // good peer
+            (addr(2), compute_score(10, 20, 0)),         // worst peer
+            (addr(3), compute_score(5, 5, 100 * 1024)),  // mediocre peer
+        ];
+        scored.sort_unstable_by_key(|&(_, score)| std::cmp::Reverse(score));
+
+        // Worst peer (addr(2)) should come first
+        assert_eq!(scored[0].0, addr(2));
+        // Good peer (addr(1)) should come last
+        assert_eq!(scored[scored.len() - 1].0, addr(1));
+    }
+
+    fn addr(port: u16) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], port))
     }
 }
