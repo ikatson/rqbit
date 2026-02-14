@@ -2,6 +2,7 @@ use std::{
     fs::OpenOptions,
     io::IoSlice,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use anyhow::Context;
@@ -119,6 +120,28 @@ impl TorrentStorage for FilesystemStorage {
             warn!("did not remove {path:?} as it was not empty");
             Ok(())
         }
+    }
+
+    fn file_metadata(
+        &self,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<Vec<Option<(SystemTime, u64)>>> {
+        let mut result = Vec::with_capacity(metadata.file_infos.len());
+        for fi in metadata.file_infos.iter() {
+            if fi.attrs.padding {
+                result.push(None);
+                continue;
+            }
+            let full_path = self.output_folder.join(&fi.relative_filename);
+            match std::fs::metadata(&full_path) {
+                Ok(m) => {
+                    let mtime = m.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    result.push(Some((mtime, m.len())));
+                }
+                Err(_) => result.push(None),
+            }
+        }
+        Ok(result)
     }
 
     fn init(
