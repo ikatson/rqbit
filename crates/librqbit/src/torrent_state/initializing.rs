@@ -168,7 +168,7 @@ impl TorrentStateInitializing {
             .context("session is dead")?
             .bitv_factory
             .clone();
-        let have_pieces = if self.previously_errored {
+        let mut have_pieces = if self.previously_errored {
             if let Err(e) = bitv_factory.clear(id).await {
                 warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
             }
@@ -179,6 +179,34 @@ impl TorrentStateInitializing {
                 .await
                 .context("error loading have_pieces")?
         };
+
+        // Quick integrity check: verify file sizes match torrent metadata.
+        // If files were modified while rqbit was shut down, fastresume data
+        // is stale and would cause seeding of corrupted data.
+        if have_pieces.is_some() {
+            if let Ok(current_meta) = self.files.file_metadata(&self.metadata) {
+                for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
+                    if fi.attrs.padding {
+                        continue;
+                    }
+                    if let Some(Some((_mtime, size))) = current_meta.get(idx) {
+                        if *size != fi.len {
+                            warn!(
+                                file = %fi.relative_filename.display(),
+                                expected_size = fi.len,
+                                actual_size = size,
+                                "File size mismatch — discarding fastresume, will do full check"
+                            );
+                            if let Err(e) = bitv_factory.clear(id).await {
+                                warn!(id=?self.shared.id, "error clearing bitfield: {e:#}");
+                            }
+                            have_pieces = None;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
 
         let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
 
