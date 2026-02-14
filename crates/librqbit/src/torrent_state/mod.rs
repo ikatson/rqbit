@@ -263,6 +263,20 @@ impl ManagedTorrent {
         }
     }
 
+    /// List files on disk that are NOT part of the torrent's file list.
+    /// Works in any active state (initializing, paused, or live).
+    pub fn list_extra_files(&self) -> anyhow::Result<Vec<PathBuf>> {
+        let metadata = self.metadata.load();
+        let metadata = metadata.as_ref().context("torrent is not resolved")?;
+        let g = self.locked.read();
+        match &g.state {
+            ManagedTorrentState::Paused(p) => p.files.list_extra_files(&metadata.file_infos),
+            ManagedTorrentState::Live(l) => l.files.list_extra_files(&metadata.file_infos),
+            ManagedTorrentState::Initializing(i) => i.files.list_extra_files(&metadata.file_infos),
+            _ => bail!("cannot list extra files: torrent is not active"),
+        }
+    }
+
     /// Get the live state if the torrent is live.
     pub fn live(&self) -> Option<Arc<TorrentStateLive>> {
         let g = self.locked.read();

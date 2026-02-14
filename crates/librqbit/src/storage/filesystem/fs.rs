@@ -165,4 +165,40 @@ impl TorrentStorage for FilesystemStorage {
         self.opened_files = files;
         Ok(())
     }
+
+    fn list_extra_files(
+        &self,
+        file_infos: &[crate::file_info::FileInfo],
+    ) -> anyhow::Result<Vec<PathBuf>> {
+        use std::collections::HashSet;
+
+        // Build set of known torrent file paths (relative to output_folder)
+        let known_files: HashSet<PathBuf> = file_infos
+            .iter()
+            .filter(|fi| !fi.attrs.padding)
+            .map(|fi| fi.relative_filename.clone())
+            .collect();
+
+        let mut extra_files = Vec::new();
+
+        if !self.output_folder.exists() {
+            return Ok(extra_files);
+        }
+
+        for entry in walkdir::WalkDir::new(&self.output_folder)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            let full_path = entry.path();
+            if let Ok(relative) = full_path.strip_prefix(&self.output_folder) {
+                let relative = relative.to_path_buf();
+                if !known_files.contains(&relative) {
+                    extra_files.push(relative);
+                }
+            }
+        }
+
+        Ok(extra_files)
+    }
 }
