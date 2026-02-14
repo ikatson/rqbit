@@ -245,12 +245,49 @@ impl TorrentStateInitializing {
                         if fi.attrs.padding {
                             continue;
                         }
-                        if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
-                            warn!(
-                                id=?self.shared.id, info_hash = ?self.shared.info_hash,
-                                "Error setting length for file {:?} to {}: {:#?}",
-                                fi.relative_filename, fi.len, err
+                        let full_path = self
+                            .shared
+                            .options
+                            .output_folder
+                            .join(&fi.relative_filename);
+
+                        // Skip set_len if the file already has the correct size.
+                        // On Windows, File::set_len() calls SetEndOfFile which
+                        // updates the modification timestamp even when the size
+                        // is unchanged, causing mtime to reset on every restart.
+                        let current_len =
+                            std::fs::metadata(&full_path).map(|m| m.len()).unwrap_or(0);
+                        if current_len == fi.len {
+                            trace!(
+                                "File {:?} already has correct length {}, skipping set_len",
+                                fi.relative_filename,
+                                SF::new(fi.len),
                             );
+                            continue;
+                        }
+
+                        if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
+                            // PermissionDenied is common for read-only complete files
+                            let level = if err
+                                .downcast_ref::<std::io::Error>()
+                                .is_some_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+                            {
+                                tracing::Level::DEBUG
+                            } else {
+                                tracing::Level::WARN
+                            };
+                            match level {
+                                tracing::Level::DEBUG => tracing::debug!(
+                                    id=?self.shared.id, info_hash = ?self.shared.info_hash,
+                                    "Error setting length for file {:?} to {}: {:#?}",
+                                    fi.relative_filename, fi.len, err
+                                ),
+                                _ => warn!(
+                                    id=?self.shared.id, info_hash = ?self.shared.info_hash,
+                                    "Error setting length for file {:?} to {}: {:#?}",
+                                    fi.relative_filename, fi.len, err
+                                ),
+                            }
                         } else {
                             trace!(
                                 "Set length for file {:?} to {} in {:?}",
