@@ -17,6 +17,7 @@ use sha1w::{ISha256, Sha256};
 /// Size of each merkle tree leaf block (16 KiB), per BEP 52.
 pub const MERKLE_BLOCK_SIZE: usize = 16384;
 const SMALL_TREE_MAX_LEAVES: usize = 8;
+const MAX_TREE_LEVELS: usize = u32::BITS as usize;
 
 /// Errors from merkle tree operations.
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
@@ -67,6 +68,16 @@ pub fn hash_pair(left: &Id32, right: &Id32) -> Id32 {
     Id32::new(hasher.finish())
 }
 
+#[inline]
+fn ct_eq_id32(left: &Id32, right: &Id32) -> bool {
+    // Keep comparison branchless over all bytes.
+    let mut diff = 0u8;
+    for i in 0..32 {
+        diff |= left.0[i] ^ right.0[i];
+    }
+    diff == 0
+}
+
 fn validate_blocks_per_piece(blocks_per_piece: u32) -> Result<(), MerkleError> {
     if blocks_per_piece == 0 {
         return Err(MerkleError::ZeroBlocksPerPiece);
@@ -75,6 +86,24 @@ fn validate_blocks_per_piece(blocks_per_piece: u32) -> Result<(), MerkleError> {
         return Err(MerkleError::NonPowerOfTwoBlocksPerPiece(blocks_per_piece));
     }
     Ok(())
+}
+
+fn reduce_tree_in_place(current: &mut Vec<Id32>) {
+    debug_assert!(!current.is_empty());
+    debug_assert!(current.len().is_power_of_two());
+
+    let mut len = current.len();
+    while len > 1 {
+        for i in 0..(len / 2) {
+            // Read the current level from the upper range and write parent
+            // hashes into the lower range of the same buffer.
+            let left = current[i * 2];
+            let right = current[i * 2 + 1];
+            current[i] = hash_pair(&left, &right);
+        }
+        len /= 2;
+        current.truncate(len);
+    }
 }
 
 /// Build a balanced binary tree from power-of-2 leaves and return the root.
@@ -87,13 +116,7 @@ fn build_subtree_root_vec(leaves: &[Id32]) -> Id32 {
     }
 
     let mut current = leaves.to_vec();
-    while current.len() > 1 {
-        let mut next = Vec::with_capacity(current.len() / 2);
-        for pair in current.chunks_exact(2) {
-            next.push(hash_pair(&pair[0], &pair[1]));
-        }
-        current = next;
-    }
+    reduce_tree_in_place(&mut current);
     current[0]
 }
 
@@ -124,90 +147,107 @@ fn build_subtree_root(leaves: &[Id32]) -> Id32 {
     build_subtree_root_vec(leaves)
 }
 
-/// Compute the full merkle tree from block hashes, extracting piece-layer hashes.
+fn piece_layer_from_block_hashes_streaming(
+    block_hashes: impl IntoIterator<Item = Id32>,
+    blocks_per_piece: usize,
+) -> Result<Vec<Id32>, MerkleError> {
+    let mut piece_hashes = Vec::new();
+    let mut piece_leaves = vec![zero_hash(); blocks_per_piece];
+    let mut it = block_hashes.into_iter();
+
+    loop {
+        let mut blocks_in_piece = 0usize;
+        while blocks_in_piece < blocks_per_piece {
+            match it.next() {
+                Some(h) => {
+                    piece_leaves[blocks_in_piece] = h;
+                    blocks_in_piece += 1;
+                }
+                None => break,
+            }
+        }
+
+        if blocks_in_piece == 0 {
+            break;
+        }
+
+        if blocks_in_piece < blocks_per_piece {
+            piece_leaves[blocks_in_piece..].fill(zero_hash());
+        }
+
+        piece_hashes.push(build_subtree_root(&piece_leaves));
+
+        if blocks_in_piece < blocks_per_piece {
+            // Input is exhausted. This was the final (possibly short) piece.
+            break;
+        }
+    }
+
+    if piece_hashes.is_empty() {
+        return Err(MerkleError::EmptyBlockHashes);
+    }
+
+    Ok(piece_hashes)
+}
+
+/// Streaming merkle construction from block hashes.
 ///
-/// The tree is padded to a power-of-2 number of leaves with [`zero_hash()`].
-/// The piece layer is extracted at height `log2(blocks_per_piece)` from the leaves.
-/// Trailing piece hashes beyond the actual file content are trimmed.
+/// Processes input lazily in piece-sized groups and avoids materializing the
+/// full block-hash list in memory.
+pub fn compute_merkle_root_streaming(
+    block_hashes: impl IntoIterator<Item = Id32>,
+    blocks_per_piece: u32,
+) -> Result<MerkleResult, MerkleError> {
+    validate_blocks_per_piece(blocks_per_piece)?;
+    let piece_hashes =
+        piece_layer_from_block_hashes_streaming(block_hashes, blocks_per_piece as usize)?;
+    let root = root_from_piece_layer(&piece_hashes, blocks_per_piece)?;
+    Ok(MerkleResult { root, piece_hashes })
+}
+
+/// Compute the full merkle tree from precomputed block hashes.
+///
+/// This is a compatibility wrapper around [`compute_merkle_root_streaming()`]
+/// for callers that already have a slice in memory.
 pub fn compute_merkle_root(
     block_hashes: &[Id32],
     blocks_per_piece: u32,
 ) -> Result<MerkleResult, MerkleError> {
-    if block_hashes.is_empty() {
-        return Err(MerkleError::EmptyBlockHashes);
-    }
-    validate_blocks_per_piece(blocks_per_piece)?;
+    compute_merkle_root_streaming(block_hashes.iter().copied(), blocks_per_piece)
+}
 
-    let bpp = blocks_per_piece as usize;
-    let n_actual = block_hashes.len();
-    let n_pieces_actual = n_actual.div_ceil(bpp);
-    let n_padded = n_actual.next_power_of_two().max(bpp);
-    let piece_layer_height = blocks_per_piece.trailing_zeros() as usize;
+fn root_from_power_of_two_leaves_noalloc(
+    leaves: impl IntoIterator<Item = Id32>,
+    leaf_count: usize,
+) -> Id32 {
+    debug_assert!(leaf_count > 0);
+    debug_assert!(leaf_count.is_power_of_two());
 
-    if n_padded <= SMALL_TREE_MAX_LEAVES {
-        let mut current_level = [Id32::default(); SMALL_TREE_MAX_LEAVES];
-        current_level[..n_actual].copy_from_slice(block_hashes);
-        current_level[n_actual..n_padded].fill(zero_hash());
+    let mut partial = [Id32::default(); MAX_TREE_LEVELS];
+    let mut occupied = [false; MAX_TREE_LEVELS];
+    let mut processed = 0usize;
 
-        let mut piece_hashes: Option<Vec<Id32>> = None;
-        let mut len = n_padded;
-        let mut height = 0;
+    for mut node in leaves {
+        let mut level = 0usize;
+        let mut carry = processed;
 
-        if piece_layer_height == 0 {
-            piece_hashes = Some(current_level[..n_pieces_actual].to_vec());
+        while carry & 1 == 1 {
+            debug_assert!(occupied[level]);
+            node = hash_pair(&partial[level], &node);
+            occupied[level] = false;
+            carry >>= 1;
+            level += 1;
         }
 
-        while len > 1 {
-            for i in 0..(len / 2) {
-                current_level[i] = hash_pair(&current_level[i * 2], &current_level[i * 2 + 1]);
-            }
-            len /= 2;
-            height += 1;
-
-            if height == piece_layer_height && piece_hashes.is_none() {
-                piece_hashes = Some(current_level[..n_pieces_actual].to_vec());
-            }
-        }
-
-        let root = current_level[0];
-        return Ok(MerkleResult {
-            root,
-            piece_hashes: piece_hashes.unwrap_or_else(|| vec![root]),
-        });
+        partial[level] = node;
+        occupied[level] = true;
+        processed += 1;
     }
 
-    // Build padded leaf level
-    let mut current_level: Vec<Id32> = Vec::with_capacity(n_padded);
-    current_level.extend_from_slice(block_hashes);
-    current_level.resize(n_padded, zero_hash());
-
-    let mut piece_hashes: Option<Vec<Id32>> = None;
-
-    // Capture piece layer at height 0 (bpp == 1: piece layer IS the leaves)
-    if piece_layer_height == 0 {
-        piece_hashes = Some(current_level[..n_pieces_actual].to_vec());
-    }
-
-    let mut height = 0;
-    while current_level.len() > 1 {
-        let mut next_level = Vec::with_capacity(current_level.len() / 2);
-        for pair in current_level.chunks_exact(2) {
-            next_level.push(hash_pair(&pair[0], &pair[1]));
-        }
-        current_level = next_level;
-        height += 1;
-
-        if height == piece_layer_height && piece_hashes.is_none() {
-            piece_hashes = Some(current_level[..n_pieces_actual].to_vec());
-        }
-    }
-
-    let root = current_level[0];
-
-    Ok(MerkleResult {
-        root,
-        piece_hashes: piece_hashes.unwrap_or_else(|| vec![root]),
-    })
+    debug_assert_eq!(processed, leaf_count);
+    let root_level = leaf_count.trailing_zeros() as usize;
+    debug_assert!(occupied[root_level]);
+    partial[root_level]
 }
 
 /// Verify a piece by hashing its data into blocks, building the subtree, and
@@ -223,7 +263,7 @@ pub fn verify_piece(
     validate_blocks_per_piece(blocks_per_piece)?;
 
     let bpp = blocks_per_piece as usize;
-    let actual_blocks = piece_data.chunks(MERKLE_BLOCK_SIZE).count();
+    let actual_blocks = piece_data.len().div_ceil(MERKLE_BLOCK_SIZE);
     if actual_blocks > bpp {
         return Err(MerkleError::PieceTooLarge {
             max_blocks: bpp,
@@ -231,16 +271,15 @@ pub fn verify_piece(
         });
     }
 
-    let block_hashes: Vec<Id32> = piece_data
+    // Keep validation allocation-free: stream real leaves first, then virtual
+    // zero-hash leaves up to blocks_per_piece.
+    let leaves = piece_data
         .chunks(MERKLE_BLOCK_SIZE)
         .map(hash_block)
-        .collect();
+        .chain(std::iter::repeat_with(zero_hash).take(bpp.saturating_sub(actual_blocks)));
 
-    let mut leaves = block_hashes;
-    leaves.resize(bpp, zero_hash());
-
-    let root = build_subtree_root(&leaves);
-    Ok(root == *expected_hash)
+    let root = root_from_power_of_two_leaves_noalloc(leaves, bpp);
+    Ok(ct_eq_id32(&root, expected_hash))
 }
 
 /// Verify a single block using a merkle proof (bottom-up sibling hashes).
@@ -283,7 +322,7 @@ pub fn verify_block_with_proof(
         index >>= 1;
     }
 
-    Ok(current == *expected_piece_hash)
+    Ok(ct_eq_id32(&current, expected_piece_hash))
 }
 
 /// Compute the piece-layer hash for a "padding piece" — a piece composed
@@ -300,6 +339,12 @@ pub fn padding_piece_hash(blocks_per_piece: u32) -> Result<Id32, MerkleError> {
     }
 
     let bpp = blocks_per_piece as usize;
+    if bpp <= SMALL_TREE_MAX_LEAVES {
+        let zero = zero_hash();
+        let leaves = [zero; SMALL_TREE_MAX_LEAVES];
+        return Ok(build_subtree_root_small(&leaves[..bpp]));
+    }
+
     let leaves = vec![zero_hash(); bpp];
     Ok(build_subtree_root(&leaves))
 }
@@ -344,13 +389,7 @@ pub fn root_from_piece_layer(
     current.extend_from_slice(piece_hashes);
     current.resize(n_padded, pad_hash);
 
-    while current.len() > 1 {
-        let mut next = Vec::with_capacity(current.len() / 2);
-        for pair in current.chunks_exact(2) {
-            next.push(hash_pair(&pair[0], &pair[1]));
-        }
-        current = next;
-    }
+    reduce_tree_in_place(&mut current);
 
     Ok(current[0])
 }
@@ -369,6 +408,15 @@ mod tests {
     fn test_zero_hash_is_all_zeros() {
         let zh = zero_hash();
         assert_eq!(zh.0, [0u8; 32]);
+    }
+
+    #[test]
+    fn test_ct_eq_id32() {
+        let a = hash_block(&make_block(1));
+        let b = a;
+        let c = hash_block(&make_block(2));
+        assert!(ct_eq_id32(&a, &b));
+        assert!(!ct_eq_id32(&a, &c));
     }
 
     #[test]
@@ -475,6 +523,23 @@ mod tests {
             3,
             "9 blocks with bpp=4 should produce 3 piece hashes, not 4"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_merkle_root_streaming_matches_slice_api() -> Result<(), MerkleError> {
+        let hashes: Vec<Id32> = (0..9).map(|i| hash_block(&make_block(i))).collect();
+        let from_slice = compute_merkle_root(&hashes, 4)?;
+        let from_stream = compute_merkle_root_streaming(hashes.into_iter(), 4)?;
+        assert_eq!(from_slice.root, from_stream.root);
+        assert_eq!(from_slice.piece_hashes, from_stream.piece_hashes);
+        Ok(())
+    }
+
+    #[test]
+    fn test_compute_merkle_root_streaming_without_hash_vec() -> Result<(), MerkleError> {
+        let result = compute_merkle_root_streaming((0..9).map(|i| hash_block(&make_block(i))), 4)?;
+        assert_eq!(result.piece_hashes.len(), 3);
         Ok(())
     }
 
