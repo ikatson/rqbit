@@ -92,8 +92,10 @@ struct Opts {
 
     /// The listen address for HTTP API.
     ///
-    /// If not set, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download" will listen
-    /// on an ephemeral port that it will print.
+    /// This option will be ignored if rqbit is passed a socket by systemd via socket activation.
+    ///
+    /// Otherwise, if not set, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download"
+    /// will listen on an ephemeral port that it will print.
     #[arg(long = "http-api-listen-addr", env = "RQBIT_HTTP_API_LISTEN_ADDR")]
     http_api_listen_addr: Option<SocketAddr>,
 
@@ -413,6 +415,55 @@ enum SubCommand {
     Download(DownloadOpts),
     /// Shell completions. eval "$(rqbit completions bash)"
     Completions(CompletionsOpts),
+}
+
+/// Return the API listener socket passed to rqbit by systemd, if any.
+///
+/// An error indicates that the process was passed socket information by systemd, but we were unable
+/// to parse and/or use it.
+///
+/// Returns `None` if this function has already been called or if no socket was provided by systemd.
+#[cfg(target_os = "linux")]
+fn api_socket_from_systemd() -> anyhow::Result<Option<TcpListener>> {
+    use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // Make sure we can only use the socket passed by systemd once.
+    static ACTIVATED: AtomicBool = AtomicBool::new(false);
+    if ACTIVATED.swap(true, Ordering::AcqRel) {
+        return Ok(None);
+    }
+
+    /// Read and an environment variable as `T` using `FromStr`.
+    fn parse_env<T: FromStr>(name: &str) -> anyhow::Result<Option<T>> {
+        let Some(var) = std::env::var_os(name) else {
+            return Ok(None);
+        };
+        let Some(var) = var.to_str() else {
+            anyhow::bail!("environment variable {name} has an invalid utf8 value {var:?}")
+        };
+        let Ok(parsed) = var.parse() else {
+            anyhow::bail!("failed to parse {var} as {}", std::any::type_name::<T>())
+        };
+        Ok(Some(parsed))
+    }
+
+    /// The first file descriptor passed by systemd, defined in <systemd/sd-daemon>.
+    const SD_LISTEN_FDS_START: RawFd = 3;
+
+    match parse_env::<u32>("LISTEN_PID")? {
+        Some(pid) if pid == std::process::id() => {}
+        _ => return Ok(None),
+    };
+    match parse_env("LISTEN_FDS")? {
+        Some(1) => {}
+        Some(0) | None => return Ok(None),
+        Some(count) => anyhow::bail!("unexpected number of sockets {count} != 1"),
+    }
+
+    let listen_fd = unsafe { OwnedFd::from_raw_fd(SD_LISTEN_FDS_START) };
+    Ok(Some(TcpListener::try_from(listen_fd)?))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -918,9 +969,21 @@ async fn start_http_api(
         Some(log_config.rust_log_reload_tx),
         Some(log_config.line_broadcast),
     );
+
+    #[cfg(target_os = "linux")]
+    let systemd_listener = api_socket_from_systemd().unwrap_or_else(|e| {
+        error!("systemd socket-activation failed: {e}");
+        None
+    });
+    #[cfg(not(target_os = "linux"))]
+    let systemd_listener = None;
     let http_api = HttpApi::new(api, Some(http_api_opts));
-    let listener = TcpListener::bind_tcp(listen_addr, Default::default())
-        .with_context(|| format!("error binding HTTP server to {listen_addr}"))?;
+    let listener = match systemd_listener {
+        Some(listener) => listener,
+        None => TcpListener::bind_tcp(listen_addr, Default::default())
+            .with_context(|| format!("error binding HTTP server to {listen_addr}"))?,
+    };
+
     let listen_addr = listener.bind_addr();
     info!("started HTTP API at http://{listen_addr}");
 

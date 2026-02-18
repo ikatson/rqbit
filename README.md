@@ -79,6 +79,10 @@ rqbit --socks-url socks5://[username:password]@host:port ...
 rqbit server start --watch-folder [path] /download/path
 ```
 
+## Systemd socket activation
+
+rqbit can be started on-demand via [systemd socket activation](https://0pointer.de/blog/projects/socket-activation.html) by installing the [service and socket systemd units](systemd) into `$XDG_CONFIG_HOME/systemd/user/` (`~/.config/systemd/user`) and customizing them to your needs. If the associated [`rqbit.conf`](systemd/rqbit.conf) file is installed in `$XDG_CONFIG_HOME/rqbit/rqbit.conf` (`~/.config/rqbit/rqbit.conf`), it will be used to configure `rqbit` when started via the provided systemd unit.
+
 ## Performance
 
 Anecdotally from a few reports, rqbit is faster than other clients they've tried, at least with their default settings.
