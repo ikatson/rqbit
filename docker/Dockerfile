@@ -10,6 +10,7 @@ COPY --chmod=755 ${TARGETPLATFORM}/rqbit /bin/rqbit
 
 WORKDIR /home/rqbit
 
+ENV HOME=/home/rqbit
 ENV XDG_DATA_HOME=/home/rqbit/db
 ENV XDG_CACHE_HOME=/home/rqbit/cache
 ENV SSL_CERT_FILE=/etc/ssl/cacerts.pem
