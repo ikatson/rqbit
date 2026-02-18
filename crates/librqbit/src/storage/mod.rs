@@ -34,6 +34,7 @@ use std::{
     any::{Any, TypeId},
     io::IoSlice,
     path::Path,
+    time::SystemTime,
 };
 
 use librqbit_core::lengths::ValidPieceIndex;
@@ -168,6 +169,16 @@ pub trait TorrentStorage: Send + Sync {
     fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Returns (mtime, size) for each file, or None if the file doesn't exist.
+    /// Used for startup integrity validation — detecting files modified while
+    /// rqbit was shut down so that stale fastresume data can be discarded.
+    fn file_metadata(
+        &self,
+        _metadata: &TorrentMetadata,
+    ) -> anyhow::Result<Vec<Option<(SystemTime, u64)>>> {
+        Ok(Vec::new())
+    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -205,5 +216,12 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         (**self).on_piece_completed(piece_id)
+    }
+
+    fn file_metadata(
+        &self,
+        metadata: &TorrentMetadata,
+    ) -> anyhow::Result<Vec<Option<(SystemTime, u64)>>> {
+        (**self).file_metadata(metadata)
     }
 }
