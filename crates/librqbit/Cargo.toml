@@ -99,6 +99,7 @@ lru = { workspace = true, optional = true }
 mime_guess.workspace = true
 tokio-socks.workspace = true
 async-trait.workspace = true
+portable-atomic.workspace = true
 async-backtrace = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 walkdir.workspace = true

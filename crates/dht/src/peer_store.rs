@@ -1,4 +1,6 @@
-use std::{collections::VecDeque, net::SocketAddr, str::FromStr, sync::atomic::AtomicU32};
+use std::{collections::VecDeque, net::SocketAddr, str::FromStr};
+
+use portable_atomic::{AtomicU32, Ordering};
 
 use bencode::ByteBufOwned;
 use chrono::{DateTime, Utc};
@@ -68,7 +70,7 @@ impl Serialize for PeerStore {
         s.serialize_field("peers", &SerializePeers { peers: &self.peers })?;
         s.serialize_field(
             "peers_len",
-            &self.peers_len.load(std::sync::atomic::Ordering::SeqCst),
+            &self.peers_len.load(Ordering::SeqCst),
         )?;
         s.end()
     }
@@ -151,7 +153,7 @@ impl PeerStore {
 
         use dashmap::mapref::entry::Entry;
         let peers_entry = self.peers.entry(announce.info_hash);
-        let peers_len = self.peers_len.load(std::sync::atomic::Ordering::SeqCst);
+        let peers_len = self.peers_len.load(Ordering::SeqCst);
         match peers_entry {
             Entry::Occupied(mut occ) => {
                 if let Some(s) = occ.get_mut().iter_mut().find(|s| s.addr == addr) {
@@ -180,7 +182,7 @@ impl PeerStore {
         }
 
         self.peers_len
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .fetch_add(1, Ordering::SeqCst);
         true
     }
 

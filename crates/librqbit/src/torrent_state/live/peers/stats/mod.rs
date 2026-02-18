@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicU32;
+use portable_atomic::AtomicU32;
 
 use crate::{
     stream_connect::ConnectionKind,

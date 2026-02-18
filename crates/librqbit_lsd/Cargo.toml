@@ -17,6 +17,7 @@ parking_lot.workspace = true
 httparse.workspace = true
 atoi.workspace = true
 tracing.workspace = true
+portable-atomic.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

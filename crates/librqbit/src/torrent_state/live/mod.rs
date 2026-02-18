@@ -50,10 +50,15 @@ use std::{
     num::NonZeroU32,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
+
+#[cfg(target_pointer_width = "64")]
+use std::sync::atomic::AtomicU64;
+#[cfg(target_pointer_width = "32")]
+use portable_atomic::AtomicU64;
 
 use anyhow::{Context, bail};
 use buffers::{ByteBuf, ByteBufOwned};

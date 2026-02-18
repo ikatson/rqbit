@@ -268,8 +268,13 @@ impl UdpTrackerClient {
     pub async fn new(
         cancel_token: CancellationToken,
         bind_device: Option<&BindDevice>,
+        ipv4_only: bool,
     ) -> anyhow::Result<Self> {
-        let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+        let addr = if ipv4_only {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
+        } else {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
+        };
         let sock = UdpSocket::bind_udp(
             addr,
             librqbit_dualstack_sockets::BindOpts {
