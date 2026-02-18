@@ -1,14 +1,6 @@
-use std::{
-    fs::File,
-    io::IoSlice,
-    ops::{Deref, DerefMut},
-    path::PathBuf,
-};
+use std::{fs::File, io::IoSlice};
 
 use anyhow::Context;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use crate::Error;
 
 pub trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
@@ -96,92 +88,6 @@ impl OurFileExt for File {
     #[cfg(not(any(windows, unix)))]
     fn pwrite_all(&self, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         anyhow::bail!("pwrite_all not implemented for your platform")
-    }
-}
-
-#[derive(Default, Debug)]
-struct OpenedFileLocked {
-    #[allow(unused)]
-    path: PathBuf,
-    fd: Option<File>,
-    #[cfg(windows)]
-    tried_marking_sparse: bool,
-}
-
-impl Deref for OpenedFileLocked {
-    type Target = Option<File>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fd
-    }
-}
-
-impl DerefMut for OpenedFileLocked {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.fd
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct OpenedFile {
-    file: RwLock<OpenedFileLocked>,
-}
-
-impl OpenedFile {
-    pub fn new(path: PathBuf, f: File) -> Self {
-        Self {
-            file: RwLock::new(OpenedFileLocked {
-                path,
-                fd: Some(f),
-                #[cfg(windows)]
-                tried_marking_sparse: false,
-            }),
-        }
-    }
-
-    pub fn new_dummy() -> Self {
-        Self {
-            file: RwLock::new(Default::default()),
-        }
-    }
-
-    pub fn take_clone(&self) -> anyhow::Result<Self> {
-        let f = std::mem::take(&mut *self.file.write());
-        Ok(Self {
-            file: RwLock::new(f),
-        })
-    }
-
-    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
-            .ok()
-            .ok_or(Error::FsFileIsNone)
-    }
-
-    pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
-        RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
-            .ok()
-            .ok_or(Error::FsFileIsNone)
-    }
-
-    #[cfg(windows)]
-    pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
-        {
-            let g = self.file.read();
-            if g.tried_marking_sparse {
-                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
-                    .ok()
-                    .ok_or(Error::FsFileIsNone);
-            }
-        }
-        let mut g = self.file.write();
-        if !g.tried_marking_sparse {
-            g.tried_marking_sparse = true;
-            let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
-            tracing::debug!(path=?g.path, marked=super::sparse::mark_file_sparse(&f), "marking sparse");
-        }
-        let g = parking_lot::RwLockWriteGuard::downgrade(g);
-        Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
     }
 }
 
