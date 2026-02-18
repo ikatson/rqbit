@@ -28,7 +28,7 @@ default-tls = [
 miri = []
 prometheus = ["metrics-exporter-prometheus"]
 rust-tls = ["reqwest/rustls-tls", "sha1w/sha1-ring", "librqbit-core/sha1-ring"]
-storage_middleware = ["lru"]
+storage_middleware = []
 storage_examples = []
 tracing-subscriber-utils = ["tracing-subscriber"]
 postgres = ["sqlx", "home"]
@@ -95,7 +95,7 @@ bytes.workspace = true
 rlimit.workspace = true
 async-stream.workspace = true
 memmap2.workspace = true
-lru = { workspace = true, optional = true }
+lru.workspace = true
 mime_guess.workspace = true
 tokio-socks.workspace = true
 async-trait.workspace = true
