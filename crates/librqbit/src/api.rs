@@ -511,6 +511,15 @@ impl Api {
         let mgr = self.mgr_handle(idx)?;
         Ok(mgr.stream(file_id).await?)
     }
+
+    pub fn api_torrent_list_extra_files(&self, idx: TorrentIdOrHash) -> Result<Vec<String>> {
+        let handle = self.mgr_handle(idx)?;
+        let paths = handle.list_extra_files().context("listing extra files")?;
+        Ok(paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    }
 }
 
 #[derive(Serialize)]
