@@ -338,6 +338,36 @@ impl TorrentStateLive {
             format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
+
+        // Peer pruner: periodically remove excess peers to bound memory
+        if let Some(max_peers) = state.shared.options.peer_pruning_max {
+            state.spawn(
+                debug_span!(parent: state.shared.span.clone(), "peer_pruner"),
+                format!("[{}]peer_pruner", state.shared.id),
+                {
+                    let state = Arc::downgrade(&state);
+                    async move {
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(60)).await;
+                            let state = match state.upgrade() {
+                                Some(state) => state,
+                                None => return Ok(()),
+                            };
+                            let pruned = state.peers.prune_peers(max_peers);
+                            if pruned > 0 {
+                                debug!(
+                                    pruned,
+                                    remaining = state.peers.states.len(),
+                                    max_peers,
+                                    "pruned excess peers"
+                                );
+                            }
+                        }
+                    }
+                },
+            );
+        }
+
         Ok(state)
     }
 
@@ -534,7 +564,7 @@ impl TorrentStateLive {
         let counters = state
             .peers
             .with_peer(addr, |p| p.stats.counters.clone())
-            .ok_or(Error::BugPeerNotFound)?;
+            .ok_or(Error::PeerNotFound)?;
 
         let handler = PeerHandler {
             addr,
