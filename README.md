@@ -143,6 +143,54 @@ If you want to resume downloading a file that already exists, you'll need to add
 
 Use a regex here to select files by their names.
 
+## List of CLI options and environment variables
+
+| Cli option name | Environment name  | Default value | Other values | Description | 
+|----------|----------|----------|----------|----------|
+|  -v | RQBIT_LOG_LEVEL_CONSOLE  | info | trace, debug, info, warn, error |The console loglevel |
+|  --log-file | RQBIT_LOG_FILE | | |The log filename to also write to in addition to the console |
+| --log-file-rust-log | RQBIT_LOG_FILE_RUST_LOG | librqbit=debug,info | | The value for RUST_LOG in the log file |
+| --i, --tracker-refresh-interval | RQBIT_TRACKER_REFRESH_INTERVAL | | | The interval to poll trackers, e.g. 30s. Trackers send the refresh interval when we connect to them. Often this is pretty big, e.g. 30 minutes. This can force a certain value. |
+| --http-api-listen-addr | RQBIT_HTTP_API_LISTEN_ADDR | 127.0.0.1:3030 | | The listen address for HTTP API. If not set, "rqbit server" will listen on 127.0.0.1:3030, and "rqbit download" will listen on an ephemeral port that it will print. |
+| --http-api-allow-create | RQBIT_HTTP_API_ALLOW_CREATE | | true, false | Allow creating torrents via HTTP API |
+| | RQBIT_SINGLE_THREAD_RUNTIME | | true, false | Set this flag if you want to use tokio's single threaded runtime. It MAY perform better, but the main purpose is easier debugging, as time profilers work better with this one.|
+| --disable-dht |RQBIT_DHT_DISABLE | | true, false| |
+| --disable-dht-persistence | RQBIT_DHT_PERSISTENCE_DISABLE | | true, false | Set this to disable DHT reading and storing it's state. For now this is a useful workaround if you want to launch multiple rqbit instances, otherwise DHT port will conflict. |
+| | RQBIT_SINGLE_THREAD_RUNTIME | | true, false | Set this flag if you want to use tokio's single threaded runtime. It MAY perform better, but the main purpose is easier debugging, as time profilers work better with this one. |
+| --disable-dht | RQBIT_DHT_DISABLE | | true, false | |
+| --disable-dht-persistence | RQBIT_DHT_PERSISTENCE_DISABLE | | true, false | Set this to disable DHT reading and storing it's state. For now this is a useful workaround if you want to launch multiple rqbit instances, otherwise DHT port will conflict.|
+| --dht-bootstrap-addrs | RQBIT_DHT_BOOTSTRAP | | | Set DHT bootstrap addrs. A comma separated list of host:port or ip:port |
+| --peer-connect-timeout | RQBIT_PEER_CONNECT_TIMEOUT | 2s | | The connect timeout, e.g. 1s, 1.5s, 100ms etc. |
+| --peer-read-write-timeout | RQBIT_PEER_READ_WRITE_TIMEOUT | 10s | | The timeout for read() and write() operations, e.g. 1s, 1.5s, 100ms etc. |
+| -t | RQBIT_RUNTIME_WORKER_THREADS | | | How many threads to spawn for the executor. |
+| --disable-tcp-listen | RQBIT_TCP_LISTEN_DISABLE | |true, false | Disable listening for incoming connections over TCP. Note that outgoing connections can still be made (--disable-tcp-connect to disable). |
+| --disable-tcp-connect | RQBIT_TCP_CONNECT_DISABLE | | true, false |  Disable outgoing connections over TCP. Note that listening over TCP for incoming connections is enabled by default (--disable-tcp-listen to disable) |
+| --experimental-enable-utp-listen | RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE | | true, false | Enable to listen and connect over uTP |
+| --listen-port |RQBIT_LISTEN_PORT | 4240 | | The port to listen for incoming connections (applies to both TCP and uTP). Defaults to 4240 for the server, and an ephemeral port for "rqbit download / rqbit share" |
+| --listen-ip | RQBIT_LISTEN_IP | :: | | What's the IP to listen on. Default is to listen on all interfaces on IPv4 and IPv6. |
+| --disable-upnp-port-forward | RQBIT_UPNP_PORT_FORWARD_DISABLE | | true, false | By default, rqbit will try to publish LISTEN_PORT through UPnP on your router. This can disable it. |
+| --enable-upnp-server | RQBIT_UPNP_SERVER_ENABLE | | true, false | If set, will run a UPnP Media server on RQBIT_HTTP_API_LISTEN_ADDR. |
+| --upnp-server-friendly-name | RQBIT_UPNP_SERVER_FRIENDLY_NAME | | | UPnP server name that would be displayed on devices in your network |
+| --bind-device | RQBIT_BIND_DEVICE | | | What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD. On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE. Not supported on Windows (will error if you try to use it). |
+| --max-blocking-threads | RQBIT_RUNTIME_MAX_BLOCKING_THREADS | 8 | | How many maximum blocking tokio threads to spawn to process disk reads/writes. This will indicate how many parallel reads/writes can happen at a moment in time. The higher the number, the more the memory usage. |
+| --defer-writes-up-to | RQBIT_DEFER_WRITES_UP_TO | | | If you set this to something, all writes to disk will happen in background and be buffered in memory up to approximately the given number of megabytes. Might be useful for slow disks. |
+| | RQBIT_SOCKS_PROXY_URL | |`socks5://[username:password]@host:port` | If set will use socks5 proxy for all outgoing connections.You may also want to disable incoming connections via --disable-tcp-listen.|
+| | RQBIT_CONCURRENT_INIT_LIMIT | 5 | | How many torrents can be initializing (rehashing) at the same time | 
+| | RQBIT_UMASK | 022 | | Set the process umask to this value. Default is inherited from your environment (usually 022). This will affect the file mode of created files. Read more at https://man7.org/linux/man-pages/man2/umask.2.html |
+| --disable-upload | RQBIT_DISABLE_UPLOAD | | true, false | Disable uploading entirely. If this is set, rqbit won't share piece availability and will disconnect on download request. Might be useful e.g. if rqbit upload consumes all your upload bandwidth and interferes with your other Internet usage. |
+| --ratelimit-download | RQBIT_RATELIMIT_DOWNLOAD | | | Limit download speed to bytes-per-second. |
+| --ratelimit-upload | RQBIT_RATELIMIT_UPLOAD | | | Limit upload speed to bytes-per-second. |
+| | RQBIT_BLOCKLIST_URL | | | Downloads a p2p blocklist from this url and blocks connections from/to those peers. Supports file:/// and http(s):// URLs. Format is newline-delimited "name:start_ip-end_ip". E.g. https://github.com/Naunter/BT_BlockLists/raw/refs/heads/master/bt_blocklists.gz |
+| | RQBIT_ALLOWLIST_URL | | | Downloads a p2p allowlist from this url and blocks ALL connections BUT from/to those peers. Supports file:/// and http(s):// URLs. Format is newline-delimited "name:start_ip-end_ip". E.g. https://github.com/Naunter/BT_BlockLists/raw/refs/heads/master/bt_blocklists.gz |
+| | RQBIT_TRACKERS_FILENAME | | | The filename with tracker URLs to always use for each torrent. Newline-delimited. | 
+| --disable-lsd | RQBIT_LSD_DISABLE | | true, false | Disable local peer discovery (LSD). By default rqbit will announce torrents to LAN |
+| --disable-trackers | RQBIT_TRACKERS_DISABLE | | true, false | Disable trackers (for debugging DHT, LSD and --initial-peers) |
+| --disable-persistence | RQBIT_SESSION_PERSISTENCE_DISABLE | | true, false | Disable server persistence. It will not read or write its state to disk. |
+| --persistence-location | RQBIT_SESSION_PERSISTENCE_LOCATION | | | The folder to store session data in. By default uses OS specific folder. If starts with postgres://, will use postgres as the backend instead of JSON file. |
+| --fastresume | RQBIT_FASTRESUME | | true, false | Experimental! if set, will try to resume quickly after restart and skip checksumming. |
+| --watch-folder | RQBIT_WATCH_FOLDER | | | The folder to watch for added .torrent files. All files in this folder will be automatically added to the session. |
+| | RQBIT_HTTP_BASIC_AUTH_USERPASS | | username:password | basic auth credentials should be in format username:password | 
+
 ## Features (not exhaustive)
 
 ### Supported BEPs
