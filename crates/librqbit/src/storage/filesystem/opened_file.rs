@@ -3,6 +3,7 @@ use std::{
     io::IoSlice,
     ops::{Deref, DerefMut},
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::Context;
@@ -124,32 +125,63 @@ impl DerefMut for OpenedFileLocked {
 
 #[derive(Debug)]
 pub(crate) struct OpenedFile {
+    path: PathBuf,
     file: RwLock<OpenedFileLocked>,
+    is_writeable: AtomicBool,
 }
 
 impl OpenedFile {
-    pub fn new(path: PathBuf, f: File) -> Self {
+    pub fn new(path: PathBuf, f: File, is_writeable: bool) -> Self {
         Self {
+            path: path.clone(),
             file: RwLock::new(OpenedFileLocked {
                 path,
                 fd: Some(f),
                 #[cfg(windows)]
                 tried_marking_sparse: false,
             }),
+            is_writeable: AtomicBool::new(is_writeable),
         }
     }
 
     pub fn new_dummy() -> Self {
         Self {
+            path: PathBuf::from(""),
             file: RwLock::new(Default::default()),
+            is_writeable: AtomicBool::new(false),
         }
     }
 
     pub fn take_clone(&self) -> anyhow::Result<Self> {
         let f = std::mem::take(&mut *self.file.write());
         Ok(Self {
+            path: self.path.clone(),
             file: RwLock::new(f),
+            is_writeable: AtomicBool::new(self.is_writeable.load(Ordering::SeqCst)),
         })
+    }
+
+    pub fn ensure_writeable(&self) -> anyhow::Result<()> {
+        match self
+            .is_writeable
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+        {
+            Ok(_) => {
+                // Updated, need to reopen writeable
+                let mut file = self.file.write();
+                let new_fd = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(false)
+                    .open(&self.path)
+                    .with_context(|| format!("error opening {:?} in write mode", self.path))?;
+                file.fd = Some(new_fd);
+            }
+            Err(_) => {
+                // Didn't update, no need to reopen
+            }
+        }
+
+        Ok(())
     }
 
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
