@@ -935,7 +935,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 .create_and_serve_torrent(
                     &path,
                     CreateTorrentOptions {
-                        name: share_opts.name.as_deref(),
+                        name: share_opts.name.clone(),
                         trackers,
                         ..Default::default()
                     },
