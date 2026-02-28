@@ -2901,6 +2901,7 @@ dependencies = [
  "librqbit-sha1-wrapper",
  "librqbit-tracker-comms",
  "librqbit-upnp",
+ "librqbit-upnp-control-point",
  "librqbit-upnp-serve",
  "librqbit-utp",
  "lru",
@@ -3139,6 +3140,27 @@ dependencies = [
  "serde_derive",
  "socket2",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "librqbit-upnp-control-point"
+version = "9.0.0-rc.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "httparse",
+ "librqbit-dualstack-sockets",
+ "librqbit-upnp",
+ "parking_lot",
+ "quick-xml 0.38.4",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_derive",
+ "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -4777,6 +4799,7 @@ dependencies = [
  "libc",
  "librqbit",
  "librqbit-dualstack-sockets",
+ "librqbit-upnp-control-point",
  "librqbit-upnp-serve",
  "mdns-sd",
  "metrics-exporter-prometheus",

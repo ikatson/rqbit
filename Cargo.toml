@@ -14,6 +14,7 @@ members = [
     "crates/upnp",
     "crates/tracker_comms",
     "crates/upnp-serve",
+    "crates/upnp-control-point",
     "desktop/src-tauri",
 ]
 
@@ -31,6 +32,7 @@ default-members = [
     "crates/upnp",
     "crates/tracker_comms",
     "crates/upnp-serve",
+    "crates/upnp-control-point",
 ]
 
 [workspace.package]
@@ -66,6 +68,7 @@ sha1w = { path = "crates/sha1w", package = "librqbit-sha1-wrapper", version = "9
 tracker_comms = { path = "crates/tracker_comms", package = "librqbit-tracker-comms", version = "9.0.0-rc.0", default-features = false }
 librqbit-upnp = { path = "crates/upnp", version = "9.0.0-rc.0" }
 upnp-serve = { path = "crates/upnp-serve", package = "librqbit-upnp-serve", version = "9.0.0-rc.0", default-features = false }
+upnp-control-point = { path = "crates/upnp-control-point", package = "librqbit-upnp-control-point", version = "9.0.0-rc.0", default-features = false }
 
 # External crates
 anyhow = "1"
