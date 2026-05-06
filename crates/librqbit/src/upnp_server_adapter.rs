@@ -427,6 +427,7 @@ mod tests {
             publisher_url: None,
             creation_date: None,
             info_hash: Id20::default(),
+            nodes: vec![],
         }
     }
 
