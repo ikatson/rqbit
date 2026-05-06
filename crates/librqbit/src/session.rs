@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::Read,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
@@ -1051,6 +1051,22 @@ impl Session {
                             torrent_from_bytes(bytes).context("error decoding torrent")?
                         }
                     };
+
+                    // BEP-0005: inject nodes from .torrent as initial peers.
+                    if !torrent.meta.nodes.is_empty() {
+                        let node_peers: Vec<SocketAddr> = torrent.meta.nodes.iter()
+                            .filter_map(|node| {
+                                node.host.parse::<IpAddr>().ok().map(|ip| {
+                                    SocketAddr::from((ip, node.port))
+                                })
+                            })
+                            .collect();
+                        if !node_peers.is_empty() {
+                            info!(nodes = ?node_peers, "BEP-0005: using torrent nodes as initial peers");
+                            let existing = opts.initial_peers.get_or_insert_with(Vec::new);
+                            existing.extend(node_peers);
+                        }
+                    }
 
                     let mut trackers = torrent
                         .meta
