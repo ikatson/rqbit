@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
         id: 1,
         parent_id: 0,
         size: 1,
+        seekable: true,
     })]);
 
     const HTTP_PORT: u16 = 9005;

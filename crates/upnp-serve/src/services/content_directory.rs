@@ -77,6 +77,7 @@ pub mod browse {
             pub mime_type: Option<mime_guess::Mime>,
             pub url: String,
             pub size: u64,
+            pub seekable: bool,
         }
 
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +95,7 @@ pub mod browse {
                         _ => return None,
                     };
                     let mime = mime.to_string();
+                    let dlna_op = if item.seekable { "DLNA.ORG_OP=01" } else { "DLNA.ORG_OP=00" };
 
                     Some(format!(
                         include_str!(
@@ -105,7 +107,8 @@ pub mod browse {
                         url = item.url,
                         upnp_class = upnp_class,
                         title = item.title,
-                        size = item.size
+                        size = item.size,
+                        dlna_op = dlna_op
                     ))
                 }
 

@@ -57,7 +57,7 @@ dht.workspace = true
 librqbit-upnp.workspace = true
 upnp-serve = { workspace = true, optional = true }
 
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "io-util", "process"] }
 governor.workspace = true
 console-subscriber = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }

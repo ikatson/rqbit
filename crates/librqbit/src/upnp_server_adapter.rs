@@ -26,6 +26,9 @@ use upnp_serve::{
     },
 };
 
+// High bit flag to mark all IDs belonging to the "Transcoded" virtual subtree.
+const TRANSCODED_FLAG: usize = 1 << 62;
+
 #[derive(Debug, PartialEq, Eq)]
 struct TorrentFileTreeNode {
     title: String,
@@ -56,14 +59,27 @@ impl TorrentFileTreeNode {
         http_host: &str,
         torrent: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        transcoded: bool,
     ) -> ItemOrContainer {
         let encoded_id = encode_id(id, torrent.id);
+        let final_id = if transcoded {
+            TRANSCODED_FLAG | encoded_id
+        } else {
+            encoded_id
+        };
         let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id));
+        let final_parent_id = encoded_parent_id.map(|p| {
+            if transcoded {
+                TRANSCODED_FLAG | p
+            } else {
+                p
+            }
+        });
+
         match self.real_torrent_file_id {
             Some(fid) => {
                 let fi = &metadata.file_infos[fid];
                 let filename = &fi.relative_filename;
-                // Torrent path joined with "/"
                 let last_url_bit = metadata
                     .info
                     .iter_file_details()
@@ -76,21 +92,36 @@ impl TorrentFileTreeNode {
                             .join("/")
                     })
                     .unwrap_or_else(|| self.title.clone());
-                ItemOrContainer::Item(Item {
-                    id: encoded_id,
-                    parent_id: encoded_parent_id.unwrap_or_default(),
-                    title: self.title.clone(),
-                    mime_type: mime_guess::from_path(filename).first(),
-                    url: format!(
+
+                let (url, mime_type, seekable) = if transcoded {
+                    let url = format!(
+                        "http://{}/torrents/{}/transcode/{}/{}",
+                        http_host, torrent.id, fid, last_url_bit
+                    );
+                    let mime: Option<mime_guess::Mime> = "video/mp2t".parse().ok();
+                    (url, mime, false)
+                } else {
+                    let url = format!(
                         "http://{}/torrents/{}/stream/{}/{}",
                         http_host, torrent.id, fid, last_url_bit
-                    ),
+                    );
+                    let mime = mime_guess::from_path(filename).first();
+                    (url, mime, true)
+                };
+
+                ItemOrContainer::Item(Item {
+                    id: final_id,
+                    parent_id: final_parent_id.unwrap_or(if transcoded { TRANSCODED_FLAG } else { 0 }),
+                    title: self.title.clone(),
+                    mime_type,
+                    url,
                     size: fi.len,
+                    seekable,
                 })
             }
             None => ItemOrContainer::Container(Container {
-                id: encoded_id,
-                parent_id: Some(encoded_parent_id.unwrap_or_default()),
+                id: final_id,
+                parent_id: Some(final_parent_id.unwrap_or(if transcoded { TRANSCODED_FLAG } else { 0 })),
                 title: self.title.clone(),
                 children_count: Some(self.children.len()),
             }),
@@ -193,7 +224,7 @@ impl TorrentFileTree {
 }
 
 impl UpnpServerSessionAdapter {
-    fn build_root(&self, hostname: &str) -> Vec<ItemOrContainer> {
+    fn build_root(&self, hostname: &str, transcoded: bool) -> Vec<ItemOrContainer> {
         let mut all = self
             .session
             .with_torrents(|torrents| torrents.map(|(_, t)| t.clone()).collect_vec());
@@ -211,7 +242,6 @@ impl UpnpServerSessionAdapter {
                 };
 
                 if is_single_file_at_root(&metadata.info) {
-                    // Just add the file directly
                     let rf = &metadata.file_infos[0].relative_filename;
                     let title = rf.file_name()?.to_str()?.to_owned();
                     Some(
@@ -226,6 +256,7 @@ impl UpnpServerSessionAdapter {
                             hostname,
                             t.shared(),
                             metadata,
+                            transcoded,
                         ),
                     )
                 } else {
@@ -234,10 +265,16 @@ impl UpnpServerSessionAdapter {
                         .name_or_else(|| format!("torrent {real_id}"))
                         .into_owned();
 
-                    // Create a folder
+                    let container_id = if transcoded {
+                        TRANSCODED_FLAG | upnp_id
+                    } else {
+                        upnp_id
+                    };
+                    let parent_id = if transcoded { TRANSCODED_FLAG } else { 0 };
+
                     Some(ItemOrContainer::Container(Container {
-                        id: upnp_id,
-                        parent_id: Some(0),
+                        id: container_id,
+                        parent_id: Some(parent_id),
                         title,
                         children_count: None,
                     }))
@@ -252,27 +289,52 @@ impl UpnpServerSessionAdapter {
         http_hostname: &str,
         metadata: bool,
     ) -> Vec<ItemOrContainer> {
+        // Original root
         if object_id == 0 {
-            let root = self.build_root(http_hostname);
+            let root = self.build_root(http_hostname, false);
             if metadata {
                 return vec![ItemOrContainer::Container(Container {
                     id: 0,
                     parent_id: None,
-                    children_count: Some(root.len()),
+                    children_count: Some(root.len() + 1), // +1 for Transcoded folder
                     title: "root".to_owned(),
+                })];
+            }
+            let mut result = root;
+            result.push(ItemOrContainer::Container(Container {
+                id: TRANSCODED_FLAG,
+                parent_id: Some(0),
+                title: "Transcoded".to_owned(),
+                children_count: None,
+            }));
+            return result;
+        }
+
+        // Transcoded root
+        if object_id == TRANSCODED_FLAG {
+            let root = self.build_root(http_hostname, true);
+            if metadata {
+                return vec![ItemOrContainer::Container(Container {
+                    id: TRANSCODED_FLAG,
+                    parent_id: Some(0),
+                    children_count: Some(root.len()),
+                    title: "Transcoded".to_owned(),
                 })];
             }
             return root;
         }
 
-        let (node_id, torrent_id) = match decode_id(object_id) {
+        let transcoded = (object_id & TRANSCODED_FLAG) != 0;
+        let actual_id = object_id & !TRANSCODED_FLAG;
+
+        let (node_id, torrent_id) = match decode_id(actual_id) {
             Ok((node_id, torrent_id)) => (node_id, torrent_id),
             Err(_) => {
                 debug!(id=?object_id, "invalid id");
                 return vec![];
             }
         };
-        trace!(object_id, node_id, torrent_id);
+        trace!(object_id, node_id, torrent_id, transcoded);
 
         let torrent = match self.session.get(torrent_id.into()) {
             Some(t) => t,
@@ -314,6 +376,7 @@ impl UpnpServerSessionAdapter {
                 http_hostname,
                 torrent.shared(),
                 t_metadata,
+                transcoded,
             ))
         } else {
             for (child_node_id, child_node) in node
@@ -326,6 +389,7 @@ impl UpnpServerSessionAdapter {
                     http_hostname,
                     torrent.shared(),
                     t_metadata,
+                    transcoded,
                 ));
             }
         };
@@ -386,7 +450,8 @@ mod tests {
         AddTorrent, AddTorrentOptions, Session, SessionOptions,
         tests::test_util::setup_test_logging,
         upnp_server_adapter::{
-            TorrentFileTree, TorrentFileTreeNode, UpnpServerSessionAdapter, decode_id, encode_id,
+            TRANSCODED_FLAG, TorrentFileTree, TorrentFileTreeNode, UpnpServerSessionAdapter,
+            decode_id, encode_id,
         },
     };
 
@@ -588,7 +653,7 @@ mod tests {
             vec![ItemOrContainer::Container(Container {
                 id: 0,
                 parent_id: None,
-                children_count: Some(2),
+                children_count: Some(3), // 2 torrents + Transcoded folder
                 title: "root".into()
             })]
         );
@@ -603,13 +668,20 @@ mod tests {
                     mime_type: None,
                     url: "http://127.0.0.1/torrents/0/stream/0/f1".into(),
                     size: 1,
+                    seekable: true,
                 }),
                 ItemOrContainer::Container(Container {
                     id: encode_id(0, 1),
                     parent_id: Some(0),
                     children_count: None,
                     title: "t2".into()
-                })
+                }),
+                ItemOrContainer::Container(Container {
+                    id: TRANSCODED_FLAG,
+                    parent_id: Some(0),
+                    children_count: None,
+                    title: "Transcoded".into()
+                }),
             ]
         );
 
@@ -622,6 +694,7 @@ mod tests {
                 mime_type: None,
                 url: "http://127.0.0.1/torrents/0/stream/0/f1".into(),
                 size: 1,
+                seekable: true,
             })]
         );
 
@@ -664,6 +737,7 @@ mod tests {
                 mime_type: None,
                 url: "http://127.0.0.1/torrents/1/stream/0/d1/f2".into(),
                 size: 1,
+                seekable: true,
             })]
         );
 
@@ -676,8 +750,44 @@ mod tests {
                 mime_type: None,
                 url: "http://127.0.0.1/torrents/1/stream/0/d1/f2".into(),
                 size: 1,
+                seekable: true,
             })]
         );
+
+        // Transcoded root
+        assert_eq!(
+            adapter.browse_metadata(TRANSCODED_FLAG, "127.0.0.1"),
+            vec![ItemOrContainer::Container(Container {
+                id: TRANSCODED_FLAG,
+                parent_id: Some(0),
+                children_count: Some(2),
+                title: "Transcoded".into()
+            })]
+        );
+
+        let transcoded_children = adapter.browse_direct_children(TRANSCODED_FLAG, "127.0.0.1");
+        assert_eq!(transcoded_children.len(), 2);
+        // f1 transcoded item
+        assert!(matches!(
+            &transcoded_children[0],
+            ItemOrContainer::Item(Item {
+                id,
+                url,
+                seekable: false,
+                ..
+            }) if *id == TRANSCODED_FLAG | encode_id(0, 0)
+              && url.contains("/transcode/")
+        ));
+        // t2 transcoded container
+        assert!(matches!(
+            &transcoded_children[1],
+            ItemOrContainer::Container(Container {
+                id,
+                parent_id: Some(pid),
+                ..
+            }) if *id == TRANSCODED_FLAG | encode_id(0, 1)
+              && *pid == TRANSCODED_FLAG
+        ));
     }
 
     #[test]
