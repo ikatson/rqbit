@@ -1,9 +1,9 @@
 use std::sync::atomic::Ordering;
 
-use axum::{body::Bytes, extract::State, response::IntoResponse};
+use axum::{extract::State, response::IntoResponse};
 use browse::response::ItemOrContainer;
 use bstr::BStr;
-use http::{HeaderMap, StatusCode, header::CONTENT_TYPE};
+use http::{StatusCode, header::CONTENT_TYPE};
 use tracing::{debug, trace};
 
 use crate::{
@@ -77,6 +77,7 @@ pub mod browse {
             pub mime_type: Option<mime_guess::Mime>,
             pub url: String,
             pub size: u64,
+            pub seekable: bool,
         }
 
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +95,7 @@ pub mod browse {
                         _ => return None,
                     };
                     let mime = mime.to_string();
+                    let dlna_op = if item.seekable { "DLNA.ORG_OP=01" } else { "DLNA.ORG_OP=00" };
 
                     Some(format!(
                         include_str!(
@@ -105,7 +107,8 @@ pub mod browse {
                         url = item.url,
                         upnp_class = upnp_class,
                         title = item.title,
-                        size = item.size
+                        size = item.size,
+                        dlna_op = dlna_op
                     ))
                 }
 
@@ -260,11 +263,23 @@ pub mod subscription {
 }
 
 pub(crate) async fn http_handler(
-    headers: HeaderMap,
     State(state): State<UnpnServerState>,
-    body: Bytes,
+    request: axum::extract::Request,
 ) -> impl IntoResponse {
-    let body = BStr::new(&body);
+    // Extract client IP using the configured extractor (if any).
+    let client_ip: Option<std::net::IpAddr> = state
+        .client_ip_extractor
+        .as_ref()
+        .and_then(|f| f(request.extensions()));
+
+    let (parts, body_bytes) = request.into_parts();
+    let headers = parts.headers;
+
+    let body_bytes = match axum::body::to_bytes(body_bytes, 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::BAD_REQUEST, "cannot read body").into_response(),
+    };
+    let body = BStr::new(&body_bytes);
     let action = headers.get("soapaction").map(|v| BStr::new(v.as_bytes()));
     trace!(?body, ?action, "received control request");
     let action = match action {
@@ -284,7 +299,7 @@ pub(crate) async fn http_handler(
                 None => return StatusCode::BAD_REQUEST.into_response(),
             };
 
-            let body = match std::str::from_utf8(body) {
+            let body = match std::str::from_utf8(&body_bytes) {
                 Ok(body) => body,
                 Err(_) => return (StatusCode::BAD_REQUEST, "cannot parse request").into_response(),
             };
@@ -305,7 +320,7 @@ pub(crate) async fn http_handler(
                     browse::response::render(
                         state
                             .provider
-                            .browse_direct_children(request.object_id, http_hostname),
+                            .browse_direct_children(request.object_id, http_hostname, client_ip),
                     ),
                 )
                     .into_response(),
@@ -314,7 +329,7 @@ pub(crate) async fn http_handler(
                     browse::response::render(
                         state
                             .provider
-                            .browse_metadata(request.object_id, http_hostname),
+                            .browse_metadata(request.object_id, http_hostname, client_ip),
                     ),
                 )
                     .into_response(),
@@ -336,9 +351,19 @@ pub(crate) async fn http_handler(
 }
 
 pub trait ContentDirectoryBrowseProvider: Send + Sync {
-    fn browse_direct_children(&self, parent_id: usize, http_hostname: &str)
-    -> Vec<ItemOrContainer>;
-    fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer>;
+    fn browse_direct_children(
+        &self,
+        parent_id: usize,
+        http_hostname: &str,
+        client_ip: Option<std::net::IpAddr>,
+    ) -> Vec<ItemOrContainer>;
+
+    fn browse_metadata(
+        &self,
+        object_id: usize,
+        http_hostname: &str,
+        client_ip: Option<std::net::IpAddr>,
+    ) -> Vec<ItemOrContainer>;
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ mod other;
 mod playlist;
 mod streaming;
 mod torrents;
+mod transcoding;
 
 use std::sync::Arc;
 
@@ -104,6 +105,14 @@ pub fn make_api_router(state: ApiState) -> Router {
         .route(
             "/torrents/{id}/stream/{file_id}/{*filename}",
             get(streaming::h_torrent_stream_file),
+        )
+        .route(
+            "/torrents/{id}/transcode/{file_id}",
+            get(transcoding::h_torrent_transcode_file),
+        )
+        .route(
+            "/torrents/{id}/transcode/{file_id}/{*filename}",
+            get(transcoding::h_torrent_transcode_file),
         )
         .route("/torrents/limits", get(configure::h_get_session_ratelimits));
 

@@ -32,6 +32,8 @@ network-interface.workspace = true
 futures.workspace = true
 librqbit-dualstack-sockets.workspace = true
 rand.workspace = true
+dashmap.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
