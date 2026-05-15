@@ -483,6 +483,7 @@ impl TorrentStateLive {
             counters,
             first_message_received: AtomicBool::new(false),
             cancel_token: self.cancellation_token.child_token(),
+            client_name_and_version: self.shared.client_name_and_version().to_owned(),
         };
         let _token_guard = handler.cancel_token.clone().drop_guard();
         let options = PeerConnectionOptions {
@@ -548,6 +549,7 @@ impl TorrentStateLive {
             counters,
             first_message_received: AtomicBool::new(false),
             cancel_token: state.cancellation_token.child_token(),
+            client_name_and_version: state.shared.client_name_and_version().to_owned(),
         };
         let _token_guard = handler.cancel_token.clone().drop_guard();
 
@@ -1027,6 +1029,8 @@ struct PeerHandler {
     first_message_received: AtomicBool,
 
     cancel_token: CancellationToken,
+
+    client_name_and_version: String,
 }
 
 impl PeerConnectionHandler for &'_ PeerHandler {
@@ -1214,6 +1218,10 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         }
 
         Ok(())
+    }
+
+    fn client_name_and_version(&self) -> &str {
+        &self.client_name_and_version
     }
 }
 

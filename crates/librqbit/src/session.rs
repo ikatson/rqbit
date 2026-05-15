@@ -150,6 +150,7 @@ pub struct Session {
     _disable_upload: bool,
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
+    client_name_and_version: String,
 }
 
 async fn torrent_from_url(
@@ -457,6 +458,10 @@ pub struct SessionOptions {
 
     /// Force IPv4 only.
     pub ipv4_only: bool,
+
+    /// Override the client name and version used in User-Agent headers and
+    /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
+    pub client_name_and_version: Option<String>,
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -505,6 +510,10 @@ impl Session {
 
     pub fn cancellation_token(&self) -> &CancellationToken {
         &self.cancellation_token
+    }
+
+    pub fn client_name_and_version(&self) -> &str {
+        &self.client_name_and_version
     }
 
     /// Create a new session with options.
@@ -639,6 +648,10 @@ impl Session {
                 None => None,
             };
 
+            let client_name_and_version = opts
+                .client_name_and_version
+                .unwrap_or_else(|| crate::client_name_and_version().to_owned());
+
             let reqwest_client = {
                 let builder = if let Some(proxy_url) = proxy_url {
                     let proxy = reqwest::Proxy::all(proxy_url)
@@ -654,7 +667,10 @@ impl Session {
                     b
                 };
 
-                builder.build().context("error building HTTP(S) client")?
+                builder
+                    .user_agent(&client_name_and_version)
+                    .build()
+                    .context("error building HTTP(S) client")?
             };
 
             let stream_connector = Arc::new(
@@ -738,6 +754,7 @@ impl Session {
                 trackers: opts.trackers,
                 disable_trackers: opts.disable_trackers,
                 peer_limit: opts.peer_limit,
+                client_name_and_version,
 
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
@@ -1279,6 +1296,7 @@ impl Session {
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
                 magnet_name: name,
+                client_name_and_version: self.client_name_and_version.clone(),
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(
@@ -1563,6 +1581,7 @@ impl Session {
             peer_rx,
             Some(self.merge_peer_opts(peer_opts)),
             self.connector.clone(),
+            self.client_name_and_version.clone(),
         )
         .await
         {

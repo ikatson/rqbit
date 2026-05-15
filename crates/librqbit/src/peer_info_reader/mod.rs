@@ -37,6 +37,7 @@ pub(crate) async fn read_metainfo_from_peer(
     peer_connection_options: Option<PeerConnectionOptions>,
     spawner: BlockingSpawner,
     connector: Arc<StreamConnector>,
+    client_name_and_version: String,
 ) -> anyhow::Result<TorrentAndInfoBytes> {
     let (result_tx, result_rx) = tokio::sync::oneshot::channel::<
         Result<(TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned), bencode::DeserializeError>,
@@ -48,6 +49,7 @@ pub(crate) async fn read_metainfo_from_peer(
         writer_tx,
         result_tx: Mutex::new(Some(result_tx)),
         locked: RwLock::new(None),
+        client_name_and_version,
     };
     let connection = PeerConnection::new(
         addr,
@@ -157,6 +159,7 @@ struct Handler {
         >,
     >,
     locked: RwLock<Option<HandlerLocked>>,
+    client_name_and_version: String,
 }
 
 impl PeerConnectionHandler for Handler {
@@ -253,5 +256,9 @@ impl PeerConnectionHandler for Handler {
 
     fn should_transmit_have(&self, _id: librqbit_core::lengths::ValidPieceIndex) -> bool {
         false
+    }
+
+    fn client_name_and_version(&self) -> &str {
+        &self.client_name_and_version
     }
 }
