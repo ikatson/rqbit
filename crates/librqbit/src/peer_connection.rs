@@ -52,6 +52,9 @@ pub trait PeerConnectionHandler {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+    fn client_name_and_version(&self) -> &str {
+        crate::client_name_and_version()
+    }
 }
 
 #[derive(Debug)]
@@ -293,7 +296,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         if supports_extended {
             let mut my_extended = ExtendedHandshake::new();
-            my_extended.v = Some(ByteBuf(crate::client_name_and_version().as_bytes()));
+            my_extended.v = Some(ByteBuf(self.handler.client_name_and_version().as_bytes()));
             my_extended.yourip = Some(self.addr.ip().into());
             self.handler
                 .update_my_extended_handshake(&mut my_extended)
