@@ -63,7 +63,12 @@ impl TorrentStorage for MmapStorage {
         anyhow::bail!("not implemented")
     }
 
-    fn init(&mut self, _meta: &ManagedTorrentShared) -> anyhow::Result<()> {
+    fn init(
+        &mut self,
+        _meta: &ManagedTorrentShared,
+        _: &crate::TorrentMetadata,
+        _: Option<&[usize]>,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 

@@ -62,6 +62,7 @@ impl TorrentStorage for CustomStorage {
         &mut self,
         _meta: &librqbit::ManagedTorrentShared,
         _: &librqbit::TorrentMetadata,
+        _: Option<&[usize]>,
     ) -> anyhow::Result<()> {
         anyhow::bail!("not implemented")
     }

@@ -52,9 +52,10 @@ pub trait StorageFactory: Send + Sync + Any {
         &self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        only_files: Option<&[usize]>,
     ) -> anyhow::Result<Self::Storage> {
         let mut storage = self.create(shared, metadata)?;
-        storage.init(shared, metadata)?;
+        storage.init(shared, metadata, only_files)?;
         Ok(storage)
     }
 
@@ -123,6 +124,7 @@ pub trait TorrentStorage: Send + Sync {
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        only_files: Option<&[usize]>,
     ) -> anyhow::Result<()>;
 
     /// Given a file_id (which you can get more info from in init_storage() through torrent info)
@@ -199,8 +201,9 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        only_files: Option<&[usize]>,
     ) -> anyhow::Result<()> {
-        (**self).init(shared, metadata)
+        (**self).init(shared, metadata, only_files)
     }
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {

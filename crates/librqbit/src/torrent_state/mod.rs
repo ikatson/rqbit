@@ -414,9 +414,11 @@ impl ManagedTorrent {
                         t.shared.clone(),
                         metadata.clone(),
                         g.only_files.clone(),
-                        t.shared
-                            .storage_factory
-                            .create_and_init(t.shared(), &metadata)?,
+                        t.shared.storage_factory.create_and_init(
+                            t.shared(),
+                            &metadata,
+                            g.only_files.as_deref(),
+                        )?,
                         true,
                     ));
                     g.state = ManagedTorrentState::Initializing(initializing.clone());

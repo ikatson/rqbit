@@ -1303,8 +1303,11 @@ impl Session {
                 minfo.clone(),
                 metadata.clone(),
                 only_files.clone(),
-                self.spawner
-                    .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
+                self.spawner.block_in_place(|| {
+                    minfo
+                        .storage_factory
+                        .create_and_init(&minfo, &metadata, only_files.as_deref())
+                })?,
                 false,
             ));
             let handle = Arc::new(ManagedTorrent {

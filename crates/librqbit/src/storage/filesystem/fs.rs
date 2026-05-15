@@ -8,6 +8,7 @@ use anyhow::Context;
 use tracing::warn;
 
 use crate::{
+    chunk_tracker::compute_selected_pieces,
     storage::{StorageFactoryExt, filesystem::opened_file::OurFileExt},
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
 };
@@ -15,6 +16,14 @@ use crate::{
 use crate::storage::{StorageFactory, TorrentStorage};
 
 use super::opened_file::OpenedFile;
+
+fn overlap_spill_root(shared: &ManagedTorrentShared) -> PathBuf {
+    std::env::temp_dir().join("rqbit-overlap").join(format!(
+        "{}-{}",
+        shared.info_hash.as_string(),
+        shared.id
+    ))
+}
 
 #[derive(Default, Clone, Copy)]
 pub struct FilesystemStorageFactory {}
@@ -29,6 +38,7 @@ impl StorageFactory for FilesystemStorageFactory {
     ) -> anyhow::Result<FilesystemStorage> {
         Ok(FilesystemStorage {
             output_folder: shared.options.output_folder.clone(),
+            overlap_spill_root: overlap_spill_root(shared),
             opened_files: Default::default(),
         })
     }
@@ -40,6 +50,7 @@ impl StorageFactory for FilesystemStorageFactory {
 
 pub struct FilesystemStorage {
     pub(super) output_folder: PathBuf,
+    pub(super) overlap_spill_root: PathBuf,
     pub(super) opened_files: Vec<OpenedFile>,
 }
 
@@ -52,6 +63,7 @@ impl FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            overlap_spill_root: self.overlap_spill_root.clone(),
         })
     }
 }
@@ -67,6 +79,7 @@ impl TorrentStorage for FilesystemStorage {
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let of = self.opened_files.get(file_id).context("no such file")?;
+        of.ensure_opened()?;
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all(offset, buf);
         #[cfg(not(windows))]
@@ -80,6 +93,7 @@ impl TorrentStorage for FilesystemStorage {
         bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
         let of = self.opened_files.get(file_id).context("no such file")?;
+        of.ensure_opened()?;
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
         #[cfg(not(windows))]
@@ -92,6 +106,7 @@ impl TorrentStorage for FilesystemStorage {
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
         let f = &self.opened_files.get(file_id).context("no such file")?;
+        f.ensure_opened()?;
         #[cfg(windows)]
         f.try_mark_sparse()?;
         Ok(f.lock_read()?.set_len(len)?)
@@ -105,6 +120,7 @@ impl TorrentStorage for FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            overlap_spill_root: self.overlap_spill_root.clone(),
         }))
     }
 
@@ -125,17 +141,56 @@ impl TorrentStorage for FilesystemStorage {
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        only_files: Option<&[usize]>,
     ) -> anyhow::Result<()> {
+        let required_files = only_files.map(|only_files| {
+            let selected_pieces = compute_selected_pieces(
+                metadata.lengths(),
+                |idx| only_files.contains(&idx),
+                &metadata.file_infos,
+            );
+
+            metadata
+                .file_infos
+                .iter()
+                .enumerate()
+                .map(|(idx, file_info)| {
+                    if only_files.contains(&idx) {
+                        return true;
+                    }
+
+                    file_info
+                        .piece_range_usize()
+                        .any(|piece_idx| selected_pieces[piece_idx])
+                })
+                .collect::<Vec<_>>()
+        });
         let mut files = Vec::<OpenedFile>::new();
-        for file_details in metadata.file_infos.iter() {
+        for (idx, file_details) in metadata.file_infos.iter().enumerate() {
             let mut full_path = self.output_folder.clone();
             let relative_path = &file_details.relative_filename;
             full_path.push(relative_path);
+            let is_selected = only_files
+                .map(|only_files| only_files.contains(&idx))
+                .unwrap_or(true);
+            let should_materialize = required_files
+                .as_ref()
+                .map(|required_files| required_files[idx])
+                .unwrap_or(true);
 
             if file_details.attrs.padding {
                 files.push(OpenedFile::new_dummy());
                 continue;
-            };
+            }
+            if !should_materialize {
+                files.push(OpenedFile::new_lazy(full_path));
+                continue;
+            }
+            if !is_selected {
+                let spill_path = self.overlap_spill_root.join(format!("{idx}.bin"));
+                files.push(OpenedFile::new_lazy(spill_path));
+                continue;
+            }
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
             let f = if shared.options.allow_overwrite {
                 OpenOptions::new()

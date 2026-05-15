@@ -130,7 +130,8 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
         &mut self,
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        only_files: Option<&[usize]>,
     ) -> anyhow::Result<()> {
-        self.underlying.init(shared, metadata)
+        self.underlying.init(shared, metadata, only_files)
     }
 }

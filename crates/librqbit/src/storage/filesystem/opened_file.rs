@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::IoSlice,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -145,11 +145,55 @@ impl OpenedFile {
         }
     }
 
+    pub fn new_lazy(path: PathBuf) -> Self {
+        Self {
+            file: RwLock::new(OpenedFileLocked {
+                path,
+                fd: None,
+                #[cfg(windows)]
+                tried_marking_sparse: false,
+            }),
+        }
+    }
+
     pub fn take_clone(&self) -> anyhow::Result<Self> {
         let f = std::mem::take(&mut *self.file.write());
         Ok(Self {
             file: RwLock::new(f),
         })
+    }
+
+    pub fn ensure_opened(&self) -> anyhow::Result<()> {
+        {
+            let g = self.file.read();
+            if g.fd.is_some() {
+                return Ok(());
+            }
+        }
+
+        let mut g = self.file.write();
+        if g.fd.is_some() {
+            return Ok(());
+        }
+        if g.path.as_os_str().is_empty() {
+            anyhow::bail!(Error::FsFileIsNone);
+        }
+        let parent = g.path.parent().context("bug: no parent")?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("error creating parent directory for {:?}", g.path))?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&g.path)
+            .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+        g.fd = Some(file);
+        #[cfg(windows)]
+        {
+            g.tried_marking_sparse = false;
+        }
+        Ok(())
     }
 
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
