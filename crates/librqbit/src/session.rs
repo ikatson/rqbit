@@ -460,7 +460,7 @@ pub struct SessionOptions {
     pub ipv4_only: bool,
 
     /// Override the client name and version used in User-Agent headers and
-    /// peer extended handshakes. Defaults to "rqbit/X.Y.Z".
+    /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
 }
 
