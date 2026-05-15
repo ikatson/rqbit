@@ -1,19 +1,24 @@
 use std::{
     io::{Cursor, Write},
+    net::IpAddr,
+    sync::Arc,
     time::Duration,
 };
 
 use anyhow::Context;
+use dashmap::DashMap;
 use gethostname::gethostname;
 use rand::{Rng, SeedableRng};
 use services::content_directory::ContentDirectoryBrowseProvider;
 use ssdp::SsdpRunner;
+use state::RendererCapabilities;
 
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
 mod constants;
 mod http_server;
+pub mod renderer_discovery;
 pub mod services;
 mod ssdp;
 pub mod state;
@@ -26,11 +31,18 @@ pub struct UpnpServerOptions {
     pub http_prefix: String,
     pub browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
     pub cancellation_token: CancellationToken,
+    /// Optional: extract client IP from request extensions so that browse
+    /// responses can be tailored per-renderer. The closure receives the
+    /// request's Extension map and should return the connecting IP.
+    pub client_ip_extractor:
+        Option<Arc<dyn Fn(&http::Extensions) -> Option<IpAddr> + Send + Sync>>,
 }
 
 pub struct UpnpServer {
     axum_router: Option<axum::Router>,
     ssdp_runner: SsdpRunner,
+    /// Shared renderer capabilities map — callers can pre-populate or inspect.
+    pub renderer_capabilities: Arc<DashMap<IpAddr, RendererCapabilities>>,
 }
 
 fn create_usn(opts: &UpnpServerOptions) -> anyhow::Result<String> {
@@ -65,6 +77,23 @@ impl UpnpServer {
                 .context("error parsing url")?
         };
 
+        // Channel for SSDP → renderer discovery task.
+        let (renderer_tx, renderer_rx) = tokio::sync::mpsc::channel::<(IpAddr, String)>(64);
+        let renderer_capabilities: Arc<DashMap<IpAddr, RendererCapabilities>> =
+            Arc::new(DashMap::new());
+
+        // Start the renderer discovery background task.
+        {
+            let caps = renderer_capabilities.clone();
+            let cancel = opts.cancellation_token.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = renderer_discovery::run_renderer_discovery(renderer_rx, caps) => {}
+                    _ = cancel.cancelled() => {}
+                }
+            });
+        }
+
         info!(
             location = %description_http_location,
             "starting UPnP/SSDP announcer for MediaServer"
@@ -75,6 +104,7 @@ impl UpnpServer {
             server_string: "Linux/3.4 UPnP/1.0 rqbit/1".to_owned(),
             notify_interval: Duration::from_secs(60),
             shutdown: opts.cancellation_token.clone(),
+            renderer_tx: Some(renderer_tx),
         })
         .await
         .context("error initializing SsdpRunner")?;
@@ -85,11 +115,16 @@ impl UpnpServer {
             usn,
             opts.browse_provider,
             opts.cancellation_token,
+            renderer_capabilities.clone(),
+            opts.client_ip_extractor,
         )?;
+
+        debug!("UPnP server initialised with renderer capability detection");
 
         Ok(Self {
             axum_router: Some(router),
             ssdp_runner,
+            renderer_capabilities,
         })
     }
 

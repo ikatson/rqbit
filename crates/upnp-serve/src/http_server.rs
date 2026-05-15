@@ -1,3 +1,5 @@
+use std::{net::IpAddr, sync::Arc};
+
 use anyhow::Context;
 use axum::{
     extract::State,
@@ -5,13 +7,14 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
+use dashmap::DashMap;
 use http::header::CONTENT_TYPE;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     constants::CONTENT_TYPE_XML_UTF8,
     services::content_directory::ContentDirectoryBrowseProvider,
-    state::{UnpnServerState, UpnpServerStateInner},
+    state::{RendererCapabilities, UnpnServerState, UpnpServerStateInner},
 };
 
 async fn description_xml(State(state): State<UnpnServerState>) -> impl IntoResponse {
@@ -46,6 +49,8 @@ pub fn make_router(
     upnp_usn: String,
     browse_provider: Box<dyn ContentDirectoryBrowseProvider>,
     cancellation_token: CancellationToken,
+    renderer_capabilities: Arc<DashMap<IpAddr, RendererCapabilities>>,
+    client_ip_extractor: Option<Arc<dyn Fn(&http::Extensions) -> Option<IpAddr> + Send + Sync>>,
 ) -> anyhow::Result<axum::Router> {
     let root_desc = render_root_description_xml(&RootDescriptionInputs {
         friendly_name: &friendly_name,
@@ -55,8 +60,14 @@ pub fn make_router(
         http_prefix: &http_prefix,
     });
 
-    let state = UpnpServerStateInner::new(root_desc.into(), browse_provider, cancellation_token)
-        .context("error creating UPNP server")?;
+    let state = UpnpServerStateInner::new(
+        root_desc.into(),
+        browse_provider,
+        cancellation_token,
+        renderer_capabilities,
+        client_ip_extractor,
+    )
+    .context("error creating UPNP server")?;
 
     let content_dir_sub_handler = {
         let state = state.clone();

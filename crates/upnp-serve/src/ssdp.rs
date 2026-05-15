@@ -107,6 +107,9 @@ pub struct SsdpRunnerOptions {
     pub server_string: String,
     pub notify_interval: Duration,
     pub shutdown: CancellationToken,
+    /// If set, the SSDP runner will forward (sender_ip, location_url) for each
+    /// renderer NOTIFY or M-SEARCH response it sees, to drive capability probing.
+    pub renderer_tx: Option<tokio::sync::mpsc::Sender<(IpAddr, String)>>,
 }
 
 pub struct SsdpRunner {
@@ -204,34 +207,71 @@ Content-Length: 0\r\n\r\n"
         }
     }
 
+    /// Extract a LOCATION header value from raw SSDP headers.
+    fn extract_location<'a>(headers: &[httparse::Header<'a>]) -> Option<&'a str> {
+        headers.iter().find_map(|h| {
+            if h.name.eq_ignore_ascii_case("location") {
+                std::str::from_utf8(h.value).ok()
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Forward a renderer's location URL to the discovery task if we have one.
+    fn maybe_send_renderer(&self, addr: SocketAddr, location: &str) {
+        if let Some(tx) = &self.opts.renderer_tx {
+            let ip = addr.ip();
+            let location = location.to_owned();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send((ip, location)).await;
+            });
+        }
+    }
+
     async fn process_incoming_message(&self, msg: &[u8], addr: SocketAddr) -> anyhow::Result<()> {
         let mut headers = [httparse::EMPTY_HEADER; 16];
         trace!(content = ?BStr::new(msg), ?addr, "received message");
         let parsed = try_parse_ssdp(msg, &mut headers);
-        let msg = match parsed {
-            Ok(SsdpMessage::MSearch(msg)) => msg,
-            Ok(m) => {
-                trace!("ignoring {m:?}");
-                return Ok(());
+
+        match parsed {
+            Ok(SsdpMessage::MSearch(ref msearch)) => {
+                if !msearch.matches_media_server() {
+                    trace!("not a media server request, ignoring");
+                    return Ok(());
+                }
+                if let Ok(st) = std::str::from_utf8(msearch.st) {
+                    let response = self.generate_ssdp_discover_response(st, addr)?;
+                    if let Some(response) = response {
+                        trace!(content = response, ?addr, "sending SSDP discover response");
+                        self.socket
+                            .send_to(response.as_bytes(), addr)
+                            .await
+                            .context("error sending")?;
+                    }
+                }
+            }
+            Ok(SsdpMessage::Response(ref resp)) => {
+                // M-SEARCH response from a renderer: extract LOCATION and probe it.
+                if let Some(location) = Self::extract_location(resp.headers) {
+                    debug!(?addr, %location, "SSDP response with LOCATION — probing renderer");
+                    self.maybe_send_renderer(addr, location);
+                }
+            }
+            Ok(SsdpMessage::OtherRequest(ref req)) => {
+                // NOTIFY from a renderer: extract LOCATION and probe it.
+                if req.method == Some("NOTIFY") {
+                    if let Some(location) = Self::extract_location(req.headers) {
+                        debug!(?addr, %location, "SSDP NOTIFY with LOCATION — probing renderer");
+                        self.maybe_send_renderer(addr, location);
+                    }
+                } else {
+                    trace!("ignoring non-NOTIFY request");
+                }
             }
             Err(e) => {
                 debug!(error=?e, "error parsing SSDP message");
-                return Ok(());
-            }
-        };
-        if !msg.matches_media_server() {
-            trace!("not a media server request, ignoring");
-            return Ok(());
-        }
-
-        if let Ok(st) = std::str::from_utf8(msg.st) {
-            let response = self.generate_ssdp_discover_response(st, addr)?;
-            if let Some(response) = response {
-                trace!(content = response, ?addr, "sending SSDP discover response");
-                self.socket
-                    .send_to(response.as_bytes(), addr)
-                    .await
-                    .context("error sending")?;
             }
         }
 
@@ -256,16 +296,15 @@ Content-Length: 0\r\n\r\n"
         }
     }
 
-    async fn try_send_example_msearch(&self) {
+    async fn try_send_msearch_for_renderers(&self) {
+        if self.opts.renderer_tx.is_none() {
+            return;
+        }
         self.socket
             .try_send_mcast_everywhere(&|opts| {
                 let dest = addr_no_scope(&opts.mcast_addr());
                 format!(
-                    "M-SEARCH * HTTP/1.1\r
-HOST: {dest}\r
-ST: urn:schemas-upnp-org:device:MediaServer:1\r
-MAN: \"ssdp:discover\"\r
-MX: 2\r\n\r\n"
+                    "M-SEARCH * HTTP/1.1\r\nHOST: {dest}\r\nST: urn:schemas-upnp-org:device:MediaRenderer:1\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\n\r\n"
                 )
                 .into()
             })
@@ -273,14 +312,13 @@ MX: 2\r\n\r\n"
     }
 
     pub async fn run_forever(&self) -> anyhow::Result<()> {
-        // This isn't necessary, but would show that it works.
-        let t0 = self.try_send_example_msearch();
+        let t0 = self.try_send_msearch_for_renderers();
         let t1 = self.task_respond_on_msearches();
         let t2 = self.task_send_alive_notifies_periodically();
 
         let wait = async move {
             tokio::join!(t0, t1, t2);
-            Ok(())
+            Ok::<(), anyhow::Error>(())
         };
 
         tokio::select! {

@@ -18,12 +18,21 @@ use tracing::{error, info};
 struct VecWrap(Vec<ItemOrContainer>);
 
 impl ContentDirectoryBrowseProvider for VecWrap {
-    fn browse_direct_children(&self, _parent_id: usize, _http_host: &str) -> Vec<ItemOrContainer> {
+    fn browse_direct_children(
+        &self,
+        _parent_id: usize,
+        _http_host: &str,
+        _client_ip: Option<std::net::IpAddr>,
+    ) -> Vec<ItemOrContainer> {
         self.0.clone()
     }
 
-    fn browse_metadata(&self, _object_id: usize, _http_hostname: &str) -> Vec<ItemOrContainer> {
-        // TODO. Remove the vec provider from core code.
+    fn browse_metadata(
+        &self,
+        _object_id: usize,
+        _http_hostname: &str,
+        _client_ip: Option<std::net::IpAddr>,
+    ) -> Vec<ItemOrContainer> {
         vec![]
     }
 }
@@ -56,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         http_prefix: HTTP_PREFIX.to_owned(),
         browse_provider: Box::new(items),
         cancellation_token: Default::default(),
+        client_ip_extractor: None,
     })
     .await?;
 
