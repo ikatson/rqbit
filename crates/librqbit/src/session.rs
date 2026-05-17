@@ -403,6 +403,9 @@ pub struct SessionOptions {
     /// A list o DHT bootstrap nodes as strings of the form host:port or ip:port
     pub dht_bootstrap_addrs: Option<Vec<String>>,
 
+    /// The listen address for DHT. If not specified, a random port will be used.
+    pub dht_listen_addr: Option<SocketAddr>,
+
     /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
     /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
     pub bind_device_name: Option<String>,
@@ -564,6 +567,7 @@ impl Session {
                         bootstrap_addrs: opts.dht_bootstrap_addrs.clone(),
                         cancellation_token: Some(token.child_token()),
                         bind_device: bind_device.as_ref(),
+                        listen_addr: opts.dht_listen_addr,
                         ..Default::default()
                     })
                     .await
