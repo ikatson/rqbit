@@ -294,6 +294,13 @@ impl ChunkTracker {
     }
 
     // return true if the whole piece is marked downloaded
+    pub fn unmark_chunk_downloaded(&mut self, chunk_info: &ChunkInfo) {
+        let chunk_range = self.lengths.chunk_range(chunk_info.piece_index);
+        if let Some(chunk_range) = self.chunk_status.get_mut(chunk_range) {
+            chunk_range.set(chunk_info.chunk_index as usize, false);
+        }
+    }
+
     pub fn mark_chunk_downloaded(
         &mut self,
         piece: &Piece<ByteBuf<'_>>,

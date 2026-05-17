@@ -83,13 +83,14 @@ rand.workspace = true
 tracing-subscriber = { workspace = true, features = ["json", "fmt", "env-filter"], optional = true }
 uuid = { workspace = true, features = ["v4"] }
 futures.workspace = true
+futures-util = "0.3"
 url = { workspace = true, features = ["serde"] }
 hex.workspace = true
 backon.workspace = true
 dashmap.workspace = true
 base64.workspace = true
 serde_with.workspace = true
-tokio-util = { workspace = true, features = ["io"] }
+tokio-util = { workspace = true, features = ["io", "codec"] }
 metrics-exporter-prometheus = { workspace = true, optional = true }
 bytes.workspace = true
 rlimit.workspace = true

@@ -46,6 +46,11 @@ const MSGID_BITFIELD: MsgId = 5;
 const MSGID_REQUEST: MsgId = 6;
 const MSGID_PIECE: MsgId = 7;
 const MSGID_CANCEL: MsgId = 8;
+const MSGID_SUGGEST_PIECE: MsgId = 13;
+const MSGID_HAVE_ALL: MsgId = 14;
+const MSGID_HAVE_NONE: MsgId = 15;
+const MSGID_REJECT_REQUEST: MsgId = 16;
+const MSGID_ALLOWED_FAST: MsgId = 17;
 const MSGID_EXTENDED: MsgId = 20;
 
 pub const EXTENDED_UT_METADATA_KEY: &[u8] = b"ut_metadata";
@@ -68,6 +73,11 @@ impl MsgIdDebug {
             MSGID_REQUEST => "request",
             MSGID_PIECE => "piece",
             MSGID_CANCEL => "cancel",
+            MSGID_SUGGEST_PIECE => "suggest_piece",
+            MSGID_HAVE_ALL => "have_all",
+            MSGID_HAVE_NONE => "have_none",
+            MSGID_REJECT_REQUEST => "reject_request",
+            MSGID_ALLOWED_FAST => "allowed_fast",
             MSGID_EXTENDED => "extended",
             _ => return None,
         };
@@ -228,6 +238,11 @@ pub enum Message<'a> {
     Interested,
     NotInterested,
     Piece(Piece<ByteBuf<'a>>),
+    SuggestPiece(u32),
+    HaveAll,
+    HaveNone,
+    RejectRequest(Request),
+    AllowedFast(u32),
     Extended(ExtendedMessage<ByteBuf<'a>>),
 }
 
@@ -271,12 +286,13 @@ impl Message<'_> {
         }
 
         match self {
-            Message::Request(request) | Message::Cancel(request) => {
+            Message::Request(request) | Message::Cancel(request) | Message::RejectRequest(request) => {
                 const TOTAL_LEN: usize = PREAMBLE_LEN + INTEGER_LEN * 3;
                 check_len!(TOTAL_LEN);
                 let msg_id = match self {
                     Message::Request(..) => MSGID_REQUEST,
                     Message::Cancel(..) => MSGID_CANCEL,
+                    Message::RejectRequest(..) => MSGID_REJECT_REQUEST,
                     _ => unsafe { unreachable_unchecked() },
                 };
                 write_preamble!((INTEGER_LEN * 3) as u32, msg_id);
@@ -291,13 +307,15 @@ impl Message<'_> {
                 out[PREAMBLE_LEN..PREAMBLE_LEN + block_len].copy_from_slice(b.as_ref());
                 Ok(total_len)
             }
-            Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested => {
+            Message::Choke | Message::Unchoke | Message::Interested | Message::NotInterested | Message::HaveAll | Message::HaveNone => {
                 check_len!(PREAMBLE_LEN);
                 let msg_id = match self {
                     Message::Choke => MSGID_CHOKE,
                     Message::Unchoke => MSGID_UNCHOKE,
                     Message::Interested => MSGID_INTERESTED,
                     Message::NotInterested => MSGID_NOT_INTERESTED,
+                    Message::HaveAll => MSGID_HAVE_ALL,
+                    Message::HaveNone => MSGID_HAVE_NONE,
                     _ => unsafe { unreachable_unchecked() },
                 };
                 write_preamble!(0, msg_id);
@@ -317,9 +335,15 @@ impl Message<'_> {
                 out[0..4].copy_from_slice(&0u32.to_be_bytes());
                 Ok(4)
             }
-            Message::Have(v) => {
+            Message::Have(v) | Message::SuggestPiece(v) | Message::AllowedFast(v) => {
                 check_len!(PREAMBLE_LEN + INTEGER_LEN);
-                write_preamble!(INTEGER_LEN as u32, MSGID_HAVE);
+                let msg_id = match self {
+                    Message::Have(..) => MSGID_HAVE,
+                    Message::SuggestPiece(..) => MSGID_SUGGEST_PIECE,
+                    Message::AllowedFast(..) => MSGID_ALLOWED_FAST,
+                    _ => unsafe { unreachable_unchecked() },
+                };
+                write_preamble!(INTEGER_LEN as u32, msg_id);
                 out[5..9].copy_from_slice(&v.to_be_bytes());
                 Ok(9)
             }
@@ -398,10 +422,24 @@ impl Message<'_> {
                 check_msg_len!(0);
                 Ok((Message::NotInterested, total_len))
             }
-            MSGID_HAVE => {
+            MSGID_HAVE | MSGID_SUGGEST_PIECE | MSGID_ALLOWED_FAST => {
                 check_msg_len!(4);
-                let have = buf.read_u32_be().unwrap();
-                Ok((Message::Have(have), total_len))
+                let val = buf.read_u32_be().unwrap();
+                let msg = match msg_id {
+                    MSGID_HAVE => Message::Have(val),
+                    MSGID_SUGGEST_PIECE => Message::SuggestPiece(val),
+                    MSGID_ALLOWED_FAST => Message::AllowedFast(val),
+                    _ => unsafe { unreachable_unchecked() },
+                };
+                Ok((msg, total_len))
+            }
+            MSGID_HAVE_ALL => {
+                check_msg_len!(0);
+                Ok((Message::HaveAll, total_len))
+            }
+            MSGID_HAVE_NONE => {
+                check_msg_len!(0);
+                Ok((Message::HaveNone, total_len))
             }
             MSGID_BITFIELD => {
                 check_msg_len!(min 1);
@@ -411,7 +449,7 @@ impl Message<'_> {
                     .ok_or(MessageDeserializeError::NeedContiguous)?;
                 Ok((Message::Bitfield(ByteBuf::from(data)), total_len))
             }
-            MSGID_REQUEST | MSGID_CANCEL => {
+            MSGID_REQUEST | MSGID_CANCEL | MSGID_REJECT_REQUEST => {
                 check_msg_len!(12);
                 const I32: usize = 4;
                 const I32_3: usize = I32 * 3;
@@ -421,10 +459,11 @@ impl Message<'_> {
                     begin: BE::read_u32(&req[I32..I32 * 2]),
                     length: BE::read_u32(&req[I32 * 2..I32 * 3]),
                 };
-                let req = if msg_id == MSGID_REQUEST {
-                    Message::Request(request)
-                } else {
-                    Message::Cancel(request)
+                let req = match msg_id {
+                    MSGID_REQUEST => Message::Request(request),
+                    MSGID_CANCEL => Message::Cancel(request),
+                    MSGID_REJECT_REQUEST => Message::RejectRequest(request),
+                    _ => unsafe { unreachable_unchecked() },
                 };
                 Ok((req, total_len))
             }
@@ -508,6 +547,10 @@ impl Handshake {
 
     pub fn supports_extended(&self) -> bool {
         self.reserved.to_be_bytes()[5] & 0x10 > 0
+    }
+
+    pub fn supports_fast_extension(&self) -> bool {
+        self.reserved.to_be_bytes()[7] & 0x04 > 0
     }
 
     #[must_use]

@@ -68,6 +68,7 @@ mod read_buf;
 mod session;
 mod session_persistence;
 pub mod session_stats;
+pub mod socket_rpc;
 pub mod spawn_utils;
 
 pub mod storage;

@@ -1,7 +1,7 @@
 use buffers::ByteBuf;
 use itertools::Either;
 use serde::Deserializer;
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
     marker::PhantomData,
@@ -132,7 +132,33 @@ where
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct SwarmHealth {
+    pub complete: u32,
+    pub downloaded: u32,
+    pub incomplete: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScrapeResponse<'a> {
+    #[serde(borrow)]
+    pub files: std::collections::HashMap<ByteBuf<'a>, SwarmHealth>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScrapeResponseRaw<'a> {
+    #[serde(borrow)]
+    pub files: std::collections::HashMap<ByteBuf<'a>, SwarmHealth>,
+}
+
+
+
+#[derive(Debug, Default)]
+pub struct ScrapeResponseOwned {
+    pub files: std::collections::HashMap<[u8; 20], SwarmHealth>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TrackerResponse<'a> {
     #[allow(dead_code)]
     #[serde(rename = "warning message", borrow)]
