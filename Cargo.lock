@@ -356,6 +356,8 @@ dependencies = [
  "serde_core",
  "serde_html_form",
  "serde_path_to_error",
+ "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -3093,6 +3095,7 @@ version = "1.0.1"
 dependencies = [
  "anyhow",
  "axum",
+ "axum-extra",
  "bstr",
  "futures",
  "gethostname",
