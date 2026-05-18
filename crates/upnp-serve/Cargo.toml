@@ -34,7 +34,8 @@ librqbit-dualstack-sockets.workspace = true
 rand.workspace = true
 
 [dev-dependencies]
-tracing-subscriber.workspace = true
+axum-extra = {version = "*", features = ["file-stream"]}
+tracing-subscriber = {workspace = true, features = ["fmt", "ansi"]}
 tower-http = { workspace = true, features = ["trace"] }
 
 [[example]]
