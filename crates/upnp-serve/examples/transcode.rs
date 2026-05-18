@@ -82,6 +82,7 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
     // parse seek headers and other DLNA headers if needed, emit dlna headers necessary
     // just passthrough as mpegts
     // ~/Movies/big_buck_bunny_720p_h264.mov
+    tracing::warn!(?headers, "headers");
     let mut ffmpeg = tokio::process::Command::new("ffmpeg")
         .arg("-i")
         .arg(format!("http://127.0.0.1:{PORT}/input.mov"))

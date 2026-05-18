@@ -105,7 +105,7 @@ pub mod browse {
                         url = item.url,
                         upnp_class = upnp_class,
                         title = item.title,
-                        size = item.size
+                        // size = item.size
                     ))
                 }
 
