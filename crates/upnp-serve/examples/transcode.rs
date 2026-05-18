@@ -2,6 +2,8 @@ use std::{
     net::{Ipv4Addr, SocketAddr},
     path::Path,
     process::Stdio,
+    str::FromStr,
+    time::Duration,
 };
 
 use axum::{
@@ -16,16 +18,17 @@ use librqbit_upnp_serve::{
     UpnpServer, UpnpServerOptions,
     services::content_directory::{
         ContentDirectoryBrowseProvider,
-        browse::response::{Item, ItemOrContainer},
+        browse::response::{Container, Item, ItemOrContainer},
     },
 };
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use tower_http::trace::TraceLayer;
-use tracing::{Instrument, debug, error_span};
+use tracing::{Instrument, debug, error_span, warn};
 
-const PORT: u16 = 6819;
+const PORT: u16 = 6820;
 const PREFIX: &str = "/upnp";
+const INPUT_DURATION: Duration = Duration::from_secs(596);
 const INPUT_FILE_PATH: &str = "/Users/igor/Movies/big_buck_bunny_720p_h264.mov";
 
 struct Provider {}
@@ -36,7 +39,7 @@ impl Provider {
             id: 1,
             parent_id: 0,
             title: "Example".to_string(),
-            mime_type: Some(mime_guess::from_ext("ts").first().unwrap()),
+            mime_type: Some(mime_guess::from_ext("mpeg").first().unwrap()),
             url: format!("http://{http_hostname}/example.ts"),
             size: 0,
         })
@@ -83,10 +86,68 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
     // just passthrough as mpegts
     // ~/Movies/big_buck_bunny_720p_h264.mov
     tracing::warn!(?headers, "headers");
-    let mut ffmpeg = tokio::process::Command::new("ffmpeg")
+
+    let mut status = StatusCode::OK;
+
+    let mut output_headers = HeaderMap::new();
+
+    // This is necessary by the spec
+    output_headers.insert(
+        "transferMode.dlna.org",
+        HeaderValue::from_static("Streaming"),
+    );
+
+    // This doesn't matter for my samsung at least, video/mpeg works fine too.
+    output_headers.insert("Content-Type", HeaderValue::from_static("video/mp2t"));
+
+    // CRUCIAL: to tell TV we support seeking only by timestamps (01 is byte ranges, 11 is both).
+    output_headers.insert(
+        "contentFeatures.dlna.org",
+        HeaderValue::from_static("DLNA.ORG_OP=10"),
+    );
+
+    let mut ffmpeg = tokio::process::Command::new("ffmpeg");
+    ffmpeg
         .arg("-i")
+        // Reencode the input stream
         .arg(format!("http://127.0.0.1:{PORT}/input.mov"))
-        .args(["-hide_banner", "-loglevel", "error"])
+        // less verbosity, only errors
+        .args(["-hide_banner", "-loglevel", "error"]);
+
+    // Parse npt seek header. We are only intersted in the first part (start).
+    // Assumes XXX.YYY format, not HH:MM:SS.YYY
+    // todo: proper npt parsing
+    if let Some(npt) = headers.get("timeseekrange.dlna.org") {
+        let (start, end) = npt
+            .to_str()
+            .unwrap()
+            .strip_prefix("npt=")
+            .unwrap()
+            .split_once('-')
+            .unwrap();
+        tracing::warn!(start, end, "npt");
+
+        // Actually seek.
+        ffmpeg
+            .arg("-ss")
+            .arg(start)
+            // CRUCIAL for this to work on Samsung. Otherwise every time you seek
+            // UI resets to zero, but ffmpeg keeps playing the seeked stream.
+            .arg("-output_ts_offset")
+            .arg(start);
+        let total = INPUT_DURATION.as_secs();
+        output_headers.insert(
+            "TimeSeekRange.dlna.org",
+            HeaderValue::from_str(&format!("npt={start}-{total}/{total}")).unwrap(),
+        );
+        tracing::warn!(?output_headers, "output headers");
+
+        // This is required by the spec
+        status = StatusCode::PARTIAL_CONTENT;
+    }
+
+    let mut ffmpeg = ffmpeg
+        // No reencoding yet, just convert to mpegts and pipe out
         .args([
             "-vcodec", "copy", "-acodec", "copy", "-f", "mpegts", "pipe:1",
         ])
@@ -94,11 +155,15 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
+        // TODO: no panics
         .expect("ffmpeg not found");
+
+    tracing::warn!(?ffmpeg, "running ffmpeg");
 
     let stdout = ffmpeg.stdout.take().unwrap();
     let stderr = ffmpeg.stderr.take().unwrap();
 
+    // TODO: don't spam logs, this is all for debugging only.
     let stderr = async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Some(line) = lines.next_line().await.transpose() {
@@ -111,6 +176,8 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
         }
     };
 
+    // TODO: add a drop guard on the stream - just before it's dropped, kill ffmpeg, stop
+    // reading from it.
     tokio::spawn(
         async move {
             let (_, wait) = tokio::join!(stderr, ffmpeg.wait());
@@ -131,7 +198,7 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
     );
 
     let stdout = tokio_util::io::ReaderStream::new(stdout);
-    Body::from_stream(stdout).into_response()
+    (status, output_headers, Body::from_stream(stdout)).into_response()
 }
 
 impl ContentDirectoryBrowseProvider for Provider {
@@ -140,11 +207,18 @@ impl ContentDirectoryBrowseProvider for Provider {
         parent_id: usize,
         http_hostname: &str,
     ) -> Vec<ItemOrContainer> {
+        tracing::warn!(parent_id, "browse direct children");
         vec![self.item(http_hostname)]
     }
 
     fn browse_metadata(&self, object_id: usize, http_hostname: &str) -> Vec<ItemOrContainer> {
-        vec![]
+        tracing::warn!(object_id, "browse metadata");
+        vec![ItemOrContainer::Container(Container {
+            id: 0,
+            parent_id: None,
+            children_count: Some(1),
+            title: "root".to_owned(),
+        })]
     }
 }
 
@@ -154,7 +228,7 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, PORT)).await?;
     let mut server = UpnpServer::new(UpnpServerOptions {
-        friendly_name: "transcode-test".to_string(),
+        friendly_name: "test-transcode-3".to_string(),
         http_listen_port: PORT,
         http_prefix: PREFIX.to_string(),
         browse_provider: Box::new(Provider {}),
