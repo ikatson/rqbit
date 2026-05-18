@@ -4,7 +4,7 @@
     s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
     <s:Body>
         <u:GetProtocolInfoResponse xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">
-            <Source>http-get:*:*:DLNA.ORG_OP=01</Source>
+            <Source>http-get:*:*:DLNA.ORG_OP=10</Source>
             <Sink></Sink>
         </u:GetProtocolInfoResponse>
     </s:Body>
