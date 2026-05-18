@@ -98,21 +98,24 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
     );
 
     // This doesn't matter for my samsung at least, video/mpeg works fine too.
-    output_headers.insert("Content-Type", HeaderValue::from_static("video/mp2t"));
+    // output_headers.insert("Content-Type", HeaderValue::from_static("video/x-matroska"));
+    output_headers.insert("Content-Type", HeaderValue::from_static("video/mpeg"));
 
     // CRUCIAL: to tell TV we support seeking only by timestamps (01 is byte ranges, 11 is both).
     output_headers.insert(
         "contentFeatures.dlna.org",
-        HeaderValue::from_static("DLNA.ORG_OP=10"),
+        HeaderValue::from_static("DLNA.ORG_OP=10;DLNA.ORG_FLAGS=81700000000000000000000000000000"),
     );
 
     let mut ffmpeg = tokio::process::Command::new("ffmpeg");
     ffmpeg
+        // less verbosity, only errors
+        .args(["-hide_banner", "-loglevel", "error"])
         .arg("-i")
         // Reencode the input stream
-        .arg(format!("http://127.0.0.1:{PORT}/input.mov"))
-        // less verbosity, only errors
-        .args(["-hide_banner", "-loglevel", "error"]);
+        // .arg(format!("http://127.0.0.1:{PORT}/input.mov"))
+        // .arg("http://router.lan:3030/torrents/10/stream/0/The.Dark.Knight.Rises.2012.2160p.UHD.BDRemux.DTS-HD.HDR.DoVi.Hybrid.P8.by.DVT.mkv")
+        .arg("http://router.lan:3030/torrents/12/stream/0/Fackham.Hall.2025.iNTERNAL.BluRay.1080p.REMUX.AVC.Dub.DDP.5.1-p3rr3nt.mkv");
 
     // Parse npt seek header. We are only intersted in the first part (start).
     // Assumes XXX.YYY format, not HH:MM:SS.YYY
@@ -146,11 +149,16 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
         status = StatusCode::PARTIAL_CONTENT;
     }
 
+    ffmpeg.args(["-map", "0", "-c:v", "copy", "-c:a", "copy", "-c:s", "copy"]);
+
+    // e.g. dts, truhd
+    let unsupported_audio_streams = [2];
+    for id in unsupported_audio_streams {
+        ffmpeg.arg(dbg!(format!("-c:{id}"))).arg("ac3");
+    }
+
     let mut ffmpeg = ffmpeg
-        // No reencoding yet, just convert to mpegts and pipe out
-        .args([
-            "-vcodec", "copy", "-acodec", "copy", "-f", "mpegts", "pipe:1",
-        ])
+        .args(["-f", "mpegts", "pipe:1"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
