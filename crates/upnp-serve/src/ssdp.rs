@@ -9,7 +9,7 @@ use librqbit_dualstack_sockets::{MulticastOpts, MulticastUdpSocket};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::constants::{UPNP_DEVICE_MEDIASERVER, UPNP_DEVICE_ROOT};
+use crate::constants::{SSDP_ALL, UPNP_DEVICE_MEDIASERVER, UPNP_DEVICE_ROOT};
 
 const SSDP_PORT: u16 = 1900;
 const SSDP_MCAST_IPV4: SocketAddrV4 =
@@ -53,7 +53,8 @@ impl SsdpMSearchRequest<'_> {
         if self.man != "\"ssdp:discover\"" {
             return false;
         }
-        if self.st == UPNP_DEVICE_ROOT || self.st == UPNP_DEVICE_MEDIASERVER {
+        if self.st == UPNP_DEVICE_ROOT || self.st == UPNP_DEVICE_MEDIASERVER || self.st == SSDP_ALL
+        {
             return true;
         }
         false
@@ -188,12 +189,17 @@ Content-Length: 0\r\n\r\n"
     }
 
     async fn try_send_notifies(&self, nts: &str) {
-        self.socket
-            .try_send_mcast_everywhere(&|opts| {
-                self.generate_notify_message(UPNP_DEVICE_MEDIASERVER, nts, opts)
-                    .into()
-            })
-            .await
+        let mediaserver_payload = |opts: &MulticastOpts| -> Option<String> {
+            self.generate_notify_message(UPNP_DEVICE_MEDIASERVER, nts, opts)
+                .into()
+        };
+        let rootdevice_payload = &|opts: &MulticastOpts| -> Option<String> {
+            self.generate_notify_message(UPNP_DEVICE_ROOT, nts, opts)
+                .into()
+        };
+        let mediaserver = self.socket.try_send_mcast_everywhere(&mediaserver_payload);
+        let rootdevice = self.socket.try_send_mcast_everywhere(&rootdevice_payload);
+        tokio::join!(mediaserver, rootdevice);
     }
 
     async fn task_send_alive_notifies_periodically(&self) {
