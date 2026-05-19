@@ -144,12 +144,12 @@ impl SsdpRunner {
         let _ = location.set_ip_host(opts.iface_ip());
         format!(
             "NOTIFY * HTTP/1.1\r
-Host: {host}\r
-Cache-Control: max-age=75\r
-Location: {location}\r
+HOST: {host}\r
+CACHE-CONTROL: max-age=75\r
+LOCATION: {location}\r
 NT: {device_kind}\r
 NTS: {nts}\r
-Server: {server}\r
+SERVER: {server}\r
 USN: {usn}::{device_kind}\r
 \r
 "
@@ -178,13 +178,12 @@ USN: {usn}::{device_kind}\r
         let server = &self.opts.server_string;
         Ok(Some(format!(
             "HTTP/1.1 200 OK\r
-Cache-Control: max-age=75\r
-Ext: \r
-Location: {location}\r
-Server: {server}\r
-St: {st}\r
-Usn: {usn}::{st}\r
-Content-Length: 0\r\n\r\n"
+CACHE-CONTROL: max-age=75\r
+EXT:\r
+LOCATION: {location}\r
+SERVER: {server}\r
+USN: {usn}::{st}\r
+CONTENT-LENGTH: 0\r\n\r\n"
         )))
     }
 
