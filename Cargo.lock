@@ -3097,6 +3097,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "bstr",
+ "bytes",
  "futures",
  "gethostname",
  "http",
