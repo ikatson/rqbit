@@ -1,6 +1,7 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
     path::Path,
+    pin::Pin,
     process::Stdio,
     str::FromStr,
     time::Duration,
@@ -22,7 +23,10 @@ use librqbit_upnp_serve::{
         browse::response::{Container, Item, ItemOrContainer},
     },
 };
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use tokio::{
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncSeekExt, BufReader},
+    process::ChildStdout,
+};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use tower_http::trace::TraceLayer;
 use tracing::{Instrument, debug, error_span, warn};
@@ -171,6 +175,34 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
     let stdout = ffmpeg.stdout.take().unwrap();
     let stderr = ffmpeg.stderr.take().unwrap();
 
+    let token = CancellationToken::new();
+
+    struct StdoutDropGuard {
+        stdout: ChildStdout,
+        token: CancellationToken,
+    }
+
+    impl Drop for StdoutDropGuard {
+        fn drop(&mut self) {
+            self.token.cancel();
+        }
+    }
+
+    impl AsyncRead for StdoutDropGuard {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            Pin::new(&mut self.get_mut().stdout).poll_read(cx, buf)
+        }
+    }
+
+    let stdout = StdoutDropGuard {
+        stdout,
+        token: token.clone(),
+    };
+
     // TODO: don't spam logs, this is all for debugging only.
     let stderr = async move {
         let mut lines = BufReader::new(stderr).lines();
@@ -188,7 +220,17 @@ async fn handler_example_ts(headers: HeaderMap) -> Response {
     // reading from it.
     tokio::spawn(
         async move {
-            let (_, wait) = tokio::join!(stderr, ffmpeg.wait());
+            let wait = async move {
+                tokio::select! {
+                    w = ffmpeg.wait() => w,
+                    _ = token.cancelled() => {
+                        tracing::warn!("killing ffmpeg");
+                        ffmpeg.start_kill()?;
+                        ffmpeg.wait().await
+                    }
+                }
+            };
+            let (_, wait) = tokio::join!(stderr, wait);
             match wait {
                 Ok(wait) => {
                     if wait.success() {
