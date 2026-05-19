@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use axum::{
     Router,
     body::Body,
@@ -26,7 +27,6 @@ use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use tower_http::trace::TraceLayer;
 use tracing::{Instrument, debug, error_span, warn};
 
-const PORT: u16 = 6820;
 const PREFIX: &str = "/upnp";
 const INPUT_DURATION: Duration = Duration::from_secs(596);
 const INPUT_FILE_PATH: &str = "/Users/igor/Movies/big_buck_bunny_720p_h264.mov";
@@ -234,10 +234,20 @@ impl ContentDirectoryBrowseProvider for Provider {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, PORT)).await?;
+    let mut args = std::env::args();
+    args.next().unwrap();
+
+    let name = args.next().context("first arg should be name")?;
+    let port: u16 = args
+        .next()
+        .context("second should be port")?
+        .parse()
+        .context("second arg port invalid u16")?;
+
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
     let mut server = UpnpServer::new(UpnpServerOptions {
-        friendly_name: "test-transcode-3".to_string(),
-        http_listen_port: PORT,
+        friendly_name: name,
+        http_listen_port: port,
         http_prefix: PREFIX.to_string(),
         browse_provider: Box::new(Provider {}),
         cancellation_token: CancellationToken::new(),
