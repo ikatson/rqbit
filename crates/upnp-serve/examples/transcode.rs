@@ -244,13 +244,15 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .context("second arg port invalid u16")?;
 
+    let token = CancellationToken::new();
+
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
     let mut server = UpnpServer::new(UpnpServerOptions {
         friendly_name: name,
         http_listen_port: port,
         http_prefix: PREFIX.to_string(),
         browse_provider: Box::new(Provider {}),
-        cancellation_token: CancellationToken::new(),
+        cancellation_token: token.clone(),
     })
     .await?;
     let router: Router = Router::new()
@@ -268,7 +270,31 @@ async fn main() -> anyhow::Result<()> {
         Ok(())
     };
 
+    let f1 = async {
+        tokio::select! {
+            r = f1 => r,
+            _ = token.cancelled() => {
+                tracing::warn!("shutting down axum - cancelled");
+                Ok(())
+            }
+        }
+    };
+
     let f2 = server.run_ssdp_forever();
-    tokio::try_join!(f1, f2)?;
+
+    let f3 = async {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {
+                tracing::warn!("ctrl-c received, canceling");
+                token.cancel();
+            }
+            Err(e) => {
+                tracing::warn!("ctrl-c error: {e:#}");
+            }
+        };
+        Ok::<_, anyhow::Error>(())
+    };
+
+    tokio::try_join!(f1, f2, f3)?;
     Ok(())
 }
