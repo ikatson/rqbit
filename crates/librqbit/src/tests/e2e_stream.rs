@@ -31,7 +31,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
     let server_session = Session::new_with_opts(
         files.path().into(),
         crate::SessionOptions {
-            disable_dht: true,
+            dht: None,
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             persistence: None,
             listen: Some(crate::listen::ListenerOptions {
@@ -77,7 +77,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
     let client_session = Session::new_with_opts(
         client_dir.path().into(),
         crate::SessionOptions {
-            disable_dht: true,
+            dht: None,
             persistence: None,
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             ..Default::default()
