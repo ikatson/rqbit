@@ -14,8 +14,9 @@ use clap::{CommandFactory, Parser, ValueEnum};
 use clap_complete::Shell;
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
-    CreateTorrentOptions, ListOnlyResponse, ListenerMode, ListenerOptions, PeerConnectionOptions,
-    Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    CreateTorrentOptions, DhtSessionConfig, ListOnlyResponse, ListenerMode, ListenerOptions,
+    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    dht::DhtPersistenceConfig,
     http_api::{HttpApi, HttpApiOptions},
     librqbit_spawn,
     limits::LimitsConfig,
@@ -603,14 +604,26 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         ..Default::default()
     });
 
+    let dht = if opts.disable_dht {
+        None
+    } else {
+        let persistence = if opts.disable_dht_persistence {
+            None
+        } else {
+            Some(DhtPersistenceConfig::default())
+        };
+        Some(DhtSessionConfig {
+            bootstrap_addrs: opts
+                .dht_bootstrap_addrs
+                .as_ref()
+                .map(|s| s.split(",").map(|v| v.to_string()).collect()),
+            port: None,
+            persistence,
+        })
+    };
+
     let mut sopts = SessionOptions {
-        disable_dht: opts.disable_dht,
-        disable_dht_persistence: opts.disable_dht_persistence,
-        dht_bootstrap_addrs: opts
-            .dht_bootstrap_addrs
-            .as_ref()
-            .map(|s| s.split(",").map(|v| v.to_string()).collect()),
-        dht_config: None,
+        dht,
         // This will be overridden by "server start" below if needed.
         persistence: None,
         peer_id: None,
@@ -663,7 +676,6 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
-        ..Default::default()
     };
 
     #[allow(clippy::needless_update)]
@@ -760,7 +772,9 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             }
 
             // "rqbit download" is ephemeral, so disable all persistence.
-            sopts.disable_dht_persistence = true;
+            if let Some(ref mut dht) = sopts.dht {
+                dht.persistence = None;
+            }
             sopts.persistence = None;
 
             let mut disable_http_api = download_opts.disable_http_api;
@@ -904,7 +918,9 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             }
 
             // "rqbit share" is ephemeral, so disable all persistence.
-            sopts.disable_dht_persistence = true;
+            if let Some(ref mut dht) = sopts.dht {
+                dht.persistence = None;
+            }
             sopts.persistence = None;
 
             if sopts.listen.is_none() {

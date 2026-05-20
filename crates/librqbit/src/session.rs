@@ -46,7 +46,7 @@ use bencode::bencode_serialize_to_writer;
 use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
-use dht::{Dht, DhtBuilder, DhtConfig, Id20, PersistentDht, PersistentDhtConfig};
+use dht::{Dht, DhtBuilder, DhtConfig, DhtPersistenceConfig, Id20, PersistentDht, dht_listen_addr};
 use futures::{
     FutureExt, Stream, StreamExt, TryFutureExt,
     future::BoxFuture,
@@ -390,21 +390,35 @@ impl SessionPersistenceConfig {
     }
 }
 
-#[derive(Default)]
-pub struct SessionOptions {
-    /// Turn on to disable DHT.
-    pub disable_dht: bool,
-    /// Turn on to disable DHT persistence. By default it will re-use stored DHT
-    /// configuration, including the port it listens on.
-    pub disable_dht_persistence: bool,
-    /// Pass in to configure DHT persistence filename. This can be used to run multiple
-    /// librqbit instances at a time.
-    pub dht_config: Option<PersistentDhtConfig>,
-    /// A list o DHT bootstrap nodes as strings of the form host:port or ip:port
-    pub dht_bootstrap_addrs: Option<Vec<String>>,
+/// Configuration for the DHT subsystem.
+/// Set to `None` in `SessionOptions::dht` to disable DHT entirely.
+pub struct DhtSessionConfig {
+    /// Bootstrap nodes (host:port or ip:port). Uses built-in defaults if None.
+    pub bootstrap_addrs: Option<Vec<String>>,
+    /// The DHT listen port. Priority: this explicit port -> persisted port
+    /// (when persistence is enabled) -> random. The bind IP is derived from
+    /// `SessionOptions::ipv4_only` (`0.0.0.0` if true, `[::]` otherwise).
+    /// Use `SessionOptions::bind_device_name` to scope the bind to a specific
+    /// network interface.
+    pub port: Option<u16>,
+    /// Persistence behavior. If None, persistence is disabled.
+    pub persistence: Option<DhtPersistenceConfig>,
+}
 
-    /// The listen address for DHT. If not specified, a random port will be used.
-    pub dht_listen_addr: Option<SocketAddr>,
+impl Default for DhtSessionConfig {
+    fn default() -> Self {
+        Self {
+            bootstrap_addrs: None,
+            port: None,
+            persistence: Some(DhtPersistenceConfig::default()),
+        }
+    }
+}
+
+pub struct SessionOptions {
+    /// DHT configuration. Set to None to disable DHT entirely.
+    /// Defaults to DHT enabled with persistence.
+    pub dht: Option<DhtSessionConfig>,
 
     /// What network device to bind to for DHT, BT-UDP, BT-TCP, trackers and LSD.
     /// On OSX will use IP(V6)_BOUND_IF, on Linux will use SO_BINDTODEVICE.
@@ -465,6 +479,36 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            dht: Some(DhtSessionConfig::default()),
+            bind_device_name: None,
+            disable_trackers: false,
+            fastresume: false,
+            persistence: None,
+            peer_id: None,
+            listen: None,
+            connect: None,
+            default_storage_factory: None,
+            cancellation_token: None,
+            concurrent_init_limit: None,
+            runtime_worker_threads: None,
+            root_span: None,
+            ratelimits: LimitsConfig::default(),
+            blocklist_url: None,
+            allowlist_url: None,
+            trackers: HashSet::new(),
+            peer_limit: None,
+            #[cfg(feature = "disable-upload")]
+            disable_upload: false,
+            disable_local_service_discovery: false,
+            ipv4_only: false,
+            client_name_and_version: None,
+        }
+    }
 }
 
 fn torrent_file_from_info_bytes(info_bytes: &[u8], trackers: &[url::Url]) -> anyhow::Result<Bytes> {
@@ -559,31 +603,34 @@ impl Session {
                 None
             };
 
-            let dht = if opts.disable_dht {
-                None
-            } else {
-                let dht = if opts.disable_dht_persistence {
-                    DhtBuilder::with_config(DhtConfig {
-                        bootstrap_addrs: opts.dht_bootstrap_addrs.clone(),
-                        cancellation_token: Some(token.child_token()),
-                        bind_device: bind_device.as_ref(),
-                        listen_addr: opts.dht_listen_addr,
-                        ..Default::default()
-                    })
-                    .await
-                    .context("error initializing DHT")?
-                } else {
-                    let pdht_config = opts.dht_config.take().unwrap_or_default();
+            let dht = if let Some(dht_config) = opts.dht.take() {
+                let dht = if let Some(persistence_config) = dht_config.persistence {
                     PersistentDht::create(
-                        Some(pdht_config),
+                        persistence_config,
+                        dht_config.port,
+                        opts.ipv4_only,
+                        dht_config.bootstrap_addrs,
                         Some(token.clone()),
                         bind_device.as_ref(),
                     )
                     .await
                     .context("error initializing persistent DHT")?
+                } else {
+                    let listen_addr = dht_listen_addr(dht_config.port, None, opts.ipv4_only);
+                    DhtBuilder::with_config(DhtConfig {
+                        bootstrap_addrs: dht_config.bootstrap_addrs,
+                        cancellation_token: Some(token.child_token()),
+                        bind_device: bind_device.as_ref(),
+                        listen_addr: Some(listen_addr),
+                        ..Default::default()
+                    })
+                    .await
+                    .context("error initializing DHT")?
                 };
 
                 Some(dht)
+            } else {
+                None
             };
             let peer_opts = opts
                 .connect

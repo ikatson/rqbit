@@ -14,13 +14,13 @@ use anyhow::Context;
 use config::RqbitDesktopConfig;
 use http::StatusCode;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, Api, ApiError, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, Api, ApiError, DhtSessionConfig, Session, SessionOptions,
     SessionPersistenceConfig, WithStatusError,
     api::{
         ApiAddTorrentResponse, ApiTorrentListOpts, EmptyJsonResponse, TorrentDetailsResponse,
         TorrentIdOrHash, TorrentListResponse, TorrentStats,
     },
-    dht::PersistentDhtConfig,
+    dht::DhtPersistenceConfig,
     http_api_types::{PeerStatsFilter, PeerStatsSnapshot},
     session_stats::snapshot::SessionStatsSnapshot,
     tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
@@ -103,15 +103,27 @@ async fn api_from_config(
         }
     }
 
+    let dht = if config.dht.disable {
+        None
+    } else {
+        let persistence = if config.dht.disable_persistence {
+            None
+        } else {
+            Some(DhtPersistenceConfig {
+                config_filename: Some(config.dht.persistence_filename.clone()),
+                ..Default::default()
+            })
+        };
+        Some(DhtSessionConfig {
+            persistence,
+            ..Default::default()
+        })
+    };
+
     let session = Session::new_with_opts(
         config.default_download_location.clone(),
         SessionOptions {
-            disable_dht: config.dht.disable,
-            disable_dht_persistence: config.dht.disable_persistence,
-            dht_config: Some(PersistentDhtConfig {
-                config_filename: Some(config.dht.persistence_filename.clone()),
-                ..Default::default()
-            }),
+            dht,
             persistence,
             connect: Some(connect),
             listen,

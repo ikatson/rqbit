@@ -42,7 +42,7 @@ async fn test_utp_with_another_client() {
     let (listen_addr, client_addr) = parse_listen_and_client_addr();
     test_with_another_client(
         crate::SessionOptions {
-            disable_dht: true,
+            dht: None,
             persistence: None,
             listen: Some(ListenerOptions {
                 mode: crate::listen::ListenerMode::UtpOnly,
@@ -66,7 +66,7 @@ async fn test_tcp_with_another_client() {
     let (listen_addr, client_addr) = parse_listen_and_client_addr();
     test_with_another_client(
         crate::SessionOptions {
-            disable_dht: true,
+            dht: None,
             persistence: None,
             listen: Some(ListenerOptions {
                 mode: crate::listen::ListenerMode::TcpOnly,

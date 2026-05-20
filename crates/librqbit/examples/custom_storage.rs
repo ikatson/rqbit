@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use librqbit::{
-    SessionOptions,
+    DhtSessionConfig, SessionOptions,
     storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
 };
 use tracing::info;
@@ -78,7 +78,10 @@ async fn main() -> anyhow::Result<()> {
     let s = librqbit::Session::new_with_opts(
         Default::default(),
         SessionOptions {
-            disable_dht_persistence: true,
+            dht: Some(DhtSessionConfig {
+                persistence: None,
+                ..Default::default()
+            }),
             persistence: None,
             ..Default::default()
         },

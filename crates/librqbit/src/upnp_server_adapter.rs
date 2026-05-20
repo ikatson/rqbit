@@ -553,7 +553,7 @@ mod tests {
         let session = Session::new_with_opts(
             td.path().to_owned(),
             SessionOptions {
-                disable_dht: true,
+                dht: None,
                 ..Default::default()
             },
         )

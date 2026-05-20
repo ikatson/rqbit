@@ -160,8 +160,7 @@ impl TestHarness {
         let session = Session::new_with_opts(
             out.clone(),
             SessionOptions {
-                disable_dht: true,
-                disable_dht_persistence: true,
+                dht: None,
                 fastresume: false,
                 persistence: None,
                 peer_id: Some(peer_id),
@@ -252,8 +251,7 @@ impl TestHarness {
         let session = Session::new_with_opts(
             path.clone(),
             SessionOptions {
-                disable_dht: true,
-                disable_dht_persistence: true,
+                dht: None,
                 fastresume: false,
                 persistence: None,
                 peer_id: Some(peer_id),

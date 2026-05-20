@@ -105,7 +105,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
                 let session = crate::Session::new_with_opts(
                     std::env::temp_dir().join("does_not_exist"),
                     SessionOptions {
-                        disable_dht: true,
+                        dht: None,
                         peer_id: Some(peer_id),
                         listen: Some(ListenerOptions {
                             mode,
@@ -209,9 +209,7 @@ async fn _test_e2e_download(mode: ListenerMode, drop_checks: &DropChecks) {
         let session = Session::new_with_opts(
             outdir.to_owned(),
             SessionOptions {
-                disable_dht: true,
-                disable_dht_persistence: true,
-                dht_config: None,
+                dht: None,
                 persistence: Some(SessionPersistenceConfig::Json {
                     folder: Some(session_persistence),
                 }),

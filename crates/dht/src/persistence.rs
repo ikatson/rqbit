@@ -9,7 +9,7 @@ use librqbit_dualstack_sockets::BindDevice;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -20,12 +20,29 @@ use crate::peer_store::PeerStore;
 use crate::routing_table::RoutingTable;
 use crate::{Dht, DhtConfig, DhtState};
 
+/// Configuration for DHT persistence (periodic dump of routing table and peer store).
+/// When provided, the DHT state will be serialized to disk periodically.
 #[derive(Default)]
-pub struct PersistentDhtConfig {
+pub struct DhtPersistenceConfig {
+    /// How often to dump state. Defaults to 60s.
     pub dump_interval: Option<Duration>,
+    /// Path to the JSON file. Uses OS-specific default if None.
     pub config_filename: Option<PathBuf>,
-    pub port: Option<u16>,
-    pub ipv4_only: bool,
+}
+
+/// Compute the DHT listen address from the explicit/stored port preferences and
+/// the session-level `ipv4_only` flag.
+///
+/// The bind IP is derived solely from `ipv4_only` (`0.0.0.0` if true, `[::]`
+/// otherwise); any persisted IP is intentionally ignored. The port is chosen
+/// in priority order: explicit -> stored -> 0 (random).
+pub fn dht_listen_addr(port: Option<u16>, stored_port: Option<u16>, ipv4_only: bool) -> SocketAddr {
+    let ip: IpAddr = if ipv4_only {
+        Ipv4Addr::UNSPECIFIED.into()
+    } else {
+        Ipv6Addr::UNSPECIFIED.into()
+    };
+    SocketAddr::new(ip, port.or(stored_port).unwrap_or(0))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,14 +102,16 @@ impl PersistentDht {
 
     #[inline(never)]
     pub fn create<'a>(
-        config: Option<PersistentDhtConfig>,
+        persistence_config: DhtPersistenceConfig,
+        port: Option<u16>,
+        ipv4_only: bool,
+        bootstrap_addrs: Option<Vec<String>>,
         cancellation_token: Option<CancellationToken>,
         bind_device: Option<&'a BindDevice>,
     ) -> BoxFuture<'a, anyhow::Result<Dht>> {
         async move {
-            let mut config = config.unwrap_or_default();
-            let config_filename = match config.config_filename.take() {
-                Some(config_filename) => config_filename,
+            let config_filename = match persistence_config.config_filename {
+                Some(f) => f,
                 None => Self::default_persistence_filename()?,
             };
 
@@ -112,20 +131,8 @@ impl PersistentDht {
                     match serde_json::from_reader::<_, DhtSerialize<RoutingTable, PeerStore>>(
                         reader,
                     ) {
-                        Ok(mut r) => {
+                        Ok(r) => {
                             info!(filename=?config_filename, "loaded DHT routing table from");
-                            if config.ipv4_only {
-                                // Force IPv4 if requested
-                                let port = r.addr.port();
-                                r.addr = SocketAddr::from(([0, 0, 0, 0], port));
-                            } else if r.addr.ip() == Ipv4Addr::UNSPECIFIED {
-                                warn!(
-                                    "patching DHT listen IP address for rqbit 9 upgrade: 0.0.0.0 -> [::]"
-                                );
-                                let port = r.addr.port();
-                                r.addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
-                            }
-
                             Some(r)
                         }
                         Err(e) => {
@@ -146,23 +153,18 @@ impl PersistentDht {
                     }
                 },
             };
-            let (mut listen_addr, routing_table, peer_store) = de
-                .map(|de| (Some(de.addr), Some(de.table), de.peer_store))
+            let (stored_port, routing_table, peer_store) = de
+                .map(|de| (Some(de.addr.port()), Some(de.table), de.peer_store))
                 .unwrap_or((None, None, None));
 
-            if let Some(port) = config.port {
-                if let Some(ref mut addr) = listen_addr {
-                    addr.set_port(port);
-                } else {
-                    listen_addr = Some(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)));
-                }
-            }
+            let listen_addr = dht_listen_addr(port, stored_port, ipv4_only);
             let peer_id = routing_table.as_ref().map(|r| r.id());
 
             let dht_config = DhtConfig {
                 peer_id,
+                bootstrap_addrs,
                 routing_table,
-                listen_addr,
+                listen_addr: Some(listen_addr),
                 peer_store,
                 cancellation_token,
                 bind_device,
@@ -175,7 +177,7 @@ impl PersistentDht {
                 dht.cancellation_token().clone(),
                 {
                     let dht = dht.clone();
-                    let dump_interval = config
+                    let dump_interval = persistence_config
                         .dump_interval
                         .unwrap_or_else(|| Duration::from_secs(60));
                     async move {
@@ -204,5 +206,66 @@ impl PersistentDht {
             Ok(dht)
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_port_no_stored_v6() {
+        let addr = dht_listen_addr(None, None, false);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 0);
+    }
+
+    #[test]
+    fn no_port_no_stored_v4() {
+        let addr = dht_listen_addr(None, None, true);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 0);
+    }
+
+    #[test]
+    fn explicit_port_v6() {
+        let addr = dht_listen_addr(Some(6881), None, false);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 6881);
+    }
+
+    #[test]
+    fn explicit_port_v4() {
+        let addr = dht_listen_addr(Some(6881), None, true);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 6881);
+    }
+
+    #[test]
+    fn stored_port_only_v6() {
+        let addr = dht_listen_addr(None, Some(12345), false);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 12345);
+    }
+
+    #[test]
+    fn stored_port_only_v4() {
+        let addr = dht_listen_addr(None, Some(12345), true);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 12345);
+    }
+
+    #[test]
+    fn explicit_overrides_stored_v6() {
+        let addr = dht_listen_addr(Some(6881), Some(12345), false);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv6Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 6881);
+    }
+
+    #[test]
+    fn explicit_overrides_stored_v4() {
+        let addr = dht_listen_addr(Some(6881), Some(12345), true);
+        assert_eq!(addr.ip(), IpAddr::from(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 6881);
     }
 }
