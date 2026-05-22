@@ -173,6 +173,7 @@ impl TestHarness {
                     utp_opts: None,
                     announce_port: None,
                     ipv4_only: false,
+                    ..Default::default()
                 }),
                 ratelimits: LimitsConfig {
                     upload_bps: NonZero::new(64 * 1024),
@@ -265,6 +266,7 @@ impl TestHarness {
                     utp_opts: None,
                     announce_port: None,
                     ipv4_only: false,
+                    ..Default::default()
                 }),
                 disable_local_service_discovery: false,
                 connect: Some(ConnectionOptions {
