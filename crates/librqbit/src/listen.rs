@@ -18,6 +18,7 @@ pub(crate) struct ListenResult {
     pub enable_upnp_port_forwarding: bool,
     pub addr: SocketAddr,
     pub announce_port: Option<u16>,
+    pub max_pending_incoming_handshake_checks: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -26,6 +27,8 @@ pub enum ListenerMode {
     UtpOnly,
     TcpAndUtp,
 }
+
+pub const DEFAULT_MAX_PENDING_INCOMING_HANDSHAKE_CHECKS: usize = 64;
 
 impl ListenerMode {
     pub fn tcp_enabled(&self) -> bool {
@@ -53,6 +56,7 @@ pub struct ListenerOptions {
     pub utp_opts: Option<librqbit_utp::SocketOpts>,
     pub announce_port: Option<u16>,
     pub ipv4_only: bool,
+    pub max_pending_incoming_handshake_checks: usize,
 }
 
 impl Default for ListenerOptions {
@@ -65,6 +69,7 @@ impl Default for ListenerOptions {
             utp_opts: None,
             announce_port: None,
             ipv4_only: false,
+            max_pending_incoming_handshake_checks: DEFAULT_MAX_PENDING_INCOMING_HANDSHAKE_CHECKS,
         }
     }
 }
@@ -154,6 +159,7 @@ impl ListenerOptions {
             announce_port,
             addr: listen_addr,
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
+            max_pending_incoming_handshake_checks: self.max_pending_incoming_handshake_checks,
         })
     }
 }
