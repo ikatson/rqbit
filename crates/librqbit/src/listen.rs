@@ -28,7 +28,7 @@ pub enum ListenerMode {
     TcpAndUtp,
 }
 
-pub const DEFAULT_MAX_PENDING_INCOMING_HANDSHAKE_CHECKS: usize = 64;
+pub const DEFAULT_MAX_PENDING_INCOMING_HANDSHAKE_CHECKS: usize = 256;
 
 impl ListenerMode {
     pub fn tcp_enabled(&self) -> bool {
