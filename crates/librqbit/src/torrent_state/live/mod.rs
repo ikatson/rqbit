@@ -66,7 +66,7 @@ use librqbit_core::{
     speed_estimator::SpeedEstimator,
     torrent_metainfo::ValidatedTorrentMetaV1Info,
 };
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use peer_binary_protocol::{
     Handshake, Message, Piece, Request,
     extended::{
@@ -101,7 +101,7 @@ use crate::{
 
 use self::{
     peer::{
-        PeerRx, PeerState, PeerTx,
+        PeerRx, PeerState, PeerTx, RemoveInflightRequestResult,
         stats::{
             atomic::PeerCountersAtomic as AtomicPeerCounters,
             snapshot::{PeerStatsFilter, PeerStatsSnapshot},
@@ -475,9 +475,7 @@ impl TorrentStateLive {
             addr: checked_peer.addr,
             incoming: true,
             on_bitfield_notify: Default::default(),
-            unchoke_notify: Default::default(),
-            _locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
-            requests_sem: Semaphore::new(0),
+            flow_control: Mutex::new(PeerFlowControl::default()),
             state: self.clone(),
             tx,
             counters,
@@ -541,9 +539,7 @@ impl TorrentStateLive {
             addr,
             incoming: false,
             on_bitfield_notify: Default::default(),
-            unchoke_notify: Default::default(),
-            _locked: RwLock::new(PeerHandlerLocked { i_am_choked: true }),
-            requests_sem: Semaphore::new(0),
+            flow_control: Mutex::new(PeerFlowControl::default()),
             state: state.clone(),
             tx,
             counters,
@@ -996,8 +992,20 @@ impl TorrentStateLive {
     }
 }
 
-struct PeerHandlerLocked {
-    pub i_am_choked: bool,
+const DEFAULT_PEER_REQUEST_WINDOW: usize = 128;
+
+struct PeerFlowControl {
+    i_am_choked: bool,
+    request_window: usize,
+}
+
+impl Default for PeerFlowControl {
+    fn default() -> Self {
+        Self {
+            i_am_choked: true,
+            request_window: DEFAULT_PEER_REQUEST_WINDOW,
+        }
+    }
 }
 
 // All peer state that would never be used by other actors should pe put here.
@@ -1005,22 +1013,16 @@ struct PeerHandlerLocked {
 struct PeerHandler {
     state: Arc<TorrentStateLive>,
     counters: Arc<AtomicPeerCounters>,
-    // Semantically, we don't need an RwLock here, as this is only requested from
+    // Semantically, we don't need a lock here, as this is only requested from
     // one future (requester + manage_peer).
     //
     // However as PeerConnectionHandler takes &self everywhere, we need shared mutability.
     // RefCell would do, but tokio is unhappy when we use it.
-    _locked: RwLock<PeerHandlerLocked>,
+    flow_control: Mutex<PeerFlowControl>,
 
     // This is used to unpause chunk requester once the bitfield
     // is received.
     on_bitfield_notify: Notify,
-
-    // This is used to unpause after we were choked.
-    unchoke_notify: Notify,
-
-    // This is used to limit the number of chunk requests we send to a peer at a time.
-    requests_sem: Semaphore,
 
     addr: SocketAddr,
     incoming: bool,
@@ -1151,6 +1153,21 @@ impl PeerConnectionHandler for &'_ PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
+        if let Some(reqq) = hs.reqq.and_then(|reqq| usize::try_from(reqq).ok())
+            && reqq > 0
+        {
+            let request_window = reqq.min(DEFAULT_PEER_REQUEST_WINDOW);
+            let mut flow = self.lock_flow_control("update request window");
+            if flow.request_window != request_window {
+                debug!(
+                    reqq,
+                    request_window, "updated peer request window from extended handshake"
+                );
+                flow.request_window = request_window;
+                self.notify_request_slots_changed();
+            }
+        }
+
         if !self.state.metadata.info.info().private && hs.m.ut_pex.is_some() {
             spawn_with_cancel(
                 debug_span!(
@@ -1258,9 +1275,10 @@ impl PeerHandler {
                     );
                 }
 
-                // Also handle any chunk-level inflight requests
-                let had_inflight = !live.inflight_requests.is_empty();
-                for req in live.inflight_requests {
+                // Also handle any active chunk-level inflight requests.
+                let mut had_inflight = false;
+                for req in live.inflight_requests() {
+                    had_inflight = true;
                     trace!(
                         "peer dead, marking chunk request cancelled, index={}, chunk={}",
                         req.piece_index.get(),
@@ -1386,6 +1404,11 @@ impl PeerHandler {
     ///
     /// Returns the piece index to download, or None if no pieces are available.
     fn acquire_next_piece(&self) -> crate::Result<Option<ValidPieceIndex>> {
+        if self.is_choked() {
+            debug!("we are choked, can't acquire piece");
+            return Ok(None);
+        }
+
         // Steal info to process after releasing the peer lock
         let mut steal_info: Option<(SocketAddr, ValidPieceIndex)> = None;
 
@@ -1393,10 +1416,6 @@ impl PeerHandler {
             .state
             .peers
             .with_live_mut(self.addr, "acquire_next_piece", |live| {
-                if self.lock_read("i am choked").i_am_choked {
-                    debug!("we are choked, can't acquire piece");
-                    return Ok(None);
-                }
                 let mut g = self.state.lock_write("acquire_next_piece");
 
                 let bf = &live.bitfield;
@@ -1548,13 +1567,15 @@ impl PeerHandler {
     }
 
     async fn wait_for_any_notify(&self, notify: &Notify, check: impl Fn() -> bool) {
-        // To remove possibility of races, we first grab a token, then check
-        // if we need it, and only if so, await.
-        let notified = notify.notified();
-        if check() {
-            return;
+        loop {
+            // To remove possibility of races, we first grab a token, then check
+            // if we need it, and only if so, await.
+            let notified = notify.notified();
+            if check() {
+                return;
+            }
+            notified.await;
         }
-        notified.await;
     }
 
     async fn wait_for_bitfield(&self) {
@@ -1567,11 +1588,17 @@ impl PeerHandler {
         .await;
     }
 
-    async fn wait_for_unchoke(&self) {
-        self.wait_for_any_notify(&self.unchoke_notify, || {
-            !self.lock_read("wait_for_unchoke:i_am_choked").i_am_choked
-        })
-        .await;
+    async fn wait_for_request_slot(&self) {
+        loop {
+            let Some(notify) = self.request_slots_changed() else {
+                return;
+            };
+            let notified = notify.notified();
+            if self.can_send_request() {
+                return;
+            }
+            notified.await;
+        }
     }
 
     // The job of this is to request chunks and also to keep peer alive.
@@ -1627,7 +1654,7 @@ impl PeerHandler {
             }
 
             update_interest(self, true)?;
-            aframe!(self.wait_for_unchoke()).await;
+            aframe!(self.wait_for_request_slot()).await;
 
             // Acquire a piece using the strategy: try steal (10x) → reserve → steal (3x).
             let new_piece_notify = self.state.new_pieces_notify.notified();
@@ -1656,11 +1683,27 @@ impl PeerHandler {
                     length: chunk.size,
                 };
 
+                aframe!(self.wait_for_request_slot()).await;
+
+                self.state
+                    .ratelimits
+                    .prepare_for_download(NonZeroU32::new(request.length).unwrap())
+                    .await?;
+
+                if let Some(session) = self.state.torrent().session.upgrade() {
+                    session
+                        .ratelimits
+                        .prepare_for_download(NonZeroU32::new(request.length).unwrap())
+                        .await?;
+                }
+
+                aframe!(self.wait_for_request_slot()).await;
+
                 match self
                     .state
                     .peers
                     .with_live_mut(handle, "add chunk request", |live| {
-                        live.inflight_requests.insert(chunk)
+                        live.add_inflight_request(chunk)
                     }) {
                     Some(true) => {}
                     Some(false) => {
@@ -1683,30 +1726,6 @@ impl PeerHandler {
                     None => return Ok(()),
                 };
 
-                self.state
-                    .ratelimits
-                    .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                    .await?;
-
-                if let Some(session) = self.state.torrent().session.upgrade() {
-                    session
-                        .ratelimits
-                        .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                        .await?;
-                }
-
-                loop {
-                    match aframe!(tokio::time::timeout(
-                        Duration::from_secs(5),
-                        aframe!(self.requests_sem.acquire())
-                    ))
-                    .await
-                    {
-                        Ok(acq) => break acq?.forget(),
-                        Err(_) => continue,
-                    };
-                }
-
                 if self
                     .tx
                     .send(WriterRequest::Message(Message::Request(request)))
@@ -1719,7 +1738,8 @@ impl PeerHandler {
     }
 
     fn on_i_am_choked(&self) {
-        self.lock_write("i_am_choked = true").i_am_choked = true;
+        self.lock_flow_control("i_am_choked = true").i_am_choked = true;
+        self.notify_request_slots_changed();
     }
 
     fn on_peer_interested(&self) {
@@ -1729,12 +1749,8 @@ impl PeerHandler {
 
     fn on_i_am_unchoked(&self) {
         trace!("we are unchoked");
-        self.lock_write("i_am_choked = false").i_am_choked = false;
-        self.unchoke_notify.notify_waiters();
-        // 128 should be more than enough to maintain 100mbps
-        // for a single peer that has 100ms ping
-        // https://www.desmos.com/calculator/x3szur87ps
-        self.requests_sem.add_permits(128);
+        self.lock_flow_control("i_am_choked = false").i_am_choked = false;
+        self.notify_request_slots_changed();
     }
 
     async fn on_received_piece(&self, piece: Piece<ByteBuf<'_>>) -> anyhow::Result<()> {
@@ -1754,35 +1770,32 @@ impl PeerHandler {
             }
         };
 
-        self.requests_sem.add_permits(1);
-
         // Peer chunk/byte counters.
         self.counters
             .fetched_bytes
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
 
-        // Ensure we are expecting this chunk from the peer.
-        let expecting_chunk = self
+        let should_process = self
             .state
             .peers
             .with_live_mut(self.addr, "inflight_requests.remove", |h| {
-                if !h.inflight_requests.remove(&chunk_info) {
-                    trace!(?piece, "peer sent us a chunk we did not ask for");
-                    if h.late_cancelled_request_tolerance == 0 {
-                        anyhow::bail!("peer sent us a chunk we did not ask for",);
+                match h.remove_inflight_request(&chunk_info) {
+                    RemoveInflightRequestResult::Expected => Ok(true),
+                    RemoveInflightRequestResult::LateCanceled => {
+                        trace!(?piece, "peer sent us a chunk we did not ask for");
+                        Ok(false)
                     }
-                    // This may be any unexpected chunk, not necessarily the exact
-                    // canceled one, but the tolerance is bounded by cancels we sent.
-                    h.late_cancelled_request_tolerance -= 1;
-                    Ok(false)
-                } else {
-                    Ok(true)
+                    RemoveInflightRequestResult::Unexpected => anyhow::bail!(
+                        "peer sent us a piece we did not ask. Inflight requests: {:?}. Got: {:?}",
+                        h.inflight_requests_debug(),
+                        &piece,
+                    ),
                 }
             })
             .context("peer not found")??;
 
-        if !expecting_chunk {
+        if !should_process {
             return Ok(());
         }
 
@@ -2019,16 +2032,46 @@ impl PeerHandler {
             });
     }
 
-    fn lock_read(
-        &self,
-        reason: &'static str,
-    ) -> TimedExistence<RwLockReadGuard<'_, PeerHandlerLocked>> {
-        TimedExistence::new(timeit(reason, || self._locked.read()), reason)
+    fn is_choked(&self) -> bool {
+        self.lock_flow_control("is_choked").i_am_choked
     }
-    fn lock_write(
+
+    fn requested_inflight_count(&self) -> Option<usize> {
+        self.state
+            .peers
+            .with_live(self.addr, |live| live.requested_inflight_count())
+    }
+
+    fn can_send_request(&self) -> bool {
+        let (i_am_choked, request_window) = {
+            let flow = self.lock_flow_control("can_send_request");
+            (flow.i_am_choked, flow.request_window)
+        };
+
+        if i_am_choked {
+            return false;
+        }
+
+        self.requested_inflight_count()
+            .is_some_and(|requested| requested < request_window)
+    }
+
+    fn lock_flow_control(
         &self,
         reason: &'static str,
-    ) -> TimedExistence<RwLockWriteGuard<'_, PeerHandlerLocked>> {
-        TimedExistence::new(timeit(reason, || self._locked.write()), reason)
+    ) -> TimedExistence<MutexGuard<'_, PeerFlowControl>> {
+        TimedExistence::new(timeit(reason, || self.flow_control.lock()), reason)
+    }
+
+    fn request_slots_changed(&self) -> Option<Arc<Notify>> {
+        self.state
+            .peers
+            .with_live(self.addr, |live| live.request_slots_changed())
+    }
+
+    fn notify_request_slots_changed(&self) {
+        if let Some(notify) = self.request_slots_changed() {
+            notify.notify_waiters();
+        }
     }
 }
