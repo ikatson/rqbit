@@ -765,22 +765,32 @@ impl Session {
 
             if let Some(mut listen) = listen_result {
                 if let Some(tcp) = listen.tcp_socket.take() {
+                    let max_pending_incoming_handshake_checks =
+                        listen.max_pending_incoming_handshake_checks;
                     session.spawn(
                         debug_span!(parent: session.rs(), "tcp_listen", addr = ?listen.addr),
                         "tcp_listen",
                         {
                             let this = session.clone();
-                            async move { this.task_listener(tcp).await }
+                            async move {
+                                this.task_listener(tcp, max_pending_incoming_handshake_checks)
+                                    .await
+                            }
                         },
                     );
                 }
                 if let Some(utp) = listen.utp_socket.take() {
+                    let max_pending_incoming_handshake_checks =
+                        listen.max_pending_incoming_handshake_checks;
                     session.spawn(
                         debug_span!(parent: session.rs(), "utp_listen", addr = ?listen.addr),
                         "utp_listen",
                         {
                             let this = session.clone();
-                            async move { this.task_listener(utp).await }
+                            async move {
+                                this.task_listener(utp, max_pending_incoming_handshake_checks)
+                                    .await
+                            }
                         },
                     );
                 }
@@ -906,14 +916,18 @@ impl Session {
         ))
     }
 
-    async fn task_listener<A: Accept>(self: Arc<Self>, l: A) -> anyhow::Result<()> {
+    async fn task_listener<A: Accept>(
+        self: Arc<Self>,
+        l: A,
+        max_pending_incoming_handshake_checks: usize,
+    ) -> anyhow::Result<()> {
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
 
         loop {
             tokio::select! {
-                r = l.accept() => {
+                r = l.accept(), if futs.len() < max_pending_incoming_handshake_checks => {
                     match r {
                         Ok((addr, (read, write))) => {
                             trace!("accepted connection from {addr}");
