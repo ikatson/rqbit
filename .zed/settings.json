@@ -7,12 +7,15 @@
     "rust-analyzer": {
       "initialization_options": {
         "check": {
-          "command": "clippy" // rust-analyzer.check.command (default: "check")
+          "command": "clippy", // rust-analyzer.check.command (default: "check")
         },
         "cargo": {
-          "features": ["librqbit/storage_middleware"]
-        }
-      }
-    }
-  }
+          "features": [
+            "librqbit/storage_middleware",
+            "librqbit/storage_examples",
+          ],
+        },
+      },
+    },
+  },
 }

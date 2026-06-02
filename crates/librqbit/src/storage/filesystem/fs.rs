@@ -39,12 +39,13 @@ impl StorageFactory for FilesystemStorageFactory {
 }
 
 pub struct FilesystemStorage {
-    pub(super) output_folder: PathBuf,
-    pub(super) opened_files: Vec<OpenedFile>,
+    pub(crate) output_folder: PathBuf,
+    pub(crate) opened_files: Vec<OpenedFile>,
 }
 
 impl FilesystemStorage {
-    pub(super) fn take_fs(&self) -> anyhow::Result<Self> {
+    #[allow(dead_code)]
+    pub(crate) fn take_fs(&self) -> anyhow::Result<Self> {
         Ok(Self {
             opened_files: self
                 .opened_files

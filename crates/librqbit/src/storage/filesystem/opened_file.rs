@@ -158,6 +158,7 @@ impl OpenedFile {
             .ok_or(Error::FsFileIsNone)
     }
 
+    #[allow(dead_code)]
     pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
         RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
             .ok()
