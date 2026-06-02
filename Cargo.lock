@@ -2921,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "3.1.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -2936,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-buffers"
-version = "4.2.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "bytes",
  "librqbit-clone-to-owned",
@@ -2946,14 +2946,14 @@ dependencies = [
 
 [[package]]
 name = "librqbit-clone-to-owned"
-version = "3.0.1"
+version = "9.0.0-beta.2"
 dependencies = [
  "bytes",
 ]
 
 [[package]]
 name = "librqbit-core"
-version = "5.0.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2982,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "5.3.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "backon",
@@ -3029,7 +3029,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-lsd"
-version = "0.1.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "atoi",
@@ -3038,7 +3038,6 @@ dependencies = [
  "httparse",
  "librqbit-core",
  "librqbit-dualstack-sockets",
- "librqbit-sha1-wrapper",
  "parking_lot",
  "rand 0.9.4",
  "tokio",
@@ -3049,7 +3048,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "4.3.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -3069,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-sha1-wrapper"
-version = "4.1.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "assert_cfg",
  "aws-lc-rs",
@@ -3078,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-tracker-comms"
-version = "3.0.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3105,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-upnp"
-version = "1.0.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "bstr",
@@ -3126,7 +3125,7 @@ dependencies = [
 
 [[package]]
 name = "librqbit-upnp-serve"
-version = "1.0.1"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -4762,7 +4761,7 @@ dependencies = [
 
 [[package]]
 name = "rqbit-desktop"
-version = "9.0.0"
+version = "9.0.0-beta.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

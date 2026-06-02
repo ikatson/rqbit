@@ -1,6 +1,6 @@
 [package]
 name = "librqbit-upnp-serve"
-version = "1.0.1"
+version.workspace = true
 edition = "2024"
 description = "Simple UPnP MediaServer implementation"
 license = "Apache-2.0"
