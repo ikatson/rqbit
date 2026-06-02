@@ -19,10 +19,7 @@ use librqbit::{
     http_api::{HttpApi, HttpApiOptions},
     librqbit_spawn,
     limits::LimitsConfig,
-    storage::{
-        StorageFactory, StorageFactoryExt,
-        filesystem::{FilesystemStorageFactory, MmapFilesystemStorageFactory},
-    },
+    storage::{StorageFactory, StorageFactoryExt, filesystem::FilesystemStorageFactory},
     tracing_subscriber_config_utils::{InitLoggingOptions, InitLoggingResult, init_logging},
 };
 use librqbit_dualstack_sockets::TcpListener;
@@ -219,11 +216,6 @@ struct Opts {
         env = "RQBIT_RUNTIME_MAX_BLOCKING_THREADS"
     )]
     max_blocking_threads: u16,
-
-    /// Use mmap (file-backed) for storage. Any advantages are questionable and unproven.
-    /// If you use it, you know what you are doing.
-    #[arg(long)]
-    experimental_mmap_storage: bool,
 
     /// If set will use socks5 proxy for all outgoing connections.
     /// The format is socks5://[username:password]@host:port
@@ -653,11 +645,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 s
             }
 
-            if opts.experimental_mmap_storage {
-                wrap(MmapFilesystemStorageFactory::default()).boxed()
-            } else {
-                wrap(FilesystemStorageFactory::default()).boxed()
-            }
+            wrap(FilesystemStorageFactory::default()).boxed()
         }),
         concurrent_init_limit: Some(opts.concurrent_init_limit),
         root_span: None,
