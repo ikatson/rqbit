@@ -246,9 +246,6 @@ impl Peer {
 
 #[derive(Debug)]
 pub(crate) struct LivePeerState {
-    #[allow(dead_code)]
-    peer_id: Id20,
-
     pub peer_interested: bool,
 
     // This is used to track the pieces the peer has.
@@ -265,13 +262,12 @@ pub(crate) struct LivePeerState {
 
 impl LivePeerState {
     pub fn new(
-        peer_id: Id20,
+        _peer_id: Id20,
         tx: PeerTx,
         initial_interested: bool,
         connection_kind: ConnectionKind,
     ) -> Self {
         LivePeerState {
-            peer_id,
             peer_interested: initial_interested,
             bitfield: BF::default(),
             inflight_requests: Default::default(),
