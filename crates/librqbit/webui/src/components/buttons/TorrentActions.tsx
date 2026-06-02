@@ -7,6 +7,7 @@ import { FaCog, FaPause, FaPlay, FaTrash } from "react-icons/fa";
 import { useErrorStore } from "../../stores/errorStore";
 import { useTorrentStore } from "../../stores/torrentStore";
 import { useUIStore } from "../../stores/uiStore";
+import { PlaylistIconButton } from "./PlaylistButton";
 
 export const TorrentActions: React.FC<{
   torrent: TorrentListItem & { stats: TorrentStats };
@@ -92,6 +93,7 @@ export const TorrentActions: React.FC<{
       <IconButton onClick={startDeleting} disabled={disabled}>
         <FaTrash className="hover:text-red-500" />
       </IconButton>
+      <PlaylistIconButton torrentId={id} disabled={disabled} />
       <DeleteTorrentModal
         show={deleting}
         onHide={cancelDeleting}
