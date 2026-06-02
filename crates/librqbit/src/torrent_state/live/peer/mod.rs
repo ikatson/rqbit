@@ -254,6 +254,11 @@ pub(crate) struct LivePeerState {
     // When the peer sends us data this is used to track if we asked for it.
     pub inflight_requests: HashSet<InflightRequest>,
 
+    // Bounded tolerance for chunks that arrive after we cancel requests.
+    // This is intentionally approximate: we track a count instead of storing every
+    // canceled chunk, so a peer is not disconnected for racing our cancel messages.
+    pub late_cancelled_request_tolerance: u32,
+
     // The main channel to send requests to peer.
     pub tx: PeerTx,
 
@@ -271,6 +276,7 @@ impl LivePeerState {
             peer_interested: initial_interested,
             bitfield: BF::default(),
             inflight_requests: Default::default(),
+            late_cancelled_request_tolerance: 0,
             tx,
             connection_kind,
         }

@@ -1762,19 +1762,29 @@ impl PeerHandler {
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
 
-        self.state
+        // Ensure we are expecting this chunk from the peer.
+        let expecting_chunk = self
+            .state
             .peers
             .with_live_mut(self.addr, "inflight_requests.remove", |h| {
                 if !h.inflight_requests.remove(&chunk_info) {
-                    anyhow::bail!(
-                        "peer sent us a piece we did not ask. Requested pieces: {:?}. Got: {:?}",
-                        &h.inflight_requests,
-                        &piece,
-                    );
+                    trace!(?piece, "peer sent us a chunk we did not ask for");
+                    if h.late_cancelled_request_tolerance == 0 {
+                        anyhow::bail!("peer sent us a chunk we did not ask for",);
+                    }
+                    // This may be any unexpected chunk, not necessarily the exact
+                    // canceled one, but the tolerance is bounded by cancels we sent.
+                    h.late_cancelled_request_tolerance -= 1;
+                    Ok(false)
+                } else {
+                    Ok(true)
                 }
-                Ok(())
             })
             .context("peer not found")??;
+
+        if !expecting_chunk {
+            return Ok(());
+        }
 
         // This one is used to calculate download speed.
         self.state
