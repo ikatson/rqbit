@@ -2863,6 +2863,7 @@ dependencies = [
  "console-subscriber",
  "dashmap 6.2.1",
  "futures",
+ "futures-util",
  "governor",
  "hex 0.4.3",
  "home",

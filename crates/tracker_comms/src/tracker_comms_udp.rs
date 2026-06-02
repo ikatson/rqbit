@@ -16,7 +16,7 @@ use tracing::{debug, debug_span, trace, warn};
 
 const ACTION_CONNECT: u32 = 0;
 const ACTION_ANNOUNCE: u32 = 1;
-// const ACTION_SCRAPE: u32 = 2;
+const ACTION_SCRAPE: u32 = 2;
 const ACTION_ERROR: u32 = 3;
 
 pub const EVENT_NONE: u32 = 0;
@@ -45,13 +45,18 @@ pub struct AnnounceFields {
     pub port: u16,
 }
 
-#[derive(Debug)]
-pub enum Request {
-    Connect,
-    Announce(ConnectionId, AnnounceFields),
+#[derive(Debug, Clone)]
+pub struct ScrapeRequest<'a> {
+    pub info_hashes: &'a [[u8; 20]],
 }
 
-impl Request {
+pub enum Request<'a> {
+    Connect,
+    Announce(ConnectionId, AnnounceFields),
+    Scrape(ConnectionId, ScrapeRequest<'a>),
+}
+
+impl Request<'_> {
     pub fn serialize(
         &self,
         transaction_id: TransactionId,
@@ -95,6 +100,14 @@ impl Request {
                 w.extend_from_slice(&(-1i32).to_be_bytes())?; // num want -1
                 w.extend_from_slice(&fields.port.to_be_bytes())?;
             }
+            Request::Scrape(connection_id, request) => {
+                w.extend_from_slice(&connection_id.to_be_bytes())?;
+                w.extend_from_slice(&ACTION_SCRAPE.to_be_bytes())?;
+                w.extend_from_slice(&transaction_id.to_be_bytes())?;
+                for hash in request.info_hashes {
+                    w.extend_from_slice(hash)?;
+                }
+            }
         }
         Ok(w.offset)
     }
@@ -110,10 +123,18 @@ pub struct AnnounceResponse {
     pub addrs: Vec<SocketAddr>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ScrapeStats {
+    pub seeders: u32,
+    pub completed: u32,
+    pub leechers: u32,
+}
+
 #[derive(Debug)]
 pub enum Response {
     Connect(ConnectionId),
     Announce(AnnounceResponse),
+    Scrape(Vec<ScrapeStats>),
     #[allow(dead_code)]
     Error(String),
     Unknown,
@@ -207,6 +228,21 @@ impl Response {
                     seeders,
                     addrs,
                 })
+            }
+            ACTION_SCRAPE => {
+                let mut stats = Vec::new();
+                let mut b = buf;
+                while b.len() >= 12 {
+                    use byteorder::{BE, ByteOrder};
+                    let seeders = BE::read_u32(&b[0..4]);
+                    let completed = BE::read_u32(&b[4..8]);
+                    let leechers = BE::read_u32(&b[8..12]);
+                    b = &b[12..];
+                    stats.push(ScrapeStats {
+                        seeders, completed, leechers
+                    });
+                }
+                Response::Scrape(stats)
             }
             ACTION_ERROR => {
                 let msg = CStr::from_bytes_with_nul(buf)
@@ -353,7 +389,7 @@ impl UdpTrackerClient {
         }
     }
 
-    async fn request(&self, addr: SocketAddr, request: Request) -> anyhow::Result<Response> {
+    async fn request(&self, addr: SocketAddr, request: Request<'_>) -> anyhow::Result<Response> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tid_g = self.reserve_transaction_id(tx)?;
 
@@ -413,6 +449,20 @@ impl UdpTrackerClient {
         match response {
             Response::Announce(r) => Ok(r),
             other => bail!("unexpected response {other:?}, expected announce"),
+        }
+    }
+
+    pub async fn scrape(
+        &self,
+        tracker: SocketAddr,
+        info_hashes: &[[u8; 20]],
+    ) -> anyhow::Result<Vec<ScrapeStats>> {
+        let connection_id = self.get_connection_id(tracker).await?;
+        let request = Request::Scrape(connection_id, ScrapeRequest { info_hashes });
+        let response = self.request(tracker, request).await?;
+        match response {
+            Response::Scrape(r) => Ok(r),
+            other => bail!("unexpected response {other:?}, expected scrape"),
         }
     }
 }

@@ -256,6 +256,8 @@ pub(crate) struct LivePeerState {
 
     // When the peer sends us data this is used to track if we asked for it.
     pub inflight_requests: HashSet<InflightRequest>,
+    pub suggested_pieces: HashSet<u32>,
+    pub allowed_fast: HashSet<u32>,
 
     // The main channel to send requests to peer.
     pub tx: PeerTx,
@@ -275,6 +277,8 @@ impl LivePeerState {
             peer_interested: initial_interested,
             bitfield: BF::default(),
             inflight_requests: Default::default(),
+            suggested_pieces: Default::default(),
+            allowed_fast: Default::default(),
             tx,
             connection_kind,
         }

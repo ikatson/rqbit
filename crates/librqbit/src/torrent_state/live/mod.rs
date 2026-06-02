@@ -1078,6 +1078,46 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             Message::Cancel(_) => {
                 trace!("received \"cancel\", but we don't process it yet")
             }
+            Message::SuggestPiece(piece) => {
+                self.state.peers.with_live_mut(self.addr, "on_suggest", |l| {
+                    l.suggested_pieces.insert(piece);
+                });
+            }
+            Message::AllowedFast(piece) => {
+                self.state.peers.with_live_mut(self.addr, "on_allowed_fast", |l| {
+                    l.allowed_fast.insert(piece);
+                });
+            }
+            Message::RejectRequest(request) => {
+                let piece_index = match self.state.lengths.validate_piece_index(request.index) {
+                    Some(p) => p,
+                    None => return Ok(()),
+                };
+                let chunk_info = match self.state.lengths.chunk_info_from_received_data(
+                    piece_index,
+                    request.begin,
+                    request.length,
+                ) {
+                    Some(d) => d,
+                    None => return Ok(()),
+                };
+
+                self.state.peers.with_live_mut(self.addr, "on_reject_request", |l| {
+                    l.inflight_requests.remove(&chunk_info);
+                });
+
+                // Immediately release chunk and transition from Pending -> Missing
+                let mut g = self.state.lock_write("on_reject_request_release");
+                if let Some(pieces) = g.get_pieces_mut().ok() {
+                    pieces.unmark_chunk_downloaded(&chunk_info);
+                    // Let the ChunkTracker know the piece has broken chunks
+                    pieces.mark_piece_broken_if_not_have(piece_index);
+                }
+
+                // Signal task to trigger acquire_next_piece
+                self.state.new_pieces_notify.notify_waiters();
+                self.unchoke_notify.notify_waiters();
+            }
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
@@ -1393,27 +1433,71 @@ impl PeerHandler {
             .state
             .peers
             .with_live_mut(self.addr, "acquire_next_piece", |live| {
-                if self.lock_read("i am choked").i_am_choked {
-                    debug!("we are choked, can't acquire piece");
-                    return Ok(None);
-                }
                 let mut g = self.state.lock_write("acquire_next_piece");
-
                 let bf = &live.bitfield;
-                // Extract references to disjoint fields
+                let allowed_fast = &live.allowed_fast;
+                let suggested_pieces = &live.suggested_pieces;
+
                 let TorrentStateLocked {
                     pieces,
                     file_priorities,
                     ..
                 } = &mut **g;
                 let pieces = pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)?;
+
+                let i_am_choked = self.lock_read("i am choked").i_am_choked;
+
+                if i_am_choked {
+                    // check if we can download an allowed_fast piece
+                    let mut found_allowed = None;
+                    for &fast_piece in allowed_fast {
+                        if let Some(vp) = self.state.lengths.validate_piece_index(fast_piece) {
+                            if !pieces.chunks().is_piece_have(vp) {
+                                found_allowed = Some(vp);
+                                break;
+                            }
+                        }
+                    }
+                    if found_allowed.is_none() {
+                        debug!("we are choked, can't acquire piece");
+                        return Ok(None);
+                    }
+                }
+
+                // If not choked (or if we are, but allowed_fast check above would have exited if none available),
+                // check suggestions locally
+                let mut suggestion_to_acquire = None;
+                for &suggested in suggested_pieces {
+                    if let Some(vp) = self.state.lengths.validate_piece_index(suggested) {
+                        if !pieces.chunks().is_piece_have(vp) {
+                            // If choked, we can only acquire allowed_fast pieces
+                            if !i_am_choked || allowed_fast.contains(&suggested) {
+                                suggestion_to_acquire = Some(vp);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let peer_has_piece = |p: ValidPieceIndex| {
+                    if i_am_choked {
+                        allowed_fast.contains(&p.get()) && bf.get(p.get() as usize).map(|v| *v) == Some(true)
+                    } else {
+                        bf.get(p.get() as usize).map(|v| *v) == Some(true)
+                    }
+                };
+
+                let priority_pieces = suggestion_to_acquire.into_iter().chain(
+                    self.state.streams.iter_next_pieces(&self.state.lengths)
+                );
+
                 let result = pieces.acquire_piece(AcquireRequest {
                     peer: self.addr,
                     peer_avg_time: self.counters.average_piece_download_time(),
-                    priority_pieces: self.state.streams.iter_next_pieces(&self.state.lengths),
+                    priority_pieces,
                     file_priorities,
                     file_infos: &self.state.metadata.file_infos,
-                    peer_has_piece: |p| bf.get(p.get() as usize).map(|v| *v) == Some(true),
+                    peer_has_piece,
                     can_steal: |p| {
                         self.state.per_piece_locks[p.get_usize()]
                             .try_write()

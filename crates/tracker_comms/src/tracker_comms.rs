@@ -137,7 +137,153 @@ async fn udp_tracker_to_socket_addrs(
     Ok(res)
 }
 
+fn announce_to_scrape(url: &str) -> Option<String> {
+    if let Some(pos) = url.rfind('/') {
+        let (base, path) = url.split_at(pos + 1);
+        if path.starts_with("announce") {
+            return Some(format!("{}scrape{}", base, &path["announce".len()..]));
+        }
+    }
+    None
+}
+
+use std::collections::HashMap;
+use crate::tracker_comms_http::SwarmHealth;
+
+pub async fn scrape_trackers(
+    trackers: &[String],
+    info_hashes: &[[u8; 20]],
+) -> anyhow::Result<HashMap<[u8; 20], SwarmHealth>> {
+    let client = reqwest::Client::new();
+    let mut js = tokio::task::JoinSet::new();
+
+    for tracker in trackers {
+        let tracker = tracker.clone();
+        let info_hashes = info_hashes.to_vec();
+        let client = client.clone();
+
+        for chunk in info_hashes.chunks(74) {
+            let chunk = chunk.to_vec();
+            let tracker = tracker.clone();
+            let client = client.clone();
+            js.spawn(async move {
+                let res = tokio::time::timeout(Duration::from_secs(5), async {
+                    if tracker.starts_with("http") {
+                        TrackerComms::http_scrape(&client, &tracker, &chunk).await
+                    } else if tracker.starts_with("udp") {
+                        let cancel_token = tokio_util::sync::CancellationToken::new();
+                        let udp_client = crate::tracker_comms_udp::UdpTrackerClient::new(cancel_token, None).await?;
+
+                        // Parse tracker host using non-blocking lookup_host
+                        let u = url::Url::parse(&tracker)?;
+                        let host = u.host_str().unwrap_or("");
+                        let port = u.port().unwrap_or(6969);
+                        let addrs = tokio::net::lookup_host((host, port)).await?.collect::<Vec<_>>();
+
+                        if addrs.is_empty() {
+                            anyhow::bail!("no addrs");
+                        }
+                        let addr = addrs[0];
+
+                        let stats: Vec<crate::tracker_comms_udp::ScrapeStats> = udp_client.scrape(addr, &chunk).await?;
+                        let mut hm = HashMap::new();
+                        for (i, stat) in stats.into_iter().enumerate() {
+                            if let Some(hash) = chunk.get(i) {
+                                hm.insert(*hash, SwarmHealth {
+                                    complete: stat.seeders,
+                                    incomplete: stat.leechers,
+                                    downloaded: stat.completed,
+                                });
+                            }
+                        }
+                        Ok(crate::tracker_comms_http::ScrapeResponseOwned { files: hm })
+                    } else {
+                        anyhow::bail!("unsupported tracker protocol")
+                    }
+                }).await;
+
+                match res {
+                    Ok(Ok(val)) => Some(val),
+                    _ => None,
+                }
+            });
+        }
+    }
+
+    let mut final_stats: HashMap<[u8; 20], SwarmHealth> = HashMap::new();
+
+    while let Some(Ok(Some(scrape_response))) = js.join_next().await {
+        for (hash, health) in scrape_response.files {
+            if hash.len() == 20 {
+                let mut h = [0u8; 20];
+                h.copy_from_slice(&hash);
+                let entry = final_stats.entry(h).or_insert_with(SwarmHealth::default);
+                if health.complete > entry.complete {
+                    entry.complete = health.complete;
+                    entry.incomplete = health.incomplete;
+                    entry.downloaded = health.downloaded;
+                }
+            }
+        }
+    }
+
+    Ok(final_stats)
+}
+
 impl TrackerComms {
+    pub async fn http_scrape(client: &reqwest::Client, url: &str, info_hashes: &[[u8; 20]]) -> anyhow::Result<crate::tracker_comms_http::ScrapeResponseOwned> {
+        let scrape_url = announce_to_scrape(url).unwrap_or_else(|| {
+            if url.ends_with('/') {
+                format!("{}scrape", url)
+            } else {
+                format!("{}/scrape", url)
+            }
+        });
+
+        let mut query = String::new();
+        for (i, hash) in info_hashes.iter().enumerate() {
+            if i > 0 { query.push('&'); }
+            use std::fmt::Write;
+            write!(&mut query, "info_hash=").unwrap();
+            for b in hash {
+                write!(&mut query, "%{:02x}", b).unwrap();
+            }
+        }
+
+        let full_url = if scrape_url.contains('?') {
+            format!("{}&{}", scrape_url, query)
+        } else {
+            format!("{}?{}", scrape_url, query)
+        };
+
+        let response = client
+            .get(&full_url)
+            .send()
+            .await?
+            .bytes()
+            .await?;
+
+        let scrape_bytes = response.to_vec();
+
+        let mut files_owned = std::collections::HashMap::new();
+
+        {
+            let scrape: crate::tracker_comms_http::ScrapeResponseRaw = match bencode::from_bytes(&scrape_bytes) {
+                Ok(s) => s,
+                Err(_) => return Ok(crate::tracker_comms_http::ScrapeResponseOwned { files: files_owned }),
+            };
+            for (hash, val) in scrape.files {
+                if hash.as_ref().len() == 20 {
+                    let mut h = [0u8; 20];
+                    h.copy_from_slice(hash.as_ref());
+                    files_owned.insert(h, val);
+                }
+            }
+        }
+
+        Ok(crate::tracker_comms_http::ScrapeResponseOwned { files: files_owned })
+    }
+
     // TODO: fix too many args
     #[allow(clippy::too_many_arguments)]
     pub fn start(

@@ -15,7 +15,7 @@ use std::{
 };
 
 use buffers::ByteBuf;
-use librqbit_core::lengths::ValidPieceIndex;
+use librqbit_core::lengths::{ValidPieceIndex, ChunkInfo};
 use peer_binary_protocol::Piece;
 
 use crate::{
@@ -239,6 +239,10 @@ impl PieceTracker {
         self.chunks.mark_piece_broken_if_not_have(piece);
     }
 
+    pub fn mark_piece_broken_if_not_have(&mut self, piece: ValidPieceIndex) {
+        self.chunks.mark_piece_broken_if_not_have(piece);
+    }
+
     /// Release all pieces owned by a peer (on peer death).
     ///
     /// Moves all pieces owned by the peer from IN_FLIGHT back to QUEUED.
@@ -280,6 +284,10 @@ impl PieceTracker {
     }
 
     // === PASS-THROUGH METHODS ===
+
+    pub fn unmark_chunk_downloaded(&mut self, chunk_info: &ChunkInfo) {
+        self.chunks.unmark_chunk_downloaded(chunk_info)
+    }
 
     /// Mark a chunk as downloaded. Returns the result indicating if the piece is complete.
     pub fn mark_chunk_downloaded(
