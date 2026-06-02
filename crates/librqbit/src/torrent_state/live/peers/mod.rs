@@ -166,6 +166,7 @@ impl PeerStates {
                         begin: req.offset,
                         length: req.size,
                     })));
+                    live.late_cancelled_request_tolerance += 1;
                     false
                 } else {
                     true
