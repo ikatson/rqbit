@@ -5,7 +5,6 @@ use std::{
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
-    thread,
     time::Duration,
 };
 
@@ -513,7 +512,7 @@ fn main() -> anyhow::Result<()> {
         let token = token.clone();
         use signal_hook::{consts::SIGINT, consts::SIGTERM, iterator::Signals};
         let mut signals = Signals::new([SIGINT, SIGTERM])?;
-        thread::spawn(move || {
+        std::thread::spawn(move || {
             let mut cancel_triggered = false;
             while let Some(sig) = signals.forever().next() {
                 if cancel_triggered {
