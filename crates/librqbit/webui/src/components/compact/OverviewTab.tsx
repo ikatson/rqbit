@@ -6,6 +6,7 @@ import {
 } from "../../api-types";
 import { formatBytes } from "../../helper/formatBytes";
 import { getCompletionETA } from "../../helper/getCompletionETA";
+import { PlaylistLink } from "../buttons/PlaylistButton";
 import { PiecesCanvas } from "./PiecesCanvas";
 
 interface OverviewTabProps {
@@ -82,7 +83,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
           {stateDisplay.text}
         </span>
       </div>
-
       {/* Pieces visualization */}
       {totalPieces > 0 && (
         <div>
@@ -158,6 +158,12 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
         </div>
         <div className="truncate">
           <LV label="Output" value={torrent.output_folder} mono />
+        </div>
+        <div className="truncate">
+          <LV
+            label="Playlist"
+            value={<PlaylistLink torrentId={torrent.id} />}
+          />
         </div>
       </div>
 
