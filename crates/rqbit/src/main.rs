@@ -83,6 +83,8 @@ struct Opts {
         env = "RQBIT_LOG_FILE_RUST_LOG"
     )]
     log_file_rust_log: String,
+    #[arg(long = "log-file-json", env = "RQBIT_LOG_FILE_JSON")]
+    log_file_json: bool,
 
     /// The interval to poll trackers, e.g. 30s.
     /// Trackers send the refresh interval when we connect to them. Often this is
@@ -572,6 +574,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         }),
         log_file: opts.log_file.as_deref(),
         log_file_rust_log: Some(&opts.log_file_rust_log),
+        log_file_json: opts.log_file_json,
     })?;
 
     match librqbit::try_increase_nofile_limit() {

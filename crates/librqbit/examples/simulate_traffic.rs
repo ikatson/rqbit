@@ -337,6 +337,7 @@ async fn main() -> anyhow::Result<()> {
         default_rust_log_value: Some("info"),
         log_file: Some(&log_file),
         log_file_rust_log: Some(log_file_rust_log.as_deref().unwrap_or("debug")),
+        log_file_json: false,
     })?;
 
     info!("logging to file: {}", log_file);
