@@ -34,7 +34,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "9.0.0-beta.2"
+version = "9.0.0-rc.0"
 
 [profile.dev]
 panic = "abort"
@@ -54,18 +54,18 @@ debug = true
 
 [workspace.dependencies]
 # Internal crates - keys are import names used in source code, package is the actual crate name
-librqbit = { path = "crates/librqbit", version = "9.0.0-beta.2", default-features = false }
-bencode = { path = "crates/bencode", package = "librqbit-bencode", version = "9.0.0-beta.2", default-features = false }
-buffers = { path = "crates/buffers", package = "librqbit-buffers", version = "9.0.0-beta.2" }
-clone_to_owned = { path = "crates/clone_to_owned", package = "librqbit-clone-to-owned", version = "9.0.0-beta.2" }
-librqbit-core = { path = "crates/librqbit_core", version = "9.0.0-beta.2", default-features = false }
-dht = { path = "crates/dht", package = "librqbit-dht", version = "9.0.0-beta.2", default-features = false }
-librqbit-lsd = { path = "crates/librqbit_lsd", version = "9.0.0-beta.2", default-features = false }
-peer_binary_protocol = { path = "crates/peer_binary_protocol", package = "librqbit-peer-protocol", version = "9.0.0-beta.2", default-features = false }
-sha1w = { path = "crates/sha1w", package = "librqbit-sha1-wrapper", version = "9.0.0-beta.2", default-features = false }
-tracker_comms = { path = "crates/tracker_comms", package = "librqbit-tracker-comms", version = "9.0.0-beta.2", default-features = false }
-librqbit-upnp = { path = "crates/upnp", version = "9.0.0-beta.2" }
-upnp-serve = { path = "crates/upnp-serve", package = "librqbit-upnp-serve", version = "9.0.0-beta.2", default-features = false }
+librqbit = { path = "crates/librqbit", version = "9.0.0-rc.0", default-features = false }
+bencode = { path = "crates/bencode", package = "librqbit-bencode", version = "9.0.0-rc.0", default-features = false }
+buffers = { path = "crates/buffers", package = "librqbit-buffers", version = "9.0.0-rc.0" }
+clone_to_owned = { path = "crates/clone_to_owned", package = "librqbit-clone-to-owned", version = "9.0.0-rc.0" }
+librqbit-core = { path = "crates/librqbit_core", version = "9.0.0-rc.0", default-features = false }
+dht = { path = "crates/dht", package = "librqbit-dht", version = "9.0.0-rc.0", default-features = false }
+librqbit-lsd = { path = "crates/librqbit_lsd", version = "9.0.0-rc.0", default-features = false }
+peer_binary_protocol = { path = "crates/peer_binary_protocol", package = "librqbit-peer-protocol", version = "9.0.0-rc.0", default-features = false }
+sha1w = { path = "crates/sha1w", package = "librqbit-sha1-wrapper", version = "9.0.0-rc.0", default-features = false }
+tracker_comms = { path = "crates/tracker_comms", package = "librqbit-tracker-comms", version = "9.0.0-rc.0", default-features = false }
+librqbit-upnp = { path = "crates/upnp", version = "9.0.0-rc.0" }
+upnp-serve = { path = "crates/upnp-serve", package = "librqbit-upnp-serve", version = "9.0.0-rc.0", default-features = false }
 
 # External crates
 anyhow = "1"
