@@ -34,6 +34,7 @@ const SPEED_AVERAGE_WINDOW_MS = 5000;
 type PeerSortColumn =
   | "addr"
   | "connKind"
+  | "client"
   | "downloadSpeed"
   | "uploadSpeed"
   | "downloaded"
@@ -178,6 +179,11 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrent }) => {
             b.stats.conn_kind ?? "",
           );
           break;
+        case "client":
+          cmp = (a.stats.client_name ?? "").localeCompare(
+            b.stats.client_name ?? "",
+          );
+          break;
         case "downloadSpeed":
           cmp = a.downloadSpeed - b.downloadSpeed;
           break;
@@ -236,6 +242,14 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrent }) => {
                   sortDirection={sortDirection}
                 />
               </th>
+              <th className={headerClass} onClick={() => handleSort("client")}>
+                Client
+                <SortIcon
+                  column="client"
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                />
+              </th>
               <th
                 className={headerClass}
                 onClick={() => handleSort("downloadSpeed")}
@@ -286,7 +300,7 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrent }) => {
             {sortedPeers.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-2 py-3 text-center text-sm text-tertiary"
                 >
                   {peerSnapshot === null
@@ -300,6 +314,9 @@ export const PeersTab: React.FC<PeersTabProps> = ({ torrent }) => {
                   <td className="px-2 py-1 text-sm font-mono">{peer.addr}</td>
                   <td className="px-2 py-1 text-sm text-secondary">
                     {peer.stats.conn_kind ?? "-"}
+                  </td>
+                  <td className="px-2 py-1 text-sm text-secondary">
+                    {peer.stats.client_name ?? "-"}
                   </td>
                   <td className="px-2 py-1 text-sm text-success">
                     {formatSpeed(peer.downloadSpeed)}
