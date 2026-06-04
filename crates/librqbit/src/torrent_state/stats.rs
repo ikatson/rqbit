@@ -44,21 +44,23 @@ impl From<&TorrentStateLive> for LiveStats {
 }
 
 #[derive(Clone, Copy, Serialize, Debug)]
+#[serde(tag = "state", rename_all = "lowercase")]
 pub enum TorrentStatsState {
-    #[serde(rename = "initializing")]
-    Initializing,
-    #[serde(rename = "live")]
+    Initializing {
+        // Serialized as a top-level `initializing_paused` (not just `paused`) to
+        // avoid confusion with the `paused` state once flattened into the JSON.
+        #[serde(rename = "initializing_paused")]
+        paused: bool,
+    },
     Live,
-    #[serde(rename = "paused")]
     Paused,
-    #[serde(rename = "error")]
     Error,
 }
 
 impl std::fmt::Display for TorrentStatsState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TorrentStatsState::Initializing => f.write_str("initializing"),
+            TorrentStatsState::Initializing { .. } => f.write_str("initializing"),
             TorrentStatsState::Live => f.write_str("live"),
             TorrentStatsState::Paused => f.write_str("paused"),
             TorrentStatsState::Error => f.write_str("error"),
@@ -68,6 +70,10 @@ impl std::fmt::Display for TorrentStatsState {
 
 #[derive(Serialize, Debug)]
 pub struct TorrentStats {
+    // Flattens into `{ "state": "initializing", "paused": <bool> }` etc., so
+    // `state` stays a plain string on the wire and `paused` only appears for
+    // the `initializing` variant.
+    #[serde(flatten)]
     pub state: TorrentStatsState,
     pub file_progress: Vec<u64>,
     pub error: Option<String>,
@@ -132,6 +138,39 @@ impl TorrentStats {
             progress: self.progress_bytes,
             total: self.total_bytes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(state: TorrentStatsState) -> TorrentStats {
+        TorrentStats {
+            state,
+            file_progress: vec![],
+            error: None,
+            progress_bytes: 10,
+            uploaded_bytes: 0,
+            total_bytes: 100,
+            finished: false,
+            live: None,
+        }
+    }
+
+    #[test]
+    fn state_flattens_to_string_with_optional_paused() {
+        let init =
+            serde_json::to_value(sample(TorrentStatsState::Initializing { paused: true })).unwrap();
+        assert_eq!(init["state"], "initializing");
+        assert_eq!(init["initializing_paused"], true);
+
+        let live = serde_json::to_value(sample(TorrentStatsState::Live)).unwrap();
+        assert_eq!(live["state"], "live");
+        assert!(
+            live.get("initializing_paused").is_none(),
+            "initializing_paused must be absent for live"
+        );
     }
 }
 

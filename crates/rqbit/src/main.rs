@@ -1045,7 +1045,7 @@ async fn stats_printer(session: Arc<Session>) -> Result<(), &'static str> {
         session.with_torrents(|torrents| {
                 for (idx, torrent) in torrents {
                     let stats = torrent.stats();
-                    if let TorrentStatsState::Initializing = stats.state {
+                    if let TorrentStatsState::Initializing { .. } = stats.state {
                         let total = stats.total_bytes;
                         let progress = stats.progress_bytes;
                         let pct =  (progress as f64 / total as f64) * 100f64;
