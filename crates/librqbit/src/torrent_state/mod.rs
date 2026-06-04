@@ -396,14 +396,6 @@ impl ManagedTorrent {
                                 }
                                 Err(err) => {
                                     if init.is_pause_requested() {
-                                        if let Err(error) = init.files.release_files() {
-                                            warn!(
-                                                id=?init.shared.id,
-                                                info_hash=?init.shared.info_hash,
-                                                error=?error,
-                                                "error releasing files after paused initial check"
-                                            );
-                                        }
                                         debug!("initial check paused");
                                         t.state_change_notify.notify_waiters();
                                         return Ok(());
