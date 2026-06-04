@@ -1153,6 +1153,14 @@ impl PeerConnectionHandler for &'_ PeerHandler {
     }
 
     fn on_extended_handshake(&self, hs: &ExtendedHandshake<ByteBuf>) -> anyhow::Result<()> {
+        if let Some(client_name) = hs.v.as_ref().and_then(format_peer_client_name) {
+            self.state
+                .peers
+                .with_live_mut(self.addr, "update peer client name", |live| {
+                    live.client_name = Some(client_name);
+                });
+        }
+
         if let Some(reqq) = hs.reqq.and_then(|reqq| usize::try_from(reqq).ok())
             && reqq > 0
         {
@@ -2074,4 +2082,13 @@ impl PeerHandler {
             notify.notify_waiters();
         }
     }
+}
+
+fn format_peer_client_name(value: &ByteBuf<'_>) -> Option<String> {
+    let client_name = String::from_utf8_lossy(value.as_ref()).trim().to_string();
+    if client_name.is_empty() {
+        return None;
+    }
+
+    Some(client_name)
 }
