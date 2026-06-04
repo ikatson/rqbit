@@ -1,9 +1,9 @@
 use std::{
     marker::PhantomData,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     lengths::{ChunkInfo, ValidPieceIndex},
@@ -70,7 +70,11 @@ impl<'a> FileOps<'a> {
     }
 
     // Returns the bitvector with pieces we have.
-    pub fn initial_check(&self, progress: &AtomicU64) -> anyhow::Result<BF> {
+    pub fn initial_check(
+        &self,
+        progress: &AtomicU64,
+        pause_requested: &AtomicBool,
+    ) -> anyhow::Result<BF> {
         let mut have_pieces =
             BF::from_boxed_slice(vec![0u8; self.torrent.lengths().piece_bitfield_bytes()].into());
         let mut piece_files = Vec::<usize>::new();
@@ -106,6 +110,10 @@ impl<'a> FileOps<'a> {
         let mut read_buffer = vec![0u8; 65536];
 
         for piece_info in self.torrent.lengths().iter_piece_infos() {
+            if pause_requested.load(Ordering::Relaxed) {
+                bail!("initial check paused");
+            }
+
             piece_files.clear();
             let mut computed_hash = Sha1::new();
             let mut piece_remaining = piece_info.len as usize;
