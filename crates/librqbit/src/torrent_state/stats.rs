@@ -160,8 +160,8 @@ mod tests {
 
     #[test]
     fn state_flattens_to_string_with_optional_paused() {
-        let init = serde_json::to_value(sample(TorrentStatsState::Initializing { paused: true }))
-            .unwrap();
+        let init =
+            serde_json::to_value(sample(TorrentStatsState::Initializing { paused: true })).unwrap();
         assert_eq!(init["state"], "initializing");
         assert_eq!(init["initializing_paused"], true);
 
