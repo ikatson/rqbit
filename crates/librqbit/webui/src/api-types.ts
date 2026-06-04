@@ -85,6 +85,7 @@ export interface PeerStats {
   counters: PeerCounters;
   state: string;
   conn_kind: ConnectionKind | null;
+  client_name: string | null;
 }
 
 export interface PeerStatsSnapshot {

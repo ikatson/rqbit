@@ -457,6 +457,13 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
 
     const peers: Record<string, any> = {};
     const rand = seededRandom(index * 4421); // For other random values
+    const mockClients = [
+      "qBittorrent 4.6.5",
+      "Transmission 4.0.5",
+      "Deluge 2.1.1",
+      "rqbit 9.0.0",
+      "libtorrent 2.0.9",
+    ];
 
     for (const peer of peerList) {
       peers[`${peer.ip}:${peer.port}`] = {
@@ -476,6 +483,7 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
         },
         state: "live",
         conn_kind: peer.connKind,
+        client_name: mockClients[Math.floor(rand() * mockClients.length)],
       };
     }
 
