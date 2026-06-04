@@ -28,6 +28,7 @@ pub struct PeerStats {
     pub counters: PeerCounters,
     pub state: &'static str,
     pub conn_kind: Option<ConnectionKind>,
+    pub client_name: Option<String>,
 }
 
 impl From<&super::atomic::PeerCountersAtomic> for PeerCounters {
@@ -61,6 +62,10 @@ impl From<&Peer> for PeerStats {
             state: state.name(),
             conn_kind: match state {
                 PeerState::Live(l) => Some(l.connection_kind),
+                _ => None,
+            },
+            client_name: match state {
+                PeerState::Live(l) => l.client_name.clone(),
                 _ => None,
             },
         }
