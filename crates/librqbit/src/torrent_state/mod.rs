@@ -256,7 +256,7 @@ impl ManagedTorrent {
         f(&mut self.locked.write().state)
     }
 
-    pub(crate) fn with_chunk_tracker<R>(
+    pub fn with_chunk_tracker<R>(
         &self,
         f: impl FnOnce(&ChunkTracker) -> R,
     ) -> anyhow::Result<R> {
@@ -269,6 +269,90 @@ impl ManagedTorrent {
                 .context("error getting chunks")?)),
             _ => bail!("no chunk tracker, torrent neither paused nor live"),
         }
+    }
+
+    pub(crate) fn with_chunk_tracker_mut<R>(
+        &self,
+        f: impl FnOnce(&mut ChunkTracker) -> R,
+    ) -> anyhow::Result<R> {
+        let g = self.locked.read();
+        match &g.state {
+            ManagedTorrentState::Paused(_) => {
+                // Paused torrents can't update streaming window - they need to be live
+                bail!("cannot modify chunk tracker while paused")
+            }
+            ManagedTorrentState::Live(l) => Ok(f(l
+                .lock_write("chunk_tracker_mut")
+                .get_chunks_mut()
+                .context("error getting chunks")?)),
+            _ => bail!("no chunk tracker, torrent neither paused nor live"),
+        }
+    }
+
+    /// Update the streaming download window
+    ///
+    /// This restricts downloading to only pieces within the specified window
+    /// around the current playback position.
+    pub fn update_streaming_window(
+        &self,
+        file_id: usize,
+        current_position: u64,
+        backward_bytes: u64,
+        forward_bytes: u64,
+    ) -> anyhow::Result<crate::chunk_tracker::StreamingWindowUpdate> {
+        let metadata = self.metadata.load_full().context("metadata not available")?;
+        let file_info = metadata
+            .file_infos
+            .get(file_id)
+            .context("invalid file_id")?;
+
+        self.with_chunk_tracker_mut(|ct| {
+            ct.update_streaming_window(file_id, file_info, current_position, backward_bytes, forward_bytes)
+        })
+    }
+
+    /// Get the total number of pieces in the torrent
+    pub fn total_pieces(&self) -> usize {
+        self.with_metadata(|m| m.lengths().total_pieces() as usize)
+            .unwrap_or(0)
+    }
+
+    /// Get a bitfield of downloaded pieces as Vec<bool>
+    pub fn get_piece_bitfield(&self) -> Vec<bool> {
+        self.with_chunk_tracker(|ct| {
+            let have_pieces = ct.get_have_pieces();
+            have_pieces.as_slice()
+                .iter()
+                .map(|b| *b)
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Check if a specific piece is downloaded
+    pub fn is_piece_downloaded(&self, piece_index: usize) -> bool {
+        self.with_chunk_tracker(|ct| {
+            let lengths = ct.get_lengths();
+            lengths.validate_piece_index(piece_index as u32)
+                .map(|idx| ct.is_piece_have(idx))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Get the number of downloaded pieces
+    pub fn downloaded_pieces_count(&self) -> usize {
+        self.with_chunk_tracker(|ct| {
+            ct.get_have_pieces().as_slice().count_ones()
+        })
+        .unwrap_or(0)
+    }
+    
+    /// Get the current streaming window for a file
+    pub fn get_streaming_window(&self, file_id: usize) -> Option<std::ops::Range<u32>> {
+        self.with_chunk_tracker(|ct| ct.get_streaming_window(file_id))
+            .ok()
+            .flatten()
     }
 
     /// Get the live state if the torrent is live.
