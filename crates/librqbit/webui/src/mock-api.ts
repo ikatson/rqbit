@@ -291,6 +291,7 @@ function generateTorrentStats(id: number): TorrentStats {
     file_progress: fileProgress,
     progress_bytes: progressBytes,
     finished,
+    initializing_paused: state === "initializing" && id % 2 === 0,
     total_bytes: totalBytes,
     live:
       state === "live"

@@ -39,6 +39,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
   const totalBytes = statsResponse.total_bytes ?? 1;
   const progressBytes = statsResponse.progress_bytes ?? 0;
   const finished = statsResponse.finished || false;
+  const paused = statsResponse.initializing_paused ?? false;
 
   const totalPieces = torrent.total_pieces ?? 0;
   const downloadedPieces =
@@ -62,7 +63,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
   const stateDisplay = (() => {
     if (error) return { text: "Error", color: "text-error" };
     if (state === STATE_INITIALIZING)
-      return { text: "Initializing", color: "text-warning" };
+      return {
+        text: paused ? "Initializing (paused)" : "Initializing",
+        color: "text-warning",
+      };
     if (state === STATE_PAUSED)
       return { text: "Paused", color: "text-secondary" };
     if (state === STATE_LIVE && finished)

@@ -517,7 +517,7 @@ impl ManagedTorrent {
             let g = self.locked.read();
             match &g.state {
                 ManagedTorrentState::Initializing(i) => {
-                    resp.state = if g.paused { S::Paused } else { S::Initializing };
+                    resp.state = S::Initializing { paused: g.paused };
                     resp.progress_bytes = i.checked_bytes.load(Ordering::Relaxed);
                 }
                 ManagedTorrentState::Paused(p) => {
