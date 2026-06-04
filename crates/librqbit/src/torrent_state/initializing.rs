@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -30,6 +30,8 @@ pub struct TorrentStateInitializing {
     pub(crate) metadata: Arc<TorrentMetadata>,
     pub(crate) only_files: Option<Vec<usize>>,
     pub(crate) checked_bytes: AtomicU64,
+    pause_requested: AtomicBool,
+    check_running: AtomicBool,
     previously_errored: bool,
 }
 
@@ -47,6 +49,8 @@ impl TorrentStateInitializing {
             only_files,
             files,
             checked_bytes: AtomicU64::new(0),
+            pause_requested: AtomicBool::new(false),
+            check_running: AtomicBool::new(false),
             previously_errored,
         }
     }
@@ -54,6 +58,28 @@ impl TorrentStateInitializing {
     pub fn get_checked_bytes(&self) -> u64 {
         self.checked_bytes
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn request_pause(&self) {
+        self.pause_requested.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn clear_pause_request(&self) {
+        self.pause_requested.store(false, Ordering::Relaxed);
+    }
+
+    pub(crate) fn is_pause_requested(&self) -> bool {
+        self.pause_requested.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn try_start_check(&self) -> bool {
+        self.check_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    pub(crate) fn finish_check(&self) {
+        self.check_running.store(false, Ordering::Release);
     }
 
     async fn validate_fastresume(
@@ -191,7 +217,7 @@ impl TorrentStateInitializing {
                     .spawner
                     .block_in_place_with_semaphore(|| {
                         FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
-                            .initial_check(&self.checked_bytes)
+                            .initial_check(&self.checked_bytes, &self.pause_requested)
                     })
                     .await?;
                 bitv_factory
