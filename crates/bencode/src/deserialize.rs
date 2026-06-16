@@ -621,18 +621,17 @@ where
 #[cfg(test)]
 mod tests {
     use buffers::ByteBuf;
-    use serde::Deserialize;
 
     use crate::{WithRawBytes, from_bytes};
 
     #[test]
     fn test_deserialize_error_context() {
-        #[derive(Deserialize, Debug)]
+        #[derive(serde_derive::Deserialize, Debug)]
         struct Child {
             #[allow(unused)]
             key: u64,
         }
-        #[derive(Deserialize, Debug)]
+        #[derive(serde_derive::Deserialize, Debug)]
         struct Parent {
             #[allow(unused)]
             child: Child,
@@ -677,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_struct() {
-        #[derive(Deserialize, Eq, PartialEq, Debug)]
+        #[derive(serde_derive::Deserialize, Eq, PartialEq, Debug)]
         struct S<'a> {
             key: u32,
             #[serde(borrow)]
@@ -712,13 +711,13 @@ mod tests {
 
     #[test]
     fn test_with_raw_bytes() {
-        #[derive(Deserialize, Debug)]
+        #[derive(serde_derive::Deserialize, Debug)]
         struct TorrentInfo<'a> {
             #[serde(borrow)]
             name: ByteBuf<'a>,
         }
 
-        #[derive(Deserialize, Debug)]
+        #[derive(serde_derive::Deserialize, Debug)]
         struct Torrent<'a> {
             #[serde(borrow)]
             info: WithRawBytes<TorrentInfo<'a>, ByteBuf<'a>>,
@@ -743,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_struct_unknown_field() {
-        #[derive(Deserialize, Eq, PartialEq, Debug)]
+        #[derive(serde_derive::Deserialize, Eq, PartialEq, Debug)]
         struct S {
             key: u32,
         }
@@ -756,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_complex_struct() {
-        #[derive(Deserialize, Eq, PartialEq, Debug)]
+        #[derive(serde_derive::Deserialize, Eq, PartialEq, Debug)]
         struct S<'a> {
             key: u32,
             #[serde(borrow)]

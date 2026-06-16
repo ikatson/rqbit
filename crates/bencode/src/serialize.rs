@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde::{Serialize, Serializer, ser::Impossible};
 
 use buffers::ByteBufOwned;
@@ -97,7 +95,7 @@ impl<W: std::io::Write> serde::ser::SerializeTuple for SerializeTuple<'_, W> {
 
 struct SerializeMap<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
-    tmp: BTreeMap<ByteBufOwned, ByteBufOwned>,
+    tmp: Vec<(ByteBufOwned, ByteBufOwned)>,
     last_key: Option<ByteBufOwned>,
 }
 impl<W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'_, W> {
@@ -125,11 +123,13 @@ impl<W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'_, W> {
         let mut ser = BencodeSerializer::new(&mut buf);
         value.serialize(&mut ser)?;
         self.tmp
-            .insert(self.last_key.take().unwrap(), ByteBufOwned::from(buf));
+            .push((self.last_key.take().unwrap(), ByteBufOwned::from(buf)));
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        self.tmp
+            .sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
         for (key, value) in self.tmp {
             self.ser.write_bytes(key.as_ref())?;
             self.ser.write_raw(value.as_ref())?;
@@ -140,7 +140,7 @@ impl<W: std::io::Write> serde::ser::SerializeMap for SerializeMap<'_, W> {
 
 struct SerializeStruct<'ser, W: std::io::Write> {
     ser: &'ser mut BencodeSerializer<W>,
-    tmp: BTreeMap<&'static str, ByteBufOwned>,
+    tmp: Vec<(&'static str, ByteBufOwned)>,
 }
 impl<W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'_, W> {
     type Ok = ();
@@ -154,11 +154,12 @@ impl<W: std::io::Write> serde::ser::SerializeStruct for SerializeStruct<'_, W> {
         let mut buf = Vec::new();
         let mut ser = BencodeSerializer::new(&mut buf);
         value.serialize(&mut ser)?;
-        self.tmp.insert(key, ByteBufOwned::from(buf));
+        self.tmp.push((key, ByteBufOwned::from(buf)));
         Ok(())
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
+    fn end(mut self) -> Result<Self::Ok, Self::Error> {
+        self.tmp.sort_unstable_by_key(|&(k, _)| k);
         for (key, value) in self.tmp {
             self.ser.write_bytes(key.as_bytes())?;
             self.ser.write_raw(value.as_ref())?;
@@ -331,12 +332,12 @@ impl<'ser, W: std::io::Write> Serializer for &'ser mut BencodeSerializer<W> {
     fn serialize_struct(
         self,
         _name: &'static str,
-        _len: usize,
+        len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
         self.write_byte(b'd')?;
         Ok(SerializeStruct {
             ser: self,
-            tmp: Default::default(),
+            tmp: Vec::with_capacity(len),
         })
     }
 
@@ -403,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_struct() {
-        #[derive(Serialize, Debug)]
+        #[derive(serde_derive::Serialize, Debug)]
         struct S<'a> {
             key: u32,
             value: ByteBuf<'a>,
@@ -429,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_struct_with_option() {
-        #[derive(Serialize, Debug)]
+        #[derive(serde_derive::Serialize, Debug)]
         struct S<'a> {
             key: u32,
             #[serde(skip_serializing_if = "Option::is_none")]
