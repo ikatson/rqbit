@@ -7,7 +7,7 @@ pub mod utils;
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
@@ -229,6 +229,11 @@ impl ManagedTorrent {
 
     pub fn shared(&self) -> &ManagedTorrentShared {
         &self.shared
+    }
+
+    /// The resolved on-disk folder this torrent's files are written under.
+    pub fn output_folder(&self) -> &Path {
+        &self.shared.options.output_folder
     }
 
     pub fn with_metadata<R>(
