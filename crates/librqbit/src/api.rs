@@ -511,9 +511,8 @@ impl Api {
                 let len = mgr
                     .with_metadata(|m| m.lengths().total_pieces())
                     .unwrap_or(0);
-                let bf = BF::from_boxed_slice(
-                    vec![0u8; (len as usize).div_ceil(8)].into_boxed_slice(),
-                );
+                let bf =
+                    BF::from_boxed_slice(vec![0u8; (len as usize).div_ceil(8)].into_boxed_slice());
                 Ok((bf, len))
             }
         }
