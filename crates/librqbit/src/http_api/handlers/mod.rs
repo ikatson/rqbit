@@ -110,10 +110,7 @@ pub fn make_api_router(state: ApiState) -> Router {
 
     if !state.opts.read_only {
         api_router = api_router
-            .route(
-                "/torrents",
-                post(torrents::h_torrents_post).layer(DefaultBodyLimit::max(100 * 1024 * 1024)),
-            )
+            .route("/torrents", post(torrents::h_torrents_post))
             .route(
                 "/torrents/limits",
                 post(configure::h_update_session_ratelimits),
@@ -142,5 +139,7 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route("/torrents/create", post(torrents::h_create_torrent));
     }
 
-    api_router.with_state(state)
+    api_router
+        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+        .with_state(state)
 }
