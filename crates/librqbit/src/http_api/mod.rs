@@ -37,6 +37,8 @@ pub struct HttpApiOptions {
     pub basic_auth: Option<(String, String)>,
     // Allow creating torrents via API.
     pub allow_create: bool,
+    /// Maximum upload body size.
+    pub max_upload_body_size: Option<usize>,
     #[cfg(feature = "prometheus")]
     pub prometheus_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
 }

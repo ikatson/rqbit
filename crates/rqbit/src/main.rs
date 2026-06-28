@@ -102,6 +102,13 @@ struct Opts {
     #[arg(long = "http-api-allow-create", env = "RQBIT_HTTP_API_ALLOW_CREATE")]
     http_api_allow_create: bool,
 
+    /// Upload body size limit in bytes.
+    #[arg(
+        long = "http-api-max-upload-size",
+        env = "RQBIT_HTTP_API_MAX_UPLOAD_SIZE"
+    )]
+    http_api_max_upload_size: Option<usize>,
+
     /// Set this flag if you want to use tokio's single threaded runtime.
     /// It MAY perform better, but the main purpose is easier debugging, as time
     /// profilers work better with this one.
@@ -689,6 +696,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             None
         },
         allow_create: opts.http_api_allow_create,
+        max_upload_body_size: opts.http_api_max_upload_size,
 
         // We need to install prometheus recorder early before we registered any metrics.
         #[cfg(feature = "prometheus")]
