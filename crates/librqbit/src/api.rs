@@ -500,22 +500,15 @@ impl Api {
 
     pub fn api_dump_haves(&self, idx: TorrentIdOrHash) -> Result<(BF, u32)> {
         let mgr = self.mgr_handle(idx)?;
-        let result = mgr.with_chunk_tracker(|chunks| {
+        mgr.with_chunk_tracker(|chunks| {
             let bf = BF::from_bitslice(chunks.get_have_pieces().as_slice());
             let len = chunks.get_lengths().total_pieces();
             (bf, len)
-        });
-        match result {
-            Ok(r) => Ok(r),
-            Err(_) => {
-                let len = mgr
-                    .with_metadata(|m| m.lengths().total_pieces())
-                    .unwrap_or(0);
-                let bf =
-                    BF::from_boxed_slice(vec![0u8; (len as usize).div_ceil(8)].into_boxed_slice());
-                Ok((bf, len))
-            }
-        }
+        })
+        .with_status_error(
+            StatusCode::PRECONDITION_FAILED,
+            crate::Error::TorrentIsNotLive,
+        )
     }
 
     pub async fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {

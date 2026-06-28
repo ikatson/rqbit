@@ -305,6 +305,7 @@ impl TestHarness {
                 read_only: false,
                 basic_auth: None,
                 allow_create: true,
+                max_upload_body_size: None,
                 prometheus_handle: None,
             }),
         );

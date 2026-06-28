@@ -40,7 +40,8 @@ pub async fn h_torrents_post(
 ) -> Result<impl IntoResponse> {
     let is_url = params.is_url;
     let opts = params.into_add_torrent_options();
-    let data = to_bytes(body, 100 * 1024 * 1024)
+    let max_size = state.opts.max_upload_body_size.unwrap_or(10 * 1024 * 1024);
+    let data = to_bytes(body, max_size)
         .await
         .map_err(|_| ApiError::from((StatusCode::PAYLOAD_TOO_LARGE, "body too large")))?
         .to_vec();
