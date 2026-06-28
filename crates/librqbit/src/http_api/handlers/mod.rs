@@ -13,7 +13,6 @@ use axum::response::Redirect;
 
 use axum::{
     Router,
-    extract::DefaultBodyLimit,
     response::IntoResponse,
     routing::{get, post},
 };
@@ -139,7 +138,5 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route("/torrents/create", post(torrents::h_create_torrent));
     }
 
-    api_router
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
-        .with_state(state)
+    api_router.with_state(state)
 }
