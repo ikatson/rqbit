@@ -362,6 +362,15 @@ struct DownloadOpts {
     /// Disable HTTP API entirely.
     #[arg(long = "disable-http-api")]
     disable_http_api: bool,
+
+    /// Forward the listen port through UPnP on your router.
+    ///
+    /// By default "rqbit download" does not port-forward, as it is an
+    /// ephemeral one-shot process. Set this to forward the port for the
+    /// duration of the download (e.g. to become connectable). Still respects
+    /// the global --disable-upnp-port-forward.
+    #[arg(long = "upnp-port-forward", env = "RQBIT_UPNP_PORT_FORWARD")]
+    upnp_port_forward: bool,
 }
 
 #[derive(Clone)]
@@ -775,8 +784,10 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             }
 
             if let Some(listen) = sopts.listen.as_mut() {
-                // We are creating an ephemeral download, no point in port forwarding.
-                listen.enable_upnp_port_forwarding = false;
+                // "rqbit download" is ephemeral, so by default don't port-forward.
+                // --upnp-port-forward opts in, but the global --disable-upnp-port-forward
+                // still acts as an off-switch.
+                listen.enable_upnp_port_forwarding &= download_opts.upnp_port_forward;
             }
 
             let torrent_opts = || AddTorrentOptions {
