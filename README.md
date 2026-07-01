@@ -55,6 +55,16 @@ Usage from CLI
 rqbit --enable-upnp-server server start ...
 ```
 
+## mDNS advertising
+
+rqbit can advertise its HTTP API on your LAN via mDNS/DNS-SD, so you can open the Web UI at http://rqbit.local:3030/web/ from any device without knowing the server's IP.
+
+Usage from CLI (requires a non-loopback listen address):
+
+```
+rqbit --enable-mdns --http-api-listen-addr 0.0.0.0:3030 server start ...
+```
+
 ## IPv6
 
 rqbit supports IPv6. By default it listens on all interfaces in dualstack mode. It can work even if there's no IPv6 enabled.
@@ -177,6 +187,7 @@ Use a regex here to select files by their names.
 - Streaming, with seeking
 - UPNP port forwarding to your router
 - UPNP Media Server
+- mDNS advertising
 - Fastresume (no rehashing)
 - Download / upload rate limiting
 - Prometheus metrics at ```/metrics``` and ```/torrents/<id_or_infohash>/peer_stats/prometheus```

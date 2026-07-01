@@ -54,6 +54,7 @@ bytes.workspace = true
 openssl = { workspace = true, features = ["vendored"], optional = true }
 upnp-serve.workspace = true
 metrics-exporter-prometheus = { workspace = true, optional = true }
+mdns-sd.workspace = true
 libc.workspace = true
 signal-hook.workspace = true
 tokio-util.workspace = true
