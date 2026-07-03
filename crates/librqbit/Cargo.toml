@@ -74,7 +74,6 @@ regex.workspace = true
 reqwest = { workspace = true, features = ["json", "socks", "stream"] }
 urlencoding.workspace = true
 byteorder.workspace = true
-bincode.workspace = true
 bitvec.workspace = true
 parking_lot.workspace = true
 tracing.workspace = true
