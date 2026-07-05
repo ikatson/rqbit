@@ -109,6 +109,14 @@ impl TorrentStorage for FilesystemStorage {
         }))
     }
 
+    fn release_files(&self) -> anyhow::Result<()> {
+        for file in &self.opened_files {
+            file.close();
+        }
+
+        Ok(())
+    }
+
     fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
         let path = self.output_folder.join(path);
         if !path.is_dir() {
