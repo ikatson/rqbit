@@ -1339,6 +1339,39 @@ impl DhtState {
         RequestPeersStream::new(self.clone(), info_hash, announce_port)
     }
 
+    /// Inject additional bootstrap nodes (e.g. from a .torrent BEP-5 `nodes`
+    /// list) into the routing table by resolving each host and running find_node
+    /// against it. Each entry is `(host, port)` where host may be a hostname or an
+    /// IPv4/IPv6 literal. Runs in the background, best-effort.
+    pub fn add_bootstrap_nodes(self: &Arc<Self>, nodes: Vec<(String, u16)>) {
+        if nodes.is_empty() {
+            return;
+        }
+        let dht = self.clone();
+        spawn_with_cancel(
+            debug_span!(parent: None, "add_bootstrap_nodes", count = nodes.len()),
+            "add_bootstrap_nodes",
+            self.cancellation_token.clone(),
+            async move {
+                let mut futs = FuturesUnordered::new();
+                for (host, port) in nodes {
+                    let dht = dht.clone();
+                    futs.push(async move {
+                        // (host, port) impls ToSocketAddrs: DNS names and IPv4/IPv6
+                        // literals (no bracketing needed) are all handled here.
+                        dht.resolve_and_find_nodes((host.as_str(), port)).await
+                    });
+                }
+                while let Some(res) = futs.next().await {
+                    if let Err(e) = res {
+                        debug!("error adding bootstrap node: {e:#}");
+                    }
+                }
+                Ok::<(), crate::Error>(())
+            },
+        );
+    }
+
     /// Run find_node against the given addresses (split by IP family) to populate
     /// the routing table.
     async fn find_nodes_in_routing_table(
@@ -1492,5 +1525,44 @@ mod tests {
             wait_for_node_in_table(&a, c_id, Duration::from_secs(10)).await,
             "A should have learned about node C via bootstrap"
         );
+    }
+
+    /// `add_bootstrap_nodes` should populate the routing table at runtime, using
+    /// only the DHT (not initial peers). A does not bootstrap off B here, so the
+    /// only way it can learn about C is via the added node.
+    #[tokio::test]
+    async fn add_bootstrap_nodes_populates_table() {
+        let b_id = Id20::new([0x11; 20]);
+        let c_id = Id20::new([0xcc; 20]);
+        let c_addr: SocketAddr = (Ipv4Addr::LOCALHOST, 9999).into();
+
+        let mut b_table = RoutingTable::new(b_id, None);
+        b_table.add_node(c_id, c_addr);
+        let b = spawn_node(b_id, Some(b_table), vec![UNREACHABLE_BOOTSTRAP.to_string()]).await;
+
+        // A's own bootstrap goes nowhere; it starts with an empty routing table.
+        let a_id = Id20::new([0x22; 20]);
+        let a = spawn_node(a_id, None, vec![UNREACHABLE_BOOTSTRAP.to_string()]).await;
+
+        a.add_bootstrap_nodes(vec![("127.0.0.1".to_string(), b.listen_addr().port())]);
+
+        assert!(
+            wait_for_node_in_table(&a, c_id, Duration::from_secs(10)).await,
+            "A should have learned about node C via add_bootstrap_nodes"
+        );
+    }
+
+    /// Empty input is a no-op and must not panic.
+    #[tokio::test]
+    async fn add_bootstrap_nodes_empty_is_noop() {
+        let a = spawn_node(
+            Id20::new([0x33; 20]),
+            None,
+            vec![UNREACHABLE_BOOTSTRAP.to_string()],
+        )
+        .await;
+        a.add_bootstrap_nodes(vec![]);
+        let count = a.with_routing_tables(|v4, v6| v4.iter().count() + v6.iter().count());
+        assert_eq!(count, 0);
     }
 }
