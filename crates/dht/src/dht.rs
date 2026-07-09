@@ -979,26 +979,7 @@ impl DhtWorker {
     }
 
     async fn bootstrap_hostname(&self, hostname: &str) -> crate::Result<()> {
-        let addrs = tokio::net::lookup_host(hostname)
-            .await
-            .map_err(|err| Error::lookup(hostname, err))?
-            .collect::<Vec<_>>();
-        let v4 = RecursiveRequest::find_node_for_routing_table(
-            self.dht.clone(),
-            self.dht.id,
-            addrs.iter().copied().filter(|a| a.is_ipv4()),
-        )
-        .instrument(debug_span!("v4"));
-
-        let v6 = RecursiveRequest::find_node_for_routing_table(
-            self.dht.clone(),
-            self.dht.id,
-            addrs.iter().copied().filter(|a| a.is_ipv6()),
-        )
-        .instrument(debug_span!("v6"));
-
-        let (v4, v6) = tokio::join!(v4, v6);
-        v4.or(v6)
+        self.dht.resolve_and_find_nodes(hostname).await
     }
 
     async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> crate::Result<()> {
@@ -1356,6 +1337,46 @@ impl DhtState {
         announce_port: Option<u16>,
     ) -> RequestPeersStream {
         RequestPeersStream::new(self.clone(), info_hash, announce_port)
+    }
+
+    /// Run find_node against the given addresses (split by IP family) to populate
+    /// the routing table.
+    async fn find_nodes_in_routing_table(
+        self: &Arc<Self>,
+        addrs: &[SocketAddr],
+    ) -> crate::Result<()> {
+        let v4 = RecursiveRequest::find_node_for_routing_table(
+            self.clone(),
+            self.id,
+            addrs.iter().copied().filter(|a| a.is_ipv4()),
+        )
+        .instrument(debug_span!("v4"));
+
+        let v6 = RecursiveRequest::find_node_for_routing_table(
+            self.clone(),
+            self.id,
+            addrs.iter().copied().filter(|a| a.is_ipv6()),
+        )
+        .instrument(debug_span!("v6"));
+
+        let (v4, v6) = tokio::join!(v4, v6);
+        v4.or(v6)
+    }
+
+    /// Resolve `addr` (a "host:port" string or a (host, port) tuple, which may be
+    /// a hostname or IPv4/IPv6 literal) and populate the routing table from it.
+    async fn resolve_and_find_nodes(
+        self: &Arc<Self>,
+        addr: impl tokio::net::ToSocketAddrs + std::fmt::Debug,
+    ) -> crate::Result<()> {
+        // lookup_host consumes `addr` and Error::lookup wants a &str, so derive
+        // the error label up front from the Debug repr.
+        let label = format!("{addr:?}");
+        let addrs = tokio::net::lookup_host(addr)
+            .await
+            .map_err(|err| Error::lookup(&label, err))?
+            .collect::<Vec<_>>();
+        self.find_nodes_in_routing_table(&addrs).await
     }
 
     pub fn listen_addr(&self) -> SocketAddr {
