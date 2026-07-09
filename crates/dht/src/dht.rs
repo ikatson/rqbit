@@ -1396,3 +1396,80 @@ impl FromSocketAddr for SocketAddrV6 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        time::Duration,
+    };
+
+    use librqbit_core::hash_id::Id20;
+
+    use crate::{Dht, DhtConfig, DhtState, routing_table::RoutingTable};
+
+    /// Spawn an in-process DHT node bound to an ephemeral v4 loopback port.
+    async fn spawn_node(
+        peer_id: Id20,
+        routing_table: Option<RoutingTable>,
+        bootstrap_addrs: Vec<String>,
+    ) -> Dht {
+        DhtState::with_config(DhtConfig {
+            peer_id: Some(peer_id),
+            bootstrap_addrs: Some(bootstrap_addrs),
+            routing_table,
+            listen_addr: Some((Ipv4Addr::LOCALHOST, 0).into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Poll the routing tables until a node with the given id shows up, or time out.
+    async fn wait_for_node_in_table(dht: &Dht, id: Id20, timeout: Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let found = dht
+                    .with_routing_tables(|v4, v6| v4.iter().chain(v6.iter()).any(|n| n.id() == id));
+                if found {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    // An unreachable bootstrap addr keeps a node's bootstrap task pending (retrying)
+    // so its worker stays alive without ever contacting the public DHT.
+    const UNREACHABLE_BOOTSTRAP: &str = "127.0.0.1:1";
+
+    /// Bootstrapping a node against a peer that knows another node should pull that
+    /// other node into the local routing table via find_node recursion.
+    #[tokio::test]
+    async fn bootstrap_populates_routing_table() {
+        let b_id = Id20::new([0x11; 20]);
+        let c_id = Id20::new([0xcc; 20]);
+        let c_addr: SocketAddr = (Ipv4Addr::LOCALHOST, 9999).into();
+
+        // Node B is seeded with a single known node C.
+        let mut b_table = RoutingTable::new(b_id, None);
+        b_table.add_node(c_id, c_addr);
+        let b = spawn_node(b_id, Some(b_table), vec![UNREACHABLE_BOOTSTRAP.to_string()]).await;
+
+        // Node A bootstraps off B, so it should learn about C.
+        let a_id = Id20::new([0x22; 20]);
+        let a = spawn_node(
+            a_id,
+            None,
+            vec![format!("127.0.0.1:{}", b.listen_addr().port())],
+        )
+        .await;
+
+        assert!(
+            wait_for_node_in_table(&a, c_id, Duration::from_secs(10)).await,
+            "A should have learned about node C via bootstrap"
+        );
+    }
+}
