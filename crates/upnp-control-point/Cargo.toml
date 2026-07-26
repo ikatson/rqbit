@@ -1,0 +1,29 @@
+[package]
+name = "librqbit-upnp-control-point"
+version.workspace = true
+edition = "2024"
+description = "UPnP Media Renderer Control Point - discovers renderers and sends AVTransport/RenderingControl commands"
+license = "Apache-2.0"
+documentation = "https://docs.rs/librqbit-upnp-control-point"
+repository = "https://github.com/ikatson/rqbit"
+readme = "README.md"
+
+[dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+tracing.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+httparse.workspace = true
+librqbit-upnp.workspace = true
+url = { workspace = true, features = ["serde"] }
+parking_lot.workspace = true
+tokio-util.workspace = true
+reqwest.workspace = true
+quick-xml = { workspace = true, features = ["serialize"] }
+futures.workspace = true
+librqbit-dualstack-sockets.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["full"] }
