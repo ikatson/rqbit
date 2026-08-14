@@ -1,8 +1,8 @@
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::IoSlice,
     ops::{Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Context;
@@ -101,9 +101,12 @@ impl OurFileExt for File {
 
 #[derive(Default, Debug)]
 struct OpenedFileLocked {
-    #[allow(unused)]
     path: PathBuf,
     fd: Option<File>,
+    // When `lazy`, `fd` is opened on first access (using `path` + `overwrite`)
+    // instead of up front at init.
+    lazy: bool,
+    overwrite: bool,
     #[cfg(windows)]
     tried_marking_sparse: bool,
 }
@@ -133,6 +136,8 @@ impl OpenedFile {
             file: RwLock::new(OpenedFileLocked {
                 path,
                 fd: Some(f),
+                lazy: false,
+                overwrite: false,
                 #[cfg(windows)]
                 tried_marking_sparse: false,
             }),
@@ -145,6 +150,45 @@ impl OpenedFile {
         }
     }
 
+    /// A real file opened on first access instead of up front at init.
+    pub fn new_lazy(path: PathBuf, overwrite: bool) -> Self {
+        Self {
+            file: RwLock::new(OpenedFileLocked {
+                path,
+                fd: None,
+                lazy: true,
+                overwrite,
+                #[cfg(windows)]
+                tried_marking_sparse: false,
+            }),
+        }
+    }
+
+    /// Open the backing file if it isn't open yet. A no-op for eager or padding
+    /// handles and for already-open files. The open happens once, under the
+    /// write lock.
+    fn ensure_open(&self) -> crate::Result<()> {
+        {
+            let g = self.file.read();
+            if g.fd.is_some() || !g.lazy {
+                return Ok(());
+            }
+        }
+        let mut g = self.file.write();
+        if g.fd.is_none() && g.lazy {
+            let f = open_file(&g.path, g.overwrite).map_err(Error::Anyhow)?;
+            g.fd = Some(f);
+        }
+        Ok(())
+    }
+
+    /// The path of a lazily-openable file not yet opened (for stat-first
+    /// checks). `None` once opened, or for eager/padding handles.
+    pub fn lazy_unopened_path(&self) -> Option<PathBuf> {
+        let g = self.file.read();
+        (g.lazy && g.fd.is_none()).then(|| g.path.clone())
+    }
+
     pub fn take_clone(&self) -> anyhow::Result<Self> {
         let f = std::mem::take(&mut *self.file.write());
         Ok(Self {
@@ -153,6 +197,7 @@ impl OpenedFile {
     }
 
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
+        self.ensure_open()?;
         RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
             .ok()
             .ok_or(Error::FsFileIsNone)
@@ -160,6 +205,7 @@ impl OpenedFile {
 
     #[allow(dead_code)]
     pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
+        self.ensure_open()?;
         RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
             .ok()
             .ok_or(Error::FsFileIsNone)
@@ -167,6 +213,7 @@ impl OpenedFile {
 
     #[cfg(windows)]
     pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
+        self.ensure_open()?;
         {
             let g = self.file.read();
             if g.tried_marking_sparse {
@@ -184,6 +231,35 @@ impl OpenedFile {
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
     }
+}
+
+/// Open (creating dirs/file as needed) a torrent file for read+write. Shared by
+/// eager `init` and lazy `ensure_open` so both use identical semantics.
+pub(super) fn open_file(full_path: &Path, allow_overwrite: bool) -> anyhow::Result<File> {
+    std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+    let f = if allow_overwrite {
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(full_path)
+            .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+    } else {
+        // create_new does not seem to work with read(true), so calling this twice.
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(full_path)
+            .with_context(|| {
+                format!(
+                    "error creating a new file (because allow_overwrite = false) {:?}",
+                    full_path
+                )
+            })?;
+        OpenOptions::new().read(true).write(true).open(full_path)?
+    };
+    Ok(f)
 }
 
 #[cfg(test)]
