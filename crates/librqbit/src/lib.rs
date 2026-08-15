@@ -82,6 +82,7 @@ mod vectored_traits;
 #[cfg(feature = "watch")]
 pub mod watch;
 
+pub use chunk_tracker::StreamingWindowUpdate;
 pub use error::{Error, Result};
 
 pub use api::Api;

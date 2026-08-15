@@ -152,6 +152,13 @@ impl TorrentStateLocked {
         self.pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)
     }
 
+    pub(crate) fn get_chunks_mut(&mut self) -> crate::Result<&mut ChunkTracker> {
+        self.pieces
+            .as_mut()
+            .map(|p| p.chunks_mut())
+            .ok_or(Error::ChunkTrackerEmpty)
+    }
+
     fn try_flush_bitv(&mut self, shared: &ManagedTorrentShared, flush_async: bool) {
         if self.unflushed_bitv_bytes == 0 {
             return;
