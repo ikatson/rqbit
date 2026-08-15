@@ -55,9 +55,10 @@ jobs:
           done
           mv target/release/rqbit-desktop ${{ github.workspace }}/builds/rqbit-desktop-linux-${{ matrix.arch }}
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
           files: |
             ${{ github.workspace }}/builds/*
 
@@ -124,10 +125,11 @@ jobs:
           cd target/cross
           cp -l ${{ matrix.platform }}/rqbit rqbit-${{ steps.gen_artifact_key.outputs.key }}
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v3
         if: ${{ github.ref_type == 'tag' }}
         with:
           generate_release_notes: true
+          draft: true
           files: |
             target/cross/rqbit-${{ steps.gen_artifact_key.outputs.key }}
 
