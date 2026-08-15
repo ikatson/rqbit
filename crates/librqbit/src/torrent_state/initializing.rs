@@ -9,7 +9,8 @@ use std::{
 use anyhow::Context;
 
 use itertools::Itertools;
-use rand::Rng;
+
+use rand::RngExt;
 use size_format::SizeFormatterBinary as SF;
 use tracing::{info, trace, warn};
 

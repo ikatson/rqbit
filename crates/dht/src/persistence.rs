@@ -122,7 +122,7 @@ impl PersistentDht {
 
             if let Some(parent) = config_filename.parent() {
                 std::fs::create_dir_all(parent)
-                    .with_context(|| format!("error creating dir {:?}", &parent))?;
+                    .with_context(|| format!("error creating dir {:?}", parent))?;
             }
 
             let de = match OpenOptions::new().read(true).open(&config_filename) {

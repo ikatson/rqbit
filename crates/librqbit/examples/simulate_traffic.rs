@@ -20,7 +20,7 @@ use librqbit::{
 };
 use librqbit_core::constants::CHUNK_SIZE;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
-use rand::{RngCore, SeedableRng, seq::IndexedRandom};
+use rand::{Rng, SeedableRng, seq::IndexedRandom};
 use tracing::info;
 
 /// Base port for test sessions. Main uses 50000, peers use 50001+.
@@ -41,7 +41,7 @@ fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     info!(?path, "creating temp file");
 
     const BUF_SIZE: usize = 8192 * 16;
-    let mut rng = rand::rngs::SmallRng::from_os_rng();
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(rand::random());
     let mut write_buf = [0; BUF_SIZE];
     while size > 0 {
         rng.fill_bytes(&mut write_buf[..]);
