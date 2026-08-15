@@ -4,7 +4,7 @@ use bencode::ByteBufOwned;
 use chrono::{DateTime, Utc};
 use librqbit_core::{compact_ip::CompactSocketAddr, hash_id::Id20};
 use parking_lot::RwLock;
-use rand::RngCore;
+use rand::Rng;
 use serde::{
     Deserialize, Serialize,
     ser::{SerializeMap, SerializeStruct},

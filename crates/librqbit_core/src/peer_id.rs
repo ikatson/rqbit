@@ -1,5 +1,5 @@
 use crate::hash_id::Id20;
-use rand::{self, RngCore};
+use rand::{self, Rng};
 
 /// Return the version of the invoking crate as a tuple
 #[macro_export]

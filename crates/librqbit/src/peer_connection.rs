@@ -404,7 +404,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             // This is poor-mans fault injection for running e2e tests.
                             use crate::tests::test_util::TestPeerMetadata;
                             let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
-                            use rand::Rng;
+                            use rand::RngExt;
                             if rand::rng().random_bool(tpm.disconnect_probability()) {
                                 return Err(Error::TestDisconnect);
                             }

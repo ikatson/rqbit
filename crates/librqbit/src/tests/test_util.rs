@@ -8,7 +8,7 @@ use std::{
 use anyhow::bail;
 use librqbit_core::{Id20, crate_version, peer_id::generate_azereus_style};
 use parking_lot::RwLock;
-use rand::{Rng, RngCore, SeedableRng, rng};
+use rand::{Rng, RngExt, SeedableRng, rng};
 use tempfile::TempDir;
 use tracing::{info, trace};
 
@@ -29,7 +29,7 @@ pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
     trace!(?path, "creating temp file");
 
     const BUF_SIZE: usize = 8192 * 16;
-    let mut rng = rand::rngs::SmallRng::from_os_rng();
+    let mut rng = rand::rngs::SmallRng::seed_from_u64(rand::random());
     let mut write_buf = [0; BUF_SIZE];
     while size > 0 {
         rng.fill_bytes(&mut write_buf[..]);
