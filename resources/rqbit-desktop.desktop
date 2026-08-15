@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=Network;FileTransfer;P2P
+Comment=rqbit torrent client
+Exec=rqbit-desktop %U
+Icon=rqbit-desktop
+Name=rqbit-desktop
+Terminal=false
+Type=Application
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
