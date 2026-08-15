@@ -10,6 +10,8 @@ use tracing::debug;
 
 use crate::{Error, hash_id::Id20, lengths::Lengths};
 
+pub use crate::dht_node::DhtNode;
+
 pub type TorrentMetaV1Borrowed<'a> = TorrentMetaV1<ByteBuf<'a>>;
 pub type TorrentMetaV1Owned = TorrentMetaV1<ByteBufOwned>;
 
@@ -66,6 +68,10 @@ pub struct TorrentMetaV1<BufType> {
     pub publisher_url: Option<BufType>,
     #[serde(rename = "creation date", skip_serializing_if = "Option::is_none")]
     pub creation_date: Option<usize>,
+
+    /// BEP-0005: DHT bootstrap nodes as `[["<host>", <port>], ...]`.
+    #[serde(default = "Vec::new", skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<DhtNode>,
 
     #[serde(skip)]
     pub info_hash: Id20,
@@ -499,6 +505,7 @@ where
             publisher: self.publisher.clone_to_owned(within_buffer),
             publisher_url: self.publisher_url.clone_to_owned(within_buffer),
             creation_date: self.creation_date,
+            nodes: self.nodes.clone(),
             info_hash: self.info_hash,
         }
     }
