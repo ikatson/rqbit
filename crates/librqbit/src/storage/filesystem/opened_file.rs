@@ -60,9 +60,16 @@ impl OurFileExt for File {
     }
 
     #[cfg(windows)]
-    fn pread_exact(&self, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+    fn pread_exact(&self, mut offset: u64, mut buf: &mut [u8]) -> anyhow::Result<()> {
         use std::os::windows::fs::FileExt;
-        self.seek_read(buf, offset)?;
+        while !buf.is_empty() {
+            let n = self.seek_read(buf, offset)?;
+            if n == 0 {
+                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof").into());
+            }
+            offset += n as u64;
+            buf = &mut buf[n..];
+        }
         Ok(())
     }
 
