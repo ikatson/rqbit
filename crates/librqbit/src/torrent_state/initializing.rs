@@ -8,9 +8,7 @@ use std::{
 
 use anyhow::Context;
 
-use itertools::Itertools;
-
-use rand::RngExt;
+use rand::{RngExt, seq::IteratorRandom};
 use size_format::SizeFormatterBinary as SF;
 use tracing::{info, trace, warn};
 
@@ -22,6 +20,8 @@ use crate::{
     file_ops::FileOps,
     type_aliases::{BF, FileStorage},
 };
+
+const MAX_FASTRESUME_CHECKS: usize = 64;
 
 use super::{ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused};
 
@@ -110,8 +110,6 @@ impl TorrentStateInitializing {
                     &self.metadata.file_infos,
                 );
 
-                use rand::seq::SliceRandom;
-
                 let mut to_validate = BF::from_boxed_slice(
                     vec![0u8; self.metadata.lengths().piece_bitfield_bytes()].into_boxed_slice(),
                 );
@@ -135,8 +133,10 @@ impl TorrentStateInitializing {
                 }
 
                 // For all the remaining pieces we claim we have, validate them with decreasing probability.
-                let mut queue = queue.iter_ones().collect_vec();
-                queue.shuffle(&mut rand::rng());
+                let queue = queue
+                    .iter_ones()
+                    .sample(&mut rand::rng(), MAX_FASTRESUME_CHECKS);
+
                 for (tmp_id, piece_id) in queue.into_iter().enumerate() {
                     let denom: u32 = (tmp_id + 1).min(50).try_into().unwrap();
                     if rand::rng().random_ratio(1, denom) {
