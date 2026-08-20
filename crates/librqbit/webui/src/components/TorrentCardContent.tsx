@@ -55,6 +55,11 @@ export const TorrentCardContent: React.FC<{
             </div>
             <div className="text-left text-sm sm:text-base lg:text-lg text-ellipsis break-all line-clamp-2 sm:line-clamp-none">
               {torrent.name}
+              {torrent.category && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-secondary/20 text-secondary rounded">
+                  {torrent.category}
+                </span>
+              )}
             </div>
           </div>
           {error ? (

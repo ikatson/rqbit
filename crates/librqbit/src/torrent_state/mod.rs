@@ -117,6 +117,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    pub category: Option<String>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
@@ -139,6 +140,7 @@ pub struct TorrentMetadata {
     pub torrent_bytes: Bytes,
     pub info_bytes: Bytes,
     pub file_infos: FileInfos,
+    pub category: Option<String>,
 }
 
 impl TorrentMetadata {
@@ -146,6 +148,7 @@ impl TorrentMetadata {
         info: ValidatedTorrentMetaV1Info<ByteBufOwned>,
         torrent_bytes: Bytes,
         info_bytes: Bytes,
+        category: Option<String>,
     ) -> anyhow::Result<Self> {
         let file_infos = info
             .iter_file_details_ext()
@@ -165,6 +168,7 @@ impl TorrentMetadata {
             torrent_bytes,
             info_bytes,
             file_infos,
+            category,
         })
     }
 
@@ -199,6 +203,20 @@ pub struct ManagedTorrentShared {
 impl ManagedTorrentShared {
     pub(crate) fn client_name_and_version(&self) -> &str {
         &self.client_name_and_version
+    }
+
+    pub fn category(&self) -> Option<&str> {
+        self.options.category.as_deref()
+    }
+}
+
+impl ManagedTorrent {
+    /// The user-assigned category/label of the torrent, if any.
+    pub fn category(&self) -> Option<String> {
+        self.metadata
+            .load()
+            .as_ref()
+            .and_then(|m| m.category.clone())
     }
 }
 
@@ -642,6 +660,27 @@ impl ManagedTorrent {
         };
 
         g.only_files = Some(only_files.iter().copied().collect());
+        Ok(())
+    }
+
+    /// Update the user-assigned category/label. The category lives on the (immutable) torrent
+    /// metadata, so this swaps in a fresh metadata value carrying the new category.
+    pub(crate) fn update_category(&self, category: Option<String>) -> anyhow::Result<()> {
+        let cur = self
+            .metadata
+            .load_full()
+            .context("torrent is not resolved")?;
+        if cur.category == category {
+            return Ok(());
+        }
+        let new = Arc::new(TorrentMetadata {
+            info: cur.info.clone(),
+            torrent_bytes: cur.torrent_bytes.clone(),
+            info_bytes: cur.info_bytes.clone(),
+            file_infos: cur.file_infos.clone(),
+            category,
+        });
+        self.metadata.store(Some(new));
         Ok(())
     }
 }

@@ -151,6 +151,7 @@ pub struct Session {
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
     client_name_and_version: String,
+    categories: Vec<String>,
 }
 
 async fn torrent_from_url(
@@ -291,6 +292,9 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    /// Category this torrent belongs to. Must match a session-defined category.
+    pub category: Option<String>,
 }
 
 pub struct ListOnlyResponse {
@@ -479,6 +483,9 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Categories available for torrent tagging. Empty means no categories.
+    pub categories: Vec<String>,
 }
 
 impl Default for SessionOptions {
@@ -507,6 +514,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            categories: Vec::new(),
         }
     }
 }
@@ -806,6 +814,16 @@ impl Session {
                 disable_trackers: opts.disable_trackers,
                 peer_limit: opts.peer_limit,
                 client_name_and_version,
+                categories: {
+                    let categories = opts.categories;
+                    let mut seen = std::collections::HashSet::new();
+                    for c in &categories {
+                        if !seen.insert(c.as_str()) {
+                            anyhow::bail!("duplicate category: {c}");
+                        }
+                    }
+                    categories
+                },
 
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
@@ -1156,6 +1174,7 @@ impl Session {
                             torrent.meta.info.data.validate()?,
                             torrent.torrent_bytes,
                             torrent.meta.info.raw_bytes.0,
+                            opts.category.clone(),
                         )?),
                         trackers: trackers
                             .iter()
@@ -1227,6 +1246,17 @@ impl Session {
             name,
         } = add_res;
 
+        // Validate category if provided
+        if let Some(ref cat) = opts.category {
+            if !self.categories.is_empty() && !self.is_valid_category(cat) {
+                anyhow::bail!(
+                    "invalid category {:?}, must be one of: {:?}",
+                    cat,
+                    self.categories
+                );
+            }
+        }
+
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
 
         let make_peer_rx = || {
@@ -1242,7 +1272,7 @@ impl Session {
 
         let mut seen_peers = Vec::new();
 
-        let (metadata, peer_rx) = {
+        let (mut metadata, peer_rx) = {
             match metadata {
                 Some(metadata) => {
                     let mut peer_rx = None;
@@ -1273,6 +1303,10 @@ impl Session {
                 }
             }
         };
+
+        // The category is a mutable, user-assigned label. It's set here uniformly regardless of
+        // whether the metadata came from a .torrent file or a resolved magnet.
+        metadata.category = opts.category.clone();
 
         trace!("Torrent metadata: {:#?}", &metadata.info.info());
 
@@ -1355,6 +1389,7 @@ impl Session {
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
+                    category: opts.category.clone(),
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },
@@ -1663,6 +1698,7 @@ impl Session {
                         info,
                         torrent_file_from_info_bytes(info_bytes.as_ref(), trackers)?,
                         info_bytes.0,
+                        None,
                     )?,
                     peer_rx: rx,
                     seen_peers: {
@@ -1719,6 +1755,26 @@ impl Session {
             .context("error adding to session")?;
 
         Ok((torrent, handle))
+    }
+
+    /// Get all defined categories.
+    pub fn categories(&self) -> &[String] {
+        &self.categories
+    }
+
+    /// Check if a category name is valid (i.e. defined in session options).
+    pub fn is_valid_category(&self, category: &str) -> bool {
+        self.categories.iter().any(|c| c == category)
+    }
+
+    pub async fn update_category(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        category: Option<String>,
+    ) -> anyhow::Result<()> {
+        handle.update_category(category)?;
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
     }
 }
 
