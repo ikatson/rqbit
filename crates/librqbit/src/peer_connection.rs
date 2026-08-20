@@ -433,7 +433,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             self.spawner
                                 .block_in_place_with_semaphore(|| {
                                     self.handler
-                                        .read_chunk(&chunk, &mut write_buf[preamble_len..])
+                                        .read_chunk(&chunk, &mut write_buf[preamble_len..full_len])
                                 })
                                 .await
                                 .map_err(Error::ReadChunk)?;
