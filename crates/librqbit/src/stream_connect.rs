@@ -125,7 +125,6 @@ gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
     utp PerFamilyAtomic PerFamilySnapshot
 ]);
 
-#[derive(Debug)]
 pub(crate) struct StreamConnector {
     proxy_config: Option<SocksProxyConfig>,
     enable_tcp: bool,
@@ -133,9 +132,43 @@ pub(crate) struct StreamConnector {
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
     stats: ConnectStatsAtomic,
     ipv4_only: bool,
+    // Pre-built connections consumed by `connect()` in test builds, in order.
+    #[cfg(test)]
+    test_connections:
+        parking_lot::Mutex<std::collections::VecDeque<(BoxAsyncReadVectored, BoxAsyncWrite)>>,
+}
+
+impl std::fmt::Debug for StreamConnector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamConnector")
+            .field("proxy_config", &self.proxy_config)
+            .field("enable_tcp", &self.enable_tcp)
+            .field("bind_device", &self.bind_device)
+            .field("utp_socket", &self.utp_socket)
+            .field("ipv4_only", &self.ipv4_only)
+            .finish()
+    }
 }
 
 impl StreamConnector {
+    #[cfg(test)]
+    pub fn with_test_connections(conns: Vec<(BoxAsyncReadVectored, BoxAsyncWrite)>) -> Self {
+        Self {
+            proxy_config: None,
+            enable_tcp: true,
+            utp_socket: None,
+            bind_device: None,
+            stats: Default::default(),
+            ipv4_only: false,
+            test_connections: parking_lot::Mutex::new(conns.into()),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn remaining_test_connections(&self) -> anyhow::Result<usize> {
+        Ok(self.test_connections.lock().len())
+    }
+
     pub async fn new(config: StreamConnectorArgs) -> anyhow::Result<Self> {
         #[allow(clippy::single_match)]
         match (
@@ -158,6 +191,8 @@ impl StreamConnector {
             bind_device: config.bind_device,
             stats: Default::default(),
             ipv4_only: config.ipv4_only,
+            #[cfg(test)]
+            test_connections: Default::default(),
         })
     }
 
@@ -211,6 +246,11 @@ impl StreamConnector {
         &self,
         addr: SocketAddr,
     ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
+        #[cfg(test)]
+        if let Some((r, w)) = self.test_connections.lock().pop_front() {
+            return Ok((ConnectionKind::Tcp, r, w));
+        }
+
         if addr.port() == 0 {
             return Err(Error::Anyhow(anyhow::anyhow!(
                 "invalid peer address (port 0): {}",

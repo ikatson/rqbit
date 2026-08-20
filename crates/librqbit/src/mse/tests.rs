@@ -1,6 +1,13 @@
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
+#[test]
+fn default_mse_mode_is_disabled() {
+    // The default must stay Disabled so merging the feature is a zero-behavior
+    // change; users opt in via SessionOptions::mse_mode.
+    assert_eq!(MseMode::default(), MseMode::Disabled);
+}
+
 fn handshake(info_hash: [u8; 20], peer_id: [u8; 20]) -> [u8; 68] {
     let mut bytes = [0u8; 68];
     bytes[..20].copy_from_slice(BT_PROTOCOL_PREFIX);
@@ -124,5 +131,128 @@ async fn fragmented_plaintext_prefix_is_replayed() -> Result<()> {
     let (sent, received) = tokio::join!(sender, receiver);
     sent?;
     received?;
+    Ok(())
+}
+#[tokio::test]
+async fn duplex_handshake_preserves_payload() -> Result<()> {
+    let info_hash = [0x42; 20];
+    let initial = handshake(info_hash, [0x11; 20]);
+    let (client, server) = duplex(8192);
+    let (client_read, client_write) = tokio::io::split(client);
+    let (server_read, server_write) = tokio::io::split(server);
+
+    let initiator = outgoing(client_read, client_write, &info_hash, &initial);
+    let responder = incoming(server_read, server_write, |candidate| {
+        (candidate == &sha1(&[b"req2", &info_hash])).then_some(info_hash)
+    });
+    let (initiator_result, responder_result) = tokio::join!(initiator, responder);
+    let (mut client_read, mut client_write) = match initiator_result? {
+        OutgoingOutcome::Encrypted(r, w) => (r, w),
+        OutgoingOutcome::PlaintextPeer => bail!("unexpected plaintext peer"),
+    };
+    let outcome = responder_result?;
+    let (mut server_read, mut server_write, received) = match outcome {
+        IncomingOutcome::Encrypted {
+            read,
+            write,
+            handshake_bytes,
+            ..
+        } => (read, write, handshake_bytes),
+        IncomingOutcome::Plaintext { .. } => bail!("unexpected plaintext outcome"),
+    };
+    assert_eq!(received, initial);
+
+    client_write.write_all(b"client payload").await?;
+    let mut client_payload = [0u8; 14];
+    server_read.read_exact(&mut client_payload).await?;
+    assert_eq!(&client_payload, b"client payload");
+
+    server_write.write_all(b"server payload").await?;
+    let mut server_payload = [0u8; 14];
+    client_read.read_exact(&mut server_payload).await?;
+    assert_eq!(&server_payload, b"server payload");
+    Ok(())
+}
+
+#[tokio::test]
+async fn plaintext_first_response_triggers_immediate_fallback() -> Result<()> {
+    // A plaintext peer answers our Ya + PadA with its 68-byte BT handshake
+    // immediately. `outgoing` must detect the `\x13BitTorrent protocol`
+    // prefix and return `PlaintextPeer` well within the 10s read timeout
+    // (2s sniff window is the ceiling here).
+    let info_hash = [0x42; 20];
+    let (client, server) = duplex(8192);
+    let (client_read, client_write) = tokio::io::split(client);
+    let (mut server_read, mut server_write) = tokio::io::split(server);
+    let responder = async move {
+        // Read and discard Ya + PadA.
+        let mut discard = [0u8; 96];
+        server_read.read_exact(&mut discard).await?;
+        // Reply with a plaintext BT handshake.
+        server_write
+            .write_all(&handshake(info_hash, [0x55; 20]))
+            .await?;
+        Ok::<_, std::io::Error>(())
+    };
+
+    let initial = handshake(info_hash, [0x11; 20]);
+    let initiator = async {
+        let started = std::time::Instant::now();
+        let outcome = outgoing(client_read, client_write, &info_hash, &initial).await?;
+        let elapsed = started.elapsed();
+        match outcome {
+            OutgoingOutcome::PlaintextPeer => {
+                assert!(
+                    elapsed < PLAINTEXT_SNIFF_TIMEOUT + Duration::from_millis(500),
+                    "plaintext fallback took {elapsed:?}, expected <= {PLAINTEXT_SNIFF_TIMEOUT:?}"
+                );
+                Ok::<_, anyhow::Error>(())
+            }
+            OutgoingOutcome::Encrypted(..) => bail!("expected plaintext peer fallback"),
+        }
+    };
+
+    let (init, resp) = tokio::join!(initiator, responder);
+    init?;
+    resp?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mse_responder_still_works_after_sniff() -> Result<()> {
+    // The sniff reads the first 20 bytes; an MSE responder's public key
+    // must still arrive intact when it does not match the BT prefix.
+    let info_hash = [0x42; 20];
+    let initial = handshake(info_hash, [0x11; 20]);
+    let (client, server) = duplex(8192);
+    let (client_read, client_write) = tokio::io::split(client);
+    let (server_read, server_write) = tokio::io::split(server);
+
+    let initiator = outgoing(client_read, client_write, &info_hash, &initial);
+    let responder = incoming(server_read, server_write, |candidate| {
+        (candidate == &sha1(&[b"req2", &info_hash])).then_some(info_hash)
+    });
+    let (initiator_result, responder_result) = tokio::join!(initiator, responder);
+    let (mut client_read, mut client_write) = match initiator_result? {
+        OutgoingOutcome::Encrypted(r, w) => (r, w),
+        OutgoingOutcome::PlaintextPeer => bail!("unexpected plaintext peer"),
+    };
+    let (mut server_read, mut server_write, received) = match responder_result? {
+        IncomingOutcome::Encrypted {
+            read,
+            write,
+            handshake_bytes,
+            ..
+        } => (read, write, handshake_bytes),
+        IncomingOutcome::Plaintext { .. } => bail!("unexpected plaintext outcome"),
+    };
+    assert_eq!(received, initial);
+    client_write.write_all(b"ping").await?;
+    let mut buf = [0u8; 4];
+    server_read.read_exact(&mut buf).await?;
+    assert_eq!(&buf, b"ping");
+    server_write.write_all(b"pong").await?;
+    client_read.read_exact(&mut buf).await?;
+    assert_eq!(&buf, b"pong");
     Ok(())
 }
