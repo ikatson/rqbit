@@ -23,7 +23,7 @@ use crate::{
     limits::{Limits, LimitsConfig},
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
-    mse::MseMode,
+    mse::{IncomingOutcome, MseMode},
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
@@ -40,6 +40,7 @@ use crate::{
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
+    vectored_traits::AsyncReadVectoredIntoCompat,
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -68,6 +69,8 @@ use librqbit_utp::BindDevice;
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
+use sha1w::{ISha1, Sha1};
+use tokio::io::AsyncReadExt;
 use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
@@ -917,7 +920,7 @@ impl Session {
         self: Arc<Self>,
         addr: SocketAddr,
         kind: ConnectionKind,
-        mut reader: BoxAsyncReadVectored,
+        reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
         let rwtimeout = self
@@ -941,19 +944,109 @@ impl Session {
             bail!("Incoming ip {incoming_ip} is not in allowlist");
         }
 
-        // MSE incoming handshake is not yet implemented: the placeholder
-        // consumes the streams and always errors out, which propagates to
-        // the caller. This path is unreachable while the placeholder bails.
-        if self.mse_mode != MseMode::Disabled {
-            crate::mse::incoming(reader, writer, |_| None).await?;
-            unreachable!("MSE incoming placeholder never returns Ok");
+        if self.mse_mode == MseMode::Disabled {
+            debug!(?addr, "MSE disabled, skipping MSE incoming handshake");
+            let mut read_buf = ReadBuf::new();
+            let mut reader = reader;
+            let h = read_buf
+                .read_handshake(&mut reader, rwtimeout)
+                .await
+                .context("error reading handshake")?;
+            return self
+                .finish_incoming_connection(addr, kind, h, reader, writer, read_buf)
+                .await;
         }
 
-        let mut read_buf = ReadBuf::new();
-        let h = read_buf
-            .read_handshake(&mut reader, rwtimeout)
+        // Snapshot the (SKEY hash -> info_hash) mapping for every known torrent
+        // so the MSE acceptor can resolve the peer's obfuscated info hash.
+        let torrent_keys: Vec<([u8; 20], [u8; 20])> = self
+            .db
+            .read()
+            .torrents
+            .values()
+            .map(|torrent| {
+                let info_hash = torrent.info_hash().0;
+                let mut h = Sha1::new();
+                h.update(b"req2");
+                h.update(&info_hash);
+                (h.finish(), info_hash)
+            })
+            .collect();
+
+        let lookup = |skey_hash: &[u8; 20]| -> Option<[u8; 20]> {
+            torrent_keys
+                .iter()
+                .find(|(k, _)| k == skey_hash)
+                .map(|(_, info_hash)| *info_hash)
+        };
+
+        let incoming = crate::mse::incoming(reader, writer, lookup);
+        let incoming = tokio::time::timeout(rwtimeout, incoming)
             .await
-            .context("error reading handshake")?;
+            .context("MSE incoming handshake timed out")??;
+
+        match incoming {
+            IncomingOutcome::Encrypted {
+                read,
+                write,
+                handshake_bytes,
+                info_hash,
+            } => {
+                let (h, _size) = Handshake::deserialize(&handshake_bytes[..])
+                    .map_err(|e| anyhow::anyhow!("error deserializing MSE handshake: {e:?}"))?;
+                if h.info_hash.0 != info_hash {
+                    bail!("MSE handshake info hash does not match SKEY");
+                }
+                self.finish_incoming_connection(
+                    addr,
+                    kind,
+                    h,
+                    Box::new(read.into_vectored_compat()),
+                    Box::new(write),
+                    ReadBuf::new(),
+                )
+                .await
+            }
+            IncomingOutcome::Plaintext { read, write } => {
+                if self.mse_mode == MseMode::Forced {
+                    warn!(?addr, "MSE forced, rejecting plaintext connection");
+                    bail!("MSE is forced, rejecting plaintext connection from {addr}");
+                }
+                // 9.0's `ReadBuf::read_handshake` performs a single `read()`
+                // before deserializing; a `PrefixReader` replaying the 20
+                // consumed prefix bytes would satisfy it with only those bytes.
+                // Read the full 68-byte handshake ourselves (read_exact loops),
+                // mirroring the Encrypted branch.
+                let mut handshake_bytes = [0u8; 68];
+                let mut read = read;
+                read.read_exact(&mut handshake_bytes)
+                    .await
+                    .context("error reading fragmented plaintext handshake")?;
+                let (h, _size) = Handshake::deserialize(&handshake_bytes[..]).map_err(|e| {
+                    anyhow::anyhow!("error deserializing plaintext handshake: {e:?}")
+                })?;
+                self.finish_incoming_connection(
+                    addr,
+                    kind,
+                    h,
+                    Box::new(read.into_vectored_compat()),
+                    Box::new(write),
+                    ReadBuf::new(),
+                )
+                .await
+            }
+        }
+    }
+
+    async fn finish_incoming_connection(
+        self: Arc<Self>,
+        addr: SocketAddr,
+        kind: ConnectionKind,
+        h: Handshake,
+        reader: BoxAsyncReadVectored,
+        writer: BoxAsyncWrite,
+        read_buf: ReadBuf,
+    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
         trace!("received handshake from {addr}: {:?}", h);
 
         if h.peer_id == self.peer_id {
