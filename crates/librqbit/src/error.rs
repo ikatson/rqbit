@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use governor::InsufficientCapacity;
 use peer_binary_protocol::MessageDeserializeError;
 use tokio::sync::AcquireError;
@@ -30,6 +32,8 @@ pub enum Error {
     WrongInfoHash,
     #[error("connecting to ourselves")]
     ConnectingToOurselves,
+    #[error("MSE is forced, but peer {0} did not complete the MSE handshake")]
+    MseForced(SocketAddr),
 
     #[error("error writing handshake: {0:#}")]
     WriteHandshake(#[source] std::io::Error),
