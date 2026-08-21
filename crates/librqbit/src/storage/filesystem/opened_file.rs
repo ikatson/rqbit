@@ -159,6 +159,15 @@ impl OpenedFile {
         })
     }
 
+    pub fn close(&self) {
+        let mut g = self.file.write();
+        g.fd = None;
+        #[cfg(windows)]
+        {
+            g.tried_marking_sparse = false;
+        }
+    }
+
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
         RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
             .ok()
