@@ -1348,7 +1348,7 @@ impl Session {
                 storage_factory,
                 options: ManagedTorrentOptions {
                     force_tracker_interval: opts.force_tracker_interval,
-                    peer_connect_timeout: peer_opts.connect_timeout,
+                    peer_connect_timeout: RwLock::new(peer_opts.connect_timeout),
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     allow_overwrite: opts.overwrite,
                     output_folder,
