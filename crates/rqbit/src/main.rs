@@ -37,6 +37,24 @@ enum LogLevel {
     Error,
 }
 
+/// `--mse-mode` values, mirroring [`librqbit::MseMode`].
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum MseModeArg {
+    Disabled,
+    Enabled,
+    Forced,
+}
+
+impl From<MseModeArg> for librqbit::MseMode {
+    fn from(value: MseModeArg) -> Self {
+        match value {
+            MseModeArg::Disabled => librqbit::MseMode::Disabled,
+            MseModeArg::Enabled => librqbit::MseMode::Enabled,
+            MseModeArg::Forced => librqbit::MseMode::Forced,
+        }
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 fn parse_umask(value: &str) -> anyhow::Result<libc::mode_t> {
     fn parse_oct_digit(d: u8) -> Option<libc::mode_t> {
@@ -174,6 +192,12 @@ struct Opts {
         env = "RQBIT_EXPERIMENTAL_UTP_LISTEN_ENABLE"
     )]
     enable_utp_listen: bool,
+
+    /// MSE (Message Stream Encryption) mode for peer connections.
+    ///
+    /// `enabled` prefers MSE with plaintext fallback; `forced` requires MSE.
+    #[arg(long = "mse-mode", env = "RQBIT_MSE_MODE", value_enum, default_value_t = MseModeArg::Disabled)]
+    mse_mode: MseModeArg,
 
     /// The port to listen for incoming connections (applies to both TCP and uTP).
     ///
@@ -691,6 +715,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
+        mse_mode: opts.mse_mode.into(),
     };
 
     #[allow(clippy::needless_update)]

@@ -23,6 +23,7 @@ use crate::{
     limits::{Limits, LimitsConfig},
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
+    mse::MseMode,
     peer_connection::PeerConnectionOptions,
     read_buf::ReadBuf,
     session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
@@ -32,7 +33,8 @@ use crate::{
         BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
     stream_connect::{
-        ConnectionKind, ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs,
+        ConnectionKind, ConnectionOptions, IncomingHandshake, SocksProxyConfig, StreamConnector,
+        StreamConnectorArgs,
     },
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
@@ -151,6 +153,7 @@ pub struct Session {
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
     client_name_and_version: String,
+    mse_mode: MseMode,
 }
 
 async fn torrent_from_url(
@@ -479,6 +482,10 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// How MSE (Message Stream Encryption) is applied to peer connections.
+    /// Defaults to [`MseMode::Disabled`].
+    pub mse_mode: MseMode,
 }
 
 impl Default for SessionOptions {
@@ -507,6 +514,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            mse_mode: MseMode::default(),
         }
     }
 }
@@ -632,11 +640,15 @@ impl Session {
             } else {
                 None
             };
-            let peer_opts = opts
+            let mut peer_opts = opts
                 .connect
                 .as_ref()
                 .and_then(|p| p.peer_opts)
                 .unwrap_or_default();
+            // The session-level MSE mode is authoritative for outgoing
+            // connections (including magnet metadata reads), regardless of any
+            // per-connection PeerConnectionOptions.
+            peer_opts.mse_mode = opts.mse_mode;
 
             async fn persistence_factory(
                 opts: &SessionOptions,
@@ -806,6 +818,7 @@ impl Session {
                 disable_trackers: opts.disable_trackers,
                 peer_limit: opts.peer_limit,
                 client_name_and_version,
+                mse_mode: opts.mse_mode,
 
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
@@ -905,7 +918,7 @@ impl Session {
         self: Arc<Self>,
         addr: SocketAddr,
         kind: ConnectionKind,
-        mut reader: BoxAsyncReadVectored,
+        reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
         let rwtimeout = self
@@ -929,12 +942,46 @@ impl Session {
             bail!("Incoming ip {incoming_ip} is not in allowlist");
         }
 
-        let mut read_buf = ReadBuf::new();
-        let h = read_buf
-            .read_handshake(&mut reader, rwtimeout)
-            .await
-            .context("error reading handshake")?;
-        trace!("received handshake from {addr}: {:?}", h);
+        // The MSE acceptor needs to map the peer's obfuscated info hash back to
+        // a torrent; it enumerates the known info hashes on demand, and never
+        // asks for them at all on the plaintext paths.
+        let incoming = crate::stream_connect::accept_with_handshake(
+            addr,
+            reader,
+            writer,
+            rwtimeout,
+            self.mse_mode,
+            || {
+                self.db
+                    .read()
+                    .torrents
+                    .values()
+                    .map(|t| t.info_hash().0)
+                    .collect()
+            },
+        )
+        .await?;
+
+        self.finish_incoming_connection(addr, kind, incoming).await
+    }
+
+    async fn finish_incoming_connection(
+        self: Arc<Self>,
+        addr: SocketAddr,
+        kind: ConnectionKind,
+        incoming: IncomingHandshake,
+    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
+        let IncomingHandshake {
+            handshake: h,
+            read: reader,
+            write: writer,
+            read_buf,
+            encrypted,
+        } = incoming;
+        trace!(
+            "received handshake from {addr}: {:?} (encrypted={encrypted})",
+            h
+        );
 
         if h.peer_id == self.peer_id {
             bail!("seems like we are connecting to ourselves, ignoring");
@@ -1037,6 +1084,7 @@ impl Session {
             keep_alive_interval: other
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
+            mse_mode: self.mse_mode,
         }
     }
 
@@ -1255,8 +1303,10 @@ impl Session {
                     let peer_rx = make_peer_rx().context(
                         "no known way to resolve peers (no DHT, no trackers, no initial_peers)",
                     )?;
+                    let mut magnet_peer_opts = opts.peer_opts.unwrap_or_default();
+                    magnet_peer_opts.mse_mode = self.mse_mode;
                     let resolved_magnet = self
-                        .resolve_magnet(info_hash, peer_rx, &trackers, opts.peer_opts)
+                        .resolve_magnet(info_hash, peer_rx, &trackers, Some(magnet_peer_opts))
                         .await?;
 
                     // Add back seen_peers into the peer stream, as we consumed some peers
@@ -1350,6 +1400,7 @@ impl Session {
                     force_tracker_interval: opts.force_tracker_interval,
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
+                    mse_mode: self.mse_mode,
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     ratelimits: opts.ratelimits,

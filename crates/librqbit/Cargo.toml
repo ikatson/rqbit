@@ -54,6 +54,8 @@ clone_to_owned.workspace = true
 peer_binary_protocol.workspace = true
 sha1w.workspace = true
 dht.workspace = true
+crypto-bigint.workspace = true
+rc4 = "0.2"
 librqbit-upnp.workspace = true
 upnp-serve = { workspace = true, optional = true }
 
