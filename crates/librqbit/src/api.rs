@@ -16,7 +16,7 @@ use crate::{
     },
     session_stats::snapshot::SessionStatsSnapshot,
     torrent_state::{
-        FileStream, ManagedTorrentHandle,
+        FileStream, FileStreamOptions, ManagedTorrentHandle,
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
     },
     type_aliases::BF,
@@ -512,8 +512,18 @@ impl Api {
     }
 
     pub async fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {
+        self.api_stream_with_options(idx, file_id, FileStreamOptions::default())
+            .await
+    }
+
+    pub async fn api_stream_with_options(
+        &self,
+        idx: TorrentIdOrHash,
+        file_id: usize,
+        options: FileStreamOptions,
+    ) -> Result<FileStream> {
         let mgr = self.mgr_handle(idx)?;
-        Ok(mgr.stream(file_id).await?)
+        Ok(mgr.stream_with_options(file_id, options).await?)
     }
 }
 

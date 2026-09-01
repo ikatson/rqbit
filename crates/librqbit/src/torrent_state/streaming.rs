@@ -25,14 +25,30 @@ use super::{ManagedTorrentHandle, TorrentMetadata};
 
 type StreamId = usize;
 
-// 32 mb lookahead by default.
-const PER_STREAM_BUF_DEFAULT: u64 = 32 * 1024 * 1024;
+/// Default number of bytes prioritized ahead of a streaming reader.
+pub const DEFAULT_STREAM_LOOKAHEAD_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Options controlling how a single file stream prioritizes pieces.
+#[derive(Debug, Clone, Copy)]
+pub struct FileStreamOptions {
+    /// How many bytes to prioritize ahead of the current reader position.
+    pub lookahead_bytes: u64,
+}
+
+impl Default for FileStreamOptions {
+    fn default() -> Self {
+        Self {
+            lookahead_bytes: DEFAULT_STREAM_LOOKAHEAD_BYTES,
+        }
+    }
+}
 
 struct StreamState {
     file_id: usize,
     file_len: u64,
     file_abs_offset: u64,
     position: u64,
+    lookahead_bytes: u64,
     waker: Option<Waker>,
 }
 
@@ -43,7 +59,9 @@ impl StreamState {
 
     fn queue<'a>(&self, lengths: &'a Lengths) -> impl Iterator<Item = ValidPieceIndex> + use<'a> {
         let start = self.file_abs_offset + self.position;
-        let end = (start + PER_STREAM_BUF_DEFAULT).min(self.file_abs_offset + self.file_len);
+        let end = start
+            .saturating_add(self.lookahead_bytes)
+            .min(self.file_abs_offset + self.file_len);
         let dpl = lengths.default_piece_length();
         let start_id = (start / dpl as u64).try_into().unwrap();
         let end_id = end.div_ceil(dpl as u64).try_into().unwrap();
@@ -335,6 +353,19 @@ impl ManagedTorrent {
     }
 
     pub async fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
+        self.stream_with_options(file_id, FileStreamOptions::default())
+            .await
+    }
+
+    pub async fn stream_with_options(
+        self: Arc<Self>,
+        file_id: usize,
+        options: FileStreamOptions,
+    ) -> anyhow::Result<FileStream> {
+        anyhow::ensure!(
+            options.lookahead_bytes > 0,
+            "stream lookahead must be positive"
+        );
         let metadata = self
             .metadata
             .load_full()
@@ -364,6 +395,7 @@ impl ManagedTorrent {
             StreamState {
                 file_id,
                 position: 0,
+                lookahead_bytes: options.lookahead_bytes,
                 waker: None,
                 file_len: fd_len,
                 file_abs_offset: fd_offset,
@@ -397,5 +429,40 @@ impl FileStream {
 
     pub fn len(&self) -> u64 {
         self.file_len
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn queued_piece_ids(lookahead_bytes: u64, lengths: &Lengths) -> Vec<u32> {
+        let state = StreamState {
+            file_id: 0,
+            file_len: lengths.total_length(),
+            file_abs_offset: 0,
+            position: 0,
+            lookahead_bytes,
+            waker: None,
+        };
+        state.queue(lengths).map(|p| p.get()).collect()
+    }
+
+    #[test]
+    fn stream_queue_uses_the_configured_lookahead() {
+        // 10 pieces of 1024 bytes each.
+        let lengths = Lengths::new(10 * 1024, 1024).unwrap();
+
+        // One piece worth of lookahead only queues the current piece.
+        assert_eq!(queued_piece_ids(1024, &lengths), vec![0]);
+
+        // Four pieces worth of lookahead queues four pieces.
+        assert_eq!(queued_piece_ids(4 * 1024, &lengths), vec![0, 1, 2, 3]);
+
+        // A lookahead past the end of the file is clamped to the file length.
+        assert_eq!(
+            queued_piece_ids(u64::MAX, &lengths),
+            (0..10).collect::<Vec<_>>()
+        );
     }
 }

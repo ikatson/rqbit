@@ -53,7 +53,7 @@ use initializing::TorrentStateInitializing;
 
 use self::paused::TorrentStatePaused;
 pub use self::stats::{TorrentStats, TorrentStatsState};
-pub use self::streaming::FileStream;
+pub use self::streaming::{DEFAULT_STREAM_LOOKAHEAD_BYTES, FileStream, FileStreamOptions};
 
 // State machine transitions.
 //
