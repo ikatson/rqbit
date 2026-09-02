@@ -2,7 +2,7 @@ use std::{io::SeekFrom, sync::Arc};
 
 use anyhow::Context;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use bytes::Bytes;
@@ -25,13 +25,30 @@ pub struct StreamPathParams {
     _filename: Option<Arc<str>>,
 }
 
+#[derive(Default, Deserialize)]
+pub struct StreamQueryParams {
+    lookahead_bytes: Option<u64>,
+}
+
 pub async fn h_torrent_stream_file(
     State(state): State<ApiState>,
     Path(StreamPathParams { id, file_id, .. }): Path<StreamPathParams>,
+    Query(query): Query<StreamQueryParams>,
     headers: http::HeaderMap,
 ) -> Result<impl IntoResponse> {
     trace!(?id, ?file_id, "acquiring stream");
-    let mut stream = state.api.api_stream(id, file_id).await?;
+    let mut options = crate::FileStreamOptions::default();
+    if let Some(lookahead_bytes) = query.lookahead_bytes {
+        if lookahead_bytes == 0 {
+            return Err(anyhow::anyhow!("lookahead_bytes must be positive"))
+                .with_status(StatusCode::BAD_REQUEST);
+        }
+        options.lookahead_bytes = lookahead_bytes;
+    }
+    let mut stream = state
+        .api
+        .api_stream_with_options(id, file_id, options)
+        .await?;
     let mut status = StatusCode::OK;
     let mut output_headers = HeaderMap::new();
     output_headers.insert("Accept-Ranges", HeaderValue::from_static("bytes"));
