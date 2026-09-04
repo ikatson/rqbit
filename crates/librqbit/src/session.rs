@@ -130,6 +130,7 @@ pub struct Session {
     peer_opts: PeerConnectionOptions,
     default_storage_factory: Option<BoxStorageFactory>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
+    pub(crate) trust_fastresume: bool,
     trackers: HashSet<url::Url>,
 
     lsd: Option<LocalServiceDiscovery>,
@@ -430,6 +431,12 @@ pub struct SessionOptions {
     /// Enable fastresume, to restore state quickly after restart.
     pub fastresume: bool,
 
+    /// With `fastresume`, trust a valid persisted piece bitfield and skip the
+    /// on-startup sampling recheck (which otherwise reads and hashes at least
+    /// one piece per file for every torrent on every launch). A torrent that
+    /// previously errored is still fully rechecked.
+    pub trust_fastresume: bool,
+
     /// Turn on to dump session contents into a file periodically, so that on next start
     /// all remembered torrents will continue where they left off.
     pub persistence: Option<SessionPersistenceConfig>,
@@ -488,6 +495,7 @@ impl Default for SessionOptions {
             bind_device_name: None,
             disable_trackers: false,
             fastresume: false,
+            trust_fastresume: false,
             persistence: None,
             peer_id: None,
             listen: None,
@@ -779,6 +787,7 @@ impl Session {
 
             let session = Arc::new(Self {
                 persistence,
+                trust_fastresume: opts.trust_fastresume,
                 bitv_factory,
                 peer_id,
                 dht,
