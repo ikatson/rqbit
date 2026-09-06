@@ -170,8 +170,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         );
 
         let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
-        let handshake = Handshake::new(self.info_hash, self.peer_id);
-        let hlen = handshake.serialize_unchecked_len(&mut *write_buf);
+        let my_handshake = Handshake::new(self.info_hash, self.peer_id);
+        let hlen = my_handshake.serialize_unchecked_len(&mut *write_buf);
         with_timeout(
             "writing handshake",
             rwtimeout,
@@ -182,10 +182,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         )
         .await?;
 
-        let handshake_supports_extended = handshake.supports_extended();
+        // What the peer supports is in the peer's handshake, not in ours.
+        let handshake_supports_extended = incoming.handshake.supports_extended();
 
         self.handler
-            .on_handshake(handshake, incoming.kind)
+            .on_handshake(incoming.handshake, incoming.kind)
             .map_err(Error::Anyhow)?;
 
         self.manage_peer(ManagePeerArgs {
