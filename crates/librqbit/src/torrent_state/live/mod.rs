@@ -802,9 +802,13 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let mut g = self.lock_write("update_only_files");
-        let pt = g.get_pieces_mut()?;
-        let hns = pt.update_only_files(&self.metadata.file_infos, only_files)?;
+        let hns = self
+            .lock_write("update_only_files")
+            .get_pieces_mut()?
+            .update_only_files(&self.metadata.file_infos, only_files)?;
+        // With the state lock released. A dying peer holds its shard of the peer table
+        // while it asks whether the torrent is finished (on_peer_died), so touching the
+        // table under the state lock is the reverse order, and the two deadlock.
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
