@@ -703,6 +703,15 @@ impl Session {
                 .client_name_and_version
                 .unwrap_or_else(|| crate::client_name_and_version().to_owned());
 
+            // With rust-tls (reqwest/rustls-no-provider), reqwest has no
+            // baked-in crypto provider and Client::builder().build() panics
+            // unless one is installed as the process default. Install the
+            // ring provider first; a lost install race is fine.
+            #[cfg(feature = "rust-tls")]
+            {
+                let _ = rustls::crypto::ring::default_provider().install_default();
+            }
+
             let reqwest_client = {
                 let builder = if let Some(proxy_url) = proxy_url {
                     let proxy = reqwest::Proxy::all(proxy_url)

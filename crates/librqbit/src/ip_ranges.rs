@@ -69,6 +69,12 @@ impl IpRanges {
             return Self::load_from_file(path).await;
         }
 
+        // See session.rs: with rust-tls (reqwest/rustls-no-provider) the
+        // ring provider must be installed before building a client.
+        #[cfg(feature = "rust-tls")]
+        {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
         let response = reqwest::get(parsed_url)
             .await
             .context("error fetching list")?;

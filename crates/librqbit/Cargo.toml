@@ -17,7 +17,7 @@ default = ["default-tls", "http-api-client"]
 tokio-console = ["console-subscriber", "tokio/tracing"]
 http-api = ["axum", "tower-http"]
 http-api-client = []
-upnp-serve-adapter = ["upnp-serve"]
+upnp-serve-adapter = ["upnp-serve", "upnp-serve/rust-tls-ring"]
 webui = []
 timed_existence = []
 default-tls = ["reqwest/default-tls", "sha1-crypto-hash"]
@@ -25,9 +25,11 @@ miri = []
 prometheus = ["metrics-exporter-prometheus"]
 rust-tls = [
     "reqwest/rustls-no-provider",
-    "ring",
-    "rustls",
+    "dep:ring",
+    "dep:rustls",
     "sha1-ring",
+    "librqbit-upnp/rust-tls-ring",
+    "tracker_comms/rust-tls-ring",
 ]
 sha1-crypto-hash = [
     "sha1w/sha1-crypto-hash",

@@ -20,6 +20,21 @@ const SSDP_MULTICAST_IP: SocketAddr =
 pub const SSDP_SEARCH_WAN_IPCONNECTION_ST: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
 pub const SSDP_SEARCH_ROOT_ST: &str = "upnp:rootdevice";
 
+/// Build a reqwest client that works with whichever TLS backend is enabled.
+///
+/// With `rust-tls-ring` (ring provider via `reqwest/rustls-no-provider`),
+/// reqwest has no baked-in crypto provider, so install the ring provider as
+/// the process default before building the client. Otherwise
+/// `Client::builder().build()` panics. Installing twice (e.g. from multiple
+/// call sites) is fine: the loser of the race is ignored.
+pub fn build_reqwest_client(builder: reqwest::ClientBuilder) -> anyhow::Result<reqwest::Client> {
+    #[cfg(feature = "rust-tls-ring")]
+    {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    Ok(builder.build()?)
+}
+
 pub fn make_ssdp_search_request(kind: &str) -> String {
     format!(
         "M-SEARCH * HTTP/1.1\r\n\
@@ -106,7 +121,7 @@ async fn forward_port(
 
     let url = control_url;
 
-    let client = reqwest::Client::new();
+    let client = build_reqwest_client(reqwest::Client::builder())?;
     let response = client
         .post(url.clone())
         .header("Content-Type", "text/xml")
@@ -265,7 +280,7 @@ pub struct UpnpDiscoverResponse {
 }
 
 pub async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
-    let response = Client::new()
+    let response = build_reqwest_client(Client::builder())?
         .get(location.clone())
         .send()
         .await
@@ -578,5 +593,15 @@ mod tests {
             }],
         };
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_build_reqwest_client_does_not_panic() {
+        // Regression test: with `rustls-no-provider` (via librqbit/rust-tls),
+        // reqwest has no baked-in crypto provider. Building a client without
+        // an installed process-default provider panics. The helper installs
+        // the ring provider first when `rust-tls-ring` is on.
+        let _client = crate::build_reqwest_client(reqwest::Client::builder())
+            .expect("building reqwest client must succeed");
     }
 }

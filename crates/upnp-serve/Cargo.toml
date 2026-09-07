@@ -8,6 +8,12 @@ documentation = "https://docs.rs/librqbit-upnp-serve"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
+[features]
+default = []
+# Re-export the upnp helper's provider wiring so librqbit/rust-tls can
+# enable it transitively.
+rust-tls-ring = ["librqbit-upnp/rust-tls-ring"]
+
 [dependencies]
 anyhow.workspace = true
 axum = { workspace = true, features = ["tokio"] }

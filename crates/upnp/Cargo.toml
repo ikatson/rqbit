@@ -11,10 +11,19 @@ readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# Install the ring rustls CryptoProvider as the process default so that
+# reqwest clients built with the `rustls-no-provider` feature have a
+# provider. Enabled via librqbit/rust-tls.
+rust-tls-ring = ["dep:ring", "dep:rustls"]
+
 [dependencies]
 tracing.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
+ring = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 serde.workspace = true
 serde_derive.workspace = true
 tokio = { workspace = true, features = ["macros"] }

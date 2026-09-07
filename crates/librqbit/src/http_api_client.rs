@@ -62,6 +62,12 @@ async fn json_response<T: serde::de::DeserializeOwned + std::any::Any>(
 impl HttpApiClient {
     #[inline(never)]
     pub fn new(url: &str) -> anyhow::Result<Self> {
+        // See session.rs: with rust-tls (reqwest/rustls-no-provider) the
+        // ring provider must be installed before building a client.
+        #[cfg(feature = "rust-tls")]
+        {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
         Ok(Self {
             base_url: reqwest::Url::parse(url)?,
             client: reqwest::ClientBuilder::new().build()?,

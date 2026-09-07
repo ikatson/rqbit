@@ -240,8 +240,7 @@ pub mod subscription {
         //
         let body = super::get_system_update_id::render_notify(system_update_id);
 
-        let resp = reqwest::Client::builder()
-            .build()?
+        let resp = ::librqbit_upnp::build_reqwest_client(reqwest::Client::builder())?
             .request(Method::from_bytes(b"NOTIFY")?, url.clone())
             .header("Content-Type", r#"text/xml; charset="utf-8""#)
             .header("NT", "upnp:event")
