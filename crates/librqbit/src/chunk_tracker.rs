@@ -269,7 +269,11 @@ impl ChunkTracker {
         }
     }
 
-    pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
+    /// The piece passed its hash check: it is ours. Sets the have-bit and moves every
+    /// count that is derived from it - the totals and the per-file bytes - in the same
+    /// call, so that nothing holding the lock between two calls can see a piece that is
+    /// have but not counted, or counted but not have.
+    pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex, file_infos: &FileInfos) {
         let id = idx.get() as usize;
         if !self.have.as_slice()[id] {
             self.have.as_slice_mut().set(id, true);
@@ -277,6 +281,18 @@ impl ChunkTracker {
             self.hns.have_bytes += len;
             if self.selected[id] {
                 self.hns.needed_bytes -= len;
+            }
+            // A filter over all files and not a scan that stops at the first
+            // non-overlapping one: a zero-length file sitting inside a piece has an empty
+            // piece range, and would stop such a scan short of the files after it.
+            for (file_id, fi) in file_infos
+                .iter()
+                .enumerate()
+                .filter(|(_, fi)| fi.piece_range.contains(&idx.get()))
+            {
+                self.per_file_bytes[file_id] +=
+                    self.lengths
+                        .size_of_piece_in_file(idx.get(), fi.offset_in_torrent, fi.len);
             }
         }
     }
@@ -384,22 +400,6 @@ impl ChunkTracker {
 
     pub fn per_file_have_bytes(&self) -> &[u64] {
         &self.per_file_bytes
-    }
-
-    // Returns remaining bytes
-    pub fn update_file_have_on_piece_completed(
-        &mut self,
-        piece_id: ValidPieceIndex,
-        file_id: usize,
-        file_info: &FileInfo,
-    ) -> u64 {
-        let diff_have = self.lengths.size_of_piece_in_file(
-            piece_id.get(),
-            file_info.offset_in_torrent,
-            file_info.len,
-        );
-        self.per_file_bytes[file_id] += diff_have;
-        file_info.len.saturating_sub(self.per_file_bytes[file_id])
     }
 }
 
@@ -512,15 +512,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_update_only_files() {
-        let piece_len = CHUNK_SIZE * 2 + 1;
-        let total_len = piece_len as u64 * 2 + 1;
-        let l = Lengths::new(total_len, piece_len).unwrap();
-        assert_eq!(l.total_pieces(), 3);
-        assert_eq!(l.total_chunks(), 7);
-
-        let all_files = vec![
+    // Four files over 3 pieces of 2 chunks + 1 byte: file 0 is piece 0 exactly; piece 1
+    // holds the 1-byte file 1, the zero-length file 2 and the start of file 3, which runs
+    // to the end of the torrent.
+    fn four_files(piece_len: u32) -> Vec<FileInfo> {
+        vec![
             FileInfo {
                 relative_filename: "0".into(),
                 offset_in_torrent: 0,
@@ -549,7 +545,60 @@ mod tests {
                 len: piece_len as u64,
                 attrs: Default::default(),
             },
-        ];
+        ]
+    }
+
+    // The per-file count moves with the have-bit, in the same call. It used to be added
+    // in a second step, under a second lock, so the two could be observed apart; and that
+    // step walked the files with skip_while/take_while, which stopped at the zero-length
+    // file 2 and never counted piece 1 into file 3.
+    #[test]
+    fn test_per_file_bytes_follow_the_have_bit() {
+        let piece_len = CHUNK_SIZE * 2 + 1;
+        let total_len = piece_len as u64 * 2 + 1;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+        let files = four_files(piece_len);
+
+        let bf_len = l.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        selected.get_mut(0..3).unwrap().fill(true);
+        let mut ct = ChunkTracker::new(have.into_dyn(), selected, l, &files).unwrap();
+        assert_eq!(ct.per_file_have_bytes(), [0, 0, 0, 0]);
+
+        // Piece 1 is shared by three files, one of them empty.
+        ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap(), &files);
+        assert_eq!(
+            ct.per_file_have_bytes(),
+            [0, 1, 0, piece_len as u64 - 1],
+            "the bytes of piece 1 in every file it overlaps"
+        );
+
+        // Marking a piece we already have counts nothing twice.
+        ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap(), &files);
+        assert_eq!(ct.per_file_have_bytes(), [0, 1, 0, piece_len as u64 - 1]);
+
+        ct.mark_piece_downloaded(l.validate_piece_index(0).unwrap(), &files);
+        ct.mark_piece_downloaded(l.validate_piece_index(2).unwrap(), &files);
+        assert_eq!(
+            ct.per_file_have_bytes(),
+            [piece_len as u64, 1, 0, piece_len as u64],
+            "every file is complete"
+        );
+        for fi in &files {
+            assert!(ct.is_file_finished(fi));
+        }
+    }
+
+    #[test]
+    fn test_update_only_files() {
+        let piece_len = CHUNK_SIZE * 2 + 1;
+        let total_len = piece_len as u64 * 2 + 1;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+        assert_eq!(l.total_pieces(), 3);
+        assert_eq!(l.total_chunks(), 7);
+
+        let all_files = four_files(piece_len);
 
         let bf_len = l.piece_bitfield_bytes();
         let initial_have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
