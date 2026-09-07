@@ -137,4 +137,33 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
     ) -> anyhow::Result<()> {
         self.underlying.init(shared, metadata)
     }
+
+    fn on_piece_completed(&self, piece_index: ValidPieceIndex) -> anyhow::Result<()> {
+        self.underlying.on_piece_completed(piece_index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::test_util::{
+        NUM_PIECES, PIECE_LEN, Probe, assert_forwards_defaults, lengths,
+    };
+
+    #[test]
+    fn test_the_defaulted_methods_reach_the_underlying_storage() {
+        let storage = WriteThroughCacheStorage {
+            lru: RwLock::new(LruCache::new(NonZeroUsize::new(1).unwrap())),
+            lengths: lengths(),
+            file_infos: vec![crate::file_info::FileInfo {
+                relative_filename: "test.dat".into(),
+                offset_in_torrent: 0,
+                len: PIECE_LEN as u64 * NUM_PIECES as u64,
+                piece_range: 0..NUM_PIECES,
+                attrs: Default::default(),
+            }],
+            underlying: Probe::default(),
+        };
+        assert_forwards_defaults(&storage, &storage.underlying);
+    }
 }
