@@ -128,7 +128,9 @@ quick-xml = "0.41"
 rand = "0.10"
 regex = "1"
 reqwest = { version = "0.13", default-features = false }
+ring = "0.17"
 rlimit = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 serde = "1"
 serde_derive = "1"
 serde_json = "1"
