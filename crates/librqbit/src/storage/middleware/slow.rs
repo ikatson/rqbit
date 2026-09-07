@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use librqbit_core::lengths::ValidPieceIndex;
 use parking_lot::Mutex;
 
 use crate::{
@@ -127,5 +128,25 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
         self.underlying.init(shared, metadata)
+    }
+
+    fn on_piece_completed(&self, piece_index: ValidPieceIndex) -> anyhow::Result<()> {
+        self.underlying.on_piece_completed(piece_index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::test_util::{Probe, assert_forwards_defaults};
+
+    #[test]
+    fn test_the_defaulted_methods_reach_the_underlying_storage() {
+        let storage = SlowStorage {
+            underlying: Probe::default(),
+            pwrite_all_bufread: Mutex::new(Box::new(std::iter::empty())),
+            pread_exact_bufread: Mutex::new(Box::new(std::iter::empty())),
+        };
+        assert_forwards_defaults(&storage, &storage.underlying);
     }
 }
