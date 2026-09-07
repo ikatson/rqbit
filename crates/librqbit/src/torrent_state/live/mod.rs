@@ -836,9 +836,6 @@ impl TorrentStateLive {
     }
 
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
-        if let Err(e) = self.files.on_piece_completed(id) {
-            debug!(?id, "file storage errored in on_piece_completed(): {e:#}");
-        }
         let mut g = self.lock_write("on_piece_completed");
         let locked = &mut **g;
         let pieces = locked.get_pieces_mut()?;
@@ -1921,6 +1918,22 @@ impl PeerHandler {
                 .with_context(|| format!("error checking piece={index}"))?
             {
                 true => {
+                    // The storage gets the piece before anyone else hears of it. This is
+                    // where a storage that stages pieces moves one into the place a
+                    // restart will look, and until it has, the piece is not ours to mark,
+                    // count, advertise or serve. A storage that can't is a disk failure
+                    // of the same class as a failed write, and ends the torrent the same
+                    // way; a restart re-checks what is on disk.
+                    if let Err(e) = state.files.on_piece_completed(chunk_info.piece_index) {
+                        error!(
+                            id = state.shared.id,
+                            info_hash = ?state.shared.info_hash,
+                            piece = index,
+                            "FATAL: error committing piece to storage: {e:#}"
+                        );
+                        return state.on_fatal_error(e);
+                    }
+
                     {
                         let mut g = state.lock_write("mark_piece_downloaded");
                         g.get_pieces_mut()?
