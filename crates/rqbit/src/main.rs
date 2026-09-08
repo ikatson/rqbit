@@ -691,6 +691,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
+        mse_mode: Default::default(),
     };
 
     #[allow(clippy::needless_update)]

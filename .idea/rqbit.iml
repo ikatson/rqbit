@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/crates/bencode/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/buffers/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/clone_to_owned/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dht/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dht/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/librqbit/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/librqbit/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/librqbit_core/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/librqbit_lsd/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/librqbit_lsd/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/peer_binary_protocol/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/peer_binary_protocol/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/rqbit/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/sha1w/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/tracker_comms/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/upnp-serve/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/upnp-serve/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/upnp/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/upnp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/desktop/src-tauri/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
