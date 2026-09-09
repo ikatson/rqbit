@@ -7,6 +7,7 @@ import {
 import { formatBytes } from "../../helper/formatBytes";
 import { getCompletionETA } from "../../helper/getCompletionETA";
 import { PlaylistLink } from "../buttons/PlaylistButton";
+import { CategoryEditor } from "../CategoryEditor";
 import { PiecesCanvas } from "./PiecesCanvas";
 
 interface OverviewTabProps {
@@ -162,6 +163,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
         </div>
         <div className="truncate">
           <LV label="Output" value={torrent.output_folder} mono />
+        </div>
+        <div>
+          <LV
+            label="Category"
+            value={
+              <CategoryEditor
+                torrentId={torrent.id}
+                category={torrent.category}
+              />
+            }
+          />
         </div>
         <div className="truncate">
           <LV
