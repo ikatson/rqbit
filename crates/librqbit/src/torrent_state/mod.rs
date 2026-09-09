@@ -110,7 +110,7 @@ pub(crate) struct ManagedTorrentLocked {
 #[derive(Default)]
 pub(crate) struct ManagedTorrentOptions {
     pub force_tracker_interval: Option<Duration>,
-    pub peer_connect_timeout: Option<Duration>,
+    pub(crate) peer_connect_timeout: RwLock<Option<Duration>>,
     pub peer_read_write_timeout: Option<Duration>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
@@ -119,6 +119,16 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_limit: Option<usize>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
+}
+
+impl ManagedTorrentOptions {
+    pub(crate) fn peer_connect_timeout(&self) -> Option<Duration> {
+        *self.peer_connect_timeout.read()
+    }
+
+    pub(crate) fn set_peer_connect_timeout(&self, timeout: Option<Duration>) {
+        *self.peer_connect_timeout.write() = timeout;
+    }
 }
 
 impl ManagedTorrentOptions {
@@ -229,6 +239,16 @@ impl ManagedTorrent {
 
     pub fn shared(&self) -> &ManagedTorrentShared {
         &self.shared
+    }
+
+    /// Update the timeout used by future outgoing peer connection attempts.
+    /// Existing peer connections are not interrupted.
+    pub fn set_peer_connect_timeout(&self, timeout: Option<Duration>) {
+        self.shared.options.set_peer_connect_timeout(timeout);
+    }
+
+    pub fn peer_connect_timeout(&self) -> Option<Duration> {
+        self.shared.options.peer_connect_timeout()
     }
 
     /// The resolved on-disk folder this torrent's files are written under.
@@ -718,4 +738,23 @@ fn spawn_peer_adder(live: &Arc<TorrentStateLive>, mut peer_rx: PeerStream) {
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::ManagedTorrentOptions;
+
+    #[test]
+    fn peer_connect_timeout_can_be_updated_for_future_connections() {
+        let options = ManagedTorrentOptions::default();
+        assert_eq!(options.peer_connect_timeout(), None);
+
+        options.set_peer_connect_timeout(Some(Duration::from_secs(3)));
+        assert_eq!(options.peer_connect_timeout(), Some(Duration::from_secs(3)));
+
+        options.set_peer_connect_timeout(None);
+        assert_eq!(options.peer_connect_timeout(), None);
+    }
 }
