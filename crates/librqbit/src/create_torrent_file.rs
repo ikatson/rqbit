@@ -9,7 +9,9 @@ use buffers::ByteBufOwned;
 use bytes::Bytes;
 use librqbit_core::Id20;
 use librqbit_core::magnet::Magnet;
-use librqbit_core::torrent_metainfo::{TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned};
+use librqbit_core::torrent_metainfo::{
+    DhtNode, TorrentMetaV1File, TorrentMetaV1Info, TorrentMetaV1Owned,
+};
 use sha1w::ISha1;
 
 use crate::spawn_utils::BlockingSpawner;
@@ -19,6 +21,8 @@ pub struct CreateTorrentOptions<'a> {
     pub name: Option<&'a str>,
     pub trackers: Vec<String>,
     pub piece_length: Option<u32>,
+    /// BEP-0005: DHT bootstrap nodes to embed in the .torrent file.
+    pub nodes: Vec<DhtNode>,
 }
 
 fn walk_dir_find_paths(dir: &Path, out: &mut Vec<Cow<'_, Path>>) -> anyhow::Result<()> {
@@ -219,6 +223,7 @@ pub async fn create_torrent<'a>(
         .iter()
         .map(|t| ByteBufOwned::from(t.as_bytes()))
         .collect();
+    let nodes = options.nodes.clone();
     let res = create_torrent_raw(path, options, spawner).await?;
     let (info_hash, bytes) = compute_info_hash(&res.info).context("error computing info hash")?;
     Ok(CreateTorrentResult {
@@ -235,6 +240,7 @@ pub async fn create_torrent<'a>(
             publisher: None,
             publisher_url: None,
             creation_date: None,
+            nodes,
             info_hash,
         },
         output_folder: res.output_folder,
@@ -245,7 +251,7 @@ pub async fn create_torrent<'a>(
 mod tests {
     use librqbit_core::torrent_metainfo::torrent_from_bytes;
 
-    use crate::{create_torrent, spawn_utils::BlockingSpawner};
+    use crate::{CreateTorrentOptions, create_torrent, spawn_utils::BlockingSpawner};
 
     #[tokio::test]
     async fn test_create_torrent() {
@@ -264,5 +270,38 @@ mod tests {
 
         let deserialized = torrent_from_bytes(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
+    }
+
+    #[tokio::test]
+    async fn test_create_torrent_with_bootstrap_nodes() {
+        use crate::tests::test_util;
+
+        let dir = test_util::create_default_random_dir_with_torrents(
+            3,
+            1000 * 1000,
+            Some("rqbit_test_create_torrent"),
+        );
+        let options = CreateTorrentOptions {
+            nodes: vec![librqbit_core::torrent_metainfo::DhtNode::new(
+                "127.0.0.1".to_string(),
+                50001,
+            )],
+            ..Default::default()
+        };
+        let torrent = create_torrent(dir.path(), options, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+
+        let bytes = torrent.as_bytes().unwrap();
+
+        let deserialized = torrent_from_bytes(&bytes).unwrap();
+        assert_eq!(torrent.info_hash(), deserialized.info_hash);
+        assert_eq!(
+            deserialized.nodes,
+            vec![librqbit_core::torrent_metainfo::DhtNode::new(
+                "127.0.0.1".to_string(),
+                50001
+            )]
+        );
     }
 }

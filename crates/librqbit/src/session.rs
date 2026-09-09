@@ -1134,6 +1134,27 @@ impl Session {
                         }
                     };
 
+                    // BEP-0005: `nodes` are DHT contacts, not BT peers. Hand them
+                    // to the DHT so it can query them to discover peers. Host may
+                    // be a hostname or IP literal; the DHT resolves them.
+                    if !torrent.meta.nodes.is_empty() {
+                        match self.dht.as_ref() {
+                            Some(dht) => {
+                                let nodes: Vec<(String, u16)> = torrent
+                                    .meta
+                                    .nodes
+                                    .iter()
+                                    .map(|node| (node.host.clone(), node.port))
+                                    .collect();
+                                info!(?nodes, "BEP-0005: adding torrent nodes to DHT");
+                                dht.add_bootstrap_nodes(nodes);
+                            }
+                            None => {
+                                debug!("BEP-0005: torrent has nodes but DHT is disabled, ignoring");
+                            }
+                        }
+                    }
+
                     let mut trackers = torrent
                         .meta
                         .iter_announce()
