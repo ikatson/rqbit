@@ -104,7 +104,7 @@ use self::{
         PeerRx, PeerState, PeerTx, RemoveInflightRequestResult,
         stats::{
             atomic::PeerCountersAtomic as AtomicPeerCounters,
-            snapshot::{PeerStatsFilter, PeerStatsSnapshot},
+            snapshot::{PeerStats, PeerStatsFilter, PeerStatsSnapshot},
         },
     },
     peers::PeerStates,
@@ -120,6 +120,19 @@ use super::{
 
 fn make_piece_bitfield(lengths: &Lengths) -> BF {
     BF::from_boxed_slice(vec![0; lengths.piece_bitfield_bytes()].into_boxed_slice())
+}
+
+/// Builds a peer's bitfield from the bytes it sent, clearing the padding.
+///
+/// A bitfield is byte-padded, so the bits past `total_pieces` are spare. The
+/// spec says a peer zeroes them, but only the byte length is validated, so a
+/// peer can set them. Clearing them here rather than working around them at
+/// each use keeps `count_ones()` meaning "pieces this peer has", and stops a
+/// peer claiming a piece that does not exist.
+fn make_peer_bitfield(bytes: &[u8], lengths: &Lengths) -> BF {
+    let mut bf = BF::from_boxed_slice(bytes.to_vec().into_boxed_slice());
+    bf[lengths.total_pieces() as usize..].fill(false);
+    bf
 }
 
 pub(crate) struct TorrentStateLocked {
@@ -752,7 +765,12 @@ impl TorrentStateLive {
                 .states
                 .iter()
                 .filter(|e| filter.state.matches(e.value().get_state()))
-                .map(|e| (e.key().to_string(), e.value().into()))
+                .map(|e| {
+                    (
+                        e.key().to_string(),
+                        PeerStats::from_peer(e.value(), filter.include_bitfield),
+                    )
+                })
                 .collect(),
         }
     }
@@ -1529,19 +1547,26 @@ impl PeerHandler {
                 if live.bitfield.is_empty() {
                     live.bitfield = make_piece_bitfield(&self.state.lengths);
                 }
-                match live.bitfield.get_mut(have as usize) {
-                    Some(mut v) => *v = true,
-                    None => {
-                        warn!(
-                            id = self.state.shared.id,
-                            info_hash = ?self.state.shared.info_hash,
-                            addr = ?self.addr,
-                            "received have {} out of range",
-                            have
-                        );
-                        return;
-                    }
-                };
+                // Bound by the piece count, not the bitfield length: the
+                // bitfield is byte-padded, so its length overshoots by up to 7
+                // and `get_mut` alone would let a peer set a padding bit.
+                let updated = have < self.state.lengths.total_pieces()
+                    && live
+                        .bitfield
+                        .get_mut(have as usize)
+                        .map(|mut v| *v = true)
+                        .is_some();
+                if !updated {
+                    warn!(
+                        id = self.state.shared.id,
+                        info_hash = ?self.state.shared.info_hash,
+                        addr = ?self.addr,
+                        "received have {} out of range",
+                        have
+                    );
+                    return;
+                }
+
                 trace!("updated bitfield with have={}", have);
                 if let Some(true) = live
                     .bitfield
@@ -1562,7 +1587,7 @@ impl PeerHandler {
                 self.state.lengths.piece_bitfield_bytes(),
             );
         }
-        let bf = BF::from_boxed_slice(bitfield.0.to_vec().into_boxed_slice());
+        let bf = make_peer_bitfield(bitfield.as_ref(), &self.state.lengths);
         if let Some(true) = bf
             .get(..self.state.lengths.total_pieces() as usize)
             .map(|s| s.all())
@@ -2091,4 +2116,59 @@ fn format_peer_client_name(value: &ByteBuf<'_>) -> Option<String> {
     }
 
     Some(client_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_peer_bitfield;
+    use librqbit_core::lengths::Lengths;
+
+    /// 10 pieces needs 2 bytes, leaving 6 spare bits.
+    fn ten_pieces() -> Lengths {
+        let l = Lengths::new(10_000, 1_000).unwrap();
+        assert_eq!(l.total_pieces(), 10);
+        assert_eq!(l.piece_bitfield_bytes(), 2);
+        l
+    }
+
+    /// A peer that sets the spare trailing bits must not appear to hold more
+    /// than it does. Only the byte length is validated on ingest, so this is
+    /// reachable from the wire even though the spec says those bits are zero.
+    #[test]
+    fn padding_bits_are_cleared_on_ingest() {
+        // Claim 3 real pieces, then set every spare bit.
+        let bf = make_peer_bitfield(&[0b1110_0000, 0b0011_1111], &ten_pieces());
+        assert_eq!(bf.count_ones(), 3);
+    }
+
+    #[test]
+    fn a_seed_holds_every_piece() {
+        let bf = make_peer_bitfield(&[0xff, 0xff], &ten_pieces());
+        assert_eq!(bf.count_ones(), 10);
+    }
+
+    #[test]
+    fn an_empty_bitfield_holds_nothing() {
+        let bf = make_peer_bitfield(&[0x00, 0x00], &ten_pieces());
+        assert_eq!(bf.count_ones(), 0);
+    }
+
+    /// Real pieces are kept exactly as sent — the mask must not reach back
+    /// into the last byte's meaningful bits.
+    #[test]
+    fn pieces_inside_the_last_byte_survive() {
+        let bf = make_peer_bitfield(&[0b0000_0000, 0b1100_0000], &ten_pieces());
+        assert_eq!(bf.count_ones(), 2);
+        assert!(bf[8]);
+        assert!(bf[9]);
+    }
+
+    /// No padding to clear when the piece count is a multiple of 8.
+    #[test]
+    fn a_whole_number_of_bytes_is_untouched() {
+        let lengths = Lengths::new(8_000, 1_000).unwrap();
+        assert_eq!(lengths.total_pieces(), 8);
+        let bf = make_peer_bitfield(&[0xff], &lengths);
+        assert_eq!(bf.count_ones(), 8);
+    }
 }
