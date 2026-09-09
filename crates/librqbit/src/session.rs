@@ -799,6 +799,40 @@ impl Session {
 
         loop {
             tokio::select! {
+                // Finish the checks already in hand before taking on more. Without
+                // `biased` the branches are polled in a random order, so while
+                // `accept()` is continuously ready it wins roughly half the time and
+                // the in-flight set grows at about half the arrival rate.
+                biased;
+
+                Some(res) = futs.next(), if !futs.is_empty() => {
+                    // Annotated because the `Err` arm no longer names the error type,
+                    // and nothing else in the loop pins it.
+                    let res: anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> =
+                        res;
+                    match res {
+                        Ok((live, checked)) => {
+                            if let Err(e) = live.add_incoming_peer(checked) {
+                                warn!("error handing over incoming connection: {e:#}");
+                            }
+                        }
+                        // A failed check is the COMMON case rather than an anomaly: a
+                        // peer asking for an infohash this session no longer holds, a
+                        // torrent that is paused, an address in the blocklist. Matching
+                        // only `Some(Ok(..))` made the pattern refutable, and a
+                        // non-matching branch is disabled for the rest of that `select!`
+                        // call — so every failed check cost the loop its chance to
+                        // drain, while `accept()` kept adding. The accepted sockets then
+                        // accumulated unread (`Recv-Q` 68, one whole BitTorrent
+                        // handshake) until the process ran out of descriptors.
+                        //
+                        // The persistence loop in `Session::new_with_opts` already uses
+                        // this shape, `Some(res)` plus an explicit `Err` arm; this is
+                        // the same idiom applied here.
+                        // Already logged where it happened, by the `map_err` below.
+                        Err(_) => {}
+                    }
+                },
                 r = l.accept() => {
                     match r {
                         Ok((stream, addr)) => {
@@ -818,11 +852,6 @@ impl Session {
                             error!("error accepting: {e:#}");
                             continue;
                         }
-                    }
-                },
-                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
-                    if let Err(e) = live.add_incoming_peer(checked) {
-                        warn!("error handing over incoming connection: {e:#}");
                     }
                 },
             }
