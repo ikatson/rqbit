@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context;
 use buffers::ByteBuf;
@@ -9,7 +9,7 @@ use tracing::{debug, trace};
 use crate::{
     bitv::{BitV, BoxBitV},
     file_info::FileInfo,
-    type_aliases::{BF, BS, FileInfos, FilePriorities},
+    type_aliases::{FileInfos, FilePriorities, BF, BS},
 };
 
 pub struct ChunkTracker {
@@ -42,6 +42,22 @@ pub struct ChunkTracker {
     // Quick to retrieve stats, that MUST be in sync with the BFs
     // above (have/selected).
     hns: HaveNeededSelected,
+
+    // Track current streaming window per file (file_id -> (start_piece, end_piece))
+    streaming_windows: HashMap<usize, std::ops::Range<u32>>,
+}
+
+/// Result of updating the streaming window
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamingWindowUpdate {
+    /// Number of pieces added to the download queue
+    pub pieces_added: usize,
+    /// Number of pieces removed from the download queue
+    pub pieces_removed: usize,
+    /// First piece index in the active window
+    pub window_start_piece: u32,
+    /// Last piece index (exclusive) in the active window
+    pub window_end_piece: u32,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -178,6 +194,7 @@ impl ChunkTracker {
             have: have_pieces,
             hns: HaveNeededSelected::default(),
             per_file_bytes: vec![0; file_infos.len()],
+            streaming_windows: HashMap::new(),
         };
         ct.recalculate_per_file_bytes(file_infos);
         ct.hns = ct.calc_hns();
@@ -248,7 +265,7 @@ impl ChunkTracker {
             .filter_map(|id| self.lengths.validate_piece_index(id))
     }
 
-    pub(crate) fn is_piece_have(&self, id: ValidPieceIndex) -> bool {
+    pub fn is_piece_have(&self, id: ValidPieceIndex) -> bool {
         self.have.as_slice()[id.get() as usize]
     }
 
@@ -311,7 +328,9 @@ impl ChunkTracker {
         chunk_range.set(chunk_info.chunk_index as usize, true);
         trace!(
             "piece={}, chunk_info={:?}, bits={:?}",
-            piece.index, chunk_info, chunk_range,
+            piece.index,
+            chunk_info,
+            chunk_range,
         );
 
         if chunk_range.all() {
@@ -386,6 +405,87 @@ impl ChunkTracker {
         &self.per_file_bytes
     }
 
+    /// Update the download queue to only include pieces within a streaming window.
+    ///
+    /// This enables "stream-only" downloading where we only download pieces
+    /// from the current playback position forward, plus a small backward buffer.
+    ///
+    /// # Arguments
+    /// * `file_info` - The file being streamed
+    /// * `current_position` - Current byte position within the file (0-indexed)
+    /// * `backward_bytes` - How many bytes behind current position to keep in queue
+    /// * `forward_bytes` - How many bytes ahead of current position to keep in queue
+    ///
+    /// # Returns
+    /// The number of pieces added and removed from the queue
+    pub fn update_streaming_window(
+        &mut self,
+        file_id: usize,
+        file_info: &FileInfo,
+        current_position: u64,
+        backward_bytes: u64,
+        forward_bytes: u64,
+    ) -> StreamingWindowUpdate {
+        let file_start = file_info.offset_in_torrent;
+        let file_end = file_start + file_info.len;
+
+        // Calculate absolute byte positions for the window
+        let abs_position = file_start + current_position.min(file_info.len);
+        let window_start = abs_position.saturating_sub(backward_bytes);
+        let window_end = (abs_position.saturating_add(forward_bytes)).min(file_end);
+
+        // Convert to piece indices
+        let piece_len = self.lengths.default_piece_length() as u64;
+        let start_piece = (window_start / piece_len) as u32;
+        let end_piece = window_end.div_ceil(piece_len) as u32;
+
+        let mut added = 0usize;
+        let mut removed = 0usize;
+
+        // Iterate over all pieces in the file's range
+        for piece_idx in file_info.piece_range.clone() {
+            let idx = piece_idx as usize;
+
+            // Check if this piece is within our streaming window
+            let in_window = piece_idx >= start_piece && piece_idx < end_piece;
+            let is_selected = self.selected.get(idx).map(|b| *b).unwrap_or(false);
+            let already_have = self.have.as_slice().get(idx).map(|b| *b).unwrap_or(false);
+
+            // Piece should be queued if: in window AND selected AND not already downloaded
+            let should_be_queued = in_window && is_selected && !already_have;
+            let currently_queued = self.queue_pieces.get(idx).map(|b| *b).unwrap_or(false);
+
+            if should_be_queued && !currently_queued {
+                self.queue_pieces.set(idx, true);
+                added += 1;
+            } else if !should_be_queued && currently_queued {
+                // Only remove from queue if it's part of this file
+                // (don't accidentally remove pieces from other files)
+                self.queue_pieces.set(idx, false);
+                removed += 1;
+            }
+        }
+
+        // Recalculate stats
+        self.hns = self.calc_hns();
+
+        // Store the streaming window for this file
+        self.streaming_windows
+            .insert(file_id, start_piece..end_piece);
+
+        StreamingWindowUpdate {
+            pieces_added: added,
+            pieces_removed: removed,
+            window_start_piece: start_piece,
+            window_end_piece: end_piece,
+        }
+    }
+
+    /// Get the current streaming window for a file
+    pub fn get_streaming_window(&self, file_id: usize) -> Option<std::ops::Range<u32>> {
+        self.streaming_windows.get(&file_id).cloned()
+    }
+
     // Returns remaining bytes
     pub fn update_file_have_on_piece_completed(
         &mut self,
@@ -412,7 +512,7 @@ mod tests {
         bitv::BitV, chunk_tracker::HaveNeededSelected, file_info::FileInfo, type_aliases::BF,
     };
 
-    use super::{ChunkTracker, compute_chunk_have_status};
+    use super::{compute_chunk_have_status, ChunkTracker};
 
     #[test]
     fn test_compute_chunk_status() {
@@ -665,5 +765,223 @@ mod tests {
         assert!(ct.queue_pieces[0]);
         assert!(ct.queue_pieces[1]);
         assert!(ct.queue_pieces[2]);
+    }
+
+    #[test]
+    fn test_streaming_window_basic() {
+        // Create a file with 10 pieces
+        let piece_len = CHUNK_SIZE * 2;
+        let total_len = piece_len as u64 * 10;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+        assert_eq!(l.total_pieces(), 10);
+
+        let file_info = FileInfo {
+            relative_filename: "test.mp4".into(),
+            offset_in_torrent: 0,
+            piece_range: 0..10,
+            len: total_len,
+            attrs: Default::default(),
+        };
+
+        // Start with no pieces downloaded, all selected
+        let have_pieces =
+            BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+        let selected_pieces = {
+            let mut bf =
+                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+            bf.get_mut(0..10).unwrap().fill(true);
+            bf
+        };
+
+        let mut ct = ChunkTracker::new(
+            have_pieces.into_dyn(),
+            selected_pieces,
+            l,
+            &vec![file_info.clone()],
+        )
+        .unwrap();
+
+        // Initially all pieces should be queued
+        for i in 0..10 {
+            assert!(ct.queue_pieces[i], "piece {} should be queued initially", i);
+        }
+
+        // Update streaming window: position at 50%, forward 30%, backward minimal
+        // Position: piece 5, forward window should include pieces 5-8
+        let position = (piece_len as u64) * 5; // Start of piece 5
+        let backward = piece_len as u64; // ~1 piece backward
+        let forward = (piece_len as u64) * 3; // ~3 pieces forward
+
+        let result = ct.update_streaming_window(0, &file_info, position, backward, forward);
+
+        // Window should be roughly pieces 4-8 (backward: 4, current+forward: 5,6,7,8)
+        assert!(result.pieces_removed > 0, "should have removed some pieces");
+
+        // Pieces before the window should NOT be queued
+        assert!(!ct.queue_pieces[0], "piece 0 should not be queued");
+        assert!(!ct.queue_pieces[1], "piece 1 should not be queued");
+        assert!(!ct.queue_pieces[2], "piece 2 should not be queued");
+        assert!(!ct.queue_pieces[3], "piece 3 should not be queued");
+
+        // Pieces in the window SHOULD be queued
+        assert!(
+            ct.queue_pieces[4],
+            "piece 4 should be queued (backward buffer)"
+        );
+        assert!(ct.queue_pieces[5], "piece 5 should be queued (current)");
+        assert!(ct.queue_pieces[6], "piece 6 should be queued (forward)");
+        assert!(ct.queue_pieces[7], "piece 7 should be queued (forward)");
+
+        // Pieces after the window should NOT be queued
+        assert!(!ct.queue_pieces[9], "piece 9 should not be queued");
+    }
+
+    #[test]
+    fn test_streaming_window_seek_forward() {
+        // Test seeking forward - old pieces should be removed from queue
+        let piece_len = CHUNK_SIZE * 2;
+        let total_len = piece_len as u64 * 10;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+
+        let file_info = FileInfo {
+            relative_filename: "test.mp4".into(),
+            offset_in_torrent: 0,
+            piece_range: 0..10,
+            len: total_len,
+            attrs: Default::default(),
+        };
+
+        let have_pieces =
+            BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+        let selected_pieces = {
+            let mut bf =
+                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+            bf.get_mut(0..10).unwrap().fill(true);
+            bf
+        };
+
+        let mut ct = ChunkTracker::new(
+            have_pieces.into_dyn(),
+            selected_pieces,
+            l,
+            &vec![file_info.clone()],
+        )
+        .unwrap();
+
+        // First, set window at position 20%
+        let position1 = (piece_len as u64) * 2;
+        let forward = (piece_len as u64) * 3;
+        ct.update_streaming_window(0, &file_info, position1, piece_len as u64, forward);
+
+        // Verify pieces 1-5 are in queue
+        assert!(ct.queue_pieces[2], "piece 2 should be queued");
+        assert!(ct.queue_pieces[3], "piece 3 should be queued");
+        assert!(ct.queue_pieces[4], "piece 4 should be queued");
+
+        // Now seek forward to 70%
+        let position2 = (piece_len as u64) * 7;
+        let result =
+            ct.update_streaming_window(0, &file_info, position2, piece_len as u64, forward);
+
+        // Old pieces should be removed
+        assert!(
+            !ct.queue_pieces[2],
+            "piece 2 should be removed after seek forward"
+        );
+        assert!(
+            !ct.queue_pieces[3],
+            "piece 3 should be removed after seek forward"
+        );
+        assert!(
+            !ct.queue_pieces[4],
+            "piece 4 should be removed after seek forward"
+        );
+
+        // New window pieces should be queued
+        assert!(
+            ct.queue_pieces[6],
+            "piece 6 should be queued (backward buffer)"
+        );
+        assert!(ct.queue_pieces[7], "piece 7 should be queued (current)");
+        assert!(ct.queue_pieces[8], "piece 8 should be queued (forward)");
+        assert!(ct.queue_pieces[9], "piece 9 should be queued (forward)");
+    }
+
+    #[test]
+    fn test_streaming_window_respects_have() {
+        // Pieces that are already downloaded should not be queued
+        let piece_len = CHUNK_SIZE * 2;
+        let total_len = piece_len as u64 * 10;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+
+        let file_info = FileInfo {
+            relative_filename: "test.mp4".into(),
+            offset_in_torrent: 0,
+            piece_range: 0..10,
+            len: total_len,
+            attrs: Default::default(),
+        };
+
+        // Mark pieces 5 and 6 as already downloaded
+        let mut have_pieces =
+            BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+        have_pieces.set(5, true);
+        have_pieces.set(6, true);
+
+        let selected_pieces = {
+            let mut bf =
+                BF::from_boxed_slice(vec![0u8; l.piece_bitfield_bytes()].into_boxed_slice());
+            bf.get_mut(0..10).unwrap().fill(true);
+            bf
+        };
+
+        let mut ct = ChunkTracker::new(
+            have_pieces.into_dyn(),
+            selected_pieces,
+            l,
+            &vec![file_info.clone()],
+        )
+        .unwrap();
+
+        // Initially: pieces 5, 6 are NOT in queue (already have), others ARE in queue
+        assert!(
+            !ct.queue_pieces[5],
+            "piece 5 is already have, should not be queued initially"
+        );
+        assert!(
+            !ct.queue_pieces[6],
+            "piece 6 is already have, should not be queued initially"
+        );
+        assert!(ct.queue_pieces[7], "piece 7 should be queued initially");
+        assert!(ct.queue_pieces[8], "piece 8 should be queued initially");
+
+        // Update window centered around pieces 5-8
+        let position = (piece_len as u64) * 5;
+        let forward = (piece_len as u64) * 4; // Forward to piece 9
+        ct.update_streaming_window(0, &file_info, position, piece_len as u64, forward);
+
+        // Pieces 5 and 6 should STILL not be queued (already have)
+        assert!(
+            !ct.queue_pieces[5],
+            "piece 5 is already have, should not be queued"
+        );
+        assert!(
+            !ct.queue_pieces[6],
+            "piece 6 is already have, should not be queued"
+        );
+
+        // Pieces 7 and 8 are in window and not downloaded - SHOULD be queued
+        assert!(ct.queue_pieces[7], "piece 7 should be queued");
+        assert!(ct.queue_pieces[8], "piece 8 should be queued");
+
+        // Pieces outside window should NOT be queued
+        assert!(
+            !ct.queue_pieces[0],
+            "piece 0 should not be queued (outside window)"
+        );
+        assert!(
+            !ct.queue_pieces[1],
+            "piece 1 should not be queued (outside window)"
+        );
     }
 }

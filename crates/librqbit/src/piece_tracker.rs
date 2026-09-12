@@ -97,6 +97,11 @@ impl PieceTracker {
         &self.chunks
     }
 
+    /// Mutable access to the underlying ChunkTracker.
+    pub fn chunks_mut(&mut self) -> &mut ChunkTracker {
+        &mut self.chunks
+    }
+
     /// Consume the PieceTracker, requeuing any in-flight pieces.
     ///
     /// This is used when pausing a torrent - any pieces that were being downloaded
