@@ -972,6 +972,9 @@ impl Session {
         l: A,
         max_pending_incoming_handshake_checks: usize,
     ) -> anyhow::Result<()> {
+        // Cap of 0 would make both select! branches below permanently disabled,
+        // which panics ("all branches are disabled").
+        let max_pending_incoming_handshake_checks = max_pending_incoming_handshake_checks.max(1);
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
@@ -1002,7 +1005,16 @@ impl Session {
                         }
                     }
                 },
-                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                Some(res) = futs.next(), if !futs.is_empty() => {
+                    // Match on the full result. Matching only Ok here would
+                    // disable the branch on Err: with the queue at the cap
+                    // that leaves both select! branches disabled, which
+                    // panics. The queue itself pops on any completion.
+                    let (live, checked) = match res {
+                        Ok(v) => v,
+                        // Already logged in the map_err() above.
+                        Err(_) => continue,
+                    };
                     let (addr, kind) = (checked.addr, checked.kind);
                     if let Err(e) = live.add_incoming_peer(checked) {
                         warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
@@ -1811,6 +1823,19 @@ mod tests {
     use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
 
     use super::torrent_file_from_info_bytes;
+    use super::{Accept, ConnectionKind, Session, SessionOptions};
+    use crate::tests::test_util::{setup_test_logging, wait_until};
+    use crate::vectored_traits::{AsyncReadVectored, AsyncReadVectoredIntoCompat};
+    use anyhow::{Context, bail};
+    use std::{
+        net::SocketAddr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+    use tokio::io::{AsyncWrite, DuplexStream};
 
     #[test]
     fn test_torrent_file_from_info_and_bytes() {
@@ -1832,5 +1857,142 @@ mod tests {
         assert_eq!(parsed.info_hash, generated_parsed.info_hash);
         assert_eq!(parsed.info, generated_parsed.info);
         assert_eq!(parsed_trackers, get_trackers(&generated_parsed));
+    }
+
+    struct ListenerTest {
+        handle: tokio::task::JoinHandle<()>,
+        accepted: Arc<AtomicUsize>,
+        tx: tokio::sync::mpsc::Sender<DuplexStream>,
+        // task_listener() consumes its Arc<Session> and downgrades it; keep the
+        // session alive for the test duration.
+        _session: Arc<Session>,
+    }
+
+    struct StubListener {
+        rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<DuplexStream>>,
+        accepted: Arc<AtomicUsize>,
+    }
+
+    impl Accept for StubListener {
+        const KIND: ConnectionKind = ConnectionKind::Tcp;
+
+        async fn accept(
+            &self,
+        ) -> anyhow::Result<(
+            SocketAddr,
+            (
+                impl AsyncReadVectored + Send + 'static,
+                impl AsyncWrite + Unpin + Send + 'static,
+            ),
+        )> {
+            let stream = self
+                .rx
+                .lock()
+                .await
+                .recv()
+                .await
+                .context("stub listener channel dropped")?;
+            self.accepted.fetch_add(1, Ordering::Relaxed);
+            let (read, write) = tokio::io::split(stream);
+            Ok((
+                "127.0.0.1:10000".parse().unwrap(),
+                (read.into_vectored_compat(), write),
+            ))
+        }
+    }
+
+    // Spawns task_listener() with the given cap and queues num_conns incoming
+    // connections whose handshake checks all fail fast (EOF), as happens in
+    // production when e.g. the torrent is still initializing.
+    async fn spawn_task_listener(cap: usize, num_conns: usize) -> ListenerTest {
+        setup_test_logging();
+        let session = Session::new_with_opts(
+            std::env::temp_dir().join("does_not_exist"),
+            SessionOptions {
+                dht: None,
+                disable_trackers: true,
+                disable_local_service_discovery: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = tokio::sync::mpsc::channel(num_conns);
+        let keepalive = session.clone();
+        let handle = tokio::spawn({
+            let accepted = accepted.clone();
+            async move {
+                let _ = session
+                    .task_listener(
+                        StubListener {
+                            rx: tokio::sync::Mutex::new(rx),
+                            accepted,
+                        },
+                        cap,
+                    )
+                    .await;
+            }
+        });
+
+        for _ in 0..num_conns {
+            let (client, server) = tokio::io::duplex(128);
+            tx.send(server).await.unwrap();
+            // Dropping the client half makes the check fail immediately with
+            // EOF instead of waiting for the read timeout.
+            drop(client);
+        }
+
+        ListenerTest {
+            handle,
+            accepted,
+            tx,
+            _session: keepalive,
+        }
+    }
+
+    async fn wait_for_accepted(t: &ListenerTest, want: usize) {
+        wait_until(
+            || {
+                let accepted = t.accepted.load(Ordering::Relaxed);
+                if accepted >= want {
+                    return Ok(());
+                }
+                if t.handle.is_finished() {
+                    bail!("listener task exited prematurely");
+                }
+                bail!("accepted {accepted}/{want} connections")
+            },
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn wait_accepted(t: &ListenerTest, want: usize) {
+        wait_for_accepted(t, want).await;
+        // The loop must keep running after draining everything queued so far:
+        // prove it accepts one more connection.
+        let (client, server) = tokio::io::duplex(128);
+        t.tx.send(server).await.unwrap();
+        drop(client);
+        wait_for_accepted(t, want + 1).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_task_listener_survives_failing_handshake_checks_at_cap() {
+        // Regression: with the queue at the cap and failing checks, the drain
+        // branch didn't match on Err, and the select! panicked with "all
+        // branches are disabled and there is no else branch".
+        let t = spawn_task_listener(2, 6).await;
+        wait_accepted(&t, 6).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_task_listener_accepts_with_zero_cap() {
+        // Regression: cap=0 used to panic on the very first select! evaluation.
+        let t = spawn_task_listener(0, 2).await;
+        wait_accepted(&t, 2).await;
     }
 }
