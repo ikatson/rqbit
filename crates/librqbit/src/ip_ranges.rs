@@ -58,7 +58,7 @@ impl IpRanges {
         self.v4.len + self.v6.len
     }
 
-    pub async fn load_from_url(url: &str) -> Result<Self> {
+    pub async fn load_from_url(client: &reqwest::Client, url: &str) -> Result<Self> {
         let parsed_url = Url::parse(url).context("failed to parse URL")?;
 
         if parsed_url.scheme() == "file" {
@@ -69,7 +69,9 @@ impl IpRanges {
             return Self::load_from_file(path).await;
         }
 
-        let response = reqwest::get(parsed_url)
+        let response = client
+            .get(parsed_url)
+            .send()
             .await
             .context("error fetching list")?;
         if !response.status().is_success() {
@@ -273,7 +275,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_real_url() {
         setup_test_logging();
-        let _ = IpRanges::load_from_url("https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
+        let client = reqwest::Client::new();
+        let _ = IpRanges::load_from_url(&client, "https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
             .await
             .unwrap();
     }
