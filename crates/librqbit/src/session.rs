@@ -309,10 +309,13 @@ pub struct AddTorrentOptions {
     /// - if no persisted bitfield exists or it has the wrong length, a full check runs
     ///   instead (with a warning), so a torrent without a usable bitfield can never be
     ///   brought up as complete;
-    /// - if loading the persisted bitfield fails (e.g. broken persistence), the torrent
-    ///   fails to add (fail-closed);
+    /// - if loading the persisted bitfield fails (e.g. broken persistence), the
+    ///   torrent transitions to the error state instead of being trusted (fail-closed);
     /// - torrents re-initialized after an error always get checked regardless of this
     ///   option;
+    /// - the persisted bitfield is keyed by info hash, not by data location: re-adding
+    ///   the same torrent with a different output folder trusts the bitfield all the
+    ///   same (within the vouch semantics);
     /// - a persisted bitfield only exists when the session was created with
     ///   `fastresume: true` and a persistence backend; otherwise every add is checked;
     /// - this only applies when the torrent is newly added. For an already managed
@@ -1679,14 +1682,16 @@ impl Session {
     ///
     /// See [`ManagedTorrent::recheck`] for the semantics. The check runs in the
     /// background; use the returned handle's `wait_until_initialized()` to wait for
-    /// completion.
+    /// completion. Must be called within the tokio runtime context.
     pub async fn recheck(&self, id: TorrentIdOrHash) -> anyhow::Result<()> {
         let torrent = self
             .get(id)
             .with_context(|| format!("no torrent found for {id:?}"))?;
-        torrent.recheck()?;
+        let result = torrent.recheck();
+        // Also flush on failure: the recheck may have transitioned the torrent to the
+        // error state, which the persistence layer should reflect.
         self.try_update_persistence_metadata(&torrent).await;
-        Ok(())
+        result
     }
 
     pub async fn update_only_files(

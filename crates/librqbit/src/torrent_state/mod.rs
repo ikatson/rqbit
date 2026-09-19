@@ -251,6 +251,55 @@ fn _start<'a>(
             let init = init.clone();
             init.clear_pause_request();
             if !init.try_start_check() {
+                if !start_paused {
+                    // A check is already running (e.g. a paused add, or a recheck).
+                    // Remember this start: go live with this peer stream once the
+                    // running check completes, so the unpause isn't silently
+                    // swallowed.
+                    let t = t.clone();
+                    spawn_with_cancel(
+                        debug_span!(parent: t.shared().span.clone(), "start_after_check"),
+                        "start_after_check",
+                        token.clone(),
+                        async move {
+                            enum Step {
+                                Retry,
+                                Done,
+                            }
+                            loop {
+                                let step = {
+                                    let g = t.locked.write();
+                                    match &g.state {
+                                        ManagedTorrentState::Initializing(_) => Step::Retry,
+                                        ManagedTorrentState::Paused(_) => {
+                                            // Respect the latest pause intent: a
+                                            // pause that arrived meanwhile wins.
+                                            if g.paused {
+                                                Step::Done
+                                            } else {
+                                                return _start(
+                                                    &t,
+                                                    peer_rx,
+                                                    false,
+                                                    session,
+                                                    Some(g),
+                                                    token,
+                                                );
+                                            }
+                                        }
+                                        _ => Step::Done,
+                                    }
+                                };
+                                match step {
+                                    Step::Retry => {
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
+                                    }
+                                    Step::Done => return Ok(()),
+                                }
+                            }
+                        },
+                    );
+                }
                 return Ok(());
             }
 
@@ -527,8 +576,9 @@ impl ManagedTorrent {
     /// the torrent initializing (with the pause requested); call `unpause()` to re-run
     /// the check and reach the target state.
     ///
-    /// Active streaming reads through this torrent are closed by a recheck, just like
-    /// by a pause: readers should expect their streams to end.
+    /// Reads through this torrent error while the check runs; parked streaming readers
+    /// resume once the torrent is live again. Must be called within the tokio runtime
+    /// context.
     ///
     /// This is useful when the data may have been modified outside of rqbit, e.g. to
     /// periodically verify a seeding library.
@@ -559,19 +609,19 @@ impl ManagedTorrent {
             .metadata
             .load_full()
             .context("torrent is not resolved")?;
-
         // Pause the live torrent first: this disconnects the peers, cancels the live
-        // tasks and closes the files, so the check can reopen them. The stream
-        // subscriptions are carried over so that parked stream readers resume when the
-        // torrent goes live again.
+        // tasks and closes the files, so the check can reopen them. Stream
+        // subscriptions are carried over from the old state (live or paused) so that
+        // parked stream readers resume when the torrent goes live again.
         let mut streams = None;
         if was_live && let ManagedTorrentState::Live(live) = &g.state {
             let paused = live
                 .pause()
                 .context("error pausing live torrent before recheck")?;
             streams = Some(paused.streams.clone());
+        } else if let ManagedTorrentState::Paused(paused) = &g.state {
+            streams = Some(paused.streams.clone());
         }
-
         let files = self
             .shared
             .storage_factory

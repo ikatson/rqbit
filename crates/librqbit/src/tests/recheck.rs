@@ -769,3 +769,106 @@ async fn test_session_recheck_wrapper() {
     let (have, _) = paused_have_finished(&handle);
     assert_eq!(have, expected_have_after_corruption(&fixture));
 }
+
+/// Recheck carries stream subscriptions from the old state (live or paused), so
+/// parked streaming readers resume when the torrent is live again.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recheck_preserves_streams() {
+    setup_test_logging();
+    let fixture = make_fixture("recheck_streams").await;
+
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, true).await;
+
+    // Compare streams objects by pointer identity; Arc::as_ptr avoids naming the
+    // pub(crate) streams type.
+    let paused_streams_ptr = streams_ptr(&handle);
+
+    // Recheck the paused torrent and unpause it: the live state must be built on the
+    // same streams object the paused readers are subscribed to.
+    handle.recheck().unwrap();
+    session.unpause(&handle).await.unwrap();
+    handle.wait_until_initialized().await.unwrap();
+    wait_live(&handle).await;
+
+    assert_eq!(
+        paused_streams_ptr,
+        live_streams_ptr(&handle),
+        "streams object was replaced by the recheck"
+    );
+
+    // Same for the live path: live -> recheck -> live keeps the streams.
+    let live_streams_before = live_streams_ptr(&handle);
+    handle.recheck().unwrap();
+    handle.wait_until_initialized().await.unwrap();
+    wait_live(&handle).await;
+    assert_eq!(
+        live_streams_before,
+        live_streams_ptr(&handle),
+        "streams object was replaced by the recheck"
+    );
+}
+
+fn streams_ptr(handle: &ManagedTorrentHandle) -> usize {
+    handle
+        .with_state(|s| match s {
+            ManagedTorrentState::Paused(p) => Ok(Arc::as_ptr(&p.streams) as usize),
+            other => bail!("unexpected state {}", other.name()),
+        })
+        .unwrap()
+}
+
+fn live_streams_ptr(handle: &ManagedTorrentHandle) -> usize {
+    handle
+        .with_state(|s| match s {
+            ManagedTorrentState::Live(l) => Ok(Arc::as_ptr(&l.streams) as usize),
+            other => bail!("unexpected state {}", other.name()),
+        })
+        .unwrap()
+}
+
+/// Unpausing while a recheck is still running must not be swallowed: the torrent
+/// goes live with the unpause's peer stream once the check completes.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unpause_during_recheck_goes_live() {
+    setup_test_logging();
+    let fixture = make_fixture("recheck_unpause_midcheck").await;
+
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, true).await;
+    assert!(handle.is_paused());
+
+    corrupt_one_byte(&fixture);
+    handle.recheck().unwrap();
+
+    // Unpause right away: the check is running, so this start is "pending".
+    session.unpause(&handle).await.unwrap();
+
+    // The recheck must complete and the torrent must end up live (not paused).
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            handle.wait_until_initialized().await.unwrap();
+            let is_live = handle
+                .with_state(|s| {
+                    Ok::<bool, anyhow::Error>(matches!(s, ManagedTorrentState::Live(_)))
+                })
+                .unwrap();
+            if is_live {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("torrent did not go live after unpause during recheck");
+    wait_live_finished(&handle, false).await;
+    assert!(!handle.is_paused());
+    let (have, _) = live_have_finished(&handle);
+    assert_eq!(have, expected_have_after_corruption(&fixture));
+}
