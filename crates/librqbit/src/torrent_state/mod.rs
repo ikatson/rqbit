@@ -548,11 +548,13 @@ impl ManagedTorrent {
             progress_bytes: 0,
             uploaded_bytes: 0,
             finished: false,
+            moving: false,
             live: None,
         };
 
         {
             let g = self.locked.read();
+            resp.moving = g.moving;
             match &g.state {
                 ManagedTorrentState::Initializing(i) => {
                     resp.state = S::Initializing { paused: g.paused };

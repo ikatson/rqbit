@@ -69,6 +69,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
       };
     if (state === STATE_PAUSED)
       return { text: "Paused", color: "text-secondary" };
+    if (statsResponse.moving) return { text: "Moving", color: "text-primary" };
     if (state === STATE_LIVE && finished)
       return { text: "Seeding", color: "text-success" };
     if (state === STATE_LIVE)

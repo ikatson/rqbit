@@ -81,6 +81,7 @@ pub struct TorrentStats {
     pub uploaded_bytes: u64,
     pub total_bytes: u64,
     pub finished: bool,
+    pub moving: bool,
     pub live: Option<LiveStats>,
 }
 
@@ -154,6 +155,7 @@ mod tests {
             uploaded_bytes: 0,
             total_bytes: 100,
             finished: false,
+            moving: false,
             live: None,
         }
     }

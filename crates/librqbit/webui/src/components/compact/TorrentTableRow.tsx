@@ -39,7 +39,7 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
   const peersDisplay = peerStats ? `${peerStats.live}/${peerStats.seen}` : "-";
 
   const eta = stats ? getCompletionETA(stats) : "-";
-  const displayEta = finished ? "Done" : eta;
+  const displayEta = stats?.moving ? "Moving" : finished ? "Done" : eta;
 
   const name = torrent.name ?? "";
 

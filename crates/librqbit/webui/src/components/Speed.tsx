@@ -17,6 +17,9 @@ export const Speed: React.FC<{ statsResponse: TorrentStats }> = ({
     case STATE_ERROR:
       return <span className="text-error">Error</span>;
   }
+  if (statsResponse.moving) {
+    return <span className="text-primary">Moving</span>;
+  }
   // Unknown state
   if (statsResponse.state != "live" || statsResponse.live === null) {
     return <span className="text-secondary">{statsResponse.state}</span>;
