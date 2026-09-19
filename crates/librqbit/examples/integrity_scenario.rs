@@ -14,10 +14,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use librqbit::{
-    AddTorrent, AddTorrentOptions, ManagedTorrent, ManagedTorrentState, Session,
-    SessionOptions, SessionPersistenceConfig,
-};
+use librqbit::{AddTorrent, AddTorrentOptions, Session, SessionOptions, SessionPersistenceConfig};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -107,15 +104,18 @@ async fn timing() -> anyhow::Result<()> {
     std::fs::create_dir_all(&data_dir)?;
     let session_dir = root.join("session");
 
-    println!("creating {NUM} torrents of {SIZE_MB}MB each in {:?}", data_dir);
+    println!(
+        "creating {NUM} torrents of {SIZE_MB}MB each in {:?}",
+        data_dir
+    );
     let mut torrents = Vec::new();
     for i in 0..NUM {
         let dir = data_dir.join(format!("t{i}"));
         std::fs::create_dir_all(&dir)?;
         librqbit::spawn_utils::BlockingSpawner::new(1)
             .block_in_place(|| {
-                use std::io::Write;
                 use rand::{Rng, SeedableRng};
+                use std::io::Write;
                 let mut rng = rand::rngs::SmallRng::seed_from_u64(i as u64);
                 let mut file = std::fs::File::create(dir.join("big.data"))?;
                 let mut written = 0usize;
@@ -144,8 +144,13 @@ async fn timing() -> anyhow::Result<()> {
     let session = new_session(&root, Some(&session_dir), true).await?;
     let t0 = Instant::now();
     for t in &torrents {
-        add_and_wait_checked(&session, t, Some(root.join("data").to_string_lossy().into_owned()), true)
-            .await?;
+        add_and_wait_checked(
+            &session,
+            t,
+            Some(root.join("data").to_string_lossy().into_owned()),
+            true,
+        )
+        .await?;
     }
     println!(
         "TIMING: first_boot_full_check_total_ms={} per_torrent={}",
@@ -160,8 +165,13 @@ async fn timing() -> anyhow::Result<()> {
     let t0 = Instant::now();
     let session = new_session(&root, Some(&session_dir), false).await?;
     for t in &torrents {
-        add_and_wait_checked(&session, t, Some(root.join("data").to_string_lossy().into_owned()), true)
-            .await?;
+        add_and_wait_checked(
+            &session,
+            t,
+            Some(root.join("data").to_string_lossy().into_owned()),
+            true,
+        )
+        .await?;
     }
     println!(
         "TIMING: boot_no_fastresume_total_ms={} per_torrent={}",
@@ -175,8 +185,13 @@ async fn timing() -> anyhow::Result<()> {
     let t0 = Instant::now();
     let session = new_session(&root, Some(&session_dir), true).await?;
     for t in &torrents {
-        add_and_wait_checked(&session, t, Some(root.join("data").to_string_lossy().into_owned()), true)
-            .await?;
+        add_and_wait_checked(
+            &session,
+            t,
+            Some(root.join("data").to_string_lossy().into_owned()),
+            true,
+        )
+        .await?;
     }
     println!(
         "TIMING: boot_fastresume_spotcheck_total_ms={} per_torrent={}",
@@ -190,8 +205,13 @@ async fn timing() -> anyhow::Result<()> {
     let t0 = Instant::now();
     let session = new_session(&root, Some(&session_dir), true).await?;
     for t in &torrents {
-        add_and_wait_checked(&session, t, Some(root.join("data").to_string_lossy().into_owned()), false)
-            .await?;
+        add_and_wait_checked(
+            &session,
+            t,
+            Some(root.join("data").to_string_lossy().into_owned()),
+            false,
+        )
+        .await?;
     }
     println!(
         "TIMING: boot_check_after_load_false_total_ms={} per_torrent={}",
@@ -231,7 +251,7 @@ async fn live(src: &Path) -> anyhow::Result<()> {
         .context("error adding torrent")?
         .into_handle()
         .context("expected handle")?;
-    let t0 = Instant::now();
+    let download_started = std::time::Instant::now();
     loop {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let st = handle.stats();
@@ -241,13 +261,13 @@ async fn live(src: &Path) -> anyhow::Result<()> {
         if st.state.to_string().contains("Error") {
             bail!("torrent errored: {:?}", st.error);
         }
-        if t0.elapsed() > Duration::from_secs(180) {
+        if download_started.elapsed() > Duration::from_secs(180) {
             bail!("timed out downloading/verifying, stats: {st}");
         }
     }
     println!(
         "LIVE-BOOT1: check_after_load=true elapsed_ms={} finished={}",
-        t0.elapsed().as_millis(),
+        download_started.elapsed().as_millis(),
         handle.stats().finished
     );
     let file_path = {
@@ -262,7 +282,7 @@ async fn live(src: &Path) -> anyhow::Result<()> {
     session.stop().await;
 
     // Boot 2: check_after_load=false: must not run any check.
-    let t0 = Instant::now();
+    let boot2_started = Instant::now();
     let session = new_session(&root, Some(&session_dir), true).await?;
     let handle = session
         .add_torrent(
@@ -279,9 +299,8 @@ async fn live(src: &Path) -> anyhow::Result<()> {
         .context("error adding torrent")?
         .into_handle()
         .context("expected handle")?;
-    let t0 = Instant::now();
     handle.wait_until_initialized().await?;
-    let elapsed = t0.elapsed();
+    let elapsed = boot2_started.elapsed();
     let st = handle.stats();
     println!(
         "LIVE-RESUME: check_after_load=false elapsed_us={} finished={} live={:?}",
@@ -322,6 +341,8 @@ async fn live(src: &Path) -> anyhow::Result<()> {
         st.finished
     );
     session.stop().await;
-    println!("LIVE: done. Data at {outdir:?}, persistence at {session_dir:?}, RUST_LOG evidence above");
+    println!(
+        "LIVE: done. Data at {outdir:?}, persistence at {session_dir:?}, RUST_LOG evidence above"
+    );
     Ok(())
 }

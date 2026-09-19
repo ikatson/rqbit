@@ -108,7 +108,6 @@ pub(crate) struct ManagedTorrentLocked {
     pub(crate) only_files: Option<Vec<usize>>,
 }
 
-#[derive(Default)]
 pub(crate) struct ManagedTorrentOptions {
     pub force_tracker_interval: Option<Duration>,
     pub peer_connect_timeout: Option<Duration>,
@@ -120,11 +119,28 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_limit: Option<usize>,
     /// Whether to run an integrity check when the torrent is loaded from the
     /// persisted bitfield. Mirrors `AddTorrentOptions::check_after_load`.
-    /// Note the derive is only used as a convenience: `session.rs` always
-    /// constructs this struct explicitly.
     pub check_after_load: bool,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
+}
+
+impl Default for ManagedTorrentOptions {
+    fn default() -> Self {
+        Self {
+            force_tracker_interval: None,
+            peer_connect_timeout: None,
+            peer_read_write_timeout: None,
+            allow_overwrite: false,
+            output_folder: PathBuf::default(),
+            ratelimits: LimitsConfig::default(),
+            initial_peers: Vec::default(),
+            peer_limit: None,
+            // Safe default: always check, unless the caller explicitly vouched.
+            check_after_load: true,
+            #[cfg(feature = "disable-upload")]
+            _disable_upload: false,
+        }
+    }
 }
 
 impl ManagedTorrentOptions {
@@ -215,6 +231,135 @@ pub struct ManagedTorrent {
     pub metadata: ArcSwapOption<TorrentMetadata>,
     pub(crate) state_change_notify: Notify,
     pub(crate) locked: RwLock<ManagedTorrentLocked>,
+}
+
+fn _start<'a>(
+    t: &'a Arc<ManagedTorrent>,
+    peer_rx: Option<PeerStream>,
+    start_paused: bool,
+    session: Arc<Session>,
+    g: Option<parking_lot::RwLockWriteGuard<'a, ManagedTorrentLocked>>,
+    token: CancellationToken,
+) -> anyhow::Result<()> {
+    let mut g = g.unwrap_or_else(|| t.locked.write());
+
+    match &g.state {
+        ManagedTorrentState::Live(_) => {
+            bail!("torrent is already live");
+        }
+        ManagedTorrentState::Initializing(init) => {
+            let init = init.clone();
+            init.clear_pause_request();
+            if !init.try_start_check() {
+                return Ok(());
+            }
+
+            let t = t.clone();
+            let span = t.shared().span.clone();
+            let token = token.clone();
+
+            spawn_with_cancel(
+                debug_span!(parent: span.clone(), "initialize_and_start"),
+                "initialize_and_start",
+                token.clone(),
+                async move {
+                    let concurrent_init_semaphore = session.concurrent_initialize_semaphore.clone();
+                    let _permit = concurrent_init_semaphore
+                        .acquire()
+                        .await
+                        .context("bug: concurrent init semaphore was closed")?;
+
+                    let check_result = init.check().await;
+                    init.finish_check();
+
+                    match check_result {
+                        Ok(paused) => {
+                            let mut g = t.locked.write();
+                            if let ManagedTorrentState::Initializing(_) = &g.state {
+                            } else {
+                                debug!(
+                                    "no need to start torrent anymore, as it switched state from initializing"
+                                );
+                                return Ok(());
+                            }
+
+                            g.state = ManagedTorrentState::Paused(paused);
+                            if start_paused
+                                && let ManagedTorrentState::Paused(paused) = &g.state
+                                && let Err(error) = paused.files.release_files()
+                            {
+                                warn!(
+                                    id=?t.shared.id,
+                                    info_hash=?t.shared.info_hash,
+                                    error=?error,
+                                    "error releasing files after paused initial check"
+                                );
+                            }
+                            t.state_change_notify.notify_waiters();
+                            _start(&t, peer_rx, start_paused, session, Some(g), token)
+                        }
+                        Err(err) => {
+                            if init.is_pause_requested() {
+                                if let Err(error) = init.files.release_files() {
+                                    warn!(
+                                        id=?init.shared.id,
+                                        info_hash=?init.shared.info_hash,
+                                        error=?error,
+                                        "error releasing files after paused initial check"
+                                    );
+                                }
+                                debug!("initial check paused");
+                                t.state_change_notify.notify_waiters();
+                                return Ok(());
+                            }
+
+                            let result = anyhow::anyhow!("{:?}", err);
+                            t.locked.write().state = ManagedTorrentState::Error(err);
+                            t.state_change_notify.notify_waiters();
+                            Err(result)
+                        }
+                    }
+                },
+            );
+            Ok(())
+        }
+        ManagedTorrentState::Paused(_) => {
+            if start_paused {
+                return Ok(());
+            }
+            let paused = g.state.take().assert_paused();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let live = TorrentStateLive::new(paused, tx, token.clone())?;
+            g.state = ManagedTorrentState::Live(live.clone());
+            t.state_change_notify.notify_waiters();
+
+            spawn_fatal_errors_receiver(t, rx, token);
+            if let Some(peer_rx) = peer_rx {
+                spawn_peer_adder(&live, peer_rx);
+            }
+            Ok(())
+        }
+        ManagedTorrentState::Error(_) => {
+            let metadata = t.metadata.load_full().expect("TODO");
+            let initializing = Arc::new(TorrentStateInitializing::new(
+                t.shared.clone(),
+                metadata.clone(),
+                g.only_files.clone(),
+                t.shared
+                    .storage_factory
+                    .create_and_init(t.shared(), &metadata)?,
+                true,
+                false,
+                None,
+            ));
+            g.state = ManagedTorrentState::Initializing(initializing.clone());
+            t.state_change_notify.notify_waiters();
+
+            // Recurse.
+            _start(t, peer_rx, start_paused, session, Some(g), token)
+        }
+        ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+    }
 }
 
 impl ManagedTorrent {
@@ -345,135 +490,6 @@ impl ManagedTorrent {
         peer_rx: Option<PeerStream>,
         start_paused: bool,
     ) -> anyhow::Result<()> {
-        fn _start<'a>(
-            t: &'a Arc<ManagedTorrent>,
-            peer_rx: Option<PeerStream>,
-            start_paused: bool,
-            session: Arc<Session>,
-            g: Option<parking_lot::RwLockWriteGuard<'a, ManagedTorrentLocked>>,
-            token: CancellationToken,
-        ) -> anyhow::Result<()> {
-            let mut g = g.unwrap_or_else(|| t.locked.write());
-
-            match &g.state {
-                ManagedTorrentState::Live(_) => {
-                    bail!("torrent is already live");
-                }
-                ManagedTorrentState::Initializing(init) => {
-                    let init = init.clone();
-                    init.clear_pause_request();
-                    if !init.try_start_check() {
-                        return Ok(());
-                    }
-
-                    let t = t.clone();
-                    let span = t.shared().span.clone();
-                    let token = token.clone();
-
-                    spawn_with_cancel(
-                        debug_span!(parent: span.clone(), "initialize_and_start"),
-                        "initialize_and_start",
-                        token.clone(),
-                        async move {
-                            let concurrent_init_semaphore =
-                                session.concurrent_initialize_semaphore.clone();
-                            let _permit = concurrent_init_semaphore
-                                .acquire()
-                                .await
-                                .context("bug: concurrent init semaphore was closed")?;
-
-                            let check_result = init.check().await;
-                            init.finish_check();
-
-                            match check_result {
-                                Ok(paused) => {
-                                    let mut g = t.locked.write();
-                                    if let ManagedTorrentState::Initializing(_) = &g.state {
-                                    } else {
-                                        debug!(
-                                            "no need to start torrent anymore, as it switched state from initializing"
-                                        );
-                                        return Ok(());
-                                    }
-
-                                    g.state = ManagedTorrentState::Paused(paused);
-                                    if start_paused
-                                        && let ManagedTorrentState::Paused(paused) = &g.state
-                                        && let Err(error) = paused.files.release_files()
-                                    {
-                                        warn!(
-                                            id=?t.shared.id,
-                                            info_hash=?t.shared.info_hash,
-                                            error=?error,
-                                            "error releasing files after paused initial check"
-                                        );
-                                    }
-                                    t.state_change_notify.notify_waiters();
-                                    _start(&t, peer_rx, start_paused, session, Some(g), token)
-                                }
-                                Err(err) => {
-                                    if init.is_pause_requested() {
-                                        if let Err(error) = init.files.release_files() {
-                                            warn!(
-                                                id=?init.shared.id,
-                                                info_hash=?init.shared.info_hash,
-                                                error=?error,
-                                                "error releasing files after paused initial check"
-                                            );
-                                        }
-                                        debug!("initial check paused");
-                                        t.state_change_notify.notify_waiters();
-                                        return Ok(());
-                                    }
-
-                                    let result = anyhow::anyhow!("{:?}", err);
-                                    t.locked.write().state = ManagedTorrentState::Error(err);
-                                    t.state_change_notify.notify_waiters();
-                                    Err(result)
-                                }
-                            }
-                        },
-                    );
-                    Ok(())
-                }
-                ManagedTorrentState::Paused(_) => {
-                    if start_paused {
-                        return Ok(());
-                    }
-                    let paused = g.state.take().assert_paused();
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    let live = TorrentStateLive::new(paused, tx, token.clone())?;
-                    g.state = ManagedTorrentState::Live(live.clone());
-                    t.state_change_notify.notify_waiters();
-
-                    spawn_fatal_errors_receiver(t, rx, token);
-                    if let Some(peer_rx) = peer_rx {
-                        spawn_peer_adder(&live, peer_rx);
-                    }
-                    Ok(())
-                }
-                ManagedTorrentState::Error(_) => {
-                    let metadata = t.metadata.load_full().expect("TODO");
-                    let initializing = Arc::new(TorrentStateInitializing::new(
-                        t.shared.clone(),
-                        metadata.clone(),
-                        g.only_files.clone(),
-                        t.shared
-                            .storage_factory
-                            .create_and_init(t.shared(), &metadata)?,
-                        true,
-                        false,
-                    ));
-                    g.state = ManagedTorrentState::Initializing(initializing.clone());
-                    t.state_change_notify.notify_waiters();
-
-                    // Recurse.
-                    _start(t, peer_rx, start_paused, session, Some(g), token)
-                }
-                ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
-            }
-        }
-
         let session = self
             .shared
             .session
@@ -506,12 +522,19 @@ impl ManagedTorrent {
     ///   fresh peer stream) automatically;
     /// - if it was paused, it stays paused.
     ///
+    /// The check runs in the background; use `wait_until_initialized()` to wait for it
+    /// to finish. Note that pausing the torrent mid-recheck aborts the check and leaves
+    /// the torrent initializing (with the pause requested); call `unpause()` to re-run
+    /// the check and reach the target state.
+    ///
+    /// Active streaming reads through this torrent are closed by a recheck, just like
+    /// by a pause: readers should expect their streams to end.
+    ///
     /// This is useful when the data may have been modified outside of rqbit, e.g. to
     /// periodically verify a seeding library.
     ///
     /// It is an error to recheck a torrent that is already initializing (i.e. already
-    /// checking), or that is in the error state. Rechecking a torrent whose check was
-    /// interrupted (e.g. paused mid-check) will re-run the check from the beginning.
+    /// checking), or that is in the error state.
     pub fn recheck(self: &Arc<Self>) -> anyhow::Result<()> {
         let session = self
             .shared
@@ -532,31 +555,57 @@ impl ManagedTorrent {
             ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
         };
 
-        // Pause the live torrent first: this disconnects the peers, cancels the live
-        // tasks and closes the files, so the check can reopen them.
-        if was_live && let ManagedTorrentState::Live(live) = &g.state {
-            live.pause()
-                .context("error pausing live torrent before recheck")?;
-        }
-
         let metadata = self
             .metadata
             .load_full()
             .context("torrent is not resolved")?;
+
+        // Pause the live torrent first: this disconnects the peers, cancels the live
+        // tasks and closes the files, so the check can reopen them. The stream
+        // subscriptions are carried over so that parked stream readers resume when the
+        // torrent goes live again.
+        let mut streams = None;
+        if was_live && let ManagedTorrentState::Live(live) = &g.state {
+            let paused = live
+                .pause()
+                .context("error pausing live torrent before recheck")?;
+            streams = Some(paused.streams.clone());
+        }
+
+        let files = self
+            .shared
+            .storage_factory
+            .create_and_init(self.shared(), &metadata);
+        let files = match files {
+            Ok(files) => files,
+            Err(err) => {
+                if was_live {
+                    // The live state was paused above and can't be resumed; transition
+                    // to the error state, from which unpause() re-initializes.
+                    let message = format!(
+                        "torrent {id} recheck failed to initialize storage: {err:#}",
+                        id = self.shared.id
+                    );
+                    g.state = ManagedTorrentState::Error(anyhow::anyhow!("{message}"));
+                    g.paused = true;
+                    self.state_change_notify.notify_waiters();
+                    return Err(anyhow::anyhow!(message));
+                }
+                return Err(err.context("error rechecking torrent"));
+            }
+        };
         let initializing = Arc::new(TorrentStateInitializing::new(
             self.shared.clone(),
-            metadata.clone(),
+            metadata,
             g.only_files.clone(),
-            self.shared
-                .storage_factory
-                .create_and_init(self.shared(), &metadata)?,
+            files,
             false,
             true,
+            streams,
         ));
         g.state = ManagedTorrentState::Initializing(initializing);
         g.paused = !was_live;
         self.state_change_notify.notify_waiters();
-        drop(g);
 
         info!(
             id = self.shared.id,
@@ -564,14 +613,26 @@ impl ManagedTorrent {
             "starting full recheck"
         );
 
-        // Reuse the normal start flow: the check task will transition to paused, and
-        // then immediately go live again if the torrent was live.
+        // Reuse the normal start flow, with the lock still held: the check task will
+        // transition to paused, and then immediately go live again if the torrent was
+        // live. Holding the lock through the check task spawn makes the transition
+        // atomic: a concurrent pause() can't land between the state swap and the check
+        // start and get silently dropped.
         let peer_rx = if was_live {
             session.make_peer_rx_managed_torrent(self, true)
         } else {
             None
         };
-        self.start(peer_rx, !was_live)
+        let token = session.cancellation_token().child_token();
+        let result = _start(self, peer_rx, !was_live, session, Some(g), token);
+        if result.is_ok() && was_live {
+            info!(
+                id = self.shared.id,
+                info_hash = ?self.shared.info_hash,
+                "started full recheck, torrent will resume seeding when it completes"
+            );
+        }
+        result
     }
 
     /// Pause the torrent if it's live.

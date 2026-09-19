@@ -23,7 +23,9 @@ use crate::{
 
 const MAX_FASTRESUME_CHECKS: usize = 64;
 
-use super::{ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused};
+use super::{
+    ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused, streaming::TorrentStreams,
+};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
@@ -35,16 +37,22 @@ pub struct TorrentStateInitializing {
     check_running: AtomicBool,
     previously_errored: bool,
     force_full_check: bool,
+    // Stream subscriptions carried over when re-initializing an existing torrent, so
+    // that parked stream readers (e.g. HTTP streaming) resume when the torrent goes
+    // live again. None means fresh.
+    streams: Option<Arc<TorrentStreams>>,
 }
 
 impl TorrentStateInitializing {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
         shared: Arc<ManagedTorrentShared>,
         metadata: Arc<TorrentMetadata>,
         only_files: Option<Vec<usize>>,
         files: FileStorage,
         previously_errored: bool,
         force_full_check: bool,
+        streams: Option<Arc<TorrentStreams>>,
     ) -> Self {
         Self {
             shared,
@@ -56,6 +64,7 @@ impl TorrentStateInitializing {
             check_running: AtomicBool::new(false),
             previously_errored,
             force_full_check,
+            streams,
         }
     }
 
@@ -223,6 +232,7 @@ impl TorrentStateInitializing {
         // (check_after_load=false), skip both the fastresume spot-check and the full
         // initial check, and trust the bitfield as-is. Anything else falls back to the
         // regular validation: no usable bitfield or a wrong-length one means a full check.
+        let was_cleared = self.previously_errored || self.force_full_check;
         let have_pieces = match have_pieces {
             Some(hp)
                 if !self.shared.options.check_after_load
@@ -236,7 +246,7 @@ impl TorrentStateInitializing {
                 hp
             }
             loaded => {
-                if !self.shared.options.check_after_load && loaded.is_none() {
+                if !was_cleared && !self.shared.options.check_after_load && loaded.is_none() {
                     warn!(
                         id=?self.shared.id,
                         info_hash = ?self.shared.info_hash,
@@ -337,7 +347,10 @@ impl TorrentStateInitializing {
             metadata: self.metadata.clone(),
             files: self.files.take()?,
             chunk_tracker,
-            streams: Arc::new(Default::default()),
+            streams: self
+                .streams
+                .clone()
+                .unwrap_or_else(|| Arc::new(Default::default())),
         };
         Ok(paused)
     }

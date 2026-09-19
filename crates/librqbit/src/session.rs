@@ -303,10 +303,21 @@ pub struct AddTorrentOptions {
     /// know the on-disk data matches the bitfield, e.g. applications that track when
     /// each torrent was last verified and skip checks for fresh ones.
     ///
-    /// This is a caller's vouch: if no usable persisted bitfield exists (missing or of
-    /// the wrong length), a full check runs anyway, so an unverified torrent can never
-    /// start seeding as if it had 100% of the data. Torrents re-initialized after an
-    /// error always get checked regardless of this option.
+    /// Details:
+    /// - this is a caller's vouch: with a usable persisted bitfield, the data is trusted
+    ///   without being verified, corrupt data included;
+    /// - if no persisted bitfield exists or it has the wrong length, a full check runs
+    ///   instead (with a warning), so a torrent without a usable bitfield can never be
+    ///   brought up as complete;
+    /// - if loading the persisted bitfield fails (e.g. broken persistence), the torrent
+    ///   fails to add (fail-closed);
+    /// - torrents re-initialized after an error always get checked regardless of this
+    ///   option;
+    /// - a persisted bitfield only exists when the session was created with
+    ///   `fastresume: true` and a persistence backend; otherwise every add is checked;
+    /// - this only applies when the torrent is newly added. For an already managed
+    ///   torrent the options are ignored (as with all options); use `recheck()` to
+    ///   force verification of an existing torrent.
     #[serde(default = "default_check_after_load")]
     pub check_after_load: bool,
 }
@@ -1420,6 +1431,7 @@ impl Session {
                     .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
                 false,
                 false,
+                None,
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {

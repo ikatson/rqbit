@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use tempfile::TempDir;
+
 use anyhow::{Context, bail};
 use librqbit_core::Id20;
 
@@ -25,6 +27,8 @@ struct Fixture {
     data_dir: PathBuf,
     // Persistence dir for the JsonSessionPersistenceStore.
     persistence_dir: PathBuf,
+    // Kept for cleanup on drop.
+    _tempdir: TempDir,
     torrent_bytes: Vec<u8>,
     info_hash: Id20,
     total_length: u64,
@@ -48,7 +52,7 @@ impl Fixture {
 // expected to be used with output_folder = data_dir.
 async fn make_fixture(prefix: &str) -> Fixture {
     let tempdir = create_default_random_dir_with_torrents(NUM_FILES, FILE_LENGTH, Some(prefix));
-    let data_dir = tempdir.keep();
+    let data_dir = tempdir.path().to_owned();
     let torrent = create_torrent(
         &data_dir,
         CreateTorrentOptions {
@@ -63,14 +67,12 @@ async fn make_fixture(prefix: &str) -> Fixture {
     let info_hash = librqbit_core::torrent_metainfo::torrent_from_bytes(&torrent_bytes)
         .unwrap()
         .info_hash;
-    let persistence_dir = data_dir.with_file_name(format!(
-        "{}_session",
-        data_dir.file_name().unwrap().to_str().unwrap()
-    ));
+    let persistence_dir = data_dir.join("session");
     std::fs::create_dir_all(&persistence_dir).unwrap();
     Fixture {
         data_dir,
         persistence_dir,
+        _tempdir: tempdir,
         torrent_bytes,
         info_hash,
         total_length: (FILE_LENGTH * NUM_FILES) as u64,
@@ -422,48 +424,6 @@ async fn test_recheck_partial_preserves_truth() {
     setup_test_logging();
     let fixture = make_fixture("recheck_partial").await;
 
-    let parsed =
-        librqbit_core::torrent_metainfo::torrent_from_bytes(&fixture.torrent_bytes).unwrap();
-    let raw_info = parsed.info.data.clone();
-    eprintln!("raw piece_length={}", raw_info.piece_length);
-    if let Some(files) = &raw_info.files {
-        for (idx, f) in files.iter().enumerate() {
-            eprintln!("raw file {idx}: {:?} len={}", f.path, f.length);
-        }
-    }
-    let info = parsed.info.data.validate().unwrap();
-    eprintln!("total_pieces={:?}", info.lengths().total_pieces());
-    use librqbit_core::lengths::{Lengths, last_element_size};
-    eprintln!(
-        "direct last_element_size={}",
-        last_element_size(16_000_000u64, 32768u64)
-    );
-    let direct = Lengths::new(16_000_000u64, 32768u32).unwrap();
-    eprintln!(
-        "direct new last_piece_length={}",
-        direct.piece_length(direct.last_piece_id())
-    );
-    let from_torrent = Lengths::from_torrent(&raw_info).unwrap();
-    eprintln!("from_torrent total={}", from_torrent.total_length());
-    eprintln!(
-        "from_torrent last_piece_length={}",
-        from_torrent.piece_length(from_torrent.last_piece_id())
-    );
-    eprintln!("from_torrent total_pieces={}", from_torrent.total_pieces());
-    eprintln!("total_length={:?}", info.lengths().total_length());
-    for (idx, fd) in info.iter_file_details_ext().enumerate() {
-        eprintln!(
-            "file {idx}: name={:?} len={} offset={} pieces={:?}",
-            fd.details.filename, fd.details.len, fd.offset, fd.pieces
-        );
-    }
-    for idx in 0..2 {
-        eprintln!(
-            "ondisk {idx}: len={}",
-            std::fs::metadata(fixture.file_path(idx)).unwrap().len()
-        );
-    }
-
     let session = new_session(&fixture.persistence_dir).await;
     let handle = add(
         &session,
@@ -572,8 +532,19 @@ async fn test_recheck_concurrent_is_safe() {
         r1.is_ok() || r2.is_ok(),
         "at least one recheck should succeed: {r1:?}, {r2:?}"
     );
+    for r in [&r1, &r2] {
+        if let Err(e) = r {
+            assert!(
+                e.to_string().contains("initializing"),
+                "unexpected recheck error: {e:#}"
+            );
+        }
+    }
 
-    handle.wait_until_initialized().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), handle.wait_until_initialized())
+        .await
+        .expect("wait_until_initialized timed out")
+        .unwrap();
     wait_live_finished(&handle, false).await;
     let (have, _) = live_have_finished(&handle);
     assert_eq!(have, expected_have_after_corruption(&fixture));
@@ -630,5 +601,171 @@ async fn test_recheck_persists_updated_bitfield() {
     wait_paused_finished(&handle, false).await;
     let (have, finished) = paused_have_finished(&handle);
     assert!(!finished);
+    assert_eq!(have, expected_have_after_corruption(&fixture));
+}
+
+/// The IO-error path of the fastresume spot-check: an unreadable piece must be
+/// treated as broken data (i.e. the full check runs), same as a hash mismatch.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_check_after_load_default_regression_io_error() {
+    setup_test_logging();
+    let fixture = make_fixture("check_after_load_default_ioerr").await;
+
+    // Session 1: verify and persist the bitfield.
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, true).await;
+    drop(session);
+    drop(handle);
+    clear_session_db(&fixture);
+
+    // Truncate file 0: reading its pieces fails with an IO error, which the
+    // spot-check must treat as broken data and fall back to a full check.
+    let path = fixture.file_path(0);
+    let contents = std::fs::read(&path).unwrap();
+    std::fs::write(&path, &contents[..100]).unwrap();
+
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, false).await;
+    let (_, finished) = paused_have_finished(&handle);
+    assert!(!finished);
+}
+
+/// A persisted bitfield that exists but cannot be read fails closed: the torrent
+/// errors out instead of being silently trusted. Rechecking it is rejected while
+/// it's in the error state.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_check_after_load_false_broken_bitv_fails_closed() {
+    setup_test_logging();
+    let fixture = make_fixture("check_after_load_false_brokenbitv").await;
+
+    // Session 1: verify and persist the bitfield.
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, true).await;
+    drop(session);
+    drop(handle);
+    clear_session_db(&fixture);
+
+    // Make the bitfield unreadable: a directory where the bitv file should be.
+    let bitv = fixture.bitv_filename();
+    std::fs::remove_file(&bitv).unwrap();
+    std::fs::create_dir(&bitv).unwrap();
+
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, false))
+        .await
+        .unwrap();
+    // wait_until_initialized propagates the torrent's error.
+    assert!(handle.wait_until_initialized().await.is_err());
+    handle
+        .with_state(|s| match s {
+            ManagedTorrentState::Error(e) => {
+                assert!(
+                    e.to_string().contains("have_pieces"),
+                    "unexpected error {e:#}"
+                );
+                Ok(())
+            }
+            other => bail!("expected error state, got {}", other.name()),
+        })
+        .unwrap();
+
+    // Recheck is rejected in the error state, with a clear error.
+    let err = match handle.recheck() {
+        Err(e) => e,
+        Ok(_) => panic!("recheck of an errored torrent should fail"),
+    };
+    assert!(
+        err.to_string().contains("error state"),
+        "unexpected: {err:#}"
+    );
+}
+
+/// Recheck of a live, unfinished torrent: stays live with the same have state.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recheck_live_unfinished() {
+    setup_test_logging();
+    let fixture = make_fixture("recheck_live_unfinished").await;
+    corrupt_one_byte(&fixture);
+
+    // No bitfield: the add runs a full check, detects the corruption, and (with
+    // paused=false) goes live unfinished.
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(
+        &session,
+        &fixture,
+        AddTorrentOptions {
+            paused: false,
+            overwrite: true,
+            output_folder: Some(fixture.data_dir.to_str().unwrap().to_owned()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    handle.wait_until_initialized().await.unwrap();
+    wait_live_finished(&handle, false).await;
+    let (have, _) = live_have_finished(&handle);
+
+    handle.recheck().unwrap();
+    handle.wait_until_initialized().await.unwrap();
+    wait_live_finished(&handle, false).await;
+    let (have2, _) = live_have_finished(&handle);
+    assert_eq!(have, have2);
+}
+
+/// Recheck of a torrent whose session is gone is rejected cleanly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_recheck_dead_session() {
+    setup_test_logging();
+    let fixture = make_fixture("recheck_dead_session").await;
+
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, true).await;
+    drop(session);
+
+    let err = match handle.recheck() {
+        Err(e) => e,
+        Ok(_) => panic!("recheck with a dead session should fail"),
+    };
+    assert!(
+        err.to_string().contains("session is dead"),
+        "unexpected: {err:#}"
+    );
+}
+
+/// The Session::recheck wrapper: same semantics, and works with the id lookup.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_session_recheck_wrapper() {
+    setup_test_logging();
+    let fixture = make_fixture("recheck_session_wrapper").await;
+
+    let session = new_session(&fixture.persistence_dir).await;
+    let handle = add(&session, &fixture, add_opts(&fixture.data_dir, true))
+        .await
+        .unwrap();
+    wait_paused_finished(&handle, true).await;
+    assert!(handle.is_paused());
+
+    corrupt_one_byte(&fixture);
+    session
+        .recheck(crate::api::TorrentIdOrHash::Hash(fixture.info_hash))
+        .await
+        .unwrap();
+    handle.wait_until_initialized().await.unwrap();
+    wait_paused_finished(&handle, false).await;
+    assert!(handle.is_paused());
+    let (have, _) = paused_have_finished(&handle);
     assert_eq!(have, expected_have_after_corruption(&fixture));
 }
