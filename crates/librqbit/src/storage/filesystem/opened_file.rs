@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::IoSlice,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -108,11 +108,24 @@ impl OurFileExt for File {
 
 #[derive(Default, Debug)]
 struct OpenedFileLocked {
-    #[allow(unused)]
     path: PathBuf,
     fd: Option<File>,
     #[cfg(windows)]
     tried_marking_sparse: bool,
+}
+
+impl OpenedFileLocked {
+    fn reopen_if_closed(&mut self) -> anyhow::Result<()> {
+        if self.fd.is_none() && !self.path.as_os_str().is_empty() {
+            let f = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&self.path)
+                .with_context(|| format!("error reopening {:?}", self.path))?;
+            self.fd = Some(f);
+        }
+        Ok(())
+    }
 }
 
 impl Deref for OpenedFileLocked {
@@ -168,10 +181,14 @@ impl OpenedFile {
         }
     }
 
-    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
+    pub fn lock_read(&self) -> anyhow::Result<impl Deref<Target = File>> {
+        if let Ok(f) = RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref()) {
+            return Ok(f);
+        }
+        self.file.write().reopen_if_closed()?;
+        Ok(RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
             .ok()
-            .ok_or(Error::FsFileIsNone)
+            .ok_or(Error::FsFileIsNone)?)
     }
 
     #[allow(dead_code)]
@@ -182,16 +199,17 @@ impl OpenedFile {
     }
 
     #[cfg(windows)]
-    pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
+    pub fn try_mark_sparse(&self) -> anyhow::Result<impl Deref<Target = File>> {
         {
             let g = self.file.read();
             if g.tried_marking_sparse {
-                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
+                return Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
                     .ok()
-                    .ok_or(Error::FsFileIsNone);
+                    .ok_or(Error::FsFileIsNone)?);
             }
         }
         let mut g = self.file.write();
+        g.reopen_if_closed()?;
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
             let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;

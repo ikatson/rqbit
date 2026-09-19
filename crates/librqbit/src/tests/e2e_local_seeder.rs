@@ -1,0 +1,124 @@
+use std::{net::Ipv4Addr, sync::Arc, time::Duration};
+
+use anyhow::Context;
+use bytes::Bytes;
+use tempfile::TempDir;
+use tokio::time::timeout;
+
+use crate::{
+    AddTorrent, AddTorrentOptions, CreateTorrentOptions, Session, SessionOptions, create_torrent,
+    listen::ListenerOptions,
+    spawn_utils::BlockingSpawner,
+    tests::test_util::{
+        TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging,
+    },
+};
+
+struct Seeder {
+    files: TempDir,
+    torrent: Bytes,
+    session: Arc<Session>,
+}
+
+async fn start_seeder(port: u16, num_files: usize) -> anyhow::Result<Seeder> {
+    let files = create_default_random_dir_with_torrents(num_files, 8192, Some("test_seeder"));
+    let torrent = create_torrent(
+        files.path(),
+        CreateTorrentOptions {
+            piece_length: Some(1024),
+            ..Default::default()
+        },
+        &BlockingSpawner::new(1),
+    )
+    .await?
+    .as_bytes()?;
+
+    let session = Session::new_with_opts(
+        files.path().into(),
+        SessionOptions {
+            dht: None,
+            persistence: None,
+            peer_id: Some(TestPeerMetadata::good().as_peer_id()),
+            listen: Some(ListenerOptions {
+                listen_addr: (Ipv4Addr::LOCALHOST, port).into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    session
+        .add_torrent(
+            AddTorrent::from_bytes(torrent.clone()),
+            Some(AddTorrentOptions {
+                output_folder: Some(files.path().to_str().unwrap().to_owned()),
+                overwrite: true,
+                ..Default::default()
+            }),
+        )
+        .await?
+        .into_handle()
+        .unwrap()
+        .wait_until_completed()
+        .await?;
+
+    Ok(Seeder {
+        files,
+        torrent,
+        session,
+    })
+}
+
+fn client_session_options() -> SessionOptions {
+    SessionOptions {
+        dht: None,
+        persistence: None,
+        peer_id: Some(TestPeerMetadata::good().as_peer_id()),
+        ..Default::default()
+    }
+}
+
+fn add_torrent_options(seeder: &Seeder, paused: bool) -> anyhow::Result<AddTorrentOptions> {
+    Ok(AddTorrentOptions {
+        paused,
+        initial_peers: Some(vec![
+            seeder
+                .session
+                .listen_addr()
+                .context("expected listen_addr to be set")?,
+        ]),
+        ..Default::default()
+    })
+}
+
+async fn resume_after_paused_initial_check() -> anyhow::Result<()> {
+    setup_test_logging();
+    let seeder = start_seeder(16002, 1).await?;
+    let client_dir = TempDir::with_prefix("test_resume_after_paused_initial_check")?;
+    let client = Session::new_with_opts(client_dir.path().into(), client_session_options()).await?;
+
+    let handle = client
+        .add_torrent(
+            AddTorrent::from_bytes(seeder.torrent.clone()),
+            Some(add_torrent_options(&seeder, true)?),
+        )
+        .await?
+        .into_handle()
+        .unwrap();
+    handle.wait_until_initialized().await?;
+
+    client.unpause(&handle).await?;
+    handle.wait_until_completed().await?;
+
+    assert_eq!(
+        std::fs::read(handle.output_folder().join("0.data"))?,
+        std::fs::read(seeder.files.path().join("0.data"))?
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_resume_after_paused_initial_check() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(10), resume_after_paused_initial_check()).await?
+}

@@ -121,6 +121,10 @@ impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
         self.underlying.remove_directory_if_empty(path)
     }
 
+    fn release_files(&self) -> anyhow::Result<()> {
+        self.underlying.release_files()
+    }
+
     fn init(
         &mut self,
         shared: &ManagedTorrentShared,
