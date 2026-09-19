@@ -34,6 +34,7 @@ use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::debug_span;
+use tracing::info;
 use tracing::trace;
 use tracing::warn;
 
@@ -117,6 +118,11 @@ pub(crate) struct ManagedTorrentOptions {
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    /// Whether to run an integrity check when the torrent is loaded from the
+    /// persisted bitfield. Mirrors `AddTorrentOptions::check_after_load`.
+    /// Note the derive is only used as a convenience: `session.rs` always
+    /// constructs this struct explicitly.
+    pub check_after_load: bool,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
@@ -456,6 +462,7 @@ impl ManagedTorrent {
                             .storage_factory
                             .create_and_init(t.shared(), &metadata)?,
                         true,
+                        false,
                     ));
                     g.state = ManagedTorrentState::Initializing(initializing.clone());
                     t.state_change_notify.notify_waiters();
@@ -488,6 +495,83 @@ impl ManagedTorrent {
 
     pub fn is_paused(&self) -> bool {
         self.locked.read().paused
+    }
+
+    /// Force a full re-verification ("recheck") of the torrent's data on disk.
+    ///
+    /// The torrent is transitioned into the initializing state, the persisted bitfield
+    /// is ignored and cleared, and a full SHA-1 check of all the pieces runs. When the
+    /// check completes:
+    /// - if the torrent was live when recheck was called, it starts live again (with a
+    ///   fresh peer stream) automatically;
+    /// - if it was paused, it stays paused.
+    ///
+    /// This is useful when the data may have been modified outside of rqbit, e.g. to
+    /// periodically verify a seeding library.
+    ///
+    /// It is an error to recheck a torrent that is already initializing (i.e. already
+    /// checking), or that is in the error state. Rechecking a torrent whose check was
+    /// interrupted (e.g. paused mid-check) will re-run the check from the beginning.
+    pub fn recheck(self: &Arc<Self>) -> anyhow::Result<()> {
+        let session = self
+            .shared
+            .session
+            .upgrade()
+            .context("session is dead, cannot recheck torrent")?;
+
+        let mut g = self.locked.write();
+        let was_live = match &g.state {
+            ManagedTorrentState::Live(_) => true,
+            ManagedTorrentState::Paused(_) => false,
+            ManagedTorrentState::Initializing(_) => {
+                bail!("torrent is already initializing (checking), can't recheck it now")
+            }
+            ManagedTorrentState::Error(_) => bail!(
+                "torrent is in error state, can't recheck it; unpause it to re-initialize instead"
+            ),
+            ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+        };
+
+        // Pause the live torrent first: this disconnects the peers, cancels the live
+        // tasks and closes the files, so the check can reopen them.
+        if was_live && let ManagedTorrentState::Live(live) = &g.state {
+            live.pause()
+                .context("error pausing live torrent before recheck")?;
+        }
+
+        let metadata = self
+            .metadata
+            .load_full()
+            .context("torrent is not resolved")?;
+        let initializing = Arc::new(TorrentStateInitializing::new(
+            self.shared.clone(),
+            metadata.clone(),
+            g.only_files.clone(),
+            self.shared
+                .storage_factory
+                .create_and_init(self.shared(), &metadata)?,
+            false,
+            true,
+        ));
+        g.state = ManagedTorrentState::Initializing(initializing);
+        g.paused = !was_live;
+        self.state_change_notify.notify_waiters();
+        drop(g);
+
+        info!(
+            id = self.shared.id,
+            info_hash = ?self.shared.info_hash,
+            "starting full recheck"
+        );
+
+        // Reuse the normal start flow: the check task will transition to paused, and
+        // then immediately go live again if the torrent was live.
+        let peer_rx = if was_live {
+            session.make_peer_rx_managed_torrent(self, true)
+        } else {
+            None
+        };
+        self.start(peer_rx, !was_live)
     }
 
     /// Pause the torrent if it's live.
