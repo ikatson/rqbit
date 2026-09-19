@@ -7,7 +7,7 @@ pub mod utils;
 
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::Ordering;
@@ -113,7 +113,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
     pub allow_overwrite: bool,
-    pub output_folder: PathBuf,
+    pub output_folder: RwLock<PathBuf>,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
@@ -200,6 +200,10 @@ impl ManagedTorrentShared {
     pub(crate) fn client_name_and_version(&self) -> &str {
         &self.client_name_and_version
     }
+
+    pub(crate) fn output_folder(&self) -> PathBuf {
+        self.options.output_folder.read().clone()
+    }
 }
 
 pub struct ManagedTorrent {
@@ -232,8 +236,8 @@ impl ManagedTorrent {
     }
 
     /// The resolved on-disk folder this torrent's files are written under.
-    pub fn output_folder(&self) -> &Path {
-        &self.shared.options.output_folder
+    pub fn output_folder(&self) -> PathBuf {
+        self.shared.output_folder()
     }
 
     pub fn with_metadata<R>(

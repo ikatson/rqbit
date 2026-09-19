@@ -177,6 +177,11 @@ pub trait TorrentStorage: Send + Sync {
         Ok(())
     }
 
+    /// Move all files to a new output folder.
+    fn move_to(&self, _shared: &ManagedTorrentShared, _output_folder: &Path) -> anyhow::Result<()> {
+        anyhow::bail!("this storage does not support moving files")
+    }
+
     /// Callback called every time a piece has completed and has been validated.
     /// Default implementation does nothing, but can be override in trait implementations.
     fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
@@ -207,6 +212,10 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn release_files(&self) -> anyhow::Result<()> {
         (**self).release_files()
+    }
+
+    fn move_to(&self, shared: &ManagedTorrentShared, output_folder: &Path) -> anyhow::Result<()> {
+        (**self).move_to(shared, output_folder)
     }
 
     fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {

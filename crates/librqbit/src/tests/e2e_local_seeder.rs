@@ -3,14 +3,14 @@ use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 use anyhow::Context;
 use bytes::Bytes;
 use tempfile::TempDir;
-use tokio::time::timeout;
+use tokio::{io::AsyncReadExt, time::timeout};
 
 use crate::{
     AddTorrent, AddTorrentOptions, CreateTorrentOptions, Session, SessionOptions, create_torrent,
     listen::ListenerOptions,
     spawn_utils::BlockingSpawner,
     tests::test_util::{
-        TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging,
+        TestPeerMetadata, create_default_random_dir_with_torrents, setup_test_logging, wait_until,
     },
 };
 
@@ -121,4 +121,64 @@ async fn resume_after_paused_initial_check() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_resume_after_paused_initial_check() -> anyhow::Result<()> {
     timeout(Duration::from_secs(10), resume_after_paused_initial_check()).await?
+}
+
+async fn move_completed_to() -> anyhow::Result<()> {
+    setup_test_logging();
+    let seeder = start_seeder(16003, 2).await?;
+    let client_dir = TempDir::with_prefix("test_move_completed_to")?;
+    let completed_dir = TempDir::with_prefix("test_move_completed_to_completed")?;
+    let client = Session::new_with_opts(
+        client_dir.path().into(),
+        SessionOptions {
+            move_completed_to: Some(completed_dir.path().into()),
+            ..client_session_options()
+        },
+    )
+    .await?;
+
+    let handle = client
+        .add_torrent(
+            AddTorrent::from_bytes(seeder.torrent.clone()),
+            Some(add_torrent_options(&seeder, false)?),
+        )
+        .await?
+        .into_handle()
+        .unwrap();
+    let old_folder = handle.output_folder();
+    let new_folder = completed_dir
+        .path()
+        .join(old_folder.strip_prefix(client_dir.path())?);
+    handle.wait_until_completed().await?;
+    wait_until(
+        || {
+            (handle.output_folder() == new_folder)
+                .then_some(())
+                .context("not moved yet")
+        },
+        Duration::from_secs(5),
+    )
+    .await?;
+
+    assert!(!old_folder.exists());
+    for name in ["0.data", "1.data"] {
+        assert_eq!(
+            std::fs::read(new_folder.join(name))?,
+            std::fs::read(seeder.files.path().join(name))?
+        );
+    }
+
+    let first_file = handle.with_metadata(|m| m.file_infos[0].relative_filename.clone())?;
+    let mut streamed = Vec::new();
+    handle.stream(0).await?.read_to_end(&mut streamed).await?;
+    assert_eq!(
+        streamed,
+        std::fs::read(seeder.files.path().join(first_file))?
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_move_completed_to() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(10), move_completed_to()).await?
 }

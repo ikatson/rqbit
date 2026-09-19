@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
+use parking_lot::RwLock;
 use tracing::warn;
 
 use crate::{
@@ -28,7 +29,7 @@ impl StorageFactory for FilesystemStorageFactory {
         _metadata: &TorrentMetadata,
     ) -> anyhow::Result<FilesystemStorage> {
         Ok(FilesystemStorage {
-            output_folder: shared.options.output_folder.clone(),
+            output_folder: RwLock::new(shared.output_folder()),
             opened_files: Default::default(),
         })
     }
@@ -39,7 +40,7 @@ impl StorageFactory for FilesystemStorageFactory {
 }
 
 pub struct FilesystemStorage {
-    pub(crate) output_folder: PathBuf,
+    pub(crate) output_folder: RwLock<PathBuf>,
     pub(crate) opened_files: Vec<OpenedFile>,
 }
 
@@ -52,7 +53,7 @@ impl FilesystemStorage {
                 .iter()
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
-            output_folder: self.output_folder.clone(),
+            output_folder: RwLock::new(self.output_folder.read().clone()),
         })
     }
 }
@@ -88,7 +89,9 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
-        Ok(std::fs::remove_file(self.output_folder.join(filename))?)
+        Ok(std::fs::remove_file(
+            self.output_folder.read().join(filename),
+        )?)
     }
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
@@ -105,7 +108,7 @@ impl TorrentStorage for FilesystemStorage {
                 .iter()
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
-            output_folder: self.output_folder.clone(),
+            output_folder: RwLock::new(self.output_folder.read().clone()),
         }))
     }
 
@@ -117,8 +120,37 @@ impl TorrentStorage for FilesystemStorage {
         Ok(())
     }
 
+    fn move_to(&self, shared: &ManagedTorrentShared, output_folder: &Path) -> anyhow::Result<()> {
+        let old_folder = self.output_folder.read().clone();
+        let mut moves = Vec::new();
+        for file in &self.opened_files {
+            let Some(path) = file.path() else {
+                continue;
+            };
+            let new_path = output_folder.join(path.strip_prefix(&old_folder)?);
+            if !shared.options.allow_overwrite && new_path.exists() {
+                anyhow::bail!(
+                    "error moving to {new_path:?}: file exists (because allow_overwrite = false)"
+                );
+            }
+            moves.push((file, path, new_path));
+        }
+
+        for (file, path, new_path) in moves {
+            file.move_to(&new_path)?;
+            for dir in path.ancestors().skip(1).take_while(|d| *d != old_folder) {
+                if std::fs::remove_dir(dir).is_err() {
+                    break;
+                }
+            }
+        }
+
+        *self.output_folder.write() = output_folder.to_owned();
+        Ok(())
+    }
+
     fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
-        let path = self.output_folder.join(path);
+        let path = self.output_folder.read().join(path);
         if !path.is_dir() {
             anyhow::bail!("cannot remove dir: {path:?} is not a directory")
         }
@@ -137,7 +169,7 @@ impl TorrentStorage for FilesystemStorage {
     ) -> anyhow::Result<()> {
         let mut files = Vec::<OpenedFile>::new();
         for file_details in metadata.file_infos.iter() {
-            let mut full_path = self.output_folder.clone();
+            let mut full_path = self.output_folder.read().clone();
             let relative_path = &file_details.relative_filename;
             full_path.push(relative_path);
 

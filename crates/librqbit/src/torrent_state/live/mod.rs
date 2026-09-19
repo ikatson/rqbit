@@ -868,6 +868,9 @@ impl TorrentStateLive {
             if chunks.get_selected_pieces()[id.get_usize()] {
                 locked.try_flush_bitv(&self.shared, false);
                 info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
+                if let Some(session) = self.shared.session.upgrade() {
+                    session.move_completed(self.shared.id);
+                }
             }
             self.finished_notify.notify_waiters();
 

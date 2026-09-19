@@ -127,6 +127,7 @@ pub struct Session {
 
     // Runtime settings
     output_folder: PathBuf,
+    move_completed_to: Option<PathBuf>,
     peer_opts: PeerConnectionOptions,
     default_storage_factory: Option<BoxStorageFactory>,
     persistence: Option<Arc<dyn SessionPersistenceStore>>,
@@ -467,6 +468,10 @@ pub struct SessionOptions {
     /// Default peer limit per torrent.
     pub peer_limit: Option<usize>,
 
+    /// Once a torrent finishes downloading, move it from the output folder to this one,
+    /// keeping its sub-folder.
+    pub move_completed_to: Option<PathBuf>,
+
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 
@@ -502,6 +507,7 @@ impl Default for SessionOptions {
             allowlist_url: None,
             trackers: HashSet::new(),
             peer_limit: None,
+            move_completed_to: None,
             #[cfg(feature = "disable-upload")]
             disable_upload: false,
             disable_local_service_discovery: false,
@@ -785,6 +791,7 @@ impl Session {
                 peer_opts,
                 spawner: spawner.clone(),
                 output_folder: default_output_folder,
+                move_completed_to: opts.move_completed_to,
                 next_id: AtomicUsize::new(0),
                 db: RwLock::new(Default::default()),
                 _cancellation_token_drop_guard: token.clone().drop_guard(),
@@ -1352,7 +1359,7 @@ impl Session {
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     allow_overwrite: opts.overwrite,
-                    output_folder,
+                    output_folder: RwLock::new(output_folder),
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
@@ -1490,14 +1497,10 @@ impl Session {
             (Ok(storage), true) => {
                 debug!("will delete files");
                 remove_files_and_dirs(&metadata.file_infos, &storage);
-                if removed.shared().options.output_folder != self.output_folder
+                if removed.output_folder() != self.output_folder
                     && let Err(e) = storage.remove_directory_if_empty(Path::new(""))
                 {
-                    warn!(
-                        ?id,
-                        "error removing {:?}: {e:#}",
-                        removed.shared().options.output_folder
-                    )
+                    warn!(?id, "error removing {:?}: {e:#}", removed.output_folder())
                 }
             }
             (_, false) => {
@@ -1623,6 +1626,46 @@ impl Session {
         handle.update_only_files(only_files)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
+    }
+
+    pub(crate) fn move_completed(self: &Arc<Self>, id: TorrentId) {
+        let Some(move_completed_to) = self.move_completed_to.clone() else {
+            return;
+        };
+        let session = self.clone();
+        self.spawn(
+            debug_span!(parent: self.rs(), "move_completed", id),
+            "move_completed",
+            async move {
+                let handle = session.get(id.into()).context("torrent was deleted")?;
+                let old_folder = handle.output_folder();
+                if old_folder.starts_with(&move_completed_to) {
+                    return Ok(());
+                }
+                let Ok(relative) = old_folder.strip_prefix(&session.output_folder) else {
+                    return Ok(());
+                };
+                let new_folder = move_completed_to.join(relative);
+
+                let live = handle.live().context("torrent is not live")?;
+                session
+                    .spawner
+                    .block_in_place_with_semaphore(|| {
+                        live.files.move_to(handle.shared(), &new_folder)
+                    })
+                    .await?;
+                if old_folder != session.output_folder
+                    && let Err(e) = std::fs::remove_dir(&old_folder)
+                {
+                    debug!(?old_folder, "not removing: {e:#}");
+                }
+
+                *handle.shared().options.output_folder.write() = new_folder.clone();
+                session.try_update_persistence_metadata(&handle).await;
+                info!(id, ?new_folder, "moved completed torrent");
+                Ok(())
+            },
+        );
     }
 
     pub fn listen_addr(&self) -> Option<SocketAddr> {

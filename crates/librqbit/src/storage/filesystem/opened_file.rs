@@ -1,8 +1,8 @@
 use std::{
     fs::{File, OpenOptions},
-    io::IoSlice,
+    io::{ErrorKind, IoSlice},
     ops::{Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Context;
@@ -115,6 +115,14 @@ struct OpenedFileLocked {
 }
 
 impl OpenedFileLocked {
+    fn close(&mut self) {
+        self.fd = None;
+        #[cfg(windows)]
+        {
+            self.tried_marking_sparse = false;
+        }
+    }
+
     fn reopen_if_closed(&mut self) -> anyhow::Result<()> {
         if self.fd.is_none() && !self.path.as_os_str().is_empty() {
             let f = OpenOptions::new()
@@ -173,12 +181,29 @@ impl OpenedFile {
     }
 
     pub fn close(&self) {
+        self.file.write().close();
+    }
+
+    pub fn path(&self) -> Option<PathBuf> {
+        let g = self.file.read();
+        (!g.path.as_os_str().is_empty()).then(|| g.path.clone())
+    }
+
+    pub fn move_to(&self, new_path: &Path) -> anyhow::Result<()> {
         let mut g = self.file.write();
-        g.fd = None;
-        #[cfg(windows)]
-        {
-            g.tried_marking_sparse = false;
+        g.close();
+        if let Some(parent) = new_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
+        match std::fs::rename(&g.path, new_path) {
+            Err(e) if e.kind() == ErrorKind::CrossesDevices => {
+                std::fs::copy(&g.path, new_path).and_then(|_| std::fs::remove_file(&g.path))
+            }
+            res => res,
+        }
+        .with_context(|| format!("error moving {:?} to {new_path:?}", g.path))?;
+        g.path = new_path.to_owned();
+        Ok(())
     }
 
     pub fn lock_read(&self) -> anyhow::Result<impl Deref<Target = File>> {

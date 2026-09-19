@@ -134,6 +134,14 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
         self.underlying.release_files()
     }
 
+    fn move_to(
+        &self,
+        shared: &ManagedTorrentShared,
+        output_folder: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        self.underlying.move_to(shared, output_folder)
+    }
+
     fn init(
         &mut self,
         shared: &ManagedTorrentShared,

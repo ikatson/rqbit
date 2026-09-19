@@ -119,9 +119,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             )
             .bind(
                 torrent
-                    .shared()
-                    .options
-                    .output_folder
+                    .output_folder()
                     .to_str()
                     .context("output_folder")?
                     .to_owned(),
@@ -163,17 +161,26 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         id: TorrentId,
         torrent: &ManagedTorrentHandle,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE torrents SET only_files = $1, is_paused = $2 WHERE id = $3")
-            .bind(torrent.only_files().map(|v| {
-                v.into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .collect::<Vec<i32>>()
-            }))
-            .bind(torrent.is_paused())
-            .bind::<i32>(id.try_into()?)
-            .execute(&self.pool)
-            .await
-            .context("error executing UPDATE torrents")?;
+        sqlx::query(
+            "UPDATE torrents SET only_files = $1, is_paused = $2, output_folder = $3 WHERE id = $4",
+        )
+        .bind(torrent.only_files().map(|v| {
+            v.into_iter()
+                .filter_map(|f| f.try_into().ok())
+                .collect::<Vec<i32>>()
+        }))
+        .bind(torrent.is_paused())
+        .bind(
+            torrent
+                .output_folder()
+                .to_str()
+                .context("output_folder")?
+                .to_owned(),
+        )
+        .bind::<i32>(id.try_into()?)
+        .execute(&self.pool)
+        .await
+        .context("error executing UPDATE torrents")?;
         Ok(())
     }
 

@@ -325,6 +325,11 @@ struct ServerStartOptions {
     /// to the session.
     #[arg(long = "watch-folder", env = "RQBIT_WATCH_FOLDER")]
     watch_folder: Option<String>,
+
+    /// Once a torrent finishes downloading, move it from the output folder to this one,
+    /// keeping its sub-folder.
+    #[arg(long = "move-completed-to", env = "RQBIT_MOVE_COMPLETED_TO")]
+    move_completed_to: Option<String>,
 }
 
 #[derive(Parser)]
@@ -688,6 +693,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_trackers: opts.disable_trackers,
         trackers,
         peer_limit: opts.peer_limit,
+        move_completed_to: None,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
@@ -757,6 +763,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
 
                 http_api_opts.read_only = false;
                 sopts.fastresume = start_opts.fastresume;
+                sopts.move_completed_to = start_opts.move_completed_to.as_ref().map(PathBuf::from);
 
                 let session =
                     Session::new_with_opts(PathBuf::from(&start_opts.output_folder), sopts)
