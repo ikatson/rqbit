@@ -1385,6 +1385,7 @@ impl Session {
                     paused: opts.paused,
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
+                    moving: false,
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
@@ -1445,12 +1446,15 @@ impl Session {
                 })
                 .context("no such torrent in db")?,
         };
-        let removed = self
-            .db
-            .write()
-            .torrents
-            .remove(&id)
-            .with_context(|| format!("torrent with id {id} did not exist"))?;
+        let removed = {
+            let mut db = self.db.write();
+            if db.torrents.get(&id).is_some_and(|t| t.locked.read().moving) {
+                bail!("torrent is being moved");
+            }
+            db.torrents
+                .remove(&id)
+                .with_context(|| format!("torrent with id {id} did not exist"))?
+        };
 
         if let Err(e) = removed.pause() {
             debug!("error pausing torrent before deletion: {e:#}")
@@ -1647,20 +1651,35 @@ impl Session {
                 };
                 let new_folder = move_completed_to.join(relative);
 
-                let live = handle.live().context("torrent is not live")?;
-                session
+                let live = {
+                    let db = session.db.read();
+                    let mut g = handle.locked.write();
+                    let live = match &g.state {
+                        ManagedTorrentState::Live(live) if db.torrents.contains_key(&id) => {
+                            live.clone()
+                        }
+                        _ => return Ok(()),
+                    };
+                    g.moving = true;
+                    live
+                };
+                let res = session
                     .spawner
                     .block_in_place_with_semaphore(|| {
                         live.files.move_to(handle.shared(), &new_folder)
                     })
-                    .await?;
+                    .await;
+                if res.is_ok() {
+                    *handle.shared().options.output_folder.write() = new_folder.clone();
+                }
+                handle.locked.write().moving = false;
+                res?;
+
                 if old_folder != session.output_folder
                     && let Err(e) = std::fs::remove_dir(&old_folder)
                 {
                     debug!(?old_folder, "not removing: {e:#}");
                 }
-
-                *handle.shared().options.output_folder.write() = new_folder.clone();
                 session.try_update_persistence_metadata(&handle).await;
                 info!(id, ?new_folder, "moved completed torrent");
                 Ok(())

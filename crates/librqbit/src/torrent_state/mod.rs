@@ -105,6 +105,7 @@ pub(crate) struct ManagedTorrentLocked {
     pub(crate) paused: bool,
     pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
+    pub(crate) moving: bool,
 }
 
 #[derive(Default)]
@@ -497,6 +498,9 @@ impl ManagedTorrent {
     /// Pause the torrent if it's live.
     pub(crate) fn pause(&self) -> anyhow::Result<()> {
         let mut g = self.locked.write();
+        if g.moving {
+            bail!("torrent is being moved");
+        }
         match &g.state {
             ManagedTorrentState::Live(live) => {
                 let paused = live.pause()?;

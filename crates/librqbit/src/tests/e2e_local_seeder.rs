@@ -182,3 +182,34 @@ async fn move_completed_to() -> anyhow::Result<()> {
 async fn test_move_completed_to() -> anyhow::Result<()> {
     timeout(Duration::from_secs(10), move_completed_to()).await?
 }
+
+async fn no_pause_or_delete_while_moving() -> anyhow::Result<()> {
+    setup_test_logging();
+    let seeder = start_seeder(16004, 1).await?;
+    let client_dir = TempDir::with_prefix("test_no_pause_or_delete_while_moving")?;
+    let client = Session::new_with_opts(client_dir.path().into(), client_session_options()).await?;
+
+    let handle = client
+        .add_torrent(
+            AddTorrent::from_bytes(seeder.torrent.clone()),
+            Some(add_torrent_options(&seeder, false)?),
+        )
+        .await?
+        .into_handle()
+        .unwrap();
+    handle.wait_until_completed().await?;
+
+    handle.locked.write().moving = true;
+    assert!(client.pause(&handle).await.is_err());
+    assert!(client.delete(handle.id().into(), false).await.is_err());
+
+    handle.locked.write().moving = false;
+    client.pause(&handle).await?;
+    client.delete(handle.id().into(), false).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_no_pause_or_delete_while_moving() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(10), no_pause_or_delete_while_moving()).await?
+}
