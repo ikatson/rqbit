@@ -181,7 +181,6 @@ mod tests {
     use crate::serialize::bencode_serialize_to_writer;
 
     use super::*;
-    use serde::Serialize;
     use std::io::Read;
 
     #[test]
@@ -219,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_serialize_struct_with_option() {
-        #[derive(Serialize)]
+        #[derive(serde_derive::Serialize)]
         struct Test {
             f1: i64,
             #[serde(skip_serializing_if = "Option::is_none")]

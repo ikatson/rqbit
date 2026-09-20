@@ -2,7 +2,7 @@ use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::{Context, bail};
 use librqbit_core::magnet::Magnet;
-use rand::Rng;
+use rand::RngExt;
 use tokio::{
     spawn,
     time::{interval, timeout},

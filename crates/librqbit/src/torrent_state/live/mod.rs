@@ -1510,7 +1510,7 @@ impl PeerHandler {
         {
             anyhow::bail!(
                 "got request for a chunk that is not ready to upload. chunk {:?}",
-                &chunk_info
+                chunk_info
             );
         }
 
@@ -1774,7 +1774,7 @@ impl PeerHandler {
         ) {
             Some(i) => i,
             None => {
-                anyhow::bail!("peer sent us an invalid piece {:?}", &piece,);
+                anyhow::bail!("peer sent us an invalid piece {:?}", piece,);
             }
         };
 
@@ -1797,7 +1797,7 @@ impl PeerHandler {
                     RemoveInflightRequestResult::Unexpected => anyhow::bail!(
                         "peer sent us a piece we did not ask. Inflight requests: {:?}. Got: {:?}",
                         h.inflight_requests_debug(),
-                        &piece,
+                        piece,
                     ),
                 }
             })

@@ -32,17 +32,19 @@ jobs:
         working-directory: desktop
         run: cargo tauri build --ci
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
           files: |
             target/release/bundle/msi/rqbit-desktop_*_x64_en-US.msi
 
       - name: Build release
         run: cargo build --profile release-github
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
           files: |
             target/release-github/rqbit.exe

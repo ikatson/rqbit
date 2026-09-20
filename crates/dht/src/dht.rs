@@ -437,7 +437,7 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             self.callbacks.on_request_end(self, id, addr, &response);
         }
 
-        let response = match self.dht.request(self.request.clone(), addr).await {
+        let response = match response {
             Ok(ResponseOrError::Response(r)) => r,
             Ok(ResponseOrError::Error(e)) => {
                 debug!("error response: {e:?}");

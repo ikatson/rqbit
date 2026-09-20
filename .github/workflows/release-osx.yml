@@ -34,9 +34,10 @@ jobs:
           rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin &&
           cargo tauri build --target universal-apple-darwin --ci
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
           files: |
             target/universal-apple-darwin/release/bundle/dmg/rqbit-desktop_*_universal.dmg
 
@@ -49,8 +50,9 @@ jobs:
           cargo build --profile release-github --target aarch64-apple-darwin &&
           lipo ./target/x86_64-apple-darwin/release-github/rqbit ./target/aarch64-apple-darwin/release-github/rqbit -create -output ./target/artifacts/rqbit-osx-universal
 
-      - uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          draft: true
           files: |
             target/artifacts/rqbit-osx-universal

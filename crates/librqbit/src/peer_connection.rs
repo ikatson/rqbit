@@ -170,8 +170,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         );
 
         let mut write_buf = Box::new([0u8; MAX_MSG_LEN]);
-        let handshake = Handshake::new(self.info_hash, self.peer_id);
-        let hlen = handshake.serialize_unchecked_len(&mut *write_buf);
+        let my_handshake = Handshake::new(self.info_hash, self.peer_id);
+        let hlen = my_handshake.serialize_unchecked_len(&mut *write_buf);
         with_timeout(
             "writing handshake",
             rwtimeout,
@@ -182,10 +182,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         )
         .await?;
 
-        let handshake_supports_extended = handshake.supports_extended();
+        // What the peer supports is in the peer's handshake, not in ours.
+        let handshake_supports_extended = incoming.handshake.supports_extended();
 
         self.handler
-            .on_handshake(handshake, incoming.kind)
+            .on_handshake(incoming.handshake, incoming.kind)
             .map_err(Error::Anyhow)?;
 
         self.manage_peer(ManagePeerArgs {
@@ -404,7 +405,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             // This is poor-mans fault injection for running e2e tests.
                             use crate::tests::test_util::TestPeerMetadata;
                             let tpm = TestPeerMetadata::from_peer_id(self.peer_id);
-                            use rand::Rng;
+                            use rand::RngExt;
                             if rand::rng().random_bool(tpm.disconnect_probability()) {
                                 return Err(Error::TestDisconnect);
                             }
@@ -433,7 +434,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             self.spawner
                                 .block_in_place_with_semaphore(|| {
                                     self.handler
-                                        .read_chunk(&chunk, &mut write_buf[preamble_len..])
+                                        .read_chunk(&chunk, &mut write_buf[preamble_len..full_len])
                                 })
                                 .await
                                 .map_err(Error::ReadChunk)?;

@@ -370,7 +370,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
     }
 
     pub fn detect_encoding(&self) -> &'static Encoding {
-        let mut encdetect = chardetng::EncodingDetector::new();
+        let mut encdetect = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
         if let Some(name) = self.name.as_ref() {
             encdetect.feed(name.as_ref(), false);
         }
@@ -381,7 +381,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             }
         }
 
-        encdetect.guess(None, true)
+        encdetect.guess(None, chardetng::Utf8Detection::Allow)
     }
 
     pub(crate) fn iter_file_details_raw(

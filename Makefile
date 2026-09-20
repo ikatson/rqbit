@@ -21,7 +21,11 @@ export RQBIT_FASTRESUME = true
 
 CARGO_RUN_FLAGS ?=
 RQBIT_OUTPUT_FOLDER ?= /tmp/scratch
-RQBIT_POSTGRES_CONNECTION_STRING ?= postgres:///rqbit
+
+PGUSER ?= $(shell whoami)
+PGHOST ?= 127.0.0.1
+PGPORT ?= 5432
+RQBIT_POSTGRES_CONNECTION_STRING ?= postgres://${PGUSER}@${PGHOST}:${PGPORT}/rqbit
 
 # Alternatively run this on OSX to profile easily
 # cargo instruments --profile release-debug --features=_disable_disk_write_net_benchmark -t time --time-limit 20000 -- download -o /tmp/scratch/ --overwrite

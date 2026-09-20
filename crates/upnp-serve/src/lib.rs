@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use gethostname::gethostname;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use services::content_directory::ContentDirectoryBrowseProvider;
 use ssdp::SsdpRunner;
 
