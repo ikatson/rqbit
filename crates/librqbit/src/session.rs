@@ -1008,13 +1008,6 @@ impl Session {
                         warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
                     }
                 },
-                // Both branches are disabled at once when futs is at
-                // max_pending_incoming_handshake_checks (accept is off by its
-                // precondition) and the next check resolves to Err (the
-                // Some(Ok(..)) pattern does not match, disabling that branch
-                // too). Without an else that panics and kills the listener.
-                // The errored future has already been consumed here, so futs
-                // has shrunk and the next iteration re-enables accept.
                 else => continue,
             }
         }
