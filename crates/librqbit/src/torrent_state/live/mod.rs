@@ -802,9 +802,14 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let mut g = self.lock_write("update_only_files");
-        let pt = g.get_pieces_mut()?;
-        let hns = pt.update_only_files(&self.metadata.file_infos, only_files)?;
+        let hns = {
+            let mut g = self.lock_write("update_only_files");
+            let pt = g.get_pieces_mut()?;
+            pt.update_only_files(&self.metadata.file_infos, only_files)?
+        };
+        // The state lock must be released before touching the peer table:
+        // peer tasks (on_peer_died, chunk requester) hold a peer entry and then
+        // take the state lock, so holding it the other way round deadlocks.
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
