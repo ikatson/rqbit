@@ -48,7 +48,7 @@ use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use dht::{Dht, DhtBuilder, DhtConfig, DhtPersistenceConfig, Id20, PersistentDht, dht_listen_addr};
 use futures::{
-    FutureExt, Stream, StreamExt, TryFutureExt,
+    FutureExt, Stream, StreamExt,
     future::BoxFuture,
     stream::{BoxStream, FuturesUnordered},
 };
@@ -977,37 +977,47 @@ impl Session {
         drop(self);
 
         loop {
-            tokio::select! {
-                r = l.accept(), if futs.len() < max_pending_incoming_handshake_checks => {
-                    match r {
-                        Ok((addr, (read, write))) => {
-                            trace!("accepted connection from {addr}");
-                            let session = session.upgrade().context("session is dead")?;
-                            let span = debug_span!(parent: session.rs(), "incoming", addr=%addr);
-                            futs.push(
-                                session.check_incoming_connection(addr, A::KIND, Box::new(read), Box::new(write))
-                                    .map_err(|e| {
-                                        debug!("error checking incoming connection: {e:#}");
-                                        e
-                                    })
-                                    .instrument(span)
-                            );
-                        }
-                        Err(e) => {
-                            warn!("error accepting: {e:#}");
-                            // Whatever is the reason, ensure we are not stuck trying to
-                            // accept indefinitely.
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                            continue
-                        }
-                    }
-                },
-                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
-                    let (addr, kind) = (checked.addr, checked.kind);
-                    if let Err(e) = live.add_incoming_peer(checked) {
-                        warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
-                    }
-                },
+            let accepted = tokio::select! {
+                a = l.accept(), if futs.len() < max_pending_incoming_handshake_checks => a,
+                _ = futs.next(), if !futs.is_empty() => continue,
+            };
+            match accepted {
+                Ok((addr, (read, write))) => {
+                    trace!("accepted connection from {addr}");
+                    let session = session.upgrade().context("session is dead")?;
+                    let span = debug_span!(parent: session.rs(), "incoming", %addr);
+                    futs.push(
+                        session
+                            .check_incoming_connection(
+                                addr,
+                                A::KIND,
+                                Box::new(read),
+                                Box::new(write),
+                            )
+                            .map(|res| match res {
+                                Ok((live, checked)) => {
+                                    let (addr, kind) = (checked.addr, checked.kind);
+                                    if let Err(e) = live.add_incoming_peer(checked) {
+                                        warn!(
+                                            ?addr,
+                                            ?kind,
+                                            "error handing over incoming connection: {e:#}"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("error checking incoming connection: {e:#}");
+                                }
+                            })
+                            .instrument(span),
+                    );
+                }
+                Err(e) => {
+                    warn!("error accepting: {e:#}");
+                    // Whatever is the reason, ensure we are not stuck trying to
+                    // accept indefinitely.
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
             }
         }
     }
