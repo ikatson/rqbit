@@ -182,6 +182,12 @@ pub trait TorrentStorage: Send + Sync {
     fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Callback called when all pieces that touch a file are present and validated.
+    /// Storage backends can drop write access at this point while keeping reads available for upload.
+    fn on_file_completed(&self, _file_id: usize) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
@@ -223,6 +229,10 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         (**self).on_piece_completed(piece_id)
+    }
+
+    fn on_file_completed(&self, file_id: usize) -> anyhow::Result<()> {
+        (**self).on_file_completed(file_id)
     }
 }
 

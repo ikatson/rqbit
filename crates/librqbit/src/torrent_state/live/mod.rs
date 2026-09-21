@@ -843,7 +843,7 @@ impl TorrentStateLive {
         let locked = &mut **g;
         let pieces = locked.get_pieces_mut()?;
 
-        // if we have all the pieces of the file, reopen it read only
+        // If we have all the pieces of the file, reopen it read-only.
         for (idx, file_info) in self
             .metadata
             .file_infos
@@ -852,7 +852,15 @@ impl TorrentStateLive {
             .skip_while(|(_, fi)| !fi.piece_range.contains(&id.get()))
             .take_while(|(_, fi)| fi.piece_range.contains(&id.get()))
         {
-            let _remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
+            let remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
+            if remaining == 0 && let Err(err) = self.files.on_file_completed(idx) {
+                debug!(
+                    ?id,
+                    file_id = idx,
+                    error = ?err,
+                    "file storage errored in on_file_completed()"
+                );
+            }
         }
 
         self.streams
