@@ -853,7 +853,9 @@ impl TorrentStateLive {
             .take_while(|(_, fi)| fi.piece_range.contains(&id.get()))
         {
             let remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
-            if remaining == 0 && let Err(err) = self.files.on_file_completed(idx) {
+            if remaining == 0
+                && let Err(err) = self.files.on_file_completed(idx)
+            {
                 debug!(
                     ?id,
                     file_id = idx,
