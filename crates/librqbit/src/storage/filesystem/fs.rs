@@ -16,6 +16,9 @@ use crate::storage::{StorageFactory, TorrentStorage};
 
 use super::opened_file::OpenedFile;
 
+#[cfg(windows)]
+const WINDOWS_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0001 | 0x0000_0002 | 0x0000_0004;
+
 #[derive(Default, Clone, Copy)]
 pub struct FilesystemStorageFactory {}
 
@@ -59,15 +62,14 @@ impl FilesystemStorage {
 
 impl TorrentStorage for FilesystemStorage {
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.opened_files
-            .get(file_id)
-            .context("no such file")?
-            .lock_read()?
-            .pread_exact(offset, buf)
+        let file = self.opened_files.get(file_id).context("no such file")?;
+        file.ensure_opened_read_only()?;
+        file.lock_read()?.pread_exact(offset, buf)
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let of = self.opened_files.get(file_id).context("no such file")?;
+        of.ensure_opened()?;
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all(offset, buf);
         #[cfg(not(windows))]
@@ -81,6 +83,7 @@ impl TorrentStorage for FilesystemStorage {
         bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
         let of = self.opened_files.get(file_id).context("no such file")?;
+        of.ensure_opened()?;
         #[cfg(windows)]
         return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
         #[cfg(not(windows))]
@@ -93,6 +96,7 @@ impl TorrentStorage for FilesystemStorage {
 
     fn ensure_file_length(&self, file_id: usize, len: u64) -> anyhow::Result<()> {
         let f = &self.opened_files.get(file_id).context("no such file")?;
+        f.ensure_opened()?;
         #[cfg(windows)]
         f.try_mark_sparse()?;
         Ok(f.lock_read()?.set_len(len)?)
@@ -107,6 +111,21 @@ impl TorrentStorage for FilesystemStorage {
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
         }))
+    }
+
+    fn release_files(&self) -> anyhow::Result<()> {
+        for file in &self.opened_files {
+            file.close();
+        }
+
+        Ok(())
+    }
+
+    fn on_file_completed(&self, file_id: usize) -> anyhow::Result<()> {
+        self.opened_files
+            .get(file_id)
+            .context("no such file")?
+            .reopen_read_only()
     }
 
     fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
@@ -139,18 +158,12 @@ impl TorrentStorage for FilesystemStorage {
             };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
             let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
+                writable_open_options()
                     .open(&full_path)
                     .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
+                create_new_open_options()
                     .open(&full_path)
                     .with_context(|| {
                         format!(
@@ -158,7 +171,7 @@ impl TorrentStorage for FilesystemStorage {
                             full_path
                         )
                     })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
+                writable_open_options().open(&full_path)?
             };
             files.push(OpenedFile::new(full_path.clone(), f));
         }
@@ -166,4 +179,30 @@ impl TorrentStorage for FilesystemStorage {
         self.opened_files = files;
         Ok(())
     }
+}
+
+fn writable_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    apply_share_mode(&mut options);
+    options
+}
+
+fn create_new_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    apply_share_mode(&mut options);
+    options
+}
+
+fn apply_share_mode(options: &mut OpenOptions) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        options.share_mode(WINDOWS_SHARE_READ_WRITE_DELETE);
+    }
+
+    #[cfg(not(windows))]
+    let _ = options;
 }
