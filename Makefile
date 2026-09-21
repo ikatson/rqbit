@@ -1,11 +1,11 @@
 all:
 
-@PHONY: webui-deps
+.PHONY: webui-deps
 webui-deps:
 	cd desktop && npm install
 	cd crates/librqbit/webui && npm install
 
-@PHONY: webui-dev
+.PHONY: webui-dev
 webui-dev: webui-deps
 	cd crates/librqbit/webui && \
 	npm run dev
@@ -29,7 +29,7 @@ RQBIT_POSTGRES_CONNECTION_STRING ?= postgres://${PGUSER}@${PGHOST}:${PGPORT}/rqb
 
 # Alternatively run this on OSX to profile easily
 # cargo instruments --profile release-debug --features=_disable_disk_write_net_benchmark -t time --time-limit 20000 -- download -o /tmp/scratch/ --overwrite
-@PHONY: devserver-profile
+.PHONY: devserver-profile
 devserver-profile:
 	cargo run --release $(CARGO_RUN_FLAGS) -- server start $(RQBIT_OUTPUT_FOLDER)
 
@@ -38,23 +38,23 @@ export RQBIT_LOG_FILE ?= /tmp/rqbit-log
 export RQBIT_LOG_FILE_RUST_LOG ?= debug,librqbit=trace,upnp_serve=trace,librqbit_utp=debug
 export CORS_ALLOW_REGEXP ?= '.*'
 
-@PHONY: devserver
+.PHONY: devserver
 devserver:
 	echo -n '' > $(RQBIT_LOG_FILE) && \
 	cargo run $(CARGO_RUN_FLAGS) -- \
 	server start $(RQBIT_OUTPUT_FOLDER)
 
-@PHONY: devserver
+.PHONY: devserver-postgres
 devserver-postgres:
 	echo -n '' > $(RQBIT_LOG_FILE) && \
 	cargo run $(CARGO_RUN_FLAGS) -- \
 	server start --fastresume --persistence-location $(RQBIT_POSTGRES_CONNECTION_STRING) $(RQBIT_OUTPUT_FOLDER)
 
-@PHONY: testserver
+.PHONY: testserver
 testserver:
 	ulimit -n unlimited && cargo run -p librqbit --features http-api,tracing-subscriber-utils,webui,prometheus --example simulate_traffic
 
-@PHONY: docker-build-xx-one-platform
+.PHONY: docker-build-xx-one-platform
 docker-build-xx-one-platform:
 	docker build -f docker/Dockerfile.xx \
 		--platform $(PLATFORM) \
@@ -65,21 +65,21 @@ docker-build-xx-one-platform:
 		-f docker/Dockerfile \
 		target/cross/
 
-@PHONY: docker-build-amd64
+.PHONY: docker-build-amd64
 docker-build-amd64:
 	PLATFORM=linux/amd64 $(MAKE) docker-build-xx-one-platform
 
-@PHONY: docker-build-armv7
+.PHONY: docker-build-armv7
 docker-build-armv7:
 		PLATFORM=linux/arm/v7 $(MAKE) docker-build-xx-one-platform
 
-@PHONY: clean
+.PHONY: clean
 clean:
 	rm -rf target
 
 CARGO_RELEASE_PROFILE ?= release-github
 
-@PHONY: release-linux-current-target
+.PHONY: release-linux-current-target
 release-linux-current-target:
 	CC_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-gcc \
 	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
@@ -87,7 +87,7 @@ release-linux-current-target:
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
 	cargo build  --profile $(CARGO_RELEASE_PROFILE) --target=$(TARGET) --features=openssl-vendored,prometheus
 
-@PHONY: debug-linux-docker-x86_64
+.PHONY: debug-linux-docker-x86_64
 debug-linux-docker-x86_64:
 	CARGO_RELEASE_PROFILE=dev \
 	$(MAKE) release-linux-x86_64 && \
@@ -95,7 +95,7 @@ debug-linux-docker-x86_64:
 	docker build -t ikatson/rqbit:tmp-debug -f docker/Dockerfile --platform linux/amd64 target/cross && \
 	docker push ikatson/rqbit:tmp-debug
 
-@PHONY: release-linux-x86_64
+.PHONY: release-linux-x86_64
 release-linux-x86_64:
 	TARGET=x86_64-unknown-linux-musl \
 	TARGET_SNAKE_CASE=x86_64_unknown_linux_musl \
@@ -103,7 +103,7 @@ release-linux-x86_64:
 	CROSS_COMPILE_PREFIX=x86_64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
-@PHONY: release-linux-aarch64
+.PHONY: release-linux-aarch64
 release-linux-aarch64:
 	TARGET=aarch64-unknown-linux-musl \
 	TARGET_SNAKE_CASE=aarch64_unknown_linux_musl \
@@ -111,7 +111,7 @@ release-linux-aarch64:
 	CROSS_COMPILE_PREFIX=aarch64-unknown-linux-musl \
 	$(MAKE) release-linux-current-target
 
-@PHONY: release-linux-armv7
+.PHONY: release-linux-armv7
 release-linux-armv7:
 	TARGET=armv7-unknown-linux-musleabihf \
 	TARGET_SNAKE_CASE=armv7_unknown_linux_musleabihf \
