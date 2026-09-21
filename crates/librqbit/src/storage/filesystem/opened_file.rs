@@ -1,5 +1,5 @@
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::IoSlice,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -9,6 +9,9 @@ use anyhow::Context;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::Error;
+
+#[cfg(windows)]
+const WINDOWS_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0001 | 0x0000_0002 | 0x0000_0004;
 
 pub trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
@@ -111,6 +114,12 @@ struct OpenedFileLocked {
     #[allow(unused)]
     path: PathBuf,
     fd: Option<File>,
+    // Whether the currently opened `fd` was opened in read-only mode.
+    // A read-only fd cannot be written to: doing so fails with EBADF on unix
+    // and ERROR_ACCESS_DENIED (os error 5) on Windows. We must reopen it for
+    // writing before any write (e.g. a piece that spans into an already
+    // completed, reopened-read-only neighbouring file).
+    read_only: bool,
     #[cfg(windows)]
     tried_marking_sparse: bool,
 }
@@ -140,6 +149,7 @@ impl OpenedFile {
             file: RwLock::new(OpenedFileLocked {
                 path,
                 fd: Some(f),
+                read_only: false,
                 #[cfg(windows)]
                 tried_marking_sparse: false,
             }),
@@ -157,6 +167,66 @@ impl OpenedFile {
         Ok(Self {
             file: RwLock::new(f),
         })
+    }
+
+    pub fn ensure_opened_read_only(&self) -> anyhow::Result<()> {
+        {
+            let g = self.file.read();
+            if g.fd.is_some() {
+                return Ok(());
+            }
+        }
+
+        let mut g = self.file.write();
+        if g.fd.is_some() {
+            return Ok(());
+        }
+        if g.path.as_os_str().is_empty() {
+            anyhow::bail!(Error::FsFileIsNone);
+        }
+        let file = read_only_open_options()
+            .open(&g.path)
+            .with_context(|| format!("error opening {:?} in read-only mode", g.path))?;
+        g.fd = Some(file);
+        g.read_only = true;
+        #[cfg(windows)]
+        {
+            g.tried_marking_sparse = true;
+        }
+        Ok(())
+    }
+
+    pub fn ensure_opened(&self) -> anyhow::Result<()> {
+        {
+            let g = self.file.read();
+            // A read-only fd is not good enough here: we need to be able to write.
+            if g.fd.is_some() && !g.read_only {
+                return Ok(());
+            }
+        }
+
+        let mut g = self.file.write();
+        if g.fd.is_some() && !g.read_only {
+            return Ok(());
+        }
+        if g.path.as_os_str().is_empty() {
+            anyhow::bail!(Error::FsFileIsNone);
+        }
+        let parent = g.path.parent().context("bug: no parent")?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("error creating parent directory for {:?}", g.path))?;
+        // Drop a stale read-only handle (if any) before reopening for writing.
+        g.fd = None;
+        let file = writable_open_options()
+            .open(&g.path)
+            .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
+        g.fd = Some(file);
+        g.read_only = false;
+        #[cfg(windows)]
+        {
+            g.tried_marking_sparse = false;
+        }
+        Ok(())
     }
 
     pub fn close(&self) {
@@ -200,6 +270,32 @@ impl OpenedFile {
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
     }
+}
+
+fn writable_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    apply_share_mode(&mut options);
+    options
+}
+
+fn read_only_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    apply_share_mode(&mut options);
+    options
+}
+
+fn apply_share_mode(options: &mut OpenOptions) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        options.share_mode(WINDOWS_SHARE_READ_WRITE_DELETE);
+    }
+
+    #[cfg(not(windows))]
+    let _ = options;
 }
 
 #[cfg(test)]
