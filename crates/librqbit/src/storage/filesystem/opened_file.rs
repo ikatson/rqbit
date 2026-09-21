@@ -168,15 +168,50 @@ impl OpenedFile {
         }
     }
 
+    // Re-opens the file if it was released with close() above. Used to make released
+    // files usable again when the torrent starts doing IO (e.g. on unpause, or when
+    // streaming from a paused torrent), so that releasing files on pause doesn't break
+    // them.
+    fn ensure_open(&self, g: &mut RwLockWriteGuard<'_, OpenedFileLocked>) -> crate::Result<()> {
+        if g.fd.is_none() {
+            let f = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&g.path)
+                .map_err(|e| Error::FsFileReOpen {
+                    path: g.path.clone(),
+                    source: e,
+                })?;
+            g.fd = Some(f);
+        }
+        Ok(())
+    }
+
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
+        // Fast path: the file descriptor is open.
+        {
+            let g = self.file.read();
+            if g.fd.is_some() {
+                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
+                    .ok()
+                    .ok_or(Error::FsFileIsNone);
+            }
+        }
+        // The file was released: re-open it and downgrade to a read lock.
+        let mut g = self.file.write();
+        self.ensure_open(&mut g)?;
+        let g = RwLockWriteGuard::downgrade(g);
+        RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
 
     #[allow(dead_code)]
     pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
-        RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
+        let mut g = self.file.write();
+        self.ensure_open(&mut g)?;
+        RwLockWriteGuard::try_map(g, |f| f.fd.as_mut())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
@@ -194,6 +229,7 @@ impl OpenedFile {
         let mut g = self.file.write();
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
+            self.ensure_open(&mut g)?;
             let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
             tracing::debug!(path=?g.path, marked=super::sparse::mark_file_sparse(f), "marking sparse");
         }
@@ -235,6 +271,42 @@ mod tests {
                 file.read_exact(&mut tmp_buf[..bufsize]).unwrap();
                 assert_eq!(&tmp_buf[..bufsize], buf);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reopen_tests {
+    use super::*;
+
+    #[test]
+    fn test_released_file_reopens_on_demand() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("file.bin");
+        std::fs::write(&path, b"hello").unwrap();
+
+        let of = OpenedFile::new(path.clone(), std::fs::File::open(&path).unwrap());
+
+        // Read works before release.
+        let mut buf = [0u8; 5];
+        of.lock_read().unwrap().pread_exact(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"hello");
+
+        // Release, then read and write again: the file must be re-opened on demand.
+        of.close();
+        let mut buf = [0u8; 5];
+        of.lock_read().unwrap().pread_exact(0, &mut buf).unwrap();
+        assert_eq!(&buf, b"hello");
+        of.lock_read().unwrap().pwrite_all(0, b"HELLO").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"HELLO");
+
+        // Deleting the file while released surfaces an error on the next use,
+        // instead of silently failing forever.
+        of.close();
+        std::fs::remove_file(&path).unwrap();
+        match of.lock_read() {
+            Err(e) => assert!(e.to_string().contains("re-opening"), "got: {e:#}"),
+            Ok(_) => panic!("expected re-open error for a deleted file"),
         }
     }
 }

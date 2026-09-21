@@ -240,7 +240,7 @@ fn merge_two_optional_streams<T>(
 /// Options for adding new torrents to the session.
 //
 // Serialize/deserialize is for Tauri.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AddTorrentOptions {
     /// Start in paused state.
     #[serde(default)]
@@ -291,6 +291,66 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    /// Whether to run the integrity check when the torrent is added.
+    ///
+    /// When true (the default), the torrent is verified on add: if a persisted bitfield
+    /// ("fastresume") exists, a cheap spot-check of sampled pieces runs, otherwise the
+    /// full torrent data is hashed.
+    ///
+    /// When false, the whole validation pass is skipped and the torrent is brought to
+    /// its target state trusting the persisted bitfield as-is. This is for callers that
+    /// know the on-disk data matches the bitfield, e.g. applications that track when
+    /// each torrent was last verified and skip checks for fresh ones.
+    ///
+    /// Details:
+    /// - this is a caller's vouch: with a usable persisted bitfield, the data is trusted
+    ///   without being verified, corrupt data included;
+    /// - if no persisted bitfield exists or it has the wrong length, a full check runs
+    ///   instead (with a warning), so a torrent without a usable bitfield can never be
+    ///   brought up as complete;
+    /// - if loading the persisted bitfield fails (e.g. broken persistence), the
+    ///   torrent transitions to the error state instead of being trusted (fail-closed);
+    /// - torrents re-initialized after an error always get checked regardless of this
+    ///   option;
+    /// - the persisted bitfield is keyed by info hash, not by data location: re-adding
+    ///   the same torrent with a different output folder trusts the bitfield all the
+    ///   same (within the vouch semantics);
+    /// - a persisted bitfield only exists when the session was created with
+    ///   `fastresume: true` and a persistence backend; otherwise every add is checked;
+    /// - this only applies when the torrent is newly added. For an already managed
+    ///   torrent the options are ignored (as with all options); use `recheck()` to
+    ///   force verification of an existing torrent.
+    #[serde(default = "default_check_after_load")]
+    pub check_after_load: bool,
+}
+
+fn default_check_after_load() -> bool {
+    true
+}
+
+impl Default for AddTorrentOptions {
+    fn default() -> Self {
+        Self {
+            paused: false,
+            only_files_regex: None,
+            only_files: None,
+            overwrite: false,
+            list_only: false,
+            output_folder: None,
+            sub_folder: None,
+            peer_opts: None,
+            force_tracker_interval: None,
+            disable_trackers: false,
+            ratelimits: LimitsConfig::default(),
+            initial_peers: None,
+            peer_limit: None,
+            preferred_id: None,
+            storage_factory: None,
+            trackers: None,
+            check_after_load: true,
+        }
+    }
 }
 
 pub struct ListOnlyResponse {
@@ -1356,6 +1416,7 @@ impl Session {
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
+                    check_after_load: opts.check_after_load,
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },
@@ -1372,6 +1433,8 @@ impl Session {
                 self.spawner
                     .block_in_place(|| minfo.storage_factory.create_and_init(&minfo, &metadata))?,
                 false,
+                false,
+                None,
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {
@@ -1613,6 +1676,22 @@ impl Session {
         handle.start(peer_rx, false)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
+    }
+
+    /// Force a full re-verification of a torrent's data on disk.
+    ///
+    /// See [`ManagedTorrent::recheck`] for the semantics. The check runs in the
+    /// background; use the returned handle's `wait_until_initialized()` to wait for
+    /// completion. Must be called within the tokio runtime context.
+    pub async fn recheck(&self, id: TorrentIdOrHash) -> anyhow::Result<()> {
+        let torrent = self
+            .get(id)
+            .with_context(|| format!("no torrent found for {id:?}"))?;
+        let result = torrent.recheck();
+        // Also flush on failure: the recheck may have transitioned the torrent to the
+        // error state, which the persistence layer should reflect.
+        self.try_update_persistence_metadata(&torrent).await;
+        result
     }
 
     pub async fn update_only_files(
