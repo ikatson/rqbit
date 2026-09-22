@@ -512,8 +512,18 @@ impl Api {
     }
 
     pub async fn api_stream(&self, idx: TorrentIdOrHash, file_id: usize) -> Result<FileStream> {
+        self.api_stream_with_options(idx, file_id, Default::default())
+            .await
+    }
+
+    pub async fn api_stream_with_options(
+        &self,
+        idx: TorrentIdOrHash,
+        file_id: usize,
+        options: crate::FileStreamOptions,
+    ) -> Result<FileStream> {
         let mgr = self.mgr_handle(idx)?;
-        Ok(mgr.stream(file_id).await?)
+        Ok(mgr.stream_with_options(file_id, options).await?)
     }
 }
 
