@@ -260,6 +260,12 @@ pub(crate) struct LivePeerState {
     // This is used to track the pieces the peer has.
     pub bitfield: BF,
 
+    // Whether the bitfield above covers the whole torrent, i.e. the peer is a seeder.
+    // Cached so that the aggregate seeder counter can be maintained on transitions
+    // instead of scanning every peer's bitfield on each stats call. Kept in sync
+    // with the bitfield by PeerStates::update_seeder_flag.
+    pub seeder: bool,
+
     // When the peer sends us data this is used to track if we asked for it.
     inflight_requests: HashSet<InflightRequest>,
 
@@ -288,6 +294,7 @@ impl LivePeerState {
             client_name: None,
             peer_interested: initial_interested,
             bitfield: BF::default(),
+            seeder: false,
             inflight_requests: Default::default(),
             late_cancelled_request_tolerance: 0,
             request_slots_changed: Default::default(),

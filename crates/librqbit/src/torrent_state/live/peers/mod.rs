@@ -111,10 +111,29 @@ impl PeerStates {
         })
     }
 
-    pub fn update_bitfield(&self, handle: PeerHandle, bitfield: BF) -> Option<()> {
+    pub fn update_bitfield(
+        &self,
+        handle: PeerHandle,
+        bitfield: BF,
+        total_pieces: usize,
+    ) -> Option<()> {
         self.with_live_mut(handle, "update_bitfield", |live| {
             live.bitfield = bitfield;
+            self.update_seeder_flag(live, total_pieces);
         })
+    }
+
+    // Recompute the cached "this peer has the full torrent" flag after its bitfield
+    // changed, keeping the aggregate seeder counters in sync. Must be called on every
+    // bitfield change of a live peer.
+    pub fn update_seeder_flag(&self, live: &mut LivePeerState, total_pieces: usize) {
+        let seeder = live.has_full_torrent(total_pieces);
+        if seeder == live.seeder {
+            return;
+        }
+        live.seeder = seeder;
+        self.stats.seeder_flag_changed(seeder);
+        self.session_stats.seeder_flag_changed(seeder);
     }
 
     pub fn mark_peer_connecting(&self, h: PeerHandle) -> crate::Result<(PeerRx, PeerTx)> {
@@ -158,5 +177,135 @@ impl PeerStates {
         self.with_live_mut(from_peer, "send_cancellations", |live| {
             live.cancel_inflight_requests_for_piece(stolen_idx);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use librqbit_core::hash_id::Id20;
+
+    use super::*;
+    use crate::stream_connect::ConnectionKind;
+
+    const TOTAL_PIECES: usize = 8;
+
+    fn full_bitfield() -> BF {
+        BF::from_boxed_slice(vec![0xffu8; 1].into_boxed_slice())
+    }
+
+    fn empty_bitfield() -> BF {
+        BF::from_boxed_slice(vec![0u8; 1].into_boxed_slice())
+    }
+
+    fn make_peer_states() -> PeerStates {
+        PeerStates {
+            session_stats: Default::default(),
+            live_outgoing_peers: Default::default(),
+            stats: Default::default(),
+            states: Default::default(),
+        }
+    }
+
+    // Returns the peer handle, keeping the receiving end of the peer channel alive.
+    fn add_live_peer(peers: &PeerStates, addr: &str) -> (PeerHandle, PeerRx) {
+        let addr: SocketAddr = addr.parse().unwrap();
+        peers.add_if_not_seen(addr).unwrap();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        peers
+            .with_peer_mut(addr, "test", |peer| {
+                peer.incoming_connection(Id20::default(), tx, peers, ConnectionKind::Tcp)
+            })
+            .unwrap()
+            .unwrap();
+        (addr, rx)
+    }
+
+    fn live_seeders(peers: &PeerStates) -> (u32, u32) {
+        (
+            peers.stats().live_seeders,
+            peers.session_stats.snapshot().live_seeders,
+        )
+    }
+
+    #[test]
+    fn full_bitfield_counts_as_seeder_and_is_uncounted_on_disconnect() {
+        let peers = make_peer_states();
+        let (addr, _rx) = add_live_peer(&peers, "127.0.0.1:1234");
+        assert_eq!(live_seeders(&peers), (0, 0));
+
+        peers
+            .update_bitfield(addr, empty_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        assert_eq!(live_seeders(&peers), (0, 0));
+
+        peers
+            .update_bitfield(addr, full_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        assert_eq!(live_seeders(&peers), (1, 1));
+
+        // Repeated updates must not double-count.
+        peers
+            .update_bitfield(addr, full_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        assert_eq!(live_seeders(&peers), (1, 1));
+
+        peers.drop_peer(addr).unwrap();
+        assert_eq!(live_seeders(&peers), (0, 0));
+    }
+
+    #[test]
+    fn bitfield_completed_piece_by_piece_counts_as_seeder() {
+        let peers = make_peer_states();
+        let (addr, _rx) = add_live_peer(&peers, "127.0.0.1:1234");
+        peers
+            .update_bitfield(addr, empty_bitfield(), TOTAL_PIECES)
+            .unwrap();
+
+        for piece in 0..TOTAL_PIECES {
+            peers
+                .with_live_mut(addr, "test", |live| {
+                    *live.bitfield.get_mut(piece).unwrap() = true;
+                    peers.update_seeder_flag(live, TOTAL_PIECES);
+                })
+                .unwrap();
+            let expected = u32::from(piece == TOTAL_PIECES - 1);
+            assert_eq!(live_seeders(&peers), (expected, expected));
+        }
+    }
+
+    #[test]
+    fn seeder_is_uncounted_when_peer_leaves_live_state() {
+        let peers = make_peer_states();
+        let (addr, _rx) = add_live_peer(&peers, "127.0.0.1:1234");
+        peers
+            .update_bitfield(addr, full_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        assert_eq!(live_seeders(&peers), (1, 1));
+
+        peers.mark_peer_not_needed(addr).unwrap();
+        assert_eq!(live_seeders(&peers), (0, 0));
+    }
+
+    #[test]
+    fn seeders_are_counted_per_peer() {
+        let peers = make_peer_states();
+        let (a, _rx_a) = add_live_peer(&peers, "127.0.0.1:1234");
+        let (b, _rx_b) = add_live_peer(&peers, "127.0.0.1:1235");
+
+        peers
+            .update_bitfield(a, full_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        peers
+            .update_bitfield(b, empty_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        assert_eq!(live_seeders(&peers), (1, 1));
+
+        peers
+            .update_bitfield(b, full_bitfield(), TOTAL_PIECES)
+            .unwrap();
+        assert_eq!(live_seeders(&peers), (2, 2));
+
+        peers.drop_peer(a).unwrap();
+        assert_eq!(live_seeders(&peers), (1, 1));
     }
 }
