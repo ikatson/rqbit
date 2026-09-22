@@ -271,6 +271,11 @@ impl ChunkTracker {
 
     pub fn mark_piece_downloaded(&mut self, idx: ValidPieceIndex) {
         let id = idx.get() as usize;
+        // While its hash was being checked the piece was neither in-flight nor have, and
+        // anything that queues "selected and not have" - update_only_files() re-selecting
+        // its file - queued it. A piece we have is not one a peer should be handed, so
+        // whatever queued it in that window is undone here.
+        self.queue_pieces.set(id, false);
         if !self.have.as_slice()[id] {
             self.have.as_slice_mut().set(id, true);
             let len = self.lengths.piece_length(idx) as u64;
@@ -665,5 +670,47 @@ mod tests {
         assert!(ct.queue_pieces[0]);
         assert!(ct.queue_pieces[1]);
         assert!(ct.queue_pieces[2]);
+    }
+
+    // Between its last chunk arriving and its hash passing, a piece is neither queued,
+    // in-flight nor have. update_only_files() sees "selected and not have" and queues it,
+    // and the hash then passes: without this, the piece is have AND queued, and the next
+    // peer to ask is handed a piece we have.
+    #[test]
+    fn test_a_piece_queued_during_its_hash_check_is_dequeued_when_it_passes() {
+        let piece_len = CHUNK_SIZE * 2;
+        let l = Lengths::new(piece_len as u64 * 3, piece_len).unwrap();
+        let files = vec![FileInfo {
+            relative_filename: "0".into(),
+            offset_in_torrent: 0,
+            piece_range: 0..3,
+            len: piece_len as u64 * 3,
+            attrs: Default::default(),
+        }];
+        let bf_len = l.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        selected.get_mut(0..3).unwrap().fill(true);
+        let mut ct = ChunkTracker::new(have.into_dyn(), selected, l, &files).unwrap();
+        let p0 = l.validate_piece_index(0).unwrap();
+
+        // A peer takes the piece, delivers all of it, and the hash check starts: it is
+        // out of the queue and, in the real thing, just out of the in-flight map too.
+        ct.reserve_needed_piece(p0);
+        assert!(!ct.queue_pieces[0]);
+
+        // Meanwhile the user deselects the file and selects it again.
+        ct.update_only_files(&files, &HashSet::new()).unwrap();
+        ct.update_only_files(&files, &HashSet::from_iter([0]))
+            .unwrap();
+        assert!(ct.queue_pieces[0]);
+
+        // The hash passes.
+        ct.mark_piece_downloaded(p0);
+        assert!(ct.is_piece_have(p0));
+        assert!(
+            !ct.queue_pieces[0],
+            "a piece we have is still queued, so a second peer will download it again"
+        );
     }
 }
