@@ -485,7 +485,7 @@ impl TorrentStateLive {
         };
         let _token_guard = handler.cancel_token.clone().drop_guard();
         let options = PeerConnectionOptions {
-            connect_timeout: self.shared.options.peer_connect_timeout,
+            connect_timeout: self.shared.options.peer_connect_timeout(),
             read_write_timeout: self.shared.options.peer_read_write_timeout,
             ..Default::default()
         };
@@ -550,7 +550,7 @@ impl TorrentStateLive {
         let _token_guard = handler.cancel_token.clone().drop_guard();
 
         let options = PeerConnectionOptions {
-            connect_timeout: state.shared.options.peer_connect_timeout,
+            connect_timeout: state.shared.options.peer_connect_timeout(),
             read_write_timeout: state.shared.options.peer_read_write_timeout,
             ..Default::default()
         };
