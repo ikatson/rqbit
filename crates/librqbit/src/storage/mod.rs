@@ -30,6 +30,9 @@ pub mod examples;
 #[cfg(feature = "storage_middleware")]
 pub mod middleware;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 use std::{
     any::{Any, TypeId},
     io::IoSlice,
@@ -188,6 +191,15 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         (**self).pwrite_all(file_id, offset, buf)
     }
 
+    fn pwrite_all_vectored(
+        &self,
+        file_id: usize,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        (**self).pwrite_all_vectored(file_id, offset, bufs)
+    }
+
     fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
         (**self).remove_file(file_id, filename)
     }
@@ -222,7 +234,9 @@ mod tests {
     use std::any::TypeId;
 
     use super::{
-        BoxStorageFactory, StorageFactory, StorageFactoryExt, filesystem::FilesystemStorageFactory,
+        BoxStorageFactory, StorageFactory, StorageFactoryExt,
+        filesystem::FilesystemStorageFactory,
+        test_util::{Probe, assert_forwards_vectored_writes},
     };
     use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
 
@@ -278,5 +292,13 @@ mod tests {
             .boxed()
             .is_type_id(TypeId::of::<Middleware<FilesystemStorageFactory>>())
         );
+    }
+
+    // What a torrent holds is a Box<dyn TorrentStorage>, so a method this impl doesn't
+    // forward is one no storage in rqbit ever gets asked.
+    #[test]
+    fn test_vectored_writes_survive_boxing() {
+        let boxed: Box<Probe> = Box::default();
+        assert_forwards_vectored_writes(&boxed, &boxed);
     }
 }
