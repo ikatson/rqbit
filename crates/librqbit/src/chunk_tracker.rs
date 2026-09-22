@@ -69,6 +69,32 @@ impl HaveNeededSelected {
     }
 }
 
+/// How much of a single piece has been downloaded, counted in chunks (blocks) of
+/// `CHUNK_SIZE` (16 KiB).
+///
+/// Whole pieces are already visible through the have-bitfield, but a piece can be
+/// many megabytes, so "have / don't have" is too coarse to show progress to a user
+/// waiting on one specific piece. This is the finer-grained view of a single piece.
+///
+/// See [`crate::ManagedTorrent::piece_chunk_progress`] for how to obtain it, and for the
+/// caveats that come with it.
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+pub struct PieceChunkProgress {
+    /// How many chunks of the piece have been written to storage.
+    ///
+    /// This is downloaded, NOT verified: see [`crate::ManagedTorrent::piece_chunk_progress`].
+    pub downloaded_chunks: u32,
+    /// How many chunks the piece has in total. The last piece of a torrent usually has
+    /// fewer chunks than the rest.
+    pub total_chunks: u32,
+    /// True if the piece is fully downloaded AND has passed its hash check, i.e. it is in
+    /// the have-bitfield.
+    ///
+    /// While this is false, `downloaded_chunks == total_chunks` only means the piece is
+    /// complete enough to be hashed, not that it is good.
+    pub verified: bool,
+}
+
 // Compute the have-status of chunks.
 //
 // Save as "have_pieces", but there's one bit per chunk (not per piece).
@@ -293,6 +319,30 @@ impl ChunkTracker {
         self.hns.needed_bytes
     }
 
+    /// How much of the given piece has been downloaded, in chunks.
+    ///
+    /// Returns None if the piece index is out of range for this torrent.
+    ///
+    /// NOTE: this is "downloaded", not "verified". A chunk is counted as soon as it has
+    /// been written to storage; a piece's hash is only checked once all of its chunks are
+    /// in. If that check fails the piece is thrown away and its count drops back to zero,
+    /// so this value CAN GO BACKWARDS, and a progress bar driven by it must be prepared
+    /// for that. [`PieceChunkProgress::verified`] tells a piece that is merely fully
+    /// downloaded from one that is known good.
+    ///
+    /// Cheap: this counts bits in an existing bitfield and allocates nothing.
+    pub fn piece_chunk_progress(&self, piece_index: u32) -> Option<PieceChunkProgress> {
+        let index = self.lengths.validate_piece_index(piece_index)?;
+        let chunks = self.chunk_status.get(self.lengths.chunk_range(index))?;
+        // count_ones() is bounded by the number of chunks in a piece, which is a u32.
+        let downloaded_chunks = chunks.count_ones().try_into().ok()?;
+        Some(PieceChunkProgress {
+            downloaded_chunks,
+            total_chunks: self.lengths.chunks_per_piece(index),
+            verified: self.is_piece_have(index),
+        })
+    }
+
     // return true if the whole piece is marked downloaded
     pub fn mark_chunk_downloaded(
         &mut self,
@@ -408,11 +458,13 @@ mod tests {
     use librqbit_core::{constants::CHUNK_SIZE, lengths::Lengths};
     use std::collections::HashSet;
 
+    use peer_binary_protocol::Piece;
+
     use crate::{
         bitv::BitV, chunk_tracker::HaveNeededSelected, file_info::FileInfo, type_aliases::BF,
     };
 
-    use super::{ChunkTracker, compute_chunk_have_status};
+    use super::{ChunkTracker, PieceChunkProgress, compute_chunk_have_status};
 
     #[test]
     fn test_compute_chunk_status() {
@@ -665,5 +717,157 @@ mod tests {
         assert!(ct.queue_pieces[0]);
         assert!(ct.queue_pieces[1]);
         assert!(ct.queue_pieces[2]);
+    }
+
+    // A 3-piece torrent where every piece but the last is 2 full chunks + 1 byte, i.e.
+    // 3 chunks. The last piece is 1 byte, i.e. a single (short) chunk.
+    fn tracker_for_chunk_progress_tests() -> (Lengths, ChunkTracker) {
+        let piece_len = CHUNK_SIZE * 2 + 1;
+        let l = Lengths::new(piece_len as u64 * 2 + 1, piece_len).unwrap();
+        assert_eq!(l.total_pieces(), 3);
+        assert_eq!(l.total_chunks(), 7);
+
+        let bf_len = l.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let selected = {
+            let mut bf = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+            bf.get_mut(0..3).unwrap().fill(true);
+            bf
+        };
+        let ct = ChunkTracker::new(have.into_dyn(), selected, l, &Default::default()).unwrap();
+        (l, ct)
+    }
+
+    fn recv_chunk(ct: &mut ChunkTracker, piece: u32, chunk: u32, len: usize) {
+        let block = vec![0u8; len];
+        ct.mark_chunk_downloaded(&Piece::from_data(piece, chunk * CHUNK_SIZE, &block))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_piece_chunk_progress_empty_piece() {
+        let (_l, ct) = tracker_for_chunk_progress_tests();
+        assert_eq!(
+            ct.piece_chunk_progress(0),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 0,
+                total_chunks: 3,
+                verified: false,
+            })
+        );
+        // The last piece is short: one chunk, not three.
+        assert_eq!(
+            ct.piece_chunk_progress(2),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 0,
+                total_chunks: 1,
+                verified: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_piece_chunk_progress_partial_piece() {
+        let (_l, mut ct) = tracker_for_chunk_progress_tests();
+
+        recv_chunk(&mut ct, 1, 0, CHUNK_SIZE as usize);
+        assert_eq!(
+            ct.piece_chunk_progress(1),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 1,
+                total_chunks: 3,
+                verified: false,
+            })
+        );
+
+        recv_chunk(&mut ct, 1, 1, CHUNK_SIZE as usize);
+        assert_eq!(
+            ct.piece_chunk_progress(1),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 2,
+                total_chunks: 3,
+                verified: false,
+            })
+        );
+
+        // Neighbouring pieces are unaffected.
+        assert_eq!(ct.piece_chunk_progress(0).unwrap().downloaded_chunks, 0);
+        assert_eq!(ct.piece_chunk_progress(2).unwrap().downloaded_chunks, 0);
+    }
+
+    #[test]
+    fn test_piece_chunk_progress_full_piece() {
+        let (l, mut ct) = tracker_for_chunk_progress_tests();
+
+        recv_chunk(&mut ct, 1, 0, CHUNK_SIZE as usize);
+        recv_chunk(&mut ct, 1, 1, CHUNK_SIZE as usize);
+        recv_chunk(&mut ct, 1, 2, 1);
+
+        // All chunks are in, but the hash has not been checked yet.
+        assert_eq!(
+            ct.piece_chunk_progress(1),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 3,
+                total_chunks: 3,
+                verified: false,
+            })
+        );
+
+        // Now it passes verification.
+        ct.mark_piece_downloaded(l.validate_piece_index(1).unwrap());
+        assert_eq!(
+            ct.piece_chunk_progress(1),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 3,
+                total_chunks: 3,
+                verified: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_piece_chunk_progress_out_of_range() {
+        let (_l, ct) = tracker_for_chunk_progress_tests();
+        assert_eq!(ct.piece_chunk_progress(3), None);
+        assert_eq!(ct.piece_chunk_progress(u32::MAX), None);
+    }
+
+    #[test]
+    fn test_piece_chunk_progress_regresses_on_failed_verification() {
+        let (l, mut ct) = tracker_for_chunk_progress_tests();
+        let idx = l.validate_piece_index(1).unwrap();
+
+        recv_chunk(&mut ct, 1, 0, CHUNK_SIZE as usize);
+        recv_chunk(&mut ct, 1, 1, CHUNK_SIZE as usize);
+        recv_chunk(&mut ct, 1, 2, 1);
+        assert_eq!(ct.piece_chunk_progress(1).unwrap().downloaded_chunks, 3);
+
+        // The hash check failed: the piece goes back into the queue and the progress
+        // honestly drops to zero rather than staying at 100%.
+        ct.mark_piece_broken_if_not_have(idx);
+        assert_eq!(
+            ct.piece_chunk_progress(1),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 0,
+                total_chunks: 3,
+                verified: false,
+            })
+        );
+
+        // Re-download it, this time the hash checks out. A piece we already have is not
+        // broken by a later call, so its progress stays put.
+        recv_chunk(&mut ct, 1, 0, CHUNK_SIZE as usize);
+        recv_chunk(&mut ct, 1, 1, CHUNK_SIZE as usize);
+        recv_chunk(&mut ct, 1, 2, 1);
+        ct.mark_piece_downloaded(idx);
+        ct.mark_piece_broken_if_not_have(idx);
+        assert_eq!(
+            ct.piece_chunk_progress(1),
+            Some(PieceChunkProgress {
+                downloaded_chunks: 3,
+                total_chunks: 3,
+                verified: true,
+            })
+        );
     }
 }

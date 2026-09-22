@@ -38,7 +38,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::Session;
-use crate::chunk_tracker::ChunkTracker;
+use crate::chunk_tracker::{ChunkTracker, PieceChunkProgress};
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
 use crate::session::TorrentId;
@@ -274,6 +274,26 @@ impl ManagedTorrent {
                 .context("error getting chunks")?)),
             _ => bail!("no chunk tracker, torrent neither paused nor live"),
         }
+    }
+
+    /// How much of the given piece has been downloaded, in 16 KiB chunks.
+    ///
+    /// Whole pieces are visible through the have-bitfield already (see
+    /// [`crate::Api::api_dump_haves`]), but a piece can be many megabytes, so that is too
+    /// coarse to show progress to a user waiting on one specific piece.
+    ///
+    /// NOTE: this is "downloaded", not "verified". A chunk counts as soon as it has been
+    /// written to storage; the piece's hash is only checked once all of its chunks are in.
+    /// If that check fails the piece is discarded and the count drops back to zero, so
+    /// this value CAN GO BACKWARDS. [`PieceChunkProgress::verified`] tells a piece that is
+    /// merely fully downloaded from one that is known good.
+    ///
+    /// Errors if the torrent is neither live nor paused, or if the piece index is out of
+    /// range. Cheap enough to poll: it takes the state lock only to count bits in an
+    /// existing bitfield, and allocates nothing.
+    pub fn piece_chunk_progress(&self, piece_index: u32) -> anyhow::Result<PieceChunkProgress> {
+        self.with_chunk_tracker(|chunks| chunks.piece_chunk_progress(piece_index))?
+            .with_context(|| format!("piece index {piece_index} is out of range"))
     }
 
     /// Get the live state if the torrent is live.
