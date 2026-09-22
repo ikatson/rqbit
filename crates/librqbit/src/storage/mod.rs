@@ -30,6 +30,9 @@ pub mod examples;
 #[cfg(feature = "storage_middleware")]
 pub mod middleware;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 use std::{
     any::{Any, TypeId},
     io::IoSlice,
@@ -222,7 +225,9 @@ mod tests {
     use std::any::TypeId;
 
     use super::{
-        BoxStorageFactory, StorageFactory, StorageFactoryExt, filesystem::FilesystemStorageFactory,
+        BoxStorageFactory, StorageFactory, StorageFactoryExt,
+        filesystem::FilesystemStorageFactory,
+        test_util::{Probe, assert_forwards_defaults},
     };
     use crate::torrent_state::{ManagedTorrentShared, TorrentMetadata};
 
@@ -278,5 +283,13 @@ mod tests {
             .boxed()
             .is_type_id(TypeId::of::<Middleware<FilesystemStorageFactory>>())
         );
+    }
+
+    // What a torrent holds is a Box<dyn TorrentStorage>, so a method this impl doesn't
+    // forward is one no storage in rqbit ever gets asked.
+    #[test]
+    fn test_the_defaulted_methods_survive_boxing() {
+        let boxed: Box<Probe> = Box::default();
+        assert_forwards_defaults(&boxed, &boxed);
     }
 }
