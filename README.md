@@ -2,29 +2,29 @@
 [![crates.io](https://img.shields.io/crates/v/librqbit.svg)](https://crates.io/crates/librqbit)
 [![docs.rs](https://img.shields.io/docsrs/librqbit.svg)](https://docs.rs/librqbit/latest/librqbit/)
 
-# rqbit - bittorrent client in Rust
+# rqbit - BitTorrent client in Rust
 
-**rqbit** is a bittorrent client written in Rust. Has HTTP API and Web UI, and can be used as a library.
+**rqbit** is a BitTorrent client written in Rust. It has an HTTP API and a Web UI, and can be used as a library.
 
-Also has a desktop app built with [Tauri](https://tauri.app/).
+rqbit also has a desktop app built with [Tauri](https://tauri.app/).
 
 ## Usage quick start
 
 ### Optional - start the server
 
-Assuming you are downloading to ~/Downloads.
+Assuming you are downloading to ~/Downloads:
 
     rqbit server start ~/Downloads
 
 ### Download torrents
 
-Assuming you are downloading to ~/Downloads. By default it'll download to current directory.
+Assuming you are downloading to ~/Downloads. By default it'll download to current directory:
 
     rqbit download [-o ~/Downloads] 'magnet:?....' [https?://url/to/.torrent] [/path/to/local/file.torrent]
 
 ## Web UI
 
-Access at http://localhost:3030/web/. See screenshot below (torrent names and speeds are simulated).
+The Web UI can be accessed at http://localhost:3030/web/. See screenshot below (torrent names and speeds are simulated).
 
 <img width="1000" src="https://github.com/user-attachments/assets/d916b3d9-ebbd-462a-889d-df3916cc2681" />
 
@@ -32,7 +32,7 @@ Access at http://localhost:3030/web/. See screenshot below (torrent names and sp
 
 The desktop app is a [thin wrapper](https://github.com/ikatson/rqbit/blob/main/desktop/src-tauri/src/main.rs) on top of the Web UI frontend.
 
-Download it in [Releases](https://github.com/ikatson/rqbit/releases) for OSX and Windows. For Linux, build manually with
+Download it at [Releases](https://github.com/ikatson/rqbit/releases) for OSX and Windows. For Linux, build manually with
 
     cargo tauri build
 
@@ -49,7 +49,7 @@ The streaming URLs look like http://IP:3030/torrents/<torrent_id>/stream/<file_i
 
 rqbit can advertise managed torrents to LAN, e.g. your TVs and stream torrents there (without transcoding). Seeking to arbitrary points in the videos is supported too.
 
-Usage from CLI
+Usage from CLI:
 
 ```
 rqbit --enable-upnp-server server start ...
@@ -67,7 +67,7 @@ rqbit --enable-mdns --http-api-listen-addr 0.0.0.0:3030 server start ...
 
 ## IPv6
 
-rqbit supports IPv6. By default it listens on all interfaces in dualstack mode. It can work even if there's no IPv6 enabled.
+rqbit supports IPv6. By default, it listens on all interfaces in dualstack mode. It can work even if there's no IPv6 enabled.
 
 ## Shell completions
 
@@ -97,7 +97,7 @@ rqbit can be started on-demand via [systemd socket activation](https://0pointer.
 
 Anecdotally from a few reports, rqbit is faster than other clients they've tried, at least with their default settings.
 
-Memory usage for the server is usually within a few tens of megabytes, which makes it great for e.g. RaspberryPI.
+Memory usage for the server is usually within a few tens of megabytes, which makes it great for low resource devices such as the Raspberry Pi.
 
 I've got a report that rqbit can saturate a 20Gbps link, although I don't have the hardware to confirm.
 
@@ -109,21 +109,21 @@ There are pre-built binaries in [Releases](https://github.com/ikatson/rqbit/rele
 
 ### Homebrew
 
-**rqbit** can be installed using Homebrew.
+**rqbit** can be installed using Homebrew:
 ```sh
 brew install rqbit
 ```
 
 ### Cargo
 
-If you have the Rust toolchain installed then you can use the following.
+If you have the Rust toolchain installed then you can use the following:
 ```sh
 cargo install rqbit
 ```
 
 ## Docker
 
-Docker images are published at [ikatson/rqbit](https://hub.docker.com/r/ikatson/rqbit)
+Docker images are published at [ikatson/rqbit](https://hub.docker.com/r/ikatson/rqbit).
 
 ## Build
 
@@ -143,7 +143,7 @@ Increase verbosity. Possible values: trace, debug, info, warn, error.
 
 ### --list
 
-Will print the contents of the torrent file or the magnet link.
+Prints the contents of the torrent file or the magnet link.
 
 ### --overwrite
 
@@ -236,7 +236,7 @@ curl -s 'http://127.0.0.1:3030/'
 
 ### Basic auth
 
-For HTTP API basic authentication set RQBIT_HTTP_BASIC_AUTH_USERPASS environment variable.
+For HTTP API basic authentication, set RQBIT_HTTP_BASIC_AUTH_USERPASS environment variable.
 
 ```
 RQBIT_HTTP_BASIC_AUTH_USERPASS=username:password rqbit server start ...
