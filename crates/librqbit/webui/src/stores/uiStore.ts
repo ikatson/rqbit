@@ -3,6 +3,7 @@ import {
   TorrentSortColumn,
   SortDirection,
   StatusFilter,
+  CATEGORY_FILTER_ALL,
 } from "../helper/torrentFilters";
 
 const LARGE_SCREEN_BREAKPOINT = 1024;
@@ -21,6 +22,11 @@ export interface UIStore {
 
   statusFilter: StatusFilter;
   setStatusFilter: (filter: StatusFilter) => void;
+
+  categoryFilter: string;
+  setCategoryFilter: (category: string) => void;
+  categories: string[];
+  setCategories: (categories: string[]) => void;
 
   selectedTorrentIds: Set<number>;
   lastSelectedId: number | null;
@@ -56,6 +62,13 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setStatusFilter: (filter) => {
     set({ statusFilter: filter });
   },
+
+  categoryFilter: CATEGORY_FILTER_ALL,
+  setCategoryFilter: (filter) => {
+    set({ categoryFilter: filter });
+  },
+  categories: [],
+  setCategories: (categories) => set({ categories }),
 
   selectedTorrentIds: new Set<number>(),
   lastSelectedId: null,

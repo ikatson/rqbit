@@ -313,6 +313,8 @@ function generateTorrentListItem(
     info_hash: generateInfoHash(id),
     name: generateTorrentName(id),
     output_folder: `/downloads/torrent_${id}`,
+    category:
+      id % 2 === 0 ? (id % 2 === 0 ? "diskimages" : "archive.org") : null,
     total_pieces: totalPieces,
   };
 
@@ -409,6 +411,10 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
     }
 
     return { torrents };
+  },
+
+  listCategories: (): Promise<string[]> => {
+    return Promise.resolve(["diskimages", "archive.org"]);
   },
 
   getTorrentDetails: async (index: number): Promise<TorrentDetails> => {
@@ -543,6 +549,10 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
   },
 
   updateOnlyFiles: async (): Promise<void> => {
+    await new Promise((r) => setTimeout(r, 100));
+  },
+
+  updateCategory: async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 100));
   },
 
