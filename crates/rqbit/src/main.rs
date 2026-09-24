@@ -15,6 +15,7 @@ use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions,
     CreateTorrentOptions, DhtSessionConfig, ListOnlyResponse, ListenerMode, ListenerOptions,
     PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState,
+    generate_peer_id,
     dht::DhtPersistenceConfig,
     http_api::{HttpApi, HttpApiOptions},
     librqbit_spawn,
@@ -61,6 +62,17 @@ fn parse_umask(value: &str) -> anyhow::Result<libc::mode_t> {
         output = output * 8 + digit;
     }
     Ok(output)
+}
+
+fn parse_peer_id(value: &str) -> anyhow::Result<String> {
+    if value.len() != 8 {
+        anyhow::bail!(
+            "peer ID fingerprint must be exactly 8 bytes, got {}",
+            value.len()
+        );
+    }
+
+    Ok(value.to_owned())
 }
 
 #[derive(Parser)]
@@ -152,6 +164,10 @@ struct Opts {
     /// The maximum number of connected peers per torrent.
     #[arg(long = "peer-limit", env = "RQBIT_PEER_LIMIT")]
     peer_limit: Option<usize>,
+
+    /// The 8-byte peer ID fingerprint to use.
+    #[arg(long = "peer-id", env = "RQBIT_PEER_ID", value_parser = parse_peer_id)]
+    peer_id: Option<String>,
 
     /// How many threads to spawn for the executor.
     #[arg(short = 't', long, env = "RQBIT_RUNTIME_WORKER_THREADS")]
@@ -645,7 +661,10 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         dht,
         // This will be overridden by "server start" below if needed.
         persistence: None,
-        peer_id: None,
+        peer_id: opts
+            .peer_id
+            .as_deref()
+            .map(|fingerprint| generate_peer_id(fingerprint.as_bytes())),
         listen,
         connect: Some(ConnectionOptions {
             proxy_url: opts.socks_url.take(),
