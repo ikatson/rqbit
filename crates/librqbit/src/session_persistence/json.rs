@@ -1,4 +1,4 @@
-use std::{any::TypeId, collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     api::TorrentIdOrHash,
@@ -6,7 +6,7 @@ use crate::{
     bitv_factory::BitVFactory,
     session::TorrentId,
     spawn_utils::BlockingSpawner,
-    storage::filesystem::FilesystemStorageFactory,
+    storage::StorageFactory,
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
 };
@@ -127,13 +127,16 @@ impl JsonSessionPersistenceStore {
         torrent: &ManagedTorrentHandle,
         write_torrent_file: bool,
     ) -> anyhow::Result<()> {
-        if !torrent
+        // What the record below leaves out is the storage: on restart it is replayed
+        // through add_torrent, which builds the session's default storage from the output
+        // folder and the file selection. So the storage is what has to promise that this
+        // is enough to find the data again, and that the have-bitfield we keep beside the
+        // record won't outlive it. See StorageFactory::ensure_persistable.
+        torrent
             .shared
             .storage_factory
-            .is_type_id(TypeId::of::<FilesystemStorageFactory>())
-        {
-            bail!("storages other than FilesystemStorageFactory are not supported");
-        }
+            .ensure_persistable()
+            .context("can't persist a torrent with this storage")?;
 
         let st = SerializedTorrent {
             trackers: torrent
