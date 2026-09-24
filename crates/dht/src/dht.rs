@@ -979,26 +979,7 @@ impl DhtWorker {
     }
 
     async fn bootstrap_hostname(&self, hostname: &str) -> crate::Result<()> {
-        let addrs = tokio::net::lookup_host(hostname)
-            .await
-            .map_err(|err| Error::lookup(hostname, err))?
-            .collect::<Vec<_>>();
-        let v4 = RecursiveRequest::find_node_for_routing_table(
-            self.dht.clone(),
-            self.dht.id,
-            addrs.iter().copied().filter(|a| a.is_ipv4()),
-        )
-        .instrument(debug_span!("v4"));
-
-        let v6 = RecursiveRequest::find_node_for_routing_table(
-            self.dht.clone(),
-            self.dht.id,
-            addrs.iter().copied().filter(|a| a.is_ipv6()),
-        )
-        .instrument(debug_span!("v6"));
-
-        let (v4, v6) = tokio::join!(v4, v6);
-        v4.or(v6)
+        self.dht.resolve_and_find_nodes(hostname).await
     }
 
     async fn bootstrap_hostname_with_backoff(&self, addr: &str) -> crate::Result<()> {
@@ -1358,6 +1339,79 @@ impl DhtState {
         RequestPeersStream::new(self.clone(), info_hash, announce_port)
     }
 
+    /// Inject additional bootstrap nodes (e.g. from a .torrent BEP-5 `nodes`
+    /// list) into the routing table by resolving each host and running find_node
+    /// against it. Each entry is `(host, port)` where host may be a hostname or an
+    /// IPv4/IPv6 literal. Runs in the background, best-effort.
+    pub fn add_bootstrap_nodes(self: &Arc<Self>, nodes: Vec<(String, u16)>) {
+        if nodes.is_empty() {
+            return;
+        }
+        let dht = self.clone();
+        spawn_with_cancel(
+            debug_span!(parent: None, "add_bootstrap_nodes", count = nodes.len()),
+            "add_bootstrap_nodes",
+            self.cancellation_token.clone(),
+            async move {
+                let mut futs = FuturesUnordered::new();
+                for (host, port) in nodes {
+                    let dht = dht.clone();
+                    futs.push(async move {
+                        // (host, port) impls ToSocketAddrs: DNS names and IPv4/IPv6
+                        // literals (no bracketing needed) are all handled here.
+                        dht.resolve_and_find_nodes((host.as_str(), port)).await
+                    });
+                }
+                while let Some(res) = futs.next().await {
+                    if let Err(e) = res {
+                        debug!("error adding bootstrap node: {e:#}");
+                    }
+                }
+                Ok::<(), crate::Error>(())
+            },
+        );
+    }
+
+    /// Run find_node against the given addresses (split by IP family) to populate
+    /// the routing table.
+    async fn find_nodes_in_routing_table(
+        self: &Arc<Self>,
+        addrs: &[SocketAddr],
+    ) -> crate::Result<()> {
+        let v4 = RecursiveRequest::find_node_for_routing_table(
+            self.clone(),
+            self.id,
+            addrs.iter().copied().filter(|a| a.is_ipv4()),
+        )
+        .instrument(debug_span!("v4"));
+
+        let v6 = RecursiveRequest::find_node_for_routing_table(
+            self.clone(),
+            self.id,
+            addrs.iter().copied().filter(|a| a.is_ipv6()),
+        )
+        .instrument(debug_span!("v6"));
+
+        let (v4, v6) = tokio::join!(v4, v6);
+        v4.or(v6)
+    }
+
+    /// Resolve `addr` (a "host:port" string or a (host, port) tuple, which may be
+    /// a hostname or IPv4/IPv6 literal) and populate the routing table from it.
+    async fn resolve_and_find_nodes(
+        self: &Arc<Self>,
+        addr: impl tokio::net::ToSocketAddrs + std::fmt::Debug,
+    ) -> crate::Result<()> {
+        // lookup_host consumes `addr` and Error::lookup wants a &str, so derive
+        // the error label up front from the Debug repr.
+        let label = format!("{addr:?}");
+        let addrs = tokio::net::lookup_host(addr)
+            .await
+            .map_err(|err| Error::lookup(&label, err))?
+            .collect::<Vec<_>>();
+        self.find_nodes_in_routing_table(&addrs).await
+    }
+
     pub fn listen_addr(&self) -> SocketAddr {
         self.listen_addr
     }
@@ -1394,5 +1448,121 @@ impl FromSocketAddr for SocketAddrV6 {
             SocketAddr::V6(a) => Some(a),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{Ipv4Addr, SocketAddr},
+        time::Duration,
+    };
+
+    use librqbit_core::hash_id::Id20;
+
+    use crate::{Dht, DhtConfig, DhtState, routing_table::RoutingTable};
+
+    /// Spawn an in-process DHT node bound to an ephemeral v4 loopback port.
+    async fn spawn_node(
+        peer_id: Id20,
+        routing_table: Option<RoutingTable>,
+        bootstrap_addrs: Vec<String>,
+    ) -> Dht {
+        DhtState::with_config(DhtConfig {
+            peer_id: Some(peer_id),
+            bootstrap_addrs: Some(bootstrap_addrs),
+            routing_table,
+            listen_addr: Some((Ipv4Addr::LOCALHOST, 0).into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Poll the routing tables until a node with the given id shows up, or time out.
+    async fn wait_for_node_in_table(dht: &Dht, id: Id20, timeout: Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                let found = dht
+                    .with_routing_tables(|v4, v6| v4.iter().chain(v6.iter()).any(|n| n.id() == id));
+                if found {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    // An unreachable bootstrap addr keeps a node's bootstrap task pending (retrying)
+    // so its worker stays alive without ever contacting the public DHT.
+    const UNREACHABLE_BOOTSTRAP: &str = "127.0.0.1:1";
+
+    /// Bootstrapping a node against a peer that knows another node should pull that
+    /// other node into the local routing table via find_node recursion.
+    #[tokio::test]
+    async fn bootstrap_populates_routing_table() {
+        let b_id = Id20::new([0x11; 20]);
+        let c_id = Id20::new([0xcc; 20]);
+        let c_addr: SocketAddr = (Ipv4Addr::LOCALHOST, 9999).into();
+
+        // Node B is seeded with a single known node C.
+        let mut b_table = RoutingTable::new(b_id, None);
+        b_table.add_node(c_id, c_addr);
+        let b = spawn_node(b_id, Some(b_table), vec![UNREACHABLE_BOOTSTRAP.to_string()]).await;
+
+        // Node A bootstraps off B, so it should learn about C.
+        let a_id = Id20::new([0x22; 20]);
+        let a = spawn_node(
+            a_id,
+            None,
+            vec![format!("127.0.0.1:{}", b.listen_addr().port())],
+        )
+        .await;
+
+        assert!(
+            wait_for_node_in_table(&a, c_id, Duration::from_secs(10)).await,
+            "A should have learned about node C via bootstrap"
+        );
+    }
+
+    /// `add_bootstrap_nodes` should populate the routing table at runtime, using
+    /// only the DHT (not initial peers). A does not bootstrap off B here, so the
+    /// only way it can learn about C is via the added node.
+    #[tokio::test]
+    async fn add_bootstrap_nodes_populates_table() {
+        let b_id = Id20::new([0x11; 20]);
+        let c_id = Id20::new([0xcc; 20]);
+        let c_addr: SocketAddr = (Ipv4Addr::LOCALHOST, 9999).into();
+
+        let mut b_table = RoutingTable::new(b_id, None);
+        b_table.add_node(c_id, c_addr);
+        let b = spawn_node(b_id, Some(b_table), vec![UNREACHABLE_BOOTSTRAP.to_string()]).await;
+
+        // A's own bootstrap goes nowhere; it starts with an empty routing table.
+        let a_id = Id20::new([0x22; 20]);
+        let a = spawn_node(a_id, None, vec![UNREACHABLE_BOOTSTRAP.to_string()]).await;
+
+        a.add_bootstrap_nodes(vec![("127.0.0.1".to_string(), b.listen_addr().port())]);
+
+        assert!(
+            wait_for_node_in_table(&a, c_id, Duration::from_secs(10)).await,
+            "A should have learned about node C via add_bootstrap_nodes"
+        );
+    }
+
+    /// Empty input is a no-op and must not panic.
+    #[tokio::test]
+    async fn add_bootstrap_nodes_empty_is_noop() {
+        let a = spawn_node(
+            Id20::new([0x33; 20]),
+            None,
+            vec![UNREACHABLE_BOOTSTRAP.to_string()],
+        )
+        .await;
+        a.add_bootstrap_nodes(vec![]);
+        let count = a.with_routing_tables(|v4, v6| v4.iter().count() + v6.iter().count());
+        assert_eq!(count, 0);
     }
 }

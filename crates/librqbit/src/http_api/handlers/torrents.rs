@@ -12,6 +12,7 @@ use http::{
     header::{CONTENT_DISPOSITION, CONTENT_TYPE},
 };
 use librqbit_core::magnet::Magnet;
+use librqbit_core::torrent_metainfo::DhtNode;
 use serde::{Deserialize, Serialize};
 
 use super::ApiState;
@@ -365,6 +366,8 @@ pub struct HttpCreateTorrentOptions {
     #[serde(default)]
     trackers: Vec<String>,
     name: Option<String>,
+    #[serde(default)]
+    nodes: Vec<DhtNode>,
 }
 
 pub async fn h_create_torrent(
@@ -389,6 +392,7 @@ pub async fn h_create_torrent(
         name: opts.name.as_deref(),
         trackers: opts.trackers,
         piece_length: None,
+        nodes: opts.nodes,
     };
 
     let (torrent, handle) = state
