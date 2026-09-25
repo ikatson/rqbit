@@ -176,6 +176,10 @@ pub enum AddIncomingPeerResult {
     Added,
     AlreadyActive,
     ConcurrencyLimitReached,
+    /// The torrent is finished and upload is disabled, so there is nothing
+    /// the connection could be used for
+    /// (https://github.com/ikatson/rqbit/issues/525).
+    NotAcceptingPeers,
 }
 
 pub struct TorrentStateLive {
@@ -364,6 +368,37 @@ impl TorrentStateLive {
         checked_peer: CheckedIncomingConnection,
     ) -> anyhow::Result<AddIncomingPeerResult> {
         use dashmap::mapref::entry::Entry;
+
+        // Mirror the outgoing peers check in task_peer_adder(): with upload
+        // disabled and nothing to download (nothing streamed either), a new
+        // peer has nothing to talk to us about, so don't accept it at all.
+        // Accepting it would only keep a socket and an entry in the peers
+        // map alive for nothing (https://github.com/ikatson/rqbit/issues/525).
+        if self.shared.options.disable_upload() && self.is_finished_and_no_active_streams() {
+            debug!(
+                addr = %checked_peer.addr,
+                kind = ?checked_peer.kind,
+                "not accepting incoming peer: torrent is finished and upload is disabled"
+            );
+            return Ok(AddIncomingPeerResult::NotAcceptingPeers);
+        }
+
+        // The peers map grows by one entry for every new incoming address.
+        // Keep it bounded by evicting the entries that can never be used
+        // again (https://github.com/ikatson/rqbit/issues/525). Checking on
+        // every addition makes the cleanup amortized O(1) per connection.
+        if self.peers.states.len() >= peers::MAX_TRACKED_PEERS {
+            let removed = self
+                .peers
+                .prune_useless_peers(peers::MAX_TRACKED_PEERS - peers::MAX_TRACKED_PEERS / 4);
+            if removed > 0 {
+                debug!(
+                    torrent_id = self.shared.id,
+                    removed, "pruned useless peer entries"
+                );
+            }
+        }
+
         let (tx, rx) = unbounded_channel();
         let permit = match self.peer_semaphore.clone().try_acquire_owned() {
             Ok(permit) => permit,
