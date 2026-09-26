@@ -99,6 +99,7 @@ pub use stream_connect::ConnectionOptions;
 pub use torrent_state::{
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentMetadata, TorrentStats,
     TorrentStatsState,
+    live::peer::stats::snapshot::{PeerStats, PeerStatsFilter, PeerStatsFilterState},
 };
 pub use type_aliases::FileInfos;
 
