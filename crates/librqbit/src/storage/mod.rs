@@ -172,9 +172,20 @@ pub trait TorrentStorage: Send + Sync {
     /// This is used to make the underlying object useless when e.g. pausing the torrent.
     fn take(&self) -> anyhow::Result<Box<dyn TorrentStorage>>;
 
+    /// Release opened file handles while keeping storage paths and torrent state available.
+    fn release_files(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Callback called every time a piece has completed and has been validated.
     /// Default implementation does nothing, but can be override in trait implementations.
     fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Callback called when all pieces that touch a file are present and validated.
+    /// Storage backends can drop write access at this point while keeping reads available for upload.
+    fn on_file_completed(&self, _file_id: usize) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -200,6 +211,10 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         (**self).take()
     }
 
+    fn release_files(&self) -> anyhow::Result<()> {
+        (**self).release_files()
+    }
+
     fn remove_directory_if_empty(&self, path: &Path) -> anyhow::Result<()> {
         (**self).remove_directory_if_empty(path)
     }
@@ -214,6 +229,10 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
 
     fn on_piece_completed(&self, piece_id: ValidPieceIndex) -> anyhow::Result<()> {
         (**self).on_piece_completed(piece_id)
+    }
+
+    fn on_file_completed(&self, file_id: usize) -> anyhow::Result<()> {
+        (**self).on_file_completed(file_id)
     }
 }
 

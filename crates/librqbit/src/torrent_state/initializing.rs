@@ -257,7 +257,7 @@ impl TorrentStateInitializing {
             SF::new(hns.selected_bytes)
         );
 
-        // Ensure file lengths are correct, and reopen read-only.
+        // Ensure file lengths are correct, and reopen completed files read-only.
         self.shared
             .spawner
             .block_in_place_with_semaphore(|| {
@@ -288,6 +288,19 @@ impl TorrentStateInitializing {
                         }
                     }
                 }
+
+                for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
+                    if chunk_tracker.is_file_finished(fi)
+                        && let Err(err) = self.files.on_file_completed(idx)
+                    {
+                        warn!(
+                            id=?self.shared.id, info_hash = ?self.shared.info_hash,
+                            "Error reopening completed file {:?} read-only: {:#?}",
+                            fi.relative_filename, err
+                        );
+                    }
+                }
+
                 Ok::<_, anyhow::Error>(())
             })
             .await?;
