@@ -841,19 +841,6 @@ impl TorrentStateLive {
         }
         let mut g = self.lock_write("on_piece_completed");
         let locked = &mut **g;
-        let pieces = locked.get_pieces_mut()?;
-
-        // if we have all the pieces of the file, reopen it read only
-        for (idx, file_info) in self
-            .metadata
-            .file_infos
-            .iter()
-            .enumerate()
-            .skip_while(|(_, fi)| !fi.piece_range.contains(&id.get()))
-            .take_while(|(_, fi)| fi.piece_range.contains(&id.get()))
-        {
-            let _remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
-        }
 
         self.streams
             .wake_streams_on_piece_completed(id, self.metadata.lengths());
@@ -1921,14 +1908,20 @@ impl PeerHandler {
                 .with_context(|| format!("error checking piece={index}"))?
             {
                 true => {
+                    let piece_len = state.lengths.piece_length(chunk_info.piece_index) as u64;
                     {
                         let mut g = state.lock_write("mark_piece_downloaded");
                         g.get_pieces_mut()?
-                            .mark_piece_hash_ok(chunk_info.piece_index);
+                            .mark_piece_hash_ok(chunk_info.piece_index, &state.metadata.file_infos);
+                        // Under the same lock as the have-bit, so the two are never seen
+                        // apart.
+                        state
+                            .stats
+                            .have_bytes
+                            .fetch_add(piece_len, Ordering::Relaxed);
                     }
 
                     // Global piece counters.
-                    let piece_len = state.lengths.piece_length(chunk_info.piece_index) as u64;
                     state
                         .stats
                         .downloaded_and_checked_bytes
@@ -1941,10 +1934,6 @@ impl PeerHandler {
                         // This counter is used to compute "is_finished", so using
                         // stronger ordering.
                         .fetch_add(1, Ordering::Release);
-                    state
-                        .stats
-                        .have_bytes
-                        .fetch_add(piece_len, Ordering::Relaxed);
                     #[allow(clippy::cast_possible_truncation)]
                     state.stats.total_piece_download_ms.fetch_add(
                         full_piece_download_time.as_millis() as u64,
