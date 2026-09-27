@@ -8,6 +8,9 @@ use super::PeerExtendedMessageIds;
 
 #[derive(Deserialize, Serialize, Debug, Default, Eq, PartialEq)]
 pub struct ExtendedHandshake<ByteBuf: ByteBufT> {
+    // BEP 10 says all items of the extended handshake dictionary are optional.
+    // Missing "m" means the peer supports no outgoing extensions.
+    #[serde(default)]
     pub m: PeerExtendedMessageIds,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub p: Option<u32>,

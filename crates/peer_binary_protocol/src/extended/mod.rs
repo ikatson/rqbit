@@ -119,6 +119,7 @@ mod tests {
         DoubleBufHelper, MessageDeserializeError,
         extended::{
             ExtendedMessage, PeerExtendedMessageIds,
+            handshake::ExtendedHandshake,
             ut_metadata::{UtMetadata, UtMetadataData},
         },
     };
@@ -155,6 +156,59 @@ mod tests {
         ut_metadata_trailing_bytes_is_error(ExtendedMessage::UtMetadata(UtMetadata::Data(
             UtMetadataData::from_bytes(0, 5, b"\x42\x42\x42\x42\x42"[..].into()),
         )));
+    }
+
+    #[test]
+    fn test_handshake_without_m_dictionary_is_accepted() {
+        // Some clients omit the "m" dictionary on private torrents (no PEX,
+        // no metadata transfer). This serializer always emits "m", so the
+        // wire bytes are handwritten.
+        const PAYLOAD: &[u8] = b"\x00d1:pi100e4:reqqi250ee";
+
+        let msg = ExtendedMessage::deserialize(DoubleBufHelper::new(PAYLOAD, &[])).unwrap();
+        let hs = match msg {
+            ExtendedMessage::Handshake(hs) => hs,
+            _ => panic!("expected handshake"),
+        };
+        // Both ids default to None: nothing to send over ut_metadata or ut_pex.
+        assert_eq!(hs.m, PeerExtendedMessageIds::default());
+        assert_eq!(hs.p, Some(100));
+        assert_eq!(hs.reqq, Some(250));
+    }
+
+    #[test]
+    fn test_handshake_without_m_dictionary_deserializes_non_contiguous() {
+        // Same handshake, split at every point. The bencode body requires a
+        // contiguous buffer, so interior splits fail with NeedContiguous.
+        const PAYLOAD: &[u8] = b"\x00d1:pi100e4:reqqi250ee";
+        for split_point in 0..PAYLOAD.len() {
+            let res = ExtendedMessage::deserialize(DoubleBufHelper::new(
+                &PAYLOAD[..split_point],
+                &PAYLOAD[split_point..],
+            ));
+            if (2..PAYLOAD.len()).contains(&split_point) {
+                assert!(
+                    matches!(res, Err(MessageDeserializeError::NeedContiguous)),
+                    "expected NeedContiguous: {split_point}"
+                );
+                continue;
+            }
+            let msg = res.unwrap();
+            assert!(matches!(msg, ExtendedMessage::Handshake(..)));
+        }
+    }
+
+    #[test]
+    fn test_handshake_roundtrip() {
+        // "m" must survive serialization. If it were dropped, the ids would
+        // come back as default (all None) and the equality would fail.
+        let msg = ExtendedMessage::Handshake(ExtendedHandshake::<ByteBuf>::new());
+        let mut buf = [0u8; 100];
+        let sz = msg
+            .serialize(&mut buf, &|| PeerExtendedMessageIds::my())
+            .unwrap();
+        let de = ExtendedMessage::deserialize(DoubleBufHelper::new(&buf[..sz], &[])).unwrap();
+        assert_eq!(msg, de);
     }
 
     #[test]
