@@ -68,10 +68,12 @@ pub(crate) struct StreamConnectorArgs {
 }
 
 impl SocksProxyConfig {
+    /// socks5h:// resolves hostnames via the proxy; socks5:// resolves them locally.
     pub fn parse(url: &str) -> anyhow::Result<Self> {
         let url = ::url::Url::parse(url).context("invalid proxy URL")?;
-        if url.scheme() != "socks5" {
-            anyhow::bail!("proxy URL should have socks5 scheme");
+        match url.scheme() {
+            "socks5" | "socks5h" => {}
+            other => anyhow::bail!("unsupported proxy URL scheme \"{other}\""),
         }
         let host = url.host_str().context("missing host")?;
         let port = url.port().context("missing port")?;
@@ -322,5 +324,53 @@ impl StreamConnector {
                 },
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_socks5() {
+        let c = SocksProxyConfig::parse("socks5://myhost:1234").unwrap();
+        assert_eq!(c.host, "myhost");
+        assert_eq!(c.port, 1234);
+        assert_eq!(c.username_password, None);
+    }
+
+    #[test]
+    fn test_parse_socks5h() {
+        let c = SocksProxyConfig::parse("socks5h://myhost:1234").unwrap();
+        assert_eq!(c.host, "myhost");
+        assert_eq!(c.port, 1234);
+    }
+
+    #[test]
+    fn test_parse_with_password() {
+        let c = SocksProxyConfig::parse("socks5h://user:pass@myhost:1234").unwrap();
+        assert_eq!(c.host, "myhost");
+        assert_eq!(c.port, 1234);
+        assert_eq!(
+            c.username_password,
+            Some(("user".to_owned(), "pass".to_owned()))
+        );
+    }
+
+    #[test]
+    fn test_parse_rejects_other_schemes() {
+        for url in [
+            "http://myhost:1234",
+            "socks4://myhost:1234",
+            "socks4a://myhost:1234",
+        ] {
+            assert!(SocksProxyConfig::parse(url).is_err(), "should reject {url}");
+        }
+    }
+
+    #[test]
+    fn test_parse_rejects_garbage() {
+        assert!(SocksProxyConfig::parse("not a url").is_err());
+        assert!(SocksProxyConfig::parse("socks5://").is_err());
     }
 }

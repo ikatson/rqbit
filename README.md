@@ -80,8 +80,11 @@ eval "$(rqbit completions bash)"
 ## Socks proxy support
 
 ```
-rqbit --socks-url socks5://[username:password]@host:port ...
+rqbit --socks-url socks5h://[username:password]@host:port ...
 ```
+
+Supported schemes: `socks5h://` (DNS resolved by the proxy), `socks5://` (DNS resolved
+locally).
 
 ## Watching a directory for .torrents
 
