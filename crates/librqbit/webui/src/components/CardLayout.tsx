@@ -17,6 +17,7 @@ import {
   isTorrentVisible,
 } from "../helper/torrentFilters";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import { CategoryFilterSelect } from "./CategoryFilterSelect";
 
 const DEFAULT_SORT_COLUMN: TorrentSortColumn = "id";
 const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
@@ -29,6 +30,7 @@ export const CardLayout = (props: {
   const setSearchQuery = useUIStore((state) => state.setSearchQuery);
   const statusFilter = useUIStore((state) => state.statusFilter);
   const setStatusFilter = useUIStore((state) => state.setStatusFilter);
+  const categoryFilter = useUIStore((state) => state.categoryFilter);
 
   // Keyboard shortcuts (Ctrl+A, Ctrl+F, Escape)
   useKeyboardShortcuts();
@@ -76,12 +78,15 @@ export const CardLayout = (props: {
   const filteredTorrents = useMemo(() => {
     if (!props.torrents) return null;
     return [...props.torrents]
-      .filter((t) => isTorrentVisible(t, normalizedQuery, statusFilter))
+      .filter((t) =>
+        isTorrentVisible(t, normalizedQuery, statusFilter, categoryFilter),
+      )
       .sort((a, b) => compareTorrents(a, b, sortColumn, sortDirection));
   }, [
     props.torrents,
     normalizedQuery,
     statusFilter,
+    categoryFilter,
     sortColumn,
     sortDirection,
   ]);
@@ -137,6 +142,9 @@ export const CardLayout = (props: {
             ),
           )}
         </select>
+
+        {/* Category filter */}
+        <CategoryFilterSelect className="py-1.5 sm:py-2 px-2 sm:px-3 text-sm bg-surface border border-divider rounded-lg focus:outline-none focus:border-primary" />
 
         {/* Sort dropdown */}
         <select

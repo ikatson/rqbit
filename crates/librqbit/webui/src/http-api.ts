@@ -108,8 +108,25 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
   listTorrents: (opts?: {
     withStats?: boolean;
   }): Promise<ListTorrentsResponse> => {
-    const url = opts?.withStats ? "/torrents?with_stats=true" : "/torrents";
+    const params = new URLSearchParams();
+    if (opts?.withStats) params.set("with_stats", "true");
+    const qs = params.toString();
+    const url = qs ? `/torrents?${qs}` : "/torrents";
     return makeRequest("GET", url);
+  },
+  listCategories: (): Promise<string[]> => {
+    return makeRequest("GET", "/categories");
+  },
+  updateCategory: (index: number, category: string | null): Promise<void> => {
+    let url = `/torrents/${index}/update_category`;
+    return makeRequest(
+      "POST",
+      url,
+      {
+        category: category,
+      },
+      true,
+    );
   },
   getTorrentDetails: (index: number): Promise<TorrentDetails> => {
     return makeRequest("GET", `/torrents/${index}`);
@@ -143,6 +160,9 @@ export const API: RqbitAPI & { getVersion: () => Promise<string> } = {
     }
     if (opts?.output_folder) {
       url += `&output_folder=${opts.output_folder}`;
+    }
+    if (opts?.category) {
+      url += `&category=${opts.category}`;
     }
     if (typeof data === "string") {
       url += "&is_url=true";

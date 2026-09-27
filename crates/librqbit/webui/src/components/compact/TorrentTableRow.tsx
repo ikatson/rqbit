@@ -94,6 +94,11 @@ const TorrentTableRowUnmemoized: React.FC<TorrentTableRowProps> = ({
           <td className={cellBase}>
             <div className="truncate" title={name}>
               {name || "Loading..."}
+              {torrent.category && (
+                <span className="ml-1.5 px-1 py-0.5 text-xs bg-secondary/20 text-secondary rounded">
+                  {torrent.category}
+                </span>
+              )}
             </div>
             {error && (
               <div className="truncate text-sm text-error" title={error}>
