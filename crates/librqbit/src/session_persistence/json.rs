@@ -6,7 +6,6 @@ use crate::{
     bitv_factory::BitVFactory,
     session::TorrentId,
     spawn_utils::BlockingSpawner,
-    storage::StorageFactory,
     torrent_state::ManagedTorrentHandle,
     type_aliases::BF,
 };
@@ -127,17 +126,6 @@ impl JsonSessionPersistenceStore {
         torrent: &ManagedTorrentHandle,
         write_torrent_file: bool,
     ) -> anyhow::Result<()> {
-        // What the record below leaves out is the storage: on restart it is replayed
-        // through add_torrent, which builds the session's default storage from the output
-        // folder and the file selection. So the storage is what has to promise that this
-        // is enough to find the data again, and that the have-bitfield we keep beside the
-        // record won't outlive it. See StorageFactory::ensure_persistable.
-        torrent
-            .shared
-            .storage_factory
-            .ensure_persistable()
-            .context("can't persist a torrent with this storage")?;
-
         let st = SerializedTorrent {
             trackers: torrent
                 .shared()

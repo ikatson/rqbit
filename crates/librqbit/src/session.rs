@@ -1312,6 +1312,18 @@ impl Session {
             .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
             .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
 
+        // A persisted torrent is replayed through add_torrent on restart, which builds the
+        // session's default storage from the output folder and the file selection. So with
+        // persistence on, the storage has to promise that this is enough to find the data
+        // again, and that a have-bitfield kept beside the record won't outlive it. Checked
+        // here, before anything is created or stored, so every persistence backend gets
+        // the same rule. See StorageFactory::ensure_persistable.
+        if self.persistence.is_some() {
+            storage_factory
+                .ensure_persistable()
+                .context("can't persist a torrent with this storage")?;
+        }
+
         let id = if let Some(id) = opts.preferred_id {
             id
         } else if let Some(p) = self.persistence.as_ref() {
