@@ -38,10 +38,38 @@ impl<const N: usize> Id<N> {
         }
         Id(xor)
     }
+
+    pub fn try_get_bit(&self, bit: usize) -> crate::Result<bool> {
+        let byte = self.0.get(bit / 8).ok_or(crate::Error::InvalidBitIndex {
+            index: bit,
+            bit_count: N.saturating_mul(8),
+        })?;
+        let mask = 1 << (7 - bit % 8);
+        Ok(byte & mask > 0)
+    }
+
     pub fn get_bit(&self, bit: u8) -> bool {
         let n = self.0[(bit / 8) as usize];
         let mask = 1 << (7 - bit % 8);
         n & mask > 0
+    }
+
+    pub fn try_set_bit(&mut self, bit: usize, value: bool) -> crate::Result<()> {
+        let bit_count = N.saturating_mul(8);
+        let n = self
+            .0
+            .get_mut(bit / 8)
+            .ok_or(crate::Error::InvalidBitIndex {
+                index: bit,
+                bit_count,
+            })?;
+        if value {
+            *n |= 1 << (7 - bit % 8)
+        } else {
+            let mask = !(1 << (7 - bit % 8));
+            *n &= mask;
+        }
+        Ok(())
     }
 
     pub fn set_bit(&mut self, bit: u8, value: bool) {
@@ -53,6 +81,28 @@ impl<const N: usize> Id<N> {
             *n &= mask;
         }
     }
+
+    pub fn try_set_bits_range(
+        &mut self,
+        range: std::ops::Range<usize>,
+        value: bool,
+    ) -> crate::Result<()> {
+        let bit_count = N.saturating_mul(8);
+        if range.start > range.end || range.end > bit_count {
+            let index = if range.end > bit_count {
+                range.end.saturating_sub(1)
+            } else {
+                range.start
+            };
+            return Err(crate::Error::InvalidBitIndex { index, bit_count });
+        }
+        for bit in range {
+            // The whole range was checked above, so every index is valid.
+            self.try_set_bit(bit, value)?;
+        }
+        Ok(())
+    }
+
     pub fn set_bits_range(&mut self, r: std::ops::Range<u8>, value: bool) {
         for bit in r {
             self.set_bit(bit, value)
@@ -208,6 +258,72 @@ mod tests {
                 0, 127, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
             ])
         )
+    }
+
+    #[test]
+    fn test_try_get_bit_out_of_bounds_returns_error() {
+        let id = Id20::default();
+        assert!(matches!(
+            id.try_get_bit(160),
+            Err(crate::Error::InvalidBitIndex {
+                index: 160,
+                bit_count: 160
+            })
+        ));
+    }
+
+    #[test]
+    fn test_try_set_bit_out_of_bounds_returns_error_without_mutation() {
+        let mut id = Id20::default();
+        assert!(matches!(
+            id.try_set_bit(160, true),
+            Err(crate::Error::InvalidBitIndex {
+                index: 160,
+                bit_count: 160
+            })
+        ));
+        assert_eq!(id, Id20::default());
+    }
+
+    #[test]
+    fn test_try_set_bits_range_out_of_bounds_is_atomic() {
+        let mut id = Id20::default();
+        assert!(matches!(
+            id.try_set_bits_range(159..161, true),
+            Err(crate::Error::InvalidBitIndex {
+                index: 160,
+                bit_count: 160
+            })
+        ));
+        assert_eq!(id, Id20::default());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_get_bit_out_of_bounds_keeps_existing_panic_behavior() {
+        Id20::default().get_bit(160);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_bit_out_of_bounds_keeps_existing_panic_behavior() {
+        Id20::default().set_bit(160, true);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_bits_range_out_of_bounds_keeps_existing_panic_behavior() {
+        Id20::default().set_bits_range(159..161, true);
+    }
+
+    #[test]
+    fn test_try_bit_operations_accept_last_valid_bit() {
+        let mut id = Id32::default();
+        id.try_set_bit(255, true).unwrap();
+        assert!(id.try_get_bit(255).unwrap());
+        id.try_set_bits_range(254..256, true).unwrap();
+        assert!(id.try_get_bit(254).unwrap());
+        assert!(id.try_get_bit(255).unwrap());
     }
 
     #[test]

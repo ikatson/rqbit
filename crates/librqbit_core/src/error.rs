@@ -14,6 +14,8 @@ pub enum Error {
     BadTorrentZeroLength,
     #[error("invalid piece index {0}")]
     InvalidPieceIndex(u32),
+    #[error("bit index {index} is out of bounds for an ID with {bit_count} bits")]
+    InvalidBitIndex { index: usize, bit_count: usize },
     #[error("no files in torrent")]
     BadTorrentNoFiles,
     #[error("duplicate filenames in torrent")]
