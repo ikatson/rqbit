@@ -1312,18 +1312,6 @@ impl Session {
             .or_else(|| self.default_storage_factory.as_ref().map(|f| f.clone_box()))
             .unwrap_or_else(|| FilesystemStorageFactory::default().boxed());
 
-        // A persisted torrent is replayed through add_torrent on restart, which builds the
-        // session's default storage from the output folder and the file selection. So with
-        // persistence on, the storage has to promise that this is enough to find the data
-        // again, and that a have-bitfield kept beside the record won't outlive it. Checked
-        // here, before anything is created or stored, so every persistence backend gets
-        // the same rule. See StorageFactory::ensure_persistable.
-        if self.persistence.is_some() {
-            storage_factory
-                .ensure_persistable()
-                .context("can't persist a torrent with this storage")?;
-        }
-
         let id = if let Some(id) = opts.preferred_id {
             id
         } else if let Some(p) = self.persistence.as_ref() {
@@ -1399,11 +1387,21 @@ impl Session {
             (handle, metadata)
         };
 
-        if let Some(p) = self.persistence.as_ref()
-            && let Err(e) = p.store(id, &managed_torrent).await
-        {
-            self.db.write().torrents.remove(&id);
-            return Err(e);
+        if let Some(p) = self.persistence.as_ref() {
+            // A persisted torrent is replayed through add_torrent on restart, which builds
+            // the session's default storage from the output folder and the file selection.
+            // So the storage has to promise that this is enough to find the data again, and
+            // that a have-bitfield kept beside the record won't outlive it. The session
+            // asks, not the store, so every persistence backend refuses the same torrents.
+            // See StorageFactory::ensure_persistable.
+            let stored = match managed_torrent.shared.storage_factory.ensure_persistable() {
+                Ok(()) => p.store(id, &managed_torrent).await,
+                Err(e) => Err(e.context("can't persist a torrent with this storage")),
+            };
+            if let Err(e) = stored {
+                self.db.write().torrents.remove(&id);
+                return Err(e);
+            }
         }
 
         let _e = managed_torrent.shared.span.clone().entered();
