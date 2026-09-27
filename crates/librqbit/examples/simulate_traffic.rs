@@ -186,6 +186,7 @@ impl TestHarness {
                         connect_timeout: Some(Duration::from_secs(1)),
                         read_write_timeout: Some(Duration::from_secs(32)),
                         keep_alive_interval: None,
+                        ..Default::default()
                     }),
                 }),
                 ..Default::default()
@@ -274,6 +275,7 @@ impl TestHarness {
                         connect_timeout: Some(Duration::from_secs(1)),
                         read_write_timeout: Some(Duration::from_secs(32)),
                         keep_alive_interval: None,
+                        ..Default::default()
                     }),
                 }),
                 ..Default::default()

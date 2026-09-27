@@ -1045,6 +1045,9 @@ impl Session {
             keep_alive_interval: other
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
+            max_request_window: other
+                .max_request_window
+                .or(self.peer_opts.max_request_window),
         }
     }
 
@@ -1360,6 +1363,7 @@ impl Session {
                     force_tracker_interval: opts.force_tracker_interval,
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
+                    peer_max_request_window: peer_opts.max_request_window,
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     ratelimits: opts.ratelimits,
