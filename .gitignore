@@ -8,4 +8,5 @@
 /flamegraph.svg
 .claude
 .serena/
+/.idea/
 node_modules

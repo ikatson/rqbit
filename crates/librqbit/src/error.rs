@@ -30,6 +30,8 @@ pub enum Error {
     WrongInfoHash,
     #[error("connecting to ourselves")]
     ConnectingToOurselves,
+    #[error("MSE is forced, but the peer did not complete the MSE handshake")]
+    MseForced,
 
     #[error("error writing handshake: {0:#}")]
     WriteHandshake(#[source] std::io::Error),
