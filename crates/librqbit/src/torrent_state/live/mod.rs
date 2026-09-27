@@ -847,25 +847,21 @@ impl TorrentStateLive {
         let locked = &mut **g;
         let pieces = locked.get_pieces_mut()?;
 
-        // If we have all the pieces of the file, reopen it read-only.
+        // The files this piece completes; the storage hears about them below, once the
+        // lock is released.
+        let mut completed_files = Vec::new();
         for (idx, file_info) in self
             .metadata
             .file_infos
             .iter()
             .enumerate()
             .skip_while(|(_, fi)| !fi.piece_range.contains(&id.get()))
-            .take_while(|(_, fi)| fi.piece_range.contains(&id.get()))
+            // An empty file has an empty piece range: step over it rather than stop at it.
+            .take_while(|(_, fi)| fi.len == 0 || fi.piece_range.contains(&id.get()))
+            .filter(|(_, fi)| fi.len != 0)
         {
-            let remaining = pieces.update_file_have_on_piece_completed(id, idx, file_info);
-            if remaining == 0
-                && let Err(err) = self.files.on_file_completed(idx)
-            {
-                debug!(
-                    ?id,
-                    file_id = idx,
-                    error = ?err,
-                    "file storage errored in on_file_completed()"
-                );
+            if pieces.update_file_have_on_piece_completed(id, idx, file_info) == 0 {
+                completed_files.push(idx);
             }
         }
 
@@ -878,20 +874,30 @@ impl TorrentStateLive {
         }
 
         let chunks = locked.get_chunks()?;
-        if chunks.is_finished() {
+        let finished = chunks.is_finished();
+        if finished {
             if chunks.get_selected_pieces()[id.get_usize()] {
                 locked.try_flush_bitv(&self.shared, false);
                 info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
             }
             self.finished_notify.notify_waiters();
+        }
+        let disconnect_peers = finished && !self.has_active_streams_unfinished_files(locked);
+        // What follows takes other locks: release this one first to prevent deadlocks.
+        drop(g);
 
-            if !self.has_active_streams_unfinished_files(locked) {
-                // prevent deadlocks.
-                drop(g);
-                // There is not point being connected to peers that have all the torrent, when
-                // we don't need anything from them, and they don't need anything from us.
-                self.disconnect_all_peers_that_have_full_torrent();
+        for file_id in completed_files {
+            if let Err(e) = self.files.on_file_completed(file_id) {
+                debug!(
+                    ?id,
+                    "file storage errored in on_file_completed({file_id}): {e:#}"
+                );
             }
+        }
+        if disconnect_peers {
+            // There is not point being connected to peers that have all the torrent, when
+            // we don't need anything from them, and they don't need anything from us.
+            self.disconnect_all_peers_that_have_full_torrent();
         }
         Ok(())
     }

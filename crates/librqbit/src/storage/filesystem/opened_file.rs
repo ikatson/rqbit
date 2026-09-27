@@ -1,17 +1,14 @@
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::IoSlice,
-    ops::{Deref, DerefMut},
-    path::PathBuf,
+    ops::Deref,
+    path::{Path, PathBuf},
 };
 
 use anyhow::Context;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::Error;
-
-#[cfg(windows)]
-const WINDOWS_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0001 | 0x0000_0002 | 0x0000_0004;
 
 pub trait OurFileExt {
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize>;
@@ -135,49 +132,43 @@ fn pwrite_all_unvectored(
 
 #[derive(Default, Debug)]
 struct OpenedFileLocked {
-    #[allow(unused)]
     path: PathBuf,
     fd: Option<File>,
-    // Whether the currently opened `fd` was opened in read-only mode.
-    // A read-only fd cannot be written to: doing so fails with EBADF on unix
-    // and ERROR_ACCESS_DENIED (os error 5) on Windows. We must reopen it for
-    // writing before any write (e.g. a piece that spans into an already
-    // completed, reopened-read-only neighbouring file).
+    // Whether `fd` is read-only. Only Windows holds files read-only, see OpenedFile.
     read_only: bool,
-    #[cfg(windows)]
-    tried_marking_sparse: bool,
 }
 
-impl Deref for OpenedFileLocked {
-    type Target = Option<File>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fd
-    }
-}
-
-impl DerefMut for OpenedFileLocked {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.fd
-    }
-}
-
+/// A file of the torrent. Its handle is closed when the torrent is paused and opened again
+/// on demand, so that a paused torrent holds no handles.
+///
+/// On Windows a handle with write access keeps other programs out of the file: an
+/// executable that is open for writing cannot be run, and any opener that leaves out
+/// FILE_SHARE_WRITE gets a sharing violation. A read-only handle (std shares read, write and
+/// delete by default) blocks much less. So there a file is held read-only, and is opened for
+/// writing only until it has all its pieces.
 #[derive(Debug)]
 pub(crate) struct OpenedFile {
     file: RwLock<OpenedFileLocked>,
 }
 
 impl OpenedFile {
-    pub fn new(path: PathBuf, f: File) -> Self {
-        Self {
+    pub fn new(path: PathBuf, f: File) -> anyhow::Result<Self> {
+        // On Windows `f`, opened for writing, is swapped for a read-only handle. That is done
+        // here rather than on demand so that the initial check never has to open the file: an
+        // error here fails the torrent, while one there would mark the file as broken.
+        #[cfg(windows)]
+        let f = {
+            let read_only = open(&path, false)?;
+            drop(f);
+            read_only
+        };
+        Ok(Self {
             file: RwLock::new(OpenedFileLocked {
                 path,
                 fd: Some(f),
-                read_only: false,
-                #[cfg(windows)]
-                tried_marking_sparse: false,
+                read_only: cfg!(windows),
             }),
-        }
+        })
     }
 
     pub fn new_dummy() -> Self {
@@ -186,160 +177,83 @@ impl OpenedFile {
         }
     }
 
+    /// Moves the file to a new OpenedFile and leaves this one useless. The handle is closed
+    /// rather than moved: this is what pausing a torrent goes through.
     pub fn take_clone(&self) -> anyhow::Result<Self> {
         let f = std::mem::take(&mut *self.file.write());
         Ok(Self {
-            file: RwLock::new(f),
+            file: RwLock::new(OpenedFileLocked { fd: None, ..f }),
         })
     }
 
-    pub fn ensure_opened_read_only(&self) -> anyhow::Result<()> {
-        {
-            let g = self.file.read();
-            if g.fd.is_some() {
-                return Ok(());
-            }
-        }
-
-        let mut g = self.file.write();
-        if g.fd.is_some() {
-            return Ok(());
-        }
-        if g.path.as_os_str().is_empty() {
-            anyhow::bail!(Error::FsFileIsNone);
-        }
-        let file = read_only_open_options()
-            .open(&g.path)
-            .with_context(|| format!("error opening {:?} in read-only mode", g.path))?;
-        g.fd = Some(file);
-        g.read_only = true;
-        #[cfg(windows)]
-        {
-            g.tried_marking_sparse = true;
-        }
-        Ok(())
+    pub fn for_read(&self) -> anyhow::Result<impl Deref<Target = File>> {
+        self.handle(false)
     }
 
-    pub fn ensure_opened(&self) -> anyhow::Result<()> {
-        {
-            let g = self.file.read();
-            // A read-only fd is not good enough here: we need to be able to write.
-            if g.fd.is_some() && !g.read_only {
-                return Ok(());
-            }
-        }
-
-        let mut g = self.file.write();
-        if g.fd.is_some() && !g.read_only {
-            return Ok(());
-        }
-        if g.path.as_os_str().is_empty() {
-            anyhow::bail!(Error::FsFileIsNone);
-        }
-        let parent = g.path.parent().context("bug: no parent")?;
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("error creating parent directory for {:?}", g.path))?;
-        // Drop a stale read-only handle (if any) before reopening for writing.
-        g.fd = None;
-        let file = writable_open_options()
-            .open(&g.path)
-            .with_context(|| format!("error opening {:?} in read/write mode", g.path))?;
-        g.fd = Some(file);
-        g.read_only = false;
-        #[cfg(windows)]
-        {
-            g.tried_marking_sparse = false;
-        }
-        Ok(())
+    pub fn for_write(&self) -> anyhow::Result<impl Deref<Target = File>> {
+        self.handle(true)
     }
 
-    pub fn close(&self) {
-        let mut g = self.file.write();
-        g.fd = None;
-        #[cfg(windows)]
-        {
-            g.tried_marking_sparse = false;
-        }
-    }
-
+    /// Swaps a read/write handle for a read-only one once the file has all its pieces.
+    #[cfg(windows)]
     pub fn reopen_read_only(&self) -> anyhow::Result<()> {
         let mut g = self.file.write();
-        if g.path.as_os_str().is_empty() {
-            return Ok(());
-        }
-
-        g.fd = None;
-        let file = read_only_open_options()
-            .open(&g.path)
-            .with_context(|| format!("error reopening {:?} in read-only mode", g.path))?;
-        g.fd = Some(file);
-        g.read_only = true;
-        #[cfg(windows)]
-        {
-            g.tried_marking_sparse = true;
-        }
+        let replaced = if g.usable(true) { g.open(false)? } else { None };
+        drop(g);
+        // Closing a handle that wrote can be slow (flush, antivirus scan): not under the lock.
+        drop(replaced);
         Ok(())
     }
 
-    pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
-            .ok()
-            .ok_or(Error::FsFileIsNone)
-    }
-
-    #[allow(dead_code)]
-    pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
-        RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
-            .ok()
-            .ok_or(Error::FsFileIsNone)
-    }
-
-    #[cfg(windows)]
-    pub fn try_mark_sparse(&self) -> crate::Result<impl Deref<Target = File>> {
-        {
-            let g = self.file.read();
-            if g.tried_marking_sparse {
-                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
-                    .ok()
-                    .ok_or(Error::FsFileIsNone);
+    /// The current handle if it can do what is asked, otherwise one opened for it.
+    fn handle(&self, write: bool) -> anyhow::Result<impl Deref<Target = File>> {
+        let mut g = self.file.read();
+        if !g.usable(write) {
+            drop(g);
+            let mut w = self.file.write();
+            if !w.usable(write) {
+                // Replaces nothing or a read-only handle, which is cheap to close here.
+                w.open(write)?;
             }
+            g = RwLockWriteGuard::downgrade(w);
         }
-        let mut g = self.file.write();
-        if !g.tried_marking_sparse {
-            g.tried_marking_sparse = true;
-            let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
-            let marked = super::sparse::mark_file_sparse(f);
-            tracing::debug!(path=?g.path, marked, "marking sparse");
-        }
-        let g = parking_lot::RwLockWriteGuard::downgrade(g);
-        Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
+        RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).map_err(|_| Error::FsFileIsNone.into())
     }
 }
 
-fn writable_open_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
-    options.create(true).truncate(false).read(true).write(true);
-    apply_share_mode(&mut options);
-    options
+impl OpenedFileLocked {
+    fn usable(&self, write: bool) -> bool {
+        self.fd.is_some() && !(write && self.read_only)
+    }
+
+    /// Opens the file for what is asked; returns the handle this replaces, if any.
+    fn open(&mut self, write: bool) -> anyhow::Result<Option<File>> {
+        if self.path.as_os_str().is_empty() {
+            return Err(Error::FsFileIsNone.into());
+        }
+        // Only Windows has a reason to hold a file read-only, elsewhere it is opened the
+        // way init() opens it.
+        let write = write || cfg!(not(windows));
+        let f = open(&self.path, write)?;
+        self.read_only = !write;
+        Ok(self.fd.replace(f))
+    }
 }
 
-fn read_only_open_options() -> OpenOptions {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    apply_share_mode(&mut options);
-    options
-}
-
-fn apply_share_mode(options: &mut OpenOptions) {
+/// The file was created by the storage init, so it has to exist.
+fn open(path: &Path, write: bool) -> anyhow::Result<File> {
+    let mode = if write { "read/write" } else { "read-only" };
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(write)
+        .open(path)
+        .with_context(|| format!("error opening {path:?} in {mode} mode"))?;
     #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-
-        options.share_mode(WINDOWS_SHARE_READ_WRITE_DELETE);
+    if write {
+        let marked = super::sparse::mark_file_sparse(&f);
+        tracing::debug!(?path, marked, "marking sparse");
     }
-
-    #[cfg(not(windows))]
-    let _ = options;
+    Ok(f)
 }
 
 #[cfg(test)]

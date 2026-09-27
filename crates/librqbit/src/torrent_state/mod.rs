@@ -391,30 +391,39 @@ impl ManagedTorrent {
                                     }
 
                                     g.state = ManagedTorrentState::Paused(paused);
-                                    if start_paused
-                                        && let ManagedTorrentState::Paused(paused) = &g.state
-                                        && let Err(error) = paused.files.release_files()
-                                    {
-                                        warn!(
-                                            id=?t.shared.id,
-                                            info_hash=?t.shared.info_hash,
-                                            error=?error,
-                                            "error releasing files after paused initial check"
-                                        );
-                                    }
                                     t.state_change_notify.notify_waiters();
+                                    // Only initial_check() stops on a pause: one requested at
+                                    // any other point of the check still has to be honoured.
+                                    let start_paused = start_paused || init.is_pause_requested();
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {
                                     if init.is_pause_requested() {
-                                        if let Err(error) = init.files.release_files() {
-                                            warn!(
-                                                id=?init.shared.id,
-                                                info_hash=?init.shared.info_hash,
-                                                error=?error,
-                                                "error releasing files after paused initial check"
-                                            );
+                                        // Like a paused live torrent, a paused check releases
+                                        // the files: its storage moves to a new state, which
+                                        // the check restarts from. Unless a new check started.
+                                        let mut g = t.locked.write();
+                                        if let ManagedTorrentState::Initializing(current) = &g.state
+                                            && Arc::ptr_eq(current, &init)
+                                            && init.is_pause_requested()
+                                            && init.try_start_check()
+                                        {
+                                            match init.take() {
+                                                Ok(taken) => {
+                                                    g.state = ManagedTorrentState::Initializing(
+                                                        Arc::new(taken),
+                                                    )
+                                                }
+                                                Err(error) => {
+                                                    init.finish_check();
+                                                    warn!(
+                                                        ?error,
+                                                        "error releasing files of a paused initial check"
+                                                    );
+                                                }
+                                            }
                                         }
+                                        drop(g);
                                         debug!("initial check paused");
                                         t.state_change_notify.notify_waiters();
                                         return Ok(());
@@ -496,7 +505,6 @@ impl ManagedTorrent {
         match &g.state {
             ManagedTorrentState::Live(live) => {
                 let paused = live.pause()?;
-                paused.files.release_files()?;
                 g.state = ManagedTorrentState::Paused(paused);
                 g.paused = true;
                 self.state_change_notify.notify_waiters();
@@ -510,12 +518,7 @@ impl ManagedTorrent {
                 Ok(())
             }
             ManagedTorrentState::Paused(_) => {
-                let paused = g.state.take().assert_paused();
-                paused.files.release_files()?;
-                g.state = ManagedTorrentState::Paused(paused);
-                g.paused = true;
-                self.state_change_notify.notify_waiters();
-                Ok(())
+                bail!("torrent is already paused");
             }
             ManagedTorrentState::Error(_) => {
                 bail!("can't pause torrent in error state")

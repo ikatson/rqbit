@@ -83,6 +83,23 @@ impl TorrentStateInitializing {
         self.check_running.store(false, Ordering::Release);
     }
 
+    /// The same state with the storage taken over (see TorrentStorage::take), for a check that
+    /// was paused: this one is left useless.
+    pub(crate) fn take(&self) -> anyhow::Result<Self> {
+        let taken = Self::new(
+            self.shared.clone(),
+            self.metadata.clone(),
+            self.only_files.clone(),
+            self.files.take()?,
+            self.previously_errored,
+        );
+        taken
+            .checked_bytes
+            .store(self.get_checked_bytes(), Ordering::Relaxed);
+        taken.request_pause();
+        Ok(taken)
+    }
+
     async fn validate_fastresume(
         &self,
         bitv_factory: &dyn BitVFactory,
@@ -213,6 +230,8 @@ impl TorrentStateInitializing {
             Some(h) => h,
             None => {
                 info!("Doing initial checksum validation, this might take a while...");
+                // The check starts over from the first piece, and so does its progress.
+                self.checked_bytes.store(0, Ordering::Relaxed);
                 let have_pieces = self
                     .shared
                     .spawner
@@ -257,7 +276,7 @@ impl TorrentStateInitializing {
             SF::new(hns.selected_bytes)
         );
 
-        // Ensure file lengths are correct, and reopen completed files read-only.
+        // Ensure file lengths are correct, and reopen read-only.
         self.shared
             .spawner
             .block_in_place_with_semaphore(|| {
@@ -288,19 +307,6 @@ impl TorrentStateInitializing {
                         }
                     }
                 }
-
-                for (idx, fi) in self.metadata.file_infos.iter().enumerate() {
-                    if chunk_tracker.is_file_finished(fi)
-                        && let Err(err) = self.files.on_file_completed(idx)
-                    {
-                        warn!(
-                            id=?self.shared.id, info_hash = ?self.shared.info_hash,
-                            "Error reopening completed file {:?} read-only: {:#?}",
-                            fi.relative_filename, err
-                        );
-                    }
-                }
-
                 Ok::<_, anyhow::Error>(())
             })
             .await?;
