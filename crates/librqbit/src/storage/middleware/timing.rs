@@ -41,6 +41,10 @@ impl<U: StorageFactory + Clone> StorageFactory for TimingStorageFactory<U> {
         self.underlying_factory.is_type_id(type_id)
     }
 
+    fn ensure_persistable(&self) -> anyhow::Result<()> {
+        self.underlying_factory.ensure_persistable()
+    }
+
     fn clone_box(&self) -> crate::storage::BoxStorageFactory {
         self.clone().boxed()
     }
