@@ -217,6 +217,14 @@ pub struct TorrentStateLive {
 }
 
 impl TorrentStateLive {
+    fn max_request_window(&self) -> usize {
+        self.shared
+            .options
+            .peer_max_request_window
+            .unwrap_or(DEFAULT_PEER_REQUEST_WINDOW)
+            .max(1)
+    }
+
     pub(crate) fn new(
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
@@ -475,7 +483,7 @@ impl TorrentStateLive {
             addr: checked_peer.addr,
             incoming: true,
             on_bitfield_notify: Default::default(),
-            flow_control: Mutex::new(PeerFlowControl::default()),
+            flow_control: Mutex::new(PeerFlowControl::new(self.max_request_window())),
             state: self.clone(),
             tx,
             counters,
@@ -539,7 +547,7 @@ impl TorrentStateLive {
             addr,
             incoming: false,
             on_bitfield_notify: Default::default(),
-            flow_control: Mutex::new(PeerFlowControl::default()),
+            flow_control: Mutex::new(PeerFlowControl::new(state.max_request_window())),
             state: state.clone(),
             tx,
             counters,
@@ -1019,11 +1027,11 @@ struct PeerFlowControl {
     request_window: usize,
 }
 
-impl Default for PeerFlowControl {
-    fn default() -> Self {
+impl PeerFlowControl {
+    fn new(max_request_window: usize) -> Self {
         Self {
             i_am_choked: true,
-            request_window: DEFAULT_PEER_REQUEST_WINDOW,
+            request_window: max_request_window,
         }
     }
 }
@@ -1184,7 +1192,7 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         if let Some(reqq) = hs.reqq.and_then(|reqq| usize::try_from(reqq).ok())
             && reqq > 0
         {
-            let request_window = reqq.min(DEFAULT_PEER_REQUEST_WINDOW);
+            let request_window = reqq.min(self.state.max_request_window());
             let mut flow = self.lock_flow_control("update request window");
             if flow.request_window != request_window {
                 debug!(
