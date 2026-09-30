@@ -64,7 +64,7 @@ impl HttpApiClient {
     pub fn new(url: &str) -> anyhow::Result<Self> {
         Ok(Self {
             base_url: reqwest::Url::parse(url)?,
-            client: reqwest::ClientBuilder::new().build()?,
+            client: crate::http_client::client_builder().build()?,
         })
     }
 
