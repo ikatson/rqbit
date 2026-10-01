@@ -188,6 +188,15 @@ impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
         (**self).pwrite_all(file_id, offset, buf)
     }
 
+    fn pwrite_all_vectored(
+        &self,
+        file_id: usize,
+        offset: u64,
+        bufs: [IoSlice<'_>; 2],
+    ) -> anyhow::Result<usize> {
+        (**self).pwrite_all_vectored(file_id, offset, bufs)
+    }
+
     fn remove_file(&self, file_id: usize, filename: &Path) -> anyhow::Result<()> {
         (**self).remove_file(file_id, filename)
     }
