@@ -174,6 +174,15 @@ pub trait TorrentStorage: Send + Sync {
 
     /// Callback called every time a piece has completed and has been validated.
     /// Default implementation does nothing, but can be override in trait implementations.
+    ///
+    /// It runs after the hash check and before the piece is marked have, so the piece is
+    /// not counted, advertised, served or readable through a stream until this has
+    /// returned `Ok`. That makes it the place for a storage that stages pieces to move
+    /// one into its final place.
+    ///
+    /// An `Err` means the piece is not ours. It is treated like a failed write: the torrent
+    /// stops with a fatal error rather than advertise a piece it cannot read back. A
+    /// restart re-checks what is on disk.
     fn on_piece_completed(&self, _piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         Ok(())
     }
