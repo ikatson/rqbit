@@ -34,6 +34,7 @@ struct StreamState {
     file_abs_offset: u64,
     position: u64,
     waker: Option<Waker>,
+    readahead: u64,
 }
 
 impl StreamState {
@@ -43,7 +44,7 @@ impl StreamState {
 
     fn queue<'a>(&self, lengths: &'a Lengths) -> impl Iterator<Item = ValidPieceIndex> + use<'a> {
         let start = self.file_abs_offset + self.position;
-        let end = (start + PER_STREAM_BUF_DEFAULT).min(self.file_abs_offset + self.file_len);
+        let end = (start + self.readahead).min(self.file_abs_offset + self.file_len);
         let dpl = lengths.default_piece_length();
         let start_id = (start / dpl as u64).try_into().unwrap();
         let end_id = end.div_ceil(dpl as u64).try_into().unwrap();
@@ -335,6 +336,16 @@ impl ManagedTorrent {
     }
 
     pub async fn stream(self: Arc<Self>, file_id: usize) -> anyhow::Result<FileStream> {
+        self.stream_with_readahead(file_id, PER_STREAM_BUF_DEFAULT).await
+    }
+
+    /// Same as `stream`, with a caller-chosen readahead window in bytes.
+    /// `0` is clamped to `1` so that at least the current piece is queued.
+    pub async fn stream_with_readahead(
+        self: Arc<Self>,
+        file_id: usize,
+        bytes: u64,
+    ) -> anyhow::Result<FileStream> {
         // Streams need live or paused state, so wait out the initial check
         // of existing data instead of failing while it runs.
         self.wait_until_initialized().await?;
@@ -370,6 +381,7 @@ impl ManagedTorrent {
                 waker: None,
                 file_len: fd_len,
                 file_abs_offset: fd_offset,
+                readahead: bytes.max(1),
             },
         );
 
