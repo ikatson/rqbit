@@ -276,7 +276,11 @@ impl Lengths {
 
         let piece_id = self.validate_piece_index(piece_id)?;
         let piece_len = self.piece_length(piece_id);
-        let piece_offset = (abs_pos / dpl as u64).try_into().ok()?;
+        // Offset *within* the piece, not the piece number. abs_pos / dpl is
+        // already `piece_id`, so dividing here made piece_offset equal the
+        // piece index, which is out of range for the piece buffer as soon as
+        // the piece index is >= 1.
+        let piece_offset = (abs_pos % dpl as u64).try_into().ok()?;
         Some(CurrentPiece {
             id: piece_id,
             piece_offset,
@@ -665,5 +669,36 @@ mod tests {
         assert_eq!(l.size_of_piece_in_file(3, 0, 10), 0);
         assert_eq!(l.size_of_piece_in_file(0, 10, 0), 0);
         assert_eq!(l.size_of_piece_in_file(0, 10, 5), 0);
+    }
+
+    // CurrentPiece::piece_offset is the offset *within* the piece. It used to be
+    // abs_pos / dpl, i.e. the piece number, which is out of range for the piece
+    // buffer as soon as the piece index is >= 1 (and wrong for any partial window).
+    #[test]
+    fn test_compute_current_piece() {
+        let l = Lengths::new(10, 5).unwrap(); // 2 pieces of 5 bytes
+        let cur = |file_pos, file_abs| l.compute_current_piece(file_pos, file_abs).unwrap();
+
+        assert_eq!(cur(0, 0).piece_offset, 0);
+        assert_eq!(cur(4, 0).piece_offset, 4);
+
+        // exactly at the piece boundary -> piece 1, offset 0
+        let c = cur(5, 0);
+        assert_eq!((c.id.get(), c.piece_offset, c.piece_remaining), (1, 0, 5));
+
+        // last byte of the torrent
+        let c = cur(9, 0);
+        assert_eq!((c.id.get(), c.piece_offset, c.piece_remaining), (1, 4, 1));
+
+        // past the first piece, with the file's own offset inside the torrent
+        let c = cur(1, 8);
+        assert_eq!((c.id.get(), c.piece_offset, c.piece_remaining), (1, 4, 1));
+
+        // dpl == 1: every byte is its own piece
+        let l = Lengths::new(4, 1).unwrap();
+        for i in 0..4u32 {
+            let c = l.compute_current_piece(i.into(), 0).unwrap();
+            assert_eq!((c.id.get(), c.piece_offset, c.piece_remaining), (i, 0, 1));
+        }
     }
 }
