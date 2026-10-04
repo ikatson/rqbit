@@ -486,6 +486,11 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Use this HTTP(S) client instead of building one. The caller then owns
+    /// proxy, interface binding, TLS and User-Agent configuration. `bind_device_name`
+    /// and `connect.proxy_url` are ignored in that case.
+    pub http_client: Option<reqwest::Client>,
 }
 
 impl Default for SessionOptions {
@@ -514,6 +519,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            http_client: None,
         }
     }
 }
@@ -711,24 +717,28 @@ impl Session {
                 .unwrap_or_else(|| crate::client_name_and_version().to_owned());
 
             let reqwest_client = {
-                let builder = if let Some(proxy_url) = proxy_url {
-                    let proxy = reqwest::Proxy::all(proxy_url)
-                        .context("error creating socks5 proxy for HTTP")?;
-                    reqwest::Client::builder().proxy(proxy)
+                if let Some(client) = opts.http_client.clone() {
+                    client
                 } else {
-                    #[allow(unused_mut)]
-                    let mut b = reqwest::Client::builder();
-                    #[cfg(not(windows))]
-                    if let Some(bd) = opts.bind_device_name.as_ref() {
-                        b = b.interface(bd);
-                    }
-                    b
-                };
+                    let builder = if let Some(proxy_url) = proxy_url {
+                        let proxy = reqwest::Proxy::all(proxy_url)
+                            .context("error creating socks5 proxy for HTTP")?;
+                        reqwest::Client::builder().proxy(proxy)
+                    } else {
+                        #[allow(unused_mut)]
+                        let mut b = reqwest::Client::builder();
+                        #[cfg(not(windows))]
+                        if let Some(bd) = opts.bind_device_name.as_ref() {
+                            b = b.interface(bd);
+                        }
+                        b
+                    };
 
-                builder
-                    .user_agent(&client_name_and_version)
-                    .build()
-                    .context("error building HTTP(S) client")?
+                    builder
+                        .user_agent(&client_name_and_version)
+                        .build()
+                        .context("error building HTTP(S) client")?
+                }
             };
 
             let stream_connector = Arc::new(
