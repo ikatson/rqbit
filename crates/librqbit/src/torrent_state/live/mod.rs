@@ -1471,6 +1471,10 @@ impl PeerHandler {
                         steal_info = Some((from_peer, piece));
                         Ok(Some(piece))
                     }
+                    AcquireResult::Helping(piece) => {
+                        debug!("helping with urgent piece {}", piece);
+                        Ok(Some(piece))
+                    }
                     AcquireResult::NoneAvailable => Ok(None),
                 }
             })
@@ -1854,7 +1858,7 @@ impl PeerHandler {
                     .map(|l| l.read());
 
                 match g.get_pieces()?.get_inflight(chunk_info.piece_index) {
-                    Some(inflight) if inflight.peer == addr => {}
+                    Some(inflight) if inflight.is_downloaded_by(addr) => {}
                     Some(inflight) => {
                         debug!(
                             "in-flight piece {} was stolen by {}, ignoring",
