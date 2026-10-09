@@ -1,6 +1,6 @@
 all: release-linux-armv7-musl
 
-@PHONY: release-linux-current-target
+.PHONY: release-linux-current-target
 release-linux-current-target:
 	CC_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-gcc \
 	CXX_$(TARGET_SNAKE_CASE)=$(CROSS_COMPILE_PREFIX)-g++ \
@@ -8,7 +8,7 @@ release-linux-current-target:
 	CARGO_TARGET_$(TARGET_SNAKE_UPPER_CASE)_LINKER=$(CROSS_COMPILE_PREFIX)-gcc \
 	cargo build --target=$(TARGET)
 
-@PHONY: release-linux-armv7-musl
+.PHONY: release-linux-armv7-musl
 release-linux-armv7-musl:
 	TARGET=armv7-unknown-linux-musleabihf \
 	TARGET_SNAKE_CASE=armv7_unknown_linux_musleabihf \

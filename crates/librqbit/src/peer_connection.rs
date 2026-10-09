@@ -77,6 +77,12 @@ pub struct PeerConnectionOptions {
 
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub keep_alive_interval: Option<Duration>,
+
+    /// The most chunk requests to keep outstanding per peer (default 128, and
+    /// never more than the peer's reqq). A newly needed piece, such as the
+    /// one at a stream's read position after a seek, is requested only after
+    /// those, so a smaller window makes streams react faster to seeks.
+    pub max_request_window: Option<usize>,
 }
 
 pub(crate) struct PeerConnection<H> {

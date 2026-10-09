@@ -19,7 +19,16 @@ pub trait OurFileExt {
 impl OurFileExt for File {
     #[cfg(unix)]
     fn pwrite_all_vectored(&self, offset: u64, bufs: [IoSlice<'_>; 2]) -> anyhow::Result<usize> {
-        nix::sys::uio::pwritev(self, &bufs, offset.try_into()?).context("error calling pwritev")
+        // off_t is 32 bits on 32-bit Android (and on 32-bit Linux built without
+        // _FILE_OFFSET_BITS=64), so pwritev cannot address anything past 2 GiB there.
+        // pwrite_all goes through pwrite64 and takes the u64 as is, so past that point
+        // write the two buffers one after the other instead.
+        match nix::libc::off_t::try_from(offset) {
+            Ok(offset) => {
+                nix::sys::uio::pwritev(self, &bufs, offset).context("error calling pwritev")
+            }
+            Err(_) => pwrite_all_unvectored(self, offset, bufs),
+        }
     }
 
     #[cfg(not(unix))]
@@ -106,6 +115,21 @@ impl OurFileExt for File {
     }
 }
 
+/// What pwrite_all_vectored() falls back to when the offset does not fit the platform's
+/// pwritev: the same bytes, in two plain positional writes.
+#[cfg(unix)]
+fn pwrite_all_unvectored(
+    file: &File,
+    mut offset: u64,
+    bufs: [IoSlice<'_>; 2],
+) -> anyhow::Result<usize> {
+    for buf in &bufs {
+        file.pwrite_all(offset, buf)?;
+        offset += buf.len() as u64;
+    }
+    Ok(bufs[0].len() + bufs[1].len())
+}
+
 #[derive(Default, Debug)]
 struct OpenedFileLocked {
     #[allow(unused)]
@@ -159,59 +183,15 @@ impl OpenedFile {
         })
     }
 
-    pub fn close(&self) {
-        let mut g = self.file.write();
-        g.fd = None;
-        #[cfg(windows)]
-        {
-            g.tried_marking_sparse = false;
-        }
-    }
-
-    // Re-opens the file if it was released with close() above. Used to make released
-    // files usable again when the torrent starts doing IO (e.g. on unpause, or when
-    // streaming from a paused torrent), so that releasing files on pause doesn't break
-    // them.
-    fn ensure_open(&self, g: &mut RwLockWriteGuard<'_, OpenedFileLocked>) -> crate::Result<()> {
-        if g.fd.is_none() {
-            let f = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .truncate(false)
-                .open(&g.path)
-                .map_err(|e| Error::FsFileReOpen {
-                    path: g.path.clone(),
-                    source: e,
-                })?;
-            g.fd = Some(f);
-        }
-        Ok(())
-    }
-
     pub fn lock_read(&self) -> crate::Result<impl Deref<Target = File>> {
-        // Fast path: the file descriptor is open.
-        {
-            let g = self.file.read();
-            if g.fd.is_some() {
-                return RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
-                    .ok()
-                    .ok_or(Error::FsFileIsNone);
-            }
-        }
-        // The file was released: re-open it and downgrade to a read lock.
-        let mut g = self.file.write();
-        self.ensure_open(&mut g)?;
-        let g = RwLockWriteGuard::downgrade(g);
-        RwLockReadGuard::try_map(g, |f| f.fd.as_ref())
+        RwLockReadGuard::try_map(self.file.read(), |f| f.as_ref())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
 
     #[allow(dead_code)]
     pub fn lock_write(&self) -> crate::Result<impl DerefMut<Target = File>> {
-        let mut g = self.file.write();
-        self.ensure_open(&mut g)?;
-        RwLockWriteGuard::try_map(g, |f| f.fd.as_mut())
+        RwLockWriteGuard::try_map(self.file.write(), |f| f.as_mut())
             .ok()
             .ok_or(Error::FsFileIsNone)
     }
@@ -229,9 +209,9 @@ impl OpenedFile {
         let mut g = self.file.write();
         if !g.tried_marking_sparse {
             g.tried_marking_sparse = true;
-            self.ensure_open(&mut g)?;
             let f = g.fd.as_ref().ok_or(Error::FsFileIsNone)?;
-            tracing::debug!(path=?g.path, marked=super::sparse::mark_file_sparse(f), "marking sparse");
+            let marked = super::sparse::mark_file_sparse(f);
+            tracing::debug!(path=?g.path, marked, "marking sparse");
         }
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
@@ -240,7 +220,7 @@ impl OpenedFile {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{IoSlice, Read};
 
     use librqbit_core::constants::CHUNK_SIZE;
     use peer_binary_protocol::DoubleBufHelper;
@@ -248,9 +228,16 @@ mod tests {
 
     use crate::storage::filesystem::opened_file::OurFileExt;
 
-    #[test]
-    fn test_pwrite_all_vectored() {
-        let td = TempDir::with_prefix("test_pwrite_all_vectored").unwrap();
+    // Writes every split of a random buffer at `offset` with `write`, and checks the file
+    // holds exactly those bytes there.
+    fn check_pwrite_all_vectored(
+        name: &str,
+        offset: u64,
+        write: impl Fn(&std::fs::File, u64, [IoSlice<'_>; 2]) -> anyhow::Result<usize>,
+    ) {
+        use std::io::Seek;
+
+        let td = TempDir::with_prefix(name).unwrap();
         let mut tmp_buf = [0u8; CHUNK_SIZE as usize];
         for bufsize in [10000usize, CHUNK_SIZE as usize] {
             let mut buf = vec![0u8; bufsize];
@@ -264,49 +251,56 @@ mod tests {
                     .unwrap();
                 let (first, second) = buf.split_at(split_point);
                 let bufs = DoubleBufHelper::new(first, second).as_ioslices(bufsize);
-                file.pwrite_all_vectored(0, bufs).unwrap();
+                assert_eq!(write(&file, offset, bufs).unwrap(), bufsize, "{path:?}");
 
                 let mut file = std::fs::File::open(&path).unwrap();
-                assert_eq!(file.metadata().unwrap().len(), bufsize as u64, "{path:?}");
+                assert_eq!(
+                    file.metadata().unwrap().len(),
+                    offset + bufsize as u64,
+                    "{path:?}"
+                );
+                file.seek(std::io::SeekFrom::Start(offset)).unwrap();
                 file.read_exact(&mut tmp_buf[..bufsize]).unwrap();
                 assert_eq!(&tmp_buf[..bufsize], buf);
             }
         }
     }
-}
-
-#[cfg(test)]
-mod reopen_tests {
-    use super::*;
 
     #[test]
-    fn test_released_file_reopens_on_demand() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("file.bin");
-        std::fs::write(&path, b"hello").unwrap();
+    fn test_pwrite_all_vectored() {
+        check_pwrite_all_vectored("test_pwrite_all_vectored", 0, |f, offset, bufs| {
+            f.pwrite_all_vectored(offset, bufs)
+        });
+    }
 
-        let of = OpenedFile::new(path.clone(), std::fs::File::open(&path).unwrap());
+    // 2 GiB is where a 32-bit off_t runs out. On a 64-bit host this still goes through
+    // pwritev, so it cannot reproduce the 32-bit failure; on a 32-bit target the same
+    // test takes the fallback.
+    //
+    // Unix only, and not because the code under test is: writing at this offset leaves a
+    // 2 GiB hole, which is free where files are sparse by default and is not on NTFS,
+    // where Windows zero-fills it -- six files of it, more than a CI runner has room or
+    // time for. Windows takes the seek_write path below, whose offset is a u64 with no
+    // such boundary, so there is nothing there for this test to find.
+    #[cfg(unix)]
+    #[test]
+    fn test_pwrite_all_vectored_past_2gib() {
+        check_pwrite_all_vectored(
+            "test_pwrite_all_vectored_past_2gib",
+            1u64 << 31,
+            |f, offset, bufs| f.pwrite_all_vectored(offset, bufs),
+        );
+    }
 
-        // Read works before release.
-        let mut buf = [0u8; 5];
-        of.lock_read().unwrap().pread_exact(0, &mut buf).unwrap();
-        assert_eq!(&buf, b"hello");
-
-        // Release, then read and write again: the file must be re-opened on demand.
-        of.close();
-        let mut buf = [0u8; 5];
-        of.lock_read().unwrap().pread_exact(0, &mut buf).unwrap();
-        assert_eq!(&buf, b"hello");
-        of.lock_read().unwrap().pwrite_all(0, b"HELLO").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"HELLO");
-
-        // Deleting the file while released surfaces an error on the next use,
-        // instead of silently failing forever.
-        of.close();
-        std::fs::remove_file(&path).unwrap();
-        match of.lock_read() {
-            Err(e) => assert!(e.to_string().contains("re-opening"), "got: {e:#}"),
-            Ok(_) => panic!("expected re-open error for a deleted file"),
-        }
+    // The fallback itself, at an offset a 32-bit off_t cannot hold: the path a 32-bit
+    // Android device takes for every write past 2 GiB into a file.
+    #[cfg(unix)]
+    #[test]
+    fn test_pwrite_all_unvectored_past_2gib() {
+        check_pwrite_all_vectored(
+            "test_pwrite_all_unvectored_past_2gib",
+            (1u64 << 31) + 12345,
+            super::pwrite_all_unvectored,
+        );
     }
 }

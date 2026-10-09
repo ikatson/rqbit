@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use governor::InsufficientCapacity;
 use peer_binary_protocol::MessageDeserializeError;
 use tokio::sync::AcquireError;
@@ -116,13 +114,6 @@ pub enum Error {
 
     #[error("file is None, torrent was probably paused")]
     FsFileIsNone,
-
-    #[error("error re-opening {path:?}")]
-    FsFileReOpen {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
 
     #[error("session is dead")]
     SessionDestroyed,

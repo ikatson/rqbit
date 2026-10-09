@@ -153,6 +153,13 @@ pub struct Session {
     client_name_and_version: String,
 }
 
+/// A 40 character hex string is a v1 info hash. Checking the length alone
+/// also matches URLs that happen to be 40 characters long, such as
+/// https://nyaa.si/download/1234567.torrent.
+fn is_bare_info_hash(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 async fn torrent_from_url(
     reqwest_client: &reqwest::Client,
     url: &str,
@@ -1098,6 +1105,9 @@ impl Session {
             keep_alive_interval: other
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
+            max_request_window: other
+                .max_request_window
+                .or(self.peer_opts.max_request_window),
         }
     }
 
@@ -1153,7 +1163,9 @@ impl Session {
         async move {
             let mut opts = opts.unwrap_or_default();
             let add_res = match add {
-                AddTorrent::Url(magnet) if magnet.starts_with("magnet:") || magnet.len() == 40 => {
+                AddTorrent::Url(magnet)
+                    if magnet.starts_with("magnet:") || is_bare_info_hash(&magnet) =>
+                {
                     let magnet = Magnet::parse(&magnet)
                         .context("provided path is not a valid magnet URL")?;
                     let info_hash = magnet
@@ -1411,6 +1423,7 @@ impl Session {
                     force_tracker_interval: opts.force_tracker_interval,
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
+                    peer_max_request_window: peer_opts.max_request_window,
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     ratelimits: opts.ratelimits,
@@ -1890,7 +1903,24 @@ mod tests {
     use itertools::Itertools;
     use librqbit_core::torrent_metainfo::{TorrentMetaV1, torrent_from_bytes};
 
-    use super::torrent_file_from_info_bytes;
+    use super::{is_bare_info_hash, torrent_file_from_info_bytes};
+
+    #[test]
+    fn test_is_bare_info_hash() {
+        assert!(is_bare_info_hash(
+            "08ada5a7a6183aae1e09d831df6748d566095a10"
+        ));
+        assert!(is_bare_info_hash(
+            "08ADA5A7A6183AAE1E09D831DF6748D566095A10"
+        ));
+        // 40 characters, but a URL.
+        assert!(!is_bare_info_hash(
+            "https://nyaa.si/download/2164312.torrent"
+        ));
+        assert!(!is_bare_info_hash(
+            "08ada5a7a6183aae1e09d831df6748d566095a1"
+        ));
+    }
 
     #[test]
     fn test_torrent_file_from_info_and_bytes() {
