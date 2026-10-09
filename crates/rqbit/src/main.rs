@@ -234,7 +234,7 @@ struct Opts {
     max_blocking_threads: u16,
 
     /// If set will use socks5 proxy for all outgoing connections.
-    /// The format is socks5://[username:password]@host:port
+    /// The format is socks5://[username:password@]host:port (socks5h:// also supported).
     ///
     /// You may also want to disable incoming connections via --disable-tcp-listen.
     #[arg(long, env = "RQBIT_SOCKS_PROXY_URL")]

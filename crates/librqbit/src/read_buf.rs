@@ -49,24 +49,38 @@ impl ReadBuf {
 
     // Read the BT handshake.
     // This MUST be run as the first operation on the buffer.
+    //
+    // The 68-byte handshake may arrive split across several reads (e.g. when the
+    // peer, or a proxy in between, writes it in more than one chunk), so keep
+    // reading until it is complete. The timeout covers the whole handshake.
     pub async fn read_handshake(
         &mut self,
         conn: &mut BoxAsyncReadVectored,
         timeout: Duration,
     ) -> Result<Handshake> {
-        self.len = with_timeout(
-            "reading",
-            timeout,
-            conn.read(&mut *self.buf).map_err(Error::ReadHandshake),
-        )
-        .await?;
-        if self.len == 0 {
-            return Err(Error::PeerDisconnectedReadingHandshake);
-        }
-        let (h, size) =
-            Handshake::deserialize(&self.buf[..self.len]).map_err(Error::DeserializeHandshake)?;
-        self.advance(size);
-        Ok(h)
+        self.start = 0;
+        self.len = 0;
+        with_timeout("reading", timeout, async {
+            loop {
+                let n = conn
+                    .read(&mut self.buf[self.len..])
+                    .await
+                    .map_err(Error::ReadHandshake)?;
+                if n == 0 {
+                    return Err(Error::PeerDisconnectedReadingHandshake);
+                }
+                self.len += n;
+                match Handshake::deserialize(&self.buf[..self.len]) {
+                    Ok((h, size)) => {
+                        self.advance(size);
+                        return Ok(h);
+                    }
+                    Err(MessageDeserializeError::NotEnoughData(..)) => continue,
+                    Err(e) => return Err(Error::DeserializeHandshake(e)),
+                }
+            }
+        })
+        .await
     }
 
     fn is_contiguous(&self) -> bool {
@@ -206,7 +220,7 @@ impl ReadBuf {
 mod tests {
     use librqbit_core::constants::CHUNK_SIZE;
     use peer_binary_protocol::{
-        MAX_MSG_LEN, Message, Piece,
+        Handshake, MAX_MSG_LEN, Message, Piece,
         extended::{
             ExtendedMessage, PeerExtendedMessageIds,
             ut_metadata::{UtMetadata, UtMetadataData},
@@ -335,6 +349,70 @@ mod tests {
 
         // start=BUFLEN-1
         assert_one(BUFLEN - 1, 100, [99..BUFLEN - 1, 0..0]);
+    }
+
+    fn test_handshake() -> Vec<u8> {
+        let mut hs = Vec::new();
+        hs.push(19u8);
+        hs.extend_from_slice(b"BitTorrent protocol");
+        hs.extend_from_slice(&[0u8; 8]);
+        hs.extend_from_slice(&[0xaa; 20]); // info hash
+        hs.extend_from_slice(&[0xbb; 20]); // peer id
+        hs
+    }
+
+    async fn read_handshake_written_as(chunks: Vec<Vec<u8>>) -> crate::Result<Handshake> {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let writer = async move {
+            let mut w = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                .await
+                .unwrap();
+            w.set_nodelay(true).unwrap();
+            for c in chunks {
+                w.write_all(&c).await.unwrap();
+                w.flush().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            // Keep the connection open until the reader is done.
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        };
+        let reader = async {
+            let reader = listener.accept().await.unwrap().0.into_split().0;
+            let mut reader: BoxAsyncReadVectored = Box::new(reader);
+            let mut rb = ReadBuf::new();
+            rb.read_handshake(&mut reader, Duration::from_secs(5)).await
+        };
+        let (h, ()) = tokio::join!(reader, writer);
+        h
+    }
+
+    #[tokio::test]
+    async fn handshake_split_across_reads_is_reassembled() {
+        setup_test_logging();
+        let hs = test_handshake();
+        // Split in the middle of the info hash, and byte by byte for the first few.
+        let mut chunks: Vec<Vec<u8>> = hs[..3].iter().map(|b| vec![*b]).collect();
+        chunks.push(hs[3..40].to_vec());
+        chunks.push(hs[40..].to_vec());
+        let h = read_handshake_written_as(chunks).await.unwrap();
+        assert_eq!(h.info_hash.0, [0xaa; 20]);
+        assert_eq!(h.peer_id.0, [0xbb; 20]);
+    }
+
+    #[tokio::test]
+    async fn handshake_cut_short_is_an_error() {
+        setup_test_logging();
+        let hs = test_handshake();
+        let err = read_handshake_written_as(vec![hs[..40].to_vec()])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::Error::PeerDisconnectedReadingHandshake),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]
