@@ -123,6 +123,10 @@ pub fn make_api_router(state: ApiState) -> Router {
                 post(torrents::h_torrent_action_start),
             )
             .route(
+                "/torrents/{id}/recheck",
+                post(torrents::h_torrent_action_recheck),
+            )
+            .route(
                 "/torrents/{id}/forget",
                 post(torrents::h_torrent_action_forget),
             )
