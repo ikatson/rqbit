@@ -67,7 +67,7 @@ use librqbit_utp::BindDevice;
 use parking_lot::RwLock;
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 use tracker_comms::{TrackerComms, UdpTrackerClient};
@@ -286,6 +286,12 @@ pub struct AddTorrentOptions {
 
     /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
+
+    /// A live peer source: unlike `initial_peers`, peers sent here are used
+    /// while resolving metadata (including with `list_only`) and afterwards
+    /// while the torrent runs. The sender stays with the caller.
+    #[serde(skip)]
+    pub peer_feed: Option<mpsc::Receiver<SocketAddr>>,
 
     /// Max concurrent connected peers.
     pub peer_limit: Option<usize>,
@@ -1242,13 +1248,15 @@ impl Session {
 
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
 
-        let make_peer_rx = || {
+        let mut peer_feed = opts.peer_feed.take();
+        let mut make_peer_rx = || {
             self.make_peer_rx(
                 info_hash,
                 trackers.clone(),
                 !opts.paused && !opts.list_only,
                 opts.force_tracker_interval,
                 opts.initial_peers.clone().unwrap_or_default(),
+                peer_feed.take(),
                 private,
             )
         };
@@ -1266,7 +1274,7 @@ impl Session {
                 }
                 None => {
                     let peer_rx = make_peer_rx().context(
-                        "no known way to resolve peers (no DHT, no trackers, no initial_peers)",
+                        "no known way to resolve peers (no DHT, no trackers, no initial_peers, no peer_feed)",
                     )?;
                     let resolved_magnet = self
                         .resolve_magnet(info_hash, peer_rx, &trackers, opts.peer_opts)
@@ -1534,6 +1542,7 @@ impl Session {
             announce,
             t.shared().options.force_tracker_interval,
             t.shared().options.initial_peers.clone(),
+            None,
             is_private,
         )
     }
@@ -1546,6 +1555,7 @@ impl Session {
         announce: bool,
         force_tracker_interval: Option<Duration>,
         initial_peers: Vec<SocketAddr>,
+        peer_feed: Option<mpsc::Receiver<SocketAddr>>,
         is_private: bool,
     ) -> Option<PeerStream> {
         let dht_rx = if is_private {
@@ -1598,12 +1608,21 @@ impl Session {
         } else {
             Some(futures::stream::iter(initial_peers))
         };
+        let peer_feed_rx = peer_feed.map(|rx| {
+            futures::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|addr| (addr, rx))
+            })
+            .boxed()
+        });
         merge_two_optional_streams(
             merge_two_optional_streams(
-                merge_two_optional_streams(dht_rx, tracker_rx),
-                initial_peers_rx,
+                merge_two_optional_streams(
+                    merge_two_optional_streams(dht_rx, tracker_rx),
+                    initial_peers_rx,
+                ),
+                lsd_rx,
             ),
-            lsd_rx,
+            peer_feed_rx,
         )
     }
 
