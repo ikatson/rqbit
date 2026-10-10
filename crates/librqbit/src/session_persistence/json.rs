@@ -148,7 +148,13 @@ impl JsonSessionPersistenceStore {
             only_files: torrent.only_files().clone(),
             is_paused: torrent.is_paused(),
             output_folder: torrent.shared().options.output_folder.clone(),
+            category: torrent
+                .metadata
+                .load()
+                .as_ref()
+                .and_then(|m| m.category.clone()),
         };
+        tracing::debug!(id = ?id, category = ?st.category, "persistence update");
 
         let torrent_bytes = torrent
             .metadata

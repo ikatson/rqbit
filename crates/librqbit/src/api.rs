@@ -173,6 +173,9 @@ impl TorrentIdOrHash {
 pub struct ApiTorrentListOpts {
     #[serde(default)]
     pub with_stats: bool,
+    /// Filter by categories. Empty means no filter.
+    #[serde(default)]
+    pub categories: Option<String>,
 }
 
 impl Api {
@@ -200,13 +203,29 @@ impl Api {
     }
 
     pub fn api_torrent_list(&self) -> TorrentListResponse {
-        self.api_torrent_list_ext(ApiTorrentListOpts { with_stats: false })
+        self.api_torrent_list_ext(ApiTorrentListOpts {
+            with_stats: false,
+            categories: None,
+        })
     }
 
     pub fn api_torrent_list_ext(&self, opts: ApiTorrentListOpts) -> TorrentListResponse {
+        let filter_categories = opts
+            .categories
+            .as_ref()
+            .map(|s| s.split(',').collect::<std::collections::HashSet<&str>>());
+
         let items = self.session.with_torrents(|torrents| {
             torrents
-                .map(|(id, mgr)| {
+                .filter_map(|(id, mgr)| {
+                    // Apply category filter
+                    if let Some(cat_filter) = &filter_categories {
+                        let torrent_cat = mgr.category().unwrap_or_default();
+                        if !cat_filter.contains(torrent_cat.as_str()) {
+                            return None;
+                        }
+                    }
+
                     let total_pieces = mgr
                         .metadata
                         .load()
@@ -223,6 +242,7 @@ impl Api {
                             .output_folder
                             .to_string_lossy()
                             .into_owned(),
+                        category: mgr.category(),
                         total_pieces,
 
                         // These will be filled in /details and /stats endpoints
@@ -232,7 +252,7 @@ impl Api {
                     if opts.with_stats {
                         r.stats = Some(mgr.stats());
                     }
-                    r
+                    Some(r)
                 })
                 .collect()
         });
@@ -250,14 +270,17 @@ impl Api {
             .to_string_lossy()
             .into_owned()
             .to_string();
-        make_torrent_details(
+        let category = handle.category();
+        let mut details = make_torrent_details(
             Some(handle.id()),
             &info_hash,
             handle.metadata.load().as_ref().map(|r| &r.info),
             handle.name().as_deref(),
             only_files.as_deref(),
             output_folder,
-        )
+        )?;
+        details.category = category;
+        Ok(details)
     }
 
     pub fn api_session_stats(&self) -> SessionStatsSnapshot {
@@ -344,6 +367,21 @@ impl Api {
             .update_only_files(&handle, only_files)
             .await
             .context("error updating only_files")?;
+        Ok(Default::default())
+    }
+
+    pub async fn api_torrent_action_update_category(
+        &self,
+        idx: TorrentIdOrHash,
+        category: Option<String>,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        tracing::debug!(idx = ?idx, category = ?category, "updating category");
+        self.session
+            .update_category(&handle, category)
+            .await
+            .context("error updating category")?;
+        tracing::debug!(idx = ?idx, "category updated successfully");
         Ok(Default::default())
     }
 
@@ -542,6 +580,9 @@ pub struct TorrentDetailsResponse {
     pub name: Option<String>,
     pub output_folder: String,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+
     #[serde(default)]
     pub total_pieces: u32,
 
@@ -593,9 +634,10 @@ fn make_torrent_details(
         name: name
             .map(|s| s.to_owned())
             .or_else(|| info.and_then(|i| i.name().map(|n| n.into_owned()))),
-        files: Some(files),
         output_folder,
+        category: None,
         total_pieces,
+        files: Some(files),
         stats: None,
     })
 }

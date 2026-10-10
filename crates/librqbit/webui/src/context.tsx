@@ -5,6 +5,7 @@ export const APIContext = createContext<RqbitAPI>({
   listTorrents: () => {
     throw new Error("Function not implemented.");
   },
+  listCategories: () => Promise.resolve([]),
   getTorrentDetails: () => {
     throw new Error("Function not implemented.");
   },
@@ -18,6 +19,9 @@ export const APIContext = createContext<RqbitAPI>({
     throw new Error("Function not implemented.");
   },
   updateOnlyFiles: () => {
+    throw new Error("Function not implemented.");
+  },
+  updateCategory: () => {
     throw new Error("Function not implemented.");
   },
   pause: () => {

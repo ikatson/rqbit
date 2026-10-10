@@ -22,6 +22,23 @@ export type StatusFilter =
   | "paused"
   | "error";
 
+// Category filter sentinels. A category name is any other string.
+export const CATEGORY_FILTER_ALL = ""; // show all categories (default)
+// Sentinel for "torrents without a category". Uses a control char so it can't
+// collide with a real user-assigned category name.
+export const CATEGORY_FILTER_NONE = "\u0000__uncategorized__";
+
+// The set of category names present in the given torrents, sorted alphabetically.
+export function availableCategories(
+  torrents: TorrentListItem[] | null,
+): string[] {
+  const set = new Set<string>();
+  for (const t of torrents ?? []) {
+    if (t.category) set.add(t.category);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
 // Sort column display labels
 export const SORT_COLUMN_LABELS: Record<TorrentSortColumn, string> = {
   id: "ID",
@@ -117,11 +134,26 @@ export function matchesStatus(
   }
 }
 
+// Check if torrent matches category filter
+export function matchesCategory(t: TorrentListItem, filter: string): boolean {
+  if (filter === CATEGORY_FILTER_ALL) return true;
+  const category = t.category ?? null;
+  if (filter === CATEGORY_FILTER_NONE) {
+    return category == null || category === "";
+  }
+  return category === filter;
+}
+
 // Combined visibility check
 export function isTorrentVisible(
   t: TorrentListItem,
   searchQuery: string,
   statusFilter: StatusFilter,
+  categoryFilter: string = CATEGORY_FILTER_ALL,
 ): boolean {
-  return matchesSearch(t.name, searchQuery) && matchesStatus(t, statusFilter);
+  return (
+    matchesSearch(t.name, searchQuery) &&
+    matchesStatus(t, statusFilter) &&
+    matchesCategory(t, categoryFilter)
+  );
 }

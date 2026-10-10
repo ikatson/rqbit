@@ -6,6 +6,7 @@ import { customSetInterval } from "./helper/customSetInterval";
 import { LogStreamModal } from "./components/modal/LogStreamModal";
 import { Header } from "./components/Header";
 import { useTorrentStore } from "./stores/torrentStore";
+import { useUIStore } from "./stores/uiStore";
 import { useErrorStore } from "./stores/errorStore";
 import { AlertModal } from "./components/modal/AlertModal";
 import { useStatsStore } from "./stores/statsStore";
@@ -43,7 +44,9 @@ export const RqbitWebUI = (props: {
   const refreshTorrents = async (): Promise<number> => {
     setTorrentsLoading(true);
     try {
-      const response = await API.listTorrents({ withStats: true });
+      const response = await API.listTorrents({
+        withStats: true,
+      });
       setTorrents(response.torrents);
       setOtherError(null);
 
