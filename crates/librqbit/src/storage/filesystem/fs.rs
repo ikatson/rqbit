@@ -16,6 +16,25 @@ use crate::storage::{StorageFactory, TorrentStorage};
 
 use super::opened_file::OpenedFile;
 
+/// Whether an open failed because another process holds the file.
+///
+/// Windows refuses an open whose access conflicts with the sharing mode an
+/// existing handle was created with. Asking for write access on a file another
+/// application opened with `FILE_SHARE_READ` is exactly that conflict.
+///
+/// `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33) are the two
+/// this can surface as. Nothing equivalent happens on Unix, where an open
+/// handle does not restrict other opens, so the check is compiled out.
+#[cfg(windows)]
+fn is_sharing_violation(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(32) | Some(33))
+}
+
+#[cfg(not(windows))]
+fn is_sharing_violation(_: &std::io::Error) -> bool {
+    false
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct FilesystemStorageFactory {}
 
@@ -139,13 +158,42 @@ impl TorrentStorage for FilesystemStorage {
             };
             std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
             let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
+                let opened = OpenOptions::new()
                     .create(true)
                     .truncate(false)
                     .read(true)
                     .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+                    .open(&full_path);
+
+                match opened {
+                    Ok(f) => f,
+                    // Another process holds this file in a way that permits
+                    // reading but not writing. Seeding only ever reads, so
+                    // falling back to a read-only handle lets a completed
+                    // torrent be served instead of failing the whole add.
+                    //
+                    // A torrent that still has data to fetch will fail on the
+                    // first write instead, which is a narrower failure than
+                    // refusing to add it at all.
+                    Err(e) if is_sharing_violation(&e) => {
+                        warn!(
+                            path=?full_path,
+                            error=?e,
+                            "opening read/write failed because another process holds the file; \
+                             falling back to read-only. This torrent can be seeded but not written to."
+                        );
+                        OpenOptions::new().read(true).open(&full_path).with_context(|| {
+                            format!(
+                                "error opening {full_path:?} read-only after a sharing violation"
+                            )
+                        })?
+                    }
+                    Err(e) => {
+                        return Err(e).with_context(|| {
+                            format!("error opening {full_path:?} in read/write mode")
+                        });
+                    }
+                }
             } else {
                 // create_new does not seem to work with read(true), so calling this twice.
                 OpenOptions::new()
