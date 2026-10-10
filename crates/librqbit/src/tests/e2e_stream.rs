@@ -13,7 +13,7 @@ use crate::{
 
 use super::test_util::create_default_random_dir_with_torrents;
 
-async fn e2e_stream() -> anyhow::Result<()> {
+async fn e2e_stream(readahead: Option<u64>) -> anyhow::Result<()> {
     setup_test_logging();
     let files = create_default_random_dir_with_torrents(1, 8192, Some("test_e2e_stream"));
     let torrent = create_torrent(
@@ -35,7 +35,8 @@ async fn e2e_stream() -> anyhow::Result<()> {
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             persistence: None,
             listen: Some(crate::listen::ListenerOptions {
-                listen_addr: (Ipv4Addr::LOCALHOST, 16001).into(),
+                // ephemeral port, so the test can run next to others
+                listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -104,7 +105,10 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
     info!("client torrent initialized, starting stream");
 
-    let mut stream = client_handle.stream(0).await?;
+    let mut stream = match readahead {
+        Some(bytes) => client_handle.stream_with_readahead(0, bytes).await?,
+        None => client_handle.stream(0).await?,
+    };
     let mut buf = Vec::<u8>::with_capacity(8192);
     stream.read_to_end(&mut buf).await?;
 
@@ -117,5 +121,12 @@ async fn e2e_stream() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_stream() -> anyhow::Result<()> {
-    timeout(Duration::from_secs(10), e2e_stream()).await?
+    timeout(Duration::from_secs(10), e2e_stream(None)).await?
+}
+
+// A readahead window of a single piece (the torrent above uses 1 KiB pieces)
+// must still deliver the whole file byte-exactly, just queueing less ahead.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_stream_with_readahead() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(10), e2e_stream(Some(1024))).await?
 }
