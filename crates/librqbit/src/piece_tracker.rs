@@ -14,6 +14,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// How many of the next pieces a stream needs count as urgent: they may be
+/// requested from several peers at once.
+pub const URGENT_PIECES: usize = 4;
+
+/// Peers that may download an urgent piece besides its owner.
+pub const MAX_HELPERS: usize = 2;
+
+/// A peer joins an urgent piece once it has been in flight as long as the
+/// peer needs on average for a whole piece, and at most this long.
+pub const HELP_AFTER_MAX: Duration = Duration::from_secs(1);
+
 use buffers::ByteBuf;
 use librqbit_core::lengths::ValidPieceIndex;
 use peer_binary_protocol::Piece;
@@ -28,7 +39,17 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct InflightPiece {
     pub peer: PeerHandle,
+    /// Other peers downloading the same (urgent) piece. Chunks from them
+    /// count too; whoever completes the piece first finishes it.
+    pub helpers: Vec<PeerHandle>,
     pub started: Instant,
+}
+
+impl InflightPiece {
+    /// The owner or a helper.
+    pub fn is_downloaded_by(&self, peer: PeerHandle) -> bool {
+        self.peer == peer || self.helpers.contains(&peer)
+    }
 }
 
 /// Result of attempting to acquire a piece.
@@ -41,6 +62,8 @@ pub enum AcquireResult {
         piece: ValidPieceIndex,
         from_peer: PeerHandle,
     },
+    /// The peer joins the download of an urgent piece as a helper.
+    Helping(ValidPieceIndex),
     /// No pieces are available for this peer.
     NoneAvailable,
 }
@@ -115,8 +138,10 @@ impl PieceTracker {
     ///
     /// The acquisition strategy is:
     /// 1. Try to steal a piece from a peer that's 10x slower
-    /// 2. Try to reserve a piece from the queue (priority pieces first)
-    /// 3. Try to steal a piece from a peer that's 3x slower
+    /// 2. Walk the priority pieces in order: reserve the first free one, or
+    ///    help with one of the first [`URGENT_PIECES`] if it is taking long
+    /// 3. Try to reserve a piece from the queue
+    /// 4. Try to steal a piece from a peer that's 3x slower
     ///
     /// If `Stolen` is returned, the caller MUST call `peers.on_steal()` to notify
     /// the old peer and update counters.
@@ -133,12 +158,32 @@ impl PieceTracker {
 
         // 2. Try reserve from priority_pieces then queued pieces
         // First check priority pieces that aren't already downloaded or in-flight
+        let help_after = req
+            .peer_avg_time
+            .unwrap_or(Duration::ZERO)
+            .min(HELP_AFTER_MAX);
+        let mut needed = 0;
         for piece in &mut req.priority_pieces {
-            if !self.chunks.is_piece_have(piece)
-                && !self.inflight.contains_key(&piece)
-                && (req.peer_has_piece)(piece)
-            {
-                return self.reserve_piece(piece, req.peer);
+            if self.chunks.is_piece_have(piece) {
+                continue;
+            }
+            let urgent = needed < URGENT_PIECES;
+            needed += 1;
+            if !(req.peer_has_piece)(piece) {
+                continue;
+            }
+            match self.inflight.get_mut(&piece) {
+                None => return self.reserve_piece(piece, req.peer),
+                Some(info)
+                    if urgent
+                        && !info.is_downloaded_by(req.peer)
+                        && info.helpers.len() < MAX_HELPERS
+                        && info.started.elapsed() >= help_after =>
+                {
+                    info.helpers.push(req.peer);
+                    return AcquireResult::Helping(piece);
+                }
+                Some(_) => {}
             }
         }
 
@@ -170,6 +215,7 @@ impl PieceTracker {
             piece,
             InflightPiece {
                 peer,
+                helpers: Vec::new(),
                 started: Instant::now(),
             },
         );
@@ -209,6 +255,7 @@ impl PieceTracker {
         // Update ownership (piece stays in inflight, just changes owner)
         let info = self.inflight.get_mut(&piece)?;
         info.peer = req.peer;
+        info.helpers.retain(|h| *h != req.peer);
         info.started = Instant::now();
 
         Some(AcquireResult::Stolen {
@@ -241,9 +288,17 @@ impl PieceTracker {
 
     /// Release all pieces owned by a peer (on peer death).
     ///
-    /// Moves all pieces owned by the peer from IN_FLIGHT back to QUEUED.
+    /// Moves all pieces owned by the peer from IN_FLIGHT back to QUEUED,
+    /// unless a helper is downloading it: then the first helper owns it.
     /// Returns the number of pieces released.
     pub fn release_pieces_owned_by(&mut self, peer: PeerHandle) -> usize {
+        for info in self.inflight.values_mut() {
+            info.helpers.retain(|h| *h != peer);
+            if info.peer == peer && !info.helpers.is_empty() {
+                info.peer = info.helpers.remove(0);
+            }
+        }
+
         // Collect pieces to release (can't modify while iterating)
         let pieces_to_release: Vec<_> = self
             .inflight
@@ -800,5 +855,123 @@ mod tests {
             }
             _ => panic!("Expected Stolen, got {:?}", result),
         }
+    }
+
+    // Urgent stream pieces with helpers.
+
+    fn acquire(
+        tracker: &mut PieceTracker,
+        peer: PeerHandle,
+        priority: &[u32],
+        file_infos: &FileInfos,
+    ) -> AcquireResult {
+        let file_priorities = make_default_file_priorities(file_infos);
+        tracker.acquire_piece(AcquireRequest {
+            peer,
+            peer_avg_time: None,
+            priority_pieces: priority.iter().map(|i| index(*i)),
+            file_priorities: &file_priorities,
+            file_infos,
+            peer_has_piece: |_| true,
+            can_steal: |_| true,
+        })
+    }
+
+    fn index(i: u32) -> ValidPieceIndex {
+        Lengths::new(16384 * 20, 16384)
+            .unwrap()
+            .validate_piece_index(i)
+            .unwrap()
+    }
+
+    #[test]
+    fn urgent_pieces_get_helpers_up_to_the_limit() {
+        let file_infos = make_test_file_infos(20);
+        let mut tracker = PieceTracker::new(make_test_chunk_tracker(20));
+        let urgent = [0];
+        assert!(matches!(
+            acquire(&mut tracker, peer(1), &urgent, &file_infos),
+            AcquireResult::Reserved(p) if p == index(0)
+        ));
+        for helper in (2..).take(MAX_HELPERS) {
+            assert!(matches!(
+                acquire(&mut tracker, peer(helper), &urgent, &file_infos),
+                AcquireResult::Helping(p) if p == index(0)
+            ));
+        }
+        // Full: the next peer takes another piece.
+        assert!(matches!(
+            acquire(&mut tracker, peer(9), &urgent, &file_infos),
+            AcquireResult::Reserved(p) if p != index(0)
+        ));
+        let info = tracker.get_inflight(index(0)).unwrap();
+        assert_eq!(info.helpers.len(), MAX_HELPERS);
+        assert!(info.is_downloaded_by(peer(2)));
+        assert!(!info.is_downloaded_by(peer(9)));
+    }
+
+    #[test]
+    fn a_peer_never_helps_with_its_own_piece() {
+        let file_infos = make_test_file_infos(20);
+        let mut tracker = PieceTracker::new(make_test_chunk_tracker(20));
+        acquire(&mut tracker, peer(1), &[0], &file_infos);
+        assert!(matches!(
+            acquire(&mut tracker, peer(1), &[0], &file_infos),
+            AcquireResult::Reserved(p) if p != index(0)
+        ));
+    }
+
+    #[test]
+    fn only_the_first_needed_pieces_are_urgent() {
+        let file_infos = make_test_file_infos(20);
+        let mut tracker = PieceTracker::new(make_test_chunk_tracker(20));
+        let window: Vec<u32> = (0..10).collect();
+        for p in 0..10 {
+            assert!(matches!(
+                acquire(&mut tracker, peer(1), &window, &file_infos),
+                AcquireResult::Reserved(r) if r == index(p)
+            ));
+        }
+        // Every helper slot of the urgent pieces fills before anything else.
+        let mut helped = Vec::new();
+        for _ in 0..URGENT_PIECES * MAX_HELPERS {
+            match acquire(&mut tracker, peer(2), &window, &file_infos) {
+                AcquireResult::Helping(p) => helped.push(p.get()),
+                // One peer helps once per piece, so fresh peers fill the rest.
+                AcquireResult::Reserved(_) => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(helped, (0..).take(URGENT_PIECES).collect::<Vec<u32>>());
+        assert!(
+            tracker
+                .get_inflight(index(URGENT_PIECES.try_into().unwrap()))
+                .unwrap()
+                .helpers
+                .is_empty(),
+            "pieces past the urgent ones get no helpers"
+        );
+    }
+
+    #[test]
+    fn a_helper_takes_over_when_the_owner_dies() {
+        let file_infos = make_test_file_infos(20);
+        let mut tracker = PieceTracker::new(make_test_chunk_tracker(20));
+        acquire(&mut tracker, peer(1), &[0], &file_infos);
+        acquire(&mut tracker, peer(2), &[0], &file_infos);
+        assert_eq!(tracker.release_pieces_owned_by(peer(1)), 0);
+        let info = tracker.get_inflight(index(0)).unwrap();
+        assert_eq!(info.peer, peer(2));
+        assert!(info.helpers.is_empty());
+
+        // A dead helper just leaves.
+        acquire(&mut tracker, peer(3), &[0], &file_infos);
+        tracker.release_pieces_owned_by(peer(3));
+        assert!(
+            !tracker
+                .get_inflight(index(0))
+                .unwrap()
+                .is_downloaded_by(peer(3))
+        );
     }
 }
