@@ -317,7 +317,7 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
         // - there's at least one file
         // - each filename has at least one path component
         // - there's no path traversal
-        // - all filenames are unique
+        // - all non-padding filenames are unique
         let mut seen_files = 0;
         for file in validated.info.iter_file_details_raw(encoding)? {
             seen_files += 1;
@@ -340,15 +340,29 @@ impl<BufType: AsRef<[u8]>> TorrentMetaV1Info<BufType> {
             return Err(Error::BadTorrentNoFiles);
         }
 
+        // Padding files (BEP 47 "p" attr; the BEP 52 v1-compat layer names
+        // them ".pad/<length>") are never materialized on disk - every
+        // storage backend skips them (filesystem storage doesn't create
+        // them, file_ops reads/writes ignore them) - and their conventional
+        // name is just the pad length, so two equal-length pads legitimately
+        // share a path. Exempt padding from the uniqueness check so hybrid
+        // v1+v2 torrents with repeated pad lengths validate; duplicate
+        // non-padding filenames still error (they would genuinely share one
+        // on-disk file).
         let mut unique_filenames = HashSet::<PathBuf>::new();
+        let mut unique_checkable = 0usize;
         for fd in validated.iter_file_details() {
+            if fd.attrs().padding {
+                continue;
+            }
+            unique_checkable += 1;
             let pb = fd.filename.to_pathbuf();
             if pb.as_os_str().is_empty() {
                 return Err(Error::BadTorrentFileNoName);
             }
             unique_filenames.insert(pb);
         }
-        if unique_filenames.len() != seen_files {
+        if unique_filenames.len() != unique_checkable {
             return Err(Error::BadTorrentDuplicateFilenames);
         }
 
@@ -576,5 +590,125 @@ mod tests {
         let buf = include_bytes!("resources/test/private.torrent");
         let torrent: TorrentMetaV1Borrowed = from_bytes(buf).unwrap();
         assert!(torrent.info.data.private);
+    }
+
+    // BEP 47 padding files ("p" attr) are synthetic and never written to
+    // disk, and their recommended path is [".pad", "<length>"], so two
+    // equal-length pads legitimately share a name. Hybrid v1+v2 (BEP 52)
+    // torrents rely on this: the v1 compat layer repeats ".pad/<length>"
+    // whenever two files need the same alignment padding.
+    #[test]
+    fn test_validate_duplicate_pad_paths() {
+        let bytes = harness_padded_multi(
+            "hybrid",
+            &[("a.bin", 1000), ("b.bin", 1000)],
+            &[("42", 42), ("42", 42)],
+        );
+        let torrent = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        let validated = torrent.info.data.validate().unwrap();
+
+        // Pads still count as file entries, but only the real files make it
+        // to disk / into "unique" accounting.
+        let details: Vec<_> = validated.iter_file_details().collect();
+        assert_eq!(details.len(), 4);
+        assert_eq!(details.iter().filter(|d| !d.attrs().padding).count(), 2);
+        assert_eq!(validated.lengths().total_length(), 2084);
+    }
+
+    #[test]
+    fn test_validate_duplicate_real_filenames() {
+        let bytes = harness_multi_named("dup", &[("same.bin", 10), ("same.bin", 10)]);
+        let torrent = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        let err = torrent.info.data.validate().unwrap_err();
+        assert!(
+            matches!(err, Error::BadTorrentDuplicateFilenames),
+            "duplicate real filenames must still be rejected, got {err:?}"
+        );
+    }
+
+    fn bstr(b: &[u8]) -> Vec<u8> {
+        let mut o = format!("{}:", b.len()).into_bytes();
+        o.extend_from_slice(b);
+        o
+    }
+
+    fn bint(v: i64) -> Vec<u8> {
+        format!("i{v}e").into_bytes()
+    }
+
+    fn bdict(entries: &[(&[u8], Vec<u8>)]) -> Vec<u8> {
+        let mut o = vec![b'd'];
+        for (k, v) in entries {
+            o.extend_from_slice(&bstr(k));
+            o.extend_from_slice(v);
+        }
+        o.push(b'e');
+        o
+    }
+
+    fn harness_multi_named(name: &str, files: &[(&str, u64)]) -> Vec<u8> {
+        let mut flist = vec![b'l'];
+        for (fname, len) in files {
+            let mut path = vec![b'l'];
+            path.extend_from_slice(&bstr(fname.as_bytes()));
+            path.push(b'e');
+            flist.extend_from_slice(&bdict(&[
+                (b"length".as_slice(), bint(*len as i64)),
+                (b"path".as_slice(), path),
+            ]));
+        }
+        flist.push(b'e');
+        harness_multi_with_files(name, flist)
+    }
+
+    // Multi-file metainfo with BEP-47 padding entries: each pad is
+    // ".pad/<len>" with attr "p".
+    fn harness_padded_multi(name: &str, files: &[(&str, u64)], pads: &[(&str, u64)]) -> Vec<u8> {
+        let mut flist = vec![b'l'];
+        let push = |flist: &mut Vec<u8>, fname: &[&[u8]], len: i64, attr: Option<&[u8]>| {
+            let mut path = vec![b'l'];
+            for bit in fname {
+                path.extend_from_slice(&bstr(bit));
+            }
+            path.push(b'e');
+            let mut entries: Vec<(&[u8], Vec<u8>)> = vec![
+                (b"length".as_slice(), bint(len)),
+                (b"path".as_slice(), path),
+            ];
+            if let Some(a) = attr {
+                entries.push((b"attr".as_slice(), bstr(a)));
+            }
+            flist.extend_from_slice(&bdict(&entries));
+        };
+        for (fname, len) in files {
+            push(&mut flist, &[fname.as_bytes()], *len as i64, None);
+        }
+        for (fname, len) in pads {
+            push(
+                &mut flist,
+                &[b".pad", fname.as_bytes()],
+                *len as i64,
+                Some(b"p"),
+            );
+        }
+        flist.push(b'e');
+        harness_multi_with_files(name, flist)
+    }
+
+    fn harness_multi_with_files(name: &str, flist: Vec<u8>) -> Vec<u8> {
+        let pieces = vec![0u8; 20];
+        let info = bdict(&[
+            (b"files".as_slice(), flist),
+            (b"name".as_slice(), bstr(name.as_bytes())),
+            (b"piece length".as_slice(), bint(16384)),
+            (b"pieces".as_slice(), bstr(&pieces)),
+        ]);
+        let mut top = vec![b'd'];
+        top.extend_from_slice(&bstr(b"announce"));
+        top.extend_from_slice(&bstr(b"http"));
+        top.extend_from_slice(&bstr(b"info"));
+        top.extend_from_slice(&info);
+        top.push(b'e');
+        top
     }
 }
