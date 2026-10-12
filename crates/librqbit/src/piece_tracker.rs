@@ -29,6 +29,8 @@ use crate::{
 pub struct InflightPiece {
     pub peer: PeerHandle,
     pub started: Instant,
+    /// The peer's average piece download time when it got the piece.
+    pub peer_avg_time: Option<Duration>,
 }
 
 /// Result of attempting to acquire a piece.
@@ -58,6 +60,9 @@ where
     pub peer_avg_time: Option<Duration>,
     /// Priority pieces to check first (e.g., for streaming).
     pub priority_pieces: I,
+    /// Pieces needed right now, e.g. the ones streams are blocked on. They are taken
+    /// from peers slower than this one as soon as they take longer than it would.
+    pub urgent_pieces: &'a [ValidPieceIndex],
     /// File download priority ordering.
     pub file_priorities: &'a FilePriorities,
     /// File metadata for iterating pieces.
@@ -114,6 +119,7 @@ impl PieceTracker {
     /// Attempt to acquire a piece for the requesting peer.
     ///
     /// The acquisition strategy is:
+    /// 0. Try to steal an urgent piece from a slower peer
     /// 1. Try to steal a piece from a peer that's 10x slower
     /// 2. Try to reserve a piece from the queue (priority pieces first)
     /// 3. Try to steal a piece from a peer that's 3x slower
@@ -126,8 +132,20 @@ impl PieceTracker {
         P: Fn(ValidPieceIndex) -> bool,
         S: Fn(ValidPieceIndex) -> bool,
     {
+        // 0. Try steal an urgent piece that's taking longer than this peer takes for
+        // a whole piece, from a peer that's slower, so fast peers don't take turns
+        // with it, each dropping the chunks the last one had coming.
+        if let Some(result) = self.try_steal(&req, 1.0, |p, info| {
+            req.urgent_pieces.contains(&p)
+                && info
+                    .peer_avg_time
+                    .is_none_or(|t| Some(t) > req.peer_avg_time)
+        }) {
+            return result;
+        }
+
         // 1. Try steal with 10x threshold (very slow peer)
-        if let Some(result) = self.try_steal(&req, 10.0) {
+        if let Some(result) = self.try_steal(&req, 10.0, |_, _| true) {
             return result;
         }
 
@@ -138,7 +156,7 @@ impl PieceTracker {
                 && !self.inflight.contains_key(&piece)
                 && (req.peer_has_piece)(piece)
             {
-                return self.reserve_piece(piece, req.peer);
+                return self.reserve_piece(piece, req.peer, req.peer_avg_time);
             }
         }
 
@@ -151,12 +169,12 @@ impl PieceTracker {
 
         for piece in queued {
             if (req.peer_has_piece)(piece) {
-                return self.reserve_piece(piece, req.peer);
+                return self.reserve_piece(piece, req.peer, req.peer_avg_time);
             }
         }
 
         // 3. Try steal with 3x threshold (moderately slow peer)
-        if let Some(result) = self.try_steal(&req, 3.0) {
+        if let Some(result) = self.try_steal(&req, 3.0, |_, _| true) {
             return result;
         }
 
@@ -164,23 +182,30 @@ impl PieceTracker {
     }
 
     /// Reserve a piece: remove from queue, add to inflight.
-    fn reserve_piece(&mut self, piece: ValidPieceIndex, peer: PeerHandle) -> AcquireResult {
+    fn reserve_piece(
+        &mut self,
+        piece: ValidPieceIndex,
+        peer: PeerHandle,
+        peer_avg_time: Option<Duration>,
+    ) -> AcquireResult {
         self.chunks.reserve_needed_piece(piece);
         self.inflight.insert(
             piece,
             InflightPiece {
                 peer,
                 started: Instant::now(),
+                peer_avg_time,
             },
         );
         AcquireResult::Reserved(piece)
     }
 
-    /// Try to steal a piece from a slower peer.
+    /// Try to steal one of the pieces `among` picks from a slower peer.
     fn try_steal<I, P, S>(
         &mut self,
         req: &AcquireRequest<I, P, S>,
         threshold: f64,
+        among: impl Fn(ValidPieceIndex, &InflightPiece) -> bool,
     ) -> Option<AcquireResult>
     where
         I: Iterator<Item = ValidPieceIndex>,
@@ -196,7 +221,7 @@ impl PieceTracker {
             .inflight
             .iter()
             .filter(|(_, info)| info.peer != req.peer)
-            .filter(|(p, _)| (req.peer_has_piece)(**p))
+            .filter(|(p, info)| among(**p, info) && (req.peer_has_piece)(**p))
             .map(|(p, info)| (*p, info.peer, info.started.elapsed()))
             .filter(|(_, _, elapsed)| *elapsed >= min_elapsed)
             .max_by_key(|(_, _, elapsed)| *elapsed)?;
@@ -210,6 +235,7 @@ impl PieceTracker {
         let info = self.inflight.get_mut(&piece)?;
         info.peer = req.peer;
         info.started = Instant::now();
+        info.peer_avg_time = req.peer_avg_time;
 
         Some(AcquireResult::Stolen {
             piece,
@@ -392,6 +418,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true, // Peer has all pieces
@@ -425,6 +452,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |p| p.get() >= 2,
@@ -453,6 +481,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -486,6 +515,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -514,6 +544,7 @@ mod tests {
             peer: peer(2),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |p| p == piece, // Only has the failed piece
@@ -543,6 +574,7 @@ mod tests {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -555,6 +587,7 @@ mod tests {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -569,6 +602,7 @@ mod tests {
             peer: peer_b,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -608,6 +642,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -617,6 +652,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -634,6 +670,7 @@ mod tests {
             peer: peer(2),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -672,6 +709,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: priority.into_iter(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -698,6 +736,7 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| false, // Peer has nothing
@@ -746,6 +785,7 @@ mod tests {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -762,6 +802,7 @@ mod tests {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |_| true,
@@ -784,6 +825,7 @@ mod tests {
             peer: peer_b,
             peer_avg_time: Some(Duration::from_millis(1)),
             priority_pieces: std::iter::empty(),
+            urgent_pieces: &[],
             file_priorities: &file_priorities,
             file_infos: &file_infos,
             peer_has_piece: |p| p.get() == 4, // Peer B only has piece 4
@@ -799,6 +841,57 @@ mod tests {
                 assert_eq!(tracker.get_inflight(piece_0).unwrap().peer, peer_a);
             }
             _ => panic!("Expected Stolen, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_steal_urgent_piece_from_slower_peer() {
+        let chunks = make_test_chunk_tracker(5);
+        let mut tracker = PieceTracker::new(chunks);
+
+        let file_infos = make_test_file_infos(5);
+        let file_priorities = make_default_file_priorities(&file_infos);
+
+        let slow = peer(1);
+        let fast = peer(2);
+        let stealer = peer(3);
+
+        let mut acquire = |peer, peer_avg_time, urgent_pieces: &[ValidPieceIndex]| {
+            tracker.acquire_piece(AcquireRequest {
+                peer,
+                peer_avg_time: Some(Duration::from_millis(peer_avg_time)),
+                priority_pieces: std::iter::empty(),
+                urgent_pieces,
+                file_priorities: &file_priorities,
+                file_infos: &file_infos,
+                peer_has_piece: |_| true,
+                can_steal: |_| true,
+            })
+        };
+        let reserve = |result| match result {
+            AcquireResult::Reserved(p) => p,
+            result => panic!("Expected Reserved, got {:?}", result),
+        };
+
+        let slow_piece = reserve(acquire(slow, 80, &[]));
+        let fast_piece = reserve(acquire(fast, 10, &[]));
+
+        // Longer than the stealer takes for a piece, but well short of 3x that.
+        std::thread::sleep(Duration::from_millis(30));
+
+        // Nothing urgent: it takes a queued piece rather than steal.
+        let queued = reserve(acquire(stealer, 20, &[]));
+        assert!(queued != slow_piece && queued != fast_piece);
+        // A faster peer keeps its urgent piece.
+        let queued = reserve(acquire(stealer, 20, &[fast_piece]));
+        assert!(queued != slow_piece && queued != fast_piece);
+        // A slower one doesn't.
+        match acquire(stealer, 20, &[slow_piece]) {
+            AcquireResult::Stolen { piece, from_peer } => {
+                assert_eq!(piece, slow_piece);
+                assert_eq!(from_peer, slow);
+            }
+            result => panic!("Expected Stolen, got {:?}", result),
         }
     }
 }

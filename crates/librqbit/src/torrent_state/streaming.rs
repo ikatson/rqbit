@@ -101,6 +101,15 @@ impl TorrentStreams {
         Interleave { all: all.into() }
     }
 
+    /// The pieces streams are reading from, or waiting on.
+    pub(crate) fn current_pieces(&self, lengths: &Lengths) -> Vec<ValidPieceIndex> {
+        self.streams
+            .iter()
+            .filter_map(|s| s.current_piece(lengths))
+            .map(|p| p.id)
+            .collect()
+    }
+
     pub(crate) fn wake_streams_on_piece_completed(
         &self,
         piece_id: ValidPieceIndex,
