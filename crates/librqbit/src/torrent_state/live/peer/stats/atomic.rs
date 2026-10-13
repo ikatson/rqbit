@@ -49,12 +49,26 @@ impl PeerCountersAtomic {
     }
 }
 
+// Reconnect backoff for an outgoing peer that died with an error.
+//
+// A single transient failure (connect refused, a seeder briefly at its
+// connection limit, a reset) used to cost 10-20 s (min 10 s, factor 6, plus
+// jitter) before the first retry, and the backoff was only reset by a fully
+// downloaded piece. For streaming that is the difference between a 1 s and a
+// 15 s time-to-first-byte. Retry quickly first (1-2 s) and back off
+// gradually; dead peers still end up at one attempt every 5-10 minutes.
+// The backoff is also reset as soon as a connection delivers data (see
+// `PeerHandler::on_received_piece`), not only on a completed piece.
+pub(crate) const BACKOFF_MIN_DELAY: Duration = Duration::from_secs(1);
+pub(crate) const BACKOFF_FACTOR: f32 = 2.;
+pub(crate) const BACKOFF_MAX_DELAY: Duration = Duration::from_secs(300);
+
 fn backoff() -> ExponentialBackoff {
     ExponentialBuilder::new()
-        .with_min_delay(Duration::from_secs(10))
-        .with_factor(6.)
+        .with_min_delay(BACKOFF_MIN_DELAY)
+        .with_factor(BACKOFF_FACTOR)
         .with_jitter()
-        .with_max_delay(Duration::from_secs(3600))
+        .with_max_delay(BACKOFF_MAX_DELAY)
         .with_total_delay(Some(Duration::from_secs(86400)))
         .without_max_times()
         .build()
@@ -78,5 +92,40 @@ impl Default for PeerStats {
 impl PeerStats {
     pub fn reset_backoff(&mut self) {
         self.backoff = backoff();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{BACKOFF_MAX_DELAY, PeerStats};
+
+    #[test]
+    fn test_backoff_first_retry_is_short_and_reset_restarts_it() {
+        let mut stats = PeerStats::default();
+        // Jitter adds up to 100% of the current delay.
+        let first = stats.backoff.next().unwrap();
+        assert!(
+            first >= Duration::from_secs(1) && first < Duration::from_secs(2),
+            "{first:?}"
+        );
+        let second = stats.backoff.next().unwrap();
+        assert!(
+            second >= Duration::from_secs(2) && second < Duration::from_secs(4),
+            "{second:?}"
+        );
+        // Grows, but is capped (max delay + jitter).
+        let mut last = second;
+        for _ in 0..20 {
+            last = stats.backoff.next().unwrap();
+        }
+        assert!(
+            last >= BACKOFF_MAX_DELAY && last < BACKOFF_MAX_DELAY * 2,
+            "{last:?}"
+        );
+        stats.reset_backoff();
+        let again = stats.backoff.next().unwrap();
+        assert!(again < Duration::from_secs(2), "{again:?}");
     }
 }
