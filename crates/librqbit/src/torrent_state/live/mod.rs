@@ -2014,7 +2014,7 @@ impl PeerHandler {
             .div_ceil(CHUNK_SIZE as u64)
             .try_into()?;
 
-        if piece_id as usize > total_pieces {
+        if piece_id as usize >= total_pieces {
             bail!("piece out of bounds")
         }
 
