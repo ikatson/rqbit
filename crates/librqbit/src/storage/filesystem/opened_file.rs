@@ -170,6 +170,41 @@ impl OpenedFile {
         }
     }
 
+    /// Keep a file's path without retaining an OS descriptor. Storage opens
+    /// it lazily on first access, and reopens it after a cache eviction.
+    pub fn new_closed(path: PathBuf) -> Self {
+        Self {
+            file: RwLock::new(OpenedFileLocked {
+                path,
+                ..Default::default()
+            }),
+        }
+    }
+
+    pub fn open_if_needed(&self) -> anyhow::Result<()> {
+        let mut guard = self.file.write();
+        if guard.fd.is_none() {
+            guard.fd = Some(
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&guard.path)
+                    .with_context(|| format!("error reopening {:?}", guard.path))?,
+            );
+            #[cfg(windows)]
+            {
+                guard.tried_marking_sparse = false;
+            }
+        }
+        Ok(())
+    }
+
+    /// Called while holding the storage cache lock. Waits for in-flight I/O
+    /// guards to drop before closing the underlying handle.
+    pub fn close(&self) {
+        self.file.write().fd.take();
+    }
+
     pub fn new_dummy() -> Self {
         Self {
             file: RwLock::new(Default::default()),
