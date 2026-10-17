@@ -77,6 +77,9 @@ struct MaybeUsefulNode {
     returned_peers: bool,
 }
 
+/// The most `get_peers` requests one torrent's peer search keeps in flight.
+const MAX_INFLIGHT_PER_SEARCH: usize = 32;
+
 fn make_rate_limiter() -> RateLimiter {
     // TODO: move to configuration, i'm lazy.
     let dht_queries_per_second = std::env::var("DHT_QUERIES_PER_SECOND")
@@ -374,6 +377,15 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                     tokio::select! {
                         addr = node_rx.recv() => {
                             let (id, addr, depth) = addr.unwrap();
+                            // Every node a response names is queued here, for
+                            // every torrent, for as long as it runs. Without a
+                            // cap the queue outgrows the session's rate limiter
+                            // and holds memory without bound. A dropped node
+                            // is found again on the next requery.
+                            if futs.len() >= MAX_INFLIGHT_PER_SEARCH {
+                                trace!(%addr, "get_peers queue full, dropping node");
+                                continue;
+                            }
                             futs.push(
                                 this.request_one(id, addr, depth)
                                     .map_err(|e| debug!("error: {e:#}"))
@@ -619,7 +631,14 @@ impl DhtState {
     }
 
     async fn request(&self, request: Request, addr: SocketAddr) -> crate::Result<ResponseOrError> {
-        self.rate_limiter.acquire_one().await;
+        // Bound the wait for the rate limiter too: a request queued behind it
+        // used to wait without limit, before RESPONSE_TIMEOUT began.
+        if tokio::time::timeout(RESPONSE_TIMEOUT, self.rate_limiter.acquire_one())
+            .await
+            .is_err()
+        {
+            return Err(Error::ResponseTimeout(RESPONSE_TIMEOUT));
+        }
         let (tid, message) = self.create_request(request, addr);
         let key = (tid, addr);
         let (tx, rx) = tokio::sync::oneshot::channel();
