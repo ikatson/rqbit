@@ -72,6 +72,10 @@ pub struct WriteThroughCacheStorage<U> {
 }
 
 impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
+    fn externally_populated(&self) -> bool {
+        self.underlying.externally_populated()
+    }
+
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let file = self.file_infos.get(file_id).context("wrong file")?;
         let current = self
