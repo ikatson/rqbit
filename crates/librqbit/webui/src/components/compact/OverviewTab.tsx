@@ -7,6 +7,7 @@ import {
 import { formatBytes } from "../../helper/formatBytes";
 import { getCompletionETA } from "../../helper/getCompletionETA";
 import { PlaylistLink } from "../buttons/PlaylistButton";
+import { DownloadLink } from "../buttons/DownloadButton";
 import { PiecesCanvas } from "./PiecesCanvas";
 
 interface OverviewTabProps {
@@ -167,6 +168,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({ torrent }) => {
           <LV
             label="Playlist"
             value={<PlaylistLink torrentId={torrent.id} />}
+          />
+        </div>
+        <div className="truncate">
+          <LV
+            label="Download"
+            value={
+              <DownloadLink torrentId={torrent.id} torrentName={torrent.name} />
+            }
           />
         </div>
       </div>

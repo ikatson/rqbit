@@ -4,23 +4,13 @@ import { TorrentListItem } from "../api-types";
 
 // Sort types
 export type TorrentSortColumn =
-  | "id"
-  | "name"
-  | "size"
-  | "progress"
-  | "downSpeed"
-  | "upSpeed"
-  | "eta";
+  "id" | "name" | "size" | "progress" | "downSpeed" | "upSpeed" | "eta";
 
 export type SortDirection = "asc" | "desc";
 
 // Status filter types
 export type StatusFilter =
-  | "all"
-  | "downloading"
-  | "seeding"
-  | "paused"
-  | "error";
+  "all" | "downloading" | "seeding" | "paused" | "error";
 
 // Sort column display labels
 export const SORT_COLUMN_LABELS: Record<TorrentSortColumn, string> = {

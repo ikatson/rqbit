@@ -91,7 +91,7 @@ const streamLogs = (
 
       buffer = mergeBuffers(buffer, value);
 
-      for (let newLineIdx: number; (newLineIdx = buffer.indexOf(10)) !== -1; ) {
+      for (let newLineIdx: number; (newLineIdx = buffer.indexOf(10)) !== -1;) {
         let lineBytes = buffer.slice(0, newLineIdx);
         let line = new TextDecoder().decode(lineBytes);
         addLine(line);
