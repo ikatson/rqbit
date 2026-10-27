@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     str::{FromStr, from_utf8},
     sync::{
@@ -66,7 +66,11 @@ struct LocalServiceDiscoveryInner {
     socket: MulticastUdpSocket,
     cookie: u32,
     cancel_token: CancellationToken,
-    receivers: RwLock<HashMap<Id20, Announce>>,
+    // Keyed by (info_hash, registration id), as a torrent can have more than
+    // one stream at a time, e.g. when it's restarted before its previous
+    // stream is dropped.
+    receivers: RwLock<BTreeMap<(Id20, u64), Announce>>,
+    next_receiver_id: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -99,6 +103,7 @@ impl LocalServiceDiscovery {
                 cookie,
                 cancel_token: opts.cancel_token.clone(),
                 receivers: Default::default(),
+                next_receiver_id: AtomicU64::new(0),
             }),
         };
 
@@ -133,6 +138,11 @@ cookie: {cookie}\r
     }
 
     async fn recv_and_process_one(&self, buf: &mut [u8]) -> anyhow::Result<()> {
+        let (sz, addr) = self.inner.socket.recv_from(buf).await?;
+        self.process_one(&buf[..sz], addr).await
+    }
+
+    async fn process_one(&self, buf: &[u8], addr: SocketAddr) -> anyhow::Result<()> {
         macro_rules! return_if_none {
             ($e:expr) => {
                 return_if_none!($e, ())
@@ -150,8 +160,7 @@ cookie: {cookie}\r
 
         let mut headers = [httparse::EMPTY_HEADER; 16];
 
-        let (sz, addr) = self.inner.socket.recv_from(buf).await?;
-        let buf = bstr::BStr::new(&buf[..sz]);
+        let buf = bstr::BStr::new(buf);
 
         let bts = return_if_none!(
             try_parse_bt_search(buf, &mut headers)
@@ -168,13 +177,21 @@ cookie: {cookie}\r
 
         let announce_port = {
             let g = self.inner.receivers.read();
-            let announce = return_if_none!(g.get(&bts.hash));
             let mut addr = addr;
             addr.set_port(bts.port);
 
-            return_if_none!(announce.tx.send(addr).ok());
-
-            let announce_port = return_if_none!(announce.port);
+            // Every stream of the torrent gets the peer, and the oldest one
+            // that announces replies.
+            let mut replier = None;
+            for announce in g
+                .range((bts.hash, 0)..=(bts.hash, u64::MAX))
+                .map(|(_, a)| a)
+            {
+                // Can't fail: AddrStream unregisters before dropping the receiver.
+                announce.tx.send(addr).unwrap();
+                replier = replier.or_else(|| announce.port.map(|port| (announce, port)));
+            }
+            let (announce, announce_port) = return_if_none!(replier);
 
             let rl = if addr.is_ipv4() {
                 &announce.last_reply_ipv4
@@ -240,7 +257,7 @@ cookie: {cookie}\r
         let (tx, rx) = unbounded_channel::<SocketAddr>();
 
         struct AddrStream {
-            info_hash: Id20,
+            key: (Id20, u64),
             rx: UnboundedReceiver<SocketAddr>,
             lsd: LocalServiceDiscovery,
         }
@@ -258,12 +275,16 @@ cookie: {cookie}\r
 
         impl Drop for AddrStream {
             fn drop(&mut self) {
-                let _ = self.lsd.inner.receivers.write().remove(&self.info_hash);
+                let _ = self.lsd.inner.receivers.write().remove(&self.key);
             }
         }
 
-        self.inner.receivers.write().insert(
+        let key = (
             info_hash,
+            self.inner.next_receiver_id.fetch_add(1, Ordering::Relaxed),
+        );
+        self.inner.receivers.write().insert(
+            key,
             Announce {
                 tx,
                 port: announce_port,
@@ -284,7 +305,7 @@ cookie: {cookie}\r
         }
 
         AddrStream {
-            info_hash,
+            key,
             rx,
             lsd: self.clone(),
         }
@@ -345,5 +366,49 @@ fn try_parse_bt_search<'a: 'h, 'h>(
             }
         }
         _ => anyhow::bail!("expecting BT-SEARCH"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt;
+
+    use super::*;
+
+    fn bt_search(info_hash: Id20, port: u16) -> String {
+        let info_hash = info_hash.as_string();
+        format!(
+            "BT-SEARCH * HTTP/1.1\r\nHost: {LSD_IPV4}\r\nPort: {port}\r\nInfohash: {info_hash}\r\n\r\n\r\n"
+        )
+    }
+
+    #[tokio::test]
+    async fn test_streams_of_one_torrent_dont_interfere() {
+        let cancel_token = CancellationToken::new();
+        let _cancel_on_exit = cancel_token.clone().drop_guard();
+        let lsd = LocalServiceDiscovery::new(LocalServiceDiscoveryOptions {
+            cancel_token,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let info_hash = Id20::new([1; 20]);
+        let msg = bt_search(info_hash, 5000);
+        let from: SocketAddr = "192.168.1.2:6771".parse().unwrap();
+        let peer: SocketAddr = "192.168.1.2:5000".parse().unwrap();
+
+        // No announce port, so nothing is sent to the network.
+        let mut old = lsd.announce(info_hash, None);
+        let mut new = lsd.announce(info_hash, None);
+
+        lsd.process_one(msg.as_bytes(), from).await.unwrap();
+        assert_eq!(old.next().await, Some(peer));
+        assert_eq!(new.next().await, Some(peer));
+
+        // As when a torrent is restarted before its previous stream is dropped.
+        drop(old);
+        lsd.process_one(msg.as_bytes(), from).await.unwrap();
+        assert_eq!(new.next().await, Some(peer));
     }
 }
