@@ -187,6 +187,12 @@ struct Opts {
     #[arg(long = "announce-port", env = "RQBIT_ANNOUNCE_PORT")]
     announce_port: Option<u16>,
 
+    /// The IP to advertise to trackers, for when rqbit is behind NAT or a proxy.
+    ///
+    /// Trackers may ignore it. UDP trackers only accept IPv4.
+    #[arg(long = "announce-ip", env = "RQBIT_ANNOUNCE_IP")]
+    announce_ip: Option<IpAddr>,
+
     /// What's the IP to listen on. Default is to listen on all interfaces on IPv4 and IPv6.
     #[arg(long = "listen-ip", default_value = "::", env = "RQBIT_LISTEN_IP")]
     listen_ip: IpAddr,
@@ -619,6 +625,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         listen_addr: (opts.listen_ip, opts.listen_port.unwrap_or(0)).into(),
         enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
         announce_port: opts.announce_port,
+        announce_ip: opts.announce_ip,
         ipv4_only: opts.ipv4_only,
         ..Default::default()
     });

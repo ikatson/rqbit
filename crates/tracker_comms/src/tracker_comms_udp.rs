@@ -43,6 +43,7 @@ pub struct AnnounceFields {
     pub event: u32,
     pub key: u32,
     pub port: u16,
+    pub ip: Option<Ipv4Addr>,
 }
 
 #[derive(Debug)]
@@ -90,7 +91,7 @@ impl Request {
                 w.extend_from_slice(&fields.left.to_be_bytes())?;
                 w.extend_from_slice(&fields.uploaded.to_be_bytes())?;
                 w.extend_from_slice(&fields.event.to_be_bytes())?;
-                w.extend_from_slice(&0u32.to_be_bytes())?; // ip address 0
+                w.extend_from_slice(&fields.ip.map_or(0, u32::from).to_be_bytes())?; // ip address, 0 = sender
                 w.extend_from_slice(&fields.key.to_be_bytes())?;
                 w.extend_from_slice(&(-1i32).to_be_bytes())?; // num want -1
                 w.extend_from_slice(&fields.port.to_be_bytes())?;
@@ -434,6 +435,35 @@ mod tests {
         dbg!(tid, response);
     }
 
+    #[test]
+    fn test_serialize_announce_ip() {
+        let serialize_ip = |ip| {
+            let request = Request::Announce(
+                0,
+                AnnounceFields {
+                    info_hash: Id20::default(),
+                    peer_id: Id20::default(),
+                    downloaded: 0,
+                    left: 0,
+                    uploaded: 0,
+                    event: EVENT_NONE,
+                    key: 0,
+                    port: 6881,
+                    ip,
+                },
+            );
+            let mut buf = [0u8; 98];
+            assert_eq!(request.serialize(0, &mut buf).unwrap(), 98);
+            // BEP 15: the IP address sits at offset 84
+            <[u8; 4]>::try_from(&buf[84..88]).unwrap()
+        };
+        assert_eq!(serialize_ip(None), [0, 0, 0, 0]);
+        assert_eq!(
+            serialize_ip(Some([203, 0, 113, 7].into())),
+            [203, 0, 113, 7]
+        );
+    }
+
     #[ignore]
     #[tokio::test]
     async fn test_announce() {
@@ -473,6 +503,7 @@ mod tests {
                 event: EVENT_NONE,
                 key: 0, // whatever that is?
                 port: 24563,
+                ip: None,
             },
         );
         let size = request.serialize(tid, &mut write_buf).unwrap();
