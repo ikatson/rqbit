@@ -1,5 +1,5 @@
 use std::{
-    net::{Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
@@ -18,6 +18,7 @@ pub(crate) struct ListenResult {
     pub enable_upnp_port_forwarding: bool,
     pub addr: SocketAddr,
     pub announce_port: Option<u16>,
+    pub announce_ip: Option<IpAddr>,
     pub max_pending_incoming_handshake_checks: usize,
 }
 
@@ -55,6 +56,7 @@ pub struct ListenerOptions {
     pub enable_upnp_port_forwarding: bool,
     pub utp_opts: Option<librqbit_utp::SocketOpts>,
     pub announce_port: Option<u16>,
+    pub announce_ip: Option<IpAddr>,
     pub ipv4_only: bool,
     pub max_pending_incoming_handshake_checks: usize,
 }
@@ -68,6 +70,7 @@ impl Default for ListenerOptions {
             enable_upnp_port_forwarding: false,
             utp_opts: None,
             announce_port: None,
+            announce_ip: None,
             ipv4_only: false,
             max_pending_incoming_handshake_checks: DEFAULT_MAX_PENDING_INCOMING_HANDSHAKE_CHECKS,
         }
@@ -157,6 +160,7 @@ impl ListenerOptions {
             tcp_socket,
             utp_socket,
             announce_port,
+            announce_ip: self.announce_ip,
             addr: listen_addr,
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
             max_pending_incoming_handshake_checks: self.max_pending_incoming_handshake_checks,
