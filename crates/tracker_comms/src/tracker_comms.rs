@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::net::SocketAddrV6;
@@ -34,6 +35,7 @@ pub struct TrackerComms {
     tx: Sender,
     // This MUST be set as trackers don't work with 0 port.
     announce_port: u16,
+    announce_ip: Option<IpAddr>,
     reqwest_client: reqwest::Client,
     key: u32,
 }
@@ -147,6 +149,7 @@ impl TrackerComms {
         stats: Box<dyn TorrentStatsProvider>,
         force_interval: Option<Duration>,
         announce_port: u16,
+        announce_ip: Option<IpAddr>,
         reqwest_client: reqwest::Client,
         udp_client: UdpTrackerClient,
     ) -> Option<BoxStream<'static, SocketAddr>> {
@@ -179,6 +182,7 @@ impl TrackerComms {
                 force_tracker_interval: force_interval,
                 tx,
                 announce_port,
+                announce_ip,
                 reqwest_client,
                 key: rand::random(),
             });
@@ -276,7 +280,7 @@ impl TrackerComms {
             compact: true,
             no_peer_id: false,
             event,
-            ip: None,
+            ip: self.announce_ip,
             numwant: None,
             key: Some(self.key),
             trackerid: None,
@@ -417,6 +421,10 @@ impl TrackerComms {
             },
             key: self.key,
             port: self.announce_port,
+            ip: match self.announce_ip.map(|ip| ip.to_canonical()) {
+                Some(IpAddr::V4(ip)) => Some(ip),
+                _ => None,
+            },
         };
 
         match client.announce(addr, request).await {
