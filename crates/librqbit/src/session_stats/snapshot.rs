@@ -94,7 +94,38 @@ impl SessionStatsSnapshot {
         m!(gauge, rqbit_peers_dead, self.peers.dead);
         m!(gauge, rqbit_peers_not_needed, self.peers.not_needed);
         m!(gauge, rqbit_peers_queued, self.peers.queued);
-        m!(gauge, rqbit_peers_queued, self.peers.seen);
+        m!(gauge, rqbit_peers_seen, self.peers.seen);
         m!(gauge, rqbit_peers_steals, self.peers.steals);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::SessionStatsSnapshot;
+
+    #[test]
+    fn test_prometheus_metric_names_are_unique() {
+        let snapshot = SessionStatsSnapshot {
+            counters: Default::default(),
+            download_speed: Default::default(),
+            upload_speed: Default::default(),
+            peers: Default::default(),
+            uptime_seconds: 0,
+            connections: Default::default(),
+        };
+        let mut out = String::new();
+        snapshot.as_prometheus(&mut out);
+
+        let mut seen = HashSet::new();
+        for name in out
+            .lines()
+            .filter_map(|l| l.strip_prefix("# TYPE "))
+            .filter_map(|l| l.split_whitespace().next())
+        {
+            assert!(seen.insert(name), "duplicate metric {name} in:\n{out}");
+        }
+        assert!(seen.contains("rqbit_peers_seen"));
     }
 }
