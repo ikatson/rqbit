@@ -1429,6 +1429,8 @@ impl PeerHandler {
             return Ok(None);
         }
 
+        let urgent_pieces = self.state.streams.current_pieces(&self.state.lengths);
+
         // Steal info to process after releasing the peer lock
         let mut steal_info: Option<(SocketAddr, ValidPieceIndex)> = None;
 
@@ -1450,6 +1452,7 @@ impl PeerHandler {
                     peer: self.addr,
                     peer_avg_time: self.counters.average_piece_download_time(),
                     priority_pieces: self.state.streams.iter_next_pieces(&self.state.lengths),
+                    urgent_pieces: &urgent_pieces,
                     file_priorities,
                     file_infos: &self.state.metadata.file_infos,
                     peer_has_piece: |p| bf.get(p.get() as usize).map(|v| *v) == Some(true),
@@ -1697,7 +1700,18 @@ impl PeerHandler {
                 }
             };
 
-            for chunk in self.state.lengths.iter_chunk_infos(next) {
+            // Some chunks may be downloaded already, if the piece was stolen.
+            let chunks: Vec<_> = {
+                let g = self.state.lock_read("missing chunks");
+                let ct = g.get_chunks()?;
+                self.state
+                    .lengths
+                    .iter_chunk_infos(next)
+                    .filter(|c| !ct.is_chunk_downloaded(c))
+                    .collect()
+            };
+
+            for chunk in chunks {
                 let request = Request {
                     index: next.get(),
                     begin: chunk.offset,
@@ -1724,10 +1738,19 @@ impl PeerHandler {
                     .state
                     .peers
                     .with_live_mut(handle, "add chunk request", |live| {
-                        live.add_inflight_request(chunk)
+                        // Under the peer lock, so that whoever takes the piece from us
+                        // afterwards cancels this request too.
+                        let owned = self
+                            .state
+                            .lock_read("check piece owner")
+                            .get_pieces()
+                            .is_ok_and(|p| p.get_inflight(next).is_some_and(|i| i.peer == handle));
+                        owned.then(|| live.add_inflight_request(chunk))
                     }) {
-                    Some(true) => {}
-                    Some(false) => {
+                    Some(Some(true)) => {}
+                    // The piece was stolen, so its other chunks aren't ours to request.
+                    Some(None) => break,
+                    Some(Some(false)) => {
                         // This request was already in-flight for this peer for this chunk.
                         // This might happen in theory, but not very likely.
                         //
