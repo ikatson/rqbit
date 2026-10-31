@@ -8,6 +8,8 @@ use std::{
 
 use backon::{BackoffBuilder, ExponentialBackoff, ExponentialBuilder};
 
+use crate::PeerBackoffConfig;
+
 #[derive(Default, Debug)]
 pub(crate) struct PeerCountersAtomic {
     pub fetched_bytes: AtomicU64,
@@ -49,13 +51,13 @@ impl PeerCountersAtomic {
     }
 }
 
-fn backoff() -> ExponentialBackoff {
+fn backoff(config: &PeerBackoffConfig) -> ExponentialBackoff {
     ExponentialBuilder::new()
-        .with_min_delay(Duration::from_secs(10))
-        .with_factor(6.)
+        .with_min_delay(config.min_delay)
+        .with_factor(config.factor)
         .with_jitter()
-        .with_max_delay(Duration::from_secs(3600))
-        .with_total_delay(Some(Duration::from_secs(86400)))
+        .with_max_delay(config.max_delay)
+        .with_total_delay(config.total_delay)
         .without_max_times()
         .build()
 }
@@ -64,19 +66,87 @@ fn backoff() -> ExponentialBackoff {
 pub(crate) struct PeerStats {
     pub counters: Arc<PeerCountersAtomic>,
     pub backoff: ExponentialBackoff,
+    backoff_config: PeerBackoffConfig,
 }
 
 impl Default for PeerStats {
     fn default() -> Self {
-        Self {
-            counters: Arc::new(Default::default()),
-            backoff: backoff(),
-        }
+        Self::new(PeerBackoffConfig::default())
     }
 }
 
 impl PeerStats {
+    pub fn new(backoff_config: PeerBackoffConfig) -> Self {
+        Self {
+            counters: Arc::new(Default::default()),
+            backoff: backoff(&backoff_config),
+            backoff_config,
+        }
+    }
+
     pub fn reset_backoff(&mut self) {
-        self.backoff = backoff();
+        self.backoff = backoff(&self.backoff_config);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn secs(s: u64) -> Duration {
+        Duration::from_secs(s)
+    }
+
+    // The jitter adds up to 100% of the delay.
+    fn assert_in(d: Option<Duration>, min: Duration) {
+        let d = d.expect("backoff ended");
+        assert!(
+            d >= min && d <= min * 2,
+            "{d:?} not in [{min:?}, {:?}]",
+            min * 2
+        );
+    }
+
+    #[test]
+    fn default_config_is_the_historic_schedule() {
+        let mut stats = PeerStats::default();
+        assert_in(stats.backoff.next(), secs(10));
+        assert_in(stats.backoff.next(), secs(60));
+        assert_in(stats.backoff.next(), secs(360));
+    }
+
+    #[test]
+    fn configured_backoff_is_used_and_reset() {
+        let mut stats = PeerStats::new(PeerBackoffConfig {
+            min_delay: Duration::from_millis(100),
+            factor: 2.,
+            max_delay: Duration::from_millis(300),
+            total_delay: Some(Duration::from_secs(60)),
+        });
+        assert_in(stats.backoff.next(), Duration::from_millis(100));
+        assert_in(stats.backoff.next(), Duration::from_millis(200));
+        // Capped by max_delay.
+        assert_in(stats.backoff.next(), Duration::from_millis(300));
+        assert_in(stats.backoff.next(), Duration::from_millis(300));
+        stats.reset_backoff();
+        assert_in(stats.backoff.next(), Duration::from_millis(100));
+    }
+
+    #[test]
+    fn total_delay_ends_the_backoff() {
+        let mut stats = PeerStats::new(PeerBackoffConfig {
+            min_delay: secs(1),
+            factor: 1.,
+            max_delay: secs(1),
+            total_delay: Some(secs(5)),
+        });
+        let mut n = 0;
+        while stats.backoff.next().is_some() {
+            n += 1;
+            assert!(n < 100, "never ends");
+        }
+        assert!(n >= 1);
     }
 }
