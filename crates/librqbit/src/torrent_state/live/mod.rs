@@ -1229,18 +1229,12 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         self.state.get_approx_have_bytes() > 0
     }
 
-    fn should_transmit_have(&self, id: ValidPieceIndex) -> bool {
-        if self.state.shared.options.disable_upload() {
-            return false;
-        }
-        let have = self
-            .state
-            .peers
-            .with_live(self.addr, |l| {
-                l.bitfield.get(id.get_usize()).map(|p| *p).unwrap_or(true)
-            })
-            .unwrap_or(true);
-        !have
+    fn should_transmit_have(&self, _id: ValidPieceIndex) -> bool {
+        // Announce every completed piece, also one the peer's bitfield already claims. Leaving
+        // such HAVEs out makes us look like a peer that doesn't report its progress, which
+        // anti-leech tools (e.g. PeerBanHelper's ProgressCheatBlocker) take as a cheating
+        // client and ban.
+        !self.state.shared.options.disable_upload()
     }
 
     fn update_my_extended_handshake(
