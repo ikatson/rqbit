@@ -488,6 +488,7 @@ impl TorrentStateLive {
             tx,
             counters,
             first_message_received: AtomicBool::new(false),
+            data_received: AtomicBool::new(false),
             cancel_token: self.cancellation_token.child_token(),
             client_name_and_version: self.shared.client_name_and_version().to_owned(),
         };
@@ -552,6 +553,7 @@ impl TorrentStateLive {
             tx,
             counters,
             first_message_received: AtomicBool::new(false),
+            data_received: AtomicBool::new(false),
             cancel_token: state.cancellation_token.child_token(),
             client_name_and_version: state.shared.client_name_and_version().to_owned(),
         };
@@ -1041,6 +1043,9 @@ struct PeerHandler {
     tx: PeerTx,
 
     first_message_received: AtomicBool,
+    // Set when this connection delivered its first chunk; resets the
+    // reconnect backoff once per connection (not only on a whole piece).
+    data_received: AtomicBool,
 
     cancel_token: CancellationToken,
 
@@ -1796,6 +1801,9 @@ impl PeerHandler {
             .fetched_bytes
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
+        if !self.data_received.swap(true, Ordering::Relaxed) {
+            self.state.peers.reset_peer_backoff(self.addr);
+        }
 
         let should_process = self
             .state
