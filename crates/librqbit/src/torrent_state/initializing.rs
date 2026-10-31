@@ -195,36 +195,61 @@ impl TorrentStateInitializing {
             .context("session is dead")?
             .bitv_factory
             .clone();
-        let have_pieces = if self.previously_errored {
-            if let Err(e) = bitv_factory.clear(id).await {
-                warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
-            }
-            None
-        } else {
+        let have_pieces = if self.files.externally_populated() {
+            anyhow::ensure!(
+                self.only_files
+                    .as_ref()
+                    .is_some_and(|files| files.is_empty()),
+                "externally populated storage requires no selected downloads"
+            );
+            // Never trust persisted HAVE bits: external data may have changed since
+            // the last session. Each piece must be explicitly verified again.
+            info!("Starting externally populated storage with no verified pieces");
             bitv_factory
-                .load(id)
+                .store_initial_check(
+                    id,
+                    BF::from_boxed_slice(
+                        vec![0; self.metadata.lengths().piece_bitfield_bytes()].into_boxed_slice(),
+                    ),
+                )
                 .await
-                .context("error loading have_pieces")?
-        };
-
-        let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
-
-        let have_pieces = match have_pieces {
-            Some(h) => h,
-            None => {
-                info!("Doing initial checksum validation, this might take a while...");
-                let have_pieces = self
-                    .shared
-                    .spawner
-                    .block_in_place_with_semaphore(|| {
-                        FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
-                            .initial_check(&self.checked_bytes, &self.pause_requested)
-                    })
-                    .await?;
+                .context("error storing empty bitfield")?
+        } else {
+            let have_pieces = if self.previously_errored {
+                if let Err(e) = bitv_factory.clear(id).await {
+                    warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
+                }
+                None
+            } else {
                 bitv_factory
-                    .store_initial_check(id, have_pieces)
+                    .load(id)
                     .await
-                    .context("error storing initial check bitfield")?
+                    .context("error loading have_pieces")?
+            };
+
+            let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
+
+            match have_pieces {
+                Some(h) => h,
+                None => {
+                    info!("Doing initial checksum validation, this might take a while...");
+                    let have_pieces = self
+                        .shared
+                        .spawner
+                        .block_in_place_with_semaphore(|| {
+                            FileOps::new(
+                                &self.metadata.info,
+                                &self.files,
+                                &self.metadata.file_infos,
+                            )
+                            .initial_check(&self.checked_bytes, &self.pause_requested)
+                        })
+                        .await?;
+                    bitv_factory
+                        .store_initial_check(id, have_pieces)
+                        .await
+                        .context("error storing initial check bitfield")?
+                }
             }
         };
 

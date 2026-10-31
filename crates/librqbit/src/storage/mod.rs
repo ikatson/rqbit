@@ -130,6 +130,22 @@ impl<U: StorageFactory + ?Sized> StorageFactory for Box<U> {
 }
 
 pub trait TorrentStorage: Send + Sync {
+    /// Whether torrent data is populated externally, for seed-only use.
+    ///
+    /// Opting in requires `AddTorrentOptions::only_files` to be `Some(vec![])`;
+    /// selecting downloads, including through later file-selection updates, is rejected.
+    /// Initialization performs no data reads and starts with an empty HAVE bitmap,
+    /// ignoring fast-resume data. Use
+    /// [`TorrentStateLive::recheck_external_piece`](crate::TorrentStateLive::recheck_external_piece)
+    /// to hash-check each available piece before advertising it to peers.
+    ///
+    /// This value must remain constant for the lifetime of the storage. Once a piece
+    /// has been verified, its bytes must remain available and unchanged while seeding.
+    /// The default preserves normal initialization and downloading behavior.
+    fn externally_populated(&self) -> bool {
+        false
+    }
+
     // Create/open files etc.
     fn init(
         &mut self,
@@ -183,6 +199,10 @@ pub trait TorrentStorage: Send + Sync {
 }
 
 impl<U: TorrentStorage + ?Sized> TorrentStorage for Box<U> {
+    fn externally_populated(&self) -> bool {
+        (**self).externally_populated()
+    }
+
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         (**self).pread_exact(file_id, offset, buf)
     }

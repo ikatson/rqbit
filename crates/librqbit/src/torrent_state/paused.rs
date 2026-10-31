@@ -17,6 +17,10 @@ pub struct TorrentStatePaused {
 
 impl TorrentStatePaused {
     pub(crate) fn update_only_files(&mut self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.files.externally_populated() || only_files.is_empty(),
+            "externally populated storage requires no selected downloads"
+        );
         self.chunk_tracker
             .update_only_files(&self.metadata.file_infos, only_files)?;
         Ok(())

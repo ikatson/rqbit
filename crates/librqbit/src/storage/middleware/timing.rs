@@ -66,6 +66,10 @@ macro_rules! timeit {
 }
 
 impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
+    fn externally_populated(&self) -> bool {
+        self.underlying.externally_populated()
+    }
+
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let storage = &self.name;
         let len = buf.len();

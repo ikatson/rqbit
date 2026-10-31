@@ -703,6 +703,65 @@ impl TorrentStateLive {
         });
     }
 
+    /// Verify and advertise one piece from externally populated seed-only storage.
+    ///
+    /// Obtain this state through [`ManagedTorrent::live`](crate::ManagedTorrent::live).
+    /// Reads the piece synchronously through storage and verifies its hash before
+    /// setting HAVE, updating file progress and notifying connected peers. Call from
+    /// a blocking context if storage reads may block.
+    ///
+    /// Returns `true` if the piece was newly verified, or `false` if it was already
+    /// HAVE (without reading it again). Returns an error for an invalid index,
+    /// inactive live state, ordinary storage, selected downloads, a read failure or
+    /// a hash mismatch. Failed verification does not mark the piece HAVE.
+    /// Verified bytes must remain available and unchanged for subsequent uploads.
+    pub fn recheck_external_piece(&self, index: u32) -> anyhow::Result<bool> {
+        anyhow::ensure!(
+            self.files.externally_populated(),
+            "storage is not externally populated"
+        );
+        let id = self.lengths.try_validate_piece_index(index)?;
+        {
+            let g = self.lock_read("external_piece");
+            let chunks = g.get_chunks().context("torrent is not live")?;
+            anyhow::ensure!(
+                !chunks.get_selected_pieces().any(),
+                "externally populated storage requires no selected downloads"
+            );
+            if chunks.is_piece_have(id) {
+                return Ok(false);
+            }
+        }
+        anyhow::ensure!(
+            !cfg!(feature = "_disable_disk_write_net_benchmark"),
+            "external piece verification requires disk hash checks"
+        );
+        anyhow::ensure!(
+            self.file_ops().check_piece(id)?,
+            "piece {index} hash mismatch"
+        );
+        let mut g = self.lock_write("external_piece");
+        if g.get_chunks()
+            .context("torrent is not live")?
+            .is_piece_have(id)
+        {
+            return Ok(false);
+        }
+        g.get_pieces_mut()?.mark_piece_hash_ok(id);
+        self.stats
+            .have_bytes
+            .fetch_add(self.lengths.piece_length(id) as u64, Ordering::Relaxed);
+        // Keep HAVE and file accounting together: pausing can move the tracker
+        // to a different live state as soon as this lock is released.
+        self.on_piece_completed_locked(id, g)?;
+        if let Err(e) = self.files.on_piece_completed(id) {
+            debug!(?id, "file storage errored in on_piece_completed(): {e:#}");
+        }
+        debug!(piece = index, "verified externally populated piece");
+        self.transmit_haves(id);
+        Ok(true)
+    }
+
     pub fn get_uploaded_bytes(&self) -> u64 {
         self.stats.uploaded_bytes.load(Ordering::Relaxed)
     }
@@ -810,6 +869,10 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.files.externally_populated() || only_files.is_empty(),
+            "externally populated storage requires no selected downloads"
+        );
         let hns = self
             .lock_write("update_only_files")
             .get_pieces_mut()?
@@ -851,7 +914,14 @@ impl TorrentStateLive {
         if let Err(e) = self.files.on_piece_completed(id) {
             debug!(?id, "file storage errored in on_piece_completed(): {e:#}");
         }
-        let mut g = self.lock_write("on_piece_completed");
+        self.on_piece_completed_locked(id, self.lock_write("on_piece_completed"))
+    }
+
+    fn on_piece_completed_locked(
+        &self,
+        id: ValidPieceIndex,
+        mut g: TimedExistence<RwLockWriteGuard<'_, TorrentStateLocked>>,
+    ) -> anyhow::Result<()> {
         let locked = &mut **g;
         let pieces = locked.get_pieces_mut()?;
 
@@ -1237,7 +1307,9 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             .state
             .peers
             .with_live(self.addr, |l| {
-                l.bitfield.get(id.get_usize()).map(|p| *p).unwrap_or(true)
+                // Peers with no pieces may omit the initial bitfield. They still
+                // need HAVE messages when pieces become available.
+                l.bitfield.get(id.get_usize()).map(|p| *p).unwrap_or(false)
             })
             .unwrap_or(true);
         !have
@@ -1648,7 +1720,10 @@ impl PeerHandler {
         loop {
             // If we have full torrent, we don't need to request more pieces.
             // However we might still need to seed them to the peer.
-            if self.state.is_finished_and_no_active_streams() {
+            // External storage remains seed-only even when a stream waits for data.
+            if self.state.files.externally_populated()
+                || self.state.is_finished_and_no_active_streams()
+            {
                 update_interest(self, false)?;
                 if self
                     .state

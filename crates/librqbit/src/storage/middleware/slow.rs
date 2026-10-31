@@ -96,6 +96,10 @@ fn sleep_from_reader(r: &Mutex<Box<dyn Iterator<Item = u64> + Send + Sync>>) {
 }
 
 impl<U: TorrentStorage> TorrentStorage for SlowStorage<U> {
+    fn externally_populated(&self) -> bool {
+        self.underlying.externally_populated()
+    }
+
     fn pread_exact(&self, file_id: usize, offset: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         sleep_from_reader(&self.pread_exact_bufread);
         self.underlying.pread_exact(file_id, offset, buf)
