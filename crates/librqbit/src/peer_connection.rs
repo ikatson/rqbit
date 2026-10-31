@@ -82,6 +82,12 @@ pub struct PeerConnectionOptions {
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub handshake_timeout: Option<Duration>,
 
+    /// The most outgoing connections a torrent starts per second (`0` counts as `1`). `None`
+    /// (the default) starts them as fast as the peer limit allows. Bounds the burst of
+    /// connection attempts a big peer list (a tracker announce, DHT) otherwise causes, which can
+    /// exhaust the connection tracking of small routers.
+    pub connect_rate: Option<u32>,
+
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub keep_alive_interval: Option<Duration>,
 

@@ -1045,6 +1045,7 @@ impl Session {
                 .read_write_timeout
                 .or(self.peer_opts.read_write_timeout),
             handshake_timeout: other.handshake_timeout.or(self.peer_opts.handshake_timeout),
+            connect_rate: other.connect_rate.or(self.peer_opts.connect_rate),
             keep_alive_interval: other
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
@@ -1367,6 +1368,7 @@ impl Session {
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     peer_handshake_timeout: peer_opts.handshake_timeout,
+                    connect_rate: peer_opts.connect_rate,
                     peer_max_request_window: peer_opts.max_request_window,
                     allow_overwrite: opts.overwrite,
                     output_folder,
