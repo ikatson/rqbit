@@ -27,7 +27,9 @@ default-tls = [
 ]
 miri = []
 prometheus = ["metrics-exporter-prometheus"]
-rust-tls = ["reqwest/rustls", "sha1w/sha1-ring", "librqbit-core/sha1-ring"]
+# `webpki-root-certs` is only compiled on Android (target-specific optional dep):
+# see src/http_client.rs for why Android cannot use rustls-platform-verifier.
+rust-tls = ["reqwest/rustls", "sha1w/sha1-ring", "librqbit-core/sha1-ring", "dep:webpki-root-certs"]
 storage_middleware = ["lru"]
 storage_examples = []
 tracing-subscriber-utils = ["tracing-subscriber"]
@@ -113,6 +115,9 @@ thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32", "Win32_System", "Win32_System_IO", "Win32_System_Ioctl"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-root-certs = { version = "1", optional = true }
 
 [build-dependencies]
 anyhow.workspace = true
