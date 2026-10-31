@@ -26,7 +26,7 @@ use tokio::{
 
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
-    Session, SessionOptions, create_torrent,
+    PeerConnectionOptions, Session, SessionOptions, create_torrent,
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
     tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging},
@@ -322,6 +322,7 @@ impl Fixture {
 #[derive(Default)]
 pub(super) struct SeederOpts {
     pub(super) upload_bps: Option<u32>,
+    pub(super) peer_opts: Option<PeerConnectionOptions>,
 }
 
 fn loopback_listener() -> ListenerOptions {
@@ -359,6 +360,10 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
                 upload_bps: opts.upload_bps.and_then(NonZeroU32::new),
                 download_bps: None,
             },
+            connect: opts.peer_opts.map(|peer_opts| ConnectionOptions {
+                peer_opts: Some(peer_opts),
+                ..Default::default()
+            }),
             ..Default::default()
         },
     )
@@ -396,6 +401,7 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
 pub(super) struct ClientOpts {
     pub(super) listen: bool,
     pub(super) initial_peers: Vec<SocketAddr>,
+    pub(super) peer_opts: Option<PeerConnectionOptions>,
 }
 
 /// A client downloading the torrent of `seed` into an empty folder.
@@ -407,7 +413,10 @@ pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Re
             dht: None,
             persistence: None,
             listen: opts.listen.then(loopback_listener),
-            connect: Some(ConnectionOptions::default()),
+            connect: Some(ConnectionOptions {
+                peer_opts: opts.peer_opts,
+                ..Default::default()
+            }),
             ipv4_only: true,
             disable_local_service_discovery: true,
             ..Default::default()

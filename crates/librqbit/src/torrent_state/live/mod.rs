@@ -495,6 +495,7 @@ impl TorrentStateLive {
         let options = PeerConnectionOptions {
             connect_timeout: self.shared.options.peer_connect_timeout,
             read_write_timeout: self.shared.options.peer_read_write_timeout,
+            handshake_timeout: self.shared.options.peer_handshake_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
@@ -560,6 +561,7 @@ impl TorrentStateLive {
         let options = PeerConnectionOptions {
             connect_timeout: state.shared.options.peer_connect_timeout,
             read_write_timeout: state.shared.options.peer_read_write_timeout,
+            handshake_timeout: state.shared.options.peer_handshake_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(

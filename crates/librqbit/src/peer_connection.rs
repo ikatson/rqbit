@@ -75,6 +75,13 @@ pub struct PeerConnectionOptions {
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub read_write_timeout: Option<Duration>,
 
+    /// How long to wait for the peer's BitTorrent handshake, when we dial it and when it dials
+    /// us. Defaults to `read_write_timeout`. A stalled handshake holds a peer slot
+    /// (`peer_limit`) until it times out, so this can be much shorter than the timeout of
+    /// regular messages.
+    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
+    pub handshake_timeout: Option<Duration>,
+
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub keep_alive_interval: Option<Duration>,
 
@@ -223,6 +230,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .connect_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
+        // How long the peer has to answer our handshake; the read/write timeout unless set.
+        let handshake_timeout = self.options.handshake_timeout.unwrap_or(rwtimeout);
+
         let now = Instant::now();
         let (ckind, mut read, mut write) = with_timeout(
             "connecting",
@@ -247,7 +257,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .await?;
 
             let mut read_buf = ReadBuf::new();
-            let h = read_buf.read_handshake(&mut read, rwtimeout).await?;
+            let h = read_buf
+                .read_handshake(&mut read, handshake_timeout)
+                .await?;
             let handshake_supports_extended = h.supports_extended();
             trace!(
                 peer_id=?h.peer_id,

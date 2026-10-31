@@ -919,6 +919,8 @@ impl Session {
             .peer_opts
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
+        // The same as for the peers we dial: the read/write timeout unless set.
+        let handshake_timeout = self.peer_opts.handshake_timeout.unwrap_or(rwtimeout);
 
         let incoming_ip = addr.ip();
         if self.blocklist.has(incoming_ip) {
@@ -938,7 +940,7 @@ impl Session {
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf
-            .read_handshake(&mut reader, rwtimeout)
+            .read_handshake(&mut reader, handshake_timeout)
             .await
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
@@ -1042,6 +1044,7 @@ impl Session {
             read_write_timeout: other
                 .read_write_timeout
                 .or(self.peer_opts.read_write_timeout),
+            handshake_timeout: other.handshake_timeout.or(self.peer_opts.handshake_timeout),
             keep_alive_interval: other
                 .keep_alive_interval
                 .or(self.peer_opts.keep_alive_interval),
@@ -1363,6 +1366,7 @@ impl Session {
                     force_tracker_interval: opts.force_tracker_interval,
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
+                    peer_handshake_timeout: peer_opts.handshake_timeout,
                     peer_max_request_window: peer_opts.max_request_window,
                     allow_overwrite: opts.overwrite,
                     output_folder,
