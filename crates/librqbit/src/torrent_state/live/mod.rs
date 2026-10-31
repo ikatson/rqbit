@@ -97,6 +97,7 @@ use crate::{
     stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
     type_aliases::{BF, FilePriorities, FileStorage, PeerHandle},
+    upload_gate::{UploadGate, UploadRequest, block_key},
 };
 
 use self::{
@@ -209,10 +210,7 @@ pub struct TorrentStateLive {
     pub(crate) streams: Arc<TorrentStreams>,
     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
 
-    ratelimit_upload_tx: tokio::sync::mpsc::UnboundedSender<(
-        tokio::sync::mpsc::UnboundedSender<WriterRequest>,
-        ChunkInfo,
-    )>,
+    ratelimit_upload_tx: UnboundedSender<UploadRequest>,
     ratelimits: Limits,
 }
 
@@ -259,10 +257,7 @@ impl TorrentStateLive {
 
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
-        let (ratelimit_upload_tx, ratelimit_upload_rx) = tokio::sync::mpsc::unbounded_channel::<(
-            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
-            ChunkInfo,
-        )>();
+        let (ratelimit_upload_tx, ratelimit_upload_rx) = unbounded_channel::<UploadRequest>();
         let ratelimits = Limits::new(paused.shared.options.ratelimits);
 
         let state = Arc::new(TorrentStateLive {
@@ -442,12 +437,18 @@ impl TorrentStateLive {
 
     async fn task_upload_scheduler(
         self: Arc<Self>,
-        mut rx: tokio::sync::mpsc::UnboundedReceiver<(
-            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
-            ChunkInfo,
-        )>,
+        mut rx: UnboundedReceiver<UploadRequest>,
     ) -> crate::Result<()> {
-        while let Some((tx, ci)) = rx.recv().await {
+        while let Some(UploadRequest {
+            tx,
+            chunk: ci,
+            gate,
+        }) = rx.recv().await
+        {
+            // The peer may have cancelled it while it was queued.
+            if !gate.keep(&ci) {
+                continue;
+            }
             tokio::select! {
                 _ = tx.closed() => {
                     continue;
@@ -465,6 +466,10 @@ impl TorrentStateLive {
                         res?;
                     }
                 }
+            }
+            // ... or while it waited for the rate limits.
+            if !gate.keep(&ci) {
+                continue;
             }
             let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
         }
@@ -487,6 +492,7 @@ impl TorrentStateLive {
             state: self.clone(),
             tx,
             counters,
+            upload_gate: Default::default(),
             first_message_received: AtomicBool::new(false),
             cancel_token: self.cancellation_token.child_token(),
             client_name_and_version: self.shared.client_name_and_version().to_owned(),
@@ -551,6 +557,7 @@ impl TorrentStateLive {
             state: state.clone(),
             tx,
             counters,
+            upload_gate: Default::default(),
             first_message_received: AtomicBool::new(false),
             cancel_token: state.cancellation_token.child_token(),
             client_name_and_version: state.shared.client_name_and_version().to_owned(),
@@ -1040,6 +1047,9 @@ struct PeerHandler {
     incoming: bool,
     tx: PeerTx,
 
+    // Upload requests of this connection that wait to be served, and the cancelled ones.
+    upload_gate: Arc<UploadGate>,
+
     first_message_received: AtomicBool,
 
     cancel_token: CancellationToken,
@@ -1089,9 +1099,7 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             Message::NotInterested => {
                 trace!("received \"not interested\", but we don't process it yet")
             }
-            Message::Cancel(_) => {
-                trace!("received \"cancel\", but we don't process it yet")
-            }
+            Message::Cancel(cancel) => self.on_cancel(cancel),
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
@@ -1143,6 +1151,10 @@ impl PeerConnectionHandler for &'_ PeerHandler {
     fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()> {
         self.state.set_peer_live(self.addr, handshake, ckind);
         Ok(())
+    }
+
+    fn should_upload_chunk(&self, chunk: &ChunkInfo) -> bool {
+        self.upload_gate.should_upload(chunk)
     }
 
     fn on_uploaded_bytes(&self, bytes: u32) {
@@ -1526,10 +1538,18 @@ impl PeerHandler {
             );
         }
 
-        self.state
-            .ratelimit_upload_tx
-            .send((self.tx.clone(), chunk_info))?;
+        self.upload_gate.register(block_key(&chunk_info));
+        self.state.ratelimit_upload_tx.send(UploadRequest {
+            tx: self.tx.clone(),
+            chunk: chunk_info,
+            gate: self.upload_gate.clone(),
+        })?;
         Ok(())
+    }
+
+    fn on_cancel(&self, cancel: Request) {
+        self.upload_gate
+            .cancel((cancel.index, cancel.begin, cancel.length));
     }
 
     fn on_have(&self, have: u32) {

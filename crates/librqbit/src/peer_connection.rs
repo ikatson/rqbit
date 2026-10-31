@@ -45,6 +45,11 @@ pub trait PeerConnectionHandler {
     async fn on_received_message(&self, msg: Message<'_>) -> anyhow::Result<()>;
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
+    /// Asked right before an accepted upload request is read from disk. `false` skips it: the
+    /// peer cancelled it while it was queued.
+    fn should_upload_chunk(&self, _chunk: &ChunkInfo) -> bool {
+        true
+    }
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
     fn update_my_extended_handshake(
         &self,
@@ -402,6 +407,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                             .serialize(&mut *write_buf, ext_msg_ids)?
                     }
                     WriterRequest::ReadChunkRequest(chunk) => {
+                        if !self.handler.should_upload_chunk(&chunk) {
+                            continue;
+                        }
                         #[allow(unused_mut)]
                         let mut skip_reading_for_e2e_tests = false;
 
