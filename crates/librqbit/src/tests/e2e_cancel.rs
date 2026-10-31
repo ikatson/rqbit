@@ -10,6 +10,7 @@ async fn test_cancelled_blocks_are_not_uploaded() -> anyhow::Result<()> {
         // One block per second: the first goes out right away, the others have to wait.
         let seed = start_seeder(SeederOpts {
             upload_bps: Some(BLOCK),
+            ..Default::default()
         })
         .await?;
         let mut peer =

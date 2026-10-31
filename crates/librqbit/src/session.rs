@@ -2,7 +2,8 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::Read,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
+    num::NonZeroU32,
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
@@ -24,6 +25,7 @@ use crate::{
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
+    peer_policy::{PeerPolicy, ThrottledUpload, canonical_ip},
     read_buf::ReadBuf,
     session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
     session_stats::SessionStats,
@@ -151,6 +153,8 @@ pub struct Session {
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
     client_name_and_version: String,
+    pub(crate) peer_policy: Option<Arc<dyn PeerPolicy>>,
+    pub(crate) throttled_upload: ThrottledUpload,
 }
 
 /// A 40 character hex string is a v1 info hash. Checking the length alone
@@ -486,6 +490,10 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Decides which peers may connect, and what each connection may do (see [`PeerPolicy`]).
+    /// Defaults to no policy: every peer is admitted and nothing is limited.
+    pub peer_policy: Option<Arc<dyn PeerPolicy>>,
 }
 
 impl Default for SessionOptions {
@@ -514,6 +522,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            peer_policy: None,
         }
     }
 }
@@ -818,6 +827,8 @@ impl Session {
                 _disable_upload: opts.disable_upload,
                 blocklist,
                 allowlist,
+                peer_policy: opts.peer_policy,
+                throttled_upload: ThrottledUpload::new(),
                 lsd,
             });
 
@@ -934,6 +945,15 @@ impl Session {
                 .blocked_incoming
                 .fetch_add(1, Ordering::Relaxed);
             bail!("Incoming ip {incoming_ip} is not in allowlist");
+        }
+        if let Some(policy) = self.peer_policy.as_ref()
+            && !policy.admit(canonical_ip(incoming_ip))
+        {
+            self.stats
+                .counters
+                .blocked_incoming
+                .fetch_add(1, Ordering::Relaxed);
+            bail!("Incoming ip {incoming_ip} is refused by the peer policy");
         }
 
         let mut read_buf = ReadBuf::new();
@@ -1369,6 +1389,7 @@ impl Session {
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
+                    peer_policy: self.peer_policy.clone(),
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },
@@ -1646,6 +1667,58 @@ impl Session {
         self.announce_port
     }
 
+    /// Closes the live connections to every peer whose address satisfies `f` (IPv4-mapped IPv6
+    /// addresses are passed as plain IPv4). Returns how many connections were closed.
+    /// Outgoing peers may be dialed again later if [`PeerPolicy::admit`] allows it.
+    pub fn disconnect_peers_where(&self, f: impl Fn(IpAddr) -> bool) -> usize {
+        // Don't hold the database lock while walking the peers.
+        let torrents: Vec<_> = self.db.read().torrents.values().cloned().collect();
+        torrents
+            .iter()
+            .filter_map(|t| t.live())
+            .map(|live| live.disconnect_peers_where(&f))
+            .sum()
+    }
+
+    /// Asks [`PeerPolicy::admit`] again about the outgoing peers it refused earlier and dials
+    /// the ones it admits now (a ban was lifted or expired). Returns how many were queued for
+    /// dialing. Call it whenever the policy admits more than before.
+    pub fn readmit_refused_peers(&self) -> usize {
+        let torrents: Vec<_> = self.db.read().torrents.values().cloned().collect();
+        torrents
+            .iter()
+            .filter_map(|t| t.live())
+            .map(|live| live.readmit_refused_peers())
+            .sum()
+    }
+
+    /// The rate shared by all connections the [`PeerPolicy`] throttled. `None` means unlimited.
+    pub fn throttled_upload_bps(&self) -> Option<NonZeroU32> {
+        self.throttled_upload.get()
+    }
+
+    /// Sets the rate shared by all connections the [`PeerPolicy`] throttled; takes effect
+    /// immediately. The default is [`DEFAULT_THROTTLED_UPLOAD_BPS`](crate::DEFAULT_THROTTLED_UPLOAD_BPS).
+    pub fn set_throttled_upload_bps(&self, bps: Option<NonZeroU32>) {
+        self.throttled_upload.set(bps);
+    }
+
+    /// For dialing peers outside of a live torrent: asks the peer policy, and counts refusals.
+    fn outgoing_admit(&self) -> Option<crate::dht_utils::AdmitFn> {
+        let policy = self.peer_policy.clone()?;
+        let stats = self.stats.clone();
+        Some(Arc::new(move |addr: SocketAddr| {
+            let admitted = policy.admit(canonical_ip(addr.ip()));
+            if !admitted {
+                stats
+                    .counters
+                    .blocked_outgoing
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            admitted
+        }))
+    }
+
     async fn resolve_magnet(
         self: &Arc<Self>,
         info_hash: Id20,
@@ -1661,6 +1734,7 @@ impl Session {
             Some(self.merge_peer_opts(peer_opts)),
             self.connector.clone(),
             self.client_name_and_version.clone(),
+            self.outgoing_admit(),
         )
         .await
         {

@@ -12,6 +12,9 @@ use crate::{
 };
 use librqbit_core::hash_id::Id20;
 
+/// Decides whether an address may be dialed at all.
+pub(crate) type AdmitFn = Arc<dyn Fn(SocketAddr) -> bool + Send + Sync>;
+
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ReadMetainfoResult<Rx> {
@@ -27,6 +30,7 @@ pub enum ReadMetainfoResult<Rx> {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unpin>(
     peer_id: Id20,
     info_hash: Id20,
@@ -35,6 +39,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
     peer_connection_options: Option<PeerConnectionOptions>,
     connector: Arc<StreamConnector>,
     client_name_and_version: String,
+    admit: Option<AdmitFn>,
 ) -> ReadMetainfoResult<A> {
     let mut seen = HashSet::<SocketAddr>::new();
     let mut addrs = addrs_stream;
@@ -45,7 +50,11 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
         let semaphore = &semaphore;
         let connector = connector.clone();
         let client_name_and_version = client_name_and_version.clone();
+        let admit = admit.clone();
         async move {
+            if admit.as_ref().is_some_and(|admit| !admit(addr)) {
+                anyhow::bail!("{addr} is refused by the peer policy");
+            }
             let token = semaphore.acquire().await?;
             let ret = peer_info_reader::read_metainfo_from_peer(
                 addr,
@@ -146,6 +155,7 @@ mod tests {
             None,
             Arc::new(StreamConnector::new(Default::default()).await.unwrap()),
             crate::client_name_and_version().to_owned(),
+            None,
         )
         .await
         {

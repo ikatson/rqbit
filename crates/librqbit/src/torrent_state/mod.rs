@@ -118,6 +118,8 @@ pub(crate) struct ManagedTorrentOptions {
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    /// Per-peer admission / upload policy installed on the session.
+    pub peer_policy: Option<Arc<dyn crate::PeerPolicy>>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

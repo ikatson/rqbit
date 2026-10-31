@@ -46,9 +46,14 @@ pub trait PeerConnectionHandler {
     fn should_transmit_have(&self, id: ValidPieceIndex) -> bool;
     fn on_uploaded_bytes(&self, bytes: u32);
     /// Asked right before an accepted upload request is read from disk. `false` skips it: the
-    /// peer cancelled it while it was queued.
+    /// peer cancelled it while it was queued, or the connection was choked or disconnected
+    /// meanwhile.
     fn should_upload_chunk(&self, _chunk: &ChunkInfo) -> bool {
         true
+    }
+    /// The block was written to the socket. An error closes the connection.
+    fn on_uploaded_chunk(&self, _chunk: &ChunkInfo) -> anyhow::Result<()> {
+        Ok(())
     }
     fn read_chunk(&self, chunk: &ChunkInfo, buf: &mut [u8]) -> anyhow::Result<()>;
     fn update_my_extended_handshake(
@@ -385,7 +390,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
                 tokio::task::yield_now().await;
 
-                let mut uploaded_add = None;
+                let mut uploaded = None;
 
                 trace!("about to send: {:?}", &req);
                 let ext_msg_ids = &|| {
@@ -454,7 +459,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                                 .map_err(Error::ReadChunk)?;
                         }
 
-                        uploaded_add = Some(chunk.size);
+                        uploaded = Some(chunk);
                         full_len
                     }
                     WriterRequest::Disconnect(res) => {
@@ -473,8 +478,11 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                 )
                 .await?;
 
-                if let Some(uploaded_add) = uploaded_add {
-                    self.handler.on_uploaded_bytes(uploaded_add)
+                if let Some(chunk) = uploaded {
+                    self.handler.on_uploaded_bytes(chunk.size);
+                    self.handler
+                        .on_uploaded_chunk(&chunk)
+                        .map_err(Error::Anyhow)?;
                 }
             }
 
