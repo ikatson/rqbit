@@ -89,7 +89,7 @@ mod crypto_hash_impl {
 mod ring_impl {
     use super::{ISha1, ISha256};
 
-    use aws_lc_rs::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY as SHA1, SHA256};
+    use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY as SHA1, SHA256};
 
     pub struct Sha1Ring {
         ctx: Context,
@@ -170,5 +170,22 @@ mod tests {
             0x78, 0x52, 0xb8, 0x55,
         ];
         assert_eq!(got, expected);
+    }
+
+    // Torrent piece verification depends on this digest, so pin it.
+    #[cfg(feature = "sha1-ring")]
+    #[test]
+    fn test_sha1_ring_known_vector() {
+        use super::{ISha1, Sha1};
+        let mut h = Sha1::new();
+        h.update(b"a");
+        h.update(b"bc");
+        assert_eq!(
+            h.finish(),
+            [
+                0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e, 0x25, 0x71, 0x78, 0x50,
+                0xc2, 0x6c, 0x9c, 0xd0, 0xd8, 0x9d
+            ]
+        );
     }
 }

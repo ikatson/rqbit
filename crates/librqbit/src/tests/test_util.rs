@@ -17,6 +17,13 @@ pub fn setup_test_logging() {
         unsafe { std::env::set_var("RUST_LOG", "info") };
     }
     let _ = tracing_subscriber::fmt::try_init();
+    install_crypto_provider();
+}
+
+/// reqwest is built with `rustls-no-provider` (see `rust-tls`), so building
+/// any client needs a process-wide crypto provider installed first.
+pub fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 pub fn create_new_file_with_random_content(path: &Path, mut size: usize) {
