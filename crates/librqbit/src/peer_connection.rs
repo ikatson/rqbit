@@ -98,6 +98,32 @@ pub struct PeerConnectionOptions {
     pub max_request_window: Option<usize>,
 }
 
+/// How long to wait before dialing an outgoing peer again after its connection died, growing
+/// exponentially (with jitter) while it keeps failing. The default is 10 s, times 6 on each
+/// failure, at most an hour, and the peer is dropped after 24 h of accumulated delay.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PeerBackoffConfig {
+    /// The delay after the first failure.
+    pub min_delay: Duration,
+    /// The factor the delay grows by after each failure.
+    pub factor: f32,
+    /// The longest single delay.
+    pub max_delay: Duration,
+    /// The peer is dropped when the delays add up to this much. `None` retries forever.
+    pub total_delay: Option<Duration>,
+}
+
+impl Default for PeerBackoffConfig {
+    fn default() -> Self {
+        Self {
+            min_delay: Duration::from_secs(10),
+            factor: 6.,
+            max_delay: Duration::from_secs(3600),
+            total_delay: Some(Duration::from_secs(86400)),
+        }
+    }
+}
+
 pub(crate) struct PeerConnection<H> {
     handler: H,
     addr: SocketAddr,

@@ -120,6 +120,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    pub peer_backoff: crate::PeerBackoffConfig,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

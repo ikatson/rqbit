@@ -26,7 +26,7 @@ use tokio::{
 
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
-    PeerConnectionOptions, Session, SessionOptions, create_torrent,
+    PeerBackoffConfig, PeerConnectionOptions, Session, SessionOptions, create_torrent,
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
     tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging},
@@ -402,6 +402,7 @@ pub(super) struct ClientOpts {
     pub(super) listen: bool,
     pub(super) initial_peers: Vec<SocketAddr>,
     pub(super) peer_opts: Option<PeerConnectionOptions>,
+    pub(super) backoff: Option<PeerBackoffConfig>,
 }
 
 /// A client downloading the torrent of `seed` into an empty folder.
@@ -419,6 +420,7 @@ pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Re
             }),
             ipv4_only: true,
             disable_local_service_discovery: true,
+            peer_backoff: opts.backoff.unwrap_or_default(),
             ..Default::default()
         },
     )

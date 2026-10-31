@@ -23,7 +23,7 @@ use crate::{
     limits::{Limits, LimitsConfig},
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
-    peer_connection::PeerConnectionOptions,
+    peer_connection::{PeerBackoffConfig, PeerConnectionOptions},
     read_buf::ReadBuf,
     session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
     session_stats::SessionStats,
@@ -151,6 +151,7 @@ pub struct Session {
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
     client_name_and_version: String,
+    peer_backoff: PeerBackoffConfig,
 }
 
 /// A 40 character hex string is a v1 info hash. Checking the length alone
@@ -486,6 +487,10 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// How soon peers that died are dialed again. Defaults to 10 s after the first failure,
+    /// growing 6x with each one, up to an hour.
+    pub peer_backoff: PeerBackoffConfig,
 }
 
 impl Default for SessionOptions {
@@ -514,6 +519,7 @@ impl Default for SessionOptions {
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            peer_backoff: PeerBackoffConfig::default(),
         }
     }
 }
@@ -813,6 +819,7 @@ impl Session {
                 disable_trackers: opts.disable_trackers,
                 peer_limit: opts.peer_limit,
                 client_name_and_version,
+                peer_backoff: opts.peer_backoff,
 
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
@@ -1375,6 +1382,7 @@ impl Session {
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
+                    peer_backoff: self.peer_backoff,
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },
