@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     lengths::{ChunkInfo, ValidPieceIndex},
@@ -18,6 +18,18 @@ use crate::{
     storage::TorrentStorage,
     type_aliases::{BF, FileInfos, PeerHandle},
 };
+
+/// Returned by [`FileOps::initial_check`] when it stopped because a pause was requested.
+#[derive(Debug)]
+pub(crate) struct InitialCheckPaused;
+
+impl std::fmt::Display for InitialCheckPaused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("initial check paused")
+    }
+}
+
+impl std::error::Error for InitialCheckPaused {}
 
 pub fn update_hash_from_file<Sha1: ISha1>(
     file_id: usize,
@@ -111,7 +123,7 @@ impl<'a> FileOps<'a> {
 
         for piece_info in self.torrent.lengths().iter_piece_infos() {
             if pause_requested.load(Ordering::Relaxed) {
-                bail!("initial check paused");
+                return Err(InitialCheckPaused.into());
             }
 
             piece_files.clear();

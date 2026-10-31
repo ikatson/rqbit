@@ -40,6 +40,7 @@ use tracing::warn;
 use crate::Session;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
+use crate::file_ops::InitialCheckPaused;
 use crate::limits::LimitsConfig;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
@@ -393,6 +394,11 @@ impl ManagedTorrent {
 
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
+                                    // A pause requested after the last piece was checked
+                                    // never aborted the check: honor it here instead of going
+                                    // live behind the caller's back. `g.paused` is the latest
+                                    // intent (pause() sets it, start()/unpause clears it).
+                                    let start_paused = g.paused;
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {
@@ -400,6 +406,28 @@ impl ManagedTorrent {
                                         debug!("initial check paused");
                                         t.state_change_notify.notify_waiters();
                                         return Ok(());
+                                    }
+
+                                    if err.downcast_ref::<InitialCheckPaused>().is_some() {
+                                        // The check bailed on a pause that an unpause cleared
+                                        // while this check was still running (that start()
+                                        // found the check busy and returned). Restart the check
+                                        // instead of turning a resume into an error.
+                                        debug!("initial check paused, then resumed; restarting it");
+                                        let g = t.locked.write();
+                                        if !matches!(g.state, ManagedTorrentState::Initializing(_))
+                                        {
+                                            return Ok(());
+                                        }
+                                        let start_paused = g.paused;
+                                        return _start(
+                                            &t,
+                                            peer_rx,
+                                            start_paused,
+                                            session,
+                                            Some(g),
+                                            token,
+                                        );
                                     }
 
                                     let result = anyhow::anyhow!("{:?}", err);
