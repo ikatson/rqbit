@@ -23,7 +23,9 @@ use crate::{
 
 const MAX_FASTRESUME_CHECKS: usize = 64;
 
-use super::{ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused};
+use super::{
+    ManagedTorrentShared, TorrentMetadata, paused::TorrentStatePaused, streaming::TorrentStreams,
+};
 
 pub struct TorrentStateInitializing {
     pub(crate) files: FileStorage,
@@ -34,15 +36,23 @@ pub struct TorrentStateInitializing {
     pause_requested: AtomicBool,
     check_running: AtomicBool,
     previously_errored: bool,
+    force_full_check: bool,
+    // Stream subscriptions carried over when re-initializing an existing torrent, so
+    // that parked stream readers (e.g. HTTP streaming) resume when the torrent goes
+    // live again. None means fresh.
+    streams: Option<Arc<TorrentStreams>>,
 }
 
 impl TorrentStateInitializing {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
         shared: Arc<ManagedTorrentShared>,
         metadata: Arc<TorrentMetadata>,
         only_files: Option<Vec<usize>>,
         files: FileStorage,
         previously_errored: bool,
+        force_full_check: bool,
+        streams: Option<Arc<TorrentStreams>>,
     ) -> Self {
         Self {
             shared,
@@ -53,6 +63,8 @@ impl TorrentStateInitializing {
             pause_requested: AtomicBool::new(false),
             check_running: AtomicBool::new(false),
             previously_errored,
+            force_full_check,
+            streams,
         }
     }
 
@@ -154,7 +166,9 @@ impl TorrentStateInitializing {
                     })
                     .enumerate()
                 {
-                    if fo.check_piece(piece_id).is_err() {
+                    // NB: both an IO error and a hash mismatch mean the data doesn't
+                    // match what the bitfield claims.
+                    if !fo.check_piece(piece_id).unwrap_or(false) {
                         return true;
                     }
 
@@ -195,7 +209,14 @@ impl TorrentStateInitializing {
             .context("session is dead")?
             .bitv_factory
             .clone();
-        let have_pieces = if self.previously_errored {
+        let have_pieces = if self.previously_errored || self.force_full_check {
+            if self.force_full_check {
+                info!(
+                    id=?self.shared.id,
+                    info_hash = ?self.shared.info_hash,
+                    "full recheck requested, ignoring the persisted bitfield"
+                );
+            }
             if let Err(e) = bitv_factory.clear(id).await {
                 warn!(id=?self.shared.id, info_hash = ?self.shared.info_hash, error=?e, "error clearing bitfield");
             }
@@ -207,24 +228,53 @@ impl TorrentStateInitializing {
                 .context("error loading have_pieces")?
         };
 
-        let have_pieces = self.validate_fastresume(&*bitv_factory, have_pieces).await;
-
+        // If the caller vouched for the data matching the persisted bitfield
+        // (check_after_load=false), skip both the fastresume spot-check and the full
+        // initial check, and trust the bitfield as-is. Anything else falls back to the
+        // regular validation: no usable bitfield or a wrong-length one means a full check.
+        let was_cleared = self.previously_errored || self.force_full_check;
         let have_pieces = match have_pieces {
-            Some(h) => h,
-            None => {
-                info!("Doing initial checksum validation, this might take a while...");
-                let have_pieces = self
-                    .shared
-                    .spawner
-                    .block_in_place_with_semaphore(|| {
-                        FileOps::new(&self.metadata.info, &self.files, &self.metadata.file_infos)
-                            .initial_check(&self.checked_bytes, &self.pause_requested)
-                    })
-                    .await?;
-                bitv_factory
-                    .store_initial_check(id, have_pieces)
-                    .await
-                    .context("error storing initial check bitfield")?
+            Some(hp)
+                if !self.shared.options.check_after_load
+                    && hp.as_bytes().len() == self.metadata.lengths().piece_bitfield_bytes() =>
+            {
+                info!(
+                    id=?self.shared.id,
+                    info_hash = ?self.shared.info_hash,
+                    "check_after_load=false, trusting the persisted bitfield, skipping integrity check"
+                );
+                hp
+            }
+            loaded => {
+                if !was_cleared && !self.shared.options.check_after_load && loaded.is_none() {
+                    warn!(
+                        id=?self.shared.id,
+                        info_hash = ?self.shared.info_hash,
+                        "check_after_load=false, but there is no persisted bitfield, falling back to a full integrity check"
+                    );
+                }
+                match self.validate_fastresume(&*bitv_factory, loaded).await {
+                    Some(h) => h,
+                    None => {
+                        info!("Doing initial checksum validation, this might take a while...");
+                        let have_pieces = self
+                            .shared
+                            .spawner
+                            .block_in_place_with_semaphore(|| {
+                                FileOps::new(
+                                    &self.metadata.info,
+                                    &self.files,
+                                    &self.metadata.file_infos,
+                                )
+                                .initial_check(&self.checked_bytes, &self.pause_requested)
+                            })
+                            .await?;
+                        bitv_factory
+                            .store_initial_check(id, have_pieces)
+                            .await
+                            .context("error storing initial check bitfield")?
+                    }
+                }
             }
         };
 
@@ -297,7 +347,10 @@ impl TorrentStateInitializing {
             metadata: self.metadata.clone(),
             files: self.files.take()?,
             chunk_tracker,
-            streams: Arc::new(Default::default()),
+            streams: self
+                .streams
+                .clone()
+                .unwrap_or_else(|| Arc::new(Default::default())),
         };
         Ok(paused)
     }
