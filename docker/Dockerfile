@@ -1,6 +1,9 @@
 # Depends on either outputs of Dockerfile.xx or the binaries compiled elsewhere.
 FROM scratch
 
+# Create /etc/ssl first: ADD --chmod also applies its mode to the parent
+# directories it creates, and 0644 directories can't be entered by non-root.
+WORKDIR /etc/ssl
 ADD --chmod=0644 https://curl.se/ca/cacert.pem /etc/ssl/cacerts.pem
 
 ARG TARGETPLATFORM
