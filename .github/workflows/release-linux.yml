@@ -182,6 +182,37 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # The image must work for any uid, not only root: if the CA bundle
+      # can't be read, startup fails building the HTTP client (#714).
+      - name: Build amd64 image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          push: false
+          tags: rqbit-smoke:latest
+          platforms: linux/amd64
+          context: target/cross/
+          file: docker/Dockerfile
+
+      - name: Smoke test the image as a non-root user
+        run: |
+          docker run -d --name rqbit-smoke --user 65534:65534 \
+            --tmpfs /data:uid=65534,gid=65534 \
+            -e XDG_DATA_HOME=/data/db -e XDG_CACHE_HOME=/data/cache \
+            -p 127.0.0.1:3030:3030 \
+            rqbit-smoke:latest server start /data/downloads
+          for i in $(seq 60); do
+            if curl -fsS http://127.0.0.1:3030/ >/dev/null; then
+              echo "rqbit started as uid 65534"
+              docker rm -f rqbit-smoke
+              exit 0
+            fi
+            [ "$(docker inspect -f '{{.State.Running}}' rqbit-smoke)" = true ] || break
+            sleep 1
+          done
+          docker logs rqbit-smoke
+          exit 1
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
