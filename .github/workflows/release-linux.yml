@@ -155,6 +155,9 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            # Immutable, sortable tag per default-branch build, so a main
+            # build can be pinned without a digest, e.g. main-20261103170000-374588c
+            type=raw,value={{branch}}-{{commit_date 'YYYYMMDDHHmmss'}}-{{sha}},enable={{is_default_branch}}
 
       - uses: actions/download-artifact@v4
         with:
