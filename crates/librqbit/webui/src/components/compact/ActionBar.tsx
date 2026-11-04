@@ -19,6 +19,7 @@ import {
   StatusFilter,
   STATUS_FILTER_LABELS,
 } from "../../helper/torrentFilters";
+import { CategoryFilterSelect } from "../CategoryFilterSelect";
 
 interface ActionBarProps {
   // When true, hides search/filter/selection count (for use in modal)
@@ -34,7 +35,6 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
   const torrents = useTorrentStore((state) => state.torrents);
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
   const setCloseableError = useErrorStore((state) => state.setCloseableError);
-
   const [disabled, setDisabled] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [torrentsToDelete, setTorrentsToDelete] = useState<
@@ -169,6 +169,9 @@ export const ActionBar: React.FC<ActionBarProps> = ({ hideFilters }) => {
               ),
             )}
           </select>
+
+          {/* Category filter */}
+          <CategoryFilterSelect className="py-1 px-2 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary" />
 
           {/* Search input */}
           <div className="relative">

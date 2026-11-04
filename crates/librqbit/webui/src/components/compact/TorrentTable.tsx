@@ -77,6 +77,7 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
   const clearSelection = useUIStore((state) => state.clearSelection);
   const searchQuery = useUIStore((state) => state.searchQuery);
   const statusFilter = useUIStore((state) => state.statusFilter);
+  const categoryFilter = useUIStore((state) => state.categoryFilter);
 
   const normalizedQuery = searchQuery.toLowerCase().trim();
 
@@ -103,7 +104,9 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
     if (!torrents) return null;
 
     return [...torrents]
-      .filter((t) => isTorrentVisible(t, normalizedQuery, statusFilter))
+      .filter((t) =>
+        isTorrentVisible(t, normalizedQuery, statusFilter, categoryFilter),
+      )
       .sort((a, b) => {
         const aVal = getTableSortValue(a, sortColumn);
         const bVal = getTableSortValue(b, sortColumn);
@@ -113,7 +116,14 @@ export const TorrentTable: React.FC<TorrentTableProps> = ({
             : (aVal as number) - (bVal as number);
         return sortDirection === "asc" ? cmp : -cmp;
       });
-  }, [torrents, normalizedQuery, statusFilter, sortColumn, sortDirection]);
+  }, [
+    torrents,
+    normalizedQuery,
+    statusFilter,
+    categoryFilter,
+    sortColumn,
+    sortDirection,
+  ]);
 
   // Compute visible IDs for keyboard navigation
   const visibleTorrentIds = useMemo(() => {

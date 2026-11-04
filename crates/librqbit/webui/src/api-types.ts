@@ -35,6 +35,7 @@ export interface TorrentListItem {
   info_hash: string;
   name: string | null;
   output_folder: string;
+  category: string | null;
   total_pieces: number;
   stats?: TorrentStats;
 }
@@ -201,6 +202,7 @@ export interface AddTorrentOptions {
   list_only?: boolean;
   output_folder?: string | null;
   sub_folder?: string | null;
+  category?: string | null;
   peer_opts?: PeerConnectionOptions | null;
   force_tracker_interval?: Duration | null;
   initial_peers?: string[] | null; // Assuming SocketAddr is equivalent to a string in TypeScript
@@ -255,6 +257,7 @@ export interface RqbitAPI {
   listTorrents: (opts?: {
     withStats?: boolean;
   }) => Promise<ListTorrentsResponse>;
+  listCategories: () => Promise<string[]>;
   getTorrentDetails: (index: number) => Promise<TorrentDetails>;
   getTorrentStats: (index: number) => Promise<TorrentStats>;
   getTorrentHaves: (index: number) => Promise<Uint8Array>;
@@ -271,6 +274,7 @@ export interface RqbitAPI {
 
   pause: (index: number) => Promise<void>;
   updateOnlyFiles: (index: number, files: number[]) => Promise<void>;
+  updateCategory: (index: number, category: string | null) => Promise<void>;
   start: (index: number) => Promise<void>;
   forget: (index: number) => Promise<void>;
   delete: (index: number) => Promise<void>;

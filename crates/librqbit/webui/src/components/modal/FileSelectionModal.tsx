@@ -13,6 +13,7 @@ import { FormInput } from "../forms/FormInput";
 import { Form } from "../forms/Form";
 import { FileListInput } from "../FileListInput";
 import { useTorrentStore } from "../../stores/torrentStore";
+import { useUIStore } from "../../stores/uiStore";
 
 export const FileSelectionModal = (props: {
   onHide: () => void;
@@ -35,9 +36,14 @@ export const FileSelectionModal = (props: {
   const [unpopularTorrent, setUnpopularTorrent] = useState(false);
   const [outputFolder, setOutputFolder] = useState<string>("");
   const refreshTorrents = useTorrentStore((state) => state.refreshTorrents);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [category, setCategory] = useState<string>("");
   const API = useContext(APIContext);
 
   useEffect(() => {
+    API.listCategories()
+      .then((cats) => setCategories(cats))
+      .catch(() => setCategories([]));
     setSelectedFiles(
       new Set(
         listTorrentResponse?.details.files.flatMap((file, idx) => {
@@ -85,6 +91,7 @@ export const FileSelectionModal = (props: {
       only_files: allSelected ? undefined : Array.from(selectedFiles),
       initial_peers: initialPeers,
       output_folder: outputFolder,
+      category: category || undefined,
     };
     if (unpopularTorrent) {
       opts.peer_opts = {
@@ -120,6 +127,23 @@ export const FileSelectionModal = (props: {
             value={outputFolder}
             onChange={(e) => setOutputFolder(e.target.value)}
           />
+
+          {categories.length > 0 && (
+            <Fieldset label="Category">
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="py-1 px-2 text-sm bg-surface border border-divider rounded focus:outline-none focus:border-primary"
+              >
+                <option value="">None</option>
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </Fieldset>
+          )}
 
           <Fieldset>
             <FileListInput

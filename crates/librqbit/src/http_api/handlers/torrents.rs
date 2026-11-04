@@ -253,6 +253,30 @@ pub async fn h_torrent_action_update_only_files(
         .map(axum::Json)
 }
 
+#[derive(Deserialize)]
+pub struct UpdateCategoryRequest {
+    // A missing or null category clears it.
+    #[serde(default)]
+    category: Option<String>,
+}
+
+pub async fn h_torrent_action_update_category(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<UpdateCategoryRequest>,
+) -> Result<impl IntoResponse> {
+    // Normalize empty/whitespace-only category to None.
+    let category = req
+        .category
+        .map(|c| c.trim().to_owned())
+        .filter(|c| !c.is_empty());
+    state
+        .api
+        .api_torrent_action_update_category(idx, category)
+        .await
+        .map(axum::Json)
+}
+
 pub async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
 }
@@ -434,4 +458,8 @@ pub async fn h_create_torrent(
             Ok((headers, torrent.as_bytes()?).into_response())
         }
     }
+}
+
+pub async fn h_categories(State(state): State<ApiState>) -> impl IntoResponse {
+    axum::Json(state.api.session().categories().to_vec())
 }

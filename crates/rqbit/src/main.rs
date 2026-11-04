@@ -294,6 +294,10 @@ struct Opts {
     /// Disable trackers (for debugging DHT, LSD and --initial-peers)
     #[arg(long = "disable-trackers", env = "RQBIT_TRACKERS_DISABLE")]
     disable_trackers: bool,
+
+    /// Categories for tagging torrents. Can be specified multiple times.
+    #[arg(long = "category", env = "RQBIT_CATEGORY", value_delimiter = ',')]
+    categories: Vec<String>,
 }
 
 #[derive(Parser)]
@@ -691,6 +695,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
+        categories: opts.categories.clone(),
     };
 
     #[allow(clippy::needless_update)]
