@@ -314,7 +314,7 @@ impl TrackerComms {
             self.tx.send(peer).await?;
         }
         Ok(Duration::from_secs(
-            response.min_interval.unwrap_or(response.interval),
+            response.interval.max(response.min_interval.unwrap_or(0)),
         ))
     }
 
