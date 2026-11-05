@@ -214,6 +214,12 @@ impl ChunkTracker {
         self.queue_pieces.set(index.get() as usize, false)
     }
 
+    pub(crate) fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {
+        self.chunk_status
+            .get(chunk.absolute_index as usize)
+            .is_some_and(|b| *b)
+    }
+
     pub fn get_hns(&self) -> &HaveNeededSelected {
         &self.hns
     }
