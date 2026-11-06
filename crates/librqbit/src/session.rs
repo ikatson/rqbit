@@ -1339,13 +1339,19 @@ impl Session {
         let (managed_torrent, metadata) = {
             let mut g = self.db.write();
             if let Some((id, handle)) = g.torrents.iter().find_map(|(eid, t)| {
-                if t.info_hash() == info_hash || *eid == id {
+                if t.info_hash() == info_hash {
                     Some((*eid, t.clone()))
                 } else {
                     None
                 }
             }) {
                 return Ok(AddTorrentResponse::AlreadyManaged(id, handle));
+            }
+            if let Some(existing) = g.torrents.get(&id) {
+                bail!(
+                    "torrent id {id} is already used by a different torrent {:?}",
+                    existing.info_hash()
+                );
             }
 
             let span = debug_span!(parent: self.rs(), "torrent", id);
