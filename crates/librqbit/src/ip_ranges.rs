@@ -275,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_real_url() {
         setup_test_logging();
-        let client = reqwest::Client::new();
+        let client = crate::http_client::client_builder().build().unwrap();
         let _ = IpRanges::load_from_url(&client, "https://raw.githubusercontent.com/Naunter/BT_BlockLists/refs/heads/master/bt_blocklists.gz")
             .await
             .unwrap();

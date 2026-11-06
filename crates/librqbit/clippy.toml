@@ -1,0 +1,6 @@
+disallowed-methods = [
+    { path = "reqwest::Client::new", reason = "use crate::http_client::client_builder() (Android TLS policy)" },
+    { path = "reqwest::Client::builder", reason = "use crate::http_client::client_builder() (Android TLS policy)" },
+    { path = "reqwest::ClientBuilder::new", reason = "use crate::http_client::client_builder() (Android TLS policy)" },
+    { path = "reqwest::get", reason = "use crate::http_client::client_builder() (Android TLS policy)" },
+]

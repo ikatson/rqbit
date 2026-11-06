@@ -714,10 +714,10 @@ impl Session {
                 let builder = if let Some(proxy_url) = proxy_url {
                     let proxy = reqwest::Proxy::all(proxy_url)
                         .context("error creating socks5 proxy for HTTP")?;
-                    reqwest::Client::builder().proxy(proxy)
+                    crate::http_client::client_builder().proxy(proxy)
                 } else {
                     #[allow(unused_mut)]
-                    let mut b = reqwest::Client::builder();
+                    let mut b = crate::http_client::client_builder();
                     #[cfg(not(windows))]
                     if let Some(bd) = opts.bind_device_name.as_ref() {
                         b = b.interface(bd);
