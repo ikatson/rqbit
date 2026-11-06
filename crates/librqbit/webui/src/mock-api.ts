@@ -570,8 +570,16 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
     return "mock-1.0.0";
   },
 
-  getTorrentStreamUrl: () => null,
-  getPlaylistUrl: () => null,
+  getTorrentStreamUrl: (
+    index: number,
+    file_id: number,
+    filename?: string | null,
+  ) => {
+    return `/torrents/${index}/stream/${file_id}${filename ? `/${filename}` : ""}`;
+  },
+  getPlaylistUrl: (index: number) => {
+    return `/torrents/${index}/playlist`;
+  },
 
   getTorrentHaves: async (index: number): Promise<Uint8Array> => {
     const totalBytes = generateTotalBytes(index);
