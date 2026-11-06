@@ -21,4 +21,5 @@ atoi.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
