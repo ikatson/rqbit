@@ -87,11 +87,36 @@ enum SupportedTracker {
     Http(Url),
 }
 
+impl SupportedTracker {
+    fn url(&self) -> &Url {
+        match self {
+            SupportedTracker::Udp(url) | SupportedTracker::Http(url) => url,
+        }
+    }
+}
+
 impl std::fmt::Debug for SupportedTracker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SupportedTracker::Udp(u) => std::fmt::Display::fmt(u, f),
             SupportedTracker::Http(u) => std::fmt::Display::fmt(u, f),
+        }
+    }
+}
+
+/// Drives one tracker monitor to its end and logs how it ended. A panic in the monitor ends only
+/// that tracker.
+async fn run_isolated(url: Url, monitor: impl Future<Output = anyhow::Result<()>>) {
+    match std::panic::AssertUnwindSafe(monitor).catch_unwind().await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => debug!(tracker = %url, "error: {e:#}"),
+        Err(panic) => {
+            let msg = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("<non-string panic payload>");
+            tracing::error!(tracker = %url, "tracker monitor panicked, disabling this tracker: {msg}");
         }
     }
 }
@@ -182,9 +207,15 @@ impl TrackerComms {
                 reqwest_client,
                 key: rand::random(),
             });
+            // Each tracker is isolated behind `catch_unwind`: all trackers and
+            // (upstream of this stream) DHT/LSD peers are polled from the same
+            // task, so a panic inside one tracker's I/O stack (e.g. a TLS
+            // verifier that aborts instead of returning an error) would
+            // otherwise tear down peer discovery for the whole torrent.
             let mut futures = FuturesUnordered::new();
             for tracker in trackers {
-                futures.push(comms.add_tracker(tracker, &udp_client))
+                let url = tracker.url().clone();
+                futures.push(run_isolated(url, comms.add_tracker(tracker, &udp_client)));
             }
             while !(futures.is_empty()) {
                 tokio::select! {
@@ -193,11 +224,7 @@ impl TrackerComms {
                             yield addr;
                         }
                     }
-                    e = futures.next(), if !futures.is_empty() => {
-                        if let Some(Err(e)) = e {
-                            debug!("error: {e}");
-                        }
-                    }
+                    _ = futures.next(), if !futures.is_empty() => {}
                 }
             }
         };
@@ -434,5 +461,68 @@ impl TrackerComms {
                 Err(e)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
+    use url::Url;
+
+    use super::run_isolated;
+
+    fn isolated(
+        url: &str,
+        monitor: impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    ) -> BoxFuture<'static, ()> {
+        run_isolated(Url::parse(url).unwrap(), monitor).boxed()
+    }
+
+    // A tracker monitor that panics (e.g. a TLS verifier that panics instead of returning an
+    // error) ends only that tracker: the other monitors, polled by the same task, keep running.
+    #[tokio::test]
+    async fn test_panicking_tracker_does_not_affect_other_trackers() {
+        let finished = Arc::new(AtomicUsize::new(0));
+        let mut monitors = FuturesUnordered::new();
+        monitors.push(isolated("https://panics-str.example/announce", async {
+            if true {
+                panic!("verifier is not initialized");
+            }
+            Ok(())
+        }));
+        monitors.push(isolated("https://panics-string.example/announce", async {
+            if true {
+                panic!("{}", String::from("formatted panic"));
+            }
+            Ok(())
+        }));
+        monitors.push(isolated("https://fails.example/announce", async {
+            anyhow::bail!("connection refused")
+        }));
+        for name in ["a", "b"] {
+            let finished = finished.clone();
+            monitors.push(isolated(
+                &format!("https://{name}.example/announce"),
+                async move {
+                    tokio::task::yield_now().await;
+                    finished.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            ));
+        }
+        let mut done = 0;
+        while monitors.next().await.is_some() {
+            done += 1;
+        }
+        assert_eq!(
+            done, 5,
+            "every monitor ends, none of them unwinds into the poller"
+        );
+        assert_eq!(finished.load(Ordering::SeqCst), 2);
     }
 }
