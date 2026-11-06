@@ -179,7 +179,7 @@ Use a regex here to select files by their names.
 
 ### Some supported features
 
-- Sequential downloading (the default and only option)
+- Rarest-first piece selection (default), with per-torrent sequential download and "first and last pieces first" (`AddTorrentOptions::piece_picking`, `Session::set_piece_picking`)
 - Resume downloading file(s) if they already exist on disk
 - Selective downloading using a regular expression for filename
 - DHT support. Allows magnet links to work, and makes more peers available.

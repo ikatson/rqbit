@@ -9,7 +9,7 @@ use tracing::{debug, trace};
 use crate::{
     bitv::{BitV, BoxBitV},
     file_info::FileInfo,
-    type_aliases::{BF, BS, FileInfos, FilePriorities},
+    type_aliases::{BF, BS, FileInfos},
 };
 
 pub struct ChunkTracker {
@@ -233,19 +233,9 @@ impl ChunkTracker {
         hns
     }
 
-    pub(crate) fn iter_queued_pieces<'a>(
-        &'a self,
-        file_priorities: &'a FilePriorities,
-        file_infos: &'a FileInfos,
-    ) -> impl Iterator<Item = ValidPieceIndex> + 'a {
-        file_priorities
-            .iter()
-            .filter_map(|p| Some((*p, file_infos.get(*p)?)))
-            .filter(|(id, f)| self.per_file_bytes[*id] != f.len)
-            .flat_map(|(_id, f)| f.iter_piece_priorities())
-            .filter(|id| self.queue_pieces[*id])
-            .filter_map(|id| id.try_into().ok())
-            .filter_map(|id| self.lengths.validate_piece_index(id))
+    /// Pieces to download next: selected, not had, not in flight.
+    pub(crate) fn queued_pieces(&self) -> &BS {
+        &self.queue_pieces
     }
 
     pub(crate) fn is_piece_have(&self, id: ValidPieceIndex) -> bool {
