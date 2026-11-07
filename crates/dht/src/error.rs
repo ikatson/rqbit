@@ -48,6 +48,9 @@ pub enum Error {
     #[error(transparent)]
     BootstrapLookup(Box<LookupError>),
 
+    #[error(transparent)]
+    OutboundPolicy(#[from] librqbit_core::network_policy::OutboundPolicyError),
+
     #[error("error sending: {0:#}")]
     Send(#[source] std::io::Error),
     #[error("error in recv: {0:#}")]

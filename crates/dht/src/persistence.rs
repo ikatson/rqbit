@@ -108,6 +108,7 @@ impl PersistentDht {
         bootstrap_addrs: Option<Vec<String>>,
         cancellation_token: Option<CancellationToken>,
         bind_device: Option<&'a BindDevice>,
+        outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
     ) -> BoxFuture<'a, anyhow::Result<Dht>> {
         async move {
             let config_filename = match persistence_config.config_filename {
@@ -168,6 +169,7 @@ impl PersistentDht {
                 peer_store,
                 cancellation_token,
                 bind_device,
+                outbound_policy,
                 ..Default::default()
             };
             let dht = DhtState::with_config(dht_config).await?;

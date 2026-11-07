@@ -65,6 +65,7 @@ pub(crate) struct StreamConnectorArgs {
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub bind_device: Option<BindDevice>,
     pub ipv4_only: bool,
+    pub outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
 }
 
 impl SocksProxyConfig {
@@ -135,6 +136,7 @@ pub(crate) struct StreamConnector {
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
     stats: ConnectStatsAtomic,
     ipv4_only: bool,
+    outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
 }
 
 impl StreamConnector {
@@ -156,10 +158,11 @@ impl StreamConnector {
         Ok(Self {
             proxy_config: config.socks_proxy_config,
             enable_tcp: config.enable_tcp,
-            utp_socket: config.utp_socket,
             bind_device: config.bind_device,
+            utp_socket: config.utp_socket,
             stats: Default::default(),
             ipv4_only: config.ipv4_only,
+            outbound_policy: config.outbound_policy,
         })
     }
 
@@ -213,6 +216,9 @@ impl StreamConnector {
         &self,
         addr: SocketAddr,
     ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
+        if let Some(policy) = &self.outbound_policy {
+            policy.check(addr)?;
+        }
         if addr.port() == 0 {
             return Err(Error::Anyhow(anyhow::anyhow!(
                 "invalid peer address (port 0): {}",
@@ -372,5 +378,71 @@ mod tests {
     fn test_parse_rejects_garbage() {
         assert!(SocksProxyConfig::parse("not a url").is_err());
         assert!(SocksProxyConfig::parse("socks5://").is_err());
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use librqbit_core::network_policy::OutboundPolicy;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn rejected_peers_never_reach_tcp_or_the_socks_proxy() {
+        for use_proxy in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let connector = StreamConnector::new(StreamConnectorArgs {
+                enable_tcp: true,
+                socks_proxy_config: use_proxy
+                    .then(|| SocksProxyConfig::parse(&format!("socks5://{address}")).unwrap()),
+                outbound_policy: Some(OutboundPolicy::new(|_| false)),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            let error = tokio::time::timeout(Duration::from_secs(1), connector.connect(address))
+                .await
+                .unwrap()
+                .err()
+                .unwrap();
+            assert!(matches!(error, Error::OutboundPolicy(_)));
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_is_rechecked_after_a_successful_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let enabled = Arc::new(AtomicBool::new(true));
+        let state = enabled.clone();
+        let connector = StreamConnector::new(StreamConnectorArgs {
+            enable_tcp: true,
+            outbound_policy: Some(OutboundPolicy::new(move |_| state.load(Ordering::SeqCst))),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let (_, connection) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(listener.accept(), connector.connect(address))
+        })
+        .await
+        .unwrap();
+        assert!(connection.is_ok());
+        enabled.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            connector.connect(address).await,
+            Err(Error::OutboundPolicy(_))
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
     }
 }

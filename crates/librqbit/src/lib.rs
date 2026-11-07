@@ -88,12 +88,13 @@ pub use api::Api;
 pub use api_error::{ApiError, WithStatus, WithStatusError};
 pub use create_torrent_file::{CreateTorrentOptions, CreateTorrentResult, create_torrent};
 pub use dht;
+pub use librqbit_core::network_policy::{OutboundPolicy, OutboundPolicyError};
 pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use listen::{ListenerMode, ListenerOptions};
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListOnlyResponse,
-    SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,
+    SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig, TrackerUrlFilter,
 };
 pub use stream_connect::ConnectionOptions;
 pub use torrent_state::{

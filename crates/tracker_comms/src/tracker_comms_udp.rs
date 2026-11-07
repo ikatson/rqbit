@@ -244,6 +244,7 @@ struct ClientLocked {
 
 struct ClientShared {
     sock: UdpSocket,
+    outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
     locked: RwLock<ClientLocked>,
 }
 
@@ -269,6 +270,15 @@ impl UdpTrackerClient {
         cancel_token: CancellationToken,
         bind_device: Option<&BindDevice>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_policy(cancel_token, bind_device, None).await
+    }
+
+    /// The policy is re-evaluated for every request, including cached connections.
+    pub async fn new_with_policy(
+        cancel_token: CancellationToken,
+        bind_device: Option<&BindDevice>,
+        outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
+    ) -> anyhow::Result<Self> {
         let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
         let sock = UdpSocket::bind_udp(
             addr,
@@ -282,6 +292,7 @@ impl UdpTrackerClient {
         let client = Self {
             state: Arc::new(ClientShared {
                 sock,
+                outbound_policy,
                 locked: RwLock::new(Default::default()),
             }),
         };
@@ -354,6 +365,9 @@ impl UdpTrackerClient {
     }
 
     async fn request(&self, addr: SocketAddr, request: Request) -> anyhow::Result<Response> {
+        if let Some(policy) = &self.state.outbound_policy {
+            policy.check(addr)?;
+        }
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tid_g = self.reserve_transaction_id(tx)?;
 
@@ -499,5 +513,74 @@ mod tests {
             }
             other => panic!("unexpected response {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use librqbit_core::network_policy::{OutboundPolicy, OutboundPolicyError};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn cached_udp_connection_cannot_bypass_an_updated_policy() {
+        let tracker = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = tracker.local_addr().unwrap();
+        let enabled = Arc::new(AtomicBool::new(true));
+        let state = enabled.clone();
+        let cancel = CancellationToken::new();
+        let client = UdpTrackerClient::new_with_policy(
+            cancel.clone(),
+            None,
+            Some(OutboundPolicy::new(move |_| state.load(Ordering::SeqCst))),
+        )
+        .await
+        .unwrap();
+        let (connection, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(client.get_connection_id(address), async {
+                let mut packet = [0; 1024];
+                let (length, source) = tracker.recv_from(&mut packet).await.unwrap();
+                assert_eq!(length, 16);
+                let mut response = Vec::from(0u32.to_be_bytes());
+                response.extend_from_slice(&packet[12..16]);
+                response.extend_from_slice(&7u64.to_be_bytes());
+                tracker.send_to(&response, source).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(connection.unwrap(), 7);
+        enabled.store(false, Ordering::SeqCst);
+        let error = client
+            .announce(
+                address,
+                AnnounceFields {
+                    info_hash: Id20::new([1; 20]),
+                    peer_id: Id20::new([2; 20]),
+                    downloaded: 0,
+                    left: 0,
+                    uploaded: 0,
+                    event: EVENT_NONE,
+                    key: 0,
+                    port: 6881,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<OutboundPolicyError>()
+                .unwrap()
+                .destination,
+            address
+        );
+        assert!(client.state.locked.read().transactions.is_empty());
+        let mut packet = [0; 1024];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), tracker.recv_from(&mut packet))
+                .await
+                .is_err()
+        );
+        cancel.cancel();
     }
 }
