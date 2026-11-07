@@ -76,6 +76,11 @@ pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
 pub type TorrentId = usize;
 
+/// Filters initial tracker URLs from torrent metadata and SessionOptions.
+/// This does not inspect redirects or DNS results; use `SessionOptions::http_client`
+/// to enforce HTTP policy at those boundaries. Callbacks must not block or panic.
+pub type TrackerUrlFilter = Arc<dyn Fn(&url::Url) -> bool + Send + Sync>;
+
 struct ParsedTorrentFile {
     meta: TorrentMetaV1Owned,
     torrent_bytes: Bytes,
@@ -120,6 +125,7 @@ pub struct Session {
     reqwest_client: reqwest::Client,
     udp_tracker_client: UdpTrackerClient,
     disable_trackers: bool,
+    tracker_url_filter: Option<TrackerUrlFilter>,
 
     // Lifecycle management
     cancellation_token: CancellationToken,
@@ -449,6 +455,15 @@ pub struct SessionOptions {
     /// Options for connecting to peers (for outgiong connections).
     pub connect: Option<ConnectionOptions>,
 
+    /// Optional host-owned HTTP client, used unchanged for metadata, HTTP trackers
+    /// and allow/block lists. The host owns DNS, redirects, proxy and interface
+    /// policy. `connect.proxy_url` and `bind_device_name` do not modify this client.
+    pub http_client: Option<reqwest::Client>,
+
+    /// Destination policy for peer TCP/uTP/SOCKS, UDP trackers and DHT sends.
+    /// This does not cover HTTP, incoming traffic, local discovery or UPnP.
+    pub outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
+
     pub default_storage_factory: Option<BoxStorageFactory>,
 
     pub cancellation_token: Option<CancellationToken>,
@@ -470,6 +485,9 @@ pub struct SessionOptions {
 
     // The list of tracker URLs to always use for each torrent.
     pub trackers: HashSet<url::Url>,
+
+    /// Reject tracker URLs before discovery starts; see `TrackerUrlFilter`.
+    pub tracker_url_filter: Option<TrackerUrlFilter>,
 
     /// Default peer limit per torrent.
     pub peer_limit: Option<usize>,
@@ -499,6 +517,8 @@ impl Default for SessionOptions {
             peer_id: None,
             listen: None,
             connect: None,
+            http_client: None,
+            outbound_policy: None,
             default_storage_factory: None,
             cancellation_token: None,
             concurrent_init_limit: None,
@@ -508,6 +528,7 @@ impl Default for SessionOptions {
             blocklist_url: None,
             allowlist_url: None,
             trackers: HashSet::new(),
+            tracker_url_filter: None,
             peer_limit: None,
             #[cfg(feature = "disable-upload")]
             disable_upload: false,
@@ -619,6 +640,7 @@ impl Session {
                         dht_config.bootstrap_addrs,
                         Some(token.clone()),
                         bind_device.as_ref(),
+                        opts.outbound_policy.clone(),
                     )
                     .await
                     .context("error initializing persistent DHT")?
@@ -626,9 +648,10 @@ impl Session {
                     let listen_addr = dht_listen_addr(dht_config.port, None, opts.ipv4_only);
                     DhtBuilder::with_config(DhtConfig {
                         bootstrap_addrs: dht_config.bootstrap_addrs,
+                        listen_addr: Some(listen_addr),
                         cancellation_token: Some(token.child_token()),
                         bind_device: bind_device.as_ref(),
-                        listen_addr: Some(listen_addr),
+                        outbound_policy: opts.outbound_policy.clone(),
                         ..Default::default()
                     })
                     .await
@@ -710,7 +733,9 @@ impl Session {
                 .client_name_and_version
                 .unwrap_or_else(|| crate::client_name_and_version().to_owned());
 
-            let reqwest_client = {
+            let reqwest_client = if let Some(client) = opts.http_client {
+                client
+            } else {
                 let builder = if let Some(proxy_url) = proxy_url {
                     let proxy = reqwest::Proxy::all(proxy_url)
                         .context("error creating socks5 proxy for HTTP")?;
@@ -738,6 +763,7 @@ impl Session {
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                     bind_device: bind_device.clone(),
                     ipv4_only: opts.ipv4_only,
+                    outbound_policy: opts.outbound_policy.clone(),
                 })
                 .await
                 .context("error creating stream connector")?,
@@ -765,9 +791,13 @@ impl Session {
                 None
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
-                .await
-                .context("error creating UDP tracker client")?;
+            let udp_tracker_client = UdpTrackerClient::new_with_policy(
+                token.clone(),
+                bind_device.as_ref(),
+                opts.outbound_policy,
+            )
+            .await
+            .context("error creating UDP tracker client")?;
 
             let lsd = {
                 if opts.disable_local_service_discovery {
@@ -811,6 +841,7 @@ impl Session {
                 ipv4_only: opts.ipv4_only,
                 trackers: opts.trackers,
                 disable_trackers: opts.disable_trackers,
+                tracker_url_filter: opts.tracker_url_filter,
                 peer_limit: opts.peer_limit,
                 client_name_and_version,
 
@@ -1572,16 +1603,20 @@ impl Session {
 
         if self.disable_trackers {
             trackers.clear();
-        }
-
-        if is_private && trackers.len() > 1 {
-            warn!(
-                ?info_hash,
-                "private trackers are not fully implemented, so using only the first tracker"
-            );
-            trackers.truncate(1);
-        } else if !self.disable_trackers {
-            trackers.extend(self.trackers.iter().cloned());
+        } else {
+            if !is_private {
+                trackers.extend(self.trackers.iter().cloned());
+            }
+            if let Some(allow) = &self.tracker_url_filter {
+                trackers.retain(|url| allow(url));
+            }
+            if is_private && trackers.len() > 1 {
+                warn!(
+                    ?info_hash,
+                    "private trackers are not fully implemented, so using only the first allowed tracker"
+                );
+                trackers.truncate(1);
+            }
         }
 
         let tracker_rx_stats = PeerRxTorrentInfo {
@@ -1871,3 +1906,6 @@ mod tests {
         assert_eq!(parsed_trackers, get_trackers(&generated_parsed));
     }
 }
+
+#[cfg(test)]
+mod network_policy_tests;

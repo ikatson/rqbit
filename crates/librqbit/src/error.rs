@@ -26,6 +26,9 @@ pub enum Error {
     #[error("TCP connections disabled")]
     TcpDisabled,
 
+    #[error(transparent)]
+    OutboundPolicy(#[from] librqbit_core::network_policy::OutboundPolicyError),
+
     #[error("wrong info hash")]
     WrongInfoHash,
     #[error("connecting to ourselves")]

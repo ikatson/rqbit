@@ -967,6 +967,7 @@ impl core::fmt::Debug for ResponseOrError {
 struct DhtWorker {
     socket: UdpSocket,
     dht: Arc<DhtState>,
+    outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
 }
 
 // Windows fails recv_from on a UDP socket with these for a single datagram, and the socket keeps
@@ -1175,6 +1176,14 @@ impl DhtWorker {
                 addr,
             }) = input_rx.recv().await
             {
+                if let Some(policy) = &self.outbound_policy
+                    && let Err(error) = policy.check(addr)
+                {
+                    if let Some(tid) = our_tid {
+                        self.on_send_error(tid, addr, error.into());
+                    }
+                    continue;
+                }
                 if our_tid.is_none() {
                     trace!("{}: sending {:?}", addr, &message);
                 }
@@ -1306,6 +1315,8 @@ pub struct DhtConfig<'a> {
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
     pub bind_device: Option<&'a BindDevice>,
+    /// Checked before every datagram send, including replies and restored nodes.
+    pub outbound_policy: Option<librqbit_core::network_policy::OutboundPolicy>,
 }
 
 impl DhtState {
@@ -1363,7 +1374,11 @@ impl DhtState {
                 {
                     let state = state.clone();
                     async move {
-                        let worker = DhtWorker { socket, dht: state };
+                        let worker = DhtWorker {
+                            socket,
+                            dht: state,
+                            outbound_policy: config.outbound_policy,
+                        };
                         worker.start(in_rx, &bootstrap_addrs).await
                     }
                 },
@@ -1499,3 +1514,6 @@ mod tests {
         assert_answers_ping(&dht).await;
     }
 }
+
+#[cfg(test)]
+mod policy_tests;

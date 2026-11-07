@@ -5,6 +5,7 @@ mod error;
 pub mod hash_id;
 pub mod lengths;
 pub mod magnet;
+pub mod network_policy;
 pub mod peer_id;
 pub mod spawn_utils;
 pub mod speed_estimator;

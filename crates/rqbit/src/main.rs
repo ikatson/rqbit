@@ -656,6 +656,8 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 ..Default::default()
             }),
         }),
+        http_client: None,
+        outbound_policy: None,
         bind_device_name: opts.bind_device_name.take(),
         default_storage_factory: Some({
             fn wrap<S: StorageFactory + Clone>(s: S) -> impl StorageFactory {
@@ -687,6 +689,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
         trackers,
+        tracker_url_filter: None,
         peer_limit: opts.peer_limit,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
