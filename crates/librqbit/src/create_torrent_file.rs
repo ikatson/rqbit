@@ -154,7 +154,10 @@ async fn create_torrent_raw<'a>(
         }
     }
 
-    if remaining_piece_length > 0 && length > 0 {
+    // Hash the last piece only if it's partially filled. If the data ended exactly at a piece
+    // boundary, that piece's hash was already added in the loop. `length` can't be used here,
+    // as it's only the length of the last file.
+    if remaining_piece_length < piece_length {
         piece_hashes.extend_from_slice(&piece_checksum.finish());
     }
     Ok(CreateTorrentRawResult {
@@ -243,9 +246,17 @@ pub async fn create_torrent<'a>(
 
 #[cfg(test)]
 mod tests {
-    use librqbit_core::torrent_metainfo::torrent_from_bytes;
+    use std::path::Path;
 
-    use crate::{create_torrent, spawn_utils::BlockingSpawner};
+    use buffers::ByteBufOwned;
+    use librqbit_core::torrent_metainfo::{TorrentMetaV1Info, torrent_from_bytes};
+    use sha1w::ISha1;
+    use tempfile::TempDir;
+
+    use crate::{
+        CreateTorrentOptions, create_torrent, spawn_utils::BlockingSpawner,
+        tests::test_util::create_new_file_with_random_content,
+    };
 
     #[tokio::test]
     async fn test_create_torrent() {
@@ -264,5 +275,73 @@ mod tests {
 
         let deserialized = torrent_from_bytes(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
+    }
+
+    const PIECE_LENGTH: u32 = 16384;
+
+    // Hashes the files of the torrent, in the order the torrent lists them, the way the
+    // pieces should be hashed.
+    fn expected_piece_hashes(path: &Path, info: &TorrentMetaV1Info<ByteBufOwned>) -> Vec<u8> {
+        let data: Vec<u8> = match &info.files {
+            None => std::fs::read(path).unwrap(),
+            Some(files) => files
+                .iter()
+                .flat_map(|f| {
+                    let file_path = f.path.iter().fold(path.to_owned(), |p, c| {
+                        p.join(std::str::from_utf8(c.as_ref()).unwrap())
+                    });
+                    std::fs::read(file_path).unwrap()
+                })
+                .collect(),
+        };
+        data.chunks(PIECE_LENGTH as usize)
+            .flat_map(|chunk| {
+                let mut sha1 = sha1w::Sha1::new();
+                sha1.update(chunk);
+                sha1.finish()
+            })
+            .collect()
+    }
+
+    async fn create_and_check_pieces(path: &Path, expected_pieces: usize) {
+        let options = CreateTorrentOptions {
+            piece_length: Some(PIECE_LENGTH),
+            ..Default::default()
+        };
+        let torrent = create_torrent(path, options, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+        let info = &torrent.as_info().info.data;
+        assert_eq!(info.pieces.as_ref().len(), expected_pieces * 20);
+        assert_eq!(info.pieces.as_ref(), expected_piece_hashes(path, info));
+    }
+
+    #[tokio::test]
+    async fn test_create_torrent_length_multiple_of_piece_length() {
+        let dir = TempDir::with_prefix("rqbit_test_create_torrent").unwrap();
+        let path = dir.path().join("file");
+        create_new_file_with_random_content(&path, 3 * PIECE_LENGTH as usize);
+        create_and_check_pieces(&path, 3).await;
+    }
+
+    #[tokio::test]
+    async fn test_create_torrent_partial_last_piece() {
+        let dir = TempDir::with_prefix("rqbit_test_create_torrent").unwrap();
+        let path = dir.path().join("file");
+        create_new_file_with_random_content(&path, 3 * PIECE_LENGTH as usize + 1);
+        create_and_check_pieces(&path, 4).await;
+    }
+
+    #[tokio::test]
+    async fn test_create_torrent_with_empty_file() {
+        // The empty file may be walked before or after the other one. When it comes last, the
+        // partial last piece must still be hashed.
+        let dir = TempDir::with_prefix("rqbit_test_create_torrent").unwrap();
+        create_new_file_with_random_content(
+            &dir.path().join("data"),
+            3 * PIECE_LENGTH as usize + 1,
+        );
+        create_new_file_with_random_content(&dir.path().join("empty"), 0);
+        create_and_check_pieces(dir.path(), 4).await;
     }
 }
