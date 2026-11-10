@@ -393,10 +393,38 @@ impl ManagedTorrent {
 
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
+                                    // Only initial_check() stops on a pause: one requested at
+                                    // any other point of the check still has to be honoured.
+                                    let start_paused = start_paused || init.is_pause_requested();
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {
                                     if init.is_pause_requested() {
+                                        // Like a paused live torrent, a paused check releases
+                                        // the files: its storage moves to a new state, which
+                                        // the check restarts from. Unless a new check started.
+                                        let mut g = t.locked.write();
+                                        if let ManagedTorrentState::Initializing(current) = &g.state
+                                            && Arc::ptr_eq(current, &init)
+                                            && init.is_pause_requested()
+                                            && init.try_start_check()
+                                        {
+                                            match init.take() {
+                                                Ok(taken) => {
+                                                    g.state = ManagedTorrentState::Initializing(
+                                                        Arc::new(taken),
+                                                    )
+                                                }
+                                                Err(error) => {
+                                                    init.finish_check();
+                                                    warn!(
+                                                        ?error,
+                                                        "error releasing files of a paused initial check"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        drop(g);
                                         debug!("initial check paused");
                                         t.state_change_notify.notify_waiters();
                                         return Ok(());

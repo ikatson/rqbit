@@ -83,6 +83,23 @@ impl TorrentStateInitializing {
         self.check_running.store(false, Ordering::Release);
     }
 
+    /// The same state with the storage taken over (see TorrentStorage::take), for a check that
+    /// was paused: this one is left useless.
+    pub(crate) fn take(&self) -> anyhow::Result<Self> {
+        let taken = Self::new(
+            self.shared.clone(),
+            self.metadata.clone(),
+            self.only_files.clone(),
+            self.files.take()?,
+            self.previously_errored,
+        );
+        taken
+            .checked_bytes
+            .store(self.get_checked_bytes(), Ordering::Relaxed);
+        taken.request_pause();
+        Ok(taken)
+    }
+
     async fn validate_fastresume(
         &self,
         bitv_factory: &dyn BitVFactory,
@@ -213,6 +230,8 @@ impl TorrentStateInitializing {
             Some(h) => h,
             None => {
                 info!("Doing initial checksum validation, this might take a while...");
+                // The check starts over from the first piece, and so does its progress.
+                self.checked_bytes.store(0, Ordering::Relaxed);
                 let have_pieces = self
                     .shared
                     .spawner
