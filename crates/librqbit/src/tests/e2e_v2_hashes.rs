@@ -93,7 +93,7 @@ async fn next_hash_message(peer: &mut FakePeer, within: Duration) -> anyhow::Res
 }
 
 /// A session that seeds `files` with `torrent` (which has every piece layer).
-async fn start_seeder(
+pub(super) async fn start_seeder(
     files: &V2Files,
     torrent: Bytes,
 ) -> anyhow::Result<(TempDir, Arc<Session>, ManagedTorrentHandle)> {
@@ -141,7 +141,7 @@ fn pieces_of_small_files(files: &V2Files) -> HashSet<u32> {
     out
 }
 
-fn have_all_piece_layers(handle: &ManagedTorrentHandle) -> bool {
+pub(super) fn have_all_piece_layers(handle: &ManagedTorrentHandle) -> bool {
     handle
         .metadata
         .load()
@@ -431,7 +431,10 @@ async fn test_v2_piece_layers_fetched_from_peers_forged_proof_rejected() -> anyh
 }
 
 /// The `.torrent` file in `persistence` once it holds every piece layer.
-async fn wait_for_stored_layers(persistence: &Path, within: Duration) -> anyhow::Result<()> {
+pub(super) async fn wait_for_stored_layers(
+    persistence: &Path,
+    within: Duration,
+) -> anyhow::Result<()> {
     let deadline = Instant::now() + within;
     loop {
         for e in std::fs::read_dir(persistence)?.filter_map(|e| e.ok()) {

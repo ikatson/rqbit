@@ -7,6 +7,7 @@ mod e2e_storage_ops;
 mod e2e_stream;
 mod e2e_v2;
 mod e2e_v2_hashes;
+mod e2e_v2_magnet;
 mod e2e_webseed;
 mod fake_peer;
 mod interop;

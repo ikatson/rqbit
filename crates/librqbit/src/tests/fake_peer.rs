@@ -468,3 +468,43 @@ async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> 
     })
     .await
 }
+
+/// A handshake with the given reserved bytes.
+pub(super) fn handshake_bytes_with_reserved(
+    info_hash: Id20,
+    peer_id: &[u8; 20],
+    reserved: [u8; 8],
+) -> [u8; 68] {
+    let mut b = handshake_bytes(info_hash, peer_id);
+    b[20..28].copy_from_slice(&reserved);
+    b
+}
+
+impl FakePeer {
+    /// Accepts one connection on `listener` and answers its handshake with the info hash it
+    /// carries and `reserved`. Returns the peer and the other side's handshake.
+    pub(super) async fn accept(
+        listener: &tokio::net::TcpListener,
+        peer_id: &[u8; 20],
+        reserved: [u8; 8],
+    ) -> anyhow::Result<(Self, [u8; 68])> {
+        let (stream, _) = listener.accept().await.context("accept")?;
+        let local = stream.local_addr()?;
+        let mut p = Self {
+            stream,
+            buf: Vec::new(),
+            local,
+        };
+        let mut theirs = [0u8; 68];
+        timeout(Duration::from_secs(5), p.stream.read_exact(&mut theirs))
+            .await
+            .context("no handshake")?
+            .context("handshake")?;
+        let mut info_hash = Id20::default();
+        info_hash.0.copy_from_slice(&theirs[28..48]);
+        p.stream
+            .write_all(&handshake_bytes_with_reserved(info_hash, peer_id, reserved))
+            .await?;
+        Ok((p, theirs))
+    }
+}

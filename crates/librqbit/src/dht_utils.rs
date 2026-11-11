@@ -7,7 +7,9 @@ use librqbit_core::torrent_metainfo::TorrentMetaV1Info;
 use tracing::{Instrument, debug, debug_span};
 
 use crate::{
-    peer_connection::PeerConnectionOptions, peer_info_reader, spawn_utils::BlockingSpawner,
+    peer_connection::PeerConnectionOptions,
+    peer_info_reader::{self, MetadataHashes},
+    spawn_utils::BlockingSpawner,
     stream_connect::StreamConnector,
 };
 use librqbit_core::hash_id::Id20;
@@ -29,7 +31,8 @@ pub enum ReadMetainfoResult<Rx> {
 
 pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unpin>(
     peer_id: Id20,
-    info_hash: Id20,
+    // What the info dictionary must hash to; also gives the swarm the handshakes join.
+    hashes: MetadataHashes,
     initial_addrs: Vec<SocketAddr>,
     addrs_stream: A,
     peer_connection_options: Option<PeerConnectionOptions>,
@@ -50,7 +53,7 @@ pub async fn read_metainfo_from_peer_receiver<A: Stream<Item = SocketAddr> + Unp
             let ret = peer_info_reader::read_metainfo_from_peer(
                 addr,
                 peer_id,
-                info_hash,
+                hashes,
                 peer_connection_options,
                 // This shouldn't be called anyway as we aren't reading/writing to disk, so it's
                 // ok not to use a shared one.
@@ -140,7 +143,7 @@ mod tests {
         let peer_id = generate_peer_id(b"-xx1234-");
         match read_metainfo_from_peer_receiver(
             peer_id,
-            info_hash,
+            MetadataHashes::new(Some(info_hash), None).unwrap(),
             Vec::new(),
             peer_rx,
             None,
