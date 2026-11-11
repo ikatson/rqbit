@@ -169,6 +169,7 @@ Use a regex here to select files by their names.
 - [BEP-12: Multitracker Metadata Extension](https://www.bittorrent.org/beps/bep_0012.html)
 - [BEP-14: Local service discovery](https://www.bittorrent.org/beps/bep_0014.html)
 - [BEP-15: UDP Tracker Protocol](https://www.bittorrent.org/beps/bep_0015.html)
+- [BEP-16: Superseeding](https://www.bittorrent.org/beps/bep_0016.html) (`AddTorrentOptions::super_seeding`, `Session::set_super_seeding`, `POST /torrents/<id_or_infohash>/super_seeding`)
 - [BEP-20: Peer ID Conventions](https://www.bittorrent.org/beps/bep_0020.html)
 - [BEP-23: Tracker Returns Compact Peer Lists](https://www.bittorrent.org/beps/bep_0023.html)
 - [BEP-27: Private Torrents](https://www.bittorrent.org/beps/bep_0027.html)

@@ -55,6 +55,20 @@ Per-peer tracking of which chunks have been requested from this peer. Used for:
 - Detecting unexpected data ("peer sent us a piece we did not ask")
 - Cleanup when peer dies
 
+### 4. Super seeding state (in `super_seeding.rs`)
+
+Upload side only; it never touches the piece states below.
+
+- `TorrentStateLive::super_seeding` (`SuperSeeding`): per torrent, the piece each super seeded
+  connection is currently shown and whether it showed up at another peer (`shown` mutex).
+- `PeerHandler::super_seed` (`SuperSeedConn`): per connection, the pieces shown to it, the one
+  shown last and which of its chunks were uploaded (`reveal` mutex).
+
+Both mutexes are leaf locks: taken after the torrent lock when at all, never held while a peer
+lock or the torrent lock is taken. The super seeding flag lives in the torrent's options
+(`ManagedTorrentShared::options`), so it survives the live state being rebuilt (pause and
+resume); the per-connection state starts over with the connection.
+
 ## Piece State Invariant
 
 A piece is in exactly ONE of these states:
