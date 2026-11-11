@@ -713,7 +713,9 @@ async fn test_missing_file_comes_from_the_peer() -> anyhow::Result<()> {
             ],
             &[],
         );
-        let seeder = Seeder::start(&torrent, bps(32 * KIB)).await?;
+        // Slow enough that the web seed, which waits a little after the 404, still has
+        // pieces of the files after the missing one left to fetch.
+        let seeder = Seeder::start(&torrent, bps(16 * KIB)).await?;
         let server = WebSeedServer::start(torrent.server_files()).await?;
         let missing = torrent.url_path(1);
         server.set(|b| b.missing = vec![missing.clone()]);
