@@ -27,6 +27,7 @@ use tokio::{
     time::timeout,
 };
 
+mod dht;
 mod smoke;
 mod trackers;
 

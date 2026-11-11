@@ -8,6 +8,11 @@ documentation = "https://docs.rs/librqbit-dht"
 repository = "https://github.com/ikatson/rqbit"
 readme = "README.md"
 
+[features]
+default = ["sha1-crypto-hash"]
+sha1-crypto-hash = ["sha1w/sha1-crypto-hash"]
+sha1-ring = ["sha1w/sha1-ring"]
+
 [dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "sync"] }
 tokio-stream = { workspace = true, features = ["sync"] }
@@ -32,6 +37,11 @@ tokio-util.workspace = true
 bytes.workspace = true
 librqbit-dualstack-sockets.workspace = true
 thiserror.workspace = true
+ed25519-dalek = { workspace = true, features = ["zeroize"] }
+sha1w.workspace = true
 
 [dev-dependencies]
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+tempfile.workspace = true
+# Only to sign with the expanded private keys of the BEP 44 test vectors.
+ed25519-dalek = { workspace = true, features = ["hazmat", "digest"] }
