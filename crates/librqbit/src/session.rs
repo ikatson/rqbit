@@ -1084,7 +1084,7 @@ impl Session {
                 ..Default::default()
             });
         info!(?ports, ?methods, "starting port mapper");
-        let stop_timeout = opts.shutdown_timeout + Duration::from_secs(1);
+        let stop_timeout = opts.shutdown_timeout.saturating_add(Duration::from_secs(1));
         Some(SessionPortMapper {
             mapper: PortMapper::new(ports.into_iter().flatten(), methods, opts, bind_device),
             stopped: CancellationToken::new(),
