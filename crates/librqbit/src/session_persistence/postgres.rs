@@ -26,6 +26,8 @@ struct TorrentsTableRecord {
     output_folder: String,
     only_files: Option<Vec<i32>>,
     is_paused: bool,
+    // NULL in rows written before web seeds: the torrent's own are used.
+    web_seeds: Option<Vec<String>>,
 }
 
 impl TorrentsTableRecord {
@@ -41,6 +43,7 @@ impl TorrentsTableRecord {
                     .only_files
                     .map(|v| v.into_iter().map(|v| v as usize).collect()),
                 is_paused: self.is_paused,
+                web_seeds: self.web_seeds,
             },
         ))
     }
@@ -80,6 +83,7 @@ impl PostgresSessionStorage {
         );
 
         exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS have_bitfield BYTEA");
+        exec!("ALTER TABLE torrents ADD COLUMN IF NOT EXISTS web_seeds TEXT[]");
 
         Ok(Self { pool })
     }
@@ -102,8 +106,8 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .as_ref()
             .map(|i| i.torrent_bytes.clone())
             .unwrap_or_default();
-        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused)
-        VALUES($1, $2, $3, $4, $5, $6, $7)
+        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, web_seeds)
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT(id) DO NOTHING";
         sqlx::query(q)
             .bind::<i32>(id.try_into()?)
@@ -132,6 +136,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
                     .collect::<Vec<i32>>()
             }))
             .bind(torrent.is_paused())
+            .bind(torrent.web_seed_urls())
             .execute(&self.pool)
             .await
             .context("error executing INSERT INTO torrents")?;
@@ -163,17 +168,20 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         id: TorrentId,
         torrent: &ManagedTorrentHandle,
     ) -> anyhow::Result<()> {
-        sqlx::query("UPDATE torrents SET only_files = $1, is_paused = $2 WHERE id = $3")
-            .bind(torrent.only_files().map(|v| {
-                v.into_iter()
-                    .filter_map(|f| f.try_into().ok())
-                    .collect::<Vec<i32>>()
-            }))
-            .bind(torrent.is_paused())
-            .bind::<i32>(id.try_into()?)
-            .execute(&self.pool)
-            .await
-            .context("error executing UPDATE torrents")?;
+        sqlx::query(
+            "UPDATE torrents SET only_files = $1, is_paused = $2, web_seeds = $3 WHERE id = $4",
+        )
+        .bind(torrent.only_files().map(|v| {
+            v.into_iter()
+                .filter_map(|f| f.try_into().ok())
+                .collect::<Vec<i32>>()
+        }))
+        .bind(torrent.is_paused())
+        .bind(torrent.web_seed_urls())
+        .bind::<i32>(id.try_into()?)
+        .execute(&self.pool)
+        .await
+        .context("error executing UPDATE torrents")?;
         Ok(())
     }
 

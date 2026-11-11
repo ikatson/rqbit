@@ -30,6 +30,10 @@ pub struct SerializedTorrent {
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
     is_paused: bool,
+    // The web seeds of the torrent, including the ones added at run time and without the ones
+    // removed. Missing in older state: the torrent's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    web_seeds: Option<Vec<String>>,
 }
 
 impl SerializedTorrent {
@@ -58,6 +62,8 @@ impl SerializedTorrent {
                     .to_owned(),
             ),
             only_files: self.only_files,
+            replace_web_seeds: self.web_seeds.is_some(),
+            web_seeds: self.web_seeds,
             overwrite: true,
             ..Default::default()
         };
@@ -95,4 +101,33 @@ where
     D: Deserializer<'de>,
 {
     Id20::deserialize(deserializer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SerializedTorrent;
+
+    const INFO_HASH: &str = "a621779b5e3d486e127c3efbca9b6f8d135f52e5";
+
+    #[test]
+    fn test_web_seeds_round_trip() {
+        let old = format!(
+            r#"{{"info_hash":"{INFO_HASH}","trackers":[],"output_folder":"/tmp/t","only_files":null,"is_paused":false}}"#
+        );
+        // State written before web seeds: the torrent's own are used.
+        let mut t: SerializedTorrent = serde_json::from_str(&old).unwrap();
+        let (_, opts) = t.clone().into_add_torrent().unwrap();
+        assert_eq!(opts.web_seeds, None);
+        assert!(!opts.replace_web_seeds);
+
+        // A stored list replaces the torrent's own, even an empty one.
+        for urls in [vec![], vec!["http://a/x".to_owned()]] {
+            t.web_seeds = Some(urls.clone());
+            let json = serde_json::to_string(&t).unwrap();
+            let t: SerializedTorrent = serde_json::from_str(&json).unwrap();
+            let (_, opts) = t.into_add_torrent().unwrap();
+            assert_eq!(opts.web_seeds, Some(urls));
+            assert!(opts.replace_web_seeds);
+        }
+    }
 }
