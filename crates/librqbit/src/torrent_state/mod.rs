@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Weak;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -129,6 +129,10 @@ pub(crate) struct ManagedTorrentOptions {
     pub upload_slots: UploadSlots,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
+    /// Super seeding (BEP 16) as set by the user. It lives here, not in the live state, so that
+    /// it survives pause / resume and storage operations; the live state reads it for every new
+    /// connection.
+    pub super_seeding: AtomicBool,
 }
 
 impl ManagedTorrentOptions {
@@ -261,6 +265,22 @@ impl ManagedTorrent {
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
         self.locked.read().only_files.clone()
+    }
+
+    /// Whether super seeding (BEP 16) is on, as set with [`crate::Session::set_super_seeding`]
+    /// or [`crate::AddTorrentOptions::super_seeding`]. It is only active while the torrent has
+    /// every selected piece, and then for the connections made from that moment on: those
+    /// see one piece at a time instead of everything we have.
+    pub fn super_seeding(&self) -> bool {
+        self.shared.options.super_seeding.load(Ordering::Acquire)
+    }
+
+    /// Turn super seeding on or off, in any state.
+    pub(crate) fn set_super_seeding(&self, enabled: bool) {
+        self.shared
+            .options
+            .super_seeding
+            .store(enabled, Ordering::Release);
     }
 
     /// How the torrent orders the pieces it downloads.
@@ -549,6 +569,7 @@ impl ManagedTorrent {
             uploaded_bytes: 0,
             finished: false,
             live: None,
+            super_seeding: self.super_seeding(),
         };
 
         {

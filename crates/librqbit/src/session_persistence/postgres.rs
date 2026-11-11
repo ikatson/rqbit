@@ -28,6 +28,7 @@ struct TorrentsTableRecord {
     is_paused: bool,
     sequential: bool,
     first_last_pieces_first: bool,
+    super_seeding: bool,
 }
 
 impl TorrentsTableRecord {
@@ -47,6 +48,7 @@ impl TorrentsTableRecord {
                     sequential: self.sequential,
                     first_last_pieces_first: self.first_last_pieces_first,
                 },
+                super_seeding: self.super_seeding,
             },
         ))
     }
@@ -92,6 +94,9 @@ impl PostgresSessionStorage {
         exec!(
             "ALTER TABLE torrents ADD COLUMN IF NOT EXISTS first_last_pieces_first BOOLEAN NOT NULL DEFAULT FALSE"
         );
+        exec!(
+            "ALTER TABLE torrents ADD COLUMN IF NOT EXISTS super_seeding BOOLEAN NOT NULL DEFAULT FALSE"
+        );
 
         Ok(Self { pool })
     }
@@ -114,8 +119,8 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .as_ref()
             .map(|i| i.torrent_bytes.clone())
             .unwrap_or_default();
-        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, sequential, first_last_pieces_first)
-        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        let q = "INSERT INTO torrents (id, info_hash, torrent_bytes, trackers, output_folder, only_files, is_paused, sequential, first_last_pieces_first, super_seeding)
+        VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT(id) DO NOTHING";
         let piece_picking = torrent.piece_picking();
         sqlx::query(q)
@@ -147,6 +152,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
             .bind(torrent.is_paused())
             .bind(piece_picking.sequential)
             .bind(piece_picking.first_last_pieces_first)
+            .bind(torrent.super_seeding())
             .execute(&self.pool)
             .await
             .context("error executing INSERT INTO torrents")?;
@@ -180,7 +186,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
     ) -> anyhow::Result<()> {
         let piece_picking = torrent.piece_picking();
         sqlx::query(
-            "UPDATE torrents SET only_files = $1, is_paused = $2, sequential = $3, first_last_pieces_first = $4 WHERE id = $5",
+            "UPDATE torrents SET only_files = $1, is_paused = $2, sequential = $3, first_last_pieces_first = $4, super_seeding = $5 WHERE id = $6",
         )
         .bind(torrent.only_files().map(|v| {
             v.into_iter()
@@ -190,6 +196,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         .bind(torrent.is_paused())
         .bind(piece_picking.sequential)
         .bind(piece_picking.first_last_pieces_first)
+        .bind(torrent.super_seeding())
         .bind::<i32>(id.try_into()?)
             .execute(&self.pool)
             .await

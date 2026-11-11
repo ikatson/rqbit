@@ -66,6 +66,8 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
             "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
             "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+            "GET /torrents/{id_or_infohash}/super_seeding": "Whether super seeding (BEP 16) is on, {\"super_seeding\": true}",
+            "POST /torrents/{id_or_infohash}/super_seeding": "Turn super seeding (BEP 16) on or off. POST json of the form {\"super_seeding\": true}. Turning it on affects new connections once the torrent has every selected piece",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
         },
         "server": "rqbit",
@@ -105,7 +107,11 @@ pub fn make_api_router(state: ApiState) -> Router {
             "/torrents/{id}/stream/{file_id}/{*filename}",
             get(streaming::h_torrent_stream_file),
         )
-        .route("/torrents/limits", get(configure::h_get_session_ratelimits));
+        .route("/torrents/limits", get(configure::h_get_session_ratelimits))
+        .route(
+            "/torrents/{id}/super_seeding",
+            get(configure::h_get_torrent_super_seeding),
+        );
 
     if !state.opts.read_only {
         api_router = api_router
@@ -113,6 +119,10 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/limits",
                 post(configure::h_update_session_ratelimits),
+            )
+            .route(
+                "/torrents/{id}/super_seeding",
+                post(configure::h_update_torrent_super_seeding),
             )
             .route(
                 "/torrents/{id}/pause",

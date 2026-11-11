@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -309,6 +309,15 @@ pub struct AddTorrentOptions {
     /// Can be changed later with [`Session::set_piece_picking`].
     #[serde(default)]
     pub piece_picking: PiecePicking,
+
+    /// Super seeding (BEP 16, "initial seeding"): once the torrent has every selected piece,
+    /// the connections made from then on are not told what we have. Each peer is shown one
+    /// piece at a time, the rarest one, and the next only after the previous one has shown up
+    /// at another peer, so that every piece we upload is a new one for the swarm. While the
+    /// torrent still needs pieces it downloads normally. Can be changed later with
+    /// [`Session::set_super_seeding`].
+    #[serde(default)]
+    pub super_seeding: bool,
 }
 
 pub struct ListOnlyResponse {
@@ -1420,6 +1429,7 @@ impl Session {
                     upload_slots: self.upload_slots,
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
+                    super_seeding: AtomicBool::new(opts.super_seeding),
                 },
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
@@ -1696,6 +1706,22 @@ impl Session {
     ) {
         handle.set_piece_picking(piece_picking);
         self.try_update_persistence_metadata(handle).await;
+    }
+
+    /// Turn super seeding (BEP 16) on or off for a torrent, in any state (see
+    /// [`AddTorrentOptions::super_seeding`]). It is kept across pause / resume and persisted.
+    ///
+    /// Turning it on affects the connections made from then on, once the torrent has every
+    /// selected piece; the peers connected already keep what they were told. Turning it off
+    /// sends the connections in the mode a `Have` for every piece they were not shown yet.
+    pub async fn set_super_seeding(
+        &self,
+        handle: &ManagedTorrentHandle,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        handle.set_super_seeding(enabled);
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
     }
 
     pub fn listen_addr(&self) -> Option<SocketAddr> {
