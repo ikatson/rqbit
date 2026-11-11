@@ -28,6 +28,7 @@ use tokio::{
 };
 
 mod smoke;
+mod trackers;
 
 /// The environment variable that points at a Python interpreter with `libtorrent` installed.
 pub(super) const PYTHON_ENV: &str = "RQBIT_TEST_LIBTORRENT_PYTHON";
