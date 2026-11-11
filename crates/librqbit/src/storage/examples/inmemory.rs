@@ -7,7 +7,9 @@ use parking_lot::RwLock;
 use crate::type_aliases::FileInfos;
 use crate::{ManagedTorrentShared, TorrentMetadata};
 
-use crate::storage::{StorageFactory, StorageFactoryExt, TorrentStorage};
+use crate::storage::{
+    MoveStorageOutcome, MoveStorageRequest, StorageFactory, StorageFactoryExt, TorrentStorage,
+};
 
 struct InMemoryPiece {
     bytes: Box<[u8]>,
@@ -122,6 +124,24 @@ impl TorrentStorage for InMemoryExampleStorage {
     }
 
     fn remove_directory_if_empty(&self, _path: &Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    // The data lives in memory by piece, not under any name or folder, so renaming and
+    // moving have nothing to do. file_length() keeps its default: memory that was never
+    // written still reads as zeroes, so the storage can't say whether a file is complete.
+    fn rename_file(&self, _file_id: usize, _from: &Path, _to: &Path) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn move_storage(
+        &self,
+        _request: &MoveStorageRequest<'_>,
+    ) -> anyhow::Result<MoveStorageOutcome> {
+        Ok(MoveStorageOutcome::default())
+    }
+
+    fn finish_move_storage(&self, _commit: bool) -> anyhow::Result<()> {
         Ok(())
     }
 }

@@ -1,8 +1,9 @@
 use std::{
     collections::{
-        HashMap,
+        BTreeMap, HashMap,
         hash_map::Entry::{Occupied, Vacant},
     },
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -56,36 +57,35 @@ impl TorrentFileTreeNode {
         http_host: &str,
         torrent: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
+        files: &[Vec<String>],
     ) -> ItemOrContainer {
         let encoded_id = encode_id(id, torrent.id);
         let encoded_parent_id = self.parent_id.map(|p| encode_id(p, torrent.id));
         match self.real_torrent_file_id {
             Some(fid) => {
-                let fi = &metadata.file_infos[fid];
-                let filename = &fi.relative_filename;
-                // Torrent path joined with "/"
-                let last_url_bit = metadata
-                    .info
-                    .iter_file_details()
-                    .nth(fid)
-                    .map(|fd| fd.filename.to_vec())
-                    .map(|components| {
-                        components
-                            .into_iter()
-                            .map(|c| urlencoding::encode(&c).into_owned())
-                            .join("/")
-                    })
-                    .unwrap_or_else(|| self.title.clone());
+                let len = metadata.file_infos.get(fid).map(|fi| fi.len).unwrap_or(0);
+                let components = files.get(fid).map(|c| c.as_slice()).unwrap_or_default();
+                // File path joined with "/"
+                let last_url_bit = if components.is_empty() {
+                    self.title.clone()
+                } else {
+                    components
+                        .iter()
+                        .map(|c| urlencoding::encode(c).into_owned())
+                        .join("/")
+                };
                 ItemOrContainer::Item(Item {
                     id: encoded_id,
                     parent_id: encoded_parent_id.unwrap_or_default(),
                     title: self.title.clone(),
-                    mime_type: mime_guess::from_path(filename).first(),
+                    mime_type: components
+                        .last()
+                        .and_then(|name| mime_guess::from_path(name).first()),
                     url: format!(
                         "http://{}/torrents/{}/stream/{}/{}",
                         http_host, torrent.id, fid, last_url_bit
                     ),
-                    size: fi.len,
+                    size: len,
                 })
             }
             None => ItemOrContainer::Container(Container {
@@ -103,29 +103,41 @@ struct TorrentFileTree {
     nodes: Vec<TorrentFileTreeNode>,
 }
 
-fn is_single_file_at_root(info: &ValidatedTorrentMetaV1Info<ByteBufOwned>) -> bool {
+// The path of every file of the torrent as it's stored now, split into components: the
+// published path, or the one the file was renamed to (`Session::rename_file`).
+fn file_components(
+    info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
+    renamed: &BTreeMap<usize, PathBuf>,
+) -> Vec<Vec<String>> {
     info.iter_file_details()
-        .flat_map(move |fd| fd.filename.iter_components())
-        .nth(1)
-        .is_none()
+        .enumerate()
+        .map(|(fid, fd)| match renamed.get(&fid) {
+            Some(path) => path
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect(),
+            None => fd.filename.to_vec(),
+        })
+        .collect()
+}
+
+fn is_single_file_at_root(files: &[Vec<String>]) -> bool {
+    matches!(files, [only] if only.len() == 1)
 }
 
 impl TorrentFileTree {
     fn build(
         torent_id: TorrentId,
         info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
+        files: &[Vec<String>],
     ) -> anyhow::Result<Self> {
-        if is_single_file_at_root(info) {
-            let filename = info
-                .iter_file_details()
-                .next()
-                .unwrap()
-                .filename
-                .iter_components()
-                .last()
-                .unwrap();
+        if is_single_file_at_root(files) {
+            let filename = files
+                .first()
+                .and_then(|c| c.last())
+                .context("bug: no file")?;
             let root_node = TorrentFileTreeNode {
-                title: filename.into_owned(),
+                title: filename.clone(),
                 parent_id: None,
                 children: vec![],
                 real_torrent_file_id: Some(0),
@@ -150,8 +162,7 @@ impl TorrentFileTree {
 
         let mut name_cache = HashMap::new();
 
-        for (fid, fd) in info.iter_file_details().enumerate() {
-            let components = fd.filename.to_vec();
+        for (fid, components) in files.iter().enumerate() {
             let mut parent_id = 0;
             let mut it = components.iter().peekable();
             while let Some(component) = it.next() {
@@ -209,11 +220,11 @@ impl UpnpServerSessionAdapter {
                     Some(r) => r,
                     None => return None,
                 };
+                let files = file_components(&metadata.info, &t.shared().renamed_files());
 
-                if is_single_file_at_root(&metadata.info) {
+                if is_single_file_at_root(&files) {
                     // Just add the file directly
-                    let rf = &metadata.file_infos[0].relative_filename;
-                    let title = rf.file_name()?.to_str()?.to_owned();
+                    let title = files.first()?.last()?.clone();
                     Some(
                         TorrentFileTreeNode {
                             title,
@@ -226,6 +237,7 @@ impl UpnpServerSessionAdapter {
                             hostname,
                             t.shared(),
                             metadata,
+                            &files,
                         ),
                     )
                 } else {
@@ -288,7 +300,8 @@ impl UpnpServerSessionAdapter {
             None => return vec![],
         };
 
-        let tree = match TorrentFileTree::build(torrent.id(), &t_metadata.info) {
+        let files = file_components(&t_metadata.info, &torrent.shared().renamed_files());
+        let tree = match TorrentFileTree::build(torrent.id(), &t_metadata.info, &files) {
             Ok(tree) => tree,
             Err(e) => {
                 warn!(object_id, error=?e, "error building torrent file tree");
@@ -314,6 +327,7 @@ impl UpnpServerSessionAdapter {
                 http_hostname,
                 torrent.shared(),
                 t_metadata,
+                &files,
             ))
         } else {
             for (child_node_id, child_node) in node
@@ -326,6 +340,7 @@ impl UpnpServerSessionAdapter {
                     http_hostname,
                     torrent.shared(),
                     t_metadata,
+                    &files,
                 ));
             }
         };
@@ -370,6 +385,8 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use bencode::bencode_serialize_to_writer;
     use bytes::Bytes;
     use dht::Id20;
@@ -387,6 +404,7 @@ mod tests {
         tests::test_util::setup_test_logging,
         upnp_server_adapter::{
             TorrentFileTree, TorrentFileTreeNode, UpnpServerSessionAdapter, decode_id, encode_id,
+            file_components,
         },
     };
 
@@ -430,10 +448,22 @@ mod tests {
         }
     }
 
+    fn build_tree(
+        t: &TorrentMetaV1Owned,
+        renamed: &[(usize, &str)],
+    ) -> anyhow::Result<TorrentFileTree> {
+        let info = t.info.data.clone().validate()?;
+        let renamed = renamed
+            .iter()
+            .map(|(idx, path)| (*idx, PathBuf::from(path)))
+            .collect();
+        TorrentFileTree::build(0, &info, &file_components(&info, &renamed))
+    }
+
     #[test]
     fn test_torrent_file_tree_single() -> anyhow::Result<()> {
         let t = create_torrent(Some("test t"), &["file0"]);
-        let tree = TorrentFileTree::build(0, &t.info.data.validate().unwrap())?;
+        let tree = build_tree(&t, &[])?;
         assert_eq!(
             &tree.nodes,
             &[TorrentFileTreeNode {
@@ -450,7 +480,7 @@ mod tests {
     #[test]
     fn test_torrent_file_tree_flat() -> anyhow::Result<()> {
         let t = create_torrent(Some("test t"), &["file0", "file1"]);
-        let tree = TorrentFileTree::build(0, &t.info.data.validate().unwrap())?;
+        let tree = build_tree(&t, &[])?;
         assert_eq!(
             &tree.nodes,
             &[
@@ -484,7 +514,7 @@ mod tests {
             Some("test t"),
             &["file0", "file1", "dir0/file2", "dir0/dir1/file3"],
         );
-        let tree = TorrentFileTree::build(0, &t.info.data.validate().unwrap())?;
+        let tree = build_tree(&t, &[])?;
         assert_eq!(
             &tree.nodes,
             &[
@@ -533,6 +563,64 @@ mod tests {
             ]
         );
 
+        Ok(())
+    }
+
+    // A renamed file shows up under its new path, so a single file moved into a directory
+    // makes the torrent a folder.
+    #[test]
+    fn test_torrent_file_tree_renamed() -> anyhow::Result<()> {
+        let t = create_torrent(Some("test t"), &["file0"]);
+        let tree = build_tree(&t, &[(0, "sub/renamed.mkv")])?;
+        assert_eq!(
+            &tree.nodes,
+            &[
+                TorrentFileTreeNode {
+                    children: vec![1],
+                    parent_id: None,
+                    real_torrent_file_id: None,
+                    title: "test t".into()
+                },
+                TorrentFileTreeNode {
+                    children: vec![2],
+                    parent_id: Some(0),
+                    real_torrent_file_id: None,
+                    title: "sub".into()
+                },
+                TorrentFileTreeNode {
+                    children: vec![],
+                    parent_id: Some(1),
+                    real_torrent_file_id: Some(0),
+                    title: "renamed.mkv".into()
+                },
+            ]
+        );
+
+        let t = create_torrent(Some("test t"), &["dir0/file0", "file1"]);
+        let tree = build_tree(&t, &[(0, "file0")])?;
+        assert_eq!(
+            &tree.nodes,
+            &[
+                TorrentFileTreeNode {
+                    children: vec![1, 2],
+                    parent_id: None,
+                    real_torrent_file_id: None,
+                    title: "test t".into()
+                },
+                TorrentFileTreeNode {
+                    children: vec![],
+                    parent_id: Some(0),
+                    real_torrent_file_id: Some(0),
+                    title: "file0".into()
+                },
+                TorrentFileTreeNode {
+                    children: vec![],
+                    parent_id: Some(0),
+                    real_torrent_file_id: Some(1),
+                    title: "file1".into()
+                },
+            ]
+        );
         Ok(())
     }
 

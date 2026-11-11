@@ -2,7 +2,10 @@ pub mod json;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -13,8 +16,10 @@ use librqbit_core::magnet::Magnet;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    AddTorrent, AddTorrentOptions, bitv_factory::BitVFactory, session::TorrentId,
-    torrent_state::ManagedTorrentHandle,
+    AddTorrent, AddTorrentOptions,
+    bitv_factory::BitVFactory,
+    session::TorrentId,
+    torrent_state::{ManagedTorrentHandle, MoveInProgress},
 };
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -30,12 +35,32 @@ pub struct SerializedTorrent {
     output_folder: PathBuf,
     only_files: Option<Vec<usize>>,
     is_paused: bool,
+    // Session::rename_file: file index -> path relative to output_folder.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    renamed_files: BTreeMap<usize, PathBuf>,
+    // A Session::move_storage the process stopped in the middle of; `output_folder` is
+    // still the folder it moved from. Undone when the session loads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    move_in_progress: Option<MoveInProgress>,
 }
 
 impl SerializedTorrent {
     pub fn info_hash(&self) -> &Id20 {
         &self.info_hash
     }
+
+    /// The files an interrupted move may have left at the place it moved them to, as
+    /// (path where the torrent has them, path the move gave them).
+    pub(crate) fn interrupted_move(&self) -> Option<Vec<(PathBuf, PathBuf)>> {
+        let m = self.move_in_progress.as_ref()?;
+        Some(
+            m.files
+                .iter()
+                .map(|rel| (self.output_folder.join(rel), m.to.join(rel)))
+                .collect(),
+        )
+    }
+
     pub fn into_add_torrent(self) -> anyhow::Result<(AddTorrent<'static>, AddTorrentOptions)> {
         let add_torrent = if !self.torrent_bytes.is_empty() {
             AddTorrent::TorrentFileBytes(self.torrent_bytes)
@@ -58,6 +83,7 @@ impl SerializedTorrent {
                     .to_owned(),
             ),
             only_files: self.only_files,
+            renamed_files: self.renamed_files,
             overwrite: true,
             ..Default::default()
         };

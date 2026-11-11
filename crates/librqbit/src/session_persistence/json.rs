@@ -165,7 +165,9 @@ impl JsonSessionPersistenceStore {
             torrent_bytes: Default::default(),
             only_files: torrent.only_files().clone(),
             is_paused: torrent.is_paused(),
-            output_folder: torrent.shared().options.output_folder.clone(),
+            output_folder: torrent.output_folder(),
+            renamed_files: torrent.shared().renamed_files(),
+            move_in_progress: torrent.shared().move_in_progress(),
         };
 
         let torrent_bytes = torrent

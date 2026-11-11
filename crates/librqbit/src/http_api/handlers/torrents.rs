@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::Context;
 use axum::{
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ApiState;
 use crate::{
-    AddTorrent, ApiError, CreateTorrentOptions, SUPPORTED_SCHEMES,
+    AddTorrent, ApiError, CreateTorrentOptions, MoveStorageMode, SUPPORTED_SCHEMES,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     api_error::WithStatusError,
     http_api::timeout::Timeout,
@@ -249,6 +249,54 @@ pub async fn h_torrent_action_update_only_files(
     state
         .api
         .api_torrent_action_update_only_files(idx, &req.only_files.into_iter().collect())
+        .await
+        .map(axum::Json)
+}
+
+pub async fn h_torrent_action_force_recheck(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_force_recheck(idx)
+        .await
+        .map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct MoveStorageRequest {
+    output_folder: PathBuf,
+    #[serde(default)]
+    mode: MoveStorageMode,
+}
+
+pub async fn h_torrent_action_move_storage(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<MoveStorageRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_move_storage(idx, req.output_folder, req.mode)
+        .await
+        .map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct RenameFileRequest {
+    file_index: usize,
+    path: PathBuf,
+}
+
+pub async fn h_torrent_action_rename_file(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<RenameFileRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_rename_file(idx, req.file_index, req.path)
         .await
         .map(axum::Json)
 }
