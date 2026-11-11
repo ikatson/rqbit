@@ -6,6 +6,12 @@
 //! counts reads (to tell whether a check hashed anything), can fail writes, and can hold a
 //! read or a move at a gate so that something else can happen exactly then.
 
+mod api;
+mod lifecycle;
+mod paths;
+mod seed_and_cache;
+mod streams;
+
 use std::{
     future::Future,
     net::{Ipv4Addr, SocketAddr},
