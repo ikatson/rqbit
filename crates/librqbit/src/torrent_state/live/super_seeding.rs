@@ -560,7 +560,7 @@ impl PeerHandler {
                 .ok()
                 .ok_or(Error::PeerTaskDead)?;
             sent += 1;
-            if sent % HAVE_BATCH == 0 {
+            if sent.is_multiple_of(HAVE_BATCH) {
                 tokio::task::yield_now().await;
             }
         }
