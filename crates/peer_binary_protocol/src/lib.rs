@@ -258,6 +258,17 @@ pub struct HashRequest {
 }
 
 impl HashRequest {
+    /// The geometry of the request, to check it with
+    /// [`librqbit_core::merkle::HashRequestShape::is_valid_for`].
+    pub fn shape(&self) -> librqbit_core::merkle::HashRequestShape {
+        librqbit_core::merkle::HashRequestShape {
+            base: self.base_layer,
+            index: self.index,
+            count: self.length,
+            proof_layers: self.proof_layers,
+        }
+    }
+
     fn serialize_unchecked_len(&self, buf: &mut [u8]) -> usize {
         buf[0..32].copy_from_slice(&self.pieces_root.0);
         BE::write_u32(&mut buf[32..36], self.base_layer);

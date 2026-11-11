@@ -45,6 +45,9 @@ impl TorrentStateLive {
             return Ok(Vec::new());
         }
         let mut steal_info = None;
+        // A piece whose expected hash is not known yet (BEP 52: its file's piece layer is still
+        // being fetched from peers) could not be checked, so it is not downloaded.
+        let has_piece = |p: ValidPieceIndex| self.metadata.info.can_verify_piece(p) && has_piece(p);
         let run = {
             let mut g = self.lock_write("web_seed_reserve");
             let TorrentStateLocked {

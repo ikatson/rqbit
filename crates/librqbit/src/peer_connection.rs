@@ -14,7 +14,7 @@ use librqbit_core::{
 };
 use parking_lot::RwLock;
 use peer_binary_protocol::{
-    Handshake, MAX_MSG_LEN, Message,
+    Handshake, Hashes, MAX_MSG_LEN, Message,
     extended::{
         ExtendedMessage, PeerExtendedMessageIds, handshake::ExtendedHandshake,
         ut_metadata::UtMetadata, ut_pex::UtPex,
@@ -62,6 +62,8 @@ pub enum WriterRequest {
     Message(Message<'static>),
     UtMetadata(UtMetadata<ByteBufOwned>),
     UtPex(UtPex<ByteBufOwned>),
+    /// BEP 52: the answer to a hash request (the borrowed form cannot be `'static`).
+    Hashes(Hashes<ByteBufOwned>),
     ReadChunkRequest(ChunkInfo),
     Disconnect(anyhow::Result<()>),
 }
@@ -145,6 +147,8 @@ pub(crate) async fn with_timeout<T>(
 
 struct ManagePeerArgs {
     handshake_supports_extended: bool,
+    // Both handshakes carried the BitTorrent v2 bit (BEP 52): the hash messages may be used.
+    v2: bool,
     read_buf: ReadBuf,
     write_buf: Box<[u8; MAX_MSG_LEN]>,
     read: BoxAsyncReadVectored,
@@ -240,6 +244,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         // What the peer supports is in the peer's handshake, not in ours.
         let handshake_supports_extended = incoming.handshake.supports_extended();
+        let v2 = self.v2 && incoming.handshake.supports_v2();
 
         self.handler
             .on_handshake(incoming.handshake, incoming.kind)
@@ -247,6 +252,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         self.manage_peer(ManagePeerArgs {
             handshake_supports_extended,
+            v2,
             read_buf: incoming.read_buf,
             write_buf,
             read: incoming.reader,
@@ -286,12 +292,14 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         async move {
             let handshake_supports_extended = handshake.supports_extended();
+            let v2 = self.v2 && handshake.supports_v2();
             self.handler
                 .on_handshake(handshake, ckind)
                 .map_err(Error::Anyhow)?;
 
             self.manage_peer(ManagePeerArgs {
                 handshake_supports_extended,
+                v2,
                 read_buf,
                 write_buf,
                 read,
@@ -377,6 +385,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
     async fn manage_peer(&self, args: ManagePeerArgs) -> Result<()> {
         let ManagePeerArgs {
             handshake_supports_extended,
+            v2,
             mut read_buf,
             mut write_buf,
             mut read,
@@ -496,6 +505,8 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
                         Message::Extended(ExtendedMessage::UtPex(ut_pex.as_borrowed()))
                             .serialize(&mut *write_buf, ext_msg_ids)?
                     }
+                    WriterRequest::Hashes(hashes) => Message::Hashes(hashes.as_borrowed())
+                        .serialize(&mut *write_buf, ext_msg_ids)?,
                     WriterRequest::ReadChunkRequest(chunk) => {
                         #[allow(unused_mut)]
                         let mut skip_reading_for_e2e_tests = false;
@@ -574,6 +585,12 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             loop {
                 let message = read_buf.read_message(&mut read, rwtimeout).await?;
                 trace!("received: {:?}", &message);
+
+                if !v2 && message.is_v2() {
+                    return Err(Error::DisconnectWithSource(anyhow::anyhow!(
+                        "peer sent {message:?}, but BitTorrent v2 was not negotiated"
+                    )));
+                }
 
                 tokio::task::yield_now().await;
 

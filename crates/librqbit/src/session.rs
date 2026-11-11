@@ -1247,7 +1247,9 @@ impl Session {
                         info_hash: torrent.meta.info_hash,
                         info_hash_v2: torrent.meta.info_hash_v2,
                         metadata: Some(TorrentMetadata::new(
-                            torrent.meta.validate_with_piece_layers()?,
+                            // BEP 52: the piece layers missing from the file are asked of
+                            // peers, their pieces are not downloaded until then.
+                            torrent.meta.validate_with_known_piece_layers()?,
                             torrent.torrent_bytes,
                             torrent.meta.info.raw_bytes.0,
                         )?),

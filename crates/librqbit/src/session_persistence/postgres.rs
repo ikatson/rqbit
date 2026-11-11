@@ -223,10 +223,17 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         id: TorrentId,
         torrent: &ManagedTorrentHandle,
     ) -> anyhow::Result<()> {
+        // The torrent bytes change when BEP 52 piece layers are learned from peers.
+        let torrent_bytes = torrent
+            .metadata
+            .load()
+            .as_ref()
+            .map(|i| i.torrent_bytes.clone())
+            .unwrap_or_default();
         // The output folder changes with Session::move_storage, the file paths with
         // Session::rename_file.
         sqlx::query(
-            "UPDATE torrents SET only_files = $1, is_paused = $2, web_seeds = $3, disable_web_seeds = $4, output_folder = $5, renamed_files = $6, move_in_progress = $7 WHERE id = $8",
+            "UPDATE torrents SET only_files = $1, is_paused = $2, web_seeds = $3, disable_web_seeds = $4, output_folder = $5, renamed_files = $6, move_in_progress = $7, torrent_bytes = CASE WHEN length($8) > 0 THEN $8 ELSE torrent_bytes END WHERE id = $9",
         )
         .bind(torrent.only_files().map(|v| {
             v.into_iter()
@@ -245,6 +252,7 @@ impl SessionPersistenceStore for PostgresSessionStorage {
         )
         .bind(renamed_files_column(torrent)?)
         .bind(move_in_progress_column(torrent)?)
+        .bind(torrent_bytes.as_ref())
         .bind::<i32>(id.try_into()?)
         .execute(&self.pool)
         .await
