@@ -1847,7 +1847,9 @@ impl Session {
     ///
     /// If anything fails, what was moved is moved back and the torrent keeps working at the
     /// old place; the error says what went wrong (and which files the undo couldn't put back,
-    /// if any). Moving to the current folder does nothing. Waits for a storage operation
+    /// if any). Moving to the current folder does nothing, however the new folder names it
+    /// (a link to it, `..`, a relative path, another case where the filesystem ignores
+    /// case): the torrent keeps its folder as it was. Waits for a storage operation
     /// already running on the torrent; deleting the torrent or stopping the session during
     /// the move undoes it.
     ///
@@ -1879,7 +1881,16 @@ impl Session {
             .load_full()
             .context("torrent is not resolved")?;
         let _storage_op = handle.lock_storage_op().await?;
-        if new_output_folder == handle.output_folder() {
+        let old_folder = handle.output_folder();
+        // Another name of the current folder moves nothing, and the folder keeps the name it
+        // had: the other one may depend on a link or a directory that goes away later, or on
+        // the current directory of the process.
+        if new_output_folder == old_folder
+            || handle.shared.spawner.block_in_place(|| {
+                crate::storage::filesystem::relocate::resolve_path(&new_output_folder)
+                    == crate::storage::filesystem::relocate::resolve_path(&old_folder)
+            })
+        {
             return Ok(());
         }
         let files = metadata
