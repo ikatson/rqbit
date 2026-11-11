@@ -45,19 +45,39 @@ pub(crate) const MAX_SUGGESTIONS: usize = 16;
 /// unchoked would get the same request again right away, in a tight loop.
 pub(crate) const REJECTED_PIECE_BACKOFF: Duration = Duration::from_secs(30);
 
-/// Rejected pieces remembered per peer for [`REJECTED_PIECE_BACKOFF`]; the oldest is forgotten
-/// first.
+/// Rejected pieces remembered per peer for [`REJECTED_PIECE_BACKOFF`]. When a reject arrives
+/// while the list is full the oldest entry is forgotten, and nothing more is asked of the peer
+/// until that entry would have expired: forgetting it must not make its piece requestable
+/// right away.
 pub(crate) const MAX_REJECTED_REMEMBERED: usize = 64;
 
-/// How long a peer that choked us has to answer what we asked it for with `Piece` or
-/// `RejectRequest` before the requests are given back to the queue, as they are right away
-/// without the extension.
+/// Rejects in a row, received while the peer unchokes us and with no block in between, after
+/// which nothing more is asked of the peer for [`REJECTED_PIECE_BACKOFF`]. The per-piece
+/// back-off alone does not stop a peer that rejects everything: there is always another piece
+/// to try. 16 lets a peer turn down a few pieces it cannot serve (a partial seed whose bitfield
+/// we read wrong, a full queue) without losing it, and stops the loop within a request window.
+pub(crate) const REJECT_STREAK_PAUSE: u32 = 16;
+
+/// Rejects in a row, received while the peer unchokes us and with no block in between, after
+/// which the peer is disconnected: it unchokes us and serves nothing, so it only takes a
+/// connection slot. Two full request windows (see
+/// [`PeerConnectionOptions::max_request_window`](crate::PeerConnectionOptions)), so the
+/// requests already on their way when the pause starts do not count twice.
+pub(crate) const MAX_REJECT_STREAK: u32 = 256;
+
+/// How long a peer that choked us has to answer the requests it voided before their pieces are
+/// given back to the queue, as they are right away without the extension. Answered means
+/// `Piece` or `RejectRequest`; each answer for such a piece restarts the clock.
 ///
 /// Half the read timeout: the reader asks [`may_be_silent`] after every half read timeout of
 /// silence, and a silent peer is given up on after a full one. So by the first question after a
 /// choke followed by silence the requests are overdue: they are given back, and the silence is
 /// excused, before the reader would give up on the peer. A peer that keeps talking without
-/// answering is caught when its next message arrives.
+/// answering is caught after its next message.
+///
+/// Allowed-fast requests are not covered: the peer serves them while it chokes us, their
+/// answer is the payload, and a slow uploader may take longer. The silence timeout and the
+/// steal of slow pieces cover those.
 ///
 /// [`may_be_silent`]: crate::peer_connection::PeerConnectionHandler::may_be_silent
 pub(crate) fn choke_answer_timeout(read_write_timeout: Duration) -> Duration {
@@ -117,11 +137,19 @@ pub(crate) struct FastDownload {
     suggested: VecDeque<ValidPieceIndex>,
     // Pieces the peer rejected a block of, and when; oldest first.
     rejected: VecDeque<(ValidPieceIndex, Instant)>,
+    // Rejects received while the peer unchoked us since the last block it sent.
+    reject_streak: u32,
+    // Nothing is asked of the peer before this (see `REJECT_STREAK_PAUSE`).
+    paused_until: Option<Instant>,
     // Pieces we own that go back to the queue once the last block of them in flight to the
-    // peer is answered.
+    // peer is answered: the peer choked us, or rejected another block of them.
     give_back: Vec<ValidPieceIndex>,
-    // Since when the peer, which chokes us, owes us answers for the blocks in flight.
-    choked_at: Option<Instant>,
+    // Since when the peer owes us answers for the blocks of `give_back`: set while it is not
+    // empty, restarted by every answer for one of its pieces.
+    answers_due_since: Option<Instant>,
+    // Download-rate budget paid for requests the peer rejected, spent on the next requests to
+    // the peer before the rate limiter is asked (the limiter cannot take tokens back).
+    rate_credit: u32,
 }
 
 impl FastDownload {
@@ -146,10 +174,11 @@ impl FastDownload {
         self.allowed_fast.contains(&piece)
     }
 
-    /// Forgets the allowed-fast set: the peer did not serve it in time, so it is not asked for
-    /// it again until it sends a new one.
-    pub fn forget_allowed_fast(&mut self) {
-        self.allowed_fast.clear();
+    /// The peer rejected a block of an allowed-fast piece while it chokes us: it will not serve
+    /// the piece past the choke any more (it served it once already, or we are no longer a
+    /// newcomer to it), so asking again would only collect more rejects.
+    pub fn remove_allowed_fast(&mut self, piece: ValidPieceIndex) {
+        self.allowed_fast.retain(|p| *p != piece);
     }
 
     /// Remembers a `SuggestPiece`: it goes first, ahead of older suggestions.
@@ -164,13 +193,64 @@ impl FastDownload {
         self.suggested.iter().copied()
     }
 
-    /// The peer rejected a block of the piece.
-    pub fn on_rejected(&mut self, piece: ValidPieceIndex, now: Instant) {
-        self.rejected.retain(|(p, _)| *p != piece);
-        if self.rejected.len() >= MAX_REJECTED_REMEMBERED {
+    /// The peer rejected a block of the piece. `unchoked`: the peer unchokes us, so the reject
+    /// is not explained by a choke and counts towards the streak. Returns `true` when the peer
+    /// rejected [`MAX_REJECT_STREAK`] requests in a row without sending a block: it is useless.
+    pub fn on_rejected(&mut self, piece: ValidPieceIndex, now: Instant, unchoked: bool) -> bool {
+        while self
+            .rejected
+            .front()
+            .is_some_and(|(_, at)| now.saturating_duration_since(*at) >= REJECTED_PIECE_BACKOFF)
+        {
             self.rejected.pop_front();
         }
+        self.rejected.retain(|(p, _)| *p != piece);
+        if self.rejected.len() >= MAX_REJECTED_REMEMBERED
+            && let Some((_, oldest)) = self.rejected.pop_front()
+            && unchoked
+        {
+            self.pause_until(oldest + REJECTED_PIECE_BACKOFF);
+        }
         self.rejected.push_back((piece, now));
+        self.on_answer(piece, now);
+        if !unchoked {
+            return false;
+        }
+        self.reject_streak = self.reject_streak.saturating_add(1);
+        if self.reject_streak.is_multiple_of(REJECT_STREAK_PAUSE) {
+            self.pause_until(now + REJECTED_PIECE_BACKOFF);
+        }
+        self.reject_streak >= MAX_REJECT_STREAK
+    }
+
+    /// Gives back the download-rate budget paid for a request the peer rejected: it pays for
+    /// the next requests to the peer. Without it a peer that rejects everything would drain the
+    /// rate limit shared with the other peers.
+    pub fn refund_rate(&mut self, len: u32) {
+        self.rate_credit = self.rate_credit.saturating_add(len);
+    }
+
+    /// Takes up to `len` bytes of refunded budget. Returns what is left to pay for.
+    pub fn spend_rate_credit(&mut self, len: u32) -> u32 {
+        let spent = self.rate_credit.min(len);
+        self.rate_credit -= spent;
+        len - spent
+    }
+
+    /// The peer sent a block of the piece: it serves, the reject streak is over.
+    pub fn on_block(&mut self, piece: ValidPieceIndex, now: Instant) {
+        self.reject_streak = 0;
+        self.on_answer(piece, now);
+    }
+
+    fn pause_until(&mut self, until: Instant) {
+        self.paused_until = Some(self.paused_until.map_or(until, |p| p.max(until)));
+    }
+
+    /// Whether nothing is to be asked of the peer right now, because it rejected too much (see
+    /// [`REJECT_STREAK_PAUSE`] and [`MAX_REJECTED_REMEMBERED`]).
+    pub fn is_paused(&self, now: Instant) -> bool {
+        self.paused_until.is_some_and(|until| now < until)
     }
 
     /// The pieces not to ask the peer for right now, because it rejected them recently (see
@@ -182,56 +262,71 @@ impl FastDownload {
             .map(|(p, _)| *p)
     }
 
-    /// The peer choked us while blocks were in flight, or we asked it for an allowed-fast block
-    /// while choked: from now on it has [`choke_answer_timeout`] to answer. A clock already
-    /// running is not restarted.
-    pub fn expect_answers(&mut self, now: Instant) {
-        self.choked_at.get_or_insert(now);
-    }
-
-    /// The peer answered a block with `Piece` or `RejectRequest`. A peer that keeps answering
-    /// is not overdue: the clock restarts while blocks remain in flight, and stops once none do.
-    pub fn on_answer(&mut self, now: Instant, more_in_flight: bool) {
-        if self.choked_at.is_some() {
-            self.choked_at = more_in_flight.then_some(now);
-        }
-    }
-
-    /// The peer unchoked us. Its rejects are explained by the choke, so they are forgiven.
+    /// The peer unchoked us after choking us (a redundant `Unchoke` must not get here). Its
+    /// rejects are explained by the choke, so they are forgiven, and so is the pause; the
+    /// streak is not, or a peer could reset it with a choke and an unchoke. The pieces that
+    /// wait to be given back still wait, and their clock keeps running: the requests the choke
+    /// voided are owed an answer all the same.
     pub fn on_unchoked(&mut self) {
-        self.choked_at = None;
         self.rejected.clear();
+        self.paused_until = None;
     }
 
-    /// Whether the peer, which chokes us, let `timeout` pass without answering what is in
-    /// flight. Returns `true` once: the caller gives back every request in flight and every
-    /// piece the peer owns, so nothing waits for an answer or a give-back any more.
-    pub fn take_overdue(&mut self, now: Instant, timeout: Duration) -> bool {
-        match self.choked_at {
-            Some(at) if now.saturating_duration_since(at) >= timeout => {
-                self.choked_at = None;
-                self.give_back.clear();
-                true
-            }
-            _ => false,
+    /// An answer for a block of the piece arrived: when the piece waits to be given back, the
+    /// peer is answering, and the clock restarts.
+    fn on_answer(&mut self, piece: ValidPieceIndex, now: Instant) {
+        if self.answers_due_since.is_some() && self.give_back.contains(&piece) {
+            self.answers_due_since = Some(now);
         }
     }
 
-    /// The piece goes back to the queue once the peer answered the last block of it in flight.
-    pub fn defer_give_back(&mut self, piece: ValidPieceIndex) {
+    /// Whether the peer let `timeout` pass without answering the requests of the pieces that
+    /// wait to be given back. Returns those pieces, once: the caller cancels their requests and
+    /// gives them back. Empty when nothing is overdue.
+    pub fn take_overdue(&mut self, now: Instant, timeout: Duration) -> Vec<ValidPieceIndex> {
+        match self.answers_due_since {
+            Some(at) if now.saturating_duration_since(at) >= timeout => {
+                self.answers_due_since = None;
+                std::mem::take(&mut self.give_back)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The piece goes back to the queue once the peer answered the last block of it in flight,
+    /// or when it let [`choke_answer_timeout`] pass without answering. A clock already running
+    /// is not restarted.
+    pub fn defer_give_back(&mut self, piece: ValidPieceIndex, now: Instant) {
         if !self.give_back.contains(&piece) {
             self.give_back.push(piece);
         }
+        self.answers_due_since.get_or_insert(now);
     }
 
     /// Whether the piece was waiting to be given back; it is not any more.
     pub fn take_give_back(&mut self, piece: ValidPieceIndex) -> bool {
-        match self.give_back.iter().position(|p| *p == piece) {
+        let taken = match self.give_back.iter().position(|p| *p == piece) {
             Some(i) => {
                 self.give_back.swap_remove(i);
                 true
             }
             None => false,
+        };
+        self.stop_clock_when_done();
+        taken
+    }
+
+    /// Keeps only the pieces that still wait to be given back. A piece another peer stole
+    /// meanwhile is not ours to give back: our requests for it were cancelled, so their answers
+    /// never reach [`take_give_back`](Self::take_give_back).
+    pub fn retain_give_back(&mut self, mut keep: impl FnMut(ValidPieceIndex) -> bool) {
+        self.give_back.retain(|p| keep(*p));
+        self.stop_clock_when_done();
+    }
+
+    fn stop_clock_when_done(&mut self) {
+        if self.give_back.is_empty() {
+            self.answers_due_since = None;
         }
     }
 
@@ -375,76 +470,196 @@ mod tests {
     fn test_rejected_pieces_back_off_until_unchoke_or_timeout() {
         let mut d = FastDownload::default();
         let t0 = Instant::now();
-        d.on_rejected(piece(5), t0);
+        assert!(!d.on_rejected(piece(5), t0, false));
         assert_eq!(d.backed_off(t0).collect::<Vec<_>>(), vec![piece(5)]);
         assert_eq!(d.backed_off(t0 + REJECTED_PIECE_BACKOFF).count(), 0);
         d.on_unchoked();
         assert_eq!(d.backed_off(t0).count(), 0, "an unchoke forgives rejects");
         for i in 0..100 {
-            d.on_rejected(piece(i), t0);
+            d.on_rejected(piece(i), t0, false);
         }
         let backed: Vec<_> = d.backed_off(t0).collect();
         assert_eq!(backed.len(), MAX_REJECTED_REMEMBERED);
         assert!(!backed.contains(&piece(0)), "the oldest is forgotten first");
+        assert!(
+            !d.is_paused(t0),
+            "rejects while choked are explained by the choke"
+        );
     }
 
+    // Scenario A of the review: a peer that unchokes us and rejects everything. The streak
+    // pauses requests, and a peer that goes on is given up on.
     #[test]
-    fn test_answers_overdue_once_per_choke() {
+    fn test_reject_streak_pauses_then_gives_up() {
         let mut d = FastDownload::default();
         let t0 = Instant::now();
-        let timeout = Duration::from_secs(5);
-        assert!(!d.take_overdue(t0 + timeout, timeout), "nothing expected");
-        d.expect_answers(t0);
-        assert!(!d.take_overdue(t0 + timeout / 2, timeout));
-        assert!(d.take_overdue(t0 + timeout, timeout));
-        assert!(!d.take_overdue(t0 + timeout * 2, timeout), "once per choke");
-        d.expect_answers(t0);
+        for i in 0..REJECT_STREAK_PAUSE - 1 {
+            assert!(!d.on_rejected(piece(i), t0, true));
+        }
+        assert!(!d.is_paused(t0));
+        assert!(!d.on_rejected(piece(99), t0, true));
+        assert!(d.is_paused(t0));
+        assert!(d.is_paused(t0 + REJECTED_PIECE_BACKOFF - Duration::from_millis(1)));
+        assert!(!d.is_paused(t0 + REJECTED_PIECE_BACKOFF));
+
+        // A block ends the streak.
+        d.on_block(piece(98), t0);
+        for i in 0..REJECT_STREAK_PAUSE - 1 {
+            d.on_rejected(piece(i), t0 + REJECTED_PIECE_BACKOFF, true);
+        }
+        assert!(!d.is_paused(t0 + REJECTED_PIECE_BACKOFF));
+
+        let mut d = FastDownload::default();
+        let mut useless = false;
+        for i in 0..MAX_REJECT_STREAK {
+            useless = d.on_rejected(piece(i % 90), t0, true);
+            assert_eq!(useless, i + 1 == MAX_REJECT_STREAK);
+        }
+        assert!(useless);
+    }
+
+    // A full list must not make its oldest piece requestable right away.
+    #[test]
+    fn test_full_reject_list_pauses_until_the_oldest_expires() {
+        let mut d = FastDownload::default();
+        let t0 = Instant::now();
+        let step = Duration::from_millis(10);
+        let mut now = t0;
+        for i in 0..MAX_REJECTED_REMEMBERED as u32 {
+            d.on_rejected(piece(i), now, true);
+            // Blocks in between keep the streak short: only the list is full.
+            d.on_block(piece(99), now);
+            now += step;
+        }
+        assert!(!d.is_paused(now));
+        d.on_rejected(piece(98), now, true);
+        assert!(d.is_paused(t0 + REJECTED_PIECE_BACKOFF - step));
+        assert!(!d.is_paused(t0 + REJECTED_PIECE_BACKOFF));
+    }
+
+    // Scenario B of the review: redundant unchokes do not forgive anything, because only a
+    // choked-to-unchoked transition calls `on_unchoked`; a real one forgives the back-off and
+    // the pause but not the streak.
+    #[test]
+    fn test_unchoke_forgives_back_off_but_not_the_streak() {
+        let mut d = FastDownload::default();
+        let t0 = Instant::now();
+        for i in 0..REJECT_STREAK_PAUSE {
+            d.on_rejected(piece(i), t0, true);
+        }
+        assert!(d.is_paused(t0));
         d.on_unchoked();
-        assert!(
-            !d.take_overdue(t0 + timeout, timeout),
-            "an unchoke ends the wait"
-        );
+        assert!(!d.is_paused(t0));
+        assert_eq!(d.backed_off(t0).count(), 0);
+        let mut useless = false;
+        for i in REJECT_STREAK_PAUSE..MAX_REJECT_STREAK {
+            useless = d.on_rejected(piece(i % 90), t0, true);
+        }
+        assert!(useless, "the streak survived the unchoke");
     }
 
     #[test]
-    fn test_answers_restart_the_clock() {
+    fn test_rejected_allowed_fast_piece_is_forgotten() {
+        let mut d = FastDownload::default();
+        d.add_allowed_fast(piece(1));
+        d.add_allowed_fast(piece(2));
+        d.remove_allowed_fast(piece(1));
+        assert_eq!(d.allowed_fast(), &[piece(2)]);
+    }
+
+    #[test]
+    fn test_overdue_only_while_pieces_wait_to_be_given_back() {
         let mut d = FastDownload::default();
         let t0 = Instant::now();
         let timeout = Duration::from_secs(5);
-        d.expect_answers(t0);
-        d.expect_answers(t0 + timeout / 2);
         assert!(
-            d.take_overdue(t0 + timeout, timeout),
-            "a second expectation does not restart the clock"
+            d.take_overdue(t0 + timeout, timeout).is_empty(),
+            "nothing owed"
         );
-        d.expect_answers(t0);
-        d.on_answer(t0 + timeout / 2, true);
+        d.defer_give_back(piece(1), t0);
+        d.defer_give_back(piece(2), t0 + timeout / 2);
+        assert!(d.take_overdue(t0 + timeout / 2, timeout).is_empty());
+        let mut overdue = d.take_overdue(t0 + timeout, timeout);
+        overdue.sort_by_key(|p| p.get());
+        assert_eq!(
+            overdue,
+            vec![piece(1), piece(2)],
+            "a second piece does not restart the clock"
+        );
         assert!(
-            !d.take_overdue(t0 + timeout, timeout),
+            d.take_overdue(t0 + timeout * 2, timeout).is_empty(),
+            "taken once"
+        );
+        assert_eq!(d.giving_back().count(), 0);
+    }
+
+    #[test]
+    fn test_answers_for_deferred_pieces_restart_the_clock() {
+        let mut d = FastDownload::default();
+        let t0 = Instant::now();
+        let timeout = Duration::from_secs(5);
+        d.defer_give_back(piece(1), t0);
+        // An answer for another piece (an allowed-fast block) does not count.
+        d.on_block(piece(9), t0 + timeout / 2);
+        assert_eq!(d.take_overdue(t0 + timeout, timeout), vec![piece(1)]);
+
+        d.defer_give_back(piece(1), t0);
+        d.on_block(piece(1), t0 + timeout / 2);
+        assert!(
+            d.take_overdue(t0 + timeout, timeout).is_empty(),
             "the peer is answering"
         );
-        assert!(d.take_overdue(t0 + timeout / 2 + timeout, timeout));
-        d.expect_answers(t0);
-        d.on_answer(t0, false);
+        d.on_rejected(piece(1), t0 + timeout, false);
         assert!(
-            !d.take_overdue(t0 + timeout * 2, timeout),
-            "nothing is in flight any more"
+            d.take_overdue(t0 + timeout + timeout / 2, timeout)
+                .is_empty()
         );
-        d.on_answer(t0, true);
-        assert!(
-            !d.take_overdue(t0 + timeout * 2, timeout),
-            "an answer while nothing was expected starts no clock"
+        assert_eq!(
+            d.take_overdue(t0 + timeout * 2, timeout),
+            vec![piece(1)],
+            "a reject is an answer too"
         );
     }
 
+    // Finding 3 of the review: neither an unchoke nor a steal leaves the clock stopped, or a
+    // stale entry behind.
     #[test]
-    fn test_give_back_is_taken_once() {
+    fn test_unchoke_keeps_the_clock_and_stolen_pieces_are_dropped() {
         let mut d = FastDownload::default();
-        d.defer_give_back(piece(7));
-        d.defer_give_back(piece(7));
-        assert!(d.take_give_back(piece(7)));
-        assert!(!d.take_give_back(piece(7)));
-        assert!(!d.take_give_back(piece(8)));
+        let t0 = Instant::now();
+        let timeout = Duration::from_secs(5);
+        d.defer_give_back(piece(1), t0);
+        d.defer_give_back(piece(2), t0);
+        d.on_unchoked();
+        assert_eq!(d.take_overdue(t0 + timeout, timeout).len(), 2);
+
+        d.defer_give_back(piece(1), t0);
+        d.defer_give_back(piece(2), t0);
+        d.retain_give_back(|p| p != piece(2));
+        assert!(d.gives_back(piece(1)) && !d.gives_back(piece(2)));
+        assert!(d.take_give_back(piece(1)));
+        assert!(!d.take_give_back(piece(1)), "taken once");
+        assert!(
+            d.take_overdue(t0 + timeout, timeout).is_empty(),
+            "nothing left: the clock stopped"
+        );
+        d.defer_give_back(piece(3), t0);
+        d.retain_give_back(|_| false);
+        assert!(d.take_overdue(t0 + timeout, timeout).is_empty());
+    }
+
+    #[test]
+    fn test_rejected_requests_refund_the_rate_budget() {
+        let mut d = FastDownload::default();
+        assert_eq!(d.spend_rate_credit(16384), 16384, "nothing to spend yet");
+        d.refund_rate(16384);
+        d.refund_rate(8192);
+        assert_eq!(d.spend_rate_credit(16384), 0, "paid by the refund");
+        assert_eq!(d.spend_rate_credit(16384), 8192, "what is left of it");
+        assert_eq!(d.spend_rate_credit(16384), 16384, "spent once");
+        d.refund_rate(u32::MAX);
+        d.refund_rate(1);
+        assert_eq!(d.spend_rate_credit(u32::MAX), 0, "saturates");
     }
 
     #[test]

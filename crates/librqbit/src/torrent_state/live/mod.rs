@@ -1327,9 +1327,6 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         {
             self.on_bitfield_notify.notify_waiters();
         }
-        // A peer that choked us and keeps talking without answering what we asked it for.
-        self.give_back_overdue_answers()?;
-
         match message {
             Message::Request(request) => {
                 self.on_download_request(request)
@@ -1395,6 +1392,9 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                 );
             }
         };
+        // A peer that choked us and keeps talking without answering what we asked it for.
+        // Checked after the message, so that an answer that just arrived counts.
+        self.give_back_overdue_answers()?;
         Ok(())
     }
 
@@ -1465,8 +1465,10 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             return they_wait;
         }
         // While we still look for peers to download from, a connection that does nothing is
-        // only kept for as long as no other peer could use it.
-        (they_wait || self.is_choked()) && self.state.peer_semaphore.available_permits() > 0
+        // only kept for as long as no other peer could use it. Nothing is asked of a peer that
+        // chokes us, or that we pause because it rejected too much (Fast Extension).
+        (they_wait || self.is_choked() || self.fast.lock().is_paused(Instant::now()))
+            && self.state.peer_semaphore.available_permits() > 0
     }
 
     fn on_uploaded_bytes(&self, bytes: u32) {
@@ -1755,20 +1757,28 @@ impl PeerHandler {
         let choked = self.is_choked();
         // What the peer told us with the Fast Extension (BEP 6), all empty without it: while it
         // chokes us only its allowed-fast pieces may be requested; its suggestions go first;
-        // pieces it rejected lately, or that wait to be given back, are not asked of it.
+        // pieces it rejected lately, or that wait to be given back, are not asked of it, and
+        // nothing is while it rejected too much in a row.
         let now = Instant::now();
-        let (allowed, suggested, avoid) = {
+        let (allowed, suggested, backed_off, paused) = {
             let fast = self.fast.lock();
             let allowed: Vec<ValidPieceIndex> = if choked {
                 fast.allowed_fast().to_vec()
             } else {
                 Vec::new()
             };
-            let suggested: Vec<ValidPieceIndex> = fast.suggestions().collect();
-            let avoid: Vec<ValidPieceIndex> =
-                fast.backed_off(now).chain(fast.giving_back()).collect();
-            (allowed, suggested, avoid)
+            let suggested: Vec<ValidPieceIndex> = if choked {
+                Vec::new()
+            } else {
+                fast.suggestions().collect()
+            };
+            let backed_off: Vec<ValidPieceIndex> = fast.backed_off(now).collect();
+            (allowed, suggested, backed_off, fast.is_paused(now))
         };
+        if paused {
+            debug!("the peer rejected too much, asking it for nothing for now");
+            return Ok(None);
+        }
         if choked && allowed.is_empty() {
             debug!("we are choked, can't acquire piece");
             return Ok(None);
@@ -1791,6 +1801,25 @@ impl PeerHandler {
                     ..
                 } = &mut **g;
                 let pieces = pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)?;
+                // A piece that went to another peer (stolen) while it waited to be given back is
+                // not ours to give back any more: our requests for it were cancelled, so their
+                // answers will not take it out of the list. `fast` is the innermost lock:
+                // nothing else is taken while it is held.
+                let giving_back: Vec<ValidPieceIndex> = {
+                    let mut fast = self.fast.lock();
+                    fast.retain_give_back(|p| {
+                        pieces
+                            .get_inflight(p)
+                            .is_some_and(|inflight| inflight.peer == self.addr)
+                    });
+                    fast.giving_back().collect()
+                };
+                let peer_has_piece = |p: ValidPieceIndex| {
+                    bf.get(p.get() as usize).map(|v| *v) == Some(true)
+                        && !backed_off.contains(&p)
+                        && !giving_back.contains(&p)
+                        && (!choked || allowed.contains(&p))
+                };
                 // Allowed-fast pieces and suggestions are only worth something while queued: a
                 // piece we have, do not want or that is in flight is not taken from them.
                 let queued = pieces.chunks().queued_pieces();
@@ -1817,11 +1846,7 @@ impl PeerHandler {
                     priority_pieces,
                     file_priorities,
                     file_infos: &self.state.metadata.file_infos,
-                    peer_has_piece: |p| {
-                        bf.get(p.get() as usize).map(|v| *v) == Some(true)
-                            && !avoid.contains(&p)
-                            && (!choked || allowed.contains(&p))
-                    },
+                    peer_has_piece,
                     can_steal: |p| {
                         self.state.per_piece_locks[p.get_usize()]
                             .try_write()
@@ -2144,7 +2169,10 @@ impl PeerHandler {
 
     /// `RejectRequest` (BEP 6): the peer will not send the block. It goes back, and so does its
     /// piece once no other block of it is in flight to the peer. The piece is not asked of the
-    /// peer again for a while, so a peer that rejects while unchoked is not asked in a loop.
+    /// peer again for a while, so a peer that rejects while unchoked is not asked in a loop; a
+    /// peer that rejects too much in a row is paused, then given up on (see
+    /// [`fast::REJECT_STREAK_PAUSE`]). A reject while it chokes us takes the piece out of the
+    /// allowed-fast set: the peer no longer serves it past the choke.
     fn on_reject_request(&self, reject: Request) -> anyhow::Result<()> {
         let chunk = self
             .state
@@ -2164,11 +2192,10 @@ impl PeerHandler {
             .peers
             .with_live_mut(self.addr, "on_reject_request", |live| {
                 match live.remove_inflight_request(&chunk) {
-                    RemoveInflightRequestResult::Expected => Some((
+                    RemoveInflightRequestResult::Expected => Some(
                         live.inflight_requests()
                             .any(|r| r.piece_index == chunk.piece_index),
-                        live.requested_inflight_count() > 0,
-                    )),
+                    ),
                     // A reject for a request we cancelled is its answer, it is expected.
                     RemoveInflightRequestResult::LateCanceled
                     | RemoveInflightRequestResult::Unexpected => None,
@@ -2176,25 +2203,36 @@ impl PeerHandler {
             })
             .flatten();
         // Clients send rejects late, after a cancel or a choke we already acted on.
-        let Some((more_of_piece, more_in_flight)) = answer else {
+        let Some(more_of_piece) = answer else {
             debug!(?reject, "ignoring a reject for a request not in flight");
             return Ok(());
         };
         let piece = chunk.piece_index;
         let now = Instant::now();
-        let give_back_now = {
+        let choked = self.is_choked();
+        let (useless, give_back_now) = {
             let mut fast = self.fast.lock();
-            fast.on_answer(now, more_in_flight);
-            fast.on_rejected(piece, now);
-            if more_of_piece {
-                fast.defer_give_back(piece);
+            let useless = fast.on_rejected(piece, now, !choked);
+            fast.refund_rate(chunk.size);
+            if choked {
+                fast.remove_allowed_fast(piece);
+            }
+            let give_back_now = if more_of_piece {
+                fast.defer_give_back(piece, now);
                 false
             } else {
                 fast.take_give_back(piece);
                 true
-            }
+            };
+            (useless, give_back_now)
         };
         trace!(?reject, more_of_piece, "request rejected");
+        if useless {
+            anyhow::bail!(
+                "the peer unchokes us but rejected {} requests in a row",
+                fast::MAX_REJECT_STREAK
+            );
+        }
         if give_back_now {
             self.give_back_piece(piece)
         } else {
@@ -2397,16 +2435,15 @@ impl PeerHandler {
 
                 aframe!(self.wait_for_request_slot(Some(next))).await;
 
-                self.state
-                    .ratelimits
-                    .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                    .await?;
+                // The budget paid for requests the peer rejected (Fast Extension) is spent
+                // first.
+                let to_pay = self.fast.lock().spend_rate_credit(request.length);
+                if let Some(to_pay) = NonZeroU32::new(to_pay) {
+                    self.state.ratelimits.prepare_for_download(to_pay).await?;
 
-                if let Some(session) = self.state.torrent().session.upgrade() {
-                    session
-                        .ratelimits
-                        .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                        .await?;
+                    if let Some(session) = self.state.torrent().session.upgrade() {
+                        session.ratelimits.prepare_for_download(to_pay).await?;
+                    }
                 }
 
                 aframe!(self.wait_for_request_slot(Some(next))).await;
@@ -2450,10 +2487,6 @@ impl PeerHandler {
                     .is_err()
                 {
                     return Ok(());
-                }
-                // An allowed-fast request made while choked has to be answered in time too.
-                if self.is_choked() {
-                    self.fast.lock().expect_answers(Instant::now());
                 }
             }
         }
@@ -2530,11 +2563,9 @@ impl PeerHandler {
         };
         {
             let mut fast = self.fast.lock();
+            let now = Instant::now();
             for piece in deferred.iter().copied() {
-                fast.defer_give_back(piece);
-            }
-            if !in_flight.is_empty() {
-                fast.expect_answers(Instant::now());
+                fast.defer_give_back(piece, now);
             }
         }
         trace!(
@@ -2564,9 +2595,11 @@ impl PeerHandler {
         Ok(())
     }
 
-    /// A peer that choked us let [`fast::choke_answer_timeout`] pass without answering what we
-    /// asked it for: everything goes back to the queue, as it does at once without the
-    /// extension, and its allowed-fast set is not asked for again.
+    /// A peer let [`fast::choke_answer_timeout`] pass without answering the requests of the
+    /// pieces that wait to be given back (it choked us, or rejected another block of them):
+    /// those requests are cancelled and the pieces go back to the queue, as they do at once
+    /// without the extension. Allowed-fast requests are not covered (see
+    /// [`fast::choke_answer_timeout`]).
     fn give_back_overdue_answers(&self) -> anyhow::Result<()> {
         if !self.policy.gate().is_fast() {
             return Ok(());
@@ -2578,19 +2611,34 @@ impl PeerHandler {
                 .peer_read_write_timeout
                 .unwrap_or(DEFAULT_READ_WRITE_TIMEOUT),
         );
-        let overdue = {
-            let mut fast = self.fast.lock();
-            let overdue = fast.take_overdue(Instant::now(), timeout);
-            if overdue {
-                fast.forget_allowed_fast();
-            }
-            overdue
-        };
-        if !overdue {
+        let overdue = self.fast.lock().take_overdue(Instant::now(), timeout);
+        if overdue.is_empty() {
             return Ok(());
         }
-        debug!("peer choked us and did not answer our requests in time, giving them back");
-        self.give_back_requests()
+        debug!(
+            pieces = overdue.len(),
+            "the peer did not answer our requests in time, giving them back"
+        );
+        self.state
+            .peers
+            .with_live_mut(self.addr, "cancel_overdue_requests", |live| {
+                for piece in overdue.iter().copied() {
+                    live.cancel_inflight_requests_for_piece(piece);
+                }
+            });
+        let released = {
+            let mut g = self.state.lock_write("give_back_overdue_answers");
+            let pieces = g.get_pieces_mut()?;
+            overdue
+                .iter()
+                .filter(|piece| pieces.release_piece_owned_by(**piece, self.addr))
+                .count()
+        };
+        if released > 0 {
+            self.state.new_pieces_notify.notify_waiters();
+        }
+        self.notify_request_slots_changed();
+        Ok(())
     }
 
     /// Whether the requester goes on with the blocks of a piece: the piece may have gone to
@@ -2625,8 +2673,15 @@ impl PeerHandler {
 
     fn on_i_am_unchoked(&self) {
         trace!("we are unchoked");
-        self.lock_flow_control("i_am_choked = false").i_am_choked = false;
-        self.fast.lock().on_unchoked();
+        let was_choked = std::mem::replace(
+            &mut self.lock_flow_control("i_am_choked = false").i_am_choked,
+            false,
+        );
+        // Only a real choked-to-unchoked transition forgives rejects: a peer must not get its
+        // rejected pieces asked again by sending redundant unchokes.
+        if was_choked {
+            self.fast.lock().on_unchoked();
+        }
         self.notify_request_slots_changed();
     }
 
@@ -2653,7 +2708,7 @@ impl PeerHandler {
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
 
-        let (should_process, last_of_piece, more_in_flight) = self
+        let (should_process, last_of_piece) = self
             .state
             .peers
             .with_live_mut(self.addr, "inflight_requests.remove", |h| {
@@ -2662,11 +2717,10 @@ impl PeerHandler {
                         true,
                         !h.inflight_requests()
                             .any(|r| r.piece_index == chunk_info.piece_index),
-                        h.requested_inflight_count() > 0,
                     )),
                     RemoveInflightRequestResult::LateCanceled => {
                         trace!(?piece, "peer sent us a chunk we did not ask for");
-                        Ok((false, false, false))
+                        Ok((false, false))
                     }
                     RemoveInflightRequestResult::Unexpected => anyhow::bail!(
                         "peer sent us a piece we did not ask. Inflight requests: {:?}. Got: {:?}",
@@ -2681,7 +2735,9 @@ impl PeerHandler {
             return Ok(());
         }
         if self.policy.gate().is_fast() {
-            self.fast.lock().on_answer(Instant::now(), more_in_flight);
+            self.fast
+                .lock()
+                .on_block(chunk_info.piece_index, Instant::now());
         }
 
         // This one is used to calculate download speed.
