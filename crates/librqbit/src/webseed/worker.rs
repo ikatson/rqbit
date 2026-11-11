@@ -36,9 +36,11 @@ use super::{PieceHashFailed, WebSeed, WebSeedState};
 
 /// How many web seeds of a torrent are downloaded from at the same time.
 pub(crate) const MAX_ACTIVE_WEB_SEEDS: usize = 4;
-/// How many bytes of pieces a web seed reserves at once (at least one piece). Bounded so that
-/// the peers are not starved and a slow web seed does not hold much.
-const MAX_RUN_BYTES: u64 = 4 * 1024 * 1024;
+/// How much a web seed reserves at once: at most this many pieces and this many bytes, but
+/// at least one piece. Bounded so that the peers are not starved and a slow web seed does not
+/// hold much.
+const MAX_RUN_PIECES: u64 = 8;
+const MAX_RUN_BYTES: u64 = 2 * 1024 * 1024;
 /// After this many pieces that failed the hash check, a web seed is disabled for the run.
 pub(crate) const MAX_HASH_FAILURES: u32 = 2;
 /// How long a worker that found nothing to do waits before looking again, unless woken.
@@ -206,9 +208,8 @@ impl<'a> Worker<'a> {
                 .options
                 .peer_read_write_timeout
                 .unwrap_or(DEFAULT_TIMEOUT),
-            max_pieces: usize::try_from(MAX_RUN_BYTES / piece_length)
-                .unwrap_or(usize::MAX)
-                .max(1),
+            max_pieces: usize::try_from((MAX_RUN_BYTES / piece_length).clamp(1, MAX_RUN_PIECES))
+                .unwrap_or(1),
             hash_failures: 0,
             transient_failures: 0,
         })
@@ -321,6 +322,7 @@ impl<'a> Worker<'a> {
             chunks: chunks.iter(),
             current: None,
             buf: Vec::with_capacity(CHUNK_SIZE as usize),
+            received_in_buf: 0,
         };
         feeder.current = feeder.chunks.next().copied();
 
@@ -613,19 +615,26 @@ struct Feeder<'a> {
     /// The chunk being filled.
     current: Option<ChunkInfo>,
     buf: Vec<u8>,
+    /// How many bytes of `buf` came from the web seed; the rest are the zeros of padding files,
+    /// which are not asked for.
+    received_in_buf: u32,
 }
 
 impl Feeder<'_> {
     async fn feed_zeros(&mut self, mut len: u64) -> Result<(), Failure> {
         while len > 0 {
             let n = usize::try_from(len).unwrap_or(usize::MAX).min(ZEROS.len());
-            self.feed(&ZEROS[..n]).await?;
+            self.feed_bytes(&ZEROS[..n], false).await?;
             len -= n as u64;
         }
         Ok(())
     }
 
-    async fn feed(&mut self, mut data: &[u8]) -> Result<(), Failure> {
+    async fn feed(&mut self, data: &[u8]) -> Result<(), Failure> {
+        self.feed_bytes(data, true).await
+    }
+
+    async fn feed_bytes(&mut self, mut data: &[u8], received: bool) -> Result<(), Failure> {
         while !data.is_empty() {
             let Some(chunk) = self.current else {
                 return Err(Failure::Local(anyhow::anyhow!(
@@ -634,10 +643,17 @@ impl Feeder<'_> {
             };
             let take = (chunk.size as usize - self.buf.len()).min(data.len());
             self.buf.extend_from_slice(&data[..take]);
+            if received {
+                // `take` is at most the chunk size, a u32.
+                self.received_in_buf = self
+                    .received_in_buf
+                    .saturating_add(u32::try_from(take).unwrap_or(u32::MAX));
+            }
             data = &data[take..];
             if self.buf.len() == chunk.size as usize {
                 self.complete(&chunk).await?;
                 self.buf.clear();
+                self.received_in_buf = 0;
                 self.current = self.chunks.next().copied();
             }
         }
@@ -645,9 +661,10 @@ impl Feeder<'_> {
     }
 
     async fn complete(&self, chunk: &ChunkInfo) -> Result<(), Failure> {
+        let received = self.received_in_buf;
         // Waiting here holds the body unread, so the server is slowed down too.
         self.state
-            .wait_for_web_seed_download_rate(chunk.size)
+            .wait_for_web_seed_download_rate(received)
             .await
             .context("waiting for the download rate limit")
             .map_err(Failure::Local)?;
@@ -658,10 +675,9 @@ impl Feeder<'_> {
             trace!(url = self.seed.url(), piece = %chunk.piece_index, "web seed lost its piece");
             return Err(Failure::Lost);
         }
-        let len = u64::from(chunk.size);
         self.counters
             .fetched_bytes
-            .fetch_add(len, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(u64::from(received), std::sync::atomic::Ordering::Relaxed);
         self.counters
             .fetched_chunks
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -673,7 +689,7 @@ impl Feeder<'_> {
             .await
         {
             Ok(()) => {
-                self.seed.add_downloaded(len);
+                self.seed.add_downloaded(u64::from(received));
                 Ok(())
             }
             Err(e) if e.downcast_ref::<PieceHashFailed>().is_some() => {
