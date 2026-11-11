@@ -252,6 +252,11 @@ impl ChunkTracker {
         self.have.as_slice()[id.get() as usize]
     }
 
+    /// Whether the piece is waiting in the queue: wanted, not had and not in flight.
+    pub(crate) fn is_piece_queued(&self, id: ValidPieceIndex) -> bool {
+        self.queue_pieces.get(id.get() as usize).is_some_and(|b| *b)
+    }
+
     pub fn mark_piece_broken_if_not_have(&mut self, index: ValidPieceIndex) {
         if self
             .have

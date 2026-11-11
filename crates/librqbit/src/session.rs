@@ -118,7 +118,7 @@ pub struct Session {
     listen_addr: Option<SocketAddr>,
     dht: Option<Dht>,
     pub(crate) connector: Arc<StreamConnector>,
-    reqwest_client: reqwest::Client,
+    pub(crate) reqwest_client: reqwest::Client,
     udp_tracker_client: UdpTrackerClient,
     disable_trackers: bool,
     disable_web_seeds: bool,

@@ -2,20 +2,55 @@
 //! as plain files. A torrent downloads from them alongside its peers.
 //!
 //! [`WebSeeds`] is the list of a torrent's web seeds and what is known about each of them. It
-//! lives as long as the torrent, across pause / resume.
+//! lives as long as the torrent, across pause / resume. The workers that download from them
+//! live in [`worker`], one per web seed in use, while the torrent is live.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+mod worker;
+
+use std::{
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+    sync::{
+        Arc,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+    },
 };
 
-use crate::{ManagedTorrent, Session, torrent_state::ManagedTorrentHandle};
+use crate::{
+    ManagedTorrent, Session, torrent_state::ManagedTorrentHandle, type_aliases::PeerHandle,
+};
 
 use librqbit_core::web_seed::{MAX_WEB_SEEDS, is_web_seed_url, push_web_seed};
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+
+pub(crate) use worker::spawn_web_seeds;
+
+/// A piece completed by a peer or a web seed failed the hash check. The piece is back in the
+/// queue by then.
+#[derive(Debug, thiserror::Error)]
+#[error("the piece failed the hash check")]
+pub(crate) struct PieceHashFailed;
+
+/// The handle under which the piece tracker knows web seed number `id` of a torrent: an
+/// address in the discard-only prefix `100::/64` (RFC 6666), which no peer can have.
+fn web_seed_handle(id: u32) -> PeerHandle {
+    let [a, b, c, d] = id.to_be_bytes();
+    SocketAddr::new(
+        IpAddr::V6(Ipv6Addr::new(
+            0x100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            u16::from_be_bytes([a, b]),
+            u16::from_be_bytes([c, d]),
+        )),
+        0,
+    )
+}
 
 /// What a web seed of a torrent is doing.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +91,8 @@ struct Status {
 #[derive(Debug)]
 pub(crate) struct WebSeed {
     url: String,
+    /// Who holds the pieces this web seed downloads, for the piece tracker.
+    handle: PeerHandle,
     status: Mutex<Status>,
     downloaded_bytes: AtomicU64,
     /// Cancelled when the web seed is removed from the torrent: its worker stops at once.
@@ -63,9 +100,10 @@ pub(crate) struct WebSeed {
 }
 
 impl WebSeed {
-    fn new(url: String) -> Self {
+    fn new(url: String, id: u32) -> Self {
         Self {
             url,
+            handle: web_seed_handle(id),
             status: Mutex::new(Status {
                 state: WebSeedState::Idle,
                 last_error: None,
@@ -73,6 +111,10 @@ impl WebSeed {
             downloaded_bytes: AtomicU64::new(0),
             removed: CancellationToken::new(),
         }
+    }
+
+    pub(crate) fn handle(&self) -> PeerHandle {
+        self.handle
     }
 
     pub(crate) fn url(&self) -> &str {
@@ -130,6 +172,8 @@ pub(crate) struct WebSeeds {
     /// but never contacted.
     disabled: bool,
     list: RwLock<Vec<Arc<WebSeed>>>,
+    /// Numbers the web seeds for their handles.
+    next_id: AtomicU32,
     /// Woken when a web seed is added or removed.
     changed: Notify,
 }
@@ -137,13 +181,15 @@ pub(crate) struct WebSeeds {
 impl WebSeeds {
     /// `urls` must be usable web seed URLs (see [`push_web_seed`]).
     pub(crate) fn new(urls: Vec<String>, disabled: bool) -> Self {
+        let list: Vec<_> = urls
+            .into_iter()
+            .zip(0u32..)
+            .map(|(url, id)| Arc::new(WebSeed::new(url, id)))
+            .collect();
         Self {
             disabled,
-            list: RwLock::new(
-                urls.into_iter()
-                    .map(|url| Arc::new(WebSeed::new(url)))
-                    .collect(),
-            ),
+            next_id: AtomicU32::new(u32::try_from(list.len()).unwrap_or(u32::MAX)),
+            list: RwLock::new(list),
             changed: Notify::new(),
         }
     }
@@ -187,7 +233,8 @@ impl WebSeeds {
             if list.len() >= MAX_WEB_SEEDS {
                 anyhow::bail!("a torrent can have at most {MAX_WEB_SEEDS} web seeds");
             }
-            list.push(Arc::new(WebSeed::new(url.to_owned())));
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            list.push(Arc::new(WebSeed::new(url.to_owned(), id)));
         }
         self.changed.notify_waiters();
         Ok(true)

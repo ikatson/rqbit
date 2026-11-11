@@ -42,6 +42,7 @@
 pub mod peer;
 pub mod peers;
 pub mod stats;
+mod web_seed;
 
 use std::{
     borrow::Cow,
@@ -346,6 +347,7 @@ impl TorrentStateLive {
             format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
+        crate::webseed::spawn_web_seeds(&state);
         Ok(state)
     }
 
@@ -1813,14 +1815,28 @@ impl PeerHandler {
         if !should_process {
             return Ok(());
         }
-
-        // This one is used to calculate download speed.
         self.state
-            .stats
+            .process_received_chunk(self.addr, &self.counters, &piece, &chunk_info)
+            .await
+    }
+}
+
+impl TorrentStateLive {
+    /// Counts, writes and, when it completes its piece, verifies a chunk that `addr` (a peer
+    /// or a web seed) sent. Fails with [`crate::webseed::PieceHashFailed`] when the piece it
+    /// completed failed the hash check (the piece is back in the queue then).
+    pub(crate) async fn process_received_chunk(
+        &self,
+        addr: PeerHandle,
+        counters: &AtomicPeerCounters,
+        piece: &Piece<ByteBuf<'_>>,
+        chunk_info: &ChunkInfo,
+    ) -> anyhow::Result<()> {
+        // This one is used to calculate download speed.
+        self.stats
             .fetched_bytes
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
-        self.state
-            .session_stats
+        self.session_stats
             .counters
             .fetched_bytes
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
@@ -1980,24 +1996,25 @@ impl PeerHandler {
                         .get_pieces_mut()?
                         .mark_piece_hash_failed(chunk_info.piece_index);
                     state.new_pieces_notify.notify_waiters();
-                    anyhow::bail!("i am probably a bogus peer. dying.")
+                    return Err(crate::webseed::PieceHashFailed.into());
                 }
             };
             Ok(())
         }
 
-        self.state
-            .shared
+        self.shared
             .spawner
             .block_in_place_with_semaphore(|| {
-                write_to_disk(&self.state, self.addr, &self.counters, &piece, &chunk_info)
+                write_to_disk(self, addr, counters, piece, chunk_info)
             })
             .await
             .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
 
         Ok(())
     }
+}
 
+impl PeerHandler {
     fn send_metadata_piece(&self, piece_id: u32) -> anyhow::Result<()> {
         let data = &self.state.metadata.info_bytes;
         let metadata_size = data.len();
