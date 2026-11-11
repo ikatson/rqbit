@@ -34,3 +34,5 @@ serde_with.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "net", "time"] }
+# The fake SOCKS5 / SOCKS4 / HTTP proxies for the UDP tracker proxy tests.
+librqbit-core = { workspace = true, features = ["test-util"] }

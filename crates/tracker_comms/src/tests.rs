@@ -1,8 +1,10 @@
 //! Behaviour of [`TorrentTrackers`] against fake trackers on loopback: a plain TCP server that
 //! records every HTTP request and answers with scripted bencode, and a UDP tracker that
-//! speaks BEP 15. Everything waits by polling with a deadline.
+//! speaks BEP 15; UDP trackers also through the fake proxies of `librqbit_core`. Everything
+//! waits by polling with a deadline.
 
 use std::{
+    collections::HashSet,
     net::SocketAddr,
     sync::{
         Arc,
@@ -12,7 +14,13 @@ use std::{
 };
 
 use futures::StreamExt;
-use librqbit_core::hash_id::Id20;
+use librqbit_core::{
+    hash_id::Id20,
+    proxy::{
+        ProxyConfig,
+        test_util::{FakeProxy, FakeProxyKind, FakeProxyOptions},
+    },
+};
 use parking_lot::Mutex;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -170,6 +178,8 @@ struct FakeUdp {
     announces: Arc<Mutex<Vec<(u32, i32)>>>,
     /// How many scrapes it got.
     scrapes: Arc<AtomicUsize>,
+    /// Where every request it answered came from.
+    sources: Arc<Mutex<Vec<SocketAddr>>>,
 }
 
 impl FakeUdp {
@@ -185,6 +195,8 @@ impl FakeUdp {
         let recorded = announces.clone();
         let scrapes = Arc::new(AtomicUsize::new(0));
         let scraped = scrapes.clone();
+        let sources = Arc::new(Mutex::new(Vec::new()));
+        let seen = sources.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             loop {
@@ -225,6 +237,7 @@ impl FakeUdp {
                     }
                     _ => continue,
                 }
+                seen.lock().push(from);
                 let _ = sock.send_to(&out, from).await;
             }
         });
@@ -232,6 +245,7 @@ impl FakeUdp {
             addr,
             announces,
             scrapes,
+            sources,
         }
     }
 
@@ -302,6 +316,20 @@ async fn make_with_timings(
     force: Option<Duration>,
     timings: TrackerTimings,
 ) -> Arc<TorrentTrackers> {
+    let udp_client = UdpTrackerClient::new(CancellationToken::new(), None)
+        .await
+        .unwrap();
+    build(tiers, own, options, force, timings, udp_client)
+}
+
+fn build(
+    tiers: Vec<Vec<Url>>,
+    own: usize,
+    options: TrackerAnnounceOptions,
+    force: Option<Duration>,
+    timings: TrackerTimings,
+    udp_client: UdpTrackerClient,
+) -> Arc<TorrentTrackers> {
     TorrentTrackers::new(
         TrackerCommsParams {
             info_hash: Id20::new([7; 20]),
@@ -314,9 +342,7 @@ async fn make_with_timings(
             force_interval: force,
             announce_port: 6881,
             reqwest_client: reqwest::Client::new(),
-            udp_client: UdpTrackerClient::new(CancellationToken::new(), None)
-                .await
-                .unwrap(),
+            udp_client,
             options,
             timings,
             enabled: true,
@@ -1045,4 +1071,144 @@ async fn stopped_comes_before_the_next_started() {
             Some("started".into())
         ]
     );
+}
+
+// ---- through a proxy ----
+
+async fn proxied(proxy: &FakeProxy, tracker: Url) -> Arc<TorrentTrackers> {
+    let config = ProxyConfig::parse(&proxy.url()).unwrap();
+    let udp_client =
+        UdpTrackerClient::new_with_proxy(CancellationToken::new(), None, Some(&config))
+            .await
+            .unwrap();
+    build(vec![vec![tracker]], 1, all(), FAST, timings(), udp_client)
+}
+
+/// Checks that everything the tracker got came from the proxy's relay sockets.
+fn assert_only_relayed(u: &FakeUdp, proxy: &FakeProxy) {
+    let relays: HashSet<SocketAddr> = proxy.datagrams().iter().map(|d| d.from).collect();
+    let sources = u.sources.lock().clone();
+    assert!(!sources.is_empty());
+    assert!(
+        sources.iter().all(|s| relays.contains(s)),
+        "the tracker was reached directly: {sources:?}, relays {relays:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn udp_announce_and_scrape_through_socks5() {
+    let proxy = FakeProxy::start(FakeProxyOptions::new(FakeProxyKind::Socks5)).await;
+    let u = FakeUdp::start().await;
+    let tt = proxied(&proxy, u.url()).await;
+    let _consumer = consume(&tt);
+    eventually("announces and a scrape", || {
+        u.events().len() >= 2 && tt.stats()[0].downloaded == Some(42)
+    })
+    .await;
+    let st = &tt.stats()[0];
+    assert_eq!(st.state, TrackerState::Working);
+    assert_eq!((st.seeders, st.leechers), (Some(7), Some(3)));
+    assert_eq!(u.events()[0], 2, "started");
+    assert!(u.scrapes.load(Ordering::SeqCst) >= 1);
+    assert_only_relayed(&u, &proxy);
+    let target = u.addr.to_string();
+    assert!(proxy.datagrams().iter().all(|d| d.target == target));
+    assert_eq!(proxy.associations(), 1, "one association for every request");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn socks5h_sends_the_tracker_host_name_to_the_proxy() {
+    let mut opts = FakeProxyOptions::new(FakeProxyKind::Socks5);
+    opts.remote_dns = true;
+    let proxy = FakeProxy::start(opts).await;
+    let u = FakeUdp::start().await;
+    let url: Url = format!("udp://localhost:{}/announce", u.addr.port())
+        .parse()
+        .unwrap();
+    let tt = proxied(&proxy, url).await;
+    let _consumer = consume(&tt);
+    eventually("an announce and a scrape", || {
+        !u.events().is_empty() && tt.stats()[0].downloaded == Some(42)
+    })
+    .await;
+    assert_eq!(tt.stats()[0].state, TrackerState::Working);
+    let target = format!("localhost:{}", u.addr.port());
+    let datagrams = proxy.datagrams();
+    assert!(
+        datagrams.iter().all(|d| d.target == target),
+        "the host name was resolved locally: {datagrams:?}"
+    );
+    assert_only_relayed(&u, &proxy);
+}
+
+/// SOCKS4 and HTTP proxies can't relay UDP: the tracker is in error and nothing is sent, to
+/// the tracker or to the proxy.
+#[tokio::test(flavor = "multi_thread")]
+async fn udp_tracker_behind_a_tcp_only_proxy_is_an_error_and_sends_nothing() {
+    for kind in [FakeProxyKind::Socks4, FakeProxyKind::Http] {
+        let proxy = FakeProxy::start(FakeProxyOptions::new(kind)).await;
+        let u = FakeUdp::start().await;
+        let tt = proxied(&proxy, u.url()).await;
+        let _consumer = consume(&tt);
+        eventually("the error", || tt.stats()[0].state == TrackerState::Error).await;
+        tt.scrape().unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let st = &tt.stats()[0];
+        let error = st.last_error.clone().unwrap_or_default();
+        assert!(error.contains("cannot relay UDP"), "{kind:?}: {error}");
+        assert!(
+            u.sources.lock().is_empty(),
+            "{kind:?}: the tracker was reached"
+        );
+        assert_eq!(proxy.accepted(), 0, "{kind:?}: the proxy was contacted");
+    }
+}
+
+/// While the proxy is down the tracker is in error and gets nothing; when the proxy comes
+/// back the association is re-established and the announces go on.
+#[tokio::test(flavor = "multi_thread")]
+async fn udp_tracker_recovers_when_the_proxy_comes_back() {
+    let proxy = FakeProxy::start(FakeProxyOptions::new(FakeProxyKind::Socks5)).await;
+    let u = FakeUdp::start().await;
+    let tt = proxied(&proxy, u.url()).await;
+    let _consumer = consume(&tt);
+    eventually("working", || tt.stats()[0].state == TrackerState::Working).await;
+
+    proxy.stop().await;
+    eventually("the error", || tt.stats()[0].state == TrackerState::Error).await;
+    let before = u.sources.lock().len();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        u.sources.lock().len(),
+        before,
+        "sent while the proxy was down"
+    );
+
+    proxy.restart().await;
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while !(u.sources.lock().len() > before && tt.stats()[0].state == TrackerState::Working) {
+        assert!(Instant::now() < deadline, "no recovery");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_only_relayed(&u, &proxy);
+    assert!(
+        proxy.associations() >= 2,
+        "the association was re-established"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn udp_association_is_rebuilt_when_its_control_connection_drops() {
+    let proxy = FakeProxy::start(FakeProxyOptions::new(FakeProxyKind::Socks5)).await;
+    let u = FakeUdp::start().await;
+    let tt = proxied(&proxy, u.url()).await;
+    let _consumer = consume(&tt);
+    eventually("working", || tt.stats()[0].state == TrackerState::Working).await;
+    proxy.drop_udp_associations();
+    let before = u.events().len();
+    eventually("announces on a new association", || {
+        proxy.associations() >= 2 && u.events().len() > before
+    })
+    .await;
+    assert_only_relayed(&u, &proxy);
 }

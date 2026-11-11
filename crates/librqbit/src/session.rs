@@ -800,9 +800,14 @@ impl Session {
                 None
             };
 
-            let udp_tracker_client = UdpTrackerClient::new(token.clone(), bind_device.as_ref())
-                .await
-                .context("error creating UDP tracker client")?;
+            // UDP trackers follow the HTTP ones: always through the proxy.
+            let udp_tracker_client = UdpTrackerClient::new_with_proxy(
+                token.clone(),
+                bind_device.as_ref(),
+                proxy_config.as_ref(),
+            )
+            .await
+            .context("error creating UDP tracker client")?;
 
             let lsd = {
                 if opts.disable_local_service_discovery {

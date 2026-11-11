@@ -7,7 +7,13 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use librqbit_core::{hash_id::Id20, spawn_utils::spawn_with_cancel};
+use librqbit_core::{
+    hash_id::Id20,
+    proxy::{
+        ProxyConfig, ProxyError, ProxyKind, SOCKS5_UDP_HEADER_MAX, Socks5UdpAssociation, TargetAddr,
+    },
+    spawn_utils::spawn_with_cancel,
+};
 use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
 use parking_lot::RwLock;
 use rand::RngExt;
@@ -267,13 +273,28 @@ struct ConnectionIdMeta {
 #[derive(Default)]
 struct ClientLocked {
     connections: HashMap<SocketAddr, ConnectionIdMeta>,
+    /// Connection ids of trackers given by host name (resolved by the proxy), by port.
+    host_connections: HashMap<String, HashMap<u16, ConnectionIdMeta>>,
     transactions: HashMap<TransactionId, tokio::sync::oneshot::Sender<Response>>,
 }
 
+/// How datagrams reach the trackers.
+enum Transport {
+    /// A local UDP socket.
+    Direct(UdpSocket),
+    /// Through a SOCKS5 proxy (UDP ASSOCIATE).
+    Socks5(Socks5UdpAssociation),
+    /// Behind a proxy that can't relay UDP: every request fails, nothing is sent.
+    Unsupported(ProxyKind),
+}
+
 struct ClientShared {
-    sock: UdpSocket,
+    transport: Transport,
     locked: RwLock<ClientLocked>,
 }
+
+/// The receive buffer: the largest response we expect, plus room for a SOCKS5 UDP header.
+const RECV_BUF_LEN: usize = 16384 + SOCKS5_UDP_HEADER_MAX;
 
 #[derive(Clone)]
 pub struct UdpTrackerClient {
@@ -293,44 +314,100 @@ impl Drop for TransactionIdGuard<'_> {
 }
 
 impl UdpTrackerClient {
+    /// A client that talks to the trackers directly.
     pub async fn new(
         cancel_token: CancellationToken,
         bind_device: Option<&BindDevice>,
     ) -> anyhow::Result<Self> {
-        let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
-        let sock = UdpSocket::bind_udp(
-            addr,
-            librqbit_dualstack_sockets::BindOpts {
-                device: bind_device,
-                ..Default::default()
-            },
-        )
-        .with_context(|| format!("error creating UDP socket at {addr}"))?;
+        Self::new_with_proxy(cancel_token, bind_device, None).await
+    }
+
+    /// A client that talks to the trackers through `proxy` when it is set.
+    ///
+    /// A SOCKS5 proxy relays the datagrams (UDP ASSOCIATE). Other proxies can't relay UDP:
+    /// then every announce and scrape fails with [`ProxyError::UdpNotSupported`] and nothing
+    /// is sent, rather than leaking the address of this host to the trackers.
+    pub async fn new_with_proxy(
+        cancel_token: CancellationToken,
+        bind_device: Option<&BindDevice>,
+        proxy: Option<&ProxyConfig>,
+    ) -> anyhow::Result<Self> {
+        let transport = match proxy {
+            None => {
+                let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0);
+                let sock = UdpSocket::bind_udp(
+                    addr,
+                    librqbit_dualstack_sockets::BindOpts {
+                        device: bind_device,
+                        ..Default::default()
+                    },
+                )
+                .with_context(|| format!("error creating UDP socket at {addr}"))?;
+                Transport::Direct(sock)
+            }
+            Some(proxy) if proxy.kind().can_relay_udp() => {
+                Transport::Socks5(Socks5UdpAssociation::new(proxy.clone(), &cancel_token)?)
+            }
+            Some(proxy) => Transport::Unsupported(proxy.kind()),
+        };
+        let relays = !matches!(transport, Transport::Unsupported(_));
 
         let client = Self {
             state: Arc::new(ClientShared {
-                sock,
+                transport,
                 locked: RwLock::new(Default::default()),
             }),
         };
 
-        spawn_with_cancel(debug_span!("udp_tracker"), "udp_tracker", cancel_token, {
-            let client = client.clone();
-            async move { client.run().await }
-        });
+        if relays {
+            spawn_with_cancel(debug_span!("udp_tracker"), "udp_tracker", cancel_token, {
+                let client = client.clone();
+                async move { client.run().await }
+            });
+        }
 
         Ok(client)
     }
 
+    /// Whether host names of trackers should be given as they are (the `socks5h` proxy
+    /// resolves them) instead of being resolved locally.
+    pub fn sends_host_names(&self) -> bool {
+        match &self.state.transport {
+            Transport::Socks5(assoc) => assoc.proxy().kind().resolves_hostnames(),
+            Transport::Direct(_) | Transport::Unsupported(_) => false,
+        }
+    }
+
+    /// Fails when no tracker can be reached: the proxy can't relay UDP. Checked before
+    /// anything else (DNS lookups included) is done for a tracker.
+    pub fn check_usable(&self) -> Result<(), ProxyError> {
+        match &self.state.transport {
+            Transport::Unsupported(kind) => Err(ProxyError::UdpNotSupported(*kind)),
+            Transport::Direct(_) | Transport::Socks5(_) => Ok(()),
+        }
+    }
+
+    async fn recv(&self, buf: &mut [u8]) -> Option<anyhow::Result<(usize, SocketAddr)>> {
+        match &self.state.transport {
+            Transport::Direct(sock) => Some(sock.recv_from(buf).await.map_err(Into::into)),
+            Transport::Socks5(assoc) => match assoc.recv_from(buf).await {
+                Err(ProxyError::UdpAssociationShutDown) => None,
+                r => Some(r.map_err(Into::into)),
+            },
+            Transport::Unsupported(_) => None,
+        }
+    }
+
     async fn run(self) -> anyhow::Result<()> {
-        let mut buf = [0u8; 16384];
+        let mut buf = vec![0u8; RECV_BUF_LEN];
         loop {
-            let (len, addr) = match self.state.sock.recv_from(&mut buf).await {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!("error in UdpSocket::recv_from: {e:#}");
+            let (len, addr) = match self.recv(&mut buf).await {
+                Some(Ok(r)) => r,
+                Some(Err(e)) => {
+                    warn!("error receiving from the UDP trackers: {e:#}");
                     continue;
                 }
+                None => return Ok(()),
             };
 
             let (tid, response) = match Response::parse(&buf[..len], addr.is_ipv6()) {
@@ -358,40 +435,74 @@ impl UdpTrackerClient {
         }
     }
 
-    async fn get_connection_id(&self, addr: SocketAddr) -> anyhow::Result<ConnectionId> {
-        if let Some(m) = self.state.locked.read().connections.get(&addr)
-            && m.created.elapsed() < Duration::from_secs(60)
+    async fn get_connection_id(&self, target: TargetAddr<'_>) -> anyhow::Result<ConnectionId> {
         {
-            return Ok(m.id);
+            let g = self.state.locked.read();
+            let meta = match target {
+                TargetAddr::Ip(addr) => g.connections.get(&addr),
+                TargetAddr::Domain(name, port) => {
+                    g.host_connections.get(name).and_then(|m| m.get(&port))
+                }
+            };
+            if let Some(m) = meta
+                && m.created.elapsed() < Duration::from_secs(60)
+            {
+                return Ok(m.id);
+            }
         }
 
-        let response = self.request(addr, Request::Connect).await?;
+        let response = self.request(target, Request::Connect).await?;
         match response {
             Response::Connect(connection_id) => {
-                self.state.locked.write().connections.insert(
-                    addr,
-                    ConnectionIdMeta {
-                        id: connection_id,
-                        created: Instant::now(),
-                    },
-                );
+                let meta = ConnectionIdMeta {
+                    id: connection_id,
+                    created: Instant::now(),
+                };
+                let mut g = self.state.locked.write();
+                match target {
+                    TargetAddr::Ip(addr) => {
+                        g.connections.insert(addr, meta);
+                    }
+                    TargetAddr::Domain(name, port) => {
+                        g.host_connections
+                            .entry(name.to_owned())
+                            .or_default()
+                            .insert(port, meta);
+                    }
+                }
                 Ok(connection_id)
             }
             _ => anyhow::bail!("expected connect response"),
         }
     }
 
-    async fn request(&self, addr: SocketAddr, request: Request) -> anyhow::Result<Response> {
+    async fn request(&self, target: TargetAddr<'_>, request: Request) -> anyhow::Result<Response> {
+        self.check_usable()?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tid_g = self.reserve_transaction_id(tx)?;
 
         let mut write_buf = [0u8; 1024];
         let len = request.serialize(tid_g.tid, &mut write_buf)?;
-        self.state
-            .sock
-            .send_to(&write_buf[..len], addr)
-            .await
-            .with_context(|| format!("error sending to {addr:?}"))?;
+        let datagram = &write_buf[..len];
+        match (&self.state.transport, target) {
+            (Transport::Direct(sock), TargetAddr::Ip(addr)) => {
+                sock.send_to(datagram, addr)
+                    .await
+                    .with_context(|| format!("error sending to {addr:?}"))?;
+            }
+            (Transport::Direct(_), TargetAddr::Domain(..)) => {
+                bail!("host names of trackers are only sent to a proxy")
+            }
+            (Transport::Socks5(assoc), target) => {
+                assoc
+                    .send_to(datagram, target)
+                    .await
+                    .with_context(|| format!("error sending to {target} through the proxy"))?;
+            }
+            (Transport::Unsupported(kind), _) => {
+                return Err(ProxyError::UdpNotSupported(*kind).into());
+            }
+        }
 
         let response = tokio::time::timeout(Duration::from_secs(10), rx)
             .await
@@ -435,6 +546,16 @@ impl UdpTrackerClient {
         tracker: SocketAddr,
         fields: AnnounceFields,
     ) -> anyhow::Result<AnnounceResponse> {
+        self.announce_to(tracker.into(), fields).await
+    }
+
+    /// Like [`announce`](Self::announce), but the tracker may also be given by host name,
+    /// which only works through a SOCKS5 proxy (see [`sends_host_names`](Self::sends_host_names)).
+    pub async fn announce_to(
+        &self,
+        tracker: TargetAddr<'_>,
+        fields: AnnounceFields,
+    ) -> anyhow::Result<AnnounceResponse> {
         let connection_id = self.get_connection_id(tracker).await?;
         let request = Request::Announce(connection_id, fields);
         let response = self.request(tracker, request).await?;
@@ -449,6 +570,16 @@ impl UdpTrackerClient {
     pub async fn scrape(
         &self,
         tracker: SocketAddr,
+        info_hash: Id20,
+    ) -> anyhow::Result<ScrapeResponse> {
+        self.scrape_from(tracker.into(), info_hash).await
+    }
+
+    /// Like [`scrape`](Self::scrape), but the tracker may also be given by host name, which
+    /// only works through a SOCKS5 proxy (see [`sends_host_names`](Self::sends_host_names)).
+    pub async fn scrape_from(
+        &self,
+        tracker: TargetAddr<'_>,
         info_hash: Id20,
     ) -> anyhow::Result<ScrapeResponse> {
         let connection_id = self.get_connection_id(tracker).await?;

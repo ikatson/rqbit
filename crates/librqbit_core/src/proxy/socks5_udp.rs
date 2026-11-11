@@ -76,7 +76,7 @@ struct Inner {
 /// A UDP "socket" whose datagrams go through a SOCKS5 proxy (UDP ASSOCIATE).
 ///
 /// Send and receive can be called concurrently from several tasks. The proxy is contacted on
-/// the first [`send_to`](Self::send_to) or [`recv_from`](Self::recv_from); after that the
+/// the first [`send_to`](Self::send_to); after that the
 /// association is kept up, and re-established with backoff whenever it ends. The association
 /// shuts down when this value is dropped or the cancellation token given to
 /// [`new`](Self::new) is cancelled.
@@ -160,11 +160,13 @@ impl Socks5UdpAssociation {
     /// [`SOCKS5_UDP_HEADER_MAX`] bytes longer than the largest datagram expected; a longer
     /// datagram is truncated. Datagrams that don't come from the relay, fragmented ones
     /// (`FRAG != 0`) and ones with a malformed header or a domain name as their source are
-    /// dropped. While there is no association, this waits for one; it fails only when the
-    /// association is shut down, or when receiving from the local socket fails.
+    /// dropped. While there is no association, this waits for one (it doesn't start one: the
+    /// first [`send_to`](Self::send_to) does); it fails only when the association is shut
+    /// down, or when receiving from the local socket fails.
     pub async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), ProxyError> {
         let mut rx = self.inner.state.subscribe();
-        self.inner.wanted.notify_one();
+        // Receiving alone doesn't contact the proxy: nothing can arrive before something was
+        // sent, and a consumer that never sends (no trackers) leaves the proxy alone.
         loop {
             let assoc = match &*rx.borrow_and_update() {
                 State::Up(assoc) => Some(assoc.clone()),
