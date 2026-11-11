@@ -42,6 +42,10 @@
 pub mod peer;
 pub mod peers;
 pub mod stats;
+mod super_seeding;
+
+use self::super_seeding::SuperSeedConn;
+pub(crate) use self::super_seeding::SuperSeeding;
 
 use std::{
     borrow::Cow,
@@ -85,18 +89,27 @@ use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 
 use crate::{
     Error,
+    choker::{Choker, ChokerPeer, RECHOKE_INTERVAL, Registration, SlotClass, Transferred},
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
+    fast::{self, FastDownload},
     file_ops::FileOps,
     limits::Limits,
     peer_connection::{
-        PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
+        DEFAULT_READ_WRITE_TIMEOUT, PeerConnection, PeerConnectionHandler, PeerConnectionOptions,
+        WriterRequest,
     },
+    peer_policy::{PeerEvent, PeerPolicyBinding, PeerVerdict, canonical_ip},
+    piece_picker::{PieceAvailability, PiecePicker, PiecePicking},
     piece_tracker::{AcquireRequest, AcquireResult, PieceTracker},
     session::CheckedIncomingConnection,
     session_stats::SessionStats,
     stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{BF, FilePriorities, FileStorage, PeerHandle},
+    type_aliases::{BF, BS, FileStorage, PeerHandle},
+    upload_gate::{
+        MAX_QUEUED_THROTTLED_UPLOADS_PER_PEER, MAX_QUEUED_UPLOADS_PER_PEER, Registered, UploadGate,
+        UploadRequest, block_key,
+    },
 };
 
 use self::{
@@ -127,8 +140,8 @@ pub(crate) struct TorrentStateLocked {
     // If this is None, the torrent was paused, and this live state is useless, and needs to be dropped.
     pub(crate) pieces: Option<PieceTracker>,
 
-    // The sorted file list in which order to download them.
-    file_priorities: FilePriorities,
+    // Orders the queue: rarest first, sequential, first and last pieces first.
+    picker: PiecePicker,
 
     // If this is None, then it was already used
     fatal_errors_tx: Option<tokio::sync::oneshot::Sender<anyhow::Error>>,
@@ -209,11 +222,22 @@ pub struct TorrentStateLive {
     pub(crate) streams: Arc<TorrentStreams>,
     have_broadcast_tx: tokio::sync::broadcast::Sender<ValidPieceIndex>,
 
-    ratelimit_upload_tx: tokio::sync::mpsc::UnboundedSender<(
-        tokio::sync::mpsc::UnboundedSender<WriterRequest>,
-        ChunkInfo,
-    )>,
+    ratelimit_upload_tx: UnboundedSender<UploadRequest>,
+    // Upload requests of the peers the policy throttled. Only exists with a peer policy.
+    throttled_upload_tx: Option<UnboundedSender<UploadRequest>>,
+    // Outgoing peers the policy refused to dial (they stay queued). `readmit_refused_peers` asks
+    // the policy again, since a refusal can be lifted while the torrent is live.
+    refused_peers: Mutex<HashSet<SocketAddr>>,
+    // We have every selected piece. Changes with the selection and with completed pieces, and is
+    // read for every event reported to the peer policy.
+    selection_complete: Arc<AtomicBool>,
     ratelimits: Limits,
+
+    // Decides which interested peers we upload to.
+    choker: Arc<Choker>,
+
+    // Which piece each super seeding (BEP 16) connection is shown.
+    pub(crate) super_seeding: Arc<SuperSeeding>,
 }
 
 impl TorrentStateLive {
@@ -227,6 +251,8 @@ impl TorrentStateLive {
 
     pub(crate) fn new(
         paused: TorrentStatePaused,
+        piece_picking: PiecePicking,
+        only_files: Option<&HashSet<usize>>,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<Arc<Self>> {
@@ -242,27 +268,26 @@ impl TorrentStateLive {
 
         let have_bytes = paused.chunk_tracker.get_hns().have_bytes;
         let lengths = *paused.chunk_tracker.get_lengths();
+        let selection_complete =
+            Arc::new(AtomicBool::new(paused.chunk_tracker.get_hns().finished()));
 
-        // TODO: make it configurable
-        let file_priorities = {
-            let mut pri = (0..paused.metadata.file_infos.len()).collect::<Vec<usize>>();
-            // sort by filename, cause many torrents have random sort order.
-            pri.sort_unstable_by_key(|id| {
-                paused
-                    .metadata
-                    .file_infos
-                    .get(*id)
-                    .map(|fi| fi.relative_filename.as_path())
-            });
-            pri
-        };
+        let picker = PiecePicker::new(
+            piece_picking,
+            lengths,
+            &paused.metadata.file_infos,
+            only_files,
+        );
 
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
-        let (ratelimit_upload_tx, ratelimit_upload_rx) = tokio::sync::mpsc::unbounded_channel::<(
-            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
-            ChunkInfo,
-        )>();
+        let (ratelimit_upload_tx, ratelimit_upload_rx) = unbounded_channel::<UploadRequest>();
+        // The queue of the peers the policy throttled only exists with a peer policy.
+        let throttled_upload = paused
+            .shared
+            .options
+            .peer_policy
+            .is_some()
+            .then(unbounded_channel::<UploadRequest>);
         let ratelimits = Limits::new(paused.shared.options.ratelimits);
 
         let state = Arc::new(TorrentStateLive {
@@ -272,11 +297,12 @@ impl TorrentStateLive {
                 session_stats: session_stats.peers.clone(),
                 stats: Default::default(),
                 states: Default::default(),
+                availability: PieceAvailability::new(lengths.total_pieces()),
                 live_outgoing_peers: Default::default(),
             },
             _locked: RwLock::new(TorrentStateLocked {
                 pieces: Some(PieceTracker::new(paused.chunk_tracker)),
-                file_priorities,
+                picker,
                 fatal_errors_tx: Some(fatal_errors_tx),
                 unflushed_bitv_bytes: 0,
             }),
@@ -302,7 +328,15 @@ impl TorrentStateLive {
                 .map(|_| RwLock::new(()))
                 .collect(),
             ratelimit_upload_tx,
+            throttled_upload_tx: throttled_upload.as_ref().map(|(tx, _)| tx.clone()),
+            refused_peers: Default::default(),
+            selection_complete,
             ratelimits,
+            choker: Arc::new(Choker::new(
+                paused.shared.options.upload_slots,
+                Instant::now(),
+            )),
+            super_seeding: Default::default(),
         });
 
         state.spawn(
@@ -344,7 +378,23 @@ impl TorrentStateLive {
         state.spawn(
             debug_span!(parent: state.shared.span.clone(), "upload_scheduler"),
             format!("[{}]upload_scheduler", state.shared.id),
-            state.clone().task_upload_scheduler(ratelimit_upload_rx),
+            state
+                .clone()
+                .task_upload_scheduler(ratelimit_upload_rx, false),
+        );
+
+        if let Some((_, throttled_rx)) = throttled_upload {
+            state.spawn(
+                debug_span!(parent: state.shared.span.clone(), "throttled_upload_scheduler"),
+                format!("[{}]throttled_upload_scheduler", state.shared.id),
+                state.clone().task_upload_scheduler(throttled_rx, true),
+            );
+        }
+
+        state.spawn(
+            debug_span!(parent: state.shared.span.clone(), "choker"),
+            format!("[{}]choker", state.shared.id),
+            Self::task_choker(state.choker.clone()),
         );
         Ok(state)
     }
@@ -440,14 +490,24 @@ impl TorrentStateLive {
         Ok(AddIncomingPeerResult::Added)
     }
 
+    // Paces the upload requests of one queue. Normal peers and throttled peers each have their own
+    // queue (and task), so waiting for the throttled rate never holds back a normal peer.
     async fn task_upload_scheduler(
         self: Arc<Self>,
-        mut rx: tokio::sync::mpsc::UnboundedReceiver<(
-            tokio::sync::mpsc::UnboundedSender<WriterRequest>,
-            ChunkInfo,
-        )>,
+        mut rx: UnboundedReceiver<UploadRequest>,
+        throttled: bool,
     ) -> crate::Result<()> {
-        while let Some((tx, ci)) = rx.recv().await {
+        while let Some(UploadRequest {
+            tx,
+            chunk: ci,
+            gate,
+        }) = rx.recv().await
+        {
+            // The peer may have cancelled it, or the connection may have been choked, while it
+            // was queued.
+            if !gate.keep(&ci) {
+                continue;
+            }
             tokio::select! {
                 _ = tx.closed() => {
                     continue;
@@ -465,10 +525,67 @@ impl TorrentStateLive {
                         res?;
                     }
                 }
+                if throttled {
+                    tokio::select! {
+                        _ = tx.closed() => {
+                            continue;
+                        }
+                        res = session.throttled_upload.acquire(NonZeroU32::new(ci.size).unwrap()) => {
+                            if let Err(e) = res {
+                                warn!(
+                                    id = self.shared.id,
+                                    info_hash = ?self.shared.info_hash,
+                                    "dropping a throttled upload request: {e:#}"
+                                );
+                                // With the Fast Extension every request is answered (BEP 6).
+                                if gate.should_upload(&ci) && gate.is_fast() {
+                                    let _ = tx.send(WriterRequest::Message(
+                                        Message::RejectRequest(Request {
+                                            index: ci.piece_index.get(),
+                                            begin: ci.offset,
+                                            length: ci.size,
+                                        }),
+                                    ));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            // ... or while it waited for the rate limits.
+            if !gate.keep(&ci) {
+                continue;
             }
             let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
         }
         Ok(())
+    }
+
+    // Hands out the upload slots at the interval. A slot that frees up in between is given
+    // away when it happens, see `Choker`.
+    async fn task_choker(choker: Arc<Choker>) -> crate::Result<()> {
+        loop {
+            tokio::time::sleep(RECHOKE_INTERVAL).await;
+            choker.rechoke(Instant::now());
+        }
+    }
+
+    // The place of a new connection in the choker.
+    fn choker_registration(
+        &self,
+        tx: &PeerTx,
+        gate: &Arc<UploadGate>,
+        counters: &Arc<AtomicPeerCounters>,
+    ) -> Registration {
+        self.choker.add(
+            Arc::new(PeerUpload {
+                tx: tx.clone(),
+                gate: gate.clone(),
+                counters: counters.clone(),
+            }),
+            Instant::now(),
+        )
     }
 
     async fn task_manage_incoming_peer(
@@ -479,22 +596,29 @@ impl TorrentStateLive {
         rx: PeerRx,
         permit: OwnedSemaphorePermit,
     ) -> crate::Result<()> {
+        let policy = self.peer_policy_binding(checked_peer.addr);
+        let choker = self.choker_registration(&tx, policy.gate(), &counters);
         let handler = PeerHandler {
             addr: checked_peer.addr,
             incoming: true,
+            policy,
             on_bitfield_notify: Default::default(),
             flow_control: Mutex::new(PeerFlowControl::new(self.max_request_window())),
+            fast: Default::default(),
             state: self.clone(),
             tx,
             counters,
+            choker,
             first_message_received: AtomicBool::new(false),
             cancel_token: self.cancellation_token.child_token(),
             client_name_and_version: self.shared.client_name_and_version().to_owned(),
+            super_seed: self.super_seed_conn(checked_peer.addr),
         };
         let _token_guard = handler.cancel_token.clone().drop_guard();
         let options = PeerConnectionOptions {
             connect_timeout: self.shared.options.peer_connect_timeout,
             read_write_timeout: self.shared.options.peer_read_write_timeout,
+            disable_fast_extension: self.shared.options.disable_fast_extension,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
@@ -516,6 +640,7 @@ impl TorrentStateLive {
                 self.have_broadcast_tx.subscribe()
             ) => {r}
         };
+        handler.notify_disconnected();
 
         match res {
             // We disconnected the peer ourselves as we don't need it
@@ -537,29 +662,42 @@ impl TorrentStateLive {
         permit: OwnedSemaphorePermit,
     ) -> crate::Result<()> {
         let state = self;
-        let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
+        let Some((rx, tx)) = state.peers.mark_peer_connecting(addr)? else {
+            debug!(
+                ?addr,
+                "peer is connected or waiting already, not dialing it"
+            );
+            return Ok(());
+        };
         let counters = state
             .peers
             .with_peer(addr, |p| p.stats.counters.clone())
             .ok_or(Error::BugPeerNotFound)?;
 
+        let policy = state.peer_policy_binding(addr);
+        let choker = state.choker_registration(&tx, policy.gate(), &counters);
         let handler = PeerHandler {
             addr,
             incoming: false,
+            policy,
             on_bitfield_notify: Default::default(),
             flow_control: Mutex::new(PeerFlowControl::new(state.max_request_window())),
+            fast: Default::default(),
             state: state.clone(),
             tx,
             counters,
+            choker,
             first_message_received: AtomicBool::new(false),
             cancel_token: state.cancellation_token.child_token(),
             client_name_and_version: state.shared.client_name_and_version().to_owned(),
+            super_seed: state.super_seed_conn(addr),
         };
         let _token_guard = handler.cancel_token.clone().drop_guard();
 
         let options = PeerConnectionOptions {
             connect_timeout: state.shared.options.peer_connect_timeout,
             read_write_timeout: state.shared.options.peer_read_write_timeout,
+            disable_fast_extension: state.shared.options.disable_fast_extension,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
@@ -590,6 +728,7 @@ impl TorrentStateLive {
             r = requester => {r}
             r = conn_manager => {r}
         };
+        handler.notify_disconnected();
 
         match res {
             // We disconnected the peer ourselves as we don't need it
@@ -618,44 +757,61 @@ impl TorrentStateLive {
                 continue;
             }
 
-            let session = state
-                .shared
-                .session
-                .upgrade()
-                .ok_or(Error::SessionDestroyed)?;
-
-            if session.ipv4_only && addr.is_ipv6() {
-                debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
-                continue;
-            }
-
-            if addr.port() == 0 {
-                debug!(?addr, "skipping peer with port 0");
-                continue;
-            }
-
-            if session.blocklist.has(addr.ip()) {
-                session
-                    .stats
-                    .counters
-                    .blocked_outgoing
-                    .fetch_add(1, Ordering::Relaxed);
-                debug!(?addr, "blocked outgoing connection (by the blacklist)");
-                continue;
-            }
-
-            if session
-                .allowlist
-                .as_ref()
-                .is_some_and(|l| !l.has(addr.ip()))
             {
-                session
-                    .stats
-                    .counters
-                    .blocked_outgoing
-                    .fetch_add(1, Ordering::Relaxed);
-                debug!(?addr, "blocked outgoing connection (by the allowlist)");
-                continue;
+                // Scoped: the session must not be kept alive while waiting for a
+                // peer permit below, or a dropped session would never be cancelled.
+                let session = state
+                    .shared
+                    .session
+                    .upgrade()
+                    .ok_or(Error::SessionDestroyed)?;
+
+                if session.ipv4_only && addr.is_ipv6() {
+                    debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
+                    continue;
+                }
+
+                if addr.port() == 0 {
+                    debug!(?addr, "skipping peer with port 0");
+                    continue;
+                }
+
+                if session.blocklist.has(addr.ip()) {
+                    session
+                        .stats
+                        .counters
+                        .blocked_outgoing
+                        .fetch_add(1, Ordering::Relaxed);
+                    debug!(?addr, "blocked outgoing connection (by the blacklist)");
+                    continue;
+                }
+
+                if session
+                    .allowlist
+                    .as_ref()
+                    .is_some_and(|l| !l.has(addr.ip()))
+                {
+                    session
+                        .stats
+                        .counters
+                        .blocked_outgoing
+                        .fetch_add(1, Ordering::Relaxed);
+                    debug!(?addr, "blocked outgoing connection (by the allowlist)");
+                    continue;
+                }
+
+                if let Some(policy) = state.shared.options.peer_policy.as_ref()
+                    && !policy.admit(canonical_ip(addr.ip()))
+                {
+                    state.refused_peers.lock().insert(addr);
+                    session
+                        .stats
+                        .counters
+                        .blocked_outgoing
+                        .fetch_add(1, Ordering::Relaxed);
+                    debug!(?addr, "blocked outgoing connection (by the peer policy)");
+                    continue;
+                }
             }
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
@@ -698,8 +854,14 @@ impl TorrentStateLive {
     }
 
     fn set_peer_live(&self, handle: PeerHandle, h: Handshake, connection_kind: ConnectionKind) {
+        let fast_extension = !self.shared.options.disable_fast_extension && h.supports_fast();
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
+            // Under the same lock as the state change, so an outgoing peer is never seen live
+            // without its Fast Extension flag. An incoming peer is live already.
             p.connecting_to_live(h.peer_id, &self.peers, connection_kind);
+            if let Some(live) = p.get_live_mut() {
+                live.fast_extension = fast_extension;
+            }
         });
     }
 
@@ -765,6 +927,13 @@ impl TorrentStateLive {
         }
     }
 
+    /// The requests we sent the live peer at `addr` and still wait an answer for.
+    #[cfg(test)]
+    pub(crate) fn inflight_requests_to(&self, addr: PeerHandle) -> Option<usize> {
+        self.peers
+            .with_live(addr, |live| live.requested_inflight_count())
+    }
+
     pub async fn wait_until_completed(&self) {
         if self.is_finished() {
             return;
@@ -810,10 +979,21 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let hns = self
-            .lock_write("update_only_files")
-            .get_pieces_mut()?
-            .update_only_files(&self.metadata.file_infos, only_files)?;
+        // The flag is written under the state lock, like in on_piece_completed: outside of it a
+        // stale value could overwrite a newer one.
+        let hns = {
+            let mut g = self.lock_write("update_only_files");
+            let hns = g
+                .get_pieces_mut()?
+                .update_only_files(&self.metadata.file_infos, only_files)?;
+            self.selection_complete
+                .store(hns.finished(), Ordering::Release);
+            g.picker
+                .update_only_files(&self.metadata.file_infos, Some(only_files));
+            hns
+        };
+        // Super seeding connections end the mode when the selection is no longer complete.
+        self.super_seeding.wake_all();
         // With the state lock released. A dying peer holds its shard of the peer table
         // while it asks whether the torrent is finished (on_peer_died), so touching the
         // table under the state lock is the reverse order, and the two deadlock.
@@ -821,6 +1001,13 @@ impl TorrentStateLive {
             self.reconnect_all_not_needed_peers();
         }
         Ok(())
+    }
+
+    /// Change how the next pieces are picked. Pieces already in flight are not affected.
+    pub(crate) fn set_piece_picking(&self, piece_picking: PiecePicking) {
+        self.lock_write("set_piece_picking")
+            .picker
+            .set_options(piece_picking);
     }
 
     // If we have all selected pieces but not necessarily all pieces.
@@ -876,6 +1063,8 @@ impl TorrentStateLive {
         }
 
         let chunks = locked.get_chunks()?;
+        self.selection_complete
+            .store(chunks.is_finished(), Ordering::Release);
         if chunks.is_finished() {
             if chunks.get_selected_pieces()[id.get_usize()] {
                 locked.try_flush_bitv(&self.shared, false);
@@ -917,6 +1106,56 @@ impl TorrentStateLive {
             .map(|socket_addr| self.peer_queue_tx.send(socket_addr))
             .take_while(|r| r.is_ok())
             .last();
+    }
+
+    /// Dials the queued peers the policy refused earlier and admits now. Returns how many.
+    pub(crate) fn readmit_refused_peers(&self) -> usize {
+        let Some(policy) = self.shared.options.peer_policy.as_ref() else {
+            return 0;
+        };
+        let refused: Vec<_> = self.refused_peers.lock().iter().copied().collect();
+        let mut dialed = 0;
+        for addr in refused {
+            if !policy.readmit(canonical_ip(addr.ip())) {
+                continue;
+            }
+            self.refused_peers.lock().remove(&addr);
+            // It may have connected to us, or been forgotten, in the meantime.
+            let queued = self
+                .peers
+                .with_peer(addr, |p| matches!(p.get_state(), PeerState::Queued))
+                .unwrap_or(false);
+            if queued && self.peer_queue_tx.send(addr).is_ok() {
+                dialed += 1;
+            }
+        }
+        dialed
+    }
+
+    /// Asks every live peer whose address satisfies `f` to disconnect. Returns how many were asked.
+    pub(crate) fn disconnect_peers_where(&self, f: &impl Fn(IpAddr) -> bool) -> usize {
+        // `f` runs without holding the peer table.
+        let live: Vec<_> = self
+            .peers
+            .states
+            .iter()
+            .filter_map(|p| Some((canonical_ip(p.key().ip()), p.value().get_live()?.tx.clone())))
+            .collect();
+        live.into_iter()
+            .filter(|(ip, _)| f(*ip))
+            .filter(|(_, tx)| tx.send(WriterRequest::Disconnect(Ok(()))).is_ok())
+            .count()
+    }
+
+    fn peer_policy_binding(&self, addr: SocketAddr) -> PeerPolicyBinding {
+        PeerPolicyBinding::new(
+            self.shared.options.peer_policy.clone(),
+            self.shared.info_hash,
+            addr,
+            self.metadata.info.info().private,
+            &self.lengths,
+            self.selection_complete.clone(),
+        )
     }
 
     async fn task_send_pex_to_peer(
@@ -1020,6 +1259,34 @@ impl PeerFlowControl {
     }
 }
 
+// What the choker needs of a connection.
+struct PeerUpload {
+    tx: PeerTx,
+    gate: Arc<UploadGate>,
+    counters: Arc<AtomicPeerCounters>,
+}
+
+impl ChokerPeer for PeerUpload {
+    fn set_choked(&self, choked: bool) {
+        // The gate decides and queues the message (and, with the Fast Extension, a reject for
+        // every request the choke dropped, BEP 6) under its lock, so the peer reads the choke
+        // before any reject it explains, and the writer serves none of the dropped requests.
+        if !self.gate.announce_choked(choked, &self.tx) {
+            trace!(
+                "peer is gone, not sending {}",
+                if choked { "choke" } else { "unchoke" }
+            );
+        }
+    }
+
+    fn transferred(&self) -> Transferred {
+        Transferred {
+            down: self.counters.fetched_bytes.load(Ordering::Relaxed),
+            up: self.counters.uploaded_bytes.load(Ordering::Relaxed),
+        }
+    }
+}
+
 // All peer state that would never be used by other actors should pe put here.
 // This state tracks a live peer.
 struct PeerHandler {
@@ -1031,6 +1298,9 @@ struct PeerHandler {
     // However as PeerConnectionHandler takes &self everywhere, we need shared mutability.
     // RefCell would do, but tokio is unhappy when we use it.
     flow_control: Mutex<PeerFlowControl>,
+    // What the peer told us on a connection with the Fast Extension (BEP 6), and what it owes
+    // us after a choke. A leaf lock: nothing else is locked while it is held.
+    fast: Mutex<FastDownload>,
 
     // This is used to unpause chunk requester once the bitfield
     // is received.
@@ -1040,11 +1310,20 @@ struct PeerHandler {
     incoming: bool,
     tx: PeerTx,
 
+    // The peer policy's view of the connection, and the upload requests of the connection that
+    // wait to be served.
+    policy: PeerPolicyBinding,
+    // The connection's place in the queue for an upload slot. Gives the slot back when dropped.
+    choker: Registration,
+
     first_message_received: AtomicBool,
 
     cancel_token: CancellationToken,
 
     client_name_and_version: String,
+
+    // Super seeding (BEP 16) of this connection. A leaf lock inside.
+    super_seed: SuperSeedConn,
 }
 
 impl PeerConnectionHandler for &'_ PeerHandler {
@@ -1066,7 +1345,6 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         {
             self.on_bitfield_notify.notify_waiters();
         }
-
         match message {
             Message::Request(request) => {
                 self.on_download_request(request)
@@ -1075,7 +1353,7 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             Message::Bitfield(b) => self
                 .on_bitfield(b.clone_to_owned(None))
                 .context("on_bitfield")?,
-            Message::Choke => self.on_i_am_choked(),
+            Message::Choke => self.on_i_am_choked()?,
             Message::Unchoke => self.on_i_am_unchoked(),
             Message::Interested => self.on_peer_interested(),
             Message::Piece(piece) => self
@@ -1085,13 +1363,16 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             Message::KeepAlive => {
                 trace!("keepalive received");
             }
-            Message::Have(h) => self.on_have(h),
-            Message::NotInterested => {
-                trace!("received \"not interested\", but we don't process it yet")
-            }
-            Message::Cancel(_) => {
-                trace!("received \"cancel\", but we don't process it yet")
-            }
+            Message::Have(h) => self.on_have(h)?,
+            Message::NotInterested => self.on_peer_not_interested(),
+            Message::Cancel(cancel) => self.on_cancel(cancel)?,
+            Message::HaveAll => self.on_have_all().context("on_have_all")?,
+            Message::HaveNone => self.on_have_none().context("on_have_none")?,
+            Message::RejectRequest(reject) => self
+                .on_reject_request(reject)
+                .context("on_reject_request")?,
+            Message::AllowedFast(index) => self.on_allowed_fast(index)?,
+            Message::SuggestPiece(index) => self.on_suggest_piece(index)?,
             Message::Extended(ExtendedMessage::UtMetadata(UtMetadata::Request(
                 metadata_piece_id,
             ))) => {
@@ -1129,6 +1410,9 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                 );
             }
         };
+        // A peer that choked us and keeps talking without answering what we asked it for.
+        // Checked after the message, so that an answer that just arrived counts.
+        self.give_back_overdue_answers()?;
         Ok(())
     }
 
@@ -1140,9 +1424,77 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         Ok(len)
     }
 
+    fn serialize_fast_opening(&self, buf: &mut [u8]) -> anyhow::Result<usize> {
+        let g = self.state.lock_read("serialize_fast_opening");
+        let bytes = g.get_chunks()?.get_have_pieces().as_bytes();
+        let have = BS::from_slice(bytes);
+        let total = self.state.lengths.total_pieces() as usize;
+        let msg = if !self.should_send_bitfield() || have.not_any() {
+            Message::HaveNone
+        } else if have.get(..total).is_some_and(|s| s.all()) {
+            Message::HaveAll
+        } else {
+            Message::Bitfield(ByteBuf(bytes))
+        };
+        let len = msg.serialize(buf, &Default::default)?;
+        trace!("sending: {:?}, length={}", &msg, len);
+        Ok(len)
+    }
+
     fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()> {
+        let (peer_id, reserved) = (handshake.peer_id, handshake.reserved);
+        self.policy.gate().set_fast(
+            !self.state.shared.options.disable_fast_extension && handshake.supports_fast(),
+        );
         self.state.set_peer_live(self.addr, handshake, ckind);
-        Ok(())
+        // A super seeding connection waits for the handshake before it waits for the piece set.
+        self.on_bitfield_notify.notify_waiters();
+        self.policy.mark_established();
+        self.policy_event(PeerEvent::Handshake {
+            peer_id,
+            reserved,
+            incoming: self.incoming,
+        })
+    }
+
+    fn should_upload_chunk(&self, chunk: &ChunkInfo) -> bool {
+        self.policy.gate().should_upload(chunk)
+    }
+
+    fn on_uploaded_chunk(&self, chunk: &ChunkInfo) -> anyhow::Result<()> {
+        self.super_seed.on_uploaded(chunk);
+        self.policy_event(PeerEvent::Uploaded {
+            piece: chunk.piece_index.get(),
+            begin: chunk.offset,
+            length: chunk.size,
+        })
+    }
+
+    fn may_be_silent(&self) -> bool {
+        // A peer that choked us and answers nothing: what we asked it for goes back to the
+        // queue first, then its silence is judged like any other.
+        if let Err(error) = self.give_back_overdue_answers() {
+            debug!("error giving back overdue requests: {error:#}");
+        }
+        // Silence is a peer that does not deliver what we asked for. But a peer that waits
+        // for one of our upload slots has nothing to say, and neither has one we wait for.
+        if self.requested_inflight_count() != Some(0) {
+            return false;
+        }
+        let they_wait = self.choker.waits_for_slot();
+        if self.state.is_finished_and_no_active_streams() {
+            return they_wait;
+        }
+        // While we still look for peers to download from, a connection that does nothing is
+        // only kept for as long as no other peer could use it. Nothing is asked of a peer that
+        // chokes us, that we pause because it rejected too much (Fast Extension), or that has
+        // nothing we need (until it announces something: a super seeder shows a piece after a
+        // while).
+        (they_wait
+            || self.is_choked()
+            || self.fast.lock().is_paused(Instant::now())
+            || !self.peer_is_interesting())
+            && self.state.peer_semaphore.available_permits() > 0
     }
 
     fn on_uploaded_bytes(&self, bytes: u32) {
@@ -1172,6 +1524,13 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                     live.client_name = Some(client_name);
                 });
         }
+        self.policy_event(PeerEvent::ExtendedHandshake {
+            client: hs
+                .v
+                .as_ref()
+                .map(|v| String::from_utf8_lossy(v.as_ref()))
+                .as_deref(),
+        })?;
 
         if let Some(reqq) = hs.reqq.and_then(|reqq| usize::try_from(reqq).ok())
             && reqq > 0
@@ -1225,6 +1584,10 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         if self.state.torrent().options.disable_upload() {
             return false;
         }
+        // A super seeder pretends to have nothing.
+        if self.super_seed.is_active() {
+            return false;
+        }
 
         self.state.get_approx_have_bytes() > 0
     }
@@ -1233,8 +1596,8 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         // Announce every completed piece, also one the peer's bitfield already claims. Leaving
         // such HAVEs out makes us look like a peer that doesn't report its progress, which
         // anti-leech tools (e.g. PeerBanHelper's ProgressCheatBlocker) take as a cheating
-        // client and ban.
-        !self.state.shared.options.disable_upload()
+        // client and ban. A super seeder only announces the pieces it shows.
+        !self.state.shared.options.disable_upload() && !self.super_seed.is_active()
     }
 
     fn update_my_extended_handshake(
@@ -1247,6 +1610,9 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         {
             handshake.metadata_size = Some(len);
         }
+
+        // How many requests we queue for a peer, see MAX_QUEUED_UPLOADS_PER_PEER.
+        handshake.reqq = Some(MAX_QUEUED_UPLOADS_PER_PEER);
 
         Ok(())
     }
@@ -1418,7 +1784,32 @@ impl PeerHandler {
     ///
     /// Returns the piece index to download, or None if no pieces are available.
     fn acquire_next_piece(&self) -> crate::Result<Option<ValidPieceIndex>> {
-        if self.is_choked() {
+        let choked = self.is_choked();
+        // What the peer told us with the Fast Extension (BEP 6), all empty without it: while it
+        // chokes us only its allowed-fast pieces may be requested; its suggestions go first;
+        // pieces it rejected lately, or that wait to be given back, are not asked of it, and
+        // nothing is while it rejected too much in a row.
+        let now = Instant::now();
+        let (allowed, suggested, backed_off, paused) = {
+            let fast = self.fast.lock();
+            let allowed: Vec<ValidPieceIndex> = if choked {
+                fast.allowed_fast().to_vec()
+            } else {
+                Vec::new()
+            };
+            let suggested: Vec<ValidPieceIndex> = if choked {
+                Vec::new()
+            } else {
+                fast.suggestions().collect()
+            };
+            let backed_off: Vec<ValidPieceIndex> = fast.backed_off(now).collect();
+            (allowed, suggested, backed_off, fast.is_paused(now))
+        };
+        if paused {
+            debug!("the peer rejected too much, asking it for nothing for now");
+            return Ok(None);
+        }
+        if choked && allowed.is_empty() {
             debug!("we are choked, can't acquire piece");
             return Ok(None);
         }
@@ -1434,19 +1825,54 @@ impl PeerHandler {
 
                 let bf = &live.bitfield;
                 // Extract references to disjoint fields
-                let TorrentStateLocked {
-                    pieces,
-                    file_priorities,
-                    ..
-                } = &mut **g;
+                let TorrentStateLocked { pieces, picker, .. } = &mut **g;
                 let pieces = pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)?;
+                // A piece that went to another peer (stolen) while it waited to be given back is
+                // not ours to give back any more: our requests for it were cancelled, so their
+                // answers will not take it out of the list. `fast` is the innermost lock:
+                // nothing else is taken while it is held.
+                let giving_back: Vec<ValidPieceIndex> = {
+                    let mut fast = self.fast.lock();
+                    fast.retain_give_back(|p| {
+                        pieces
+                            .get_inflight(p)
+                            .is_some_and(|inflight| inflight.peer == self.addr)
+                    });
+                    fast.giving_back().collect()
+                };
+                let peer_has_piece = |p: ValidPieceIndex| {
+                    bf.get(p.get() as usize).map(|v| *v) == Some(true)
+                        && !backed_off.contains(&p)
+                        && !giving_back.contains(&p)
+                        && (!choked || allowed.contains(&p))
+                };
+                // Allowed-fast pieces and suggestions are only worth something while queued: a
+                // piece we have, do not want or that is in flight is not taken from them.
+                let queued = pieces.chunks().queued_pieces();
+                let is_queued = |p: &ValidPieceIndex| queued.get(p.get_usize()).is_some_and(|b| *b);
+                let preferred: Vec<ValidPieceIndex> = if choked {
+                    allowed.iter().copied().filter(is_queued).collect()
+                } else {
+                    suggested.iter().copied().filter(is_queued).collect()
+                };
+                let priority_pieces: Box<dyn Iterator<Item = ValidPieceIndex> + '_> = if choked {
+                    Box::new(preferred.iter().copied())
+                } else {
+                    // Streams first: a suggestion must not delay what a reader waits for.
+                    Box::new(
+                        self.state
+                            .streams
+                            .iter_next_pieces(&self.state.lengths)
+                            .chain(preferred.iter().copied()),
+                    )
+                };
                 let result = pieces.acquire_piece(AcquireRequest {
                     peer: self.addr,
                     peer_avg_time: self.counters.average_piece_download_time(),
-                    priority_pieces: self.state.streams.iter_next_pieces(&self.state.lengths),
-                    file_priorities,
-                    file_infos: &self.state.metadata.file_infos,
-                    peer_has_piece: |p| bf.get(p.get() as usize).map(|v| *v) == Some(true),
+                    priority_pieces,
+                    picker,
+                    availability: &self.state.peers.availability,
+                    peer_has_piece,
                     can_steal: |p| {
                         self.state.per_piece_locks[p.get_usize()]
                             .try_write()
@@ -1508,25 +1934,143 @@ impl PeerHandler {
             }
         };
 
+        if self.super_seed.hides(piece_index) {
+            // As for a piece we do not have, but the peer did nothing wrong: it may have asked
+            // before the mode started, so the connection stays.
+            if self.policy.gate().is_fast() {
+                return self.reject_on_arrival(request);
+            }
+            trace!(
+                ?request,
+                "super seeding: ignoring a request for a piece not shown"
+            );
+            return Ok(());
+        }
+
         if !self
             .state
             .lock_read("is_chunk_ready_to_upload")
             .get_chunks()?
             .is_chunk_ready_to_upload(&chunk_info)
         {
+            // With the Fast Extension a request for a piece we do not have is answered "no"
+            // (BEP 6); without it the peer is lying about what we announced.
+            if self.policy.gate().is_fast() {
+                return self.reject_on_arrival(request);
+            }
             anyhow::bail!(
                 "got request for a chunk that is not ready to upload. chunk {:?}",
                 chunk_info
             );
         }
 
-        self.state
-            .ratelimit_upload_tx
-            .send((self.tx.clone(), chunk_info))?;
+        let peer_claims_piece = self.policy.is_active()
+            && self
+                .state
+                .peers
+                .with_live(self.addr, |live| {
+                    live.bitfield
+                        .get(request.index as usize)
+                        .is_some_and(|bit| *bit)
+                })
+                .unwrap_or_default();
+        self.policy_event(PeerEvent::Request {
+            piece: request.index,
+            begin: request.begin,
+            length: request.length,
+            peer_claims_piece,
+        })?;
+
+        let gate = self.policy.gate();
+        let level = gate.level();
+        let max_queued = match level {
+            PeerVerdict::Throttle => MAX_QUEUED_THROTTLED_UPLOADS_PER_PEER,
+            _ => MAX_QUEUED_UPLOADS_PER_PEER,
+        };
+        let key = block_key(&chunk_info);
+        let accepted = if gate.is_fast() {
+            match gate.register_fast(key, max_queued) {
+                Registered::Queued | Registered::QueuedAllowedFast => true,
+                Registered::Choked | Registered::Full => {
+                    self.reject_on_arrival(request)?;
+                    false
+                }
+            }
+        } else {
+            gate.register(key, max_queued)
+        };
+        if !accepted {
+            // The peer is choked: it has no upload slot (it asked before our choke reached it,
+            // or does not care), or the policy choked it. Or too many of its requests wait
+            // already. Without the fast extension there is no way to tell it "no": the request
+            // is just not served, and the peer has to ask again.
+            trace!(?request, "ignoring a request");
+            return Ok(());
+        }
+        let queue = match level {
+            PeerVerdict::Throttle => self
+                .state
+                .throttled_upload_tx
+                .as_ref()
+                .unwrap_or(&self.state.ratelimit_upload_tx),
+            _ => &self.state.ratelimit_upload_tx,
+        };
+        queue.send(UploadRequest {
+            tx: self.tx.clone(),
+            chunk: chunk_info,
+            gate: gate.clone(),
+        })?;
         Ok(())
     }
 
-    fn on_have(&self, have: u32) {
+    fn policy_event(&self, event: PeerEvent<'_>) -> anyhow::Result<()> {
+        // What the policy decided is carried out by the choker: a throttled connection is
+        // served outside of the upload slots, a choked one never gets a slot again.
+        let class = match self.policy.dispatch(event)? {
+            Some(PeerVerdict::Throttle) => SlotClass::Exempt,
+            Some(PeerVerdict::Choke) => SlotClass::Barred,
+            _ => return Ok(()),
+        };
+        self.choker.set_class(class, Instant::now());
+        // A peer without a slot is choked already, so the choker leaves its queue alone: the
+        // allowed-fast requests in it would still be served.
+        if class == SlotClass::Barred && !self.policy.gate().drop_all(&self.tx) {
+            return Err(Error::PeerTaskDead.into());
+        }
+        Ok(())
+    }
+
+    fn notify_disconnected(&self) {
+        if !self.policy.is_active() {
+            return;
+        }
+        let bitfield = self
+            .state
+            .peers
+            .with_live(self.addr, |l| l.bitfield.clone());
+        let bits = bitfield
+            .as_ref()
+            .and_then(|b| b.get(..self.state.lengths.total_pieces() as usize));
+        self.policy.disconnected(bits);
+    }
+
+    fn on_cancel(&self, cancel: Request) -> anyhow::Result<()> {
+        let gate = self.policy.gate();
+        // BEP 6: a cancelled request still gets an answer, a reject, unless it was sent already.
+        if gate.cancel((cancel.index, cancel.begin, cancel.length)) && gate.is_fast() {
+            self.send_reject(cancel)?;
+        }
+        if cancel.index < self.policy.num_pieces() {
+            self.policy_event(PeerEvent::Cancel {
+                piece: cancel.index,
+                begin: cancel.begin,
+                length: cancel.length,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn on_have(&self, have: u32) -> anyhow::Result<()> {
         self.state
             .peers
             .with_live_mut(self.addr, "on_have", |live| {
@@ -1535,8 +2079,8 @@ impl PeerHandler {
                 if live.bitfield.is_empty() {
                     live.bitfield = make_piece_bitfield(&self.state.lengths);
                 }
-                match live.bitfield.get_mut(have as usize) {
-                    Some(mut v) => *v = true,
+                let newly_had = match live.bitfield.get_mut(have as usize) {
+                    Some(mut v) => !v.replace(true),
                     None => {
                         warn!(
                             id = self.state.shared.id,
@@ -1548,6 +2092,9 @@ impl PeerHandler {
                         return;
                     }
                 };
+                if newly_had {
+                    self.state.peers.on_new_peer_piece(live, have as usize);
+                }
                 trace!("updated bitfield with have={}", have);
                 self.state
                     .peers
@@ -1557,6 +2104,14 @@ impl PeerHandler {
                 }
             });
         self.on_bitfield_notify.notify_waiters();
+        if let Some(piece) = self.state.lengths.validate_piece_index(have) {
+            self.super_seed.on_peer_has(piece);
+            self.state.super_seeding.on_have(self.addr, piece);
+        }
+        if have < self.policy.num_pieces() {
+            self.policy_event(PeerEvent::Have { piece: have })?;
+        }
+        Ok(())
     }
 
     fn on_bitfield(&self, bitfield: ByteBufOwned) -> anyhow::Result<()> {
@@ -1568,17 +2123,227 @@ impl PeerHandler {
             );
         }
         let bf = BF::from_boxed_slice(bitfield.0.to_vec().into_boxed_slice());
-        if let Some(true) = bf
-            .get(..self.state.lengths.total_pieces() as usize)
-            .map(|s| s.all())
-        {
+        self.on_piece_set(bf)
+    }
+
+    /// `HaveAll` (BEP 6): the same as a full bitfield, so the peer counts once as a seed.
+    fn on_have_all(&self) -> anyhow::Result<()> {
+        let mut bf = make_piece_bitfield(&self.state.lengths);
+        if let Some(bits) = bf.get_mut(..self.state.lengths.total_pieces() as usize) {
+            bits.fill(true);
+        }
+        self.on_piece_set(bf)
+    }
+
+    /// `HaveNone` (BEP 6): the same as an empty bitfield.
+    fn on_have_none(&self) -> anyhow::Result<()> {
+        self.on_piece_set(make_piece_bitfield(&self.state.lengths))
+    }
+
+    /// The peer's piece set arrived, as a `Bitfield`, `HaveAll` or `HaveNone`.
+    fn on_piece_set(&self, bf: BF) -> anyhow::Result<()> {
+        let total_pieces = self.state.lengths.total_pieces() as usize;
+        let peer_pieces = bf.get(..total_pieces).map_or(0, |s| s.count_ones());
+        if peer_pieces == total_pieces {
             debug!("peer has full torrent");
         }
+        let event_bits = self.policy.is_active().then(|| bf.clone());
+        let has_shown = self
+            .super_seed
+            .current_piece()
+            .filter(|p| bf.get(p.get_usize()).is_some_and(|b| *b));
         self.state
             .peers
-            .update_bitfield(self.addr, bf, self.state.lengths.total_pieces() as usize);
+            .update_bitfield(self.addr, bf, total_pieces);
         self.on_bitfield_notify.notify_waiters();
+        match has_shown {
+            Some(piece) => self.super_seed.on_peer_has(piece),
+            None => self.super_seed.wake(),
+        }
+        // After the update: when the policy disconnects the peer for it, the bitfield is the one
+        // reported with the disconnect.
+        if let Some(bits) = event_bits.as_ref().and_then(|b| b.get(..total_pieces)) {
+            self.policy_event(PeerEvent::Bitfield { bits })?;
+        }
+        // After the policy saw the piece set, so a verdict against the peer is known.
+        self.offer_allowed_fast(peer_pieces)
+    }
+
+    /// Sends a newcomer the pieces of its allowed-fast set (BEP 6) that we have, right after
+    /// its piece set arrived. Decided once per connection.
+    fn offer_allowed_fast(&self, peer_pieces: usize) -> anyhow::Result<()> {
+        let gate = self.policy.gate();
+        // A super seeder offers nothing it did not show (libtorrent does the same).
+        if !gate.is_fast() || gate.allowed_fast_decided() || self.super_seed.is_active() {
+            return Ok(());
+        }
+        let offer = self.allowed_fast_offer(gate, peer_pieces)?;
+        for &piece in &offer {
+            self.tx
+                .send(WriterRequest::Message(Message::AllowedFast(piece)))
+                .ok()
+                .ok_or(Error::PeerTaskDead)?;
+        }
+        if !offer.is_empty() {
+            debug!(?offer, "offered allowed-fast pieces");
+        }
+        gate.offer_allowed_fast(offer);
         Ok(())
+    }
+
+    /// The allowed-fast pieces to offer the peer: none unless it is a choked IPv4 newcomer the
+    /// policy has nothing against and we upload at all; otherwise the canonical set, less the
+    /// pieces we do not have.
+    fn allowed_fast_offer(
+        &self,
+        gate: &UploadGate,
+        peer_pieces: usize,
+    ) -> anyhow::Result<Vec<u32>> {
+        // The BEP defines the set for IPv4 only.
+        let IpAddr::V4(ip) = canonical_ip(self.addr.ip()) else {
+            return Ok(Vec::new());
+        };
+        if self.state.torrent().options.disable_upload()
+            || peer_pieces >= fast::ALLOWED_FAST_MAX_PEER_PIECES as usize
+            || gate.level() != PeerVerdict::Allow
+            || gate.is_unchoked()
+        {
+            return Ok(Vec::new());
+        }
+        let mut set = fast::allowed_fast_set(
+            ip,
+            &self.state.shared.info_hash,
+            self.state.lengths.total_pieces(),
+            fast::ALLOWED_FAST_K,
+        );
+        let g = self.state.lock_read("allowed_fast_offer");
+        let chunks = g.get_chunks()?;
+        set.retain(|&p| {
+            self.state
+                .lengths
+                .validate_piece_index(p)
+                .is_some_and(|p| chunks.is_piece_have(p))
+        });
+        Ok(set)
+    }
+
+    /// `RejectRequest` (BEP 6): the peer will not send the block. It goes back, and so does its
+    /// piece once no other block of it is in flight to the peer. The piece is not asked of the
+    /// peer again for a while, so a peer that rejects while unchoked is not asked in a loop; a
+    /// peer that rejects too much in a row is paused, then given up on (see
+    /// [`fast::REJECT_STREAK_PAUSE`]). A reject while it chokes us takes the piece out of the
+    /// allowed-fast set: the peer no longer serves it past the choke.
+    fn on_reject_request(&self, reject: Request) -> anyhow::Result<()> {
+        let chunk = self
+            .state
+            .lengths
+            .validate_piece_index(reject.index)
+            .and_then(|piece| {
+                self.state
+                    .lengths
+                    .chunk_info_from_received_data(piece, reject.begin, reject.length)
+            });
+        let Some(chunk) = chunk else {
+            debug!(?reject, "ignoring a reject for a block that does not exist");
+            return Ok(());
+        };
+        let answer = self
+            .state
+            .peers
+            .with_live_mut(self.addr, "on_reject_request", |live| {
+                match live.remove_inflight_request(&chunk) {
+                    RemoveInflightRequestResult::Expected => Some(
+                        live.inflight_requests()
+                            .any(|r| r.piece_index == chunk.piece_index),
+                    ),
+                    // A reject for a request we cancelled is its answer, it is expected.
+                    RemoveInflightRequestResult::LateCanceled
+                    | RemoveInflightRequestResult::Unexpected => None,
+                }
+            })
+            .flatten();
+        // Clients send rejects late, after a cancel or a choke we already acted on.
+        let Some(more_of_piece) = answer else {
+            debug!(?reject, "ignoring a reject for a request not in flight");
+            return Ok(());
+        };
+        let piece = chunk.piece_index;
+        let now = Instant::now();
+        let choked = self.is_choked();
+        let (useless, give_back_now) = {
+            let mut fast = self.fast.lock();
+            let useless = fast.on_rejected(piece, now, !choked);
+            fast.refund_rate(chunk.size);
+            if choked {
+                fast.remove_allowed_fast(piece);
+            }
+            let give_back_now = if more_of_piece {
+                fast.defer_give_back(piece, now);
+                false
+            } else {
+                fast.take_give_back(piece);
+                true
+            };
+            (useless, give_back_now)
+        };
+        trace!(?reject, more_of_piece, "request rejected");
+        if useless {
+            anyhow::bail!(
+                "the peer unchokes us but rejected {} requests in a row",
+                fast::MAX_REJECT_STREAK
+            );
+        }
+        if give_back_now {
+            self.give_back_piece(piece)
+        } else {
+            self.notify_request_slots_changed();
+            Ok(())
+        }
+    }
+
+    /// `AllowedFast` (BEP 6): a piece the peer serves even while it chokes us.
+    fn on_allowed_fast(&self, index: u32) -> anyhow::Result<()> {
+        let Some(piece) = self.state.lengths.validate_piece_index(index) else {
+            debug!(index, "ignoring an allowed-fast piece out of range");
+            return Ok(());
+        };
+        if self.fast.lock().add_allowed_fast(piece) {
+            trace!(%piece, "allowed fast");
+            self.notify_request_slots_changed();
+        }
+        Ok(())
+    }
+
+    /// `SuggestPiece` (BEP 6): the peer would rather we asked for this piece next.
+    fn on_suggest_piece(&self, index: u32) -> anyhow::Result<()> {
+        let Some(piece) = self.state.lengths.validate_piece_index(index) else {
+            debug!(index, "ignoring a suggested piece out of range");
+            return Ok(());
+        };
+        trace!(%piece, "piece suggested");
+        self.fast.lock().add_suggestion(piece);
+        Ok(())
+    }
+
+    fn send_reject(&self, request: Request) -> anyhow::Result<()> {
+        self.tx
+            .send(WriterRequest::Message(Message::RejectRequest(request)))
+            .ok()
+            .ok_or(Error::PeerTaskDead)?;
+        Ok(())
+    }
+
+    /// Rejects a request we turn down as it arrives. A peer that keeps asking for what it is
+    /// refused past [`fast::MAX_REJECTS_PER_CHOKE`] is disconnected: BEP 6 wants every request
+    /// answered, and answering without end would let it fill our write queue.
+    fn reject_on_arrival(&self, request: Request) -> anyhow::Result<()> {
+        if !self.policy.gate().take_reject(Instant::now()) {
+            anyhow::bail!(
+                "the peer sent more than {} requests we had to reject",
+                fast::MAX_REJECTS_PER_CHOKE
+            );
+        }
+        self.send_reject(request)
     }
 
     async fn wait_for_any_notify(&self, notify: &Notify, check: impl Fn() -> bool) {
@@ -1603,13 +2368,23 @@ impl PeerHandler {
         .await;
     }
 
-    async fn wait_for_request_slot(&self) {
+    /// Waits until a request may be sent: for a block of `piece` when given. With the Fast
+    /// Extension it also returns when the peer chokes us and the piece is no longer ours to
+    /// request, so the requester can turn to the allowed-fast pieces.
+    async fn wait_for_request_slot(&self, piece: Option<ValidPieceIndex>) {
         loop {
             let Some(notify) = self.request_slots_changed() else {
                 return;
             };
             let notified = notify.notified();
-            if self.can_send_request() {
+            if self.can_send_request(piece) {
+                return;
+            }
+            if let Some(piece) = piece
+                && self.policy.gate().is_fast()
+                && self.is_choked()
+                && !self.may_continue_piece(piece)
+            {
                 return;
             }
             notified.await;
@@ -1620,6 +2395,7 @@ impl PeerHandler {
     // The moment this ends, the peer is disconnected.
     async fn task_peer_chunk_requester(&self) -> crate::Result<()> {
         let handle = self.addr;
+        self.run_super_seeding().await?;
         self.wait_for_bitfield().await;
 
         let mut update_interest = {
@@ -1668,11 +2444,58 @@ impl PeerHandler {
                 }
             }
 
+            // Interested only in a peer that has something for us (BEP 3). A super seeder
+            // (BEP 16) shows its next piece to a peer that is not interested in it, or that
+            // announced the last one: staying interested in a peer that has nothing for us
+            // would leave us waiting for it forever.
+            // Registered before looking, so a change in between is not missed.
+            let peer_announced = self.on_bitfield_notify.notified();
+            let need_changed = self.state.new_pieces_notify.notified();
+            if !self.peer_is_interesting() {
+                update_interest(self, false)?;
+                // Its `Have`s, or a change in what we need, may make it interesting.
+                match aframe!(tokio::time::timeout(
+                    // Half of default rw timeout not to race with it.
+                    Duration::from_secs(5),
+                    async {
+                        tokio::select! {
+                            _ = peer_announced => {}
+                            _ = need_changed => {}
+                        }
+                    }
+                ))
+                .await
+                {
+                    Ok(()) => debug!("woken up, the peer may have something for us"),
+                    Err(_) => trace!("the peer has nothing for us, looking again"),
+                }
+                continue;
+            }
             update_interest(self, true)?;
-            aframe!(self.wait_for_request_slot()).await;
+            aframe!(self.wait_for_request_slot(None)).await;
 
             // Acquire a piece using the strategy: try steal (10x) → reserve → steal (3x).
             let new_piece_notify = self.state.new_pieces_notify.notified();
+            // The peer announcing a piece (a super seeder shows its pieces one `Have` at a time)
+            // may give us something to ask it for.
+            let peer_pieces_notify = self.on_bitfield_notify.notified();
+            // With the Fast Extension the requester also runs while choked, for allowed-fast
+            // pieces. When none of them is left to ask for, the unchoke (or a new allowed-fast
+            // piece) has to wake it, not only a piece coming back to the queue.
+            let slots_changed = self
+                .policy
+                .gate()
+                .is_fast()
+                .then(|| self.request_slots_changed())
+                .flatten();
+            // Registered before looking for a piece, so a change in between is not missed.
+            let slots_changed_notified = slots_changed.as_ref().map(|notify| notify.notified());
+            let slots_changed_notify = async {
+                match slots_changed_notified {
+                    Some(notified) => notified.await,
+                    None => std::future::pending().await,
+                }
+            };
             let next = match self.acquire_next_piece()? {
                 Some(next) => next,
                 None => {
@@ -1680,7 +2503,13 @@ impl PeerHandler {
                     match aframe!(tokio::time::timeout(
                         // Half of default rw timeout not to race with it.
                         Duration::from_secs(5),
-                        new_piece_notify
+                        async {
+                            tokio::select! {
+                                _ = new_piece_notify => {}
+                                _ = peer_pieces_notify => {}
+                                _ = slots_changed_notify => {}
+                            }
+                        }
                     ))
                     .await
                     {
@@ -1698,21 +2527,26 @@ impl PeerHandler {
                     length: chunk.size,
                 };
 
-                aframe!(self.wait_for_request_slot()).await;
+                aframe!(self.wait_for_request_slot(Some(next))).await;
 
-                self.state
-                    .ratelimits
-                    .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                    .await?;
+                // The budget paid for requests the peer rejected (Fast Extension) is spent
+                // first.
+                let to_pay = self.fast.lock().spend_rate_credit(request.length);
+                if let Some(to_pay) = NonZeroU32::new(to_pay) {
+                    self.state.ratelimits.prepare_for_download(to_pay).await?;
 
-                if let Some(session) = self.state.torrent().session.upgrade() {
-                    session
-                        .ratelimits
-                        .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                        .await?;
+                    if let Some(session) = self.state.torrent().session.upgrade() {
+                        session.ratelimits.prepare_for_download(to_pay).await?;
+                    }
                 }
 
-                aframe!(self.wait_for_request_slot()).await;
+                aframe!(self.wait_for_request_slot(Some(next))).await;
+
+                // While this waited the piece may have gone to another peer: it was stolen, or
+                // the peer choked us and what we had asked it for went back to the queue.
+                if !self.may_continue_piece(next) {
+                    break;
+                }
 
                 match self
                     .state
@@ -1752,19 +2586,196 @@ impl PeerHandler {
         }
     }
 
-    fn on_i_am_choked(&self) {
+    fn on_i_am_choked(&self) -> anyhow::Result<()> {
         self.lock_flow_control("i_am_choked = true").i_am_choked = true;
+        if self.policy.gate().is_fast() {
+            return self.on_i_am_choked_fast();
+        }
+        // A choke voids what we asked the peer for (BEP 3): none of it is coming. Its pieces go
+        // back to the queue for the other peers right away, instead of when this peer is given
+        // up on for not delivering them.
+        self.give_back_requests()
+    }
+
+    /// Forgets every request in flight to the peer and gives every piece it owns back to the
+    /// queue, for the other peers.
+    fn give_back_requests(&self) -> anyhow::Result<()> {
+        let forgotten = self
+            .state
+            .peers
+            .with_live_mut(self.addr, "forget_inflight_requests", |live| {
+                live.forget_inflight_requests()
+            })
+            .unwrap_or_default();
+        let released = self
+            .state
+            .lock_write("release_pieces_on_choke")
+            .get_pieces_mut()?
+            .release_pieces_owned_by(self.addr);
+        if forgotten > 0 || released > 0 {
+            trace!(
+                forgotten,
+                released, "choked: requests dropped, pieces requeued"
+            );
+            self.state.new_pieces_notify.notify_waiters();
+        }
         self.notify_request_slots_changed();
+        Ok(())
+    }
+
+    /// With the Fast Extension a choke no longer voids what we asked for: the peer answers
+    /// every request with `Piece` or `RejectRequest` (BEP 6), and keeps serving its
+    /// allowed-fast pieces. A piece with no block in flight goes back to the queue now, one
+    /// with blocks in flight once the last of them is answered, or when the peer let
+    /// [`fast::choke_answer_timeout`] pass without answering.
+    fn on_i_am_choked_fast(&self) -> anyhow::Result<()> {
+        let in_flight: HashSet<ValidPieceIndex> = self
+            .state
+            .peers
+            .with_live(self.addr, |live| {
+                live.inflight_requests().map(|r| r.piece_index).collect()
+            })
+            .unwrap_or_default();
+        let allowed = self.fast.lock().allowed_fast().to_vec();
+        let mut deferred = Vec::new();
+        let released = {
+            let mut g = self.state.lock_write("release_pieces_on_fast_choke");
+            let pieces = g.get_pieces_mut()?;
+            let owned: Vec<ValidPieceIndex> = pieces
+                .pieces_owned_by(self.addr)
+                .filter(|p| !allowed.contains(p))
+                .collect();
+            let mut released = 0usize;
+            for piece in owned {
+                if in_flight.contains(&piece) {
+                    deferred.push(piece);
+                } else if pieces.release_piece_owned_by(piece, self.addr) {
+                    released += 1;
+                }
+            }
+            released
+        };
+        {
+            let mut fast = self.fast.lock();
+            let now = Instant::now();
+            for piece in deferred.iter().copied() {
+                fast.defer_give_back(piece, now);
+            }
+        }
+        trace!(
+            released,
+            awaiting_answers = deferred.len(),
+            "choked with the fast extension"
+        );
+        if released > 0 {
+            self.state.new_pieces_notify.notify_waiters();
+        }
+        self.notify_request_slots_changed();
+        Ok(())
+    }
+
+    /// Gives one piece we own back to the queue, for the other peers.
+    fn give_back_piece(&self, piece: ValidPieceIndex) -> anyhow::Result<()> {
+        let released = self
+            .state
+            .lock_write("give_back_piece")
+            .get_pieces_mut()?
+            .release_piece_owned_by(piece, self.addr);
+        if released {
+            trace!(%piece, "piece given back");
+            self.state.new_pieces_notify.notify_waiters();
+        }
+        self.notify_request_slots_changed();
+        Ok(())
+    }
+
+    /// A peer let [`fast::choke_answer_timeout`] pass without answering the requests of the
+    /// pieces that wait to be given back (it choked us, or rejected another block of them):
+    /// those requests are cancelled and the pieces go back to the queue, as they do at once
+    /// without the extension. Allowed-fast requests are not covered (see
+    /// [`fast::choke_answer_timeout`]).
+    fn give_back_overdue_answers(&self) -> anyhow::Result<()> {
+        if !self.policy.gate().is_fast() {
+            return Ok(());
+        }
+        let timeout = fast::choke_answer_timeout(
+            self.state
+                .shared
+                .options
+                .peer_read_write_timeout
+                .unwrap_or(DEFAULT_READ_WRITE_TIMEOUT),
+        );
+        let overdue = self.fast.lock().take_overdue(Instant::now(), timeout);
+        if overdue.is_empty() {
+            return Ok(());
+        }
+        debug!(
+            pieces = overdue.len(),
+            "the peer did not answer our requests in time, giving them back"
+        );
+        self.state
+            .peers
+            .with_live_mut(self.addr, "cancel_overdue_requests", |live| {
+                for piece in overdue.iter().copied() {
+                    live.cancel_inflight_requests_for_piece(piece);
+                }
+            });
+        let released = {
+            let mut g = self.state.lock_write("give_back_overdue_answers");
+            let pieces = g.get_pieces_mut()?;
+            overdue
+                .iter()
+                .filter(|piece| pieces.release_piece_owned_by(**piece, self.addr))
+                .count()
+        };
+        if released > 0 {
+            self.state.new_pieces_notify.notify_waiters();
+        }
+        self.notify_request_slots_changed();
+        Ok(())
+    }
+
+    /// Whether the requester goes on with the blocks of a piece: the piece may have gone to
+    /// another peer (stolen, or given back after a choke or a reject).
+    fn may_continue_piece(&self, piece: ValidPieceIndex) -> bool {
+        self.owns_piece(piece) && !self.fast.lock().gives_back(piece)
+    }
+
+    fn owns_piece(&self, piece: ValidPieceIndex) -> bool {
+        self.state
+            .lock_read("owns_piece")
+            .get_pieces()
+            .ok()
+            .and_then(|pieces| pieces.get_inflight(piece))
+            .is_some_and(|inflight| inflight.peer == self.addr)
     }
 
     fn on_peer_interested(&self) {
         trace!("peer is interested");
         self.state.peers.mark_peer_interested(self.addr, true);
+        // With uploads disabled nobody ever gets an upload slot.
+        if !self.state.torrent().options.disable_upload() {
+            self.choker.set_interested(true, Instant::now());
+        }
+    }
+
+    fn on_peer_not_interested(&self) {
+        trace!("peer is not interested");
+        self.state.peers.mark_peer_interested(self.addr, false);
+        self.choker.set_interested(false, Instant::now());
     }
 
     fn on_i_am_unchoked(&self) {
         trace!("we are unchoked");
-        self.lock_flow_control("i_am_choked = false").i_am_choked = false;
+        let was_choked = std::mem::replace(
+            &mut self.lock_flow_control("i_am_choked = false").i_am_choked,
+            false,
+        );
+        // Only a real choked-to-unchoked transition forgives rejects: a peer must not get its
+        // rejected pieces asked again by sending redundant unchokes.
+        if was_choked {
+            self.fast.lock().on_unchoked();
+        }
         self.notify_request_slots_changed();
     }
 
@@ -1791,15 +2802,19 @@ impl PeerHandler {
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
 
-        let should_process = self
+        let (should_process, last_of_piece) = self
             .state
             .peers
             .with_live_mut(self.addr, "inflight_requests.remove", |h| {
                 match h.remove_inflight_request(&chunk_info) {
-                    RemoveInflightRequestResult::Expected => Ok(true),
+                    RemoveInflightRequestResult::Expected => Ok((
+                        true,
+                        !h.inflight_requests()
+                            .any(|r| r.piece_index == chunk_info.piece_index),
+                    )),
                     RemoveInflightRequestResult::LateCanceled => {
                         trace!(?piece, "peer sent us a chunk we did not ask for");
-                        Ok(false)
+                        Ok((false, false))
                     }
                     RemoveInflightRequestResult::Unexpected => anyhow::bail!(
                         "peer sent us a piece we did not ask. Inflight requests: {:?}. Got: {:?}",
@@ -1812,6 +2827,11 @@ impl PeerHandler {
 
         if !should_process {
             return Ok(());
+        }
+        if self.policy.gate().is_fast() {
+            self.fast
+                .lock()
+                .on_block(chunk_info.piece_index, Instant::now());
         }
 
         // This one is used to calculate download speed.
@@ -1995,6 +3015,16 @@ impl PeerHandler {
             .await
             .with_context(|| format!("error processing received chunk {chunk_info:?}"))?;
 
+        // The last block of a piece that waits to be given back (the peer choked us, or
+        // rejected another block of it): a piece that is still incomplete goes back to the
+        // queue; a completed one left the in-flight set already, and nothing happens.
+        if last_of_piece
+            && self.policy.gate().is_fast()
+            && self.fast.lock().take_give_back(chunk_info.piece_index)
+        {
+            self.give_back_piece(chunk_info.piece_index)?;
+        }
+
         Ok(())
     }
 
@@ -2057,18 +3087,55 @@ impl PeerHandler {
             .with_live(self.addr, |live| live.requested_inflight_count())
     }
 
-    fn can_send_request(&self) -> bool {
+    /// Whether the peer has a piece we still need, or one a stream waits for: the peer we
+    /// are interested in (BEP 3). `false` while its piece set is unknown or the torrent is not
+    /// live.
+    fn peer_is_interesting(&self) -> bool {
+        self.state
+            .peers
+            .with_live(self.addr, |live| {
+                let g = self.state.lock_read("peer_is_interesting");
+                let Ok(chunks) = g.get_chunks() else {
+                    return false;
+                };
+                chunks.has_needed_piece(&live.bitfield)
+                    || self
+                        .state
+                        .streams
+                        .iter_next_pieces(&self.state.lengths)
+                        .any(|p| {
+                            live.bitfield.get(p.get_usize()).is_some_and(|b| *b)
+                                && !chunks.is_piece_have(p)
+                        })
+            })
+            .unwrap_or(false)
+    }
+
+    fn can_send_request(&self, piece: Option<ValidPieceIndex>) -> bool {
         let (i_am_choked, request_window) = {
             let flow = self.lock_flow_control("can_send_request");
             (flow.i_am_choked, flow.request_window)
         };
 
-        if i_am_choked {
+        if i_am_choked && !self.may_request_while_choked(piece) {
             return false;
         }
 
         self.requested_inflight_count()
             .is_some_and(|requested| requested < request_window)
+    }
+
+    /// With the Fast Extension a peer that chokes us still serves its allowed-fast pieces
+    /// (BEP 6). For `None`: whether there is any such piece to try.
+    fn may_request_while_choked(&self, piece: Option<ValidPieceIndex>) -> bool {
+        if !self.policy.gate().is_fast() {
+            return false;
+        }
+        let fast = self.fast.lock();
+        match piece {
+            Some(piece) => fast.is_allowed_fast(piece),
+            None => !fast.allowed_fast().is_empty(),
+        }
     }
 
     fn lock_flow_control(

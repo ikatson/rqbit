@@ -169,6 +169,7 @@ Use a regex here to select files by their names.
 - [BEP-12: Multitracker Metadata Extension](https://www.bittorrent.org/beps/bep_0012.html)
 - [BEP-14: Local service discovery](https://www.bittorrent.org/beps/bep_0014.html)
 - [BEP-15: UDP Tracker Protocol](https://www.bittorrent.org/beps/bep_0015.html)
+- [BEP-16: Superseeding](https://www.bittorrent.org/beps/bep_0016.html) (`AddTorrentOptions::super_seeding`, `Session::set_super_seeding`, `POST /torrents/<id_or_infohash>/super_seeding`)
 - [BEP-20: Peer ID Conventions](https://www.bittorrent.org/beps/bep_0020.html)
 - [BEP-23: Tracker Returns Compact Peer Lists](https://www.bittorrent.org/beps/bep_0023.html)
 - [BEP-27: Private Torrents](https://www.bittorrent.org/beps/bep_0027.html)
@@ -179,7 +180,7 @@ Use a regex here to select files by their names.
 
 ### Some supported features
 
-- Sequential downloading (the default and only option)
+- Rarest-first piece selection (default), with per-torrent sequential download and "first and last pieces first" (`AddTorrentOptions::piece_picking`, `Session::set_piece_picking`)
 - Resume downloading file(s) if they already exist on disk
 - Selective downloading using a regular expression for filename
 - DHT support. Allows magnet links to work, and makes more peers available.
@@ -193,6 +194,7 @@ Use a regex here to select files by their names.
 - mDNS advertising
 - Fastresume (no rehashing)
 - Download / upload rate limiting
+- Upload slots (choking): uploads go to the peers that give or take the most, with optimistic unchokes (`--upload-slots`, `SessionOptions::upload_slots`)
 - Prometheus metrics at ```/metrics``` and ```/torrents/<id_or_infohash>/peer_stats/prometheus```
 
 ## HTTP API

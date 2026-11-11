@@ -23,6 +23,8 @@ pub struct TorrentAddQueryParams {
     // Will force interpreting the content as a URL.
     pub is_url: Option<bool>,
     pub list_only: Option<bool>,
+    /// Super seeding (BEP 16), see [`AddTorrentOptions::super_seeding`].
+    pub super_seeding: Option<bool>,
 }
 
 impl Serialize for OnlyFiles {
@@ -106,6 +108,7 @@ impl TorrentAddQueryParams {
                 read_write_timeout: self.peer_read_write_timeout.map(Duration::from_secs),
                 ..Default::default()
             }),
+            super_seeding: self.super_seeding.unwrap_or(false),
             ..Default::default()
         }
     }

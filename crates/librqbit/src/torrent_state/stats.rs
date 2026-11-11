@@ -82,6 +82,8 @@ pub struct TorrentStats {
     pub total_bytes: u64,
     pub finished: bool,
     pub live: Option<LiveStats>,
+    /// Super seeding (BEP 16) is on (see [`crate::ManagedTorrent::super_seeding`]).
+    pub super_seeding: bool,
 }
 
 impl std::fmt::Display for TorrentStats {
@@ -155,6 +157,7 @@ mod tests {
             total_bytes: 100,
             finished: false,
             live: None,
+            super_seeding: false,
         }
     }
 

@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Weak;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -38,9 +38,11 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::Session;
+use crate::choker::UploadSlots;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
+use crate::piece_picker::PiecePicking;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
@@ -105,6 +107,8 @@ pub(crate) struct ManagedTorrentLocked {
     pub(crate) paused: bool,
     pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
+    // Kept here, not in the live state, so it survives pause / resume.
+    pub(crate) piece_picking: PiecePicking,
 }
 
 #[derive(Default)]
@@ -113,13 +117,22 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
     pub peer_max_request_window: Option<usize>,
+    /// Session-wide: do not advertise the Fast Extension (BEP 6).
+    pub disable_fast_extension: bool,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    /// Per-peer admission / upload policy installed on the session.
+    pub peer_policy: Option<Arc<dyn crate::PeerPolicy>>,
+    pub upload_slots: UploadSlots,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
+    /// Super seeding (BEP 16) as set by the user. It lives here, not in the live state, so that
+    /// it survives pause / resume and storage operations; the live state reads it for every new
+    /// connection.
+    pub super_seeding: AtomicBool,
 }
 
 impl ManagedTorrentOptions {
@@ -252,6 +265,41 @@ impl ManagedTorrent {
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
         self.locked.read().only_files.clone()
+    }
+
+    /// Whether super seeding (BEP 16) is on, as set with [`crate::Session::set_super_seeding`]
+    /// or [`crate::AddTorrentOptions::super_seeding`]. It is only active while the torrent has
+    /// every selected piece, and then for the connections made from that moment on: those
+    /// see one piece at a time instead of everything we have.
+    pub fn super_seeding(&self) -> bool {
+        self.shared.options.super_seeding.load(Ordering::Acquire)
+    }
+
+    /// Turn super seeding on or off, in any state. Turning it on affects the connections made
+    /// from then on; turning it off shows every connection in the mode all of our pieces.
+    pub(crate) fn set_super_seeding(&self, enabled: bool) {
+        self.shared
+            .options
+            .super_seeding
+            .store(enabled, Ordering::Release);
+        if let ManagedTorrentState::Live(live) = &self.locked.read().state {
+            live.super_seeding.wake_all();
+        }
+    }
+
+    /// How the torrent orders the pieces it downloads.
+    pub fn piece_picking(&self) -> PiecePicking {
+        self.locked.read().piece_picking
+    }
+
+    /// Change how the torrent orders the pieces it downloads, in any state. Applies to the
+    /// pieces requested from now on.
+    pub fn set_piece_picking(&self, piece_picking: PiecePicking) {
+        let mut g = self.locked.write();
+        g.piece_picking = piece_picking;
+        if let ManagedTorrentState::Live(live) = &g.state {
+            live.set_piece_picking(piece_picking);
+        }
     }
 
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
@@ -418,7 +466,15 @@ impl ManagedTorrent {
                     }
                     let paused = g.state.take().assert_paused();
                     let (tx, rx) = tokio::sync::oneshot::channel();
-                    let live = TorrentStateLive::new(paused, tx, token.clone())?;
+                    let only_files: Option<HashSet<usize>> =
+                        g.only_files.as_ref().map(|f| f.iter().copied().collect());
+                    let live = TorrentStateLive::new(
+                        paused,
+                        g.piece_picking,
+                        only_files.as_ref(),
+                        tx,
+                        token.clone(),
+                    )?;
                     g.state = ManagedTorrentState::Live(live.clone());
                     t.state_change_notify.notify_waiters();
 
@@ -517,6 +573,7 @@ impl ManagedTorrent {
             uploaded_bytes: 0,
             finished: false,
             live: None,
+            super_seeding: self.super_seeding(),
         };
 
         {

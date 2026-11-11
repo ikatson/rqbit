@@ -26,17 +26,18 @@ use tokio::{
 
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
-    Session, SessionOptions, create_torrent,
+    PeerConnectionOptions, PeerPolicy, Session, SessionOptions, SessionPersistenceConfig,
+    UploadSlots, create_torrent,
     limits::LimitsConfig,
     spawn_utils::BlockingSpawner,
-    tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging},
+    tests::test_util::{create_default_random_dir_with_torrents, setup_test_logging, wait_until},
     torrent_state::ManagedTorrentHandle,
 };
 
 pub(super) const PIECE_LEN: u32 = 32 * 1024;
 pub(super) const BLOCK: u32 = 16 * 1024;
 pub(super) const PIECES: u32 = 4;
-const FILE_LEN: usize = (PIECE_LEN * PIECES) as usize;
+pub(super) const FILE_LEN: usize = (PIECE_LEN * PIECES) as usize;
 
 pub(super) async fn run(fut: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
     setup_test_logging();
@@ -67,6 +68,12 @@ pub(super) enum Wire {
     Cancel(u32, u32, u32),
     Extended,
     Other(u8),
+    // The Fast Extension (BEP 6).
+    SuggestPiece(u32),
+    HaveAll,
+    HaveNone,
+    RejectRequest(u32, u32, u32),
+    AllowedFast(u32),
 }
 
 pub(super) enum Recv {
@@ -170,8 +177,20 @@ impl FakePeer {
         self.send(2, &[]).await
     }
 
+    pub(super) async fn not_interested(&mut self) -> anyhow::Result<()> {
+        self.send(3, &[]).await
+    }
+
+    pub(super) async fn choke(&mut self) -> anyhow::Result<()> {
+        self.send(0, &[]).await
+    }
+
     pub(super) async fn unchoke(&mut self) -> anyhow::Result<()> {
         self.send(1, &[]).await
+    }
+
+    pub(super) async fn keep_alive(&mut self) -> anyhow::Result<()> {
+        self.send_raw(&[0; 4]).await
     }
 
     pub(super) async fn piece(
@@ -220,6 +239,11 @@ impl FakePeer {
             },
             (8, 12) => Wire::Cancel(be32(p), be32(&p[4..]), be32(&p[8..])),
             (20, _) => Wire::Extended,
+            (0x0D, 4) => Wire::SuggestPiece(be32(p)),
+            (0x0E, 0) => Wire::HaveAll,
+            (0x0F, 0) => Wire::HaveNone,
+            (0x10, 12) => Wire::RejectRequest(be32(p), be32(&p[4..]), be32(&p[8..])),
+            (0x11, 4) => Wire::AllowedFast(be32(p)),
             (id, _) => Wire::Other(id),
         })
     }
@@ -280,6 +304,20 @@ impl FakePeer {
         Ok(out)
     }
 
+    /// Waits for `msg`, skipping whatever arrives before it.
+    pub(super) async fn expect(&mut self, msg: Wire, within: Duration) -> anyhow::Result<()> {
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.recv(left).await {
+                Recv::Msg(m) if m == msg => return Ok(()),
+                Recv::Msg(_) => {}
+                Recv::Timeout => bail!("no {msg:?} in {within:?}"),
+                Recv::Closed => bail!("closed before {msg:?}"),
+            }
+        }
+    }
+
     pub(super) async fn expect_closed(&mut self, within: Duration) -> anyhow::Result<Vec<Wire>> {
         let (msgs, closed) = self.collect(within).await;
         anyhow::ensure!(closed, "connection still open, received {msgs:?}");
@@ -321,7 +359,13 @@ impl Fixture {
 
 #[derive(Default)]
 pub(super) struct SeederOpts {
+    pub(super) policy: Option<Arc<dyn PeerPolicy>>,
     pub(super) upload_bps: Option<u32>,
+    /// Number of files of the torrent (default 1); the total size is the same.
+    pub(super) files: Option<usize>,
+    pub(super) upload_slots: UploadSlots,
+    /// How long a peer may send nothing before the seeder gives up on it. `None`: the default.
+    pub(super) read_write_timeout: Option<Duration>,
 }
 
 fn loopback_listener() -> ListenerOptions {
@@ -332,9 +376,22 @@ fn loopback_listener() -> ListenerOptions {
     }
 }
 
-/// A session listening on loopback that has the whole (one file) torrent.
+/// A session listening on loopback that has the whole torrent.
 pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
-    let dir = create_default_random_dir_with_torrents(1, FILE_LEN, Some("rqbit_fake_peer_seed"));
+    start_seeder_ext(opts, SeederExt::default()).await
+}
+
+/// [`start_seeder`] with the settings of [`SeederExt`].
+pub(super) async fn start_seeder_ext(opts: SeederOpts, ext: SeederExt) -> anyhow::Result<Fixture> {
+    let files = opts.files.unwrap_or(1);
+    let total_len = ext
+        .pieces
+        .map_or(FILE_LEN, |pieces| (pieces * PIECE_LEN) as usize);
+    let dir = create_default_random_dir_with_torrents(
+        files,
+        total_len / files,
+        Some("rqbit_fake_peer_seed"),
+    );
     let torrent = create_torrent(
         dir.path(),
         CreateTorrentOptions {
@@ -345,7 +402,10 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
         &BlockingSpawner::new(1),
     )
     .await?;
-    let content = std::fs::read(dir.path().join("0.data"))?;
+    let mut content = Vec::new();
+    for f in 0..files {
+        content.extend(std::fs::read(dir.path().join(format!("{f}.data")))?);
+    }
     let torrent_bytes = torrent.as_bytes()?;
     let session = Session::new_with_opts(
         dir.path().into(),
@@ -359,6 +419,9 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
                 upload_bps: opts.upload_bps.and_then(NonZeroU32::new),
                 download_bps: None,
             },
+            peer_policy: opts.policy,
+            upload_slots: opts.upload_slots,
+            disable_fast_extension: ext.disable_fast_extension,
             ..Default::default()
         },
     )
@@ -371,6 +434,11 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
                 paused: false,
                 output_folder: Some(dir.path().to_str().unwrap().to_owned()),
                 overwrite: true,
+                peer_opts: Some(PeerConnectionOptions {
+                    read_write_timeout: opts.read_write_timeout,
+                    ..Default::default()
+                }),
+                super_seeding: ext.super_seeding,
                 ..Default::default()
             }),
         )
@@ -394,22 +462,50 @@ pub(super) async fn start_seeder(opts: SeederOpts) -> anyhow::Result<Fixture> {
 
 #[derive(Default)]
 pub(super) struct ClientOpts {
+    pub(super) policy: Option<Arc<dyn PeerPolicy>>,
     pub(super) listen: bool,
     pub(super) initial_peers: Vec<SocketAddr>,
+    pub(super) only_files: Option<Vec<usize>>,
+    pub(super) download_bps: Option<u32>,
+    /// Allow IPv6 peers (the default is IPv4 only).
+    pub(super) dual_stack: bool,
+    /// How long a peer may send nothing before the client gives up on it. `None`: the default.
+    pub(super) read_write_timeout: Option<Duration>,
+    pub(super) disable_fast_extension: bool,
+    /// Keep the session's JSON persistence, with fastresume, in the client's folder.
+    pub(super) persistence: bool,
+    /// Download into this folder instead of a fresh temporary one, e.g. the folder of an
+    /// earlier client, to pick up where it stopped.
+    pub(super) dir: Option<TempDir>,
+    /// Add the torrent with [`AddTorrentOptions::super_seeding`].
+    pub(super) super_seeding: bool,
 }
 
-/// A client downloading the torrent of `seed` into an empty folder.
+/// A client downloading the torrent of `seed` into an empty folder, or into `opts.dir`.
 pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Result<Fixture> {
-    let dir = TempDir::with_prefix("rqbit_fake_peer_client")?;
+    let dir = match opts.dir {
+        Some(dir) => dir,
+        None => TempDir::with_prefix("rqbit_fake_peer_client")?,
+    };
+    let persistence = opts.persistence.then(|| SessionPersistenceConfig::Json {
+        folder: Some(dir.path().join("session")),
+    });
     let session = Session::new_with_opts(
         dir.path().into(),
         SessionOptions {
             dht: None,
-            persistence: None,
+            fastresume: persistence.is_some(),
+            persistence,
             listen: opts.listen.then(loopback_listener),
             connect: Some(ConnectionOptions::default()),
-            ipv4_only: true,
+            ipv4_only: !opts.dual_stack,
             disable_local_service_discovery: true,
+            ratelimits: LimitsConfig {
+                upload_bps: None,
+                download_bps: opts.download_bps.and_then(NonZeroU32::new),
+            },
+            peer_policy: opts.policy,
+            disable_fast_extension: opts.disable_fast_extension,
             ..Default::default()
         },
     )
@@ -420,7 +516,13 @@ pub(super) async fn start_client(seed: &Fixture, opts: ClientOpts) -> anyhow::Re
             AddTorrent::from_bytes(seed.torrent_bytes.clone()),
             Some(AddTorrentOptions {
                 paused: false,
+                only_files: opts.only_files,
                 initial_peers: (!opts.initial_peers.is_empty()).then_some(opts.initial_peers),
+                peer_opts: Some(PeerConnectionOptions {
+                    read_write_timeout: opts.read_write_timeout,
+                    ..Default::default()
+                }),
+                super_seeding: opts.super_seeding,
                 ..Default::default()
             }),
         )
@@ -444,6 +546,20 @@ pub(super) fn uploaded(f: &Fixture) -> u64 {
     f.handle.live().map_or(0, |l| l.get_uploaded_bytes())
 }
 
+/// A block is counted as uploaded once its write returns, which may be after the peer has read
+/// it: the counter is waited for.
+pub(super) async fn expect_uploaded(f: &Fixture, bytes: u64) -> anyhow::Result<()> {
+    wait_until(
+        || {
+            let got = uploaded(f);
+            anyhow::ensure!(got == bytes, "uploaded {got}, expected {bytes}");
+            Ok(())
+        },
+        Duration::from_secs(5),
+    )
+    .await
+}
+
 // The harness itself: a session serves the blocks a wire-level peer asks for.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> {
@@ -456,8 +572,115 @@ async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> 
         let pieces = peer.expect_pieces(1, Duration::from_secs(10)).await?;
         assert_eq!((pieces[0].0, pieces[0].1), (1, BLOCK));
         assert_eq!(pieces[0].2, seed.block(1, BLOCK, BLOCK));
-        assert_eq!(uploaded(&seed), BLOCK as u64);
+        expect_uploaded(&seed, BLOCK as u64).await?;
         Ok(())
     })
     .await
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Fast Extension (BEP 6)
+// ---------------------------------------------------------------------------------------------
+
+/// Reserved handshake bytes with the extension protocol (BEP 10) and the Fast Extension (BEP 6).
+pub(super) const FAST_RESERVED: [u8; 8] = [0, 0, 0, 0, 0, 0x10, 0, 0x04];
+
+/// A handshake with the given reserved bytes.
+pub(super) fn handshake_bytes_with_reserved(
+    info_hash: Id20,
+    peer_id: &[u8; 20],
+    reserved: [u8; 8],
+) -> [u8; 68] {
+    let mut b = handshake_bytes(info_hash, peer_id);
+    b[20..28].copy_from_slice(&reserved);
+    b
+}
+
+/// Whether reserved handshake bytes carry the Fast Extension bit.
+pub(super) fn reserved_supports_fast(reserved: &[u8; 8]) -> bool {
+    reserved[7] & 0x04 != 0
+}
+
+impl FakePeer {
+    /// Connects with the given reserved bytes. Returns the peer and the reserved bytes of the
+    /// other side's handshake.
+    pub(super) async fn connect_with_reserved(
+        addr: SocketAddr,
+        info_hash: Id20,
+        peer_id: &[u8; 20],
+        reserved: [u8; 8],
+    ) -> anyhow::Result<(Self, [u8; 8])> {
+        let mut p = Self::connect_without_handshake(addr).await?;
+        p.stream
+            .write_all(&handshake_bytes_with_reserved(info_hash, peer_id, reserved))
+            .await?;
+        let mut reply = [0u8; 68];
+        timeout(Duration::from_secs(5), p.stream.read_exact(&mut reply))
+            .await
+            .context("no handshake reply")?
+            .context("handshake reply")?;
+        anyhow::ensure!(&reply[28..48] == info_hash.0.as_slice(), "wrong info hash");
+        let mut theirs = [0u8; 8];
+        theirs.copy_from_slice(&reply[20..28]);
+        Ok((p, theirs))
+    }
+
+    /// Connects with the Fast Extension bit; fails unless the other side set it too.
+    pub(super) async fn connect_fast(
+        addr: SocketAddr,
+        info_hash: Id20,
+        peer_id: &[u8; 20],
+    ) -> anyhow::Result<Self> {
+        let (p, theirs) =
+            Self::connect_with_reserved(addr, info_hash, peer_id, FAST_RESERVED).await?;
+        anyhow::ensure!(
+            reserved_supports_fast(&theirs),
+            "no Fast Extension bit in {theirs:?}"
+        );
+        Ok(p)
+    }
+
+    /// The first message other than a keep-alive or an extended one.
+    pub(super) async fn first_message(&mut self, within: Duration) -> anyhow::Result<Wire> {
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.recv(left).await {
+                Recv::Msg(Wire::KeepAlive | Wire::Extended) => {}
+                Recv::Msg(m) => return Ok(m),
+                Recv::Timeout => bail!("nothing in {within:?}"),
+                Recv::Closed => bail!("closed before the first message"),
+            }
+        }
+    }
+
+    pub(super) async fn suggest_piece(&mut self, piece: u32) -> anyhow::Result<()> {
+        self.send(0x0D, &piece.to_be_bytes()).await
+    }
+
+    pub(super) async fn have_all(&mut self) -> anyhow::Result<()> {
+        self.send(0x0E, &[]).await
+    }
+
+    pub(super) async fn have_none(&mut self) -> anyhow::Result<()> {
+        self.send(0x0F, &[]).await
+    }
+
+    pub(super) async fn reject(&mut self, piece: u32, begin: u32, len: u32) -> anyhow::Result<()> {
+        self.send(0x10, &Self::triple(piece, begin, len)).await
+    }
+
+    pub(super) async fn allowed_fast(&mut self, piece: u32) -> anyhow::Result<()> {
+        self.send(0x11, &piece.to_be_bytes()).await
+    }
+}
+
+/// Seeder settings beyond [`SeederOpts`], for [`start_seeder_ext`].
+#[derive(Default)]
+pub(super) struct SeederExt {
+    /// Pieces of the torrent. `None`: [`PIECES`].
+    pub(super) pieces: Option<u32>,
+    pub(super) disable_fast_extension: bool,
+    /// Add the torrent with [`AddTorrentOptions::super_seeding`].
+    pub(super) super_seeding: bool,
 }

@@ -146,6 +146,9 @@ impl Peer {
         for counter in [&counters.session_stats, &counters.stats] {
             counter.dec(&self.state);
         }
+        if let PeerState::Live(l) = &self.state {
+            counters.forget_availability(l);
+        }
         if let (Some(addr), PeerState::Live(..)) = (self.outgoing_address, &self.state) {
             counters.live_outgoing_peers.write().remove(&addr);
         }
@@ -154,6 +157,10 @@ impl Peer {
     pub fn set_state(&mut self, new: PeerState, counters: &PeerStates) -> PeerState {
         for counter in [&counters.session_stats, &counters.stats] {
             counter.incdec(&self.state, &new);
+        }
+        // A live peer only enters with an empty bitfield, so only leaving changes availability.
+        if let PeerState::Live(l) = &self.state {
+            counters.forget_availability(l);
         }
         if let Some(addr) = self.outgoing_address {
             if matches!(&self.state, PeerState::Live(..)) {
@@ -266,6 +273,10 @@ pub(crate) struct LivePeerState {
     // with the bitfield by PeerStates::update_seeder_flag.
     pub seeder: bool,
 
+    // How the bitfield above is counted in the torrent's piece availability: as one seed
+    // (it was full when it arrived) or piece by piece. Uncounting must match.
+    pub counted_as_seed: bool,
+
     // When the peer sends us data this is used to track if we asked for it.
     inflight_requests: HashSet<InflightRequest>,
 
@@ -280,6 +291,9 @@ pub(crate) struct LivePeerState {
     pub tx: PeerTx,
 
     pub connection_kind: ConnectionKind,
+
+    // Both handshakes carried the Fast Extension bit (BEP 6).
+    pub fast_extension: bool,
 }
 
 impl LivePeerState {
@@ -295,11 +309,13 @@ impl LivePeerState {
             peer_interested: initial_interested,
             bitfield: BF::default(),
             seeder: false,
+            counted_as_seed: false,
             inflight_requests: Default::default(),
             late_cancelled_request_tolerance: 0,
             request_slots_changed: Default::default(),
             tx,
             connection_kind,
+            fast_extension: false,
         }
     }
 
@@ -356,6 +372,20 @@ impl LivePeerState {
         if self.inflight_requests.len() != before {
             self.request_slots_changed.notify_waiters();
         }
+    }
+
+    /// The peer choked us, which voids everything we asked it for (BEP 3). Returns how many
+    /// requests that was. A block that was on its way already may still arrive.
+    pub fn forget_inflight_requests(&mut self) -> usize {
+        let forgotten = self.inflight_requests.len();
+        self.inflight_requests.clear();
+        self.late_cancelled_request_tolerance = self
+            .late_cancelled_request_tolerance
+            .saturating_add(u32::try_from(forgotten).unwrap_or(u32::MAX));
+        if forgotten > 0 {
+            self.request_slots_changed.notify_waiters();
+        }
+        forgotten
     }
 
     pub fn inflight_requests(&self) -> impl Iterator<Item = &InflightRequest> {

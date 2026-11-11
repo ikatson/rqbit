@@ -45,10 +45,12 @@ pub mod api;
 mod api_error;
 mod bitv;
 mod bitv_factory;
+mod choker;
 mod chunk_tracker;
 mod create_torrent_file;
 mod dht_utils;
 mod error;
+mod fast;
 pub mod file_info;
 mod file_ops;
 #[cfg(feature = "http-api")]
@@ -63,6 +65,8 @@ mod listen;
 mod merge_streams;
 mod peer_connection;
 mod peer_info_reader;
+mod peer_policy;
+mod piece_picker;
 mod piece_tracker;
 mod read_buf;
 mod session;
@@ -76,6 +80,7 @@ mod torrent_state;
 #[cfg(feature = "tracing-subscriber-utils")]
 pub mod tracing_subscriber_config_utils;
 mod type_aliases;
+mod upload_gate;
 #[cfg(all(feature = "http-api", feature = "upnp-serve-adapter"))]
 pub mod upnp_server_adapter;
 mod vectored_traits;
@@ -86,11 +91,14 @@ pub use error::{Error, Result};
 
 pub use api::Api;
 pub use api_error::{ApiError, WithStatus, WithStatusError};
+pub use choker::UploadSlots;
 pub use create_torrent_file::{CreateTorrentOptions, CreateTorrentResult, create_torrent};
 pub use dht;
 pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use listen::{ListenerMode, ListenerOptions};
 pub use peer_connection::PeerConnectionOptions;
+pub use peer_policy::{DEFAULT_THROTTLED_UPLOAD_BPS, PeerCtx, PeerEvent, PeerPolicy, PeerVerdict};
+pub use piece_picker::PiecePicking;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListOnlyResponse,
     SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,

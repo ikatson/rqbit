@@ -21,7 +21,8 @@ use peer_binary_protocol::Piece;
 use crate::{
     chunk_tracker::{ChunkMarkingResult, ChunkTracker},
     file_info::FileInfo,
-    type_aliases::{FileInfos, FilePriorities, PeerHandle},
+    piece_picker::{PieceAvailability, PiecePicker},
+    type_aliases::{FileInfos, PeerHandle},
 };
 
 /// Tracks a piece currently being downloaded.
@@ -58,10 +59,10 @@ where
     pub peer_avg_time: Option<Duration>,
     /// Priority pieces to check first (e.g., for streaming).
     pub priority_pieces: I,
-    /// File download priority ordering.
-    pub file_priorities: &'a FilePriorities,
-    /// File metadata for iterating pieces.
-    pub file_infos: &'a FileInfos,
+    /// Orders the queued pieces (rarest first, sequential, first and last pieces first).
+    pub picker: &'a PiecePicker,
+    /// How many connected peers have each piece.
+    pub availability: &'a PieceAvailability,
     /// Returns true if the peer has the given piece.
     pub peer_has_piece: P,
     /// Returns true if the piece can be stolen (e.g., not locked for writing).
@@ -115,7 +116,8 @@ impl PieceTracker {
     ///
     /// The acquisition strategy is:
     /// 1. Try to steal a piece from a peer that's 10x slower
-    /// 2. Try to reserve a piece from the queue (priority pieces first)
+    /// 2. Try to reserve a piece from the queue (priority pieces first, then as `picker` orders
+    ///    the queue)
     /// 3. Try to steal a piece from a peer that's 3x slower
     ///
     /// If `Stolen` is returned, the caller MUST call `peers.on_steal()` to notify
@@ -142,17 +144,25 @@ impl PieceTracker {
             }
         }
 
-        // Then check naturally ordered queued pieces
-        // Note: iter_queued_pieces only returns pieces in queue_pieces (not in-flight)
-        let queued: Vec<_> = self
-            .chunks
-            .iter_queued_pieces(req.file_priorities, req.file_infos)
-            .collect();
-
-        for piece in queued {
-            if (req.peer_has_piece)(piece) {
-                return self.reserve_piece(piece, req.peer);
-            }
+        // Then the queue (it holds no in-flight pieces), in the picker's order.
+        let lengths = *self.chunks.get_lengths();
+        let picked = req
+            .picker
+            .pick(
+                self.chunks.queued_pieces(),
+                self.chunks.get_hns().have_bytes,
+                req.availability,
+                |p| {
+                    u32::try_from(p)
+                        .ok()
+                        .and_then(|p| lengths.validate_piece_index(p))
+                        .is_some_and(|p| (req.peer_has_piece)(p))
+                },
+            )
+            .and_then(|p| u32::try_from(p).ok())
+            .and_then(|p| lengths.validate_piece_index(p));
+        if let Some(piece) = picked {
+            return self.reserve_piece(piece, req.peer);
         }
 
         // 3. Try steal with 3x threshold (moderately slow peer)
@@ -258,6 +268,29 @@ impl PieceTracker {
             self.chunks.mark_piece_broken_if_not_have(piece);
         }
         count
+    }
+
+    /// Moves one piece from IN_FLIGHT back to QUEUED if the peer owns it. Returns whether it
+    /// did: the piece may have been completed or stolen meanwhile.
+    pub fn release_piece_owned_by(&mut self, piece: ValidPieceIndex, peer: PeerHandle) -> bool {
+        if self
+            .inflight
+            .get(&piece)
+            .is_none_or(|info| info.peer != peer)
+        {
+            return false;
+        }
+        self.inflight.remove(&piece);
+        self.chunks.mark_piece_broken_if_not_have(piece);
+        true
+    }
+
+    /// The pieces the peer owns, i.e. that are in flight to it.
+    pub fn pieces_owned_by(&self, peer: PeerHandle) -> impl Iterator<Item = ValidPieceIndex> + '_ {
+        self.inflight
+            .iter()
+            .filter(move |(_, info)| info.peer == peer)
+            .map(|(p, _)| *p)
     }
 
     // === QUERIES ===
@@ -369,8 +402,22 @@ mod tests {
         }]
     }
 
-    fn make_default_file_priorities(file_infos: &FileInfos) -> FilePriorities {
-        (0..file_infos.len()).collect()
+    /// A picker that hands out pieces in index order, so tests can predict them.
+    fn make_sequential_picker(file_infos: &FileInfos) -> (PiecePicker, PieceAvailability) {
+        let total: u32 = file_infos
+            .iter()
+            .map(|f| f.piece_range.end)
+            .max()
+            .unwrap_or(0);
+        let lengths = Lengths::new(16384u64 * u64::from(total), 16384).unwrap();
+        let picking = crate::PiecePicking {
+            sequential: true,
+            ..Default::default()
+        };
+        (
+            PiecePicker::new(picking, lengths, file_infos, None),
+            PieceAvailability::new(total),
+        )
     }
 
     #[test]
@@ -386,14 +433,14 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         let result = tracker.acquire_piece(AcquireRequest {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true, // Peer has all pieces
             can_steal: |_| true,
         });
@@ -415,25 +462,24 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         // Peer only has piece 2 and later
-        // Note: iter_queued_pieces iterates in order: first, last, middle
-        // So for 0..5: 0, 4, 1, 2, 3
-        // With filter >= 2, we get 4 first (skips 0, takes 4)
+        // Note: the sequential picker hands out pieces in index order,
+        // so with filter >= 2 we get 2
         let result = tracker.acquire_piece(AcquireRequest {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |p| p.get() >= 2,
             can_steal: |_| true,
         });
 
         match result {
             AcquireResult::Reserved(piece) => {
-                // Got piece 4 (first one peer has in iteration order)
+                // Got piece 2 (first one peer has in index order)
                 assert!(piece.get() >= 2, "Should have gotten a piece >= 2");
             }
             _ => panic!("Expected Reserved, got {:?}", result),
@@ -446,15 +492,15 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         // Reserve a piece first
         let result = tracker.acquire_piece(AcquireRequest {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         });
@@ -479,15 +525,15 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         // Reserve piece 0
         let result = tracker.acquire_piece(AcquireRequest {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         });
@@ -514,8 +560,8 @@ mod tests {
             peer: peer(2),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |p| p == piece, // Only has the failed piece
             can_steal: |_| true,
         });
@@ -532,19 +578,19 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         let peer_a = peer(1);
         let peer_b = peer(2);
 
-        // Peer A reserves first two pieces (order: 0, 4, 1, 2, 3)
-        // So peer A gets pieces 0 and 4
+        // Peer A reserves first two pieces (index order with the sequential picker)
+        // So peer A gets pieces 0 and 1
         let piece_a1 = match tracker.acquire_piece(AcquireRequest {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         }) {
@@ -555,8 +601,8 @@ mod tests {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         }) {
@@ -569,8 +615,8 @@ mod tests {
             peer: peer_b,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         }) {
@@ -601,15 +647,15 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         // Reserve pieces 0 and 1
         tracker.acquire_piece(AcquireRequest {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         });
@@ -617,8 +663,8 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         });
@@ -634,8 +680,8 @@ mod tests {
             peer: peer(2),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         });
@@ -653,7 +699,7 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         // Priority pieces: piece 3, then piece 2
         let piece3 = tracker
@@ -672,8 +718,8 @@ mod tests {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: priority.into_iter(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         });
@@ -691,15 +737,15 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         // Peer has no pieces
         let result = tracker.acquire_piece(AcquireRequest {
             peer: peer(1),
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| false, // Peer has nothing
             can_steal: |_| true,
         });
@@ -736,18 +782,18 @@ mod tests {
         let mut tracker = PieceTracker::new(chunks);
 
         let file_infos = make_test_file_infos(5);
-        let file_priorities = make_default_file_priorities(&file_infos);
+        let (picker, availability) = make_sequential_picker(&file_infos);
 
         let peer_a = peer(1);
         let peer_b = peer(2);
 
-        // Peer A reserves pieces 0 and 4 (first two in iteration order)
+        // Peer A reserves pieces 0 and 1 (first two in index order)
         let piece_0 = match tracker.acquire_piece(AcquireRequest {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         }) {
@@ -758,17 +804,17 @@ mod tests {
             _ => panic!("Expected Reserved"),
         };
 
-        let piece_4 = match tracker.acquire_piece(AcquireRequest {
+        let piece_1 = match tracker.acquire_piece(AcquireRequest {
             peer: peer_a,
             peer_avg_time: None,
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
+            picker: &picker,
+            availability: &availability,
             peer_has_piece: |_| true,
             can_steal: |_| true,
         }) {
             AcquireResult::Reserved(p) => {
-                assert_eq!(p.get(), 4);
+                assert_eq!(p.get(), 1);
                 p
             }
             _ => panic!("Expected Reserved"),
@@ -779,21 +825,21 @@ mod tests {
 
         // Peer B tries to acquire with:
         // - Very short avg_time (1ms) so 3x threshold = 3ms < 5ms elapsed
-        // - peer_has_piece returns true ONLY for piece 4, NOT piece 0
+        // - peer_has_piece returns true ONLY for piece 1, NOT piece 0
         let result = tracker.acquire_piece(AcquireRequest {
             peer: peer_b,
             peer_avg_time: Some(Duration::from_millis(1)),
             priority_pieces: std::iter::empty(),
-            file_priorities: &file_priorities,
-            file_infos: &file_infos,
-            peer_has_piece: |p| p.get() == 4, // Peer B only has piece 4
+            picker: &picker,
+            availability: &availability,
+            peer_has_piece: |p| p.get() == 1, // Peer B only has piece 1
             can_steal: |_| true,
         });
 
-        // Should steal piece 4 (which peer B has), NOT piece 0 (which peer B doesn't have)
+        // Should steal piece 1 (which peer B has), NOT piece 0 (which peer B doesn't have)
         match result {
             AcquireResult::Stolen { piece, from_peer } => {
-                assert_eq!(piece, piece_4, "Should steal piece 4 (the one peer B has)");
+                assert_eq!(piece, piece_1, "Should steal piece 1 (the one peer B has)");
                 assert_eq!(from_peer, peer_a);
                 // Verify piece 0 is still owned by peer A (wasn't stolen)
                 assert_eq!(tracker.get_inflight(piece_0).unwrap().peer, peer_a);

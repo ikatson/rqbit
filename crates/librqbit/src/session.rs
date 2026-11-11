@@ -2,17 +2,19 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     io::Read,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
+    num::NonZeroU32,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
 use crate::{
-    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared,
+    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared, PiecePicking,
+    UploadSlots,
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
@@ -24,6 +26,7 @@ use crate::{
     listen::{Accept, ListenerOptions},
     merge_streams::merge_streams,
     peer_connection::PeerConnectionOptions,
+    peer_policy::{PeerPolicy, ThrottledUpload, canonical_ip},
     read_buf::ReadBuf,
     session_persistence::{SessionPersistenceStore, json::JsonSessionPersistenceStore},
     session_stats::SessionStats,
@@ -150,7 +153,10 @@ pub struct Session {
     _disable_upload: bool,
     pub ipv4_only: bool,
     pub peer_limit: Option<usize>,
+    upload_slots: UploadSlots,
     client_name_and_version: String,
+    pub(crate) peer_policy: Option<Arc<dyn PeerPolicy>>,
+    pub(crate) throttled_upload: ThrottledUpload,
 }
 
 /// A 40 character hex string is a v1 info hash. Checking the length alone
@@ -298,6 +304,20 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    /// How pieces are ordered: rarest first (default), sequential, first and last pieces first.
+    /// Can be changed later with [`Session::set_piece_picking`].
+    #[serde(default)]
+    pub piece_picking: PiecePicking,
+
+    /// Super seeding (BEP 16, "initial seeding"): once the torrent has every selected piece,
+    /// the connections made from then on are not told what we have. Each peer is shown one
+    /// piece at a time, the rarest one, and the next only after the previous one has shown up
+    /// at another peer, so that every piece we upload is a new one for the swarm. While the
+    /// torrent still needs pieces it downloads normally. Can be changed later with
+    /// [`Session::set_super_seeding`].
+    #[serde(default)]
+    pub super_seeding: bool,
 }
 
 pub struct ListOnlyResponse {
@@ -474,6 +494,9 @@ pub struct SessionOptions {
     /// Default peer limit per torrent.
     pub peer_limit: Option<usize>,
 
+    /// How many peers each torrent uploads to at a time, see [`UploadSlots`].
+    pub upload_slots: UploadSlots,
+
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 
@@ -486,6 +509,13 @@ pub struct SessionOptions {
     /// Override the client name and version used in User-Agent headers and
     /// peer extended handshakes. Defaults to "rqbit X.Y.Z".
     pub client_name_and_version: Option<String>,
+
+    /// Decides which peers may connect, and what each connection may do (see [`PeerPolicy`]).
+    /// Defaults to no policy: every peer is admitted and nothing is limited.
+    pub peer_policy: Option<Arc<dyn PeerPolicy>>,
+    /// Do not advertise the Fast Extension (BEP 6). Default off: handshakes set the bit, and a
+    /// connection uses Fast when the peer set it too.
+    pub disable_fast_extension: bool,
 }
 
 impl Default for SessionOptions {
@@ -509,11 +539,14 @@ impl Default for SessionOptions {
             allowlist_url: None,
             trackers: HashSet::new(),
             peer_limit: None,
+            upload_slots: UploadSlots::default(),
             #[cfg(feature = "disable-upload")]
             disable_upload: false,
             disable_local_service_discovery: false,
             ipv4_only: false,
             client_name_and_version: None,
+            peer_policy: None,
+            disable_fast_extension: false,
         }
     }
 }
@@ -639,11 +672,14 @@ impl Session {
             } else {
                 None
             };
-            let peer_opts = opts
+            let mut peer_opts = opts
                 .connect
                 .as_ref()
                 .and_then(|p| p.peer_opts)
                 .unwrap_or_default();
+            // Fast is a session-wide decision: every handshake we send, including magnet
+            // metadata reads, advertises it unless the session turned it off.
+            peer_opts.disable_fast_extension = opts.disable_fast_extension;
 
             async fn persistence_factory(
                 opts: &SessionOptions,
@@ -812,12 +848,15 @@ impl Session {
                 trackers: opts.trackers,
                 disable_trackers: opts.disable_trackers,
                 peer_limit: opts.peer_limit,
+                upload_slots: opts.upload_slots,
                 client_name_and_version,
 
                 #[cfg(feature = "disable-upload")]
                 _disable_upload: opts.disable_upload,
                 blocklist,
                 allowlist,
+                peer_policy: opts.peer_policy,
+                throttled_upload: ThrottledUpload::new(),
                 lsd,
             });
 
@@ -908,33 +947,58 @@ impl Session {
         .boxed()
     }
 
+    /// Read the handshake of an incoming connection and find the torrent it is for.
+    ///
+    /// Only holds a [`Weak`] reference to the session while waiting on the peer: a
+    /// connection that stays silent must not keep a dropped session (and all its
+    /// tasks) alive until the handshake times out.
     async fn check_incoming_connection(
-        self: Arc<Self>,
+        session: Weak<Self>,
         addr: SocketAddr,
         kind: ConnectionKind,
         mut reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
-        let rwtimeout = self
-            .peer_opts
-            .read_write_timeout
-            .unwrap_or_else(|| Duration::from_secs(10));
+        let (rwtimeout, our_peer_id) = {
+            let session = session.upgrade().context("session is dead")?;
+            let rwtimeout = session
+                .peer_opts
+                .read_write_timeout
+                .unwrap_or_else(|| Duration::from_secs(10));
 
-        let incoming_ip = addr.ip();
-        if self.blocklist.has(incoming_ip) {
-            self.stats
-                .counters
-                .blocked_incoming
-                .fetch_add(1, Ordering::Relaxed);
-            bail!("Incoming ip {incoming_ip} is in blocklist");
-        }
-        if self.allowlist.as_ref().is_some_and(|l| !l.has(incoming_ip)) {
-            self.stats
-                .counters
-                .blocked_incoming
-                .fetch_add(1, Ordering::Relaxed);
-            bail!("Incoming ip {incoming_ip} is not in allowlist");
-        }
+            let incoming_ip = addr.ip();
+            if session.blocklist.has(incoming_ip) {
+                session
+                    .stats
+                    .counters
+                    .blocked_incoming
+                    .fetch_add(1, Ordering::Relaxed);
+                bail!("Incoming ip {incoming_ip} is in blocklist");
+            }
+            if session
+                .allowlist
+                .as_ref()
+                .is_some_and(|l| !l.has(incoming_ip))
+            {
+                session
+                    .stats
+                    .counters
+                    .blocked_incoming
+                    .fetch_add(1, Ordering::Relaxed);
+                bail!("Incoming ip {incoming_ip} is not in allowlist");
+            }
+            if let Some(policy) = session.peer_policy.as_ref()
+                && !policy.admit(canonical_ip(incoming_ip))
+            {
+                session
+                    .stats
+                    .counters
+                    .blocked_incoming
+                    .fetch_add(1, Ordering::Relaxed);
+                bail!("Incoming ip {incoming_ip} is refused by the peer policy");
+            }
+            (rwtimeout, session.peer_id)
+        };
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf
@@ -943,11 +1007,13 @@ impl Session {
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
 
-        if h.peer_id == self.peer_id {
+        if h.peer_id == our_peer_id {
             bail!("seems like we are connecting to ourselves, ignoring");
         }
 
-        let (id, torrent) = self
+        let (id, torrent) = session
+            .upgrade()
+            .context("session is dead")?
             .db
             .read()
             .torrents
@@ -979,20 +1045,31 @@ impl Session {
         l: A,
         max_pending_incoming_handshake_checks: usize,
     ) -> anyhow::Result<()> {
+        // Pending checks only hold a weak reference to the session (see
+        // check_incoming_connection), so neither they nor this task keep it alive.
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
 
+        // After an accept error, stop accepting for a while, but keep driving the
+        // pending checks meanwhile.
+        let mut accept_paused_until: Option<tokio::time::Instant> = None;
+
         loop {
+            let paused_until = accept_paused_until;
+            let can_accept =
+                paused_until.is_none() && futs.len() < max_pending_incoming_handshake_checks;
             tokio::select! {
-                r = l.accept(), if futs.len() < max_pending_incoming_handshake_checks => {
+                r = l.accept(), if can_accept => {
                     match r {
                         Ok((addr, (read, write))) => {
                             trace!("accepted connection from {addr}");
-                            let session = session.upgrade().context("session is dead")?;
-                            let span = debug_span!(parent: session.rs(), "incoming", addr=%addr);
+                            let span = {
+                                let session = session.upgrade().context("session is dead")?;
+                                debug_span!(parent: session.rs(), "incoming", addr=%addr)
+                            };
                             futs.push(
-                                session.check_incoming_connection(addr, A::KIND, Box::new(read), Box::new(write))
+                                Self::check_incoming_connection(session.clone(), addr, A::KIND, Box::new(read), Box::new(write))
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
@@ -1004,10 +1081,13 @@ impl Session {
                             warn!("error accepting: {e:#}");
                             // Whatever is the reason, ensure we are not stuck trying to
                             // accept indefinitely.
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                            continue
+                            accept_paused_until =
+                                Some(tokio::time::Instant::now() + Duration::from_secs(10));
                         }
                     }
+                },
+                _ = tokio::time::sleep_until(paused_until.unwrap_or_else(tokio::time::Instant::now)), if paused_until.is_some() => {
+                    accept_paused_until = None;
                 },
                 Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
                     let (addr, kind) = (checked.addr, checked.kind);
@@ -1048,6 +1128,7 @@ impl Session {
             max_request_window: other
                 .max_request_window
                 .or(self.peer_opts.max_request_window),
+            disable_fast_extension: self.peer_opts.disable_fast_extension,
         }
     }
 
@@ -1370,13 +1451,17 @@ impl Session {
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     peer_max_request_window: peer_opts.max_request_window,
+                    disable_fast_extension: peer_opts.disable_fast_extension,
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     ratelimits: opts.ratelimits,
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
                     peer_limit: opts.peer_limit.or(self.peer_limit),
+                    peer_policy: self.peer_policy.clone(),
+                    upload_slots: self.upload_slots,
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
+                    super_seeding: AtomicBool::new(opts.super_seeding),
                 },
                 connector: self.connector.clone(),
                 session: Arc::downgrade(self),
@@ -1397,6 +1482,7 @@ impl Session {
                     paused: opts.paused,
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
+                    piece_picking: opts.piece_picking,
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
@@ -1644,12 +1730,90 @@ impl Session {
         Ok(())
     }
 
+    /// Change how a torrent orders the pieces it downloads, in any state.
+    pub async fn set_piece_picking(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        piece_picking: PiecePicking,
+    ) {
+        handle.set_piece_picking(piece_picking);
+        self.try_update_persistence_metadata(handle).await;
+    }
+
+    /// Turn super seeding (BEP 16) on or off for a torrent, in any state (see
+    /// [`AddTorrentOptions::super_seeding`]). It is kept across pause / resume and persisted.
+    ///
+    /// Turning it on affects the connections made from then on, once the torrent has every
+    /// selected piece; the peers connected already keep what they were told. Turning it off
+    /// sends the connections in the mode a `Have` for every piece they were not shown yet.
+    pub async fn set_super_seeding(
+        &self,
+        handle: &ManagedTorrentHandle,
+        enabled: bool,
+    ) -> anyhow::Result<()> {
+        handle.set_super_seeding(enabled);
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
     pub fn listen_addr(&self) -> Option<SocketAddr> {
         self.listen_addr
     }
 
     pub fn announce_port(&self) -> Option<u16> {
         self.announce_port
+    }
+
+    /// Closes the live connections to every peer whose address satisfies `f` (IPv4-mapped IPv6
+    /// addresses are passed as plain IPv4). Returns how many connections were closed.
+    /// Outgoing peers may be dialed again later if [`PeerPolicy::admit`] allows it.
+    pub fn disconnect_peers_where(&self, f: impl Fn(IpAddr) -> bool) -> usize {
+        // Don't hold the database lock while walking the peers.
+        let torrents: Vec<_> = self.db.read().torrents.values().cloned().collect();
+        torrents
+            .iter()
+            .filter_map(|t| t.live())
+            .map(|live| live.disconnect_peers_where(&f))
+            .sum()
+    }
+
+    /// Asks [`PeerPolicy::admit`] again about the outgoing peers it refused earlier and dials
+    /// the ones it admits now (a ban was lifted or expired). Returns how many were queued for
+    /// dialing. Call it whenever the policy admits more than before.
+    pub fn readmit_refused_peers(&self) -> usize {
+        let torrents: Vec<_> = self.db.read().torrents.values().cloned().collect();
+        torrents
+            .iter()
+            .filter_map(|t| t.live())
+            .map(|live| live.readmit_refused_peers())
+            .sum()
+    }
+
+    /// The rate shared by all connections the [`PeerPolicy`] throttled. `None` means unlimited.
+    pub fn throttled_upload_bps(&self) -> Option<NonZeroU32> {
+        self.throttled_upload.get()
+    }
+
+    /// Sets the rate shared by all connections the [`PeerPolicy`] throttled; takes effect
+    /// immediately. The default is [`DEFAULT_THROTTLED_UPLOAD_BPS`](crate::DEFAULT_THROTTLED_UPLOAD_BPS).
+    pub fn set_throttled_upload_bps(&self, bps: Option<NonZeroU32>) {
+        self.throttled_upload.set(bps);
+    }
+
+    /// For dialing peers outside of a live torrent: asks the peer policy, and counts refusals.
+    fn outgoing_admit(&self) -> Option<crate::dht_utils::AdmitFn> {
+        let policy = self.peer_policy.clone()?;
+        let stats = self.stats.clone();
+        Some(Arc::new(move |addr: SocketAddr| {
+            let admitted = policy.admit(canonical_ip(addr.ip()));
+            if !admitted {
+                stats
+                    .counters
+                    .blocked_outgoing
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            admitted
+        }))
     }
 
     async fn resolve_magnet(
@@ -1667,6 +1831,7 @@ impl Session {
             Some(self.merge_peer_opts(peer_opts)),
             self.connector.clone(),
             self.client_name_and_version.clone(),
+            self.outgoing_admit(),
         )
         .await
         {
