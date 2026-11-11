@@ -78,6 +78,21 @@ impl<BufType> TorrentMetaV1<BufType> {
         }
         itertools::Either::Right(self.announce.iter())
     }
+
+    /// The tiers of BEP 12. `announce-list` wins when it has any tracker; otherwise `announce`
+    /// is a single tier with a single tracker.
+    pub fn announce_tiers(&self) -> Vec<Vec<&BufType>> {
+        let tiers: Vec<Vec<&BufType>> = self
+            .announce_list
+            .iter()
+            .map(|tier| tier.iter().collect::<Vec<_>>())
+            .filter(|tier| !tier.is_empty())
+            .collect();
+        if !tiers.is_empty() {
+            return tiers;
+        }
+        self.announce.iter().map(|a| vec![a]).collect()
+    }
 }
 
 /// Main torrent information, shared by .torrent files and magnet link contents.

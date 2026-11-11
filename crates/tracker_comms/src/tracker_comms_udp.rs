@@ -16,7 +16,7 @@ use tracing::{debug, debug_span, trace, warn};
 
 const ACTION_CONNECT: u32 = 0;
 const ACTION_ANNOUNCE: u32 = 1;
-// const ACTION_SCRAPE: u32 = 2;
+const ACTION_SCRAPE: u32 = 2;
 const ACTION_ERROR: u32 = 3;
 
 pub const EVENT_NONE: u32 = 0;
@@ -43,12 +43,15 @@ pub struct AnnounceFields {
     pub event: u32,
     pub key: u32,
     pub port: u16,
+    /// How many peers to ask for; -1 is the tracker's default, 0 is used for `stopped`.
+    pub num_want: i32,
 }
 
 #[derive(Debug)]
 pub enum Request {
     Connect,
     Announce(ConnectionId, AnnounceFields),
+    Scrape(ConnectionId, Id20),
 }
 
 impl Request {
@@ -92,8 +95,14 @@ impl Request {
                 w.extend_from_slice(&fields.event.to_be_bytes())?;
                 w.extend_from_slice(&0u32.to_be_bytes())?; // ip address 0
                 w.extend_from_slice(&fields.key.to_be_bytes())?;
-                w.extend_from_slice(&(-1i32).to_be_bytes())?; // num want -1
+                w.extend_from_slice(&fields.num_want.to_be_bytes())?;
                 w.extend_from_slice(&fields.port.to_be_bytes())?;
+            }
+            Request::Scrape(connection_id, info_hash) => {
+                w.extend_from_slice(&connection_id.to_be_bytes())?;
+                w.extend_from_slice(&ACTION_SCRAPE.to_be_bytes())?;
+                w.extend_from_slice(&transaction_id.to_be_bytes())?;
+                w.extend_from_slice(&info_hash.0)?;
             }
         }
         Ok(w.offset)
@@ -103,17 +112,25 @@ impl Request {
 #[derive(Debug)]
 pub struct AnnounceResponse {
     pub interval: u32,
-    #[allow(dead_code)]
     pub leechers: u32,
-    #[allow(dead_code)]
     pub seeders: u32,
     pub addrs: Vec<SocketAddr>,
+}
+
+/// What a tracker knows about one torrent (BEP 15 scrape).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrapeResponse {
+    pub seeders: u32,
+    /// How many times the torrent was downloaded completely.
+    pub completed: u32,
+    pub leechers: u32,
 }
 
 #[derive(Debug)]
 pub enum Response {
     Connect(ConnectionId),
     Announce(AnnounceResponse),
+    Scrape(ScrapeResponse),
     #[allow(dead_code)]
     Error(String),
     Unknown,
@@ -206,6 +223,17 @@ impl Response {
                     leechers,
                     seeders,
                     addrs,
+                })
+            }
+            ACTION_SCRAPE => {
+                let (seeders, b) = u32::parse_num(buf).context("can't parse seeders")?;
+                let (completed, b) = u32::parse_num(b).context("can't parse completed")?;
+                let (leechers, b) = u32::parse_num(b).context("can't parse leechers")?;
+                buf = b;
+                Response::Scrape(ScrapeResponse {
+                    seeders,
+                    completed,
+                    leechers,
                 })
             }
             ACTION_ERROR => {
@@ -415,6 +443,23 @@ impl UdpTrackerClient {
             other => bail!("unexpected response {other:?}, expected announce"),
         }
     }
+
+    /// Asks one tracker how many seeders / leechers / completed downloads it knows of for
+    /// `info_hash` (BEP 15 action 2). The connection id of the announces is reused.
+    pub async fn scrape(
+        &self,
+        tracker: SocketAddr,
+        info_hash: Id20,
+    ) -> anyhow::Result<ScrapeResponse> {
+        let connection_id = self.get_connection_id(tracker).await?;
+        let response = self
+            .request(tracker, Request::Scrape(connection_id, info_hash))
+            .await?;
+        match response {
+            Response::Scrape(r) => Ok(r),
+            other => bail!("unexpected response {other:?}, expected scrape"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -424,8 +469,64 @@ mod tests {
     use librqbit_core::{hash_id::Id20, peer_id::generate_peer_id};
 
     use crate::tracker_comms_udp::{
-        AnnounceFields, EVENT_NONE, Request, Response, new_transaction_id,
+        ACTION_SCRAPE, AnnounceFields, EVENT_NONE, Request, Response, ScrapeResponse,
+        new_transaction_id,
     };
+
+    fn scrape_reply(tid: u32, rest: &[u8]) -> Vec<u8> {
+        let mut b = ACTION_SCRAPE.to_be_bytes().to_vec();
+        b.extend_from_slice(&tid.to_be_bytes());
+        b.extend_from_slice(rest);
+        b
+    }
+
+    #[test]
+    fn scrape_request_layout() {
+        let hash = Id20::new([5; 20]);
+        let mut buf = [0u8; 64];
+        let n = Request::Scrape(0x0102030405060708, hash)
+            .serialize(9, &mut buf)
+            .unwrap();
+        assert_eq!(n, 36);
+        assert_eq!(&buf[..8], &0x0102030405060708u64.to_be_bytes());
+        assert_eq!(&buf[8..12], &2u32.to_be_bytes());
+        assert_eq!(&buf[12..16], &9u32.to_be_bytes());
+        assert_eq!(&buf[16..36], &[5u8; 20]);
+    }
+
+    #[test]
+    fn scrape_response_parses() {
+        let mut rest = Vec::new();
+        for n in [11u32, 22, 33] {
+            rest.extend_from_slice(&n.to_be_bytes());
+        }
+        let (tid, r) = Response::parse(&scrape_reply(77, &rest), false).unwrap();
+        assert_eq!(tid, 77);
+        let Response::Scrape(ScrapeResponse {
+            seeders,
+            completed,
+            leechers,
+        }) = r
+        else {
+            panic!("not a scrape response: {r:?}")
+        };
+        // The wire order is seeders, completed, leechers.
+        assert_eq!((seeders, completed, leechers), (11, 22, 33));
+    }
+
+    #[test]
+    fn malformed_scrape_responses_do_not_parse() {
+        for rest in [&[][..], &[0u8; 11][..], &[0u8; 13][..], &[0u8; 24][..]] {
+            let (_, r) = Response::parse(&scrape_reply(1, rest), false).unwrap();
+            assert!(
+                matches!(r, Response::Unknown),
+                "{} bytes: {r:?}",
+                rest.len()
+            );
+        }
+        // Too short to even carry an action and a transaction id.
+        assert!(Response::parse(&[0, 0, 0, 2, 0, 0], false).is_err());
+    }
 
     #[test]
     fn test_parse_announce() {
@@ -472,6 +573,7 @@ mod tests {
                 uploaded: 0,
                 event: EVENT_NONE,
                 key: 0, // whatever that is?
+                num_want: -1,
                 port: 24563,
             },
         );

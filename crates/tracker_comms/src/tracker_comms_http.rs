@@ -13,12 +13,10 @@ use librqbit_core::{
     hash_id::Id20,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrackerRequestEvent {
     Started,
-    #[allow(dead_code)]
     Stopped,
-    #[allow(dead_code)]
     Completed,
 }
 
@@ -36,12 +34,13 @@ pub struct TrackerRequest<'a> {
     pub ip: Option<IpAddr>,
     pub numwant: Option<usize>,
     pub key: Option<u32>,
-    pub trackerid: Option<&'a str>,
+    pub trackerid: Option<&'a [u8]>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct TrackerError<'a> {
-    #[serde(rename = "failure reason", borrow)]
+    // BEP 3 spells it with a space, BEP 48 (scrape) with an underscore.
+    #[serde(rename = "failure reason", alias = "failure_reason", borrow)]
     pub failure_reason: ByteBuf<'a>,
 }
 
@@ -134,22 +133,17 @@ where
 
 #[derive(Deserialize, Debug)]
 pub struct TrackerResponse<'a> {
-    #[allow(dead_code)]
     #[serde(rename = "warning message", borrow)]
     pub warning_message: Option<ByteBuf<'a>>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub complete: u64,
-    pub interval: u64,
-    #[allow(dead_code)]
+    pub complete: Option<u64>,
+    pub interval: Option<u64>,
     #[serde(rename = "min interval")]
     pub min_interval: Option<u64>,
-    #[allow(dead_code)]
+    #[serde(rename = "tracker id", borrow)]
     pub tracker_id: Option<ByteBuf<'a>>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub incomplete: u64,
-    #[serde(borrow)]
+    pub incomplete: Option<u64>,
+    // A tracker that has no peers to give may leave the key out.
+    #[serde(default, borrow)]
     pub peers: Peers<'a, SocketAddrV4>,
     #[serde(default, borrow)]
     pub peers6: Peers<'a, SocketAddrV6>,
@@ -198,7 +192,8 @@ impl TrackerRequest<'_> {
             write!(s, "&key={key}").unwrap();
         }
         if let Some(trackerid) = &self.trackerid {
-            write!(s, "&trackerid={trackerid}").unwrap();
+            s.push_str("&trackerid=");
+            s.push_str(u::encode_binary(trackerid).as_ref());
         }
         s
     }
