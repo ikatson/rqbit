@@ -416,7 +416,7 @@ mod tests {
                 data: TorrentMetaV1Info {
                     name: name.map(|n| n.as_bytes().into()),
                     name_utf8: None,
-                    pieces: b""[..].into(),
+                    pieces: Some(b""[..].into()),
                     piece_length: 1,
                     length: None,
                     md5sum: None,
@@ -437,6 +437,8 @@ mod tests {
                     sha1: None,
                     symlink_path: None,
                     private: false,
+                    meta_version: None,
+                    file_tree: None,
                 },
                 raw_bytes: Default::default(),
             },
@@ -448,6 +450,8 @@ mod tests {
             creation_date: None,
             info_hash: Id20::default(),
             url_list: Vec::new(),
+            info_hash_v2: None,
+            piece_layers: None,
         }
     }
 
