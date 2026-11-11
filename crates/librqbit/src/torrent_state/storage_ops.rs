@@ -9,7 +9,9 @@
 // An operation first "quiesces" the torrent: a live torrent is paused (keeping its
 // counters), a running check is stopped the way a pause stops it. It then borrows the
 // storage out of the state, works on it in a blocking thread without holding the state
-// lock, puts it back, and restarts the torrent if it stopped it.
+// lock, puts it back, and restarts the torrent if it stopped it. A stream that reads while
+// the storage is out (or while a recheck runs) waits for it to come back, then reads from
+// wherever the files are now (see `streaming`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -136,7 +138,7 @@ impl ManagedTorrent {
             .context("torrent is not resolved")?;
         let taken = {
             let mut g = self.locked.write();
-            match &mut g.state {
+            let taken = match &mut g.state {
                 ManagedTorrentState::Paused(p) => Some((p.files.take()?, Borrowed::Paused)),
                 ManagedTorrentState::Initializing(init) => {
                     Some((init.files.take()?, Borrowed::Initializing(init.clone())))
@@ -144,7 +146,10 @@ impl ManagedTorrent {
                 ManagedTorrentState::Error(_) => None,
                 ManagedTorrentState::Live(_) => bail!("bug: the torrent wasn't quiesced"),
                 ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
-            }
+            };
+            // A stream reading from now on waits for the storage to come back.
+            g.storage_on_loan = taken.is_some();
+            taken
         };
         let (storage, borrowed) = match taken {
             Some(taken) => taken,
@@ -211,6 +216,9 @@ impl ManagedTorrent {
                 "the torrent changed state during a storage operation, dropping its storage"
             ),
         }
+        g.storage_on_loan = false;
+        // Streams that waited for the storage read on (see `streaming`).
+        self.state_change_notify.notify_waiters();
     }
 
     /// Replaces the state of a quiesced torrent with a check that ignores the fastresume

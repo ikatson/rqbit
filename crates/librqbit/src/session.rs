@@ -1456,6 +1456,7 @@ impl Session {
                     paused: opts.paused,
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
+                    storage_on_loan: false,
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,

@@ -116,6 +116,9 @@ pub(crate) struct ManagedTorrentLocked {
     pub(crate) paused: bool,
     pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
+    // Set while a storage operation has the storage out of the state (see `storage_ops`), so
+    // that a stream reading meanwhile waits for it instead of reading from what's left.
+    pub(crate) storage_on_loan: bool,
 }
 
 #[derive(Default)]
@@ -510,6 +513,9 @@ impl ManagedTorrent {
                             match check_result {
                                 Ok(paused) => {
                                     let mut g = g;
+                                    // Streams waiting for a piece the check found present
+                                    // won't see it downloaded: let them look again.
+                                    paused.streams.wake_all();
                                     g.state = ManagedTorrentState::Paused(paused);
                                     t.state_change_notify.notify_waiters();
                                     // A pause requested after the last piece was checked
