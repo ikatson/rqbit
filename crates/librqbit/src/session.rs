@@ -510,8 +510,11 @@ pub struct SessionOptions {
     pub peer_backoff: PeerBackoffConfig,
 
     /// Reach the I2P network through the SAM bridge of a local I2P router, for the torrents
-    /// that have I2P trackers. `None` (the default): no I2P, such trackers report an error.
-    /// See [`I2pOptions`].
+    /// that have I2P trackers. `None` (the default): no I2P, such trackers report an error
+    /// and synthetic I2P addresses can't be dialed. See [`I2pOptions`] for what is supported
+    /// (SAM 3.1 streams, transient destinations, I2P HTTP trackers, mixed mode) and what is not
+    /// (the I2P DHT, UDP trackers, persistent destinations). Peer statistics show I2P peers
+    /// under their synthetic `0100::/64` addresses, see [`Session::i2p_destination`].
     pub i2p: Option<I2pOptions>,
 }
 
@@ -1811,6 +1814,7 @@ impl Session {
         // them.
         let is_private = is_private || !net.uses_clearnet();
         initial_peers.retain(|a| net.admits(a));
+
         let dht_rx = if is_private {
             None
         } else {

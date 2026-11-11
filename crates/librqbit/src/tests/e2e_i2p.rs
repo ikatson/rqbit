@@ -455,12 +455,15 @@ async fn i2p_seeder(
 // A wire-level peer
 // ---------------------------------------------------------------------------------------------
 
+/// The payloads of the extended messages a [`WirePeer`] got: `(extended id, payload)`.
+type ExtendedLog = Arc<Mutex<Vec<(u8, Vec<u8>)>>>;
+
 /// A peer on a loopback listener that answers the handshake of whoever connects, sends an
 /// extended handshake offering PEX (id 1) and a bitfield (all pieces or none), never unchokes,
-/// and records the payload of every extended message it gets: `(extended id, payload)`.
+/// and records the payload of every extended message it gets.
 struct WirePeer {
     addr: SocketAddr,
-    extended: Arc<Mutex<Vec<(u8, Vec<u8>)>>>,
+    extended: ExtendedLog,
     task: JoinHandle<()>,
 }
 
@@ -474,7 +477,7 @@ impl WirePeer {
     async fn start(info_hash: Id20, pieces: u32, has_all: bool) -> anyhow::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let addr = listener.local_addr()?;
-        let extended: Arc<Mutex<Vec<(u8, Vec<u8>)>>> = Default::default();
+        let extended: ExtendedLog = Default::default();
         let ext = extended.clone();
         let task = tokio::spawn(async move {
             while let Ok((sock, _)) = listener.accept().await {
@@ -518,7 +521,7 @@ async fn wire_peer_conn(
     info_hash: Id20,
     pieces: u32,
     has_all: bool,
-    extended: Arc<Mutex<Vec<(u8, Vec<u8>)>>>,
+    extended: ExtendedLog,
 ) -> anyhow::Result<()> {
     let mut hs = [0u8; 68];
     sock.read_exact(&mut hs).await?;
@@ -527,7 +530,8 @@ async fn wire_peer_conn(
         .await?;
     let frame = |id: u8, payload: &[u8]| {
         let mut f = Vec::with_capacity(5 + payload.len());
-        f.extend_from_slice(&(payload.len() as u32 + 1).to_be_bytes());
+        let len = u32::try_from(payload.len() + 1).expect("a short test message");
+        f.extend_from_slice(&len.to_be_bytes());
         f.push(id);
         f.extend_from_slice(payload);
         f
