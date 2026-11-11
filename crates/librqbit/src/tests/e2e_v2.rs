@@ -163,7 +163,6 @@ async fn test_e2e_v2_only_download_seed_restart() -> anyhow::Result<()> {
             SessionSetup {
                 listen: true,
                 persistence: Some(persistence.clone()),
-                ..Default::default()
             },
         )
         .await?;
@@ -209,7 +208,6 @@ async fn test_e2e_v2_only_download_seed_restart() -> anyhow::Result<()> {
             SessionSetup {
                 listen: false,
                 persistence: Some(persistence.clone()),
-                ..Default::default()
             },
         )
         .await?;

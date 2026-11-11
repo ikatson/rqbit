@@ -472,7 +472,6 @@ async fn test_v2_fetched_piece_layers_survive_a_restart() -> anyhow::Result<()> 
             let setup = || SessionSetup {
                 listen: true,
                 persistence: Some(persistence.clone()),
-                ..Default::default()
             };
             let client = new_session(&out, setup()).await?;
             let handle = add(&client, stripped, &out, vec![seeder_addr]).await?;
