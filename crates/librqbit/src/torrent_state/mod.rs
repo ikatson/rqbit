@@ -359,6 +359,11 @@ impl ManagedTorrent {
                     let init = init.clone();
                     init.clear_pause_request();
                     if !init.try_start_check() {
+                        // The running check started without this stream (e.g. a paused add
+                        // or a recheck of a paused torrent): keep it for when it goes live.
+                        if let Some(peer_rx) = peer_rx {
+                            init.stash_peer_rx(peer_rx);
+                        }
                         return Ok(());
                     }
 
@@ -399,6 +404,7 @@ impl ManagedTorrent {
                                     // live behind the caller's back. `g.paused` is the latest
                                     // intent (pause() sets it, start()/unpause clears it).
                                     let start_paused = g.paused;
+                                    let peer_rx = peer_rx.or_else(|| init.take_peer_rx());
                                     _start(&t, peer_rx, start_paused, session, Some(g), token)
                                 }
                                 Err(err) => {
@@ -420,6 +426,7 @@ impl ManagedTorrent {
                                             return Ok(());
                                         }
                                         let start_paused = g.paused;
+                                        let peer_rx = peer_rx.or_else(|| init.take_peer_rx());
                                         return _start(
                                             &t,
                                             peer_rx,

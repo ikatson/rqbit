@@ -200,3 +200,69 @@ async fn pause_requested_after_last_piece() -> anyhow::Result<()> {
     assert!(!handle.is_paused());
     Ok(())
 }
+
+// An unpause that arrives while the check of a paused torrent is still running must not
+// lose the peers: the check started without a peer stream, so the one the unpause made is
+// the only way the torrent can find its peers once it goes live.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_unpause_during_check_keeps_the_peer_stream() -> anyhow::Result<()> {
+    timeout(Duration::from_secs(60), unpause_during_check())
+        .await
+        .context("test timed out")?
+}
+
+async fn unpause_during_check() -> anyhow::Result<()> {
+    setup_test_logging();
+    let seed = super::fake_peer::start_seeder(super::fake_peer::SeederOpts::default()).await?;
+    let out = tempfile::TempDir::with_prefix("rqbit_unpause_check_out")?;
+    let session = Session::new_with_opts(
+        out.path().to_owned(),
+        SessionOptions {
+            dht: None,
+            listen: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let gate = Arc::new(Gate::default());
+    let handle = session
+        .add_torrent(
+            AddTorrent::TorrentFileBytes(seed.torrent_bytes.clone()),
+            Some(AddTorrentOptions {
+                output_folder: Some(out.path().to_string_lossy().into_owned()),
+                overwrite: true,
+                paused: true,
+                initial_peers: Some(vec![seed.addr()]),
+                storage_factory: Some(
+                    GatedFactory {
+                        inner: FilesystemStorageFactory::default(),
+                        gate: gate.clone(),
+                    }
+                    .boxed(),
+                ),
+                ..Default::default()
+            }),
+        )
+        .await?
+        .into_handle()
+        .context("no handle")?;
+
+    let waiter = gate.clone();
+    tokio::task::spawn_blocking(move || waiter.wait_entered()).await?;
+    assert!(matches!(
+        handle.stats().state,
+        TorrentStatsState::Initializing { .. }
+    ));
+    session.unpause(&handle).await?;
+    assert!(!handle.is_paused());
+    gate.release();
+
+    timeout(Duration::from_secs(30), handle.wait_until_completed())
+        .await
+        .context("the torrent went live without its peers")??;
+    assert!(handle.stats().finished);
+    Ok(())
+}
