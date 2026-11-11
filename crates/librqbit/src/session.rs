@@ -31,9 +31,7 @@ use crate::{
     storage::{
         BoxStorageFactory, StorageFactoryExt, TorrentStorage, filesystem::FilesystemStorageFactory,
     },
-    stream_connect::{
-        ConnectionKind, ConnectionOptions, SocksProxyConfig, StreamConnector, StreamConnectorArgs,
-    },
+    stream_connect::{ConnectionKind, ConnectionOptions, StreamConnector, StreamConnectorArgs},
     torrent_state::{
         ManagedTorrentHandle, ManagedTorrentLocked, ManagedTorrentOptions, ManagedTorrentState,
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
@@ -59,6 +57,7 @@ use librqbit_core::{
     directories::get_configuration_directory,
     magnet::Magnet,
     peer_id::generate_azereus_style,
+    proxy::{ProxyConfig, ProxyKind},
     spawn_utils::spawn_with_cancel,
     torrent_metainfo::{TorrentMetaV1Owned, ValidatedTorrentMetaV1Info},
 };
@@ -728,12 +727,15 @@ impl Session {
                 .await
                 .context("error initializing session persistence store")?;
 
-            let proxy_url = opts.connect.as_ref().and_then(|s| s.proxy_url.as_ref());
-            let proxy_config = match proxy_url {
-                Some(pu) => Some(
-                    SocksProxyConfig::parse(pu)
-                        .with_context(|| format!("error parsing proxy url {pu}"))?,
-                ),
+            let proxy_config = match opts.connect.as_ref().and_then(|s| s.proxy_url.as_deref()) {
+                Some(url) => {
+                    let config = ProxyConfig::parse(url).context("error parsing the proxy URL")?;
+                    match config.kind() {
+                        ProxyKind::Socks5 | ProxyKind::Socks5h => {}
+                        other => bail!("{other} proxies are not supported yet"),
+                    }
+                    Some(config)
+                }
                 None => None,
             };
 
@@ -742,10 +744,9 @@ impl Session {
                 .unwrap_or_else(|| crate::client_name_and_version().to_owned());
 
             let reqwest_client = {
-                let builder = if let Some(proxy_url) = proxy_url {
-                    let proxy = reqwest::Proxy::all(proxy_url)
-                        .context("error creating socks5 proxy for HTTP")?;
-                    crate::http_client::client_builder().proxy(proxy)
+                let builder = if let Some(proxy_config) = proxy_config.as_ref() {
+                    crate::http_client::client_builder()
+                        .proxy(crate::http_client::proxy(proxy_config)?)
                 } else {
                     #[allow(unused_mut)]
                     let mut b = crate::http_client::client_builder();
@@ -765,7 +766,7 @@ impl Session {
             let stream_connector = Arc::new(
                 StreamConnector::new(StreamConnectorArgs {
                     enable_tcp: opts.connect.as_ref().map(|c| c.enable_tcp).unwrap_or(true),
-                    socks_proxy_config: proxy_config,
+                    proxy: proxy_config,
                     utp_socket: listen_result.as_ref().and_then(|l| l.utp_socket.clone()),
                     bind_device: bind_device.clone(),
                     ipv4_only: opts.ipv4_only,

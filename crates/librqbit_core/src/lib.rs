@@ -6,6 +6,7 @@ pub mod hash_id;
 pub mod lengths;
 pub mod magnet;
 pub mod peer_id;
+pub mod proxy;
 pub mod spawn_utils;
 pub mod speed_estimator;
 pub mod torrent_metainfo;

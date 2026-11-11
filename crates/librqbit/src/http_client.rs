@@ -25,3 +25,20 @@ pub(crate) fn client_builder() -> reqwest::ClientBuilder {
     );
     builder
 }
+
+/// The reqwest proxy for a parsed proxy URL: every request of the client goes through it,
+/// credentials included. SOCKS4 user ids are not sent (reqwest has no way to).
+pub(crate) fn proxy(config: &librqbit_core::proxy::ProxyConfig) -> anyhow::Result<reqwest::Proxy> {
+    use anyhow::Context;
+    use librqbit_core::proxy::ProxyKind;
+
+    let proxy = reqwest::Proxy::all(config.url_without_credentials())
+        .with_context(|| format!("error creating the HTTP client proxy for {config}"))?;
+    Ok(
+        match (config.kind(), config.username(), config.password()) {
+            (ProxyKind::Socks4 | ProxyKind::Socks4a, _, _) => proxy,
+            (_, Some(username), Some(password)) => proxy.basic_auth(username, password),
+            _ => proxy,
+        },
+    )
+}

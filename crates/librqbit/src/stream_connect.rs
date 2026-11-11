@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::{Context, bail};
+use anyhow::bail;
+use librqbit_core::proxy::ProxyConfig;
 use librqbit_dualstack_sockets::ConnectOpts;
 use librqbit_utp::{BindDevice, UtpSocketUdp};
 use serde::Serialize;
@@ -51,65 +52,32 @@ impl Default for ConnectionOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct SocksProxyConfig {
-    pub host: String,
-    pub port: u16,
-    pub username_password: Option<(String, String)>,
-}
-
 #[derive(Default, Debug, Clone)]
 pub(crate) struct StreamConnectorArgs {
     pub enable_tcp: bool,
-    pub socks_proxy_config: Option<SocksProxyConfig>,
+    pub proxy: Option<ProxyConfig>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub bind_device: Option<BindDevice>,
     pub ipv4_only: bool,
 }
 
-impl SocksProxyConfig {
-    /// socks5h:// resolves hostnames via the proxy; socks5:// resolves them locally.
-    pub fn parse(url: &str) -> anyhow::Result<Self> {
-        let url = ::url::Url::parse(url).context("invalid proxy URL")?;
-        match url.scheme() {
-            "socks5" | "socks5h" => {}
-            other => anyhow::bail!("unsupported proxy URL scheme \"{other}\""),
-        }
-        let host = url.host_str().context("missing host")?;
-        let port = url.port().context("missing port")?;
-        let up = url
-            .password()
-            .map(|p| (url.username().to_owned(), p.to_owned()));
-        Ok(Self {
-            host: host.to_owned(),
-            port,
-            username_password: up,
-        })
-    }
+async fn socks5_connect(
+    proxy: &ProxyConfig,
+    addr: SocketAddr,
+) -> tokio_socks::Result<(
+    impl tokio::io::AsyncRead + Unpin + 'static,
+    impl tokio::io::AsyncWrite + Unpin + 'static,
+)> {
+    let proxy_addr = (proxy.host(), proxy.port());
 
-    async fn connect(
-        &self,
-        addr: SocketAddr,
-    ) -> tokio_socks::Result<(
-        impl tokio::io::AsyncRead + Unpin + 'static,
-        impl tokio::io::AsyncWrite + Unpin + 'static,
-    )> {
-        let proxy_addr = (self.host.as_str(), self.port);
-
-        let stream = if let Some((username, password)) = self.username_password.as_ref() {
-            tokio_socks::tcp::Socks5Stream::connect_with_password(
-                proxy_addr,
-                addr,
-                username.as_str(),
-                password.as_str(),
-            )
+    let stream = if let (Some(username), Some(password)) = (proxy.username(), proxy.password()) {
+        tokio_socks::tcp::Socks5Stream::connect_with_password(proxy_addr, addr, username, password)
             .await?
-        } else {
-            tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr).await?
-        };
+    } else {
+        tokio_socks::tcp::Socks5Stream::connect(proxy_addr, addr).await?
+    };
 
-        Ok(tokio::io::split(stream))
-    }
+    Ok(tokio::io::split(stream))
 }
 
 gen_stats!(SingleStatAtomic SingleStatSnapshot, [
@@ -129,7 +97,7 @@ gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
 
 #[derive(Debug)]
 pub(crate) struct StreamConnector {
-    proxy_config: Option<SocksProxyConfig>,
+    proxy_config: Option<ProxyConfig>,
     enable_tcp: bool,
     bind_device: Option<BindDevice>,
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
@@ -141,7 +109,7 @@ impl StreamConnector {
     pub async fn new(config: StreamConnectorArgs) -> anyhow::Result<Self> {
         #[allow(clippy::single_match)]
         match (
-            config.socks_proxy_config.is_some(),
+            config.proxy.is_some(),
             config.enable_tcp,
             config.utp_socket.is_some(),
         ) {
@@ -154,7 +122,7 @@ impl StreamConnector {
         }
 
         Ok(Self {
-            proxy_config: config.socks_proxy_config,
+            proxy_config: config.proxy,
             enable_tcp: config.enable_tcp,
             utp_socket: config.utp_socket,
             bind_device: config.bind_device,
@@ -229,7 +197,11 @@ impl StreamConnector {
 
         if let Some(proxy) = self.proxy_config.as_ref() {
             let (r, w) = self
-                .with_stat(ConnectionKind::Socks, addr.is_ipv6(), proxy.connect(addr))
+                .with_stat(
+                    ConnectionKind::Socks,
+                    addr.is_ipv6(),
+                    socks5_connect(proxy, addr),
+                )
                 .await?;
             debug!(?addr, "connected through SOCKS5");
             return Ok((
@@ -324,53 +296,5 @@ impl StreamConnector {
                 },
             };
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_socks5() {
-        let c = SocksProxyConfig::parse("socks5://myhost:1234").unwrap();
-        assert_eq!(c.host, "myhost");
-        assert_eq!(c.port, 1234);
-        assert_eq!(c.username_password, None);
-    }
-
-    #[test]
-    fn test_parse_socks5h() {
-        let c = SocksProxyConfig::parse("socks5h://myhost:1234").unwrap();
-        assert_eq!(c.host, "myhost");
-        assert_eq!(c.port, 1234);
-    }
-
-    #[test]
-    fn test_parse_with_password() {
-        let c = SocksProxyConfig::parse("socks5h://user:pass@myhost:1234").unwrap();
-        assert_eq!(c.host, "myhost");
-        assert_eq!(c.port, 1234);
-        assert_eq!(
-            c.username_password,
-            Some(("user".to_owned(), "pass".to_owned()))
-        );
-    }
-
-    #[test]
-    fn test_parse_rejects_other_schemes() {
-        for url in [
-            "http://myhost:1234",
-            "socks4://myhost:1234",
-            "socks4a://myhost:1234",
-        ] {
-            assert!(SocksProxyConfig::parse(url).is_err(), "should reject {url}");
-        }
-    }
-
-    #[test]
-    fn test_parse_rejects_garbage() {
-        assert!(SocksProxyConfig::parse("not a url").is_err());
-        assert!(SocksProxyConfig::parse("socks5://").is_err());
     }
 }
