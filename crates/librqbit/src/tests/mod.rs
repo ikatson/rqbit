@@ -11,4 +11,5 @@ mod e2e_stream;
 mod e2e_super_seeding;
 mod fake_peer;
 mod interop;
+mod session_teardown;
 pub mod test_util;
