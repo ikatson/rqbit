@@ -233,8 +233,9 @@ struct Opts {
     )]
     max_blocking_threads: u16,
 
-    /// If set will use socks5 proxy for all outgoing connections.
-    /// The format is socks5://[username:password@]host:port (socks5h:// also supported).
+    /// If set will use this proxy for all outgoing connections and tracker requests.
+    /// The format is scheme://[username:password@]host:port, the scheme being socks5, socks5h
+    /// (the proxy resolves host names), socks4, socks4a or http (CONNECT tunnels).
     ///
     /// You may also want to disable incoming connections via --disable-tcp-listen.
     #[arg(long, env = "RQBIT_SOCKS_PROXY_URL")]
@@ -638,6 +639,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
                 .map(|s| s.split(",").map(|v| v.to_string()).collect()),
             port: None,
             persistence,
+            ..Default::default()
         })
     };
 
@@ -649,6 +651,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         listen,
         connect: Some(ConnectionOptions {
             proxy_url: opts.socks_url.take(),
+            proxy_peer_connections: true,
             enable_tcp: !opts.disable_tcp_connect,
             peer_opts: Some(PeerConnectionOptions {
                 connect_timeout: Some(opts.peer_connect_timeout),
@@ -687,10 +690,13 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
         trackers,
+        tracker_announce: Default::default(),
         peer_limit: opts.peer_limit,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
+        peer_backoff: Default::default(),
+        i2p: None,
     };
 
     #[allow(clippy::needless_update)]

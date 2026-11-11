@@ -525,6 +525,10 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
           v4: { attempts: 0, successes: 0, errors: 0 },
           v6: { attempts: 0, successes: 0, errors: 0 },
         },
+        http_proxy: {
+          v4: { attempts: 0, successes: 0, errors: 0 },
+          v6: { attempts: 0, successes: 0, errors: 0 },
+        },
       },
       download_speed: {
         mbps: downloadSpeed,

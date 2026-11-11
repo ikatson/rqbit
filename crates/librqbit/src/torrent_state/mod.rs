@@ -109,15 +109,17 @@ pub(crate) struct ManagedTorrentLocked {
 
 #[derive(Default)]
 pub(crate) struct ManagedTorrentOptions {
-    pub force_tracker_interval: Option<Duration>,
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
+    pub peer_handshake_timeout: Option<Duration>,
+    pub connect_rate: Option<u32>,
     pub peer_max_request_window: Option<usize>,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub ratelimits: LimitsConfig,
     pub initial_peers: Vec<SocketAddr>,
     pub peer_limit: Option<usize>,
+    pub peer_backoff: crate::PeerBackoffConfig,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
@@ -184,6 +186,8 @@ pub struct ManagedTorrentShared {
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<url::Url>,
+    /// Talks to the trackers of the torrent. See [`tracker_comms::TorrentTrackers`].
+    pub(crate) tracker_comms: Arc<tracker_comms::TorrentTrackers>,
     pub peer_id: Id20,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,
@@ -195,6 +199,9 @@ pub struct ManagedTorrentShared {
     pub(crate) magnet_name: Option<String>,
 
     pub(crate) client_name_and_version: String,
+
+    /// Which networks (clearnet, I2P) the torrent uses.
+    pub(crate) net: crate::i2p::TorrentNet,
 }
 
 impl ManagedTorrentShared {
@@ -230,6 +237,13 @@ impl ManagedTorrent {
 
     pub fn shared(&self) -> &ManagedTorrentShared {
         &self.shared
+    }
+
+    /// The state of every tracker of this torrent, ordered by tier and by position in the
+    /// tier. Works in every state of the torrent: while it is paused the trackers report what
+    /// they were last known to be.
+    pub fn trackers(&self) -> Vec<tracker_comms::TrackerStats> {
+        self.shared.tracker_comms.stats()
     }
 
     /// The resolved on-disk folder this torrent's files are written under.

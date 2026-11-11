@@ -273,6 +273,7 @@ impl TorrentStateLive {
                 stats: Default::default(),
                 states: Default::default(),
                 live_outgoing_peers: Default::default(),
+                peer_backoff: paused.shared.options.peer_backoff,
             },
             _locked: RwLock::new(TorrentStateLocked {
                 pieces: Some(PieceTracker::new(paused.chunk_tracker)),
@@ -495,6 +496,7 @@ impl TorrentStateLive {
         let options = PeerConnectionOptions {
             connect_timeout: self.shared.options.peer_connect_timeout,
             read_write_timeout: self.shared.options.peer_read_write_timeout,
+            handshake_timeout: self.shared.options.peer_handshake_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
@@ -560,6 +562,7 @@ impl TorrentStateLive {
         let options = PeerConnectionOptions {
             connect_timeout: state.shared.options.peer_connect_timeout,
             read_write_timeout: state.shared.options.peer_read_write_timeout,
+            handshake_timeout: state.shared.options.peer_handshake_timeout,
             ..Default::default()
         };
         let peer_connection = PeerConnection::new(
@@ -610,6 +613,12 @@ impl TorrentStateLive {
         mut peer_queue_rx: UnboundedReceiver<SocketAddr>,
     ) -> crate::Result<()> {
         let state = self;
+        // Optional cap on how fast one torrent starts outgoing connections.
+        let connect_interval = state
+            .shared
+            .options
+            .connect_rate
+            .map(|per_second| Duration::from_micros(1_000_000 / u64::from(per_second.max(1))));
         loop {
             let addr = peer_queue_rx.recv().await.ok_or(Error::TorrentIsNotLive)?;
             if state.shared.options.disable_upload() && state.is_finished_and_no_active_streams() {
@@ -624,7 +633,15 @@ impl TorrentStateLive {
                 .upgrade()
                 .ok_or(Error::SessionDestroyed)?;
 
-            if session.ipv4_only && addr.is_ipv6() {
+            // A peer of a network the torrent doesn't use is never dialed. I2P peers have
+            // synthetic addresses, which are not IPs: no IP filter applies to them.
+            if !state.shared.net.admits(&addr) {
+                debug!(?addr, "skipping peer of a network the torrent doesn't use");
+                continue;
+            }
+            let i2p_peer = librqbit_core::i2p::is_synthetic(&addr);
+
+            if session.ipv4_only && addr.is_ipv6() && !i2p_peer {
                 debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
                 continue;
             }
@@ -634,7 +651,7 @@ impl TorrentStateLive {
                 continue;
             }
 
-            if session.blocklist.has(addr.ip()) {
+            if !i2p_peer && session.blocklist.has(addr.ip()) {
                 session
                     .stats
                     .counters
@@ -644,10 +661,11 @@ impl TorrentStateLive {
                 continue;
             }
 
-            if session
-                .allowlist
-                .as_ref()
-                .is_some_and(|l| !l.has(addr.ip()))
+            if !i2p_peer
+                && session
+                    .allowlist
+                    .as_ref()
+                    .is_some_and(|l| !l.has(addr.ip()))
             {
                 session
                     .stats
@@ -664,6 +682,9 @@ impl TorrentStateLive {
                 format!("[{}][addr={addr}]manage_peer", state.shared.id),
                 aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
             );
+            if let Some(interval) = connect_interval {
+                tokio::time::sleep(interval).await;
+            }
         }
     }
 
@@ -880,6 +901,11 @@ impl TorrentStateLive {
             if chunks.get_selected_pieces()[id.get_usize()] {
                 locked.try_flush_bitv(&self.shared, false);
                 info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
+                // Tell the trackers once. This only runs when the last selected piece completes
+                // while the torrent runs, so torrents that were already complete when added or
+                // resumed never get here. Fine under the state lock: the trackers' own lock
+                // is a leaf, they never call back into the torrent while holding it.
+                self.shared.tracker_comms.completed();
             }
             self.finished_notify.notify_waiters();
 
@@ -952,9 +978,11 @@ impl TorrentStateLive {
                 connected.clear();
                 dropped.clear();
 
+                // I2P peers are never told to anyone: their synthetic addresses aren't real.
                 connected.extend(
                     live_peers
                         .difference(&peer_view_of_live_peers)
+                        .filter(|a| !librqbit_core::i2p::is_synthetic(a))
                         .take(MAX_SENT_PEERS)
                         .copied(),
                 );
@@ -1188,7 +1216,11 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             }
         }
 
-        if !self.state.metadata.info.info().private && hs.m.ut_pex.is_some() {
+        // No PEX inside I2P, nor anywhere for a torrent that stays inside I2P.
+        if !self.state.metadata.info.info().private
+            && hs.m.ut_pex.is_some()
+            && self.state.shared.net.pex_with(&self.addr)
+        {
             spawn_with_cancel(
                 debug_span!(
                     parent: self.state.shared.span.clone(),
@@ -1205,17 +1237,22 @@ impl PeerConnectionHandler for &'_ PeerHandler {
                     .task_send_pex_to_peer(self.addr, self.tx.clone()),
             );
         }
-        // Lets update outgoing Socket address for incoming connection
+        // Lets update outgoing Socket address for incoming connection. Not for an I2P peer:
+        // it is reached by its destination, whatever port it names; and a clearnet peer
+        // naming a synthetic address must not make us dial into I2P.
         if self.incoming
+            && !librqbit_core::i2p::is_synthetic(&self.addr)
             && let Some(port) = hs.port()
         {
             let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
             let outgoing_addr = SocketAddr::new(peer_ip, port);
-            self.state
-                .peers
-                .with_peer_mut(self.addr, "update outgoing addr", |peer| {
-                    peer.outgoing_address = Some(outgoing_addr)
-                });
+            if !librqbit_core::i2p::is_synthetic(&outgoing_addr) {
+                self.state
+                    .peers
+                    .with_peer_mut(self.addr, "update outgoing addr", |peer| {
+                        peer.outgoing_address = Some(outgoing_addr)
+                    });
+            }
         }
 
         Ok(())
@@ -1246,6 +1283,11 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             && let Ok(len) = info_bytes.len().try_into()
         {
             handshake.metadata_size = Some(len);
+        }
+        // No PEX with a peer we never exchange peers with (an I2P peer, or any peer of an
+        // I2P-only torrent): it must not wait for messages that never come.
+        if !self.state.shared.net.pex_with(&self.addr) {
+            handshake.m.ut_pex = None;
         }
 
         Ok(())
@@ -2029,8 +2071,14 @@ impl PeerHandler {
     }
 
     fn on_pex_message(&self, msg: UtPex<ByteBuf<'_>>) {
+        // PEX from an I2P peer, or for a torrent that stays inside I2P, is ignored; and a PEX
+        // message never brings I2P peers.
+        if !self.state.shared.net.pex_with(&self.addr) {
+            return;
+        }
         msg.dropped_peers()
             .chain(msg.added_peers())
+            .filter(|peer| !librqbit_core::i2p::is_synthetic(&peer.addr))
             .for_each(|peer| {
                 self.state
                     .add_peer_if_not_seen(peer.addr)

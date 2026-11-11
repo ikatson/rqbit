@@ -10,6 +10,12 @@ pub enum Error {
         #[source]
         tokio_socks::Error,
     ),
+    #[error("error connecting through proxy: {0:#}")]
+    ProxyConnect(
+        #[from]
+        #[source]
+        librqbit_core::proxy::ProxyError,
+    ),
     #[error("error connecting over TCP: {0:#}")]
     TcpConnect(#[source] librqbit_dualstack_sockets::Error),
     #[error("error connecting over uTP: {0:#}")]
