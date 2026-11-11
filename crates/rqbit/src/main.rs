@@ -687,6 +687,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
         trackers,
+        tracker_announce: Default::default(),
         peer_limit: opts.peer_limit,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,

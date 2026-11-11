@@ -880,6 +880,11 @@ impl TorrentStateLive {
             if chunks.get_selected_pieces()[id.get_usize()] {
                 locked.try_flush_bitv(&self.shared, false);
                 info!(id=self.shared.id, info_hash=?self.shared.info_hash, "torrent finished downloading");
+                // Tell the trackers once. This only runs when the last selected piece completes
+                // while the torrent runs, so torrents that were already complete when added or
+                // resumed never get here. Fine under the state lock: the trackers' own lock
+                // is a leaf, they never call back into the torrent while holding it.
+                self.shared.tracker_comms.completed();
             }
             self.finished_notify.notify_waiters();
 

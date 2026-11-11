@@ -31,3 +31,6 @@ librqbit-dualstack-sockets.workspace = true
 backon.workspace = true
 itertools.workspace = true
 serde_with.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "net", "time"] }
