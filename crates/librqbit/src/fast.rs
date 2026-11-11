@@ -530,7 +530,7 @@ mod tests {
         let t0 = Instant::now();
         let step = Duration::from_millis(10);
         let mut now = t0;
-        for i in 0..MAX_REJECTED_REMEMBERED as u32 {
+        for i in 0..u32::try_from(MAX_REJECTED_REMEMBERED).unwrap() {
             d.on_rejected(piece(i), now, true);
             // Blocks in between keep the streak short: only the list is full.
             d.on_block(piece(99), now);

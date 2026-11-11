@@ -828,8 +828,9 @@ async fn test_fast_choke_without_answers_gives_pieces_back_in_time() -> anyhow::
     .await
 }
 
-// A silent peer, not even keep-alives: the safety net gives the pieces back before the read
-// timeout gives up on the peer.
+// A silent peer, not even keep-alives: the safety net gives the pieces back while the peer is
+// still connected (a peer that chokes us is excused for being silent, so without the net the
+// pieces would wait for the silent-peer timeout of minutes).
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fast_choke_and_silence_gives_pieces_back() -> anyhow::Result<()> {
     run(async {
@@ -849,21 +850,31 @@ async fn test_fast_choke_and_silence_gives_pieces_back() -> anyhow::Result<()> {
         silent.have_all().await?;
         silent.unchoke().await?;
         let asked = requests(&mut silent, BLOCKS).await?;
-        let choked_at = Instant::now();
         silent.choke().await?;
 
         let mut other = connect_fast(&client, b"-FK0002-").await?;
         other.have_all().await?;
         other.unchoke().await?;
-        let again = serve_until_complete(&mut other, &seed, &client).await?;
+        let (piece, begin, len) = loop {
+            match other.recv(STEP).await {
+                Recv::Msg(Wire::Request(piece, begin, len)) => break (piece, begin, len),
+                Recv::Msg(_) => {}
+                Recv::Timeout | Recv::Closed => bail!("nothing given back"),
+            }
+        };
+        assert_eq!(
+            live_fast_flags(&client).len(),
+            2,
+            "the pieces came back because the silent peer was dropped"
+        );
+        other
+            .piece(piece, begin, seed.block(piece, begin, len))
+            .await?;
+        let mut again = serve_until_complete(&mut other, &seed, &client).await?;
+        again.insert((piece, begin, len));
         for block in &asked {
             assert!(again.contains(block), "{block:?} was not asked again");
         }
-        assert!(
-            choked_at.elapsed() < read_write_timeout * 3,
-            "completed {:?} after the choke",
-            choked_at.elapsed()
-        );
         Ok(())
     })
     .await
@@ -1053,10 +1064,11 @@ async fn test_fast_protocol_errors_close_the_connection() -> anyhow::Result<()> 
 async fn test_fast_two_sessions_download() -> anyhow::Result<()> {
     run(async {
         for (seed_disables, client_disables) in [(false, false), (true, false), (false, true)] {
-            // Slow enough to see the connection live before the download completes.
+            // Slow enough to see the connection live before the download completes: about
+            // seven seconds for the eight blocks.
             let seed = start_seeder_ext(
                 SeederOpts {
-                    upload_bps: Some(4 * BLOCK),
+                    upload_bps: Some(BLOCK),
                     ..Default::default()
                 },
                 SeederExt {
