@@ -504,7 +504,8 @@ impl TorrentStateLive {
             Some(options),
             self.shared.spawner.clone(),
             self.shared.connector.clone(),
-        );
+        )
+        .with_info_hash_v2(self.shared.info_hash_v2);
         let requester = handler.task_peer_chunk_requester();
 
         let res = tokio::select! {
@@ -569,7 +570,8 @@ impl TorrentStateLive {
             Some(options),
             state.shared.spawner.clone(),
             state.shared.connector.clone(),
-        );
+        )
+        .with_info_hash_v2(state.shared.info_hash_v2);
         let requester = aframe!(
             handler
                 .task_peer_chunk_requester()

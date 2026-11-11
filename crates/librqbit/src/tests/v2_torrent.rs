@@ -188,7 +188,8 @@ impl V2Files {
                 f.set("length", B::I(pad as i64));
                 f.set("path", B::L(vec![B::s(".pad"), B::s(pad.to_string())]));
                 v1_files.push(f);
-                v1_stream.resize(v1_stream.len() + pad as usize, 0);
+                let pad = usize::try_from(pad).expect("test padding fits in memory");
+                v1_stream.resize(v1_stream.len() + pad, 0);
             }
         }
 

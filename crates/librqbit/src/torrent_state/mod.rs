@@ -23,7 +23,7 @@ use buffers::ByteBufOwned;
 use bytes::Bytes;
 use futures::FutureExt;
 use futures::future::BoxFuture;
-use librqbit_core::hash_id::Id20;
+use librqbit_core::hash_id::{Id20, Id32};
 use librqbit_core::lengths::Lengths;
 
 use librqbit_core::spawn_utils::spawn_with_cancel;
@@ -195,6 +195,9 @@ impl TorrentMetadata {
 pub struct ManagedTorrentShared {
     pub id: TorrentId,
     pub info_hash: Id20,
+    /// BEP 52: SHA-256 of the info dictionary of a v2 or hybrid torrent. (`info_hash` is its
+    /// truncation for a v2-only torrent, and the SHA-1 for a hybrid one.)
+    pub info_hash_v2: Option<Id32>,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<url::Url>,
     pub peer_id: Id20,
@@ -234,6 +237,14 @@ pub(crate) struct StorageLocation {
 pub(crate) struct MoveInProgress {
     pub to: PathBuf,
     pub files: Vec<PathBuf>,
+}
+
+/// The other 20-byte info hash a hybrid torrent is known by, next to its v1 hash `info_hash`:
+/// the truncated v2 hash, which peers of the v2 swarm use in handshakes and announces.
+pub(crate) fn alt_info_hash(info_hash: Id20, info_hash_v2: Option<Id32>) -> Option<Id20> {
+    info_hash_v2
+        .map(|h| h.truncate_for_dht())
+        .filter(|h| *h != info_hash)
 }
 
 impl ManagedTorrentShared {
@@ -281,6 +292,25 @@ impl ManagedTorrentShared {
     /// The move that persistence must remember, see [`StorageLocation::move_in_progress`].
     pub(crate) fn move_in_progress(&self) -> Option<MoveInProgress> {
         self.location.read().move_in_progress.clone()
+    }
+
+    /// The other 20-byte info hash a hybrid torrent is known by: its truncated v2 hash, which
+    /// peers of the v2 swarm use in handshakes and which we announce next to `info_hash`.
+    pub fn alt_info_hash(&self) -> Option<Id20> {
+        alt_info_hash(self.info_hash, self.info_hash_v2)
+    }
+
+    /// Whether `h` is one of the 20-byte info hashes of the torrent (for a hybrid torrent:
+    /// the v1 hash or the truncated v2 hash).
+    pub fn has_info_hash(&self, h: Id20) -> bool {
+        h == self.info_hash || self.alt_info_hash() == Some(h)
+    }
+
+    /// Whether the torrent is the one identified by `info_hash` (a v1 or truncated v2 hash) or
+    /// by the full v2 hash `info_hash_v2`: either one is enough.
+    pub(crate) fn is_same_torrent(&self, info_hash: Id20, info_hash_v2: Option<Id32>) -> bool {
+        self.has_info_hash(info_hash)
+            || info_hash_v2.is_some_and(|v2| self.info_hash_v2 == Some(v2))
     }
 }
 
@@ -347,6 +377,11 @@ impl ManagedTorrent {
 
     pub fn info_hash(&self) -> Id20 {
         self.shared.info_hash
+    }
+
+    /// BEP 52: the SHA-256 info hash of a v2 or hybrid torrent.
+    pub fn info_hash_v2(&self) -> Option<Id32> {
+        self.shared.info_hash_v2
     }
 
     pub fn only_files(&self) -> Option<Vec<usize>> {

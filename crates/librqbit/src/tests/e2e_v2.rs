@@ -10,21 +10,27 @@ use std::{
 use anyhow::Context;
 use bytes::Bytes;
 use librqbit_core::{Id20, metainfo_v2::TorrentVersion, torrent_metainfo::torrent_from_bytes};
+use peer_binary_protocol::Handshake;
 use tempfile::TempDir;
-use tokio::time::timeout;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    time::timeout,
+};
 
 use crate::{
-    AddTorrent, AddTorrentOptions, ConnectionOptions, ListenerOptions, Session, SessionOptions,
-    SessionPersistenceConfig,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, ListenerOptions, Session,
+    SessionOptions, SessionPersistenceConfig,
     api::TorrentIdOrHash,
     tests::{
-        fake_peer::{FakePeer, Recv, Wire, peer_id, run},
+        fake_peer::{FakePeer, Recv, Wire, handshake_bytes, peer_id, run},
         v2_torrent::V2Files,
     },
     torrent_state::ManagedTorrentHandle,
 };
 
 pub(super) const PIECE_LEN: u32 = 32 * 1024;
+const BLOCK: u32 = 16 * 1024;
 
 /// Files covering the layout cases: a file of several pieces with a short
 /// last one, an exact multiple of the piece length, a file smaller than a
@@ -156,6 +162,7 @@ async fn test_e2e_v2_only_download_seed_restart() -> anyhow::Result<()> {
             SessionSetup {
                 listen: true,
                 persistence: Some(persistence.clone()),
+                ..Default::default()
             },
         )
         .await?;
@@ -201,6 +208,7 @@ async fn test_e2e_v2_only_download_seed_restart() -> anyhow::Result<()> {
             SessionSetup {
                 listen: false,
                 persistence: Some(persistence.clone()),
+                ..Default::default()
             },
         )
         .await?;
@@ -264,6 +272,192 @@ async fn test_e2e_hybrid_download() -> anyhow::Result<()> {
         assert_eq!(stats.progress_bytes, files.total_len());
         client.stop().await;
         seeder.stop().await;
+        Ok(())
+    })
+    .await
+}
+
+/// The handshake of a wire-level fake peer for `info_hash`, with the BEP 52
+/// "supports v2" bit set if `v2`.
+pub(super) fn fake_handshake(info_hash: Id20, v2: bool) -> [u8; 68] {
+    let mut h = handshake_bytes(info_hash, &peer_id(b"-FK0002-"));
+    if v2 {
+        h[27] |= 0x10;
+    }
+    h
+}
+
+/// Opens a plaintext connection to `addr` and exchanges handshakes carrying
+/// `info_hash`. Returns the peer and the handshake it got back.
+pub(super) async fn connect_with_hash(
+    addr: SocketAddr,
+    info_hash: Id20,
+    v2: bool,
+) -> anyhow::Result<(FakePeer, Handshake)> {
+    let mut peer = FakePeer::connect_without_handshake(addr).await?;
+    peer.send_raw(&fake_handshake(info_hash, v2)).await?;
+    let reply = read_handshake(&mut peer.stream).await?;
+    Ok((peer, reply))
+}
+
+async fn read_handshake(stream: &mut TcpStream) -> anyhow::Result<Handshake> {
+    let mut buf = [0u8; 68];
+    timeout(Duration::from_secs(10), stream.read_exact(&mut buf))
+        .await
+        .context("no handshake")?
+        .context("reading the handshake")?;
+    Ok(Handshake::deserialize(&buf).context("bad handshake")?.0)
+}
+
+/// A hybrid torrent is one torrent in two swarms: a seeder answers peers that
+/// connect with its v1 info hash and peers that connect with its truncated v2
+/// one, each with the hash it used, and serves both the same v1 pieces
+/// (padding included). The session finds the torrent by either hash, and
+/// adding it again resolves to the same torrent.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_hybrid_v1_and_v2_peers() -> anyhow::Result<()> {
+    run(async {
+        let files = sample_files(4);
+        let torrent = Bytes::from(files.torrent("hybrid", PIECE_LEN, true).to_bytes());
+        let parsed = torrent_from_bytes(&torrent)?;
+        let v1 = parsed.info_hash;
+        let v2 = parsed
+            .info_hash_v2
+            .context("no v2 hash")?
+            .truncate_for_dht();
+        assert_ne!(v1, v2);
+
+        let seed_dir = TempDir::with_prefix("rqbit_hybrid_swarms")?;
+        files.write_to(seed_dir.path());
+        let seeder = new_session(
+            seed_dir.path(),
+            SessionSetup {
+                listen: true,
+                ..Default::default()
+            },
+        )
+        .await?;
+        let handle = add(&seeder, torrent.clone(), seed_dir.path(), vec![]).await?;
+        completed(&handle, Duration::from_secs(20)).await?;
+        assert_eq!(handle.info_hash(), v1);
+        assert_eq!(handle.info_hash_v2(), parsed.info_hash_v2);
+        for hash in [v1, v2] {
+            let found = seeder.get(TorrentIdOrHash::Hash(hash)).map(|h| h.id());
+            assert_eq!(found, Some(handle.id()), "not found by {hash:?}");
+        }
+        let again = seeder
+            .add_torrent(
+                AddTorrent::from_bytes(torrent.clone()),
+                Some(AddTorrentOptions {
+                    output_folder: Some(seed_dir.path().to_str().context("utf-8")?.to_owned()),
+                    ..Default::default()
+                }),
+            )
+            .await?;
+        assert!(
+            matches!(again, AddTorrentResponse::AlreadyManaged(id, _) if id == handle.id()),
+            "added twice"
+        );
+
+        // The first piece of `big.bin`, and its last one, which the v1 layout
+        // pads with zeros up to the piece length.
+        let big = &files.files[0].1;
+        let pl = PIECE_LEN as usize;
+        let mut padded = big[3 * pl..].to_vec();
+        padded.resize(BLOCK as usize, 0);
+        let addr = seeder.listen_addr().context("listen addr")?;
+        for (hash, v2_bit) in [(v1, false), (v1, true), (v2, true)] {
+            let (mut peer, reply) = connect_with_hash(addr, hash, v2_bit).await?;
+            assert_eq!(reply.info_hash, hash, "answered with another hash");
+            assert!(reply.supports_v2(), "no v2 bit in the reply");
+            peer.interested().await?;
+            peer.request(0, 0, BLOCK).await?;
+            peer.request(3, 0, BLOCK).await?;
+            let mut got = peer.expect_pieces(2, Duration::from_secs(10)).await?;
+            got.sort_by_key(|(index, _, _)| *index);
+            assert_eq!(got[0].2, big[..BLOCK as usize], "piece 0 via {hash:?}");
+            assert_eq!(got[1].2, padded, "piece 3 via {hash:?}");
+        }
+        seeder.stop().await;
+        Ok(())
+    })
+    .await
+}
+
+/// A peer that knows a hybrid torrent only by its v2 info hash closes
+/// connections that carry the v1 one: we connect to it again with the
+/// truncated v2 hash, and the connection then works.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_hybrid_outgoing_falls_back_to_v2_hash() -> anyhow::Result<()> {
+    run(async {
+        let files = sample_files(5);
+        let torrent = Bytes::from(files.torrent("hybrid", PIECE_LEN, true).to_bytes());
+        let parsed = torrent_from_bytes(&torrent)?;
+        let v1 = parsed.info_hash;
+        let v2 = parsed
+            .info_hash_v2
+            .context("no v2 hash")?
+            .truncate_for_dht();
+        let num_pieces = parsed
+            .validate_with_piece_layers()?
+            .lengths()
+            .total_pieces();
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+        let client_dir = TempDir::with_prefix("rqbit_hybrid_fallback")?;
+        let client = new_session(client_dir.path(), SessionSetup::default()).await?;
+        let _handle = add(
+            &client,
+            torrent,
+            client_dir.path(),
+            vec![listener.local_addr()?],
+        )
+        .await?;
+
+        let accept = || async {
+            timeout(Duration::from_secs(10), listener.accept())
+                .await
+                .context("no connection")?
+                .context("accept")
+        };
+        let (mut conn, _) = accept().await?;
+        let first = read_handshake(&mut conn).await?;
+        assert_eq!(
+            first.info_hash, v1,
+            "the first attempt is not with the v1 hash"
+        );
+        assert!(first.supports_v2(), "no v2 bit");
+        drop(conn);
+
+        let (mut conn, _) = accept().await?;
+        let second = read_handshake(&mut conn).await?;
+        assert_eq!(second.info_hash, v2, "no retry with the v2 hash");
+        assert!(second.supports_v2(), "no v2 bit");
+        conn.write_all(&fake_handshake(v2, true)).await?;
+        let local = conn.local_addr()?;
+        let mut peer = FakePeer {
+            stream: conn,
+            buf: Vec::new(),
+            local,
+        };
+        let mut bits = vec![0u8; num_pieces.div_ceil(8) as usize];
+        for i in 0..num_pieces {
+            bits[(i / 8) as usize] |= 0x80 >> (i % 8);
+        }
+        peer.bitfield(&bits).await?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match peer
+                .recv(deadline.saturating_duration_since(Instant::now()))
+                .await
+            {
+                Recv::Msg(Wire::Interested) => break,
+                Recv::Msg(_) => {}
+                Recv::Timeout => anyhow::bail!("no Interested on the connection with the v2 hash"),
+                Recv::Closed => anyhow::bail!("the connection with the v2 hash was closed"),
+            }
+        }
+        client.stop().await;
         Ok(())
     })
     .await

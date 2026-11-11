@@ -520,6 +520,19 @@ impl Handshake {
         buf[48..68].copy_from_slice(&self.peer_id.0);
         68
     }
+
+    /// Sets the reserved bit that announces support for BitTorrent v2 (BEP 52: the fourth most
+    /// significant bit of the last reserved byte, `reserved[7] & 0x10`).
+    #[must_use]
+    pub fn with_v2_support(mut self) -> Handshake {
+        self.reserved |= 0x10;
+        self
+    }
+
+    /// True if the peer announces support for BitTorrent v2 (BEP 52).
+    pub fn supports_v2(&self) -> bool {
+        self.reserved.to_be_bytes()[7] & 0x10 != 0
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -794,5 +807,24 @@ mod tests {
                 assert_eq!(buf[..len], tmp[..len]);
             }
         }
+    }
+
+    // BEP 52: "the 4th most significant bit in the last byte of the reserved bitfield".
+    #[test]
+    fn test_handshake_v2_bit() {
+        let h = Handshake::new(Id20::new([1; 20]), Id20::new([2; 20]));
+        assert!(!h.supports_v2());
+        let h = h.with_v2_support();
+        assert!(h.supports_v2());
+        assert!(h.supports_extended());
+        let mut buf = [0u8; 68];
+        assert_eq!(h.serialize_unchecked_len(&mut buf), 68);
+        assert_eq!(buf[20..28], [0, 0, 0, 0, 0, 0x10, 0, 0x10]);
+        let (back, _) = Handshake::deserialize(&buf).unwrap();
+        assert!(back.supports_v2());
+
+        let mut other = buf;
+        other[27] = 0x08;
+        assert!(!Handshake::deserialize(&other).unwrap().0.supports_v2());
     }
 }
