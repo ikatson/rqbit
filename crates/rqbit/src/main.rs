@@ -294,6 +294,10 @@ struct Opts {
     /// Disable trackers (for debugging DHT, LSD and --initial-peers)
     #[arg(long = "disable-trackers", env = "RQBIT_TRACKERS_DISABLE")]
     disable_trackers: bool,
+
+    /// Never download from web seeds (BEP 19 `url-list` / magnet `ws=` HTTP sources)
+    #[arg(long = "disable-web-seeds", env = "RQBIT_WEB_SEEDS_DISABLE")]
+    disable_web_seeds: bool,
 }
 
 #[derive(Parser)]
@@ -686,6 +690,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         allowlist_url: opts.allowlist_url.take(),
         disable_local_service_discovery: opts.disable_local_peer_discovery,
         disable_trackers: opts.disable_trackers,
+        disable_web_seeds: opts.disable_web_seeds,
         trackers,
         peer_limit: opts.peer_limit,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),

@@ -39,6 +39,7 @@ use crate::{
         TorrentMetadata, TorrentStateLive, initializing::TorrentStateInitializing,
     },
     type_aliases::{BoxAsyncReadVectored, BoxAsyncWrite, PeerStream},
+    webseed::{WebSeeds, merge_web_seed_urls},
 };
 use anyhow::{Context, bail};
 use arc_swap::ArcSwapOption;
@@ -117,9 +118,10 @@ pub struct Session {
     listen_addr: Option<SocketAddr>,
     dht: Option<Dht>,
     pub(crate) connector: Arc<StreamConnector>,
-    reqwest_client: reqwest::Client,
+    pub(crate) reqwest_client: reqwest::Client,
     udp_tracker_client: UdpTrackerClient,
     disable_trackers: bool,
+    disable_web_seeds: bool,
 
     // Lifecycle management
     cancellation_token: CancellationToken,
@@ -298,6 +300,23 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    /// Web seeds (BEP 19 HTTP(S) URLs) to download from, added to the ones the torrent or the
+    /// magnet link carries (or, with `replace_web_seeds`, used instead of them). Unusable and
+    /// duplicate URLs are skipped. Can be changed later with [`Session::add_web_seed`] and
+    /// [`Session::remove_web_seed`].
+    #[serde(default)]
+    pub web_seeds: Option<Vec<String>>,
+
+    /// `web_seeds` replaces the web seeds of the torrent or magnet link instead of adding to
+    /// them, so that a web seed removed with [`Session::remove_web_seed`] stays removed when the
+    /// torrent is added again. Without `web_seeds` this does nothing.
+    #[serde(default)]
+    pub replace_web_seeds: bool,
+
+    /// Never contact the web seeds of this torrent. They are still listed and persisted.
+    #[serde(default)]
+    pub disable_web_seeds: bool,
 }
 
 pub struct ListOnlyResponse {
@@ -434,6 +453,10 @@ pub struct SessionOptions {
     /// Disable tracker communication
     pub disable_trackers: bool,
 
+    /// Never contact web seeds (BEP 19), for any torrent of the session. They are still listed
+    /// and persisted.
+    pub disable_web_seeds: bool,
+
     /// Enable fastresume, to restore state quickly after restart.
     pub fastresume: bool,
 
@@ -494,6 +517,7 @@ impl Default for SessionOptions {
             dht: Some(DhtSessionConfig::default()),
             bind_device_name: None,
             disable_trackers: false,
+            disable_web_seeds: false,
             fastresume: false,
             persistence: None,
             peer_id: None,
@@ -551,6 +575,8 @@ struct InternalAddResult {
     metadata: Option<TorrentMetadata>,
     trackers: Vec<url::Url>,
     name: Option<String>,
+    /// The web seeds of the torrent file or the magnet link.
+    web_seeds: Vec<String>,
 }
 
 impl Session {
@@ -811,6 +837,7 @@ impl Session {
                 ipv4_only: opts.ipv4_only,
                 trackers: opts.trackers,
                 disable_trackers: opts.disable_trackers,
+                disable_web_seeds: opts.disable_web_seeds,
                 peer_limit: opts.peer_limit,
                 client_name_and_version,
 
@@ -1127,6 +1154,7 @@ impl Session {
                             .collect(),
                         metadata: None,
                         name: magnet.name,
+                        web_seeds: magnet.web_seeds,
                     }
                 }
                 other => {
@@ -1175,6 +1203,7 @@ impl Session {
                             .filter_map(|t| url::Url::parse(t).ok())
                             .collect(),
                         name: None,
+                        web_seeds: torrent.meta.url_list,
                     }
                 }
             };
@@ -1238,7 +1267,10 @@ impl Session {
             metadata,
             trackers,
             name,
+            web_seeds,
         } = add_res;
+        let web_seeds =
+            merge_web_seed_urls(web_seeds, opts.web_seeds.as_deref(), opts.replace_web_seeds);
 
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
 
@@ -1382,6 +1414,7 @@ impl Session {
                 session: Arc::downgrade(self),
                 magnet_name: name,
                 client_name_and_version: self.client_name_and_version.clone(),
+                web_seeds: WebSeeds::new(web_seeds, opts.disable_web_seeds, self.disable_web_seeds),
             });
 
             let initializing = Arc::new(TorrentStateInitializing::new(
@@ -1613,7 +1646,7 @@ impl Session {
         )
     }
 
-    async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
+    pub(crate) async fn try_update_persistence_metadata(&self, handle: &ManagedTorrentHandle) {
         if let Some(p) = self.persistence.as_ref()
             && let Err(e) = p.update_metadata(handle.id(), handle).await
         {

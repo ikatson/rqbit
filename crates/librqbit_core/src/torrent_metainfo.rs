@@ -66,6 +66,17 @@ pub struct TorrentMetaV1<BufType> {
     pub publisher_url: Option<BufType>,
     #[serde(rename = "creation date", skip_serializing_if = "Option::is_none")]
     pub creation_date: Option<usize>,
+    /// BEP 19 web seeds (`url-list`): HTTP(S) URLs serving the torrent's
+    /// content. A string or a list of strings in the file; entries that are
+    /// not usable `http` / `https` URLs are dropped, duplicates removed and the
+    /// count bounded (see [`crate::web_seed`]). BEP 17 `httpseeds` is ignored.
+    #[serde(
+        rename = "url-list",
+        default,
+        deserialize_with = "crate::web_seed::deserialize_url_list",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub url_list: Vec<String>,
 
     #[serde(skip)]
     pub info_hash: Id20,
@@ -85,6 +96,14 @@ impl<BufType> TorrentMetaV1<BufType> {
 pub struct TorrentMetaV1Info<BufType> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<BufType>,
+    /// `name.utf-8`: the name in UTF-8, set by some clients next to a `name` in a legacy
+    /// encoding. Not used for file names on disk; web seed URLs prefer it, like libtorrent.
+    #[serde(
+        rename = "name.utf-8",
+        default = "none",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub name_utf8: Option<BufType>,
     pub pieces: BufType,
     #[serde(rename = "piece length")]
     pub piece_length: u32,
@@ -444,6 +463,14 @@ const fn none<T>() -> Option<T> {
 pub struct TorrentMetaV1File<BufType> {
     pub length: u64,
     pub path: Vec<BufType>,
+    /// `path.utf-8`: the path in UTF-8, set by some clients next to a `path` in a legacy
+    /// encoding. Not used for file names on disk; web seed URLs prefer it, like libtorrent.
+    #[serde(
+        rename = "path.utf-8",
+        default = "none",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub path_utf8: Option<Vec<BufType>>,
 
     #[serde(default = "none", skip_serializing_if = "Option::is_none")]
     pub attr: Option<BufType>,
@@ -467,6 +494,7 @@ where
         TorrentMetaV1File {
             length: self.length,
             path: self.path.clone_to_owned(within_buffer),
+            path_utf8: self.path_utf8.clone_to_owned(within_buffer),
             attr: self.attr.clone_to_owned(within_buffer),
             sha1: self.sha1.clone_to_owned(within_buffer),
             symlink_path: self.symlink_path.clone_to_owned(within_buffer),
@@ -483,6 +511,7 @@ where
     fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
         TorrentMetaV1Info {
             name: self.name.clone_to_owned(within_buffer),
+            name_utf8: self.name_utf8.clone_to_owned(within_buffer),
             pieces: self.pieces.clone_to_owned(within_buffer),
             piece_length: self.piece_length,
             length: self.length,
@@ -513,6 +542,7 @@ where
             publisher: self.publisher.clone_to_owned(within_buffer),
             publisher_url: self.publisher_url.clone_to_owned(within_buffer),
             creation_date: self.creation_date,
+            url_list: self.url_list.clone(),
             info_hash: self.info_hash,
         }
     }
@@ -624,6 +654,129 @@ mod tests {
             matches!(err, Error::BadTorrentDuplicateFilenames),
             "duplicate real filenames must still be rejected, got {err:?}"
         );
+    }
+
+    // A single-file torrent with `url-list` set to the given raw bencoded value.
+    fn torrent_with_url_list(url_list: Option<&[u8]>) -> Vec<u8> {
+        let info = bdict(&[
+            (b"length".as_slice(), bint(10)),
+            (b"name".as_slice(), bstr(b"f")),
+            (b"piece length".as_slice(), bint(16384)),
+            (b"pieces".as_slice(), bstr(&[0u8; 20])),
+        ]);
+        let mut entries: Vec<(&[u8], Vec<u8>)> = vec![(b"info".as_slice(), info)];
+        if let Some(v) = url_list {
+            entries.push((b"url-list".as_slice(), v.to_vec()));
+        }
+        bdict(&entries)
+    }
+
+    fn blist(items: &[Vec<u8>]) -> Vec<u8> {
+        let mut o = vec![b'l'];
+        for i in items {
+            o.extend_from_slice(i);
+        }
+        o.push(b'e');
+        o
+    }
+
+    #[test]
+    fn test_url_list_absent() {
+        let bytes = torrent_with_url_list(None);
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        assert!(t.url_list.is_empty());
+    }
+
+    #[test]
+    fn test_url_list_string() {
+        let bytes = torrent_with_url_list(Some(&bstr(b"http://example.com/f")));
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        assert_eq!(t.url_list, vec!["http://example.com/f"]);
+
+        // A string that is not a usable URL is dropped.
+        let bytes = torrent_with_url_list(Some(&bstr(b"ftp://example.com/f")));
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        assert!(t.url_list.is_empty());
+    }
+
+    #[test]
+    fn test_url_list_list_skips_garbage_and_duplicates() {
+        let value = blist(&[
+            bstr(b"http://a.example/f"),
+            bint(5),
+            bstr(b"ftp://x/"),
+            blist(&[bstr(b"http://nested.example/")]),
+            bdict(&[(b"k".as_slice(), bstr(b"http://dict.example/"))]),
+            bstr(b"http://a.example/f"),
+            bstr(b"\xff\xfe"),
+            bstr(b""),
+            bstr(b"https://b.example/dir/"),
+        ]);
+        let bytes = torrent_with_url_list(Some(&value));
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        assert_eq!(
+            t.url_list,
+            vec!["http://a.example/f", "https://b.example/dir/"]
+        );
+    }
+
+    #[test]
+    fn test_url_list_bounded() {
+        let items: Vec<Vec<u8>> = (0..crate::web_seed::MAX_WEB_SEEDS + 10)
+            .map(|i| bstr(format!("http://h{i}.example/").as_bytes()))
+            .collect();
+        let bytes = torrent_with_url_list(Some(&blist(&items)));
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        assert_eq!(t.url_list.len(), crate::web_seed::MAX_WEB_SEEDS);
+        assert_eq!(t.url_list[0], "http://h0.example/");
+    }
+
+    #[test]
+    fn test_url_list_of_wrong_type_is_ignored() {
+        for value in [
+            bint(7),
+            bdict(&[(b"a".as_slice(), bstr(b"http://x/"))]),
+            blist(&[]),
+        ] {
+            let bytes = torrent_with_url_list(Some(&value));
+            let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+            assert!(t.url_list.is_empty(), "{value:?}");
+        }
+    }
+
+    #[test]
+    #[cfg(any(feature = "sha1-ring", feature = "sha1-crypto-hash"))]
+    fn test_url_list_does_not_change_info_hash() {
+        let without = torrent_from_bytes(&torrent_with_url_list(None))
+            .unwrap()
+            .info_hash;
+        let bytes = torrent_with_url_list(Some(&bstr(b"http://example.com/f")));
+        let with = torrent_from_bytes(&bytes).unwrap().info_hash;
+        assert_eq!(without, with);
+    }
+
+    #[test]
+    fn test_url_list_serialize_round_trip() {
+        let value = blist(&[bstr(b"http://a.example/"), bstr(b"https://b.example/f")]);
+        let bytes = torrent_with_url_list(Some(&value));
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        let mut out = Vec::new();
+        bencode::bencode_serialize_to_writer(&t, &mut out).unwrap();
+        let needle = [b"8:url-list".as_slice(), &value].concat();
+        assert!(
+            out.windows(needle.len()).any(|w| w == needle),
+            "{}",
+            String::from_utf8_lossy(&out)
+        );
+        let back = from_bytes::<TorrentMetaV1Borrowed>(&out).unwrap();
+        assert_eq!(back.url_list, t.url_list);
+
+        // An empty list is not written.
+        let bytes = torrent_with_url_list(None);
+        let t = from_bytes::<TorrentMetaV1Borrowed>(&bytes).unwrap();
+        let mut out = Vec::new();
+        bencode::bencode_serialize_to_writer(&t, &mut out).unwrap();
+        assert!(!out.windows(8).any(|w| w == b"url-list"));
     }
 
     fn bstr(b: &[u8]) -> Vec<u8> {

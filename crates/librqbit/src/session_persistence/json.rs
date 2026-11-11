@@ -165,6 +165,8 @@ impl JsonSessionPersistenceStore {
             torrent_bytes: Default::default(),
             only_files: torrent.only_files().clone(),
             is_paused: torrent.is_paused(),
+            web_seeds: Some(torrent.web_seed_urls()),
+            disable_web_seeds: torrent.web_seeds_disabled_for_torrent(),
             output_folder: torrent.shared().options.output_folder.clone(),
         };
 

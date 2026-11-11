@@ -195,6 +195,9 @@ pub struct ManagedTorrentShared {
     pub(crate) magnet_name: Option<String>,
 
     pub(crate) client_name_and_version: String,
+
+    /// The web seeds (BEP 19) of the torrent.
+    pub(crate) web_seeds: crate::webseed::WebSeeds,
 }
 
 impl ManagedTorrentShared {
