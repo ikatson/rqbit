@@ -260,6 +260,29 @@ impl PieceTracker {
         count
     }
 
+    /// Moves one piece from IN_FLIGHT back to QUEUED if the peer owns it. Returns whether it
+    /// did: the piece may have been completed or stolen meanwhile.
+    pub fn release_piece_owned_by(&mut self, piece: ValidPieceIndex, peer: PeerHandle) -> bool {
+        if self
+            .inflight
+            .get(&piece)
+            .is_none_or(|info| info.peer != peer)
+        {
+            return false;
+        }
+        self.inflight.remove(&piece);
+        self.chunks.mark_piece_broken_if_not_have(piece);
+        true
+    }
+
+    /// The pieces the peer owns, i.e. that are in flight to it.
+    pub fn pieces_owned_by(&self, peer: PeerHandle) -> impl Iterator<Item = ValidPieceIndex> + '_ {
+        self.inflight
+            .iter()
+            .filter(move |(_, info)| info.peer == peer)
+            .map(|(p, _)| *p)
+    }
+
     // === QUERIES ===
 
     /// Get the inflight info for a piece, if it's currently being downloaded.

@@ -280,6 +280,9 @@ pub(crate) struct LivePeerState {
     pub tx: PeerTx,
 
     pub connection_kind: ConnectionKind,
+
+    // Both handshakes carried the Fast Extension bit (BEP 6).
+    pub fast_extension: bool,
 }
 
 impl LivePeerState {
@@ -300,6 +303,7 @@ impl LivePeerState {
             request_slots_changed: Default::default(),
             tx,
             connection_kind,
+            fast_extension: false,
         }
     }
 

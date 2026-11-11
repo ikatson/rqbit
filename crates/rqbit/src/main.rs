@@ -300,6 +300,10 @@ struct Opts {
     /// Disable trackers (for debugging DHT, LSD and --initial-peers)
     #[arg(long = "disable-trackers", env = "RQBIT_TRACKERS_DISABLE")]
     disable_trackers: bool,
+
+    /// Disable the Fast Extension (BEP 6: HaveAll / HaveNone, rejects, allowed-fast pieces)
+    #[arg(long = "disable-fast-extension", env = "RQBIT_FAST_EXTENSION_DISABLE")]
+    disable_fast_extension: bool,
 }
 
 #[derive(Parser)]
@@ -699,6 +703,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
         peer_policy: None,
+        disable_fast_extension: opts.disable_fast_extension,
     };
 
     #[allow(clippy::needless_update)]

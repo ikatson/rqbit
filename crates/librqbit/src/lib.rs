@@ -50,6 +50,7 @@ mod chunk_tracker;
 mod create_torrent_file;
 mod dht_utils;
 mod error;
+mod fast;
 pub mod file_info;
 mod file_ops;
 #[cfg(feature = "http-api")]

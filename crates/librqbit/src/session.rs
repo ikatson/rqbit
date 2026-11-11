@@ -498,6 +498,9 @@ pub struct SessionOptions {
     /// Decides which peers may connect, and what each connection may do (see [`PeerPolicy`]).
     /// Defaults to no policy: every peer is admitted and nothing is limited.
     pub peer_policy: Option<Arc<dyn PeerPolicy>>,
+    /// Do not advertise the Fast Extension (BEP 6). Default off: handshakes set the bit, and a
+    /// connection uses Fast when the peer set it too.
+    pub disable_fast_extension: bool,
 }
 
 impl Default for SessionOptions {
@@ -528,6 +531,7 @@ impl Default for SessionOptions {
             ipv4_only: false,
             client_name_and_version: None,
             peer_policy: None,
+            disable_fast_extension: false,
         }
     }
 }
@@ -653,11 +657,14 @@ impl Session {
             } else {
                 None
             };
-            let peer_opts = opts
+            let mut peer_opts = opts
                 .connect
                 .as_ref()
                 .and_then(|p| p.peer_opts)
                 .unwrap_or_default();
+            // Fast is a session-wide decision: every handshake we send, including magnet
+            // metadata reads, advertises it unless the session turned it off.
+            peer_opts.disable_fast_extension = opts.disable_fast_extension;
 
             async fn persistence_factory(
                 opts: &SessionOptions,
@@ -1074,6 +1081,7 @@ impl Session {
             max_request_window: other
                 .max_request_window
                 .or(self.peer_opts.max_request_window),
+            disable_fast_extension: self.peer_opts.disable_fast_extension,
         }
     }
 
@@ -1396,6 +1404,7 @@ impl Session {
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     peer_max_request_window: peer_opts.max_request_window,
+                    disable_fast_extension: peer_opts.disable_fast_extension,
                     allow_overwrite: opts.overwrite,
                     output_folder,
                     ratelimits: opts.ratelimits,

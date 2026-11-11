@@ -29,6 +29,8 @@ pub struct PeerStats {
     pub state: &'static str,
     pub conn_kind: Option<ConnectionKind>,
     pub client_name: Option<String>,
+    /// The Fast Extension (BEP 6) was negotiated on the live connection.
+    pub fast_extension: bool,
 }
 
 impl From<&super::atomic::PeerCountersAtomic> for PeerCounters {
@@ -67,6 +69,10 @@ impl From<&Peer> for PeerStats {
             client_name: match state {
                 PeerState::Live(l) => l.client_name.clone(),
                 _ => None,
+            },
+            fast_extension: match state {
+                PeerState::Live(l) => l.fast_extension,
+                _ => false,
             },
         }
     }

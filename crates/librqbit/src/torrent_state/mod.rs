@@ -114,6 +114,8 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_connect_timeout: Option<Duration>,
     pub peer_read_write_timeout: Option<Duration>,
     pub peer_max_request_window: Option<usize>,
+    /// Session-wide: do not advertise the Fast Extension (BEP 6).
+    pub disable_fast_extension: bool,
     pub allow_overwrite: bool,
     pub output_folder: PathBuf,
     pub ratelimits: LimitsConfig,

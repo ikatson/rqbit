@@ -256,6 +256,21 @@ pub enum Message<'a> {
     AllowedFast(u32),
 }
 
+impl Message<'_> {
+    /// Whether this message exists only in the Fast Extension (BEP 6). A peer may send these
+    /// only when both handshakes carried the Fast bit.
+    pub fn is_fast_extension(&self) -> bool {
+        matches!(
+            self,
+            Message::SuggestPiece(_)
+                | Message::HaveAll
+                | Message::HaveNone
+                | Message::RejectRequest(_)
+                | Message::AllowedFast(_)
+        )
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum SerializeError {
     #[error("not enough space in buffer")]

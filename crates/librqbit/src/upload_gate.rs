@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc,
-        atomic::{AtomicU8, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
     },
 };
 
@@ -40,6 +40,9 @@ pub(crate) fn block_key(chunk: &ChunkInfo) -> BlockKey {
 struct PendingBlock {
     queued: u32,
     cancelled: u32,
+    // An allowed-fast request (BEP 6): a choke does not drop it, it is served while the peer
+    // is choked.
+    exempt: bool,
 }
 
 #[derive(Default)]
@@ -50,12 +53,17 @@ struct Pending {
     cancelled: u32,
     // We unchoked the peer. A connection starts choked (BEP 3).
     unchoked: bool,
+    // The allowed-fast set we offered the peer (BEP 6), and its blocks served while choked.
+    // Under the same lock as the queue, so accepting a request past the choke is one decision.
+    fast_upload: crate::fast::FastUpload,
 }
 
 /// Shared between the reader side of a connection (which registers requests and cancels), the
 /// choker, the upload schedulers and the writer: it knows which accepted upload requests must
 /// still be served. A request is dropped when the peer cancelled it, or when the connection
-/// was choked (it lost its upload slot, or the policy choked or disconnected it).
+/// was choked (it lost its upload slot, or the policy choked or disconnected it). With the Fast
+/// Extension the caller rejects what a choke dropped; allowed-fast requests are exempt and stay
+/// queued.
 #[derive(Default)]
 pub(crate) struct UploadGate {
     level: AtomicU8,
@@ -64,6 +72,24 @@ pub(crate) struct UploadGate {
     queued: AtomicU32,
     cancelled: AtomicU32,
     pending: Mutex<Pending>,
+    // Both handshakes carried the Fast Extension bit (BEP 6). Set once, at the handshake.
+    fast: AtomicBool,
+    // Rejects sent in the current choke period for requests turned down on arrival, see
+    // `fast::MAX_REJECTS_PER_CHOKE`.
+    rejects: AtomicU32,
+}
+
+/// What [`UploadGate::register_fast`] did with a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Registered {
+    /// Queued: the peer is unchoked.
+    Queued,
+    /// Queued past the choke, as an allowed-fast request.
+    QueuedAllowedFast,
+    /// Not queued: the peer is choked.
+    Choked,
+    /// Not queued: as many requests of the connection as allowed wait already.
+    Full,
 }
 
 impl UploadGate {
@@ -74,6 +100,29 @@ impl UploadGate {
     /// Escalates the connection's verdict. Returns the previous one.
     pub fn raise(&self, to: PeerVerdict) -> PeerVerdict {
         PeerVerdict::from_u8(self.level.fetch_max(to as u8, Ordering::AcqRel))
+    }
+
+    /// Whether the choker (or the policy) currently allows this peer an upload slot.
+    pub fn is_unchoked(&self) -> bool {
+        self.pending.lock().unchoked
+    }
+
+    /// Records that the Fast Extension was negotiated on the connection.
+    pub fn set_fast(&self, fast: bool) {
+        self.fast.store(fast, Ordering::Release);
+    }
+
+    /// Whether the Fast Extension was negotiated on the connection: the peer then expects a
+    /// `RejectRequest` for every request we will not serve.
+    pub fn is_fast(&self) -> bool {
+        self.fast.load(Ordering::Acquire)
+    }
+
+    /// Takes one reject out of the budget of the current choke period (see
+    /// [`MAX_REJECTS_PER_CHOKE`](crate::fast::MAX_REJECTS_PER_CHOKE)). `false`: the peer keeps
+    /// asking for what it is not given, the request is to be dropped without an answer.
+    pub fn take_reject(&self) -> bool {
+        self.rejects.fetch_add(1, Ordering::AcqRel) < crate::fast::MAX_REJECTS_PER_CHOKE
     }
 
     /// The peer asked for the block. `false`: the request is ignored, because the peer is
@@ -89,26 +138,91 @@ impl UploadGate {
         true
     }
 
-    /// We choke or unchoke the peer. A choke drops every request that waits: the peer asks
-    /// again once it is unchoked.
-    pub fn set_choked(&self, choked: bool) {
+    /// [`UploadGate::register`] for a connection with the Fast Extension (BEP 6), which needs
+    /// to know why a request was not accepted to answer it. A block of a piece in the
+    /// allowed-fast set we offered the peer is accepted while the peer is choked too, once per
+    /// block and only while the policy has nothing against the peer (it bypasses the choke,
+    /// not the queue bound), and a later choke does not drop it.
+    pub fn register_fast(&self, key: BlockKey, max_queued: u32) -> Registered {
+        let mut g = self.pending.lock();
+        if g.queued >= max_queued {
+            return Registered::Full;
+        }
+        let offered = g.fast_upload.is_offered(key.0);
+        let unchoked = g.unchoked;
+        if !unchoked
+            && !(offered && self.level() == PeerVerdict::Allow && g.fast_upload.take_block(key))
+        {
+            return Registered::Choked;
+        }
+        let b = g.blocks.entry(key).or_default();
+        b.queued += 1;
+        b.exempt |= offered;
+        g.queued += 1;
+        self.queued.store(g.queued, Ordering::Release);
+        if unchoked {
+            Registered::Queued
+        } else {
+            Registered::QueuedAllowedFast
+        }
+    }
+
+    /// Whether we already decided which allowed-fast set to offer the peer.
+    pub fn allowed_fast_decided(&self) -> bool {
+        self.pending.lock().fast_upload.decided()
+    }
+
+    /// Records the allowed-fast set offered to the peer (possibly empty); decided once.
+    pub fn offer_allowed_fast(&self, pieces: Vec<u32>) {
+        self.pending.lock().fast_upload.set_offered(pieces);
+    }
+
+    /// We choke or unchoke the peer. A choke drops every request that waits, except
+    /// allowed-fast ones while the policy has nothing against the peer (a policy choke or
+    /// disconnect drops them too). On a connection with the Fast Extension the dropped ones are
+    /// returned (one entry per request still to be served) so the caller can reject each of
+    /// them; a request the peer already cancelled is not returned, it was answered when the
+    /// cancel arrived. Without the extension nothing is returned: the peer asks again once it is
+    /// unchoked.
+    pub fn set_choked(&self, choked: bool) -> Vec<BlockKey> {
         let mut g = self.pending.lock();
         g.unchoked = !choked;
-        if choked {
-            g.blocks.clear();
-            g.queued = 0;
-            g.cancelled = 0;
-            self.queued.store(0, Ordering::Release);
-            self.cancelled.store(0, Ordering::Release);
+        self.rejects.store(0, Ordering::Release);
+        if !choked {
+            return Vec::new();
         }
+        let keep_exempt = self.level() == PeerVerdict::Allow;
+        self.drop_blocks(&mut g, |b| !(keep_exempt && b.exempt))
+    }
+
+    fn drop_blocks(&self, g: &mut Pending, drop: impl Fn(&PendingBlock) -> bool) -> Vec<BlockKey> {
+        // Only a Fast connection answers what was dropped; the others need no list.
+        let collect = self.is_fast();
+        let mut dropped = Vec::new();
+        g.blocks.retain(|key, b| {
+            if !drop(b) {
+                return true;
+            }
+            if collect {
+                let live = b.queued.saturating_sub(b.cancelled);
+                dropped.extend(std::iter::repeat_n(*key, live as usize));
+            }
+            false
+        });
+        g.queued = g.blocks.values().map(|b| b.queued).sum();
+        g.cancelled = g.blocks.values().map(|b| b.cancelled).sum();
+        self.queued.store(g.queued, Ordering::Release);
+        self.cancelled.store(g.cancelled, Ordering::Release);
+        dropped
     }
 
     /// The peer cancelled the block. Only cancels a request that is still waiting: one that
     /// was already sent (or never made) has nothing to cancel, and remembering the cancel would
-    /// swallow a later legitimate request for the same block.
-    pub fn cancel(&self, key: BlockKey) {
+    /// swallow a later legitimate request for the same block. Returns whether a waiting request
+    /// was cancelled, so a Fast connection can answer it with `RejectRequest`.
+    pub fn cancel(&self, key: BlockKey) -> bool {
         if self.queued.load(Ordering::Acquire) == 0 {
-            return;
+            return false;
         }
         let mut g = self.pending.lock();
         if let Some(b) = g.blocks.get_mut(&key)
@@ -117,7 +231,9 @@ impl UploadGate {
             b.cancelled += 1;
             g.cancelled += 1;
             self.cancelled.store(g.cancelled, Ordering::Release);
+            return true;
         }
+        false
     }
 
     /// Takes one waiting request for the block out of the queue. Returns whether it has to be
