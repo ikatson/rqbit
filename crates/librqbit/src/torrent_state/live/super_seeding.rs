@@ -404,6 +404,12 @@ impl PeerHandler {
             return Ok(());
         }
         let shared = self.state.super_seeding.clone();
+        // An outgoing connection is still being made: the wait for the piece set starts with
+        // the handshake.
+        self.wait_for_any_notify(&self.on_bitfield_notify, || {
+            self.state.peers.with_live(self.addr, |_| ()).is_some()
+        })
+        .await;
         let piece_set = self.wait_for_any_notify(&self.on_bitfield_notify, || {
             self.first_message_received.load(Ordering::Relaxed)
                 || self

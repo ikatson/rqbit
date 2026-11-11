@@ -1437,6 +1437,8 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             !self.state.shared.options.disable_fast_extension && handshake.supports_fast(),
         );
         self.state.set_peer_live(self.addr, handshake, ckind);
+        // A super seeding connection waits for the handshake before it waits for the piece set.
+        self.on_bitfield_notify.notify_waiters();
         self.policy.mark_established();
         self.policy_event(PeerEvent::Handshake {
             peer_id,
@@ -2432,6 +2434,9 @@ impl PeerHandler {
 
             // Acquire a piece using the strategy: try steal (10x) → reserve → steal (3x).
             let new_piece_notify = self.state.new_pieces_notify.notified();
+            // The peer announcing a piece (a super seeder shows its pieces one `Have` at a time)
+            // may give us something to ask it for.
+            let peer_pieces_notify = self.on_bitfield_notify.notified();
             // With the Fast Extension the requester also runs while choked, for allowed-fast
             // pieces. When none of them is left to ask for, the unchoke (or a new allowed-fast
             // piece) has to wake it, not only a piece coming back to the queue.
@@ -2459,6 +2464,7 @@ impl PeerHandler {
                         async {
                             tokio::select! {
                                 _ = new_piece_notify => {}
+                                _ = peer_pieces_notify => {}
                                 _ = slots_changed_notify => {}
                             }
                         }
