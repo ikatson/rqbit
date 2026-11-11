@@ -776,6 +776,19 @@ where
     }
 }
 
+/// The transaction id of a BEP 44 `put` query that [`deserialize_message`] refused, e.g. for a
+/// `k` or `sig` of the wrong length. BEP 44 has such a put answered with error 203 rather than
+/// dropped. `None` when `buf` is not a `put` query at all.
+pub fn malformed_put_transaction_id(buf: &[u8]) -> Option<ByteBufOwned> {
+    let de: RawMessage<ByteBuf> = bencode::from_bytes(buf).ok()?;
+    match (de.message_type, de.method_name) {
+        (MessageType::Request, Some(method)) if method.as_ref() == b"put" => {
+            Some(ByteBufOwned::from(de.transaction_id.as_ref()))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;

@@ -179,7 +179,9 @@ fn canonical_string(buf: &[u8], pos: usize) -> Option<(&[u8], usize)> {
     Some((buf.get(colon + 1..end)?, end))
 }
 
-/// A mutable item as found in the DHT, with everything needed to check (and re-publish) it.
+/// A mutable item as found in the DHT. Together with the salt it was looked up with, it has
+/// everything needed to check it and to re-publish it (see
+/// [`crate::DhtState::put_mutable_signed`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MutableItem {
     /// The bencoded value, byte for byte as it was signed.

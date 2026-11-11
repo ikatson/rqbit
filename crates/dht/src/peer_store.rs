@@ -134,14 +134,31 @@ impl PeerStore {
     }
 
     /// Sets our node id of one address family, which decides which info hashes are close enough
-    /// to us to store peers for.
+    /// to us to store peers for. Peers of that family stored for info hashes that are too far
+    /// from the new id are dropped: we would not take them now, and they would hold places that
+    /// announces near the new id need.
     pub(crate) fn set_self_id(&self, is_v4: bool, id: Id20) {
-        let mut ids = self.self_ids.write();
-        if is_v4 {
-            ids.0 = id;
-        } else {
-            ids.1 = id;
+        {
+            let mut ids = self.self_ids.write();
+            if is_v4 {
+                ids.0 = id;
+            } else {
+                ids.1 = id;
+            }
         }
+        self.peers.retain(|info_hash, peers| {
+            if info_hash.distance(&id) > self.max_distance {
+                peers.retain(|p| p.addr.is_ipv4() != is_v4);
+            }
+            !peers.is_empty()
+        });
+        // Counted again rather than decremented: an announce stored meanwhile may not have
+        // added itself to the count yet, and the count must not wrap below zero for it.
+        let len: usize = self.peers.iter().map(|e| e.value().len()).sum();
+        self.peers_len.store(
+            u32::try_from(len).unwrap_or(u32::MAX),
+            std::sync::atomic::Ordering::SeqCst,
+        );
     }
 
     #[cfg(test)]
@@ -229,5 +246,48 @@ impl PeerStore {
     #[allow(dead_code)]
     pub fn garbage_collect_peers(&self) {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    fn announce(store: &PeerStore, info_hash: Id20, addr: SocketAddr) -> bool {
+        let id = Id20::new([1; 20]);
+        let token = store.gen_token_for(id, addr);
+        let announce = AnnouncePeer {
+            id,
+            implied_port: 1,
+            info_hash,
+            port: 0,
+            token: ByteBufOwned::from(&token[..]),
+        };
+        store.store_peer(&announce, addr)
+    }
+
+    #[test]
+    fn moving_the_id_drops_far_peers_of_that_family() {
+        let old = Id20::new([0; 20]);
+        let store = PeerStore::new(old);
+        let v4 = SocketAddr::from_str("1.2.3.4:5").unwrap();
+        let v6 = SocketAddr::from_str("[2001:db8::1]:5").unwrap();
+        let near_old = Id20::new([0; 20]);
+        assert!(announce(&store, near_old, v4));
+        assert!(announce(&store, near_old, v6));
+        assert_eq!(store.peers_len.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        // Only the IPv4 id moves, far away: the IPv4 peer goes, the IPv6 one stays.
+        let new = Id20::new([0xff; 20]);
+        store.set_self_id(true, new);
+        assert_eq!(store.peers_len.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let left = store.get_for_info_hash(near_old, Want::Both);
+        assert_eq!(left.len(), 1);
+
+        // Announces near the new id are taken, near the old one no longer.
+        assert!(announce(&store, new, v4));
+        assert!(!announce(&store, near_old, v4));
     }
 }
