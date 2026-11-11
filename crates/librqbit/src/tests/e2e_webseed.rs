@@ -25,11 +25,11 @@ use crate::{
     torrent_state::ManagedTorrentHandle,
 };
 
-const PIECE: usize = 16 * 1024;
+pub(super) const PIECE: usize = 16 * 1024;
 const KIB: u32 = 1024;
 const WAIT: Duration = Duration::from_secs(30);
 
-async fn run(fut: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
+pub(super) async fn run(fut: impl Future<Output = anyhow::Result<()>>) -> anyhow::Result<()> {
     setup_test_logging();
     timeout(Duration::from_secs(90), fut)
         .await
@@ -51,13 +51,13 @@ async fn until(what: &str, mut cond: impl FnMut() -> bool) -> anyhow::Result<()>
     .with_context(|| format!("timed out waiting until {what}"))
 }
 
-async fn wait_completed(handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
+pub(super) async fn wait_completed(handle: &ManagedTorrentHandle) -> anyhow::Result<()> {
     timeout(WAIT, handle.wait_until_completed())
         .await
         .context("the torrent did not complete")?
 }
 
-fn only_seed(handle: &ManagedTorrentHandle) -> anyhow::Result<WebSeedStats> {
+pub(super) fn only_seed(handle: &ManagedTorrentHandle) -> anyhow::Result<WebSeedStats> {
     match &handle.web_seeds()[..] {
         [one] => Ok(one.clone()),
         other => bail!("expected one web seed, got {other:?}"),
@@ -69,24 +69,24 @@ fn only_seed(handle: &ManagedTorrentHandle) -> anyhow::Result<WebSeedStats> {
 // ---------------------------------------------------------------------------------------------
 
 /// An entry of the file list of a multi-file torrent.
-enum Entry<'a> {
+pub(super) enum Entry<'a> {
     File(&'a [&'a str], usize),
     /// A BEP 47 padding file.
     Pad(usize),
 }
 
-struct Torrent {
-    bytes: Bytes,
-    name: String,
-    single: bool,
+pub(super) struct Torrent {
+    pub(super) bytes: Bytes,
+    pub(super) name: String,
+    pub(super) single: bool,
     /// The path components and content of every file that is not padding, in torrent order.
-    files: Vec<(Vec<String>, Vec<u8>)>,
-    pieces: u64,
+    pub(super) files: Vec<(Vec<String>, Vec<u8>)>,
+    pub(super) pieces: u64,
 }
 
 impl Torrent {
     /// The decoded path of file `i` on the server, under the web seed URL of the server.
-    fn url_path(&self, i: usize) -> String {
+    pub(super) fn url_path(&self, i: usize) -> String {
         if self.single {
             format!("/seed/{}", self.name)
         } else {
@@ -94,14 +94,14 @@ impl Torrent {
         }
     }
 
-    fn server_files(&self) -> Vec<(String, Vec<u8>)> {
+    pub(super) fn server_files(&self) -> Vec<(String, Vec<u8>)> {
         (0..self.files.len())
             .map(|i| (self.url_path(i), self.files[i].1.clone()))
             .collect()
     }
 
     /// Where file `i` is when the torrent is downloaded to the output folder `out`.
-    fn disk_path(&self, out: &Path, i: usize) -> PathBuf {
+    pub(super) fn disk_path(&self, out: &Path, i: usize) -> PathBuf {
         if self.single {
             out.join(&self.name)
         } else {
@@ -112,12 +112,12 @@ impl Torrent {
         }
     }
 
-    fn content_len(&self) -> u64 {
+    pub(super) fn content_len(&self) -> u64 {
         self.files.iter().map(|(_, d)| d.len() as u64).sum()
     }
 
     /// Asserts that the files in `out` are the torrent's, byte for byte.
-    fn check_files(&self, out: &Path) -> anyhow::Result<()> {
+    pub(super) fn check_files(&self, out: &Path) -> anyhow::Result<()> {
         for (i, (path, data)) in self.files.iter().enumerate() {
             let on_disk = std::fs::read(self.disk_path(out, i))
                 .with_context(|| format!("reading {path:?}"))?;
@@ -152,11 +152,11 @@ fn pseudo_random(len: usize, seed: u64) -> Vec<u8> {
         .collect()
 }
 
-fn single_file(name: &str, len: usize, url_list: &[&str]) -> Torrent {
+pub(super) fn single_file(name: &str, len: usize, url_list: &[&str]) -> Torrent {
     build(name, true, &[Entry::File(&[], len)], url_list)
 }
 
-fn multi_file(name: &str, entries: &[Entry<'_>], url_list: &[&str]) -> Torrent {
+pub(super) fn multi_file(name: &str, entries: &[Entry<'_>], url_list: &[&str]) -> Torrent {
     build(name, false, entries, url_list)
 }
 
@@ -266,15 +266,15 @@ fn client_opts() -> SessionOptions {
     }
 }
 
-struct Client {
-    session: Arc<Session>,
-    handle: ManagedTorrentHandle,
-    out: PathBuf,
+pub(super) struct Client {
+    pub(super) session: Arc<Session>,
+    pub(super) handle: ManagedTorrentHandle,
+    pub(super) out: PathBuf,
     _dir: TempDir,
 }
 
 impl Client {
-    async fn start(torrent: &Torrent, opts: AddTorrentOptions) -> anyhow::Result<Self> {
+    pub(super) async fn start(torrent: &Torrent, opts: AddTorrentOptions) -> anyhow::Result<Self> {
         Self::start_with(torrent, client_opts(), opts).await
     }
 
@@ -297,7 +297,7 @@ impl Client {
         })
     }
 
-    fn checked_pieces(&self) -> u64 {
+    pub(super) fn checked_pieces(&self) -> u64 {
         self.handle
             .live()
             .map_or(0, |l| l.stats_snapshot().downloaded_and_checked_pieces)
