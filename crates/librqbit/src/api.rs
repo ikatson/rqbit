@@ -1,4 +1,11 @@
-use std::{collections::HashSet, marker::PhantomData, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    marker::PhantomData,
+    net::SocketAddr,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::Context;
 use buffers::ByteBufOwned;
@@ -15,6 +22,7 @@ use crate::{
         AddTorrent, AddTorrentOptions, AddTorrentResponse, ListOnlyResponse, Session, TorrentId,
     },
     session_stats::snapshot::SessionStatsSnapshot,
+    storage::MoveStorageMode,
     torrent_state::{
         FileStream, ManagedTorrentHandle,
         peer::stats::snapshot::{PeerStatsFilter, PeerStatsSnapshot},
@@ -246,6 +254,7 @@ impl Api {
             handle.name().as_deref(),
             only_files.as_deref(),
             output_folder,
+            &handle.shared().renamed_files(),
         )
     }
 
@@ -259,7 +268,9 @@ impl Api {
         file_idx: usize,
     ) -> Result<&'static str> {
         let handle = self.mgr_handle(idx)?;
-        handle.with_metadata(|r| torrent_file_mime_type(&r.info, file_idx))?
+        handle.with_metadata(|r| {
+            torrent_file_mime_type(handle.shared().file_relative_path(r, file_idx))
+        })?
     }
 
     pub fn api_peer_stats(
@@ -336,6 +347,52 @@ impl Api {
         Ok(Default::default())
     }
 
+    /// See [`Session::force_recheck`]: returns once the check has started.
+    pub async fn api_torrent_action_force_recheck(
+        &self,
+        idx: TorrentIdOrHash,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .force_recheck(&handle)
+            .await
+            .context("error starting the recheck")
+            .with_status(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
+    /// See [`Session::move_storage`].
+    pub async fn api_torrent_action_move_storage(
+        &self,
+        idx: TorrentIdOrHash,
+        output_folder: PathBuf,
+        mode: MoveStorageMode,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .move_storage(&handle, output_folder, mode)
+            .await
+            .context("error moving the torrent's files")
+            .with_status(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
+    /// See [`Session::rename_file`].
+    pub async fn api_torrent_action_rename_file(
+        &self,
+        idx: TorrentIdOrHash,
+        file_index: usize,
+        new_relative_path: PathBuf,
+    ) -> Result<EmptyJsonResponse> {
+        let handle = self.mgr_handle(idx)?;
+        self.session
+            .rename_file(&handle, file_index, new_relative_path)
+            .await
+            .context("error renaming the file")
+            .with_status(StatusCode::BAD_REQUEST)?;
+        Ok(Default::default())
+    }
+
     pub fn api_set_rust_log(&self, new_value: String) -> Result<EmptyJsonResponse> {
         let tx = self
             .rust_log_reload_tx
@@ -382,6 +439,7 @@ impl Api {
                     handle.name().as_deref(),
                     handle.only_files().as_deref(),
                     handle.output_folder().to_string_lossy().into_owned(),
+                    &handle.shared().renamed_files(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -409,6 +467,7 @@ impl Api {
                     None,
                     only_files.as_deref(),
                     output_folder.to_string_lossy().into_owned().to_string(),
+                    &BTreeMap::new(),
                 )
                 .context("error making torrent details")?,
             },
@@ -420,6 +479,7 @@ impl Api {
                     handle.name().as_deref(),
                     handle.only_files().as_deref(),
                     handle.output_folder().to_string_lossy().into_owned(),
+                    &handle.shared().renamed_files(),
                 )
                 .context("error making torrent details")?;
                 ApiAddTorrentResponse {
@@ -491,9 +551,13 @@ pub struct TorrentListResponse {
     pub torrents: Vec<TorrentDetailsResponse>,
 }
 
+/// A file of a torrent in [`TorrentDetailsResponse`].
 #[derive(Serialize, Deserialize)]
 pub struct TorrentDetailsResponseFile {
+    /// The path of the file relative to the output folder, as it's stored now
+    /// (`Session::rename_file` changes it), with "/" between components.
     pub name: String,
+    /// The components of `name`.
     pub components: Vec<String>,
     pub length: u64,
     pub included: bool,
@@ -535,14 +599,23 @@ fn make_torrent_details(
     name: Option<&str>,
     only_files: Option<&[usize]>,
     output_folder: String,
+    renamed_files: &BTreeMap<usize, PathBuf>,
 ) -> Result<TorrentDetailsResponse> {
     let files = match info {
         Some(info) => info
             .iter_file_details()
             .enumerate()
             .map(|(idx, d)| {
-                let name = d.filename.to_string();
-                let components = d.filename.to_vec();
+                let (name, components) = match renamed_files.get(&idx) {
+                    Some(path) => {
+                        let components = path
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                            .collect::<Vec<_>>();
+                        (components.join("/"), components)
+                    }
+                    None => (d.filename.to_string(), d.filename.to_vec()),
+                };
                 let included = only_files.map(|o| o.contains(&idx)).unwrap_or(true);
                 TorrentDetailsResponseFile {
                     name,
@@ -569,19 +642,9 @@ fn make_torrent_details(
     })
 }
 
-fn torrent_file_mime_type(
-    info: &ValidatedTorrentMetaV1Info<ByteBufOwned>,
-    file_idx: usize,
-) -> Result<&'static str> {
-    Ok(info
-        .iter_file_details()
-        .nth(file_idx)
-        .and_then(|d| {
-            d.filename
-                .iter_components()
-                .last()
-                .and_then(|s| mime_guess::from_path(&*s).first_raw())
-        })
+fn torrent_file_mime_type(relative_path: Option<PathBuf>) -> Result<&'static str> {
+    Ok(relative_path
+        .and_then(|p| mime_guess::from_path(p).first_raw())
         .ok_or((
             StatusCode::INTERNAL_SERVER_ERROR,
             "cannot determine mime type for file",

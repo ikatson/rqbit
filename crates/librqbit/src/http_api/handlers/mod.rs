@@ -66,6 +66,9 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
             "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
             "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+            "POST /torrents/{id_or_infohash}/force_recheck": "Forget which pieces are downloaded and verify the files again. Returns once the check has started",
+            "POST /torrents/{id_or_infohash}/move_storage": "Move the files to another folder. You need to POST json of the following form {\"output_folder\": \"/new/folder\", \"mode\": \"fail_if_exists\"} (mode: fail_if_exists (default), overwrite or keep_existing)",
+            "POST /torrents/{id_or_infohash}/rename_file": "Rename or move a file inside the output folder. You need to POST json of the following form {\"file_index\": 0, \"path\": \"new/relative/path\"}",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
         },
         "server": "rqbit",
@@ -133,6 +136,18 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/{id}/update_only_files",
                 post(torrents::h_torrent_action_update_only_files),
+            )
+            .route(
+                "/torrents/{id}/force_recheck",
+                post(torrents::h_torrent_action_force_recheck),
+            )
+            .route(
+                "/torrents/{id}/move_storage",
+                post(torrents::h_torrent_action_move_storage),
+            )
+            .route(
+                "/torrents/{id}/rename_file",
+                post(torrents::h_torrent_action_rename_file),
             )
             .route("/torrents/{id}/add_peers", post(torrents::h_add_peers))
             .route("/torrents/create", post(torrents::h_create_torrent));
