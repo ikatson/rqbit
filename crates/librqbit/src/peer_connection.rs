@@ -257,13 +257,18 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .read_write_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
-        let connect_timeout = self
-            .options
-            .connect_timeout
-            .unwrap_or_else(|| Duration::from_secs(10));
+        let connect_timeout = crate::i2p::peer_connect_timeout(
+            &self.addr,
+            self.options
+                .connect_timeout
+                .unwrap_or_else(|| Duration::from_secs(10)),
+        );
 
         // How long the peer has to answer our handshake; the read/write timeout unless set.
-        let handshake_timeout = self.options.handshake_timeout.unwrap_or(rwtimeout);
+        let handshake_timeout = crate::i2p::peer_handshake_timeout(
+            &self.addr,
+            self.options.handshake_timeout.unwrap_or(rwtimeout),
+        );
 
         let now = Instant::now();
         let (ckind, mut read, mut write) = with_timeout(
@@ -348,7 +353,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         if supports_extended {
             let mut my_extended = ExtendedHandshake::new();
             my_extended.v = Some(ByteBuf(self.handler.client_name_and_version().as_bytes()));
-            my_extended.yourip = Some(self.addr.ip().into());
+            // An I2P peer must not learn an address: its synthetic one means nothing to it.
+            if !librqbit_core::i2p::is_synthetic(&self.addr) {
+                my_extended.yourip = Some(self.addr.ip().into());
+            }
             self.handler
                 .update_my_extended_handshake(&mut my_extended)
                 .map_err(Error::Anyhow)?;

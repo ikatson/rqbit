@@ -696,6 +696,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,
         peer_backoff: Default::default(),
+        i2p: None,
     };
 
     #[allow(clippy::needless_update)]

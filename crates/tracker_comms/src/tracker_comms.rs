@@ -34,7 +34,11 @@ use crate::scrape::{self, ScrapeCounts};
 use crate::tiers::{self, Availability};
 use crate::tracker_comms_http::{self, TrackerRequestEvent};
 use crate::tracker_comms_udp::{self, UdpTrackerClient};
-use librqbit_core::{hash_id::Id20, i2p::is_i2p_host, proxy::TargetAddr};
+use librqbit_core::{
+    hash_id::Id20,
+    i2p::{is_i2p_host, is_synthetic},
+    proxy::TargetAddr,
+};
 
 pub use crate::tiers::TrackerAnnounceOptions;
 
@@ -1176,6 +1180,11 @@ impl TorrentTrackers {
                     t.scrape_wanted = true;
                 }
                 addrs = outcome.addrs;
+                // The addresses that stand for I2P peers come from I2P trackers only: one in
+                // the answer of a clearnet tracker would let it pick I2P peers for us.
+                if t.kind != Kind::I2p {
+                    addrs.retain(|a| !is_synthetic(a));
+                }
             }
             Err(e) => {
                 t.state = TrackerState::Error;

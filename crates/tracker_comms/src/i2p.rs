@@ -355,10 +355,11 @@ impl I2pPeers<'_> {
                     );
                 }
                 Ok(bytes
-                    .chunks_exact(32)
+                    .as_chunks::<32>()
+                    .0
+                    .iter()
                     .take(MAX_PEERS_PER_RESPONSE)
-                    .filter_map(|c| <[u8; 32]>::try_from(c).ok())
-                    .map(|h| transport.peer_from_hash(I2pHash(h)))
+                    .map(|h| transport.peer_from_hash(I2pHash(*h)))
                     .collect())
             }
             I2pPeers::Dict(ips) => Ok(ips

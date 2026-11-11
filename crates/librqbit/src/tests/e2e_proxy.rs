@@ -258,6 +258,7 @@ fn connections_made(client: &Fixture, kind: ConnectionKind) -> u64 {
         ConnectionKind::Utp => c.utp.v4.successes,
         ConnectionKind::Socks => c.socks.v4.successes,
         ConnectionKind::HttpProxy => c.http_proxy.v4.successes,
+        ConnectionKind::I2p => c.i2p.successes,
     }
 }
 

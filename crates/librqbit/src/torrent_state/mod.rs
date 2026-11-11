@@ -199,6 +199,9 @@ pub struct ManagedTorrentShared {
     pub(crate) magnet_name: Option<String>,
 
     pub(crate) client_name_and_version: String,
+
+    /// Which networks (clearnet, I2P) the torrent uses.
+    pub(crate) net: crate::i2p::TorrentNet,
 }
 
 impl ManagedTorrentShared {

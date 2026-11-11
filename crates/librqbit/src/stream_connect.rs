@@ -28,6 +28,9 @@ pub enum ConnectionKind {
     /// TCP through an HTTP proxy (`CONNECT` tunnel).
     #[serde(rename = "http_proxy")]
     HttpProxy,
+    /// A stream inside the I2P network, through the SAM bridge of the local I2P router.
+    #[serde(rename = "i2p")]
+    I2p,
 }
 
 impl std::fmt::Display for ConnectionKind {
@@ -37,6 +40,7 @@ impl std::fmt::Display for ConnectionKind {
             ConnectionKind::Utp => f.write_str("uTP"),
             ConnectionKind::Socks => f.write_str("socks"),
             ConnectionKind::HttpProxy => f.write_str("http proxy"),
+            ConnectionKind::I2p => f.write_str("i2p"),
         }
     }
 }
@@ -90,6 +94,8 @@ pub(crate) struct StreamConnectorArgs {
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub bind_device: Option<BindDevice>,
     pub ipv4_only: bool,
+    /// The I2P side of the session, which reaches the peers behind synthetic addresses.
+    pub i2p: Option<Arc<crate::i2p::I2pRuntime>>,
 }
 
 /// Opens a TCP connection to `addr` through the proxy.
@@ -141,7 +147,8 @@ gen_stats!(ConnectStatsAtomic ConnectStatsSnapshot, [], [
     socks PerFamilyAtomic PerFamilySnapshot,
     http_proxy PerFamilyAtomic PerFamilySnapshot,
     tcp PerFamilyAtomic PerFamilySnapshot,
-    utp PerFamilyAtomic PerFamilySnapshot
+    utp PerFamilyAtomic PerFamilySnapshot,
+    i2p SingleStatAtomic SingleStatSnapshot
 ]);
 
 #[derive(Debug)]
@@ -152,6 +159,7 @@ pub(crate) struct StreamConnector {
     utp_socket: Option<Arc<librqbit_utp::UtpSocketUdp>>,
     stats: ConnectStatsAtomic,
     ipv4_only: bool,
+    i2p: Option<Arc<crate::i2p::I2pRuntime>>,
 }
 
 impl StreamConnector {
@@ -177,6 +185,7 @@ impl StreamConnector {
             bind_device: config.bind_device,
             stats: Default::default(),
             ipv4_only: config.ipv4_only,
+            i2p: config.i2p,
         })
     }
 
@@ -186,6 +195,7 @@ impl StreamConnector {
             ConnectionKind::Utp => &self.stats.utp,
             ConnectionKind::Socks => &self.stats.socks,
             ConnectionKind::HttpProxy => &self.stats.http_proxy,
+            ConnectionKind::I2p => return &self.stats.i2p,
         };
         if is_v6 { &stat.v6 } else { &stat.v4 }
     }
@@ -231,6 +241,25 @@ impl StreamConnector {
         &self,
         addr: SocketAddr,
     ) -> Result<(ConnectionKind, BoxAsyncReadVectored, BoxAsyncWrite)> {
+        // Peers inside I2P are known under synthetic addresses that no socket can reach: they
+        // go through the SAM bridge, whatever the proxy settings, and nowhere else.
+        if librqbit_core::i2p::is_synthetic(&addr) {
+            let Some(i2p) = self.i2p.as_ref() else {
+                return Err(Error::Anyhow(anyhow::anyhow!(
+                    "{addr} is an I2P peer, but I2P is not enabled"
+                )));
+            };
+            let (r, w) = self
+                .with_stat(ConnectionKind::I2p, true, i2p.connect_peer(addr))
+                .await
+                .map_err(Error::Anyhow)?;
+            debug!(?addr, "connected over I2P");
+            return Ok((
+                ConnectionKind::I2p,
+                Box::new(r.into_vectored_compat()),
+                Box::new(w),
+            ));
+        }
         if addr.port() == 0 {
             return Err(Error::Anyhow(anyhow::anyhow!(
                 "invalid peer address (port 0): {}",

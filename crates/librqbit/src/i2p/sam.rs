@@ -180,6 +180,7 @@ impl Reply {
     }
 
     /// Every `key=value` token, in order.
+    #[cfg(test)]
     pub fn pairs(&self) -> &[(String, String)] {
         &self.pairs
     }

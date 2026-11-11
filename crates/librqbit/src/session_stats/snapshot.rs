@@ -97,6 +97,12 @@ impl SessionStatsSnapshot {
             self.peers.live_http_proxy
         )
         .unwrap();
+        writeln!(
+            &mut out,
+            "rqbit_peers_live{{kind=\"i2p\"}} {}",
+            self.peers.live_i2p
+        )
+        .unwrap();
         m!(gauge, rqbit_peers_dead, self.peers.dead);
         m!(gauge, rqbit_peers_not_needed, self.peers.not_needed);
         m!(gauge, rqbit_peers_queued, self.peers.queued);

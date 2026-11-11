@@ -17,6 +17,7 @@ gen_stats!(AggregatePeerStatsAtomic AggregatePeerStats, [
     live_utp u32,
     live_socks u32,
     live_http_proxy u32,
+    live_i2p u32,
     live_seeders u32,
     seen u32,
     dead u32,
@@ -41,6 +42,7 @@ impl AggregatePeerStatsAtomic {
             ConnectionKind::Utp => &self.live_utp,
             ConnectionKind::Socks => &self.live_socks,
             ConnectionKind::HttpProxy => &self.live_http_proxy,
+            ConnectionKind::I2p => &self.live_i2p,
         }
     }
 
