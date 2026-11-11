@@ -55,7 +55,9 @@ pub struct ConnectionOptions {
     /// any proxy (TCP through the proxy is used instead). Incoming connections are not affected
     /// (see [`crate::ListenerOptions`]), but a session behind a proxy is normally not reachable
     /// from outside. Port mapping (UPnP / NAT-PMP) and local service discovery only talk to the
-    /// local network and stay direct.
+    /// local network and stay direct; a DHT behind the proxy has no port of its own to map.
+    /// Behind `socks5h` host names are never looked up locally: DHT bootstrap nodes given by
+    /// name are skipped, UDP trackers are sent to the proxy by name.
     pub proxy_url: Option<String>,
     /// Whether peer connections and the DHT go through [`Self::proxy_url`] (default true). When
     /// false, only tracker traffic and the HTTP requests use the proxy; peers, the DHT and
