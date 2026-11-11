@@ -77,6 +77,10 @@ async fn serve_until_complete(
     tokio::pin!(done);
     loop {
         tokio::select! {
+            // Completion first: the client hangs up on `peer` (a seeder) once it has the whole
+            // torrent, after it signalled the completion, so a busy test task that finds both
+            // ready must not take the close for a failure.
+            biased;
             r = &mut done => {
                 r?;
                 return Ok(asked);
