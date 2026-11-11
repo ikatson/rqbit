@@ -205,9 +205,9 @@ fn at_least(bytes: u64, rate: u32) -> Duration {
     Duration::from_secs_f64(bytes.saturating_sub(free) as f64 / f64::from(rate) * 0.8)
 }
 
-// The old limit is 1 KiB/s: a block parked on it needs 15 more seconds, the rest of the
-// torrent hours. Finishing within this shows that both the parked transfer and the next ones
-// follow the lifted limit.
+// The old limit is 1 KiB/s: the rest of the torrent would take more than an hour at it.
+// Finishing within this shows that both the transfer parked on the old bucket and the next
+// ones follow the lifted limit.
 const LIFTED_WITHIN: Duration = Duration::from_secs(12);
 
 #[tokio::test(flavor = "multi_thread")]

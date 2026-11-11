@@ -11,9 +11,12 @@
 //! are out and over the new cap are retired as their connections end, and no new connection is
 //! made until the count is below the cap.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use parking_lot::Mutex;
@@ -145,14 +148,22 @@ pub(crate) struct PeerPermits {
 }
 
 impl PeerPermits {
-    /// Both permits if both limits have room right now (incoming connections are refused, not
-    /// queued).
-    pub(crate) fn try_acquire(
+    /// For an incoming connection: the torrent's permit if it has room right now, then the
+    /// session's, queueing for it for at most `wait`. `None`: the connection is refused.
+    ///
+    /// A permit that comes back goes to the first in the session's queue before anyone could
+    /// take it from the free ones, so a connection that only took a free permit would be refused
+    /// for as long as any torrent had a dialer waiting. In the queue it gets its turn among them.
+    pub(crate) async fn acquire_incoming(
         torrent: &Arc<ConnectionLimit>,
         session: &Arc<ConnectionLimit>,
+        wait: Duration,
     ) -> Option<Self> {
         let torrent = torrent.try_acquire()?;
-        let session = session.try_acquire()?;
+        let session = tokio::time::timeout(wait, session.acquire())
+            .await
+            .ok()?
+            .ok()?;
         Some(Self {
             _torrent: torrent,
             _session: session,
@@ -183,7 +194,7 @@ impl PeerPermits {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use tokio::time::timeout;
+    use tokio::{sync::Semaphore, time::timeout};
 
     use super::{ConnectionLimit, ConnectionPermit, PeerPermits};
 
@@ -249,7 +260,7 @@ mod tests {
         drop(permits);
         assert_eq!(limit.available(), 2);
         limit.set_limit(None);
-        assert!(limit.available() > 1 << 40);
+        assert_eq!(limit.available(), Semaphore::MAX_PERMITS);
         assert_eq!(limit.in_use(), 0);
     }
 
@@ -279,17 +290,80 @@ mod tests {
         assert_eq!(limit.available(), 1);
     }
 
-    #[test]
-    fn test_refused_incoming_takes_no_permit() {
+    #[tokio::test]
+    async fn test_refused_incoming_takes_no_permit() {
         let torrent = ConnectionLimit::new(Some(2));
         let session = ConnectionLimit::new(Some(1));
-        let first = PeerPermits::try_acquire(&torrent, &session).expect("room in both");
-        // The session cap is full: the torrent permit taken on the way is given back.
-        assert!(PeerPermits::try_acquire(&torrent, &session).is_none());
+        let wait = Duration::from_millis(50);
+        let first = PeerPermits::acquire_incoming(&torrent, &session, wait)
+            .await
+            .expect("room in both");
+        // The session cap stays full: the torrent permit taken on the way is given back.
+        assert!(
+            PeerPermits::acquire_incoming(&torrent, &session, wait)
+                .await
+                .is_none()
+        );
         assert_eq!(torrent.available(), 1);
         drop(first);
         assert_eq!(torrent.available(), 2);
         assert_eq!(session.available(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_incoming_gets_its_turn_behind_a_waiting_dialer() {
+        // Torrent b's dialer waits for the full session budget, then an incoming connection of
+        // torrent a: the first slot that frees up goes to the dialer, the next one to the
+        // incoming connection, not to b's next dialer.
+        let session = ConnectionLimit::new(Some(1));
+        let a = ConnectionLimit::new(Some(10));
+        let b = ConnectionLimit::new(Some(10));
+        let held = PeerPermits::acquire(&b, &session).await.expect("acquire");
+
+        let dialer = tokio::spawn({
+            let (b, session) = (b.clone(), session.clone());
+            async move { PeerPermits::acquire(&b, &session).await }
+        });
+        tokio::task::yield_now().await;
+        let incoming = tokio::spawn({
+            let (a, session) = (a.clone(), session.clone());
+            async move { PeerPermits::acquire_incoming(&a, &session, Duration::from_secs(30)).await }
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(a.in_use(), 1, "the incoming connection waits in the queue");
+
+        drop(held);
+        let dialed = timeout(Duration::from_secs(5), dialer)
+            .await
+            .expect("the dialer got the slot")
+            .expect("join")
+            .expect("acquire");
+        tokio::task::yield_now().await;
+        assert!(!incoming.is_finished());
+        // b dials again while its connection is open: it queues behind the incoming one.
+        let next_dialer = tokio::spawn({
+            let (b, session) = (b.clone(), session.clone());
+            async move { PeerPermits::acquire(&b, &session).await }
+        });
+        tokio::task::yield_now().await;
+
+        drop(dialed);
+        let accepted = timeout(Duration::from_secs(5), incoming)
+            .await
+            .expect("the incoming connection got the slot")
+            .expect("join")
+            .expect("not refused");
+        tokio::task::yield_now().await;
+        assert!(!next_dialer.is_finished());
+        drop(accepted);
+        timeout(Duration::from_secs(5), next_dialer)
+            .await
+            .expect("the next dialer got the slot")
+            .expect("join")
+            .expect("acquire");
+        assert_eq!(session.available(), 1);
+        assert_eq!(a.available(), 10);
+        assert_eq!(b.available(), 10);
     }
 
     #[tokio::test]

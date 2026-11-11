@@ -16,7 +16,7 @@ use crate::{
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
-    connection_limit::ConnectionLimit,
+    connection_limit::{ConnectionLimit, PeerPermits},
     create_torrent,
     create_torrent_file::CreateTorrentResult,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
@@ -80,6 +80,17 @@ pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 pub const DEFAULT_PEER_LIMIT: usize = 128;
 
 pub type TorrentId = usize;
+
+// How long an incoming connection that has a torrent permit may queue for a session permit
+// before it is refused. Short: the peer waits for our handshake meanwhile.
+const INCOMING_SESSION_SLOT_WAIT: Duration = Duration::from_secs(3);
+
+// A checked incoming connection, with its permits if the limits let it in.
+type IncomingCheck = (
+    Arc<TorrentStateLive>,
+    CheckedIncomingConnection,
+    Option<PeerPermits>,
+);
 
 struct ParsedTorrentFile {
     meta: TorrentMetaV1Owned,
@@ -486,7 +497,8 @@ pub struct SessionOptions {
     pub peer_limit: Option<usize>,
 
     /// How many peers all torrents of the session together may have connecting or connected at
-    /// a time, on top of each torrent's own limit. `None` (the default): no session-wide limit.
+    /// a time, on top of each torrent's own limit. The connections that fetch the metadata of a
+    /// magnet link count as well. `None` (the default): no session-wide limit.
     /// Can be changed later with [`Session::set_global_peer_limit`].
     pub global_peer_limit: Option<usize>,
     #[cfg(feature = "disable-upload")]
@@ -934,7 +946,7 @@ impl Session {
         kind: ConnectionKind,
         mut reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
-    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
+    ) -> anyhow::Result<IncomingCheck> {
         let rwtimeout = self
             .peer_opts
             .read_write_timeout
@@ -981,6 +993,15 @@ impl Session {
             .await
             .with_context(|| format!("torrent {id} is not live, ignoring connection"))?;
 
+        // Waiting here rather than in the listener loop, which hands connections over one by one.
+        let options = &live.shared.options;
+        let permits = PeerPermits::acquire_incoming(
+            &options.peer_slots,
+            &options.session_peer_slots,
+            INCOMING_SESSION_SLOT_WAIT,
+        )
+        .await;
+
         Ok((
             live,
             CheckedIncomingConnection {
@@ -991,6 +1012,7 @@ impl Session {
                 handshake: h,
                 read_buf,
             },
+            permits,
         ))
     }
 
@@ -1029,9 +1051,9 @@ impl Session {
                         }
                     }
                 },
-                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                Some(Ok((live, checked, permits))) = futs.next(), if !futs.is_empty() => {
                     let (addr, kind) = (checked.addr, checked.kind);
-                    if let Err(e) = live.add_incoming_peer(checked) {
+                    if let Err(e) = live.add_incoming_peer(checked, permits) {
                         warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
                     }
                 },
@@ -1740,6 +1762,7 @@ impl Session {
             Some(self.merge_peer_opts(peer_opts)),
             self.connector.clone(),
             self.client_name_and_version.clone(),
+            self.stats.peer_slots.clone(),
         )
         .await
         {

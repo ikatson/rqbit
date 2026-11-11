@@ -361,16 +361,16 @@ impl TorrentStateLive {
         &self.up_speed_estimator
     }
 
+    /// Hands over an incoming connection. `permits`: the torrent's and the session's, taken
+    /// while the connection was checked; `None` if either limit was reached, which refuses it.
     pub(crate) fn add_incoming_peer(
         self: &Arc<Self>,
         checked_peer: CheckedIncomingConnection,
+        permits: Option<PeerPermits>,
     ) -> anyhow::Result<AddIncomingPeerResult> {
         use dashmap::mapref::entry::Entry;
         let (tx, rx) = unbounded_channel();
-        let options = &self.shared.options;
-        let Some(permits) =
-            PeerPermits::try_acquire(&options.peer_slots, &options.session_peer_slots)
-        else {
+        let Some(permits) = permits else {
             debug!("limit of live peers reached, dropping incoming peer");
             self.peers.with_peer(checked_peer.addr, |p| {
                 atomic_inc(&p.stats.counters.incoming_connections);
@@ -1258,6 +1258,23 @@ impl PeerConnectionHandler for &'_ PeerHandler {
 }
 
 impl PeerHandler {
+    // Both the torrent's and the session's download limits.
+    async fn wait_for_download_rate(&self, len: u32) -> crate::Result<()> {
+        let Some(len) = NonZeroU32::new(len) else {
+            return Ok(());
+        };
+        self.state
+            .shared
+            .options
+            .ratelimits
+            .prepare_for_download(len)
+            .await?;
+        if let Some(session) = self.state.torrent().session.upgrade() {
+            session.ratelimits.prepare_for_download(len).await?;
+        }
+        Ok(())
+    }
+
     fn on_peer_died(self, error: Option<crate::Error>) -> crate::Result<()> {
         let peers = &self.state.peers;
         let handle = self.addr;
@@ -1701,19 +1718,7 @@ impl PeerHandler {
 
                 aframe!(self.wait_for_request_slot()).await;
 
-                self.state
-                    .shared
-                    .options
-                    .ratelimits
-                    .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                    .await?;
-
-                if let Some(session) = self.state.torrent().session.upgrade() {
-                    session
-                        .ratelimits
-                        .prepare_for_download(NonZeroU32::new(request.length).unwrap())
-                        .await?;
-                }
+                self.wait_for_download_rate(request.length).await?;
 
                 aframe!(self.wait_for_request_slot()).await;
 

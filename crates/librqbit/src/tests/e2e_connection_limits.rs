@@ -437,6 +437,98 @@ async fn test_incoming_connections_over_the_global_cap_are_refused() -> anyhow::
     .await
 }
 
+// A torrent whose peer adder waits for the full session budget does not lock out the incoming
+// connections of the other torrents: they queue for the budget alongside the dialer and get
+// their turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_incoming_connection_gets_its_turn_behind_a_waiting_dialer() -> anyhow::Result<()> {
+    run(async {
+        let total = Arc::new(Count::default());
+        let client = Client::start(client_opts(Some(1), true)).await?;
+        let a = client.add(&[], None, PATIENT).await?;
+        let swarm = Swarm::start(4, &total).await?;
+        let b = client.add(&swarm.addrs, None, PATIENT).await?;
+        // One connection, and the peer adder holding the torrent's permit for the next peer
+        // while it waits for the session's only one.
+        wait_for("b's dialer to wait", || {
+            total.open() == 1 && torrent_slots(&b).in_use() == 2
+        })
+        .await?;
+
+        let (addr, info_hash) = (client.addr()?, a.info_hash());
+        let incoming =
+            tokio::spawn(
+                async move { FakePeer::connect(addr, info_hash, &peer_id(b"-FK0001-")).await },
+            );
+        wait_for("the incoming connection to wait", || {
+            torrent_slots(&a).in_use() == 1
+        })
+        .await?;
+
+        // The first slot that frees up goes to b's dialer, which was first in line...
+        assert_eq!(swarm.close(1), 1);
+        wait_for("b's dialer to connect", || {
+            total.accepted() == 2 && total.open() == 1
+        })
+        .await?;
+        // ...and the next one to the incoming connection, ahead of b's next dial.
+        assert_eq!(swarm.close(1), 1);
+        let _peer = incoming
+            .await
+            .context("join")?
+            .context("the incoming connection was refused")?;
+        assert_eq!(client.slots().in_use(), 1);
+        quiet_period().await;
+        assert_eq!(total.open(), 0, "connected over the session cap");
+        assert_eq!(total.accepted(), 2);
+        Ok(())
+    })
+    .await
+}
+
+// The connections that fetch the metadata of a magnet link count against the session-wide cap,
+// and give their permits back when the resolution is abandoned.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_magnet_metadata_connections_count_against_the_global_cap() -> anyhow::Result<()> {
+    run(async {
+        let total = Arc::new(Count::default());
+        let client = Client::start(client_opts(Some(2), false)).await?;
+        let swarm = Swarm::start(6, &total).await?;
+        let magnet = format!(
+            "magnet:?xt=urn:btih:{}",
+            librqbit_core::Id20::new([7; 20]).as_string()
+        );
+        let resolving = tokio::spawn({
+            let session = client.session.clone();
+            let peers = swarm.addrs.clone();
+            async move {
+                session
+                    .add_torrent(
+                        AddTorrent::from_url(magnet),
+                        Some(AddTorrentOptions {
+                            initial_peers: Some(peers),
+                            peer_opts: Some(PeerConnectionOptions {
+                                read_write_timeout: Some(PATIENT),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                    )
+                    .await
+                    .map(drop)
+            }
+        });
+        wait_for("2 metadata connections", || total.open() == 2).await?;
+        quiet_period().await;
+        assert_eq!(total.max_open(), 2, "connected over the session cap");
+        assert_eq!(client.slots().in_use(), 2);
+
+        resolving.abort();
+        wait_released(&client, &[]).await?;
+        Ok(())
+    })
+    .await
+}
 // ---------------------------------------------------------------------------------------------
 // Per-torrent limit
 // ---------------------------------------------------------------------------------------------

@@ -55,9 +55,13 @@ pub async fn h_get_torrent_ratelimits(
 }
 
 /// The body of the peer limit endpoints. `null` is "no limit of its own": unlimited for the
-/// session, the session default for a torrent.
+/// session, the session default for a torrent. `0` lets no new connection start. The key is
+/// required, so that a misspelled body is rejected instead of removing the limit.
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PeerLimit {
+    // A plain `Option` field would be `null` when it is missing.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub peer_limit: Option<usize>,
 }
 
@@ -96,4 +100,25 @@ pub async fn h_get_torrent_peer_limit(
     Ok(Json(PeerLimit {
         peer_limit: state.api.mgr_handle(idx)?.peer_limit(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PeerLimit;
+
+    fn parse(body: &str) -> Option<Option<usize>> {
+        serde_json::from_str::<PeerLimit>(body)
+            .ok()
+            .map(|l| l.peer_limit)
+    }
+
+    #[test]
+    fn test_peer_limit_body() {
+        assert_eq!(parse(r#"{"peer_limit": 50}"#), Some(Some(50)));
+        assert_eq!(parse(r#"{"peer_limit": null}"#), Some(None));
+        assert_eq!(parse(r#"{}"#), None, "a missing key is not `null`");
+        assert_eq!(parse(r#"{"limit": 50}"#), None);
+        assert_eq!(parse(r#"{"peer_limit": 5, "limit": 50}"#), None);
+        assert_eq!(parse(r#"{"peer_limit": -1}"#), None);
+    }
 }
