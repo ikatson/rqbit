@@ -22,8 +22,8 @@ use tempfile::TempDir;
 use tokio::{net::TcpListener, time::timeout};
 
 use super::fake_peer::{
-    BLOCK, ClientOpts, FILE_LEN, FakePeer, Fixture, PIECE_LEN, PIECES, SeederOpts, Wire,
-    handshake_bytes, peer_id, run, start_client, start_seeder, uploaded,
+    BLOCK, ClientOpts, FILE_LEN, FakePeer, Fixture, PIECE_LEN, PIECES, Recv, SeederOpts, Wire,
+    expect_uploaded, handshake_bytes, peer_id, run, start_client, start_seeder, uploaded,
 };
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, PeerCtx, PeerEvent, PeerPolicy, PeerVerdict,
@@ -427,31 +427,50 @@ async fn test_choke_stops_uploads_and_keeps_the_connection() -> anyhow::Result<(
         let mut peer =
             FakePeer::connect(seed.addr(), seed.info_hash, &peer_id(b"-FK0003-")).await?;
         peer.interested().await?;
+        // The first block goes out at once: the rate starts with one second of it in the
+        // bucket. It is served before the choke is asked for, as a choke also drops a block
+        // that the writer has not sent yet.
+        peer.request(0, 0, BLOCK).await?;
+        let first = peer.expect_pieces(1, Duration::from_secs(10)).await?;
+        assert_eq!((first[0].0, first[0].1), (0, 0));
+        // The bucket is empty now and the next block is a second away. The rate can't go lower
+        // than a block per second (the limiter refuses a request larger than its burst), so a
+        // few requests wait in front of the choke: one that slips out before the choke is read
+        // still leaves the others queued when it comes.
         let mut batch = Vec::new();
-        // The first goes out immediately, the next two wait for their turn, the last one chokes.
-        for (piece, begin) in [(0, 0), (0, BLOCK), (2, 0), (1, 0)] {
+        // The first ones wait for their turn, the last one chokes.
+        for (piece, begin) in [(0, BLOCK), (2, 0), (2, BLOCK), (3, 0), (1, 0)] {
             batch.extend(FakePeer::request_frame(piece, begin, BLOCK));
         }
         peer.send_raw(&batch).await?;
+        // Blocks that went out before the choke was read are fine; none may follow it.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut slipped = 0u32;
+        loop {
+            match peer
+                .recv(deadline.saturating_duration_since(Instant::now()))
+                .await
+            {
+                Recv::Msg(Wire::Choke) => break,
+                Recv::Msg(Wire::Piece { .. }) => slipped += 1,
+                Recv::Msg(_) => {}
+                Recv::Timeout => bail!("no choke"),
+                Recv::Closed => bail!("closed before the choke"),
+            }
+        }
+        assert!(
+            slipped < 4,
+            "every queued request was served before the choke"
+        );
 
+        // With the limit lifted, whatever the choke left queued would go out at once.
+        seed.session.ratelimits.set_upload_bps(None);
         let (msgs, closed) = peer.collect(Duration::from_millis(3500)).await;
         assert!(!closed, "choked peers stay connected");
-        let pieces: Vec<_> = msgs
-            .iter()
-            .filter_map(|m| match m {
-                Wire::Piece { index, begin, .. } => Some((*index, *begin)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            pieces,
-            vec![(0, 0)],
-            "queued requests are dropped: {msgs:?}"
-        );
-        assert_eq!(
-            msgs.iter().filter(|m| **m == Wire::Choke).count(),
-            1,
-            "exactly one choke: {msgs:?}"
+        assert!(
+            msgs.iter()
+                .all(|m| !matches!(m, Wire::Piece { .. } | Wire::Choke)),
+            "queued requests are dropped, the peer is choked once: {msgs:?}"
         );
 
         // Requests after the choke are ignored, silently, but still reported.
@@ -466,12 +485,17 @@ async fn test_choke_stops_uploads_and_keeps_the_connection() -> anyhow::Result<(
         );
         wait_for(
             "requests reported",
-            || policy.count(|e| matches!(e, Ev::Request { .. })) == 6,
+            || policy.count(|e| matches!(e, Ev::Request { .. })) == 8,
             Duration::from_secs(5),
         )
         .await?;
-        assert_eq!(uploaded(&seed), BLOCK as u64);
-        assert_eq!(policy.count(|e| matches!(e, Ev::Uploaded(..))), 1);
+        expect_uploaded(&seed, u64::from(1 + slipped) * BLOCK as u64).await?;
+        wait_for(
+            "uploads reported",
+            || policy.count(|e| matches!(e, Ev::Uploaded(..))) == 1 + slipped as usize,
+            Duration::from_secs(5),
+        )
+        .await?;
 
         // The connection is still alive in the session as well.
         assert_eq!(seed.session.disconnect_peers_where(|_| true), 1);
