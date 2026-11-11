@@ -58,7 +58,7 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "GET /torrents/{id_or_infohash}/stream/{file_idx}": "Stream a file. Accepts Range header to seek.",
             "GET /torrents/{id_or_infohash}/playlist": "Playlist for supported players",
             "POST /torrents": "Add a torrent here. magnet: or http:// or a local file.",
-            "POST /torrents/create": "Create a torrent and start seeding. Body should be a local folder",
+            "POST /torrents/create": "Create a torrent and start seeding. Body should be a local file or folder. Query (all optional): output=magnet|torrent, name, trackers (repeat), version=v1|v2|hybrid, private=true, piece_length (bytes, power of two, 16 KiB..128 MiB), web_seeds (repeat), source, comment",
             "POST /torrents/resolve_magnet": "Resolve a magnet to torrent file bytes",
             "POST /torrents/{id_or_infohash}/pause": "Pause torrent",
             "POST /torrents/{id_or_infohash}/start": "Resume torrent",
@@ -66,6 +66,12 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "POST /torrents/{id_or_infohash}/delete": "Forget about the torrent, remove the files",
             "POST /torrents/{id_or_infohash}/add_peers": "Add peers (newline-delimited)",
             "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
+            "GET /torrents/{id_or_infohash}/web_seeds": "The web seeds (BEP 19) of the torrent: {\"web_seeds\": [{\"url\": ..., \"state\": \"Downloading\", \"downloaded_bytes\": ..., \"last_error\": null}]} (state: Idle, Downloading, BackingOff or Disabled)",
+            "POST /torrents/{id_or_infohash}/web_seeds/add": "Add a web seed (an http or https URL): {\"url\": \"https://example.com/files/\"}",
+            "POST /torrents/{id_or_infohash}/web_seeds/remove": "Remove a web seed: {\"url\": \"https://example.com/files/\"}",
+            "POST /torrents/{id_or_infohash}/force_recheck": "Forget which pieces are downloaded and verify the files again. Returns once the check has started",
+            "POST /torrents/{id_or_infohash}/move_storage": "Move the files to another folder. You need to POST json of the following form {\"output_folder\": \"/new/folder\", \"mode\": \"fail_if_exists\"} (mode: fail_if_exists (default), overwrite or keep_existing)",
+            "POST /torrents/{id_or_infohash}/rename_file": "Rename or move a file inside the output folder. You need to POST json of the following form {\"file_index\": 0, \"path\": \"new/relative/path\"}",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
         },
         "server": "rqbit",
@@ -105,6 +111,10 @@ pub fn make_api_router(state: ApiState) -> Router {
             "/torrents/{id}/stream/{file_id}/{*filename}",
             get(streaming::h_torrent_stream_file),
         )
+        .route(
+            "/torrents/{id}/web_seeds",
+            get(torrents::h_torrent_web_seeds),
+        )
         .route("/torrents/limits", get(configure::h_get_session_ratelimits));
 
     if !state.opts.read_only {
@@ -133,6 +143,26 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/{id}/update_only_files",
                 post(torrents::h_torrent_action_update_only_files),
+            )
+            .route(
+                "/torrents/{id}/web_seeds/add",
+                post(torrents::h_torrent_action_add_web_seed),
+            )
+            .route(
+                "/torrents/{id}/web_seeds/remove",
+                post(torrents::h_torrent_action_remove_web_seed),
+            )
+            .route(
+                "/torrents/{id}/force_recheck",
+                post(torrents::h_torrent_action_force_recheck),
+            )
+            .route(
+                "/torrents/{id}/move_storage",
+                post(torrents::h_torrent_action_move_storage),
+            )
+            .route(
+                "/torrents/{id}/rename_file",
+                post(torrents::h_torrent_action_rename_file),
             )
             .route("/torrents/{id}/add_peers", post(torrents::h_add_peers))
             .route("/torrents/create", post(torrents::h_create_torrent));

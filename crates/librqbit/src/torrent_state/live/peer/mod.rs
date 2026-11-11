@@ -280,6 +280,9 @@ pub(crate) struct LivePeerState {
     pub tx: PeerTx,
 
     pub connection_kind: ConnectionKind,
+
+    // A BitTorrent v2 connection (BEP 52): hashes may be asked of it.
+    pub v2: bool,
 }
 
 impl LivePeerState {
@@ -300,6 +303,7 @@ impl LivePeerState {
             request_slots_changed: Default::default(),
             tx,
             connection_kind,
+            v2: false,
         }
     }
 

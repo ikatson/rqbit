@@ -5,7 +5,7 @@ use buffers::{ByteBuf, ByteBufOwned};
 use bytes::Bytes;
 use librqbit_core::{
     constants::CHUNK_SIZE,
-    hash_id::Id20,
+    hash_id::{Id20, Id32},
     lengths::{ChunkInfo, last_element_size},
     torrent_metainfo::TorrentMetaV1Info,
 };
@@ -18,7 +18,7 @@ use peer_binary_protocol::{
         ut_metadata::{UtMetadata, UtMetadataData},
     },
 };
-use sha1w::{ISha1, Sha1};
+use sha1w::{ISha1, ISha256, Sha1, Sha256};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::trace;
 
@@ -30,10 +30,52 @@ use crate::{
     stream_connect::{ConnectionKind, StreamConnector},
 };
 
+/// The info hashes a downloaded info dictionary must hash to (BEP 9): the SHA-1 one of a
+/// `btih` magnet link, the SHA-256 one of a `btmh` link (BEP 52), or both for a hybrid one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MetadataHashes {
+    v1: Option<Id20>,
+    v2: Option<Id32>,
+    swarm_id: Id20,
+}
+
+impl MetadataHashes {
+    /// None if neither hash is known.
+    pub(crate) fn new(v1: Option<Id20>, v2: Option<Id32>) -> Option<Self> {
+        // The swarm of a v2-only torrent is known by the truncated v2 hash.
+        let swarm_id = v1.or_else(|| v2.map(|v2| v2.truncate_for_dht()))?;
+        Some(Self { v1, v2, swarm_id })
+    }
+
+    pub(crate) fn v2(&self) -> Option<Id32> {
+        self.v2
+    }
+
+    /// The info hash handshakes carry: the v1 hash if known, the truncated v2 hash otherwise.
+    pub(crate) fn swarm_id(&self) -> Id20 {
+        self.swarm_id
+    }
+
+    /// Whether `info` hashes to every known hash.
+    fn matches(&self, info: &[u8]) -> bool {
+        let v1_ok = self.v1.is_none_or(|v1| {
+            let mut h = Sha1::new();
+            h.update(info);
+            h.finish() == v1.0
+        });
+        let v2_ok = self.v2.is_none_or(|v2| {
+            let mut h = Sha256::new();
+            h.update(info);
+            h.finish() == v2.0
+        });
+        v1_ok && v2_ok
+    }
+}
+
 pub(crate) async fn read_metainfo_from_peer(
     addr: SocketAddr,
     peer_id: Id20,
-    info_hash: Id20,
+    hashes: MetadataHashes,
     peer_connection_options: Option<PeerConnectionOptions>,
     spawner: BlockingSpawner,
     connector: Arc<StreamConnector>,
@@ -45,21 +87,24 @@ pub(crate) async fn read_metainfo_from_peer(
     let (writer_tx, writer_rx) = tokio::sync::mpsc::unbounded_channel::<WriterRequest>();
     let handler = Handler {
         addr,
-        info_hash,
+        hashes,
         writer_tx,
         result_tx: Mutex::new(Some(result_tx)),
         locked: RwLock::new(None),
         client_name_and_version,
     };
+    // The v2 bit is set only when the torrent is known to be a v2 one: a peer with a v1-only
+    // torrent drops connections that offer v2. A hybrid swarm takes either hash.
     let connection = PeerConnection::new(
         addr,
-        info_hash,
+        hashes.swarm_id(),
         peer_id,
         handler,
         peer_connection_options,
         spawner,
         connector,
-    );
+    )
+    .with_info_hash_v2(hashes.v2());
 
     let result_reader = result_rx;
     let (_, brx) = tokio::sync::broadcast::channel(1);
@@ -111,7 +156,7 @@ impl HandlerLocked {
     fn record_piece(
         &mut self,
         d: &UtMetadataData<ByteBuf>,
-        info_hash: &Id20,
+        hashes: &MetadataHashes,
     ) -> anyhow::Result<bool> {
         let piece = d.piece();
         if piece as usize >= self.total_pieces {
@@ -134,10 +179,9 @@ impl HandlerLocked {
         self.received_pieces[piece as usize] = true;
 
         if self.received_pieces.iter().all(|p| *p) {
-            // check metadata
-            let mut hash = Sha1::new();
-            hash.update(&self.buffer);
-            if hash.finish() != info_hash.0 {
+            // A forged info dictionary costs the peer its connection, and it is not asked
+            // again.
+            if !hashes.matches(&self.buffer) {
                 anyhow::bail!("info checksum invalid");
             }
             Ok(true)
@@ -151,7 +195,7 @@ pub type TorrentAndInfoBytes = (TorrentMetaV1Info<ByteBufOwned>, ByteBufOwned);
 
 struct Handler {
     addr: SocketAddr,
-    info_hash: Id20,
+    hashes: MetadataHashes,
     writer_tx: UnboundedSender<WriterRequest>,
     result_tx: Mutex<
         Option<
@@ -171,7 +215,12 @@ impl PeerConnectionHandler for Handler {
         Ok(0)
     }
 
-    fn on_handshake(&self, handshake: Handshake, _kind: ConnectionKind) -> anyhow::Result<()> {
+    fn on_handshake(
+        &self,
+        handshake: Handshake,
+        _kind: ConnectionKind,
+        _v2: bool,
+    ) -> anyhow::Result<()> {
         if !handshake.supports_extended() {
             anyhow::bail!(
                 "this peer does not support extended handshaking, which is a prerequisite to download metadata"
@@ -189,7 +238,7 @@ impl PeerConnectionHandler for Handler {
                 .write()
                 .as_mut()
                 .unwrap()
-                .record_piece(&utdata, &self.info_hash)?;
+                .record_piece(&utdata, &self.hashes)?;
             if piece_ready {
                 let buf = Bytes::from(self.locked.write().take().unwrap().buffer);
                 let info = from_bytes::<TorrentMetaV1Info<ByteBuf>>(&buf)

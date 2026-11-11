@@ -5,7 +5,7 @@
 // gives a default, because forgetting one still compiles and then answers something
 // plausible of its own instead of asking the storage underneath.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use librqbit_core::{
     constants::CHUNK_SIZE,
@@ -13,7 +13,11 @@ use librqbit_core::{
 };
 use parking_lot::Mutex;
 
-use crate::{ManagedTorrentShared, TorrentMetadata, storage::TorrentStorage};
+use crate::{
+    ManagedTorrentShared, TorrentMetadata,
+    storage::{MoveStorageMode, MoveStorageOutcome, MoveStorageRequest, TorrentStorage},
+};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) const PIECE_LEN: u32 = CHUNK_SIZE * 2;
 pub(crate) const NUM_PIECES: u32 = 2;
@@ -30,6 +34,16 @@ pub(crate) fn piece(id: u32) -> ValidPieceIndex {
 pub(crate) struct Probe {
     /// The pieces on_piece_completed() was called for, in order.
     pub completed: Mutex<Vec<u32>>,
+    /// The files file_length() was asked about.
+    pub lengths_asked: Mutex<Vec<usize>>,
+    /// The (file, from, to) of every rename_file().
+    pub renamed: Mutex<Vec<(usize, PathBuf, PathBuf)>>,
+    /// The destination of every move_storage().
+    pub moved_to: Mutex<Vec<PathBuf>>,
+    /// The `commit` of every finish_move_storage().
+    pub finished_moves: Mutex<Vec<bool>>,
+    /// How many times forget_cached_data() was called.
+    pub forgot_cached_data: Mutex<usize>,
 }
 
 impl TorrentStorage for Probe {
@@ -69,6 +83,37 @@ impl TorrentStorage for Probe {
         self.completed.lock().push(piece_index.get());
         Ok(())
     }
+
+    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        self.lengths_asked.lock().push(file_id);
+        Ok(Some(42))
+    }
+
+    fn rename_file(&self, file_id: usize, from: &Path, to: &Path) -> anyhow::Result<()> {
+        self.renamed
+            .lock()
+            .push((file_id, from.to_owned(), to.to_owned()));
+        Ok(())
+    }
+
+    fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
+        self.moved_to
+            .lock()
+            .push(request.new_output_folder.to_owned());
+        Ok(MoveStorageOutcome {
+            adopted_files: vec![7],
+        })
+    }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        self.finished_moves.lock().push(commit);
+        Ok(())
+    }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        *self.forgot_cached_data.lock() += 1;
+        Ok(())
+    }
 }
 
 // Everything a wrapper has to pass through to the storage it wraps and can't decide on
@@ -80,5 +125,57 @@ pub(crate) fn assert_forwards_defaults<S: TorrentStorage>(storage: &S, probe: &P
         vec![1],
         "on_piece_completed() didn't reach the storage: a store that makes a piece \
          visible there never gets told"
+    );
+
+    assert_eq!(
+        storage.file_length(3).unwrap(),
+        Some(42),
+        "file_length() didn't reach the storage: skip_initial_check would hash everything"
+    );
+    assert_eq!(*probe.lengths_asked.lock(), vec![3]);
+
+    storage
+        .rename_file(1, Path::new("a/b"), Path::new("c/d"))
+        .unwrap();
+    assert_eq!(
+        *probe.renamed.lock(),
+        vec![(1, PathBuf::from("a/b"), PathBuf::from("c/d"))],
+        "rename_file() didn't reach the storage: the file would stay where it was"
+    );
+
+    let cancel = CancellationToken::new();
+    let outcome = storage
+        .move_storage(&MoveStorageRequest {
+            new_output_folder: Path::new("/elsewhere"),
+            files: &[Some(PathBuf::from("a")), None],
+            mode: MoveStorageMode::KeepExisting,
+            cancel: &cancel,
+        })
+        .unwrap();
+    assert_eq!(
+        outcome.adopted_files,
+        vec![7],
+        "move_storage() didn't return what the storage said"
+    );
+    assert_eq!(
+        *probe.moved_to.lock(),
+        vec![PathBuf::from("/elsewhere")],
+        "move_storage() didn't reach the storage: the files would stay where they were"
+    );
+
+    storage.finish_move_storage(true).unwrap();
+    assert_eq!(
+        *probe.finished_moves.lock(),
+        vec![true],
+        "finish_move_storage() didn't reach the storage: what the move replaced or left \
+         behind would stay forever"
+    );
+
+    storage.forget_cached_data().unwrap();
+    assert_eq!(
+        *probe.forgot_cached_data.lock(),
+        1,
+        "forget_cached_data() didn't reach the storage: a cache under the wrapper would \
+         answer a recheck instead of the disk"
     );
 }

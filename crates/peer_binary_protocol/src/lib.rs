@@ -12,7 +12,11 @@ use byteorder::{BE, ByteOrder};
 use bytes::Bytes;
 use clone_to_owned::CloneToOwned;
 use extended::PeerExtendedMessageIds;
-use librqbit_core::{constants::CHUNK_SIZE, hash_id::Id20, lengths::ChunkInfo};
+use librqbit_core::{
+    constants::CHUNK_SIZE,
+    hash_id::{Id20, Id32},
+    lengths::ChunkInfo,
+};
 use serde_derive::{Deserialize, Serialize};
 
 pub use crate::double_buf::DoubleBufHelper;
@@ -27,11 +31,27 @@ pub const PIECE_MESSAGE_DEFAULT_LEN: usize = PIECE_MESSAGE_PREAMBLE_LEN + CHUNK_
 
 // extended message ut_metadata request is the largest known message.
 const MAX_MSG_LEN_LEN_JUST_IN_CASE_EXTRA: usize = 64;
-pub const MAX_MSG_LEN: usize = PREAMBLE_LEN
+const MAX_UT_METADATA_MSG_LEN: usize = PREAMBLE_LEN
     + 1
     + b"d8:msg_typei1e5:piecei42e10:total_sizei16384ee".len()
     + CHUNK_SIZE as usize
     + MAX_MSG_LEN_LEN_JUST_IN_CASE_EXTRA;
+
+/// BEP 52: the request fields of `hash request`, `hashes` and `hash reject`: the pieces root,
+/// then the base layer, index, length and proof layers as 4-byte integers.
+const HASH_REQUEST_LEN: usize = 32 + INTEGER_LEN * 4;
+/// The most hashes a `hashes` message may carry: 512 base hashes (BEP 52 says requests SHOULD
+/// NOT ask for more, and neither we nor libtorrent do for piece layers) plus their uncle
+/// hashes, of which there are fewer than 64 for any tree.
+pub const MAX_HASHES_PER_MESSAGE: usize = 512 + 64;
+const MAX_HASHES_MSG_LEN: usize = PREAMBLE_LEN + HASH_REQUEST_LEN + MAX_HASHES_PER_MESSAGE * 32;
+
+/// The largest message we send or accept (except `piece` messages of non-standard size).
+pub const MAX_MSG_LEN: usize = if MAX_HASHES_MSG_LEN > MAX_UT_METADATA_MSG_LEN {
+    MAX_HASHES_MSG_LEN
+} else {
+    MAX_UT_METADATA_MSG_LEN
+};
 
 const PSTR_BT1: &str = "BitTorrent protocol";
 
@@ -47,6 +67,9 @@ const MSGID_REQUEST: MsgId = 6;
 const MSGID_PIECE: MsgId = 7;
 const MSGID_CANCEL: MsgId = 8;
 const MSGID_EXTENDED: MsgId = 20;
+const MSGID_HASH_REQUEST: MsgId = 21;
+const MSGID_HASHES: MsgId = 22;
+const MSGID_HASH_REJECT: MsgId = 23;
 
 pub const EXTENDED_UT_METADATA_KEY: &[u8] = b"ut_metadata";
 pub const MY_EXTENDED_UT_METADATA: u8 = 3;
@@ -69,6 +92,9 @@ impl MsgIdDebug {
             MSGID_PIECE => "piece",
             MSGID_CANCEL => "cancel",
             MSGID_EXTENDED => "extended",
+            MSGID_HASH_REQUEST => "hash_request",
+            MSGID_HASHES => "hashes",
+            MSGID_HASH_REJECT => "hash_reject",
             _ => return None,
         };
         Some(n)
@@ -119,6 +145,10 @@ pub enum MessageDeserializeError {
         expected_size: u32,
         received_size: u32,
     },
+    #[error("hashes: {0} bytes of hashes is not a positive multiple of 32 bytes")]
+    HashesBadLength(usize),
+    #[error("hashes: {0} hashes is more than {MAX_HASHES_PER_MESSAGE}")]
+    HashesTooMany(usize),
     #[error("pstr doesn't match {PSTR_BT1:?}")]
     HandshakePstrWrongContent,
     #[error("pstr should be 19 bytes long but got {0}")]
@@ -216,6 +246,101 @@ impl<'a> Piece<ByteBuf<'a>> {
     }
 }
 
+/// BEP 52: which hashes of which file a `hash request` asks for; `hashes` and `hash reject`
+/// repeat it. `base_layer` 0 is the 16 KiB block layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HashRequest {
+    pub pieces_root: Id32,
+    pub base_layer: u32,
+    pub index: u32,
+    pub length: u32,
+    pub proof_layers: u32,
+}
+
+impl HashRequest {
+    /// The geometry of the request, to check it with
+    /// [`librqbit_core::merkle::HashRequestShape::is_valid_for`].
+    pub fn shape(&self) -> librqbit_core::merkle::HashRequestShape {
+        librqbit_core::merkle::HashRequestShape {
+            base: self.base_layer,
+            index: self.index,
+            count: self.length,
+            proof_layers: self.proof_layers,
+        }
+    }
+
+    fn serialize_unchecked_len(&self, buf: &mut [u8]) -> usize {
+        buf[0..32].copy_from_slice(&self.pieces_root.0);
+        BE::write_u32(&mut buf[32..36], self.base_layer);
+        BE::write_u32(&mut buf[36..40], self.index);
+        BE::write_u32(&mut buf[40..44], self.length);
+        BE::write_u32(&mut buf[44..48], self.proof_layers);
+        HASH_REQUEST_LEN
+    }
+
+    fn deserialize(b: &[u8; HASH_REQUEST_LEN]) -> Self {
+        let mut pieces_root = Id32::default();
+        pieces_root.0.copy_from_slice(&b[0..32]);
+        HashRequest {
+            pieces_root,
+            base_layer: BE::read_u32(&b[32..36]),
+            index: BE::read_u32(&b[36..40]),
+            length: BE::read_u32(&b[40..44]),
+            proof_layers: BE::read_u32(&b[44..48]),
+        }
+    }
+}
+
+/// BEP 52 `hashes`: the answer to `request`, the `length` base hashes followed by the uncle
+/// hashes, 32 bytes each.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Hashes<B> {
+    pub request: HashRequest,
+    pub hashes: B,
+}
+
+impl<B: AsRef<[u8]>> std::fmt::Debug for Hashes<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hashes")
+            .field("request", &self.request)
+            .field("hashes", &(self.hashes.as_ref().len() / 32))
+            .finish()
+    }
+}
+
+impl<B: AsRef<[u8]>> Hashes<B> {
+    /// The hashes in the order they were sent.
+    pub fn iter_hashes(&self) -> impl Iterator<Item = Id32> + '_ {
+        self.hashes
+            .as_ref()
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .map(|h| Id32::new(*h))
+    }
+}
+
+impl Hashes<ByteBufOwned> {
+    /// `hashes` concatenated as the message carries them.
+    pub fn new(request: HashRequest, hashes: &[Id32]) -> Self {
+        let mut buf = Vec::with_capacity(hashes.len() * 32);
+        for h in hashes {
+            buf.extend_from_slice(&h.0);
+        }
+        Hashes {
+            request,
+            hashes: buf.into(),
+        }
+    }
+
+    pub fn as_borrowed(&self) -> Hashes<ByteBuf<'_>> {
+        Hashes {
+            request: self.request,
+            hashes: self.hashes.as_ref().into(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Message<'a> {
     Request(Request),
@@ -229,6 +354,23 @@ pub enum Message<'a> {
     NotInterested,
     Piece(Piece<ByteBuf<'a>>),
     Extended(ExtendedMessage<ByteBuf<'a>>),
+    /// BEP 52: asks for hashes of a file's merkle tree. Only for peers with the v2 bit.
+    HashRequest(HashRequest),
+    /// BEP 52: the answer to a `HashRequest`.
+    Hashes(Hashes<ByteBuf<'a>>),
+    /// BEP 52: the sender will not answer this `HashRequest`.
+    HashReject(HashRequest),
+}
+
+impl Message<'_> {
+    /// Whether this message exists only in BitTorrent v2 (BEP 52). A peer may send these only
+    /// when both handshakes carried the v2 bit.
+    pub fn is_v2(&self) -> bool {
+        matches!(
+            self,
+            Message::HashRequest(_) | Message::Hashes(_) | Message::HashReject(_)
+        )
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -328,6 +470,27 @@ impl Message<'_> {
                 let msg_len = e.serialize(&mut out[PREAMBLE_LEN..], peer_extended_messages)?;
                 write_preamble!(msg_len as u32, MSGID_EXTENDED);
                 Ok(PREAMBLE_LEN + msg_len)
+            }
+            Message::HashRequest(r) | Message::HashReject(r) => {
+                check_len!(PREAMBLE_LEN + HASH_REQUEST_LEN);
+                let msg_id = if matches!(self, Message::HashRequest(_)) {
+                    MSGID_HASH_REQUEST
+                } else {
+                    MSGID_HASH_REJECT
+                };
+                write_preamble!(HASH_REQUEST_LEN as u32, msg_id);
+                r.serialize_unchecked_len(&mut out[PREAMBLE_LEN..]);
+                Ok(PREAMBLE_LEN + HASH_REQUEST_LEN)
+            }
+            Message::Hashes(h) => {
+                let hashes = h.hashes.as_ref();
+                let payload_len = HASH_REQUEST_LEN + hashes.len();
+                check_len!(PREAMBLE_LEN + payload_len);
+                write_preamble!(payload_len as u32, MSGID_HASHES);
+                let rest = &mut out[PREAMBLE_LEN..];
+                let n = h.request.serialize_unchecked_len(rest);
+                rest[n..n + hashes.len()].copy_from_slice(hashes);
+                Ok(PREAMBLE_LEN + payload_len)
             }
         }
     }
@@ -459,6 +622,38 @@ impl Message<'_> {
                 Message::Extended(ExtendedMessage::deserialize(buf.with_max_len(msg_len))?),
                 PREAMBLE_LEN + msg_len,
             )),
+            MSGID_HASH_REQUEST | MSGID_HASH_REJECT => {
+                check_msg_len!(48);
+                let request = HashRequest::deserialize(&buf.consume().unwrap());
+                let msg = if msg_id == MSGID_HASH_REQUEST {
+                    Message::HashRequest(request)
+                } else {
+                    Message::HashReject(request)
+                };
+                Ok((msg, total_len))
+            }
+            MSGID_HASHES => {
+                // The request and at least one hash.
+                check_msg_len!(min 80);
+                let hashes_len = msg_len - HASH_REQUEST_LEN;
+                if !hashes_len.is_multiple_of(32) {
+                    return Err(MessageDeserializeError::HashesBadLength(hashes_len));
+                }
+                if hashes_len / 32 > MAX_HASHES_PER_MESSAGE {
+                    return Err(MessageDeserializeError::HashesTooMany(hashes_len / 32));
+                }
+                let request = HashRequest::deserialize(&buf.consume().unwrap());
+                let hashes = buf
+                    .get_contiguous(hashes_len)
+                    .ok_or(MessageDeserializeError::NeedContiguous)?;
+                Ok((
+                    Message::Hashes(Hashes {
+                        request,
+                        hashes: ByteBuf::from(hashes),
+                    }),
+                    total_len,
+                ))
+            }
             msg_id => Err(MessageDeserializeError::UnsupportedMessageId(msg_id)),
         }
     }
@@ -519,6 +714,19 @@ impl Handshake {
         buf[28..48].copy_from_slice(&self.info_hash.0);
         buf[48..68].copy_from_slice(&self.peer_id.0);
         68
+    }
+
+    /// Sets the reserved bit that announces support for BitTorrent v2 (BEP 52: the fourth most
+    /// significant bit of the last reserved byte, `reserved[7] & 0x10`).
+    #[must_use]
+    pub fn with_v2_support(mut self) -> Handshake {
+        self.reserved |= 0x10;
+        self
+    }
+
+    /// True if the peer announces support for BitTorrent v2 (BEP 52).
+    pub fn supports_v2(&self) -> bool {
+        self.reserved.to_be_bytes()[7] & 0x10 != 0
     }
 }
 
@@ -793,6 +1001,167 @@ mod tests {
                 assert_eq!(slen, len);
                 assert_eq!(buf[..len], tmp[..len]);
             }
+        }
+    }
+
+    // BEP 52: "the 4th most significant bit in the last byte of the reserved bitfield".
+    #[test]
+    fn test_handshake_v2_bit() {
+        let h = Handshake::new(Id20::new([1; 20]), Id20::new([2; 20]));
+        assert!(!h.supports_v2());
+        let h = h.with_v2_support();
+        assert!(h.supports_v2());
+        assert!(h.supports_extended());
+        let mut buf = [0u8; 68];
+        assert_eq!(h.serialize_unchecked_len(&mut buf), 68);
+        assert_eq!(buf[20..28], [0, 0, 0, 0, 0, 0x10, 0, 0x10]);
+        let (back, _) = Handshake::deserialize(&buf).unwrap();
+        assert!(back.supports_v2());
+
+        let mut other = buf;
+        other[27] = 0x08;
+        assert!(!Handshake::deserialize(&other).unwrap().0.supports_v2());
+    }
+
+    /// Deserializes `wire` split at every point, checks the result and serializes it back to
+    /// the same bytes.
+    fn assert_round_trip(wire: &[u8], check: impl Fn(&Message<'_>) -> bool) {
+        for split_point in 0..=wire.len() {
+            let (first, second) = wire.split_at(split_point);
+            let (msg, len) = Message::deserialize(first, second)
+                .unwrap_or_else(|e| panic!("split_point={split_point}: {e:#}"));
+            assert!(check(&msg), "split_point={split_point}: unexpected {msg:?}");
+            assert_eq!(len, wire.len());
+            let mut tmp = [0u8; 100];
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(&tmp[..slen], wire);
+        }
+    }
+
+    fn hash_request_wire(msg_id: u8, extra: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&(1 + 48 + extra.len() as u32).to_be_bytes());
+        wire.push(msg_id);
+        wire.extend_from_slice(&[0xab; 32]);
+        wire.extend_from_slice(&[0, 0, 0, 2, 0, 0, 0, 64, 0, 0, 2, 0, 0, 0, 0, 9]);
+        wire.extend_from_slice(extra);
+        wire
+    }
+
+    const HR: HashRequest = HashRequest {
+        pieces_root: librqbit_core::hash_id::Id([0xab; 32]),
+        base_layer: 2,
+        index: 64,
+        length: 512,
+        proof_layers: 9,
+    };
+
+    #[test]
+    fn test_hash_messages_round_trip() {
+        assert_round_trip(
+            &hash_request_wire(21, &[]),
+            |m| matches!(m, Message::HashRequest(r) if *r == HR),
+        );
+        assert_round_trip(
+            &hash_request_wire(23, &[]),
+            |m| matches!(m, Message::HashReject(r) if *r == HR),
+        );
+        // Hashes need a contiguous buffer, so only split before the hashes or after them.
+        let hashes: Vec<u8> = (0..64u8).collect();
+        let wire = hash_request_wire(22, &hashes);
+        for split_point in (0..=5 + 48).chain([wire.len()]) {
+            let (first, second) = wire.split_at(split_point);
+            let (msg, len) = Message::deserialize(first, second)
+                .unwrap_or_else(|e| panic!("split_point={split_point}: {e:#}"));
+            assert_eq!(len, wire.len());
+            let Message::Hashes(h) = &msg else {
+                panic!("split_point={split_point}: unexpected {msg:?}")
+            };
+            assert_eq!(h.request, HR);
+            let firsts: Vec<u8> = h.iter_hashes().map(|h| h.0[0]).collect();
+            assert_eq!(firsts, [0, 32]);
+            let mut tmp = [0u8; 200];
+            let slen = msg.serialize(&mut tmp, &|| Default::default()).unwrap();
+            assert_eq!(&tmp[..slen], wire);
+        }
+        assert!(Message::HashRequest(HR).is_v2());
+        assert!(!Message::Have(1).is_v2());
+    }
+
+    #[test]
+    fn test_hashes_owned_serializes_like_wire() {
+        let ids = [Id32::new([1; 32]), Id32::new([2; 32])];
+        let owned = Hashes::new(HR, &ids);
+        let mut buf = [0u8; 200];
+        let len = Message::Hashes(owned.as_borrowed())
+            .serialize(&mut buf, &Default::default)
+            .unwrap();
+        let extra: Vec<u8> = [[1u8; 32], [2u8; 32]].concat();
+        assert_eq!(&buf[..len], hash_request_wire(22, &extra));
+        assert_eq!(owned.iter_hashes().collect::<Vec<_>>(), ids);
+        // Too small an output buffer is an error, not a panic.
+        assert!(matches!(
+            Message::Hashes(owned.as_borrowed()).serialize(&mut buf[..100], &Default::default),
+            Err(SerializeError::NoSpaceInBuffer)
+        ));
+    }
+
+    #[test]
+    fn test_hash_messages_reject_malformed() {
+        // Request and reject are exactly 48 bytes.
+        for msg_id in [21u8, 23] {
+            for payload_len in [0u32, 1, 47, 49, 80] {
+                let mut buf = vec![0u8; 200];
+                buf[0..4].copy_from_slice(&(payload_len + 1).to_be_bytes());
+                buf[4] = msg_id;
+                match Message::deserialize(&buf, &[]) {
+                    Err(MessageDeserializeError::IncorrectMsgLen {
+                        received, expected, ..
+                    }) => {
+                        assert_eq!(received, payload_len);
+                        assert_eq!(expected, 48);
+                    }
+                    other => panic!("msg_id={msg_id} payload_len={payload_len}: {other:?}"),
+                }
+            }
+        }
+        // Hashes: no hash at all, or a partial hash.
+        for extra in [0usize, 1, 31, 33, 63] {
+            let wire = hash_request_wire(22, &vec![0; extra]);
+            let res = Message::deserialize(&wire, &[]);
+            assert!(
+                matches!(
+                    res,
+                    Err(MessageDeserializeError::IncorrectMsgLen { .. }
+                        | MessageDeserializeError::HashesBadLength(_))
+                ),
+                "extra={extra}: {res:?}"
+            );
+        }
+        // More hashes than any answer can carry.
+        let too_many = vec![0u8; (MAX_HASHES_PER_MESSAGE + 1) * 32];
+        assert!(matches!(
+            Message::deserialize(&hash_request_wire(22, &too_many), &[]),
+            Err(MessageDeserializeError::HashesTooMany(n)) if n == MAX_HASHES_PER_MESSAGE + 1
+        ));
+        // The largest answer fits in the largest message.
+        let max = vec![0u8; MAX_HASHES_PER_MESSAGE * 32];
+        let wire = hash_request_wire(22, &max);
+        assert!(wire.len() <= MAX_MSG_LEN);
+        assert!(Message::deserialize(&wire, &[]).is_ok());
+        // Split across the ring buffer inside the hashes: needs a contiguous buffer.
+        let wire = hash_request_wire(22, &[0; 64]);
+        let (a, b) = wire.split_at(5 + 48 + 10);
+        assert!(matches!(
+            Message::deserialize(a, b),
+            Err(MessageDeserializeError::NeedContiguous)
+        ));
+    }
+
+    #[test]
+    fn test_hash_message_names() {
+        for (msg_id, name) in [(21, "hash_request"), (22, "hashes"), (23, "hash_reject")] {
+            assert_eq!(format!("{:?}", MsgIdDebug(msg_id)), name);
         }
     }
 }

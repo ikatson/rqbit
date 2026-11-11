@@ -313,6 +313,18 @@ impl PieceTracker {
     pub fn flush_have_pieces(&mut self, flush_async: bool) -> anyhow::Result<()> {
         self.chunks.get_have_pieces_mut().flush(flush_async)
     }
+
+    /// Reserves `piece` for `peer` if it is in the queue, without going through
+    /// [`Self::acquire_piece`]'s order. Web seeds use it to extend the piece
+    /// [`Self::acquire_piece`] gave them into a run of consecutive pieces fetched with one HTTP
+    /// request. Returns whether the piece was reserved.
+    pub fn reserve_queued(&mut self, piece: ValidPieceIndex, peer: PeerHandle) -> bool {
+        if !self.chunks.is_piece_queued(piece) {
+            return false;
+        }
+        self.reserve_piece(piece, peer);
+        true
+    }
 }
 
 #[cfg(test)]
@@ -800,5 +812,36 @@ mod tests {
             }
             _ => panic!("Expected Stolen, got {:?}", result),
         }
+    }
+
+    #[test]
+    fn test_reserve_queued() {
+        // Four pieces; the last one is not selected.
+        let lengths = Lengths::new(16384 * 4, 16384).unwrap();
+        let bf_len = lengths.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        for i in 0..3 {
+            selected.set(i, true);
+        }
+        let chunks = ChunkTracker::new(
+            have.into_dyn(),
+            selected,
+            lengths.clone(),
+            &make_test_file_infos(4),
+        )
+        .unwrap();
+        let mut tracker = PieceTracker::new(chunks);
+        let p = |i| lengths.validate_piece_index(i).unwrap();
+
+        assert!(tracker.reserve_queued(p(1), peer(1)));
+        assert_eq!(tracker.get_inflight(p(1)).unwrap().peer, peer(1));
+        // Already in flight: not queued any more.
+        assert!(!tracker.reserve_queued(p(1), peer(2)));
+        // Not wanted at all: never queued.
+        assert!(!tracker.reserve_queued(p(3), peer(1)));
+        assert!(tracker.reserve_queued(p(2), peer(1)));
+        assert_eq!(tracker.release_pieces_owned_by(peer(1)), 2);
+        assert!(tracker.reserve_queued(p(1), peer(2)));
     }
 }

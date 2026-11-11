@@ -67,6 +67,10 @@ pub(super) enum Wire {
     Cancel(u32, u32, u32),
     Extended,
     Other(u8),
+    // BitTorrent v2 (BEP 52), the payloads as sent.
+    HashRequest(Vec<u8>),
+    Hashes(Vec<u8>),
+    HashReject(Vec<u8>),
 }
 
 pub(super) enum Recv {
@@ -220,6 +224,9 @@ impl FakePeer {
             },
             (8, 12) => Wire::Cancel(be32(p), be32(&p[4..]), be32(&p[8..])),
             (20, _) => Wire::Extended,
+            (21, 48) => Wire::HashRequest(p.to_vec()),
+            (22, n) if n >= 48 => Wire::Hashes(p.to_vec()),
+            (23, 48) => Wire::HashReject(p.to_vec()),
             (id, _) => Wire::Other(id),
         })
     }
@@ -460,4 +467,44 @@ async fn test_fake_peer_downloads_a_block_from_a_seeder() -> anyhow::Result<()> 
         Ok(())
     })
     .await
+}
+
+/// A handshake with the given reserved bytes.
+pub(super) fn handshake_bytes_with_reserved(
+    info_hash: Id20,
+    peer_id: &[u8; 20],
+    reserved: [u8; 8],
+) -> [u8; 68] {
+    let mut b = handshake_bytes(info_hash, peer_id);
+    b[20..28].copy_from_slice(&reserved);
+    b
+}
+
+impl FakePeer {
+    /// Accepts one connection on `listener` and answers its handshake with the info hash it
+    /// carries and `reserved`. Returns the peer and the other side's handshake.
+    pub(super) async fn accept(
+        listener: &tokio::net::TcpListener,
+        peer_id: &[u8; 20],
+        reserved: [u8; 8],
+    ) -> anyhow::Result<(Self, [u8; 68])> {
+        let (stream, _) = listener.accept().await.context("accept")?;
+        let local = stream.local_addr()?;
+        let mut p = Self {
+            stream,
+            buf: Vec::new(),
+            local,
+        };
+        let mut theirs = [0u8; 68];
+        timeout(Duration::from_secs(5), p.stream.read_exact(&mut theirs))
+            .await
+            .context("no handshake")?
+            .context("handshake")?;
+        let mut info_hash = Id20::default();
+        info_hash.0.copy_from_slice(&theirs[28..48]);
+        p.stream
+            .write_all(&handshake_bytes_with_reserved(info_hash, peer_id, reserved))
+            .await?;
+        Ok((p, theirs))
+    }
 }

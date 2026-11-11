@@ -1,6 +1,8 @@
 use std::{
     collections::VecDeque,
+    future::Future,
     io::SeekFrom,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -9,7 +11,7 @@ use std::{
     time::Instant,
 };
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use dashmap::DashMap;
 
 use librqbit_core::lengths::{CurrentPiece, Lengths, ValidPieceIndex};
@@ -19,9 +21,9 @@ use tokio::{
 };
 use tracing::{debug, trace};
 
-use crate::{ManagedTorrent, file_info::FileInfo, storage::TorrentStorage};
+use crate::{ManagedTorrent, ManagedTorrentState, chunk_tracker::ChunkTracker};
 
-use super::{ManagedTorrentHandle, TorrentMetadata};
+use super::{ManagedTorrentHandle, ManagedTorrentLocked, TorrentMetadata};
 
 type StreamId = usize;
 
@@ -120,6 +122,16 @@ impl TorrentStreams {
         }
     }
 
+    // Wakes every stream waiting for a piece. A check that just ended may have found pieces
+    // that no download will complete (and so wake their streams) any more.
+    pub(crate) fn wake_all(&self) {
+        for mut w in self.streams.iter_mut() {
+            if let Some(waker) = w.value_mut().waker.take() {
+                waker.wake();
+            }
+        }
+    }
+
     fn drop_stream(&self, stream_id: StreamId) -> Option<StreamState> {
         debug!(stream_id, "dropping stream");
         self.streams.remove(&stream_id).map(|s| s.1)
@@ -142,7 +154,58 @@ pub struct FileStream {
     file_len: u64,
     file_torrent_abs_offset: u64,
 
+    // Set while a storage operation has the storage (see `storage_busy`): the read waits for
+    // it to end.
+    storage_wait: Option<StorageWait>,
+
     _blocking_permit: OwnedSemaphorePermit,
+}
+
+type StorageWait = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + Sync>>;
+
+// What one try at a stream read found.
+enum StreamRead {
+    // The bytes were read.
+    Done,
+    // The piece isn't there; the stream is woken once it is.
+    MissingPiece,
+    // The storage can't be read now (see `storage_busy`).
+    StorageBusy,
+}
+
+// Whether the storage is out of a stream's reach for now: a storage operation (move, rename,
+// recheck) has it, or the torrent checks its files (or waits to). Fails in a state the torrent
+// doesn't leave on its own.
+fn storage_busy(g: &ManagedTorrentLocked) -> anyhow::Result<bool> {
+    match &g.state {
+        ManagedTorrentState::Live(_) => Ok(false),
+        ManagedTorrentState::Paused(_) => Ok(g.storage_on_loan),
+        ManagedTorrentState::Initializing(_) => Ok(true),
+        ManagedTorrentState::Error(e) => bail!("the torrent stopped with an error: {e:#}"),
+        ManagedTorrentState::None => bail!("bug: torrent is in empty state"),
+    }
+}
+
+// Waits until a stream can read the storage of `torrent` again: until the storage operation
+// or the check that has it ends. Fails if the torrent is deleted or the session stops
+// meanwhile, or if the torrent ends up in error.
+async fn wait_storage_readable(torrent: ManagedTorrentHandle) -> anyhow::Result<()> {
+    loop {
+        // Registered before looking, so that a change right after the look still wakes us.
+        let notified = torrent.state_change_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let busy = storage_busy(&torrent.locked.read())?;
+        if !busy {
+            return Ok(());
+        }
+        tokio::select! {
+            _ = notified => {}
+            _ = torrent.storage_op_cancel.cancelled() => {
+                bail!("the torrent was deleted or the session stopped")
+            }
+        }
+    }
 }
 
 macro_rules! map_io_err {
@@ -166,78 +229,83 @@ macro_rules! poll_try_io {
 
 impl AsyncRead for FileStream {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         tbuf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
         // if the file is over, return 0
-        if self.position == self.file_len {
+        if this.position == this.file_len {
             debug!(
-                stream_id = self.stream_id,
-                file_id = self.file_id,
+                stream_id = this.stream_id,
+                file_id = this.file_id,
                 "stream completed, EOF"
             );
             return Poll::Ready(Ok(()));
         }
 
-        let current = poll_try_io!(
-            self.metadata
-                .lengths()
-                .compute_current_piece(self.position, self.file_torrent_abs_offset)
-                .context("invalid position")
-        );
-
-        // if the piece is not there, register to wake when it is
-        // check if we have the piece for real
-        let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
-            let have = ct.get_have_pieces().as_slice()[current.id.get() as usize];
-            if !have {
-                self.streams
-                    .register_waker(self.stream_id, cx.waker().clone());
+        let bytes_read = loop {
+            // A storage operation had the storage: once it's over, look again, as the piece
+            // may be gone (a recheck found it damaged) and the file elsewhere (moved, renamed).
+            if let Some(wait) = this.storage_wait.as_mut() {
+                let waited = std::task::ready!(wait.as_mut().poll(cx));
+                this.storage_wait = None;
+                poll_try_io!(waited);
             }
-            have
-        }));
-        if !have {
-            debug!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have");
-            return Poll::Pending;
-        }
 
-        // actually stream the piece
-        let buf = tbuf.initialize_unfilled();
-        let file_remaining = self.file_len - self.position;
-        let bytes_to_read: usize = poll_try_io!(
-            (buf.len() as u64)
-                .min(current.piece_remaining as u64)
-                .min(file_remaining)
-                .try_into()
-        );
+            let current = poll_try_io!(
+                this.metadata
+                    .lengths()
+                    .compute_current_piece(this.position, this.file_torrent_abs_offset)
+                    .context("invalid position")
+            );
 
-        let buf = &mut buf[..bytes_to_read];
+            let buf = tbuf.initialize_unfilled();
+            let file_remaining = this.file_len - this.position;
+            let bytes_to_read: usize = poll_try_io!(
+                (buf.len() as u64)
+                    .min(current.piece_remaining as u64)
+                    .min(file_remaining)
+                    .try_into()
+            );
+            let buf = &mut buf[..bytes_to_read];
 
-        let start = Instant::now();
-        poll_try_io!(poll_try_io!(self.torrent.shared.spawner.block_in_place(
-            || {
-                self.torrent.with_storage_and_file(
-                    self.file_id,
-                    |files, _fi| {
-                        files.pread_exact(self.file_id, self.position, buf)?;
-                        Ok::<_, anyhow::Error>(())
-                    },
-                    &self.metadata,
-                )
+            let start = Instant::now();
+            let read = poll_try_io!(this.torrent.shared.spawner.block_in_place(|| {
+                this.torrent
+                    .stream_read(this.file_id, this.position, current.id, buf, || {
+                        this.streams
+                            .register_waker(this.stream_id, cx.waker().clone())
+                    })
+            }));
+            match read {
+                StreamRead::Done => {
+                    trace!(
+                        buflen = bytes_to_read,
+                        stream_id = this.stream_id,
+                        file_id = this.file_id,
+                        read_time = ?start.elapsed(),
+                        "will write bytes"
+                    );
+                    break bytes_to_read;
+                }
+                StreamRead::MissingPiece => {
+                    debug!(stream_id = this.stream_id, file_id = this.file_id, piece_id = %current.id, "poll pending, not have");
+                    return Poll::Pending;
+                }
+                StreamRead::StorageBusy => {
+                    debug!(
+                        stream_id = this.stream_id,
+                        file_id = this.file_id,
+                        "storage busy, waiting for it"
+                    );
+                    this.storage_wait = Some(Box::pin(wait_storage_readable(this.torrent.clone())));
+                }
             }
-        )));
+        };
 
-        trace!(
-            buflen = buf.len(),
-            stream_id = self.stream_id,
-            file_id = self.file_id,
-            read_time = ?start.elapsed(),
-            "will write bytes"
-        );
-
-        self.as_mut().advance(bytes_to_read as u64);
-        tbuf.advance(bytes_to_read);
+        this.advance(bytes_read as u64);
+        tbuf.advance(bytes_read);
 
         Poll::Ready(Ok(()))
     }
@@ -282,24 +350,44 @@ impl Drop for FileStream {
 }
 
 impl ManagedTorrent {
-    fn with_storage_and_file<F, R>(
+    // One try at a stream's read of `buf.len()` bytes of file `file_id` at `offset`, inside
+    // `piece`. The state lock is held from looking at the piece to the end of the read, so
+    // that neither can a storage operation take the storage nor a recheck start in between.
+    // `on_missing` (registering the stream's waker) runs under the lock that marking the piece
+    // present takes, so that the wake-up can't be missed.
+    fn stream_read(
         &self,
         file_id: usize,
-        f: F,
-        metadata: &TorrentMetadata,
-    ) -> anyhow::Result<R>
-    where
-        F: FnOnce(&dyn TorrentStorage, &FileInfo) -> R,
-    {
-        self.with_state(|s| {
-            let files = match s {
-                crate::ManagedTorrentState::Paused(p) => &*p.files,
-                crate::ManagedTorrentState::Live(l) => &*l.files,
-                s => anyhow::bail!("with_storage_and_file: invalid state: {}", s.name()),
-            };
-            let fi = metadata.file_infos.get(file_id).context("invalid file")?;
-            Ok(f(files, fi))
-        })
+        offset: u64,
+        piece: ValidPieceIndex,
+        buf: &mut [u8],
+        on_missing: impl FnOnce(),
+    ) -> anyhow::Result<StreamRead> {
+        let g = self.locked.read();
+        if storage_busy(&g)? {
+            return Ok(StreamRead::StorageBusy);
+        }
+        let files = match &g.state {
+            ManagedTorrentState::Live(l) => {
+                let locked = l.lock_read("stream_read");
+                let chunks = locked.get_chunks().context("error getting chunks")?;
+                if !have_piece(chunks, piece) {
+                    on_missing();
+                    return Ok(StreamRead::MissingPiece);
+                }
+                &*l.files
+            }
+            ManagedTorrentState::Paused(p) => {
+                if !have_piece(&p.chunk_tracker, piece) {
+                    on_missing();
+                    return Ok(StreamRead::MissingPiece);
+                }
+                &*p.files
+            }
+            s => bail!("bug: reading a stream in state {}", s.name()),
+        };
+        files.pread_exact(file_id, offset, buf)?;
+        Ok(StreamRead::Done)
     }
 
     fn streams(&self) -> anyhow::Result<Arc<TorrentStreams>> {
@@ -342,11 +430,8 @@ impl ManagedTorrent {
             .metadata
             .load_full()
             .context("torrent metadata is not resolved")?;
-        let (fd_len, fd_offset) = self.with_storage_and_file(
-            file_id,
-            |_fd, fi| (fi.len, fi.offset_in_torrent),
-            &metadata,
-        )?;
+        let fi = metadata.file_infos.get(file_id).context("invalid file")?;
+        let (fd_len, fd_offset) = (fi.len, fi.offset_in_torrent);
         let streams = self.streams()?;
         let blocking_permit = self.shared().spawner.semaphore().acquire_owned().await?;
         let s = FileStream {
@@ -357,6 +442,7 @@ impl ManagedTorrent {
 
             file_len: fd_len,
             file_torrent_abs_offset: fd_offset,
+            storage_wait: None,
             _blocking_permit: blocking_permit,
             torrent: self,
             metadata,
@@ -377,6 +463,14 @@ impl ManagedTorrent {
 
         Ok(s)
     }
+}
+
+fn have_piece(chunks: &ChunkTracker, piece: ValidPieceIndex) -> bool {
+    chunks
+        .get_have_pieces()
+        .as_slice()
+        .get(piece.get() as usize)
+        .is_some_and(|b| *b)
 }
 
 impl FileStream {

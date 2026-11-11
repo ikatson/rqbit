@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::Context;
 use axum::{
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ApiState;
 use crate::{
-    AddTorrent, ApiError, CreateTorrentOptions, SUPPORTED_SCHEMES,
+    AddTorrent, ApiError, CreateTorrentOptions, MoveStorageMode, SUPPORTED_SCHEMES, TorrentVersion,
     api::{ApiTorrentListOpts, Result, TorrentIdOrHash},
     api_error::WithStatusError,
     http_api::timeout::Timeout,
@@ -253,6 +253,89 @@ pub async fn h_torrent_action_update_only_files(
         .map(axum::Json)
 }
 
+pub async fn h_torrent_web_seeds(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state.api.api_torrent_web_seeds(idx).map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct WebSeedRequest {
+    url: String,
+}
+
+pub async fn h_torrent_action_add_web_seed(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<WebSeedRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_add_web_seed(idx, &req.url)
+        .await
+        .map(axum::Json)
+}
+
+pub async fn h_torrent_action_force_recheck(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_force_recheck(idx)
+        .await
+        .map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct MoveStorageRequest {
+    output_folder: PathBuf,
+    #[serde(default)]
+    mode: MoveStorageMode,
+}
+
+pub async fn h_torrent_action_move_storage(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<MoveStorageRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_move_storage(idx, req.output_folder, req.mode)
+        .await
+        .map(axum::Json)
+}
+
+pub async fn h_torrent_action_remove_web_seed(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<WebSeedRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_remove_web_seed(idx, &req.url)
+        .await
+        .map(axum::Json)
+}
+
+#[derive(Deserialize)]
+pub struct RenameFileRequest {
+    file_index: usize,
+    path: PathBuf,
+}
+
+pub async fn h_torrent_action_rename_file(
+    State(state): State<ApiState>,
+    Path(idx): Path<TorrentIdOrHash>,
+    axum::Json(req): axum::Json<RenameFileRequest>,
+) -> Result<impl IntoResponse> {
+    state
+        .api
+        .api_torrent_action_rename_file(idx, req.file_index, req.path)
+        .await
+        .map(axum::Json)
+}
 pub async fn h_session_stats(State(state): State<ApiState>) -> impl IntoResponse {
     axum::Json(state.api.api_session_stats())
 }
@@ -358,6 +441,26 @@ enum CreateTorrentOutput {
     Torrent,
 }
 
+#[derive(Default, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum CreateTorrentVersion {
+    #[default]
+    V1,
+    V2,
+    Hybrid,
+}
+
+impl From<CreateTorrentVersion> for TorrentVersion {
+    fn from(v: CreateTorrentVersion) -> Self {
+        match v {
+            CreateTorrentVersion::V1 => TorrentVersion::V1,
+            CreateTorrentVersion::V2 => TorrentVersion::V2,
+            CreateTorrentVersion::Hybrid => TorrentVersion::Hybrid,
+        }
+    }
+}
+
+/// Query of `POST /torrents/create`; see [`CreateTorrentOptions`] for the meaning of each.
 #[derive(Default, Deserialize, Debug)]
 pub struct HttpCreateTorrentOptions {
     #[serde(default)]
@@ -365,6 +468,18 @@ pub struct HttpCreateTorrentOptions {
     #[serde(default)]
     trackers: Vec<String>,
     name: Option<String>,
+    /// `v1` (default), `v2` or `hybrid`.
+    #[serde(default)]
+    version: CreateTorrentVersion,
+    #[serde(default)]
+    private: bool,
+    /// In bytes; automatic when absent.
+    piece_length: Option<u32>,
+    /// Repeat the parameter for several web seeds.
+    #[serde(default)]
+    web_seeds: Vec<String>,
+    source: Option<String>,
+    comment: Option<String>,
 }
 
 pub async fn h_create_torrent(
@@ -388,7 +503,13 @@ pub async fn h_create_torrent(
     let create_opts = CreateTorrentOptions {
         name: opts.name.as_deref(),
         trackers: opts.trackers,
-        piece_length: None,
+        piece_length: opts.piece_length,
+        version: opts.version.into(),
+        private: opts.private,
+        web_seeds: opts.web_seeds,
+        source: opts.source.as_deref(),
+        comment: opts.comment.as_deref(),
+        ..Default::default()
     };
 
     let (torrent, handle) = state
@@ -403,6 +524,11 @@ pub async fn h_create_torrent(
     }
     if let Ok(v) = HeaderValue::from_str(&torrent.info_hash().as_string()) {
         headers.insert("torrent-info-hash", v);
+    }
+    if let Some(v2) = torrent.info_hash_v2()
+        && let Ok(v) = HeaderValue::from_str(&v2.as_string())
+    {
+        headers.insert("torrent-info-hash-v2", v);
     }
 
     match opts.output {

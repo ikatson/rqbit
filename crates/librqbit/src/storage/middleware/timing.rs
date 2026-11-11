@@ -6,7 +6,9 @@ use librqbit_core::lengths::ValidPieceIndex;
 
 use crate::{
     ManagedTorrentShared,
-    storage::{StorageFactory, StorageFactoryExt, TorrentStorage},
+    storage::{
+        MoveStorageOutcome, MoveStorageRequest, StorageFactory, StorageFactoryExt, TorrentStorage,
+    },
     torrent_state::TorrentMetadata,
 };
 
@@ -121,6 +123,52 @@ impl<U: TorrentStorage> TorrentStorage for TimingStorage<U> {
 
     fn on_piece_completed(&self, piece_index: ValidPieceIndex) -> anyhow::Result<()> {
         self.underlying.on_piece_completed(piece_index)
+    }
+
+    fn file_length(&self, file_id: usize) -> anyhow::Result<Option<u64>> {
+        self.underlying.file_length(file_id)
+    }
+
+    fn rename_file(
+        &self,
+        file_id: usize,
+        from: &std::path::Path,
+        to: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        let storage = &self.name;
+        timeit!(
+            "rename_file",
+            self.underlying.rename_file(file_id, from, to),
+            file_id,
+            storage
+        )
+    }
+
+    fn move_storage(&self, request: &MoveStorageRequest<'_>) -> anyhow::Result<MoveStorageOutcome> {
+        let storage = &self.name;
+        timeit!(
+            "move_storage",
+            self.underlying.move_storage(request),
+            storage
+        )
+    }
+
+    fn finish_move_storage(&self, commit: bool) -> anyhow::Result<()> {
+        let storage = &self.name;
+        timeit!(
+            "finish_move_storage",
+            self.underlying.finish_move_storage(commit),
+            storage
+        )
+    }
+
+    fn forget_cached_data(&self) -> anyhow::Result<()> {
+        let storage = &self.name;
+        timeit!(
+            "forget_cached_data",
+            self.underlying.forget_cached_data(),
+            storage
+        )
     }
 }
 

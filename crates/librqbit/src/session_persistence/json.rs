@@ -165,7 +165,11 @@ impl JsonSessionPersistenceStore {
             torrent_bytes: Default::default(),
             only_files: torrent.only_files().clone(),
             is_paused: torrent.is_paused(),
-            output_folder: torrent.shared().options.output_folder.clone(),
+            web_seeds: Some(torrent.web_seed_urls()),
+            disable_web_seeds: torrent.web_seeds_disabled_for_torrent(),
+            output_folder: torrent.output_folder(),
+            renamed_files: torrent.shared().renamed_files(),
+            move_in_progress: torrent.shared().move_in_progress(),
         };
 
         let torrent_bytes = torrent
@@ -175,23 +179,24 @@ impl JsonSessionPersistenceStore {
             .map(|i| i.torrent_bytes.clone())
             .unwrap_or_default();
 
-        if write_torrent_file && !torrent_bytes.is_empty() {
-            let torrent_bytes_file = self.torrent_bytes_filename(&torrent.info_hash());
-            match tokio::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&torrent_bytes_file)
+        let torrent_bytes_file = self.torrent_bytes_filename(&torrent.info_hash());
+        // The bytes change after the torrent was stored when BEP 52 piece layers are learned
+        // from peers (they only ever grow the file). A file we cannot stat is written again.
+        let changed = !write_torrent_file
+            && !torrent_bytes.is_empty()
+            && tokio::fs::metadata(&torrent_bytes_file)
                 .await
-            {
-                Ok(mut f) => {
-                    if let Err(e) = f.write_all(&torrent_bytes).await {
-                        warn!(error=?e, file=?torrent_bytes_file, "error writing torrent bytes")
-                    }
-                }
-                Err(e) => {
-                    warn!(error=?e, file=?torrent_bytes_file, "error opening torrent bytes file")
-                }
+                .map_or(true, |m| m.len() != torrent_bytes.len() as u64);
+        if (write_torrent_file || changed) && !torrent_bytes.is_empty() {
+            // Through a temporary file, so that a crash does not leave half of it.
+            let tmp = torrent_bytes_file.with_extension("torrent.tmp");
+            let res = async {
+                tokio::fs::write(&tmp, &torrent_bytes).await?;
+                tokio::fs::rename(&tmp, &torrent_bytes_file).await
+            }
+            .await;
+            if let Err(e) = res {
+                warn!(error=?e, file=?torrent_bytes_file, "error writing torrent bytes")
             }
         }
 
