@@ -534,13 +534,18 @@ async fn test_web_seed_and_peer_together() -> anyhow::Result<()> {
 
         let seed = only_seed(&client.handle)?;
         assert!(seed.downloaded_bytes > 0, "the web seed gave nothing");
-        assert!(seeder.uploaded() > 0, "the peer gave nothing");
+        // The seeder counts a block once it is written to the socket, which can be after
+        // the client has it: wait for the counter instead of reading it right away.
+        until("the peer's upload is counted", || seeder.uploaded() > 0).await?;
         // No piece was completed twice, none failed.
         assert_eq!(client.checked_pieces(), torrent.pieces);
         assert_eq!(seed.last_error, None);
         // Whole pieces only went to one of them, and the web seed only delivered what was
         // written: together they cover the torrent.
-        assert!(seed.downloaded_bytes + seeder.uploaded() >= torrent.content_len());
+        until("the web seed and the peer cover the torrent", || {
+            seed.downloaded_bytes + seeder.uploaded() >= torrent.content_len()
+        })
+        .await?;
         client.session.stop().await;
         seeder.session.stop().await;
         Ok(())
@@ -580,7 +585,10 @@ async fn test_corrupt_web_seed_is_disabled_and_the_peer_fills_in() -> anyhow::Re
         let error = seed.last_error.context("no error")?;
         assert!(error.contains("hash check"), "{error}");
         assert_eq!(client.checked_pieces(), torrent.pieces);
-        assert!(seeder.uploaded() >= torrent.content_len());
+        until("the peer's upload is counted", || {
+            seeder.uploaded() >= torrent.content_len()
+        })
+        .await?;
         client.session.stop().await;
         seeder.session.stop().await;
         Ok(())
@@ -756,7 +764,10 @@ async fn test_missing_file_comes_from_the_peer() -> anyhow::Result<()> {
         assert!(server.served(&missing, 206) == 0);
         // Once known missing, the file is not asked for again.
         assert_eq!(server.served(&missing, 404), 1);
-        assert!(seeder.uploaded() >= 2 * PIECE as u64);
+        until("the peer's upload is counted", || {
+            seeder.uploaded() >= 2 * PIECE as u64
+        })
+        .await?;
         client.session.stop().await;
         seeder.session.stop().await;
         Ok(())
