@@ -588,20 +588,40 @@ impl PieceVerifier {
 
     /// True if exactly the piece's length was fed and every hash matches.
     pub fn finish(self) -> bool {
-        if self.fed != self.piece_len {
-            return false;
-        }
-        if let Some((h, expected)) = self.v1 {
-            use sha1w::ISha1;
-            if h.finish() != expected {
-                return false;
-            }
-        }
-        if let Some(v2) = self.v2
-            && v2.hasher.finish(v2.leaves) != Some(v2.expected)
-        {
-            return false;
-        }
-        true
+        self.verdict() == PieceVerdict::Good
     }
+
+    /// Like [`Self::finish`], but tells a bad piece apart from a hybrid
+    /// torrent whose v1 and v2 hashes disagree about the same bytes.
+    pub fn verdict(self) -> PieceVerdict {
+        if self.fed != self.piece_len {
+            return PieceVerdict::Bad;
+        }
+        let v1 = self.v1.map(|(h, expected)| {
+            use sha1w::ISha1;
+            h.finish() == expected
+        });
+        let v2 = self
+            .v2
+            .map(|v2| v2.hasher.finish(v2.leaves) == Some(v2.expected));
+        match (v1, v2) {
+            (Some(a), Some(b)) if a != b => PieceVerdict::Inconsistent,
+            (Some(false), _) | (_, Some(false)) => PieceVerdict::Bad,
+            _ => PieceVerdict::Good,
+        }
+    }
+}
+
+/// Outcome of [`PieceVerifier::verdict`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PieceVerdict {
+    /// Every hash the torrent has for the piece matches.
+    Good,
+    /// The bytes are not the piece: the hashes do not match, or the wrong
+    /// number of bytes was fed.
+    Bad,
+    /// Hybrid torrent: one of the two hashes matches the bytes and the other
+    /// does not, so the v1 and v2 descriptions of the torrent disagree and
+    /// the torrent itself is broken (libtorrent stops such a torrent too).
+    Inconsistent,
 }

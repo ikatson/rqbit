@@ -220,7 +220,9 @@ impl TorrentStateInitializing {
                     .enumerate()
                 {
                     // check_piece() answers Ok(false) for a piece whose hash doesn't
-                    // match: that piece is as wrong as one that can't be read.
+                    // match: that piece is as wrong as one that can't be read. A v2
+                    // piece whose layer is not known, or a hybrid piece whose v1 and
+                    // v2 hashes disagree, is an error.
                     match fo.check_piece(piece_id) {
                         Ok(true) => {}
                         Ok(false) => return true,

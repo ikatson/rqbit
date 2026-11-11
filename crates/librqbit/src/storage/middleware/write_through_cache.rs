@@ -123,7 +123,7 @@ impl<U: TorrentStorage> TorrentStorage for WriteThroughCacheStorage<U> {
         Ok(Box::new(WriteThroughCacheStorage {
             lru: RwLock::new(lru),
             underlying: self.underlying.take()?,
-            lengths: self.lengths,
+            lengths: self.lengths.clone(),
             file_infos: self.file_infos.clone(),
         }))
     }

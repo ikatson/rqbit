@@ -1,16 +1,13 @@
-use std::{
-    marker::PhantomData,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::Context;
 use buffers::{ByteBuf, ByteBufOwned};
 use librqbit_core::{
     lengths::{ChunkInfo, ValidPieceIndex},
+    metainfo_v2::{PieceVerdict, PieceVerifier},
     torrent_metainfo::ValidatedTorrentMetaV1Info,
 };
 use peer_binary_protocol::{DoubleBufHelper, Piece};
-use sha1w::{ISha1, Sha1};
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -31,31 +28,60 @@ impl std::fmt::Display for InitialCheckPaused {
 
 impl std::error::Error for InitialCheckPaused {}
 
-pub fn update_hash_from_file<Sha1: ISha1>(
+/// The parts of files that hold the `len` bytes at torrent offset `start`, as
+/// (file index, file, offset within the file, length).
+///
+/// Files are in torrent order with increasing offsets. In v1 and hybrid
+/// torrents they follow each other without gaps; in v2-only torrents each one
+/// starts on a piece boundary, and no piece or chunk covers the gap after a
+/// file, because the file's last piece is short.
+fn file_slices(
+    file_infos: &[FileInfo],
+    start: u64,
+    len: u64,
+) -> impl Iterator<Item = (usize, &FileInfo, u64, u64)> {
+    let end = start.saturating_add(len);
+    let first = file_infos.partition_point(|fi| fi.offset_in_torrent + fi.len <= start);
+    file_infos
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take_while(move |(_, fi)| fi.offset_in_torrent < end)
+        .filter_map(move |(idx, fi)| {
+            let from = start.max(fi.offset_in_torrent);
+            let to = end.min(fi.offset_in_torrent + fi.len);
+            (to > from).then(|| (idx, fi, from - fi.offset_in_torrent, to - from))
+        })
+}
+
+/// Feed `len` bytes of a file, starting at `pos`, to `verifier`, reading
+/// through `buf`. Padding files read as zeros.
+fn feed_from_file(
     file_id: usize,
     file_info: &FileInfo,
     mut pos: u64,
+    mut len: u64,
     files: &dyn TorrentStorage,
-    hash: &mut Sha1,
+    verifier: &mut PieceVerifier,
     buf: &mut [u8],
-    mut bytes_to_read: usize,
 ) -> anyhow::Result<()> {
-    let mut read = 0;
-    while bytes_to_read > 0 {
-        let chunk = std::cmp::min(buf.len(), bytes_to_read);
+    let mut read = 0u64;
+    while len > 0 {
+        let chunk = usize::try_from(len).unwrap_or(usize::MAX).min(buf.len());
+        let Some(buf) = buf.get_mut(..chunk) else {
+            anyhow::bail!("bug: read buffer is too small");
+        };
         if file_info.attrs.padding {
-            buf[..chunk].fill(0);
+            buf.fill(0);
         } else {
-            files
-                .pread_exact(file_id, pos, &mut buf[..chunk])
-                .with_context(|| {
-                    format!("failed reading chunk of size {chunk}, read so far {read}")
-                })?;
+            files.pread_exact(file_id, pos, buf).with_context(|| {
+                format!("failed reading chunk of size {chunk}, read so far {read}")
+            })?;
         }
-        bytes_to_read -= chunk;
-        read += chunk;
+        verifier.update(buf);
+        len -= chunk as u64;
+        read += chunk as u64;
         pos += chunk as u64;
-        hash.update(&buf[..chunk]);
     }
     Ok(())
 }
@@ -64,7 +90,6 @@ pub(crate) struct FileOps<'a> {
     torrent: &'a ValidatedTorrentMetaV1Info<ByteBufOwned>,
     files: &'a dyn TorrentStorage,
     file_infos: &'a FileInfos,
-    phantom_data: PhantomData<Sha1>,
 }
 
 impl<'a> FileOps<'a> {
@@ -77,7 +102,6 @@ impl<'a> FileOps<'a> {
             torrent,
             files,
             file_infos,
-            phantom_data: PhantomData,
         }
     }
 
@@ -87,94 +111,58 @@ impl<'a> FileOps<'a> {
         progress: &AtomicU64,
         pause_requested: &AtomicBool,
     ) -> anyhow::Result<BF> {
+        let lengths = self.torrent.lengths();
         let mut have_pieces =
-            BF::from_boxed_slice(vec![0u8; self.torrent.lengths().piece_bitfield_bytes()].into());
-        let mut piece_files = Vec::<usize>::new();
-
-        #[derive(Debug)]
-        struct CurrentFile<'a> {
-            index: usize,
-            fi: &'a FileInfo,
-            processed_bytes: u64,
-            is_broken: bool,
-        }
-        impl CurrentFile<'_> {
-            fn remaining(&self) -> u64 {
-                self.fi.len - self.processed_bytes
-            }
-            fn mark_processed_bytes(&mut self, bytes: u64) {
-                self.processed_bytes += bytes
-            }
-        }
-        let mut file_iterator = self
-            .file_infos
-            .iter()
-            .enumerate()
-            .map(|(idx, fi)| CurrentFile {
-                index: idx,
-                fi,
-                processed_bytes: 0,
-                is_broken: false,
-            });
-
-        let mut current_file = file_iterator.next().context("empty input file list")?;
-
+            BF::from_boxed_slice(vec![0u8; lengths.piece_bitfield_bytes()].into());
+        // A file that failed to read once (usually: it does not exist yet) is
+        // not read again; the pieces it is part of are needed.
+        let mut broken_files = vec![false; self.file_infos.len()];
         let mut read_buffer = vec![0u8; 65536];
 
-        for piece_info in self.torrent.lengths().iter_piece_infos() {
+        for piece_info in lengths.iter_piece_infos() {
             if pause_requested.load(Ordering::Relaxed) {
                 return Err(InitialCheckPaused.into());
             }
-
-            piece_files.clear();
-            let mut computed_hash = Sha1::new();
-            let mut piece_remaining = piece_info.len as usize;
-            let mut some_files_broken = false;
             progress.fetch_add(piece_info.len as u64, Ordering::Relaxed);
 
-            while piece_remaining > 0 {
-                let mut to_read_in_file: usize =
-                    std::cmp::min(current_file.remaining(), piece_remaining as u64).try_into()?;
-
-                // Keep changing the current file to next until we find a file that has greater than 0 length.
-                while to_read_in_file == 0 {
-                    current_file = file_iterator.next().context("broken torrent metadata")?;
-
-                    to_read_in_file =
-                        std::cmp::min(current_file.remaining(), piece_remaining as u64)
-                            .try_into()?;
+            // None: a v2 piece whose piece layer is not known yet. It cannot be
+            // trusted, so it is needed.
+            let Some(mut verifier) = self.torrent.piece_verifier(piece_info.piece_index) else {
+                continue;
+            };
+            let mut readable = true;
+            for (idx, fi, pos, len) in file_slices(
+                self.file_infos,
+                lengths.piece_offset(piece_info.piece_index),
+                piece_info.len.into(),
+            ) {
+                let Some(broken) = broken_files.get_mut(idx) else {
+                    anyhow::bail!("bug: file index {idx} out of range");
+                };
+                if *broken {
+                    readable = false;
+                    break;
                 }
-
-                piece_files.push(current_file.index);
-
-                let pos = current_file.processed_bytes;
-                piece_remaining -= to_read_in_file;
-                current_file.mark_processed_bytes(to_read_in_file as u64);
-
-                if current_file.is_broken {
-                    // no need to read.
-                    continue;
-                }
-
-                if let Err(err) = update_hash_from_file(
-                    current_file.index,
-                    current_file.fi,
+                if let Err(err) = feed_from_file(
+                    idx,
+                    fi,
                     pos,
+                    len,
                     self.files,
-                    &mut computed_hash,
+                    &mut verifier,
                     &mut read_buffer,
-                    to_read_in_file,
                 ) {
                     debug!(
                         "error reading from file {} ({:?}) at {}: {:#}",
-                        current_file.index, current_file.fi.relative_filename, pos, &err
+                        idx, fi.relative_filename, pos, &err
                     );
-                    current_file.is_broken = true;
-                    some_files_broken = true;
+                    *broken = true;
+                    readable = false;
+                    break;
                 }
             }
 
-            if some_files_broken {
+            if !readable {
                 trace!(
                     "piece {} had errors, marking as needed",
                     piece_info.piece_index
@@ -182,93 +170,68 @@ impl<'a> FileOps<'a> {
                 continue;
             }
 
-            if self
-                .torrent
-                .info()
-                .compare_hash(piece_info.piece_index.get(), computed_hash.finish())
-                .context("bug: either torrent info broken or we have a bug - piece index invalid")?
-            {
-                have_pieces.set(piece_info.piece_index.get() as usize, true);
+            match verifier.verdict() {
+                PieceVerdict::Good => {
+                    have_pieces.set(piece_info.piece_index.get() as usize, true);
+                }
+                PieceVerdict::Bad => {}
+                PieceVerdict::Inconsistent => anyhow::bail!(
+                    "piece {}: the v1 and v2 hashes of this hybrid torrent disagree",
+                    piece_info.piece_index
+                ),
             }
         }
 
         Ok(have_pieces)
     }
 
+    /// Read a piece back from storage and check it against the torrent's
+    /// hashes. Errors if the piece cannot be read or verified, or if the v1
+    /// and v2 hashes of a hybrid torrent disagree about it.
     pub fn check_piece(&self, piece_index: ValidPieceIndex) -> anyhow::Result<bool> {
         if cfg!(feature = "_disable_disk_write_net_benchmark") {
             return Ok(true);
         }
 
-        let mut h = Sha1::new();
-        let piece_length = self.torrent.lengths().piece_length(piece_index);
-        let mut absolute_offset = self.torrent.lengths().piece_offset(piece_index);
+        let lengths = self.torrent.lengths();
+        let mut verifier = self.torrent.piece_verifier(piece_index).with_context(|| {
+            format!("piece {piece_index} cannot be verified: its piece layer is not known")
+        })?;
+        let piece_length = lengths.piece_length(piece_index);
+        let piece_offset = lengths.piece_offset(piece_index);
         let mut buf = vec![0u8; std::cmp::min(65536, piece_length as usize)];
 
-        let mut piece_remaining_bytes = piece_length as usize;
-
-        for (file_idx, fi) in self.file_infos.iter().enumerate() {
-            let file_len = fi.len;
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
-                continue;
-            }
-            let file_remaining_len = file_len - absolute_offset;
-
-            let to_read_in_file: usize =
-                std::cmp::min(file_remaining_len, piece_remaining_bytes as u64).try_into()?;
+        for (file_idx, fi, pos, len) in
+            file_slices(self.file_infos, piece_offset, piece_length.into())
+        {
             trace!(
                 "piece={}, file_idx={}, seeking to {}",
-                piece_index, file_idx, absolute_offset,
+                piece_index, file_idx, pos,
             );
-            update_hash_from_file(
-                file_idx,
-                fi,
-                absolute_offset,
-                self.files,
-                &mut h,
-                &mut buf,
-                to_read_in_file,
-            )
-            .with_context(|| {
-                format!(
-                    "error reading {to_read_in_file} bytes, file_id: {file_idx} (\"{:?}\")",
-                    fi.relative_filename
-                )
-            })?;
-
-            piece_remaining_bytes -= to_read_in_file;
-
-            if piece_remaining_bytes == 0 {
-                break;
-            }
-
-            absolute_offset = 0;
+            feed_from_file(file_idx, fi, pos, len, self.files, &mut verifier, &mut buf)
+                .with_context(|| {
+                    format!(
+                        "error reading {len} bytes, file_id: {file_idx} (\"{:?}\")",
+                        fi.relative_filename
+                    )
+                })?;
         }
 
-        match self
-            .torrent
-            .info()
-            .compare_hash(piece_index.get(), h.finish())
-        {
-            Some(true) => {
+        match verifier.verdict() {
+            PieceVerdict::Good => {
                 trace!("piece={} hash matches", piece_index);
                 Ok(true)
             }
-            Some(false) => {
-                let piece_length = self.torrent.lengths().piece_length(piece_index);
-                let absolute_offset = self.torrent.lengths().piece_offset(piece_index);
+            PieceVerdict::Bad => {
                 warn!(
                     piece_length,
-                    absolute_offset, "the piece={} hash does not match", piece_index
+                    piece_offset, "the piece={} hash does not match", piece_index
                 );
                 Ok(false)
             }
-            None => {
-                // this is probably a bug?
-                warn!("compare_hash() did not find the piece");
-                anyhow::bail!("compare_hash() did not find the piece");
-            }
+            PieceVerdict::Inconsistent => anyhow::bail!(
+                "piece {piece_index}: the v1 and v2 hashes of this hybrid torrent disagree"
+            ),
         }
     }
 
@@ -281,39 +244,30 @@ impl<'a> FileOps<'a> {
         if result_buf.len() < chunk_info.size as usize {
             anyhow::bail!("read_chunk(): not enough capacity in the provided buffer")
         }
-        let mut absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
+        let absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
         let mut buf = result_buf;
 
-        for (file_idx, file_info) in self.file_infos.iter().enumerate() {
-            let file_len = file_info.len;
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
-                continue;
-            }
-            let file_remaining_len = file_len - absolute_offset;
-            let to_read_in_file = std::cmp::min(file_remaining_len, buf.len() as u64).try_into()?;
-
+        for (file_idx, file_info, pos, len) in
+            file_slices(self.file_infos, absolute_offset, chunk_info.size.into())
+        {
             trace!(
                 "piece={}, handle={}, file_idx={}, seeking to {}. To read chunk: {:?}",
-                chunk_info.piece_index, who_sent, file_idx, absolute_offset, &chunk_info
+                chunk_info.piece_index, who_sent, file_idx, pos, &chunk_info
             );
+            let to_read_in_file: usize = len.try_into()?;
+            let Some((dst, rest)) = buf.split_at_mut_checked(to_read_in_file) else {
+                anyhow::bail!("bug: chunk spans more bytes than its size");
+            };
             if file_info.attrs.padding {
-                buf[..to_read_in_file].fill(0);
+                dst.fill(0);
             } else {
                 self.files
-                    .pread_exact(file_idx, absolute_offset, &mut buf[..to_read_in_file])
+                    .pread_exact(file_idx, pos, dst)
                     .with_context(|| {
-                        format!("error reading {file_idx} bytes, file_id: {to_read_in_file}")
+                        format!("error reading {to_read_in_file} bytes, file_id: {file_idx}")
                     })?;
             }
-
-            buf = &mut buf[to_read_in_file..];
-
-            if buf.is_empty() {
-                break;
-            }
-
-            absolute_offset = 0;
+            buf = rest;
         }
 
         Ok(())
@@ -325,19 +279,13 @@ impl<'a> FileOps<'a> {
         data: &Piece<ByteBuf<'a>>,
         chunk_info: &ChunkInfo,
     ) -> anyhow::Result<()> {
-        let mut absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
+        let absolute_offset = self.torrent.lengths().chunk_absolute_offset(chunk_info);
         let mut data = DoubleBufHelper::new(data.data().0, data.data().1);
 
-        for (file_idx, file_info) in self.file_infos.iter().enumerate() {
-            let file_len = file_info.len;
-            if absolute_offset > file_len {
-                absolute_offset -= file_len;
-                continue;
-            }
-
-            let remaining_len = file_len - absolute_offset;
-            let to_write = std::cmp::min(data.len() as u64, remaining_len).try_into()?;
-
+        for (file_idx, file_info, pos, len) in
+            file_slices(self.file_infos, absolute_offset, data.len() as u64)
+        {
+            let to_write: usize = len.try_into()?;
             trace!(
                 "piece={}, chunk={:?}, handle={}, begin={}, file={}, writing {} bytes at {}",
                 chunk_info.piece_index,
@@ -346,14 +294,14 @@ impl<'a> FileOps<'a> {
                 chunk_info.offset,
                 file_idx,
                 to_write,
-                absolute_offset
+                pos
             );
             let slices = data.as_ioslices(to_write);
             debug_assert_eq!(slices[0].len() + slices[1].len(), to_write);
             if !file_info.attrs.padding {
                 let written = self
                     .files
-                    .pwrite_all_vectored(file_idx, absolute_offset, slices)
+                    .pwrite_all_vectored(file_idx, pos, slices)
                     .with_context(|| {
                         format!(
                             "error writing to file {file_idx} (\"{:?}\")",
@@ -363,11 +311,6 @@ impl<'a> FileOps<'a> {
                 debug_assert_eq!(written, to_write);
             }
             data.advance(to_write);
-            if data.is_empty() {
-                break;
-            }
-
-            absolute_offset = 0;
         }
 
         Ok(())

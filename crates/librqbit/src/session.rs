@@ -1241,7 +1241,7 @@ impl Session {
                     InternalAddResult {
                         info_hash: torrent.meta.info_hash,
                         metadata: Some(TorrentMetadata::new(
-                            torrent.meta.info.data.validate()?,
+                            torrent.meta.validate_with_piece_layers()?,
                             torrent.torrent_bytes,
                             torrent.meta.info.raw_bytes.0,
                         )?),

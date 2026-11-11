@@ -39,6 +39,11 @@ pub struct ChunkTracker {
 
     lengths: Lengths,
 
+    // (piece, bytes of padding files in it), sorted by piece, for the pieces
+    // that hold padding (hybrid torrents, v1 torrents with BEP 47 padding).
+    // Progress counts the bytes of real files only.
+    padding: Box<[(u32, u32)]>,
+
     // Quick to retrieve stats, that MUST be in sync with the BFs
     // above (have/selected).
     hns: HaveNeededSelected,
@@ -147,6 +152,24 @@ pub(crate) fn compute_selected_pieces(
     bf
 }
 
+// (piece, bytes of padding files in it) for every piece that holds padding,
+// sorted by piece. Files are in torrent order, so their pieces only grow.
+fn compute_padding(lengths: &Lengths, file_infos: &FileInfos) -> Box<[(u32, u32)]> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for fi in file_infos.iter().filter(|fi| fi.attrs.padding) {
+        for piece in fi.piece_range.clone() {
+            let bytes = lengths.size_of_piece_in_file(piece, fi.offset_in_torrent, fi.len);
+            // At most a piece length, which is a u32.
+            let bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
+            match out.last_mut() {
+                Some((last, sum)) if *last == piece => *sum = sum.saturating_add(bytes),
+                _ => out.push((piece, bytes)),
+            }
+        }
+    }
+    out.into_boxed_slice()
+}
+
 #[derive(Debug)]
 pub enum ChunkMarkingResult {
     PreviouslyCompleted,
@@ -174,6 +197,7 @@ impl ChunkTracker {
                 .context("error computing chunk status")?,
             queue_pieces: needed_pieces,
             selected: selected_pieces,
+            padding: compute_padding(&lengths, file_infos),
             lengths,
             have: have_pieces,
             hns: HaveNeededSelected::default(),
@@ -218,11 +242,23 @@ impl ChunkTracker {
         &self.hns
     }
 
+    /// How many bytes of real files the piece holds: its length minus the
+    /// padding in it.
+    pub fn file_bytes_in_piece(&self, idx: ValidPieceIndex) -> u64 {
+        let pad = self
+            .padding
+            .binary_search_by_key(&idx.get(), |(p, _)| *p)
+            .ok()
+            .and_then(|pos| self.padding.get(pos))
+            .map_or(0, |(_, bytes)| u64::from(*bytes));
+        u64::from(self.lengths.piece_length(idx)).saturating_sub(pad)
+    }
+
     fn calc_hns(&self) -> HaveNeededSelected {
         let mut hns = HaveNeededSelected::default();
         for piece in self.lengths.iter_piece_infos() {
             let id = piece.piece_index.get() as usize;
-            let len = piece.len as u64;
+            let len = self.file_bytes_in_piece(piece.piece_index);
             let is_have = self.have.as_slice()[id];
             let is_selected = self.selected[id];
             let is_needed = is_selected && !is_have;
@@ -283,7 +319,7 @@ impl ChunkTracker {
         self.queue_pieces.set(id, false);
         if !self.have.as_slice()[id] {
             self.have.as_slice_mut().set(id, true);
-            let len = self.lengths.piece_length(idx) as u64;
+            let len = self.file_bytes_in_piece(idx);
             self.hns.have_bytes += len;
             if self.selected[id] {
                 self.hns.needed_bytes -= len;
