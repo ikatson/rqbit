@@ -3,6 +3,7 @@ pub mod constants;
 pub mod directories;
 mod error;
 pub mod hash_id;
+pub mod i2p;
 pub mod lengths;
 pub mod magnet;
 pub mod peer_id;
