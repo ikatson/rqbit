@@ -8,6 +8,9 @@ mod persistence;
 mod routing_table;
 mod utils;
 
+#[cfg(test)]
+mod proxy_tests;
+
 use std::sync::Arc;
 use std::time::Duration;
 

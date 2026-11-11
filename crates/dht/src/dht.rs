@@ -36,6 +36,7 @@ use librqbit_core::{
     crate_version,
     hash_id::Id20,
     peer_id::generate_azereus_style,
+    proxy::{ProxyConfig, ProxyError, SOCKS5_UDP_HEADER_MAX, Socks5UdpAssociation, TargetAddr},
     spawn_utils::{spawn, spawn_with_cancel},
 };
 use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
@@ -865,6 +866,8 @@ pub struct DhtState {
     routing_table_v4: RwLock<RoutingTable>,
     routing_table_v6: RwLock<RoutingTable>,
     listen_addr: SocketAddr,
+    // The SOCKS5 proxy every datagram goes through, if any.
+    proxy: Option<ProxyConfig>,
 
     // BEP 42: our external address of each family, from the "ip" field of responses.
     ip_voter_v4: Mutex<ExternalIpVoter>,
@@ -915,6 +918,7 @@ impl DhtState {
             routing_table_v6: RwLock::new(routing_table_v6),
             worker_sender: sender,
             listen_addr,
+            proxy: None,
             ip_voter_v4: Mutex::new(ExternalIpVoter::new()),
             ip_voter_v6: Mutex::new(ExternalIpVoter::new()),
             enforce_node_id: AtomicBool::new(enforce_node_id),
@@ -1867,8 +1871,62 @@ impl core::fmt::Debug for ResponseOrError {
 }
 
 struct DhtWorker {
-    socket: UdpSocket,
+    socket: DhtSocket,
     dht: Arc<DhtState>,
+}
+
+/// Where the datagrams of the DHT go: a local UDP socket, or a SOCKS5 proxy (UDP ASSOCIATE).
+enum DhtSocket {
+    Direct(UdpSocket),
+    Socks5(Socks5UdpAssociation),
+}
+
+/// The receive buffer: the largest datagram we take, plus room for a SOCKS5 UDP header.
+const RECV_BUF_LEN: usize = 16384 + SOCKS5_UDP_HEADER_MAX;
+
+impl DhtSocket {
+    /// Whether host names (of bootstrap nodes) go to the proxy, which can't be done for the
+    /// DHT: they must not be looked up locally either.
+    fn resolves_remotely(&self) -> bool {
+        match self {
+            DhtSocket::Direct(_) => false,
+            DhtSocket::Socks5(assoc) => assoc.proxy().kind().resolves_hostnames(),
+        }
+    }
+
+    async fn send_to(&self, buf: &[u8], addr: SocketAddr) -> crate::Result<()> {
+        match self {
+            DhtSocket::Direct(sock) => sock
+                .send_to(buf, addr)
+                .await
+                .map(|_| ())
+                .map_err(Error::Send),
+            DhtSocket::Socks5(assoc) => assoc
+                .send_to(buf, TargetAddr::Ip(addr))
+                .await
+                .map_err(Error::Proxy),
+        }
+    }
+
+    /// The next datagram; `None` for a receive error that only concerns one datagram.
+    async fn recv_from(&self, buf: &mut [u8]) -> crate::Result<Option<(usize, SocketAddr)>> {
+        let r = match self {
+            DhtSocket::Direct(sock) => sock.recv_from(buf).await,
+            DhtSocket::Socks5(assoc) => match assoc.recv_from(buf).await {
+                Ok(r) => Ok(r),
+                Err(ProxyError::Io(e)) => Err(e),
+                Err(e) => return Err(Error::Proxy(e)),
+            },
+        };
+        match r {
+            Ok(r) => Ok(Some(r)),
+            Err(e) if is_datagram_error(&e) => {
+                debug!("ignoring UDP receive error: {e:#}");
+                Ok(None)
+            }
+            Err(e) => Err(Error::Recv(e)),
+        }
+    }
 }
 
 // Windows fails recv_from on a UDP socket with these for a single datagram, and the socket keeps
@@ -1939,8 +1997,26 @@ impl DhtWorker {
     async fn bootstrap(&self, bootstrap_addrs: &[String]) -> crate::Result<()> {
         let mut futs = FuturesUnordered::new();
 
+        // Behind a proxy that resolves host names, looking them up here would leak them; the
+        // proxy can't resolve them for the DHT either (the requests are keyed by address).
+        let remote_dns = self.socket.resolves_remotely();
+        let mut skipped = 0;
         for addr in bootstrap_addrs.iter() {
+            if remote_dns && addr.parse::<SocketAddr>().is_err() {
+                skipped += 1;
+                continue;
+            }
             futs.push(self.bootstrap_hostname_with_backoff(addr));
+        }
+        if skipped > 0 {
+            warn!(
+                skipped,
+                "the proxy resolves host names: bootstrap nodes given by name are not used, only \
+                 addresses and the nodes already known"
+            );
+            if futs.is_empty() {
+                return Ok(());
+            }
         }
         let mut successes = 0;
         while let Some(resp) = futs.next().await {
@@ -2066,7 +2142,7 @@ impl DhtWorker {
 
     async fn framer(
         &self,
-        socket: &UdpSocket,
+        socket: &DhtSocket,
         mut input_rx: UnboundedReceiver<WorkerSendRequest>,
         output_tx: Sender<(Message<ByteBufOwned>, SocketAddr)>,
     ) -> crate::Result<()> {
@@ -2093,22 +2169,17 @@ impl DhtWorker {
                 if let Err(e) = socket.send_to(&buf, addr).await {
                     debug!("error sending to {addr}: {e:#}");
                     if let Some(tid) = our_tid {
-                        self.on_send_error(tid, addr, Error::Send(e));
+                        self.on_send_error(tid, addr, e);
                     }
                 }
             }
             Err(Error::DhtDead)
         };
         let reader = async {
-            let mut buf = vec![0u8; 16384];
+            let mut buf = vec![0u8; RECV_BUF_LEN];
             loop {
-                let (size, addr) = match socket.recv_from(&mut buf).await {
-                    Ok(r) => r,
-                    Err(e) if is_datagram_error(&e) => {
-                        debug!("ignoring UDP receive error: {e:#}");
-                        continue;
-                    }
-                    Err(e) => return Err(Error::Recv(e)),
+                let Some((size, addr)) = socket.recv_from(&mut buf).await? else {
+                    continue;
                 };
                 match bprotocol::deserialize_message::<ByteBufOwned>(&buf[..size]) {
                     Ok(msg) => match output_tx.send((msg, addr)).await {
@@ -2214,10 +2285,18 @@ pub struct DhtConfig<'a> {
     pub bootstrap_addrs: Option<Vec<String>>,
     pub routing_table: Option<RoutingTable>,
     pub routing_table_v6: Option<RoutingTable>,
+    /// The address the DHT listens on. Behind a proxy nothing listens: this is then the address
+    /// that was asked for, and the DHT is reached through the proxy.
     pub listen_addr: Option<SocketAddr>,
     pub peer_store: Option<PeerStore>,
     pub cancellation_token: Option<CancellationToken>,
     pub bind_device: Option<&'a BindDevice>,
+    /// Sends and receives every datagram through this proxy (SOCKS5 UDP ASSOCIATE) instead of a
+    /// local socket. Only SOCKS5 proxies can do that: with another kind
+    /// [`DhtState::with_config`] fails with [`ProxyError::UdpNotSupported`]. Behind a
+    /// `socks5h` proxy bootstrap nodes given by host name are skipped (looking them up locally
+    /// would leak them).
+    pub proxy: Option<&'a ProxyConfig>,
     /// BEP 42 enforcement: nodes whose id does not match their address are kept out of the
     /// routing table, are not handed out in `nodes` and never get our announces or puts. Their
     /// answers still help the lookup in progress. Off by default, like in libtorrent.
@@ -2238,18 +2317,30 @@ impl DhtState {
             let addr = config
                 .listen_addr
                 .unwrap_or((Ipv6Addr::UNSPECIFIED, 0).into());
-            let socket = UdpSocket::bind_udp(
-                addr,
-                librqbit_dualstack_sockets::BindOpts {
-                    request_dualstack: true,
-                    reuseport: false,
-                    device: config.bind_device,
-                },
-            )
-            .map_err(|e| Error::Bind(Box::new(e)))?;
-
-            let listen_addr = socket.bind_addr();
-            info!("DHT listening on {:?}", listen_addr);
+            let (socket, listen_addr) = match config.proxy {
+                None => {
+                    let socket = UdpSocket::bind_udp(
+                        addr,
+                        librqbit_dualstack_sockets::BindOpts {
+                            request_dualstack: true,
+                            reuseport: false,
+                            device: config.bind_device,
+                        },
+                    )
+                    .map_err(|e| Error::Bind(Box::new(e)))?;
+                    let listen_addr = socket.bind_addr();
+                    info!("DHT listening on {:?}", listen_addr);
+                    (DhtSocket::Direct(socket), listen_addr)
+                }
+                Some(proxy) => {
+                    // The association stops with the DHT (it ends with this token too).
+                    let token = config.cancellation_token.get_or_insert_default();
+                    let assoc =
+                        Socks5UdpAssociation::new(proxy.clone(), token).map_err(Error::Proxy)?;
+                    info!(proxy = %proxy, "DHT goes through the proxy");
+                    (DhtSocket::Socks5(assoc), addr)
+                }
+            };
 
             let peer_id = config
                 .peer_id
@@ -2262,16 +2353,19 @@ impl DhtState {
             let token = config.cancellation_token.take().unwrap_or_default();
 
             let (in_tx, in_rx) = unbounded_channel();
-            let state = Arc::new(Self::new_internal(
-                peer_id,
-                in_tx,
-                config.routing_table,
-                config.routing_table_v6,
-                listen_addr,
-                config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
-                config.enforce_node_id,
-                token,
-            ));
+            let state = Arc::new(DhtState {
+                proxy: config.proxy.cloned(),
+                ..Self::new_internal(
+                    peer_id,
+                    in_tx,
+                    config.routing_table,
+                    config.routing_table_v6,
+                    listen_addr,
+                    config.peer_store.unwrap_or_else(|| PeerStore::new(peer_id)),
+                    config.enforce_node_id,
+                    token,
+                )
+            });
 
             spawn_with_cancel(
                 debug_span!("dht"),
@@ -2298,8 +2392,15 @@ impl DhtState {
         RequestPeersStream::new(self.clone(), info_hash, announce_port)
     }
 
+    /// The address the DHT listens on; behind a proxy (see [`DhtConfig::proxy`]) nothing does,
+    /// and this is the address that was asked for.
     pub fn listen_addr(&self) -> SocketAddr {
         self.listen_addr
+    }
+
+    /// The proxy the DHT goes through, if any (see [`DhtConfig::proxy`]).
+    pub fn proxy(&self) -> Option<&ProxyConfig> {
+        self.proxy.as_ref()
     }
 
     pub fn stats(&self) -> DhtStats {

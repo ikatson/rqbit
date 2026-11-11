@@ -650,7 +650,20 @@ impl Session {
                 None
             };
 
-            let dht = if let Some(dht_config) = opts.dht.take() {
+            // The DHT follows the peers: behind their proxy it goes through UDP ASSOCIATE, and a
+            // proxy that can't relay UDP turns it off rather than letting it talk directly.
+            let dht_config = opts.dht.take().filter(|_| match peer_proxy.as_ref() {
+                Some(proxy) if !proxy.kind().can_relay_udp() => {
+                    warn!(
+                        proxy = %proxy,
+                        "DHT disabled: {} proxies cannot relay UDP",
+                        proxy.kind().scheme()
+                    );
+                    false
+                }
+                _ => true,
+            });
+            let dht = if let Some(dht_config) = dht_config {
                 let dht = if let Some(persistence_config) = dht_config.persistence {
                     PersistentDht::create_with_config(
                         persistence_config,
@@ -661,6 +674,7 @@ impl Session {
                             cancellation_token: Some(token.clone()),
                             bind_device: bind_device.as_ref(),
                             enforce_node_id: dht_config.enforce_node_id,
+                            proxy: peer_proxy.as_ref(),
                             ..Default::default()
                         },
                     )
@@ -674,6 +688,7 @@ impl Session {
                         bind_device: bind_device.as_ref(),
                         listen_addr: Some(listen_addr),
                         enforce_node_id: dht_config.enforce_node_id,
+                        proxy: peer_proxy.as_ref(),
                         ..Default::default()
                     })
                     .await

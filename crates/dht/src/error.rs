@@ -53,6 +53,9 @@ pub enum Error {
     #[error("error in recv: {0:#}")]
     Recv(#[source] std::io::Error),
 
+    #[error(transparent)]
+    Proxy(librqbit_core::proxy::ProxyError),
+
     #[error("bencode serialize error: {0:#}")]
     Serialize(#[source] Box<SerializeError>),
 
