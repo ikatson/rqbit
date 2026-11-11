@@ -38,6 +38,7 @@ use tracing::trace;
 use tracing::warn;
 
 use crate::Session;
+use crate::choker::UploadSlots;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
@@ -120,6 +121,7 @@ pub(crate) struct ManagedTorrentOptions {
     pub peer_limit: Option<usize>,
     /// Per-peer admission / upload policy installed on the session.
     pub peer_policy: Option<Arc<dyn crate::PeerPolicy>>,
+    pub upload_slots: UploadSlots,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }

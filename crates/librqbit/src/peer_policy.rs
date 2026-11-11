@@ -22,13 +22,9 @@ use std::{
 
 use bitvec::{order::Msb0, slice::BitSlice};
 use librqbit_core::{hash_id::Id20, lengths::Lengths};
-use peer_binary_protocol::Message;
-use tokio::sync::mpsc::UnboundedSender;
-use tracing::trace;
 
 use crate::{
     limits::{Limits, LimitsConfig},
-    peer_connection::WriterRequest,
     upload_gate::UploadGate,
 };
 
@@ -69,8 +65,9 @@ pub enum PeerEvent<'a> {
         piece: u32,
     },
     /// A valid request for a block we have. It is also reported while the connection is choked
-    /// by the policy (the request is then ignored); `peer_claims_piece` tells whether the peer
-    /// had announced the piece through its bitfield or a HAVE before asking for it.
+    /// (it has no upload slot, or the policy choked it; the request is then ignored).
+    /// `peer_claims_piece` tells whether the peer had announced the piece through its bitfield
+    /// or a HAVE before asking for it.
     Request {
         piece: u32,
         begin: u32,
@@ -213,7 +210,6 @@ pub(crate) struct PeerPolicyBinding {
     num_pieces: u32,
     // The torrent has every selected piece. Kept up to date by the torrent.
     we_are_seeding: Arc<AtomicBool>,
-    tx: UnboundedSender<WriterRequest>,
     // Disconnected is only reported for connections that got to report a handshake.
     established: AtomicBool,
 }
@@ -226,7 +222,6 @@ impl PeerPolicyBinding {
         private: bool,
         lengths: &Lengths,
         we_are_seeding: Arc<AtomicBool>,
-        tx: UnboundedSender<WriterRequest>,
     ) -> Self {
         Self {
             policy,
@@ -238,7 +233,6 @@ impl PeerPolicyBinding {
             piece_length: lengths.default_piece_length(),
             num_pieces: lengths.total_pieces(),
             we_are_seeding,
-            tx,
             established: AtomicBool::new(false),
         }
     }
@@ -271,11 +265,12 @@ impl PeerPolicyBinding {
         }
     }
 
-    /// Reports the event and applies the verdict to the connection. An error means the
-    /// connection has to be closed.
-    pub fn dispatch(&self, event: PeerEvent<'_>) -> anyhow::Result<()> {
+    /// Reports the event and raises the connection to the verdict. Returns the verdict when it
+    /// is a new one for the connection: [`PeerVerdict::Throttle`] and [`PeerVerdict::Choke`] are
+    /// then for the caller to carry out. An error means the connection has to be closed.
+    pub fn dispatch(&self, event: PeerEvent<'_>) -> anyhow::Result<Option<PeerVerdict>> {
         let Some(policy) = self.policy.as_ref() else {
-            return Ok(());
+            return Ok(None);
         };
         let verdict = policy.on_event(&self.ctx(), event);
         self.apply(verdict)
@@ -293,28 +288,16 @@ impl PeerPolicyBinding {
         policy.on_event(&self.ctx(), PeerEvent::Disconnected { bits });
     }
 
-    fn apply(&self, verdict: PeerVerdict) -> anyhow::Result<()> {
+    fn apply(&self, verdict: PeerVerdict) -> anyhow::Result<Option<PeerVerdict>> {
         if verdict <= self.gate.raise(verdict) {
-            return Ok(());
+            return Ok(None);
         }
-        match verdict {
-            PeerVerdict::Allow | PeerVerdict::Throttle => Ok(()),
-            PeerVerdict::Choke => {
-                self.gate.drop_queued();
-                if self
-                    .tx
-                    .send(WriterRequest::Message(Message::Choke))
-                    .is_err()
-                {
-                    trace!(addr = %self.addr, "peer is gone, not sending choke");
-                }
-                Ok(())
-            }
-            PeerVerdict::Disconnect => {
-                self.gate.drop_queued();
-                anyhow::bail!("disconnected by peer policy")
-            }
+        if verdict == PeerVerdict::Disconnect {
+            // Nothing that still waits goes out while the connection is taken down.
+            self.gate.set_choked(true);
+            anyhow::bail!("disconnected by peer policy")
         }
+        Ok(Some(verdict))
     }
 }
 
@@ -331,7 +314,6 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use parking_lot::Mutex;
-    use tokio::sync::mpsc::unbounded_channel;
 
     use super::*;
     use crate::upload_gate::MAX_QUEUED_UPLOADS_PER_PEER;
@@ -363,24 +345,14 @@ mod tests {
 
     const CAP: u32 = MAX_QUEUED_UPLOADS_PER_PEER;
 
-    fn binding(
-        policy: Option<Arc<dyn PeerPolicy>>,
-    ) -> (
-        PeerPolicyBinding,
-        tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
-    ) {
-        let (tx, rx) = unbounded_channel();
-        (
-            PeerPolicyBinding::new(
-                policy,
-                Id20::new([7; 20]),
-                "[::ffff:1.2.3.4]:6881".parse().unwrap(),
-                false,
-                &lengths(),
-                Arc::new(AtomicBool::new(false)),
-                tx,
-            ),
-            rx,
+    fn binding(policy: Option<Arc<dyn PeerPolicy>>) -> PeerPolicyBinding {
+        PeerPolicyBinding::new(
+            policy,
+            Id20::new([7; 20]),
+            "[::ffff:1.2.3.4]:6881".parse().unwrap(),
+            false,
+            &lengths(),
+            Arc::new(AtomicBool::new(false)),
         )
     }
 
@@ -416,47 +388,38 @@ mod tests {
     }
 
     #[test]
-    fn choke_verdict_drops_what_is_queued_and_what_follows() {
-        let (b, _rx) = binding(Some(Arc::new(Recorder::default())));
-        let g = b.gate().clone();
-        g.register((0, 0, 16384), CAP);
-        g.register((1, 0, 16384), CAP);
-        b.apply(PeerVerdict::Choke).unwrap();
-        assert!(!g.release((0, 0, 16384)));
-        assert!(!g.release((1, 0, 16384)));
-        // A request that raced the choke is dropped as well.
-        g.register((2, 0, 16384), CAP);
-        assert!(!g.release((2, 0, 16384)));
+    fn verdicts_are_sticky_and_only_act_once() {
+        use PeerVerdict::*;
+        let b = binding(Some(Arc::new(Recorder::default())));
+        assert_eq!(b.apply(Throttle).unwrap(), Some(Throttle));
+        assert_eq!(b.apply(Choke).unwrap(), Some(Choke));
+        // Milder or equal verdicts neither downgrade nor act again.
+        for v in [Allow, Throttle, Choke] {
+            assert_eq!(b.apply(v).unwrap(), None);
+        }
+        assert_eq!(b.gate().level(), Choke);
+        // Disconnect escalates from choke, and is an error for the caller.
+        assert!(b.apply(Disconnect).is_err());
+        assert_eq!(b.gate().level(), Disconnect);
     }
 
     #[test]
-    fn verdicts_are_sticky_and_only_act_once() {
-        let (b, mut rx) = binding(Some(Arc::new(Recorder::default())));
-        b.apply(PeerVerdict::Throttle).unwrap();
-        assert_eq!(b.gate().level(), PeerVerdict::Throttle);
-        b.apply(PeerVerdict::Choke).unwrap();
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(WriterRequest::Message(Message::Choke))
-        ));
-        // Milder or equal verdicts neither downgrade nor choke again.
-        b.apply(PeerVerdict::Allow).unwrap();
-        b.apply(PeerVerdict::Throttle).unwrap();
-        b.apply(PeerVerdict::Choke).unwrap();
-        assert_eq!(b.gate().level(), PeerVerdict::Choke);
-        assert!(rx.try_recv().is_err(), "choke must be sent exactly once");
-        // Disconnect escalates from choke, and is an error for the caller.
+    fn disconnect_drops_what_waits() {
+        let b = binding(Some(Arc::new(Recorder::default())));
+        let g = b.gate().clone();
+        g.set_choked(false);
+        assert!(g.register((0, 0, 16384), CAP));
         assert!(b.apply(PeerVerdict::Disconnect).is_err());
-        assert_eq!(b.gate().level(), PeerVerdict::Disconnect);
+        assert!(!g.release((0, 0, 16384)));
+        assert!(!g.register((1, 0, 16384), CAP));
     }
 
     #[test]
     fn dispatch_without_policy_does_nothing() {
-        let (b, mut rx) = binding(None);
+        let b = binding(None);
         assert!(!b.is_active());
-        b.dispatch(PeerEvent::Have { piece: 1 }).unwrap();
+        assert_eq!(b.dispatch(PeerEvent::Have { piece: 1 }).unwrap(), None);
         assert_eq!(b.gate().level(), PeerVerdict::Allow);
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -465,7 +428,7 @@ mod tests {
         rec.verdicts
             .lock()
             .extend([PeerVerdict::Allow, PeerVerdict::Disconnect]);
-        let (b, _rx) = binding(Some(rec.clone()));
+        let b = binding(Some(rec.clone()));
         b.dispatch(PeerEvent::Have { piece: 4 }).unwrap();
         assert!(b.dispatch(PeerEvent::Have { piece: 5 }).is_err());
         let events = rec.events.lock();
@@ -475,7 +438,7 @@ mod tests {
 
     #[test]
     fn context_describes_the_torrent() {
-        let (b, _rx) = binding(None);
+        let b = binding(None);
         let ctx = b.ctx();
         assert_eq!(ctx.total_length, 100_000);
         assert_eq!(ctx.piece_length, 32 * 1024);
@@ -490,7 +453,7 @@ mod tests {
     #[test]
     fn disconnected_is_reported_once_and_only_when_established() {
         let rec = Arc::new(Recorder::default());
-        let (b, _rx) = binding(Some(rec.clone()));
+        let b = binding(Some(rec.clone()));
         b.disconnected(None);
         assert!(rec.events.lock().is_empty(), "never handshaken");
         b.mark_established();
@@ -506,11 +469,11 @@ mod tests {
     #[test]
     fn dropping_an_established_binding_reports_disconnected() {
         let rec = Arc::new(Recorder::default());
-        let (b, _rx) = binding(Some(rec.clone()));
+        let b = binding(Some(rec.clone()));
         drop(b);
         assert!(rec.events.lock().is_empty(), "never handshaken");
 
-        let (b, _rx) = binding(Some(rec.clone()));
+        let b = binding(Some(rec.clone()));
         b.mark_established();
         drop(b);
         assert_eq!(rec.events.lock().len(), 1);
@@ -521,11 +484,10 @@ mod tests {
     fn disconnected_verdict_is_ignored() {
         let rec = Arc::new(Recorder::default());
         rec.verdicts.lock().push(PeerVerdict::Disconnect);
-        let (b, mut rx) = binding(Some(rec));
+        let b = binding(Some(rec));
         b.mark_established();
         b.disconnected(None);
         assert_eq!(b.gate().level(), PeerVerdict::Allow);
-        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
