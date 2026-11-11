@@ -34,7 +34,7 @@ const METADATA_PIECE: usize = 16 * 1024;
 /// Extension protocol (BEP 10) and BitTorrent v2 (BEP 52) bits.
 const V2_RESERVED: [u8; 8] = [0, 0, 0, 0, 0, 0x10, 0, 0x10];
 
-async fn add_magnet(
+pub(super) async fn add_magnet(
     session: &Arc<Session>,
     magnet: &str,
     output_folder: &Path,

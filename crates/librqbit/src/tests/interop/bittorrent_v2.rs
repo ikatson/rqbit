@@ -1,13 +1,15 @@
 //! BitTorrent v2 (BEP 52) against libtorrent, for v2-only and hybrid torrents: rqbit downloads
 //! from libtorrent and libtorrent downloads from rqbit. In both directions the downloader is
-//! given the `.torrent` without its `piece layers`, the way it knows a torrent added from a
-//! magnet link, so it has to ask the seeder for them with BEP 52 hash requests: the seeder's
-//! answers are checked against the pieces roots by an independent implementation.
+//! given the `.torrent` without its `piece layers`, or a magnet link (`btmh`, with `btih` for
+//! a hybrid torrent) so that it reads the info dictionary from the seeder first, and it has to
+//! ask the seeder for the layers with BEP 52 hash requests: the seeder's answers are checked
+//! against the pieces roots by an independent implementation.
 
 use std::{path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, ensure};
 use bytes::Bytes;
+use librqbit_core::torrent_metainfo::torrent_from_bytes;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -15,6 +17,7 @@ use crate::{
     Session,
     tests::{
         e2e_v2::{PIECE_LEN, SessionSetup, add, completed, new_session, sample_files},
+        e2e_v2_magnet::add_magnet,
         fake_peer::run,
         v2_torrent::V2Files,
     },
@@ -52,13 +55,17 @@ def main():
 run(main)
 "#;
 
-// Downloads the torrent argv[1] (without its piece layers) from the peer at 127.0.0.1:argv[2]
-// into the current folder.
+// Downloads the torrent argv[1] (a file without its piece layers, or a magnet link) from the
+// peer at 127.0.0.1:argv[2] into the current folder.
 const LEECH_PY: &str = r#"
 def main():
     session = make_session()
-    info = lt.torrent_info(sys.argv[1])
-    params = started_params(info, ".")
+    if sys.argv[1].startswith("magnet:"):
+        params = lt.parse_magnet_uri(sys.argv[1])
+        params.save_path = "."
+        params.flags &= ~(lt.torrent_flags.auto_managed | lt.torrent_flags.paused)
+    else:
+        params = started_params(lt.torrent_info(sys.argv[1]), ".")
     handle = session.add_torrent(params)
     handle.connect_peer(("127.0.0.1", int(sys.argv[2])))
     failed = 0
@@ -77,7 +84,7 @@ def main():
                 "finished",
                 downloaded=status.total_payload_download,
                 hash_failures=failed,
-                v2=info.info_hashes().has_v2(),
+                v2=handle.torrent_file().info_hashes().has_v2(),
             )
             return
 
@@ -95,6 +102,19 @@ fn torrent_without_piece_layers(files: &V2Files, hybrid: bool) -> Bytes {
     Bytes::from(t.to_bytes())
 }
 
+/// The magnet link of a torrent: `btmh`, and `btih` too for a hybrid torrent.
+fn magnet_of(files: &V2Files, hybrid: bool) -> anyhow::Result<String> {
+    let full = full_torrent(files, hybrid);
+    let parsed = torrent_from_bytes(&full)?;
+    let v2 = parsed.info_hash_v2.context("no v2 hash")?;
+    let mut magnet = format!("magnet:?xt=urn:btmh:1220{}", v2.as_string());
+    if hybrid {
+        magnet.push_str(&format!("&xt=urn:btih:{}", parsed.info_hash.as_string()));
+    }
+    magnet.push_str(&format!("&dn={NAME}"));
+    Ok(magnet)
+}
+
 async fn rqbit_session(dir: &Path) -> anyhow::Result<Arc<Session>> {
     new_session(
         dir,
@@ -106,10 +126,10 @@ async fn rqbit_session(dir: &Path) -> anyhow::Result<Arc<Session>> {
     .await
 }
 
-/// libtorrent seeds `files`; rqbit, given the torrent without piece layers, fetches the
-/// layers from libtorrent and downloads everything.
-async fn rqbit_downloads_from_libtorrent(hybrid: bool) -> anyhow::Result<()> {
-    let files = sample_files(if hybrid { 52 } else { 51 });
+/// libtorrent seeds `files`; rqbit, given the torrent without piece layers or a magnet link,
+/// fetches the metadata and the layers from libtorrent and downloads everything.
+async fn rqbit_downloads_from_libtorrent(hybrid: bool, magnet: bool) -> anyhow::Result<()> {
+    let files = sample_files(if hybrid { 52 } else { 51 } + if magnet { 10 } else { 0 });
     let work = TempDir::with_prefix("rqbit_interop_v2")?;
     let torrent_file = work.path().join("full.torrent");
     tokio::fs::write(&torrent_file, full_torrent(&files, hybrid)).await?;
@@ -132,13 +152,18 @@ async fn rqbit_downloads_from_libtorrent(hybrid: bool) -> anyhow::Result<()> {
     let client_dir = work.path().join("client");
     let session = rqbit_session(&client_dir).await?;
     let out = client_dir.join("out");
-    let handle = add(
-        &session,
-        torrent_without_piece_layers(&files, hybrid),
-        &out,
-        vec![([127, 0, 0, 1], port).into()],
-    )
-    .await?;
+    let peers = vec![([127, 0, 0, 1], port).into()];
+    let handle = if magnet {
+        add_magnet(&session, &magnet_of(&files, hybrid)?, &out, peers).await?
+    } else {
+        add(
+            &session,
+            torrent_without_piece_layers(&files, hybrid),
+            &out,
+            peers,
+        )
+        .await?
+    };
     completed(&handle, WAIT).await?;
     files.assert_equal_to(&out);
     let live = handle.live().context("not live")?;
@@ -169,10 +194,10 @@ fn hash_requests_received(handle: &ManagedTorrentHandle) -> u64 {
     handle.live().map_or(0, |l| l.hash_requests_received())
 }
 
-/// rqbit seeds `files`; libtorrent, given the torrent without piece layers, asks rqbit for
-/// them and downloads everything.
-async fn libtorrent_downloads_from_rqbit(hybrid: bool) -> anyhow::Result<()> {
-    let files = sample_files(if hybrid { 54 } else { 53 });
+/// rqbit seeds `files`; libtorrent, given the torrent without piece layers or a magnet link,
+/// asks rqbit for the metadata and the layers and downloads everything.
+async fn libtorrent_downloads_from_rqbit(hybrid: bool, magnet: bool) -> anyhow::Result<()> {
+    let files = sample_files(if hybrid { 54 } else { 53 } + if magnet { 10 } else { 0 });
     let work = TempDir::with_prefix("rqbit_interop_v2")?;
     let seed_dir = work.path().join("seed");
     files.write_to(&seed_dir);
@@ -186,14 +211,12 @@ async fn libtorrent_downloads_from_rqbit(hybrid: bool) -> anyhow::Result<()> {
 
     let torrent_file = work.path().join("stripped.torrent");
     tokio::fs::write(&torrent_file, torrent_without_piece_layers(&files, hybrid)).await?;
-    let mut lt = Libtorrent::spawn(
-        LEECH_PY,
-        &[
-            torrent_file.to_str().context("utf-8 path")?,
-            &port.to_string(),
-        ],
-    )
-    .await?;
+    let source = if magnet {
+        magnet_of(&files, hybrid)?
+    } else {
+        torrent_file.to_str().context("utf-8 path")?.to_owned()
+    };
+    let mut lt = Libtorrent::spawn(LEECH_PY, &[&source, &port.to_string()]).await?;
     let finished = lt.expect("finished", WAIT).await?;
     tracing::info!(%finished, "libtorrent downloaded");
     ensure!(finished["v2"] == json!(true), "libtorrent sees no v2 hash");
@@ -213,23 +236,47 @@ async fn libtorrent_downloads_from_rqbit(hybrid: bool) -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
 async fn test_interop_v2_rqbit_downloads_from_libtorrent() -> anyhow::Result<()> {
-    run(rqbit_downloads_from_libtorrent(false)).await
+    run(rqbit_downloads_from_libtorrent(false, false)).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
 async fn test_interop_hybrid_rqbit_downloads_from_libtorrent() -> anyhow::Result<()> {
-    run(rqbit_downloads_from_libtorrent(true)).await
+    run(rqbit_downloads_from_libtorrent(true, false)).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
 async fn test_interop_v2_libtorrent_downloads_from_rqbit() -> anyhow::Result<()> {
-    run(libtorrent_downloads_from_rqbit(false)).await
+    run(libtorrent_downloads_from_rqbit(false, false)).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
 async fn test_interop_hybrid_libtorrent_downloads_from_rqbit() -> anyhow::Result<()> {
-    run(libtorrent_downloads_from_rqbit(true)).await
+    run(libtorrent_downloads_from_rqbit(true, false)).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
+async fn test_interop_v2_magnet_rqbit_downloads_from_libtorrent() -> anyhow::Result<()> {
+    run(rqbit_downloads_from_libtorrent(false, true)).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
+async fn test_interop_hybrid_magnet_rqbit_downloads_from_libtorrent() -> anyhow::Result<()> {
+    run(rqbit_downloads_from_libtorrent(true, true)).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
+async fn test_interop_v2_magnet_libtorrent_downloads_from_rqbit() -> anyhow::Result<()> {
+    run(libtorrent_downloads_from_rqbit(false, true)).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs RQBIT_TEST_LIBTORRENT_PYTHON"]
+async fn test_interop_hybrid_magnet_libtorrent_downloads_from_rqbit() -> anyhow::Result<()> {
+    run(libtorrent_downloads_from_rqbit(true, true)).await
 }
