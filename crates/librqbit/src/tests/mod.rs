@@ -5,4 +5,5 @@ mod e2e_padded_files;
 mod e2e_piece_picking;
 mod e2e_stream;
 mod fake_peer;
+mod interop;
 pub mod test_util;
