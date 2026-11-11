@@ -136,22 +136,31 @@ fn is_public_address(ip: IpAddr) -> bool {
     }
 }
 
-/// The network a voter belongs to: its /24 (IPv4) or /64 (IPv6). Several nodes in one network
-/// count as one vote, so that a single party cannot outvote the rest of the DHT cheaply.
+/// The network a voter belongs to: its /24 (IPv4) or /48 (IPv6). Several nodes in one network
+/// count as one vote, so that a single party cannot outvote the rest of the DHT cheaply. IPv6
+/// end sites usually get a /48, so anything narrower would let one site vote many times.
 fn voter_network(ip: IpAddr) -> [u8; 8] {
     let mut key = [0u8; 8];
-    match ip {
+    match ip.to_canonical() {
         IpAddr::V4(ip) => {
             key[0] = 4;
             key[1..4].copy_from_slice(&ip.octets()[..3]);
         }
-        IpAddr::V6(ip) => key.copy_from_slice(&ip.octets()[..8]),
+        IpAddr::V6(ip) => {
+            key[0] = 6;
+            key[1..7].copy_from_slice(&ip.octets()[..6]);
+        }
     }
     key
 }
 
-/// Votes from distinct voter networks that an address needs before we adopt it.
+/// Votes from distinct voter networks that an address needs before we adopt it, when we have
+/// no address yet.
 const MIN_VOTES: u32 = 4;
+/// Votes an address needs to replace one we adopted already. Higher than [`MIN_VOTES`]: moving
+/// costs a new node id and a rebuilt routing table, so it should take more than a handful of
+/// colluding nodes.
+pub(crate) const VOTES_TO_REPLACE: u32 = 10;
 /// How long an adopted address stays before a later vote may replace it.
 const MIN_CHANGE_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// A round without a decision is dropped after this many votes, so that stale votes go away
@@ -161,15 +170,18 @@ const MAX_ROUND_VOTES: u32 = 50;
 /// Decides our external address of one address family from the `ip` field of KRPC responses.
 ///
 /// Modelled after libtorrent's `ip_voter`: each voter network (see [`voter_network`]) votes at
-/// most once per round; an address wins when it has at least [`MIN_VOTES`] votes and at least
-/// twice as many as the runner-up, and an adopted address is not replaced within
-/// [`MIN_CHANGE_INTERVAL`]. A single node, or a single network, cannot move us.
+/// most once per round, and so does each referrer (the node whose node list led us to the
+/// voter), so that a node handing out many addresses it controls gets one vote for all of them.
+/// An address wins when it has at least [`MIN_VOTES`] votes ([`VOTES_TO_REPLACE`] to replace
+/// an adopted one) and at least twice as many as the runner-up, and an adopted address is not
+/// replaced within [`MIN_CHANGE_INTERVAL`]. A single node, or a single network, cannot move us.
 #[derive(Debug)]
 pub(crate) struct ExternalIpVoter {
     adopted: Option<IpAddr>,
     last_change: Option<Instant>,
     candidates: Vec<(IpAddr, u32)>,
     voters: HashSet<[u8; 8]>,
+    referrers: HashSet<[u8; 8]>,
     round_votes: u32,
 }
 
@@ -180,6 +192,7 @@ impl ExternalIpVoter {
             last_change: None,
             candidates: Vec::new(),
             voters: HashSet::new(),
+            referrers: HashSet::new(),
             round_votes: 0,
         }
     }
@@ -192,20 +205,35 @@ impl ExternalIpVoter {
     fn reset_round(&mut self) {
         self.candidates.clear();
         self.voters.clear();
+        self.referrers.clear();
         self.round_votes = 0;
     }
 
-    /// Records that `voter` told us our address is `reported`. Returns the new external address
-    /// when this vote changed it.
-    pub(crate) fn vote(&mut self, voter: IpAddr, reported: IpAddr, now: Instant) -> Option<IpAddr> {
+    /// Records that `voter` told us our address is `reported`; `referrer` is the node that
+    /// listed `voter` in an answer to us, if any. Returns the new external address when this
+    /// vote changed it.
+    pub(crate) fn vote(
+        &mut self,
+        voter: IpAddr,
+        referrer: Option<IpAddr>,
+        reported: IpAddr,
+        now: Instant,
+    ) -> Option<IpAddr> {
         let voter = voter.to_canonical();
         let reported = reported.to_canonical();
         if voter.is_ipv4() != reported.is_ipv4() || !is_public_address(reported) {
             return None;
         }
-        if !self.voters.insert(voter_network(voter)) {
+        let voter_key = voter_network(voter);
+        if self.voters.contains(&voter_key) {
             return None;
         }
+        if let Some(referrer) = referrer
+            && !self.referrers.insert(voter_network(referrer))
+        {
+            return None;
+        }
+        self.voters.insert(voter_key);
         self.round_votes += 1;
         match self.candidates.iter_mut().find(|(ip, _)| *ip == reported) {
             Some((_, votes)) => *votes += 1,
@@ -225,7 +253,12 @@ impl ExternalIpVoter {
             }
         }
 
-        let decided = leader.filter(|&(_, votes)| votes >= MIN_VOTES && votes >= 2 * runner_up);
+        let quorum = if self.adopted.is_some() {
+            VOTES_TO_REPLACE
+        } else {
+            MIN_VOTES
+        };
+        let decided = leader.filter(|&(_, votes)| votes >= quorum && votes >= 2 * runner_up);
         let result = match decided {
             Some((ip, _)) if self.adopted == Some(ip) => {
                 // Confirmed what we have; start counting afresh.
@@ -435,21 +468,73 @@ mod tests {
         let ours = v4(1, 2, 3, 4);
         // The same node, or several nodes of one /24, count once.
         for i in 0..20 {
-            assert_eq!(voter.vote(v4(5, 5, 5, i), ours, now), None);
+            assert_eq!(voter.vote(v4(5, 5, 5, i), None, ours, now), None);
         }
         assert_eq!(voter.adopted(), None);
         // Three more networks agree: four networks in total.
-        assert_eq!(voter.vote(v4(6, 6, 6, 6), ours, now), None);
-        assert_eq!(voter.vote(v4(7, 7, 7, 7), ours, now), None);
-        assert_eq!(voter.vote(v4(8, 8, 8, 8), ours, now), Some(ours));
+        assert_eq!(voter.vote(v4(6, 6, 6, 6), None, ours, now), None);
+        assert_eq!(voter.vote(v4(7, 7, 7, 7), None, ours, now), None);
+        assert_eq!(voter.vote(v4(8, 8, 8, 8), None, ours, now), Some(ours));
         assert_eq!(voter.adopted(), Some(ours));
 
         // Much later, a liar alone does not change our mind.
         let later = now + Duration::from_secs(3600);
         for i in 0..20 {
-            assert_eq!(voter.vote(v4(9, 9, 9, i), v4(66, 66, 66, 66), later), None);
+            assert_eq!(
+                voter.vote(v4(9, 9, 9, i), None, v4(66, 66, 66, 66), later),
+                None
+            );
         }
         assert_eq!(voter.adopted(), Some(ours));
+    }
+
+    #[test]
+    fn voter_one_referrer_one_vote() {
+        let mut voter = ExternalIpVoter::new();
+        let now = Instant::now();
+        let ours = v4(1, 2, 3, 4);
+        let lie = v4(66, 66, 66, 66);
+        // A node lists many nodes of its own, each in another /24, and they all lie. Only the
+        // first of them counts.
+        let liar = Some(v4(50, 0, 0, 1));
+        for n in 100..120 {
+            assert_eq!(voter.vote(v4(n, 0, 0, 1), liar, lie, now), None);
+        }
+        assert_eq!(voter.adopted(), None);
+        // Honest nodes, found through different nodes, outvote it: four of them are four votes
+        // and twice the one vote of the liars.
+        for n in 10..13u8 {
+            assert_eq!(
+                voter.vote(v4(n, 0, 0, 1), Some(v4(n, 9, 9, 9)), ours, now),
+                None
+            );
+        }
+        assert_eq!(
+            voter.vote(v4(13, 0, 0, 1), Some(v4(13, 9, 9, 9)), ours, now),
+            Some(ours)
+        );
+    }
+
+    #[test]
+    fn voter_replacing_needs_more_votes() {
+        let mut voter = ExternalIpVoter::new();
+        let now = Instant::now();
+        let first = v4(1, 2, 3, 4);
+        let second = v4(4, 3, 2, 1);
+        for n in 10..13 {
+            assert_eq!(voter.vote(v4(n, 0, 0, 1), None, first, now), None);
+        }
+        assert_eq!(voter.vote(v4(13, 0, 0, 1), None, first, now), Some(first));
+
+        let later = now + MIN_CHANGE_INTERVAL + Duration::from_secs(1);
+        for n in 1..VOTES_TO_REPLACE as u8 {
+            assert_eq!(voter.vote(v4(100 + n, 0, 0, 1), None, second, later), None);
+        }
+        assert_eq!(voter.adopted(), Some(first));
+        assert_eq!(
+            voter.vote(v4(200, 0, 0, 1), None, second, later),
+            Some(second)
+        );
     }
 
     #[test]
@@ -459,20 +544,23 @@ mod tests {
         let first = v4(1, 2, 3, 4);
         let second = v4(4, 3, 2, 1);
         for n in 10..13 {
-            assert_eq!(voter.vote(v4(n, 0, 0, 1), first, now), None);
+            assert_eq!(voter.vote(v4(n, 0, 0, 1), None, first, now), None);
         }
-        assert_eq!(voter.vote(v4(13, 0, 0, 1), first, now), Some(first));
+        assert_eq!(voter.vote(v4(13, 0, 0, 1), None, first, now), Some(first));
 
         // A clear majority for another address right away: too soon to change.
         let soon = now + Duration::from_secs(60);
-        for n in 20..26 {
-            assert_eq!(voter.vote(v4(n, 0, 0, 1), second, soon), None);
+        for n in 20..32 {
+            assert_eq!(voter.vote(v4(n, 0, 0, 1), None, second, soon), None);
         }
         assert_eq!(voter.adopted(), Some(first));
 
         // Once the interval passed, the next vote of the majority moves us.
         let later = now + MIN_CHANGE_INTERVAL + Duration::from_secs(1);
-        assert_eq!(voter.vote(v4(26, 0, 0, 1), second, later), Some(second));
+        assert_eq!(
+            voter.vote(v4(32, 0, 0, 1), None, second, later),
+            Some(second)
+        );
         assert_eq!(voter.adopted(), Some(second));
     }
 
@@ -484,15 +572,15 @@ mod tests {
         let b = v4(4, 3, 2, 1);
         // 4 against 3 is not twice as many.
         for n in 10..13 {
-            assert_eq!(voter.vote(v4(n, 0, 0, 1), b, now), None);
+            assert_eq!(voter.vote(v4(n, 0, 0, 1), None, b, now), None);
         }
         for n in 20..24 {
-            assert_eq!(voter.vote(v4(n, 0, 0, 1), a, now), None);
+            assert_eq!(voter.vote(v4(n, 0, 0, 1), None, a, now), None);
         }
         assert_eq!(voter.adopted(), None);
         // 6 against 3 is.
-        assert_eq!(voter.vote(v4(24, 0, 0, 1), a, now), None);
-        assert_eq!(voter.vote(v4(25, 0, 0, 1), a, now), Some(a));
+        assert_eq!(voter.vote(v4(24, 0, 0, 1), None, a, now), None);
+        assert_eq!(voter.vote(v4(25, 0, 0, 1), None, a, now), Some(a));
     }
 
     #[test]
@@ -501,12 +589,13 @@ mod tests {
         let now = Instant::now();
         for n in 10..30 {
             // Local addresses say nothing about our place in the DHT.
-            voter.vote(v4(n, 0, 0, 1), v4(192, 168, 0, 10), now);
-            voter.vote(v4(n, 0, 0, 1), v4(127, 0, 0, 1), now);
-            voter.vote(v4(n, 0, 0, 1), v4(0, 0, 0, 0), now);
+            voter.vote(v4(n, 0, 0, 1), None, v4(192, 168, 0, 10), now);
+            voter.vote(v4(n, 0, 0, 1), None, v4(127, 0, 0, 1), now);
+            voter.vote(v4(n, 0, 0, 1), None, v4(0, 0, 0, 0), now);
             // An IPv4 voter cannot vote for an IPv6 address.
             voter.vote(
                 v4(n, 0, 0, 1),
+                None,
                 IpAddr::V6(Ipv6Addr::from_str("2001:db8::1").unwrap()),
                 now,
             );
@@ -515,21 +604,35 @@ mod tests {
     }
 
     #[test]
+    fn voter_round_is_bounded() {
+        let mut voter = ExternalIpVoter::new();
+        let now = Instant::now();
+        // Votes spread over many addresses never decide anything; after MAX_ROUND_VOTES the
+        // round starts over instead of growing.
+        for n in 0..MAX_ROUND_VOTES as u8 {
+            voter.vote(v4(n + 1, 0, 0, 1), None, v4(100, 0, 0, n + 1), now);
+        }
+        assert!(voter.candidates.is_empty());
+        assert!(voter.voters.is_empty());
+        assert_eq!(voter.round_votes, 0);
+    }
+
+    #[test]
     fn voter_ipv6_networks() {
         let mut voter = ExternalIpVoter::new();
         let now = Instant::now();
         let ours = IpAddr::from_str("2001:db8:aaaa::1").unwrap();
-        // Many addresses in a single /64 are one vote.
+        // Many addresses, even many /64s, in a single /48 are one vote.
         for i in 1..10u16 {
-            let voter_ip = IpAddr::V6(Ipv6Addr::new(0x2a00, 1, 2, 3, 0, 0, 0, i));
-            assert_eq!(voter.vote(voter_ip, ours, now), None);
+            let voter_ip = IpAddr::V6(Ipv6Addr::new(0x2a00, 1, 2, i, 0, 0, 0, 1));
+            assert_eq!(voter.vote(voter_ip, None, ours, now), None);
         }
         for n in 1..3u16 {
-            let voter_ip = IpAddr::V6(Ipv6Addr::new(0x2a00, 1, 2, 3 + n, 0, 0, 0, 1));
-            assert_eq!(voter.vote(voter_ip, ours, now), None);
+            let voter_ip = IpAddr::V6(Ipv6Addr::new(0x2a00, 1, 2 + n, 3, 0, 0, 0, 1));
+            assert_eq!(voter.vote(voter_ip, None, ours, now), None);
         }
         let voter_ip = IpAddr::V6(Ipv6Addr::new(0x2a00, 9, 9, 9, 0, 0, 0, 1));
-        assert_eq!(voter.vote(voter_ip, ours, now), Some(ours));
+        assert_eq!(voter.vote(voter_ip, None, ours, now), Some(ours));
         assert_eq!(adopted_v6(&voter), Some(ours.to_string().parse().unwrap()));
         assert_eq!(adopted_v4(&voter), None);
     }

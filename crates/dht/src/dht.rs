@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU16, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::Poll,
     time::{Duration, Instant},
@@ -86,6 +86,31 @@ impl NodeIds {
 
 struct OutstandingRequest {
     done: tokio::sync::oneshot::Sender<crate::Result<ResponseOrError>>,
+    // The node that pointed us to the address we asked (see `NodeToQuery::referrer`).
+    referrer: Option<SocketAddr>,
+    // Tells this request apart from a later one that happens to get the same key.
+    serial: u64,
+}
+
+/// Removes the in-flight entry of a request when the request future goes away, whether it got
+/// its answer, timed out or was dropped half-way (a lookup past its deadline, a cancelled task).
+struct InflightGuard<'a> {
+    map: &'a DashMap<(u16, SocketAddr), OutstandingRequest>,
+    key: (u16, SocketAddr),
+    serial: u64,
+}
+
+impl Drop for InflightGuard<'_> {
+    fn drop(&mut self) {
+        self.map
+            .remove_if(&self.key, |_, r| r.serial == self.serial);
+    }
+}
+
+/// Transaction ids are random, so that a node that sees our queries cannot guess the ids of the
+/// queries we send to others and forge their answers (and with them, votes on our address).
+fn random_transaction_id() -> u16 {
+    rand::random()
 }
 
 pub struct WorkerSendRequest {
@@ -178,7 +203,8 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
             );
             return;
         }
-        let (tid, message) = req.dht.create_request(
+        let message = req.dht.create_request(
+            random_transaction_id(),
             Request::Announce {
                 info_hash: req.info_hash,
                 token: token.clone(),
@@ -187,8 +213,9 @@ impl RecursiveRequestCallbacks for RecursiveRequestCallbacksGetPeers {
             addr,
         );
 
+        // Nobody waits for the answer, so the request is not tracked.
         let _ = req.dht.worker_sender.send(WorkerSendRequest {
-            our_tid: Some(tid),
+            our_tid: None,
             message,
             addr,
         });
@@ -236,9 +263,26 @@ struct RecursiveRequest<C: RecursiveRequestCallbacks> {
     dht: Arc<DhtState>,
     useful_nodes: RwLock<Vec<MaybeUsefulNode>>,
     peer_tx: tokio::sync::mpsc::UnboundedSender<SocketAddr>,
-    node_tx: tokio::sync::mpsc::UnboundedSender<(Option<Id20>, SocketAddr, usize)>,
+    node_tx: tokio::sync::mpsc::UnboundedSender<NodeToQuery>,
     callbacks: C,
 }
+
+/// A node a lookup is going to query.
+struct NodeToQuery {
+    /// Its id, when we know it (bootstrap addresses come without one).
+    id: Option<Id20>,
+    addr: SocketAddr,
+    /// The node whose answer listed it; `None` when it came from our routing table or the
+    /// caller. BEP 42 votes on our external address count once per referrer, so that one node
+    /// cannot vote through the many nodes it points us to.
+    referrer: Option<SocketAddr>,
+    depth: usize,
+}
+
+/// The most nodes one answer may add to a lookup: one bucket's worth, what an answer is
+/// supposed to carry per address family. Anything beyond it is dropped, so that a hostile
+/// answer cannot make us fire off hundreds of queries.
+const MAX_NODES_PER_ANSWER: usize = 8;
 
 pub struct RequestPeersStream {
     rx: tokio::sync::mpsc::UnboundedReceiver<SocketAddr>,
@@ -329,12 +373,13 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
     /// is left to ask.
     async fn run_to_completion(
         &self,
-        mut node_rx: UnboundedReceiver<(Option<Id20>, SocketAddr, usize)>,
+        mut node_rx: UnboundedReceiver<NodeToQuery>,
         seeds: impl Iterator<Item = (Option<Id20>, SocketAddr)>,
     ) -> crate::Result<()> {
         let target = self.info_hash;
-        let request_one = |id, addr, depth| {
-            self.request_one(id, addr, depth)
+        let request_one = |node: NodeToQuery| {
+            let addr = node.addr;
+            self.request_one(node)
                 .map_err(|e| {
                     debug!("error: {e:#}");
                     e
@@ -350,7 +395,12 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
         let mut initial_addrs = 0;
         for (id, addr) in seeds {
-            futs.push(request_one(id, addr, 0));
+            futs.push(request_one(NodeToQuery {
+                id,
+                addr,
+                referrer: None,
+                depth: 0,
+            }));
             initial_addrs += 1;
         }
 
@@ -363,8 +413,8 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
 
                 r = node_rx.recv() => {
                     // `self` holds the sender, so the channel never closes while we run.
-                    let Some((id, addr, depth)) = r else { break };
-                    futs.push(request_one(id, addr, depth))
+                    let Some(node) = r else { break };
+                    futs.push(request_one(node))
                 },
                 f = futs.next() => {
                     let f = match f {
@@ -544,7 +594,7 @@ fn check_item_salt(salt: &[u8]) -> crate::Result<()> {
 impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
     fn request_peers_forever(
         self: &Arc<Self>,
-        mut node_rx: tokio::sync::mpsc::UnboundedReceiver<(Option<Id20>, SocketAddr, usize)>,
+        mut node_rx: tokio::sync::mpsc::UnboundedReceiver<NodeToQuery>,
         is_v4: bool,
     ) -> tokio::task::JoinHandle<()> {
         let this = self.clone();
@@ -578,10 +628,11 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
                 let mut futs = FuturesUnordered::new();
                 loop {
                     tokio::select! {
-                        addr = node_rx.recv() => {
-                            let (id, addr, depth) = addr.unwrap();
+                        node = node_rx.recv() => {
+                            let node = node.unwrap();
+                            let addr = node.addr;
                             futs.push(
-                                this.request_one(id, addr, depth)
+                                this.request_one(node)
                                     .map_err(|e| debug!("error: {e:#}"))
                                     .instrument(debug_span!("addr", addr=addr.to_string()))
                             );
@@ -612,7 +663,12 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
         {
             count += 1;
             self.node_tx
-                .send((Some(id), addr, 0))
+                .send(NodeToQuery {
+                    id: Some(id),
+                    addr,
+                    referrer: None,
+                    depth: 0,
+                })
                 .ok()
                 .ok_or(Error::DhtDead)?;
         }
@@ -622,19 +678,20 @@ impl RecursiveRequest<RecursiveRequestCallbacksGetPeers> {
 }
 
 impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
-    async fn request_one(
-        &self,
-        id: Option<Id20>,
-        addr: SocketAddr,
-        depth: usize,
-    ) -> crate::Result<()> {
+    async fn request_one(&self, node: NodeToQuery) -> crate::Result<()> {
+        let NodeToQuery {
+            id,
+            addr,
+            referrer,
+            depth,
+        } = node;
         if let Some(id) = id {
             self.callbacks.on_request_start(self, id, addr);
         }
 
         let response = self
             .dht
-            .request(self.request.clone(), addr)
+            .request_referred(self.request.clone(), addr, referrer)
             .await
             .inspect(|r| {
                 self.mark_node_responded(addr, r);
@@ -671,7 +728,8 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
                     .iter()
                     .flat_map(|n| n.iter().map(|n| n.as_socketaddr())),
             )
-            .filter(|node| addr.is_ipv4() == node.addr.is_ipv4());
+            .filter(|node| addr.is_ipv4() == node.addr.is_ipv4())
+            .take(MAX_NODES_PER_ANSWER);
 
         let now = now();
         // Other nodes list us too; asking ourselves is a wasted round trip (and a BEP 44 put
@@ -686,7 +744,12 @@ impl<C: RecursiveRequestCallbacks> RecursiveRequest<C> {
             );
             if should_request {
                 self.node_tx
-                    .send((Some(node.id), node.addr, depth + 1))
+                    .send(NodeToQuery {
+                        id: Some(node.id),
+                        addr: node.addr,
+                        referrer: Some(addr),
+                        depth: depth + 1,
+                    })
                     .ok()
                     .ok_or(Error::ReceiverDead)?;
             }
@@ -783,7 +846,7 @@ pub struct DhtState {
     // Lock order: a routing table, then `ids`. `ids` is only ever held to copy an id out or to
     // swap the ids, never across another lock.
     ids: RwLock<NodeIds>,
-    next_transaction_id: AtomicU16,
+    next_request_serial: AtomicU64,
 
     // Created requests: (transaction_id, addr) => Requests.
     // If we get a response, it gets removed from here.
@@ -834,7 +897,7 @@ impl DhtState {
         peer_store.set_self_id(false, ids.v6);
         Self {
             ids: RwLock::new(ids),
-            next_transaction_id: AtomicU16::new(0),
+            next_request_serial: AtomicU64::new(0),
             inflight_by_transaction_id: Default::default(),
             routing_table_v4: RwLock::new(routing_table_v4),
             routing_table_v6: RwLock::new(routing_table_v6),
@@ -919,10 +982,13 @@ impl DhtState {
     }
 
     /// Counts the "ip" field of a response from `voter` towards our external address, and moves
-    /// our node id when the vote adopts a new address.
+    /// our node id when the vote adopts a new address. `referrer` is the node that pointed us to
+    /// `voter`, if any: one referrer gets one vote per round, whatever number of nodes it
+    /// listed.
     pub(crate) fn on_external_ip_reported(
         self: &Arc<Self>,
         voter: SocketAddr,
+        referrer: Option<SocketAddr>,
         reported: SocketAddr,
     ) {
         let voter_ip = voter.ip().to_canonical();
@@ -932,17 +998,20 @@ impl DhtState {
         } else {
             &self.ip_voter_v6
         };
-        let adopted = voter_lock.lock().vote(voter_ip, reported.ip(), now());
+        let adopted =
+            voter_lock
+                .lock()
+                .vote(voter_ip, referrer.map(|r| r.ip()), reported.ip(), now());
         if let Some(ip) = adopted {
             self.on_external_ip_adopted(ip);
         }
     }
 
-    /// Makes voters in four distinct networks of the family of `ip` report `ip` as our address,
-    /// which is enough for the vote to adopt it.
+    /// Makes enough voters in distinct networks of the family of `ip` report `ip` as our
+    /// address for the vote to adopt it, whether we have an address already or not.
     #[cfg(test)]
     pub(crate) fn vote_external_ip(self: &Arc<Self>, ip: IpAddr) {
-        for n in 1..=4u8 {
+        for n in 1..=bep42::VOTES_TO_REPLACE as u8 {
             let voter = match ip {
                 IpAddr::V4(_) => SocketAddr::from(([n, 1, 1, 1], 6881)),
                 IpAddr::V6(_) => SocketAddr::from((
@@ -950,7 +1019,7 @@ impl DhtState {
                     6881,
                 )),
             };
-            self.on_external_ip_reported(voter, SocketAddr::new(ip, 4321));
+            self.on_external_ip_reported(voter, None, SocketAddr::new(ip, 4321));
         }
     }
 
@@ -1013,43 +1082,66 @@ impl DhtState {
     }
 
     async fn request(&self, request: Request, addr: SocketAddr) -> crate::Result<ResponseOrError> {
+        self.request_referred(request, addr, None).await
+    }
+
+    /// Sends `request` to `addr` and waits for the answer. `referrer` is the node that pointed
+    /// us to `addr`, if any (see `NodeToQuery::referrer`).
+    async fn request_referred(
+        &self,
+        request: Request,
+        addr: SocketAddr,
+        referrer: Option<SocketAddr>,
+    ) -> crate::Result<ResponseOrError> {
         self.rate_limiter.acquire_one().await;
-        let (tid, message) = self.create_request(request, addr);
-        let key = (tid, addr);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.inflight_by_transaction_id
-            .insert(key, OutstandingRequest { done: tx });
-        trace!("sending {message:?}");
-        match self.worker_sender.send(WorkerSendRequest {
-            our_tid: Some(tid),
-            message,
-            addr,
-        }) {
-            Ok(_) => {}
-            Err(_) => {
-                self.inflight_by_transaction_id.remove(&key);
-                return Err(Error::DhtDead);
+        let serial = self.next_request_serial.fetch_add(1, Ordering::Relaxed);
+        let tid = loop {
+            let tid = random_transaction_id();
+            if let dashmap::Entry::Vacant(e) = self.inflight_by_transaction_id.entry((tid, addr)) {
+                e.insert(OutstandingRequest {
+                    done: tx,
+                    referrer,
+                    serial,
+                });
+                break tid;
             }
         };
+        let _guard = InflightGuard {
+            map: &self.inflight_by_transaction_id,
+            key: (tid, addr),
+            serial,
+        };
+        let message = self.create_request(tid, request, addr);
+        trace!("sending {message:?}");
+        if self
+            .worker_sender
+            .send(WorkerSendRequest {
+                our_tid: Some(tid),
+                message,
+                addr,
+            })
+            .is_err()
+        {
+            return Err(Error::DhtDead);
+        }
         match tokio::time::timeout(RESPONSE_TIMEOUT, rx).await {
             Ok(Ok(r)) => r.map(|r| {
                 trace!("received {r:?}");
                 r
             }),
-            Ok(Err(_)) => {
-                self.inflight_by_transaction_id.remove(&key);
-                Err(Error::DhtDead)
-            }
-            Err(_) => {
-                self.inflight_by_transaction_id.remove(&key);
-                Err(Error::ResponseTimeout(RESPONSE_TIMEOUT))
-            }
+            Ok(Err(_)) => Err(Error::DhtDead),
+            Err(_) => Err(Error::ResponseTimeout(RESPONSE_TIMEOUT)),
         }
     }
 
-    fn create_request(&self, request: Request, addr: SocketAddr) -> (u16, Message<ByteBufOwned>) {
-        let transaction_id = self.next_transaction_id.fetch_add(1, Ordering::Relaxed);
-        let transaction_id_buf = [(transaction_id >> 8) as u8, (transaction_id & 0xff) as u8];
+    fn create_request(
+        &self,
+        transaction_id: u16,
+        request: Request,
+        addr: SocketAddr,
+    ) -> Message<ByteBufOwned> {
+        let transaction_id_buf = transaction_id.to_be_bytes();
 
         let want = if addr.is_ipv6() {
             Some(Want::V6)
@@ -1058,7 +1150,7 @@ impl DhtState {
         };
         let id = self.id_for(addr);
 
-        let message = match request {
+        match request {
             Request::GetPeers(info_hash) => Message {
                 transaction_id: ByteBufOwned::from(transaction_id_buf.as_ref()),
                 version: None,
@@ -1138,8 +1230,7 @@ impl DhtState {
                     kind: MessageKind::PutRequest(put),
                 }
             }
-        };
-        (transaction_id, message)
+        }
     }
 
     fn generate_compact_nodes_both(
@@ -1229,7 +1320,7 @@ impl DhtState {
                 // Errors count as well: a node that enforces BEP 42 answers a node with an id
                 // that does not match its address with an error.
                 if let Some(reported) = msg.ip {
-                    self.on_external_ip_reported(addr, reported);
+                    self.on_external_ip_reported(addr, request.referrer, reported);
                 }
 
                 let response_or_error = match msg.kind {
@@ -1720,7 +1811,7 @@ fn is_datagram_error(e: &std::io::Error) -> bool {
 
 impl DhtWorker {
     fn on_send_error(&self, tid: u16, addr: SocketAddr, err: crate::Error) {
-        if let Some((_, OutstandingRequest { done })) =
+        if let Some((_, OutstandingRequest { done, .. })) =
             self.dht.inflight_by_transaction_id.remove(&(tid, addr))
         {
             let _ = done.send(Err(err)).is_err();
@@ -2325,12 +2416,63 @@ mod tests {
         for _ in 0..20 {
             dht.on_external_ip_reported(
                 SocketAddr::from(([5, 6, 7, 8], 6881)),
+                None,
                 SocketAddr::from(([124, 31, 75, 21], 4321)),
             );
         }
         let stats = dht.get_stats();
         assert_eq!(stats.external_ip_v4, None);
         assert_eq!(stats.id, before);
+    }
+
+    #[tokio::test]
+    async fn test_unsolicited_answers_do_not_vote() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = start_dht(silent.local_addr().unwrap()).await;
+        // Answers to queries we never sent, from many networks: none of them counts.
+        for n in 1..=20u8 {
+            let msg = bprotocol::Message {
+                transaction_id: ByteBufOwned::from(&[n, n][..]),
+                version: None,
+                ip: Some(SocketAddr::from(([124, 31, 75, 21], 4321))),
+                kind: MessageKind::Response(bprotocol::Response {
+                    id: Id20::new([n; 20]),
+                    ..Default::default()
+                }),
+            };
+            assert!(matches!(
+                dht.on_received_message(msg, SocketAddr::from(([n, 1, 1, 1], 6881))),
+                Err(crate::Error::RequestNotFound)
+            ));
+        }
+        assert_eq!(dht.get_stats().external_ip_v4, None);
+    }
+
+    #[tokio::test]
+    async fn test_dropped_request_leaves_no_inflight_entry() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let dht = start_dht(silent.local_addr().unwrap()).await;
+        let other = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let other_addr = other.local_addr().unwrap();
+        let pending = |dht: &DhtState| {
+            dht.inflight_by_transaction_id
+                .iter()
+                .filter(|e| e.key().1 == other_addr)
+                .count()
+        };
+        // Nobody answers; the caller gives up long before RESPONSE_TIMEOUT, as a lookup past
+        // its deadline does.
+        let r = tokio::time::timeout(
+            Duration::from_millis(100),
+            dht.request(Request::Ping, other_addr),
+        )
+        .await;
+        assert!(r.is_err());
+        assert_eq!(pending(&dht), 0);
+        // The query did go out (and was tracked while it was pending).
+        let mut buf = [0u8; 1500];
+        let (len, _) = other.recv_from(&mut buf).await.unwrap();
+        assert!(bprotocol::deserialize_message::<ByteBufOwned>(&buf[..len]).is_ok());
     }
 
     #[tokio::test]
