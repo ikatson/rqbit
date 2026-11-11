@@ -756,11 +756,19 @@ fn move_one(
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        cell::{Cell, RefCell},
+        fs::File,
+        io,
+        path::{Path, PathBuf},
+    };
 
     use tokio_util::sync::CancellationToken;
 
-    use super::{OsFs, copy_then_remove, create_parents, move_files, remove_empty_parents};
+    use super::{
+        COPY_BUFFER_LEN, FsOps, OsFs, copy_then_remove, create_parents, move_file, move_files,
+        partial_path, remove_empty_parents,
+    };
     use crate::storage::{MoveStorageMode, MoveStorageRequest};
 
     fn write(path: &Path, content: &[u8]) {
@@ -770,6 +778,116 @@ mod tests {
 
     fn read(path: &Path) -> Vec<u8> {
         std::fs::read(path).unwrap()
+    }
+
+    // Bytes no copy can mistake for a hole: no chunk of them is all zeros.
+    fn pattern(len: usize) -> Vec<u8> {
+        (1..=251u8).cycle().take(len).collect()
+    }
+
+    fn len_u64(len: usize) -> u64 {
+        u64::try_from(len).unwrap()
+    }
+
+    // Called after every successful write with the file written and the bytes written so far
+    // by the filesystem.
+    type WriteHook = Box<dyn Fn(&Path, u64)>;
+
+    /// The real filesystem, except that `device` and everything under it behave as another
+    /// filesystem (a rename between the two fails as across devices), the disk can fill up
+    /// once, and every flush and write is recorded.
+    #[derive(Default)]
+    struct TestFs {
+        device: Option<PathBuf>,
+        // How many bytes the disk takes before the next write fails as full; only once, so
+        // that an undo afterwards can copy files back.
+        full_after: Cell<Option<u64>>,
+        written: Cell<u64>,
+        // The rename call (counted from 0) after which `.1` gets cancelled.
+        cancel_after_rename: Option<(usize, CancellationToken)>,
+        renames: Cell<usize>,
+        after_write: Option<WriteHook>,
+        synced_files: RefCell<Vec<PathBuf>>,
+        synced_dirs: RefCell<Vec<PathBuf>>,
+    }
+
+    impl TestFs {
+        fn across(device: &Path) -> Self {
+            Self {
+                device: Some(device.to_owned()),
+                ..Default::default()
+            }
+        }
+    }
+
+    impl FsOps for TestFs {
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            let call = self.renames.get();
+            self.renames.set(call + 1);
+            let crosses = self
+                .device
+                .as_deref()
+                .is_some_and(|d| from.starts_with(d) != to.starts_with(d));
+            let result = if crosses {
+                Err(io::Error::from(io::ErrorKind::CrossesDevices))
+            } else {
+                OsFs.rename(from, to)
+            };
+            if let Some((at, cancel)) = &self.cancel_after_rename
+                && *at == call
+            {
+                cancel.cancel();
+            }
+            result
+        }
+
+        fn write_all(&self, file: &mut File, path: &Path, buf: &[u8]) -> io::Result<()> {
+            let written = self.written.get();
+            if let Some(room) = self.full_after.get()
+                && written + len_u64(buf.len()) > room
+            {
+                self.full_after.set(None);
+                let fits = usize::try_from(room - written).unwrap();
+                OsFs.write_all(file, path, &buf[..fits])?;
+                self.written.set(room);
+                return Err(io::Error::from(io::ErrorKind::StorageFull));
+            }
+            OsFs.write_all(file, path, buf)?;
+            self.written.set(written + len_u64(buf.len()));
+            if let Some(hook) = &self.after_write {
+                hook(path, self.written.get());
+            }
+            Ok(())
+        }
+
+        fn sync_file(&self, file: &File, path: &Path) -> io::Result<()> {
+            self.synced_files.borrow_mut().push(path.to_owned());
+            OsFs.sync_file(file, path)
+        }
+
+        fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+            self.synced_dirs.borrow_mut().push(dir.to_owned());
+            OsFs.sync_dir(dir)
+        }
+    }
+
+    // The names in `dir`, sorted; none if it doesn't exist.
+    fn names(dir: &Path) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut names = entries
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    fn io_kind_in_chain(err: &anyhow::Error, kind: io::ErrorKind) -> bool {
+        err.chain().any(|e| {
+            e.downcast_ref::<io::Error>()
+                .is_some_and(|e| e.kind() == kind)
+        })
     }
 
     #[test]
@@ -1050,5 +1168,361 @@ mod tests {
         )
         .err()
         .unwrap();
+    }
+
+    #[test]
+    fn test_move_files_across_devices_copies_then_commits_or_rolls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        // More than one copy buffer, so the copy loop runs several times.
+        let big = pattern(COPY_BUFFER_LEN * 2 + 17);
+        write(&old.join("a/big"), &big);
+        write(&old.join("small"), b"small");
+        let files = vec![Some(PathBuf::from("a/big")), Some(PathBuf::from("small"))];
+        let total = len_u64(big.len() + b"small".len());
+        let cancel = CancellationToken::new();
+
+        let mut fs = TestFs::across(&new);
+        let (o, n) = (old.clone(), new.clone());
+        // While a file is being copied (either way), its source is still there and the
+        // copy doesn't have the file's name yet.
+        fs.after_write = Some(Box::new(move |partial, _| {
+            let name = partial.file_name().unwrap().to_str().unwrap();
+            let name = name
+                .strip_prefix('.')
+                .and_then(|n| n.strip_suffix(".rqbit-partial"))
+                .expect("copies are written under a temporary name");
+            let (from, to) = if partial.starts_with(&n) {
+                (&o, &n)
+            } else {
+                (&n, &o)
+            };
+            let rel = partial
+                .parent()
+                .unwrap()
+                .strip_prefix(to)
+                .unwrap()
+                .join(name);
+            assert!(from.join(&rel).exists(), "the source stays during its copy");
+            assert!(!to.join(&rel).exists(), "the copy is named once complete");
+        }));
+
+        let moved = move_files(
+            &fs,
+            &old,
+            &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
+        )
+        .unwrap();
+        assert_eq!(fs.written.get(), total, "copied, not renamed");
+        assert_eq!(read(&new.join("a/big")), big);
+        assert_eq!(
+            std::fs::metadata(new.join("a/big")).unwrap().len(),
+            len_u64(big.len())
+        );
+        assert_eq!(read(&new.join("small")), b"small");
+        assert!(!old.join("a/big").exists() && !old.join("small").exists());
+        assert_eq!(names(&new), ["a", "small"], "no temporary copies left");
+        assert_eq!(names(&new.join("a")), ["big"], "no temporary copies left");
+
+        moved.rollback(&fs).unwrap();
+        assert_eq!(
+            fs.written.get(),
+            2 * total,
+            "the undo copies the files back"
+        );
+        assert_eq!(read(&old.join("a/big")), big);
+        assert_eq!(read(&old.join("small")), b"small");
+        assert_eq!(names(&old), ["a", "small"]);
+        assert_eq!(names(&old.join("a")), ["big"]);
+        assert!(
+            !new.exists(),
+            "the copies and the directories made are gone"
+        );
+
+        let moved = move_files(
+            &fs,
+            &old,
+            &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
+        )
+        .unwrap();
+        moved.commit();
+        assert_eq!(fs.written.get(), 3 * total);
+        assert_eq!(read(&new.join("a/big")), big);
+        assert_eq!(read(&new.join("small")), b"small");
+        assert!(names(&old).is_empty(), "emptied source directories go");
+    }
+
+    #[test]
+    fn test_cross_device_copy_checks_the_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a");
+        let other = dir.path().join("other");
+        let dst = other.join("a");
+        std::fs::create_dir(&other).unwrap();
+        let content = pattern(COPY_BUFFER_LEN * 2 + 17);
+        write(&src, &content);
+        let shrunk = COPY_BUFFER_LEN + 5;
+
+        let mut fs = TestFs::across(&other);
+        let s = src.clone();
+        // Something else shortens the source while it's being copied.
+        fs.after_write = Some(Box::new(move |_, written| {
+            if written == len_u64(COPY_BUFFER_LEN) {
+                File::options()
+                    .write(true)
+                    .open(&s)
+                    .unwrap()
+                    .set_len(len_u64(shrunk))
+                    .unwrap();
+            }
+        }));
+        let err = move_file(&fs, &src, &dst, &CancellationToken::new()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("bytes long instead of"),
+            "{err:#}"
+        );
+        assert!(names(&other).is_empty(), "no copy, partial or not, is left");
+        assert_eq!(read(&src), content[..shrunk], "the source stays");
+    }
+
+    // The bytes the filesystem gave `path`, if it can tell.
+    #[cfg(unix)]
+    fn allocated(path: &Path) -> Option<u64> {
+        use std::os::unix::fs::MetadataExt;
+        // st_blocks counts 512-byte units whatever the block size of the filesystem.
+        Some(std::fs::metadata(path).ok()?.blocks() * 512)
+    }
+
+    #[cfg(not(unix))]
+    fn allocated(_path: &Path) -> Option<u64> {
+        None
+    }
+
+    #[test]
+    fn test_cross_device_copy_keeps_holes() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a");
+        let other = dir.path().join("other");
+        let dst = other.join("a");
+        std::fs::create_dir(&other).unwrap();
+        // A hole, data, and a hole up to the end, as a preallocated torrent file has.
+        let len = COPY_BUFFER_LEN * 6;
+        let data_at = COPY_BUFFER_LEN * 2;
+        let data = pattern(COPY_BUFFER_LEN);
+        {
+            let mut f = File::create(&src).unwrap();
+            f.set_len(len_u64(len)).unwrap();
+            f.seek(SeekFrom::Start(len_u64(data_at))).unwrap();
+            f.write_all(&data).unwrap();
+        }
+        let mut expected = vec![0u8; len];
+        expected[data_at..data_at + data.len()].copy_from_slice(&data);
+        let src_allocated = allocated(&src);
+
+        let fs = TestFs::across(&other);
+        move_file(&fs, &src, &dst, &CancellationToken::new()).unwrap();
+        assert_eq!(
+            fs.written.get(),
+            len_u64(data.len()),
+            "only the data is written, the holes are skipped"
+        );
+        assert_eq!(read(&dst), expected);
+        assert!(!src.exists());
+        match (src_allocated, allocated(&dst)) {
+            (Some(src_allocated), Some(dst_allocated)) if src_allocated < len_u64(len) => {
+                assert!(
+                    dst_allocated <= src_allocated + len_u64(COPY_BUFFER_LEN),
+                    "the copy takes {dst_allocated} bytes on disk, the source {src_allocated}"
+                );
+            }
+            _ => eprintln!(
+                "the temporary filesystem doesn't keep holes or can't tell: only the length \
+                 and the bytes of the copy were checked"
+            ),
+        }
+    }
+
+    #[test]
+    fn test_cross_device_copy_flushes_the_file_and_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a");
+        let other = dir.path().join("other/deep");
+        let dst = other.join("a");
+        std::fs::create_dir_all(&other).unwrap();
+        write(&src, b"data");
+        let fs = TestFs::across(&dir.path().join("other"));
+        move_file(&fs, &src, &dst, &CancellationToken::new()).unwrap();
+        assert_eq!(read(&dst), b"data");
+        assert_eq!(
+            *fs.synced_files.borrow(),
+            [partial_path(&dst).unwrap()],
+            "the copy is flushed while it still has its temporary name"
+        );
+        assert_eq!(
+            *fs.synced_dirs.borrow(),
+            [other],
+            "the directory that got the copy's name is flushed"
+        );
+    }
+
+    #[test]
+    fn test_full_disk_part_way_undoes_the_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        let one = pattern(100);
+        let two = pattern(COPY_BUFFER_LEN + 3);
+        let three = pattern(COPY_BUFFER_LEN * 2);
+        write(&old.join("1"), &one);
+        write(&old.join("d/2"), &two);
+        write(&old.join("3"), &three);
+        let files = vec![
+            Some(PathBuf::from("1")),
+            Some(PathBuf::from("d/2")),
+            Some(PathBuf::from("3")),
+        ];
+        let fs = TestFs::across(&new);
+        let before_three = len_u64(one.len() + two.len());
+        // The disk fills half way through the first chunk of "3".
+        let half_chunk = len_u64(COPY_BUFFER_LEN / 2);
+        fs.full_after.set(Some(before_three + half_chunk));
+        let cancel = CancellationToken::new();
+
+        let err = move_files(
+            &fs,
+            &old,
+            &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            io_kind_in_chain(&err, io::ErrorKind::StorageFull),
+            "{err:#}"
+        );
+        assert_eq!(
+            fs.written.get(),
+            before_three + half_chunk + before_three,
+            "\"1\" and \"d/2\" were copied there and back, part of \"3\" was copied"
+        );
+        assert!(!partial_path(&new.join("3")).unwrap().exists());
+        assert!(
+            !new.exists(),
+            "the partial copy and the directories made are gone"
+        );
+        assert_eq!(read(&old.join("1")), one);
+        assert_eq!(read(&old.join("d/2")), two);
+        assert_eq!(read(&old.join("3")), three);
+        assert_eq!(names(&old), ["1", "3", "d"]);
+        assert_eq!(names(&old.join("d")), ["2"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_links_move_as_links() {
+        for across in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("target");
+            write(&target, b"target bytes");
+            let old = dir.path().join("old");
+            // One level deeper than `old`: a relative link copied as is would point
+            // elsewhere.
+            let new = dir.path().join("x/new");
+            std::fs::create_dir(&old).unwrap();
+            std::os::unix::fs::symlink("../target", old.join("rel")).unwrap();
+            std::os::unix::fs::symlink(&target, old.join("abs")).unwrap();
+            let files = vec![Some(PathBuf::from("rel")), Some(PathBuf::from("abs"))];
+            let fs = if across {
+                TestFs::across(&new)
+            } else {
+                TestFs::default()
+            };
+            let cancel = CancellationToken::new();
+            let real_target = std::fs::canonicalize(&target).unwrap();
+            let check_links = |folder: &Path| {
+                for name in ["rel", "abs"] {
+                    let link = folder.join(name);
+                    let meta = std::fs::symlink_metadata(&link).unwrap();
+                    assert!(meta.file_type().is_symlink(), "{link:?} (across: {across})");
+                    assert_eq!(std::fs::canonicalize(&link).unwrap(), real_target);
+                }
+                let meta = std::fs::symlink_metadata(&target).unwrap();
+                assert!(meta.is_file(), "the target stays a file");
+                assert_eq!(read(&target), b"target bytes", "the target is untouched");
+            };
+
+            let moved = move_files(
+                &fs,
+                &old,
+                &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
+            )
+            .unwrap();
+            check_links(&new);
+            assert!(names(&old).is_empty(), "the links left the old folder");
+            moved.rollback(&fs).unwrap();
+            check_links(&old);
+            assert!(!new.exists());
+
+            let moved = move_files(
+                &fs,
+                &old,
+                &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
+            )
+            .unwrap();
+            moved.commit();
+            check_links(&new);
+            assert!(names(&old).is_empty());
+            assert_eq!(fs.written.get(), 0, "no data is copied for a link");
+        }
+    }
+
+    #[test]
+    fn test_cancel_between_files_moves_back_the_moved_ones() {
+        for across in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let old = dir.path().join("old");
+            let new = dir.path().join("new");
+            let contents: [(&str, &[u8]); 3] = [("a", b"aaa"), ("b", b"bbbb"), ("c", b"ccccc")];
+            for (name, content) in contents {
+                write(&old.join(name), content);
+            }
+            let files = contents
+                .iter()
+                .map(|(name, _)| Some(PathBuf::from(name)))
+                .collect::<Vec<_>>();
+            let cancel = CancellationToken::new();
+            let mut fs = if across {
+                TestFs::across(&new)
+            } else {
+                TestFs::default()
+            };
+            // Fired once "b" is reached, after "a" moved. By rename "b" moves and "c" sees
+            // the cancellation; across devices the copy of "b" does.
+            fs.cancel_after_rename = Some((1, cancel.clone()));
+
+            let err = move_files(
+                &fs,
+                &old,
+                &request(&new, &files, MoveStorageMode::FailIfExists, &cancel),
+            )
+            .err()
+            .unwrap();
+            let msg = format!("{err:#}");
+            assert!(cancel.is_cancelled());
+            if across {
+                assert!(msg.contains("cancelled while copying"), "{msg}");
+                assert_eq!(fs.written.get(), 2 * 3, "\"a\" was copied there and back");
+                assert_eq!(fs.renames.get(), 3, "a, b, then a back");
+            } else {
+                assert!(msg.contains("the move was cancelled"), "{msg}");
+                assert_eq!(fs.renames.get(), 4, "a, b, then b and a back");
+            }
+            for (name, content) in contents {
+                assert_eq!(read(&old.join(name)), content, "{name} (across: {across})");
+            }
+            assert!(!new.exists(), "nothing is left at the destination");
+        }
     }
 }
