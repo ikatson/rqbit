@@ -1312,6 +1312,22 @@ impl PeerHandler {
         };
         let prev = pe.value_mut().take_state(peers);
 
+        // A connection we hung up on (disconnect_all_peers_that_have_full_torrent marks the
+        // entry NotNeeded right away) can end after the torrent wanted the peer back, e.g. a
+        // file was raised from priority 0: the entry is then queued again, or already owned by
+        // the next connection to the same address. That entry is not ours to change.
+        let superseded = match &prev {
+            PeerState::Queued => true,
+            PeerState::Connecting(tx) => !tx.same_channel(&self.tx),
+            PeerState::Live(live) => !live.tx.same_channel(&self.tx),
+            PeerState::Dead | PeerState::NotNeeded => false,
+        };
+        if superseded {
+            trace!("connection superseded by a newer one, leaving the peer entry alone");
+            pe.value_mut().set_state(prev, peers);
+            return Ok(());
+        }
+
         match prev {
             PeerState::Connecting(_) => {}
             PeerState::Live(live) => {
