@@ -5,7 +5,7 @@ use std::{
     net::SocketAddr,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -917,33 +917,48 @@ impl Session {
         .boxed()
     }
 
+    /// Read the handshake of an incoming connection and find the torrent it is for.
+    ///
+    /// Only holds a [`Weak`] reference to the session while waiting on the peer: a
+    /// connection that stays silent must not keep a dropped session (and all its
+    /// tasks) alive until the handshake times out.
     async fn check_incoming_connection(
-        self: Arc<Self>,
+        session: Weak<Self>,
         addr: SocketAddr,
         kind: ConnectionKind,
         mut reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
     ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
-        let rwtimeout = self
-            .peer_opts
-            .read_write_timeout
-            .unwrap_or_else(|| Duration::from_secs(10));
+        let (rwtimeout, our_peer_id) = {
+            let session = session.upgrade().context("session is dead")?;
+            let rwtimeout = session
+                .peer_opts
+                .read_write_timeout
+                .unwrap_or_else(|| Duration::from_secs(10));
 
-        let incoming_ip = addr.ip();
-        if self.blocklist.has(incoming_ip) {
-            self.stats
-                .counters
-                .blocked_incoming
-                .fetch_add(1, Ordering::Relaxed);
-            bail!("Incoming ip {incoming_ip} is in blocklist");
-        }
-        if self.allowlist.as_ref().is_some_and(|l| !l.has(incoming_ip)) {
-            self.stats
-                .counters
-                .blocked_incoming
-                .fetch_add(1, Ordering::Relaxed);
-            bail!("Incoming ip {incoming_ip} is not in allowlist");
-        }
+            let incoming_ip = addr.ip();
+            if session.blocklist.has(incoming_ip) {
+                session
+                    .stats
+                    .counters
+                    .blocked_incoming
+                    .fetch_add(1, Ordering::Relaxed);
+                bail!("Incoming ip {incoming_ip} is in blocklist");
+            }
+            if session
+                .allowlist
+                .as_ref()
+                .is_some_and(|l| !l.has(incoming_ip))
+            {
+                session
+                    .stats
+                    .counters
+                    .blocked_incoming
+                    .fetch_add(1, Ordering::Relaxed);
+                bail!("Incoming ip {incoming_ip} is not in allowlist");
+            }
+            (rwtimeout, session.peer_id)
+        };
 
         let mut read_buf = ReadBuf::new();
         let h = read_buf
@@ -952,11 +967,13 @@ impl Session {
             .context("error reading handshake")?;
         trace!("received handshake from {addr}: {:?}", h);
 
-        if h.peer_id == self.peer_id {
+        if h.peer_id == our_peer_id {
             bail!("seems like we are connecting to ourselves, ignoring");
         }
 
-        let (id, torrent) = self
+        let (id, torrent) = session
+            .upgrade()
+            .context("session is dead")?
             .db
             .read()
             .torrents
@@ -988,20 +1005,31 @@ impl Session {
         l: A,
         max_pending_incoming_handshake_checks: usize,
     ) -> anyhow::Result<()> {
+        // Pending checks only hold a weak reference to the session (see
+        // check_incoming_connection), so neither they nor this task keep it alive.
         let mut futs = FuturesUnordered::new();
         let session = Arc::downgrade(&self);
         drop(self);
 
+        // After an accept error, stop accepting for a while, but keep driving the
+        // pending checks meanwhile.
+        let mut accept_paused_until: Option<tokio::time::Instant> = None;
+
         loop {
+            let paused_until = accept_paused_until;
+            let can_accept =
+                paused_until.is_none() && futs.len() < max_pending_incoming_handshake_checks;
             tokio::select! {
-                r = l.accept(), if futs.len() < max_pending_incoming_handshake_checks => {
+                r = l.accept(), if can_accept => {
                     match r {
                         Ok((addr, (read, write))) => {
                             trace!("accepted connection from {addr}");
-                            let session = session.upgrade().context("session is dead")?;
-                            let span = debug_span!(parent: session.rs(), "incoming", addr=%addr);
+                            let span = {
+                                let session = session.upgrade().context("session is dead")?;
+                                debug_span!(parent: session.rs(), "incoming", addr=%addr)
+                            };
                             futs.push(
-                                session.check_incoming_connection(addr, A::KIND, Box::new(read), Box::new(write))
+                                Self::check_incoming_connection(session.clone(), addr, A::KIND, Box::new(read), Box::new(write))
                                     .map_err(|e| {
                                         debug!("error checking incoming connection: {e:#}");
                                         e
@@ -1013,10 +1041,13 @@ impl Session {
                             warn!("error accepting: {e:#}");
                             // Whatever is the reason, ensure we are not stuck trying to
                             // accept indefinitely.
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                            continue
+                            accept_paused_until =
+                                Some(tokio::time::Instant::now() + Duration::from_secs(10));
                         }
                     }
+                },
+                _ = tokio::time::sleep_until(paused_until.unwrap_or_else(tokio::time::Instant::now)), if paused_until.is_some() => {
+                    accept_paused_until = None;
                 },
                 Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
                     let (addr, kind) = (checked.addr, checked.kind);
