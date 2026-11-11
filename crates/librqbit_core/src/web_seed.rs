@@ -245,8 +245,10 @@ mod tests {
 
     #[test]
     fn test_web_seed_file_url_table() {
+        // Base URL, torrent name, path components (`None`: single-file torrent), expected URL.
+        type Case<'a> = (&'a str, &'a [u8], Option<Vec<&'a [u8]>>, &'a str);
         let none: Option<Vec<&[u8]>> = None;
-        let cases: Vec<(&str, &[u8], Option<Vec<&[u8]>>, &str)> = vec![
+        let cases: Vec<Case<'_>> = vec![
             // Single file: the URL is the file.
             ("http://h/f.iso", b"a.iso", none.clone(), "http://h/f.iso"),
             // Single file, trailing slash: the name is appended.

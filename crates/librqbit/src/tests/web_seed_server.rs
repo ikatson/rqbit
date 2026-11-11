@@ -254,10 +254,12 @@ fn answer(state: &State, request: &Request) -> (u16, Vec<(&'static str, String)>
         return (404, Vec::new(), Vec::new());
     };
     let mut content = content.clone();
+    // An offset into `content`, clamped to its length.
+    let at = |v: u64, len: usize| usize::try_from(v).map_or(len, |v| v.min(len));
     for (path, range) in &behaviour.corrupt {
         if *path == request.path {
-            let end = range.end.min(content.len() as u64);
-            for b in &mut content[range.start.min(end) as usize..end as usize] {
+            let end = at(range.end, content.len());
+            for b in &mut content[at(range.start, end)..end] {
                 *b ^= 0xff;
             }
         }
@@ -280,7 +282,7 @@ fn answer(state: &State, request: &Request) -> (u16, Vec<(&'static str, String)>
             (
                 206,
                 vec![("Content-Range", content_range)],
-                content[first as usize..end as usize].to_vec(),
+                content[at(first, content.len())..at(end, content.len())].to_vec(),
             )
         }
         _ => (200, Vec::new(), content),
