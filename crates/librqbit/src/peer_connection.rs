@@ -37,7 +37,13 @@ pub trait PeerConnectionHandler {
     fn on_connected(&self, _connection_time: Duration) {}
     fn should_send_bitfield(&self) -> bool;
     fn serialize_bitfield_message_to_buf(&self, buf: &mut [u8]) -> anyhow::Result<usize>;
-    fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()>;
+    /// `v2`: the connection is a BitTorrent v2 one (BEP 52), on which hash messages may be used.
+    fn on_handshake(
+        &self,
+        handshake: Handshake,
+        ckind: ConnectionKind,
+        v2: bool,
+    ) -> anyhow::Result<()>;
     fn on_extended_handshake(
         &self,
         extended_handshake: &ExtendedHandshake<ByteBuf>,
@@ -97,6 +103,9 @@ pub(crate) struct PeerConnection<H> {
     alt_info_hash: Option<Id20>,
     // Whether our handshakes set the BEP 52 "supports v2" bit.
     v2: bool,
+    // Open outgoing connections of a hybrid torrent with the v2 hash first, falling back to
+    // the v1 one: only v2 connections may exchange hashes.
+    v2_first: bool,
     peer_id: Id20,
     options: PeerConnectionOptions,
     spawner: BlockingSpawner,
@@ -147,7 +156,7 @@ pub(crate) async fn with_timeout<T>(
 
 struct ManagePeerArgs {
     handshake_supports_extended: bool,
-    // Both handshakes carried the BitTorrent v2 bit (BEP 52): the hash messages may be used.
+    // A BitTorrent v2 connection (BEP 52): the hash messages may be used.
     v2: bool,
     read_buf: ReadBuf,
     write_buf: Box<[u8; MAX_MSG_LEN]>,
@@ -173,6 +182,7 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             info_hash,
             alt_info_hash: None,
             v2: false,
+            v2_first: false,
             peer_id,
             spawner,
             options: options.unwrap_or_default(),
@@ -189,6 +199,16 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         self
     }
 
+    /// BEP 52: open outgoing connections of a hybrid torrent through its v2 swarm, as a
+    /// torrent that still lacks piece layers must, to ask the peer for them. The v1 hash
+    /// is the fallback for a peer that refuses the v2 one. libtorrent keeps a connection
+    /// opened with the v1 hash a v1 one when the handshakes are encrypted (it then answers
+    /// with the v1 hash and the "supports v2" bit), so that peer would never give hashes.
+    pub fn with_v2_first(mut self, v2_first: bool) -> Self {
+        self.v2_first = v2_first;
+        self
+    }
+
     fn our_handshake(&self, info_hash: Id20) -> Handshake {
         let h = Handshake::new(info_hash, self.peer_id);
         if self.v2 { h.with_v2_support() } else { h }
@@ -196,6 +216,14 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
     fn is_our_info_hash(&self, h: Id20) -> bool {
         h == self.info_hash || Some(h) == self.alt_info_hash
+    }
+
+    /// BEP 52: hash messages belong to v2 connections, the ones on which the (truncated) v2
+    /// info hash was exchanged: every connection of a v2-only torrent, and the connections of
+    /// a hybrid torrent made through, or upgraded to, its v2 swarm. As in libtorrent, the
+    /// "supports v2" bit of a handshake that carries the v1 hash only offers the upgrade.
+    fn is_v2_connection(&self, exchanged: Id20) -> bool {
+        self.v2 && exchanged == self.alt_info_hash.unwrap_or(self.info_hash)
     }
 
     // By the time this is called:
@@ -214,11 +242,22 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .unwrap_or_else(|| Duration::from_secs(10));
 
         // Answer with the hash the peer used: for a hybrid torrent that tells whether it joined
-        // through the v1 or the v2 swarm.
-        let info_hash = incoming.handshake.info_hash;
-        if !self.is_our_info_hash(info_hash) {
+        // through the v1 or the v2 swarm. A peer that sent the v1 hash with the "supports v2" bit
+        // is upgraded to the v2 swarm by answering with the v2 hash, as libtorrent does.
+        let peer_info_hash = incoming.handshake.info_hash;
+        if !self.is_our_info_hash(peer_info_hash) {
             return Err(Error::WrongInfoHash);
         }
+        let info_hash = match self.alt_info_hash {
+            Some(alt)
+                if self.v2
+                    && peer_info_hash == self.info_hash
+                    && incoming.handshake.supports_v2() =>
+            {
+                alt
+            }
+            _ => peer_info_hash,
+        };
 
         if incoming.handshake.peer_id == self.peer_id {
             return Err(Error::ConnectingToOurselves);
@@ -244,10 +283,10 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         // What the peer supports is in the peer's handshake, not in ours.
         let handshake_supports_extended = incoming.handshake.supports_extended();
-        let v2 = self.v2 && incoming.handshake.supports_v2();
+        let v2 = self.is_v2_connection(info_hash);
 
         self.handler
-            .on_handshake(incoming.handshake, incoming.kind)
+            .on_handshake(incoming.handshake, incoming.kind, v2)
             .map_err(Error::Anyhow)?;
 
         self.manage_peer(ManagePeerArgs {
@@ -268,16 +307,20 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         outgoing_chan: tokio::sync::mpsc::UnboundedReceiver<WriterRequest>,
         have_broadcast: tokio::sync::broadcast::Receiver<ValidPieceIndex>,
     ) -> Result<()> {
-        let first = self.connect_outgoing(self.info_hash).await;
-        let established = match (first, self.alt_info_hash) {
+        let (first_hash, fallback) = match self.alt_info_hash {
+            Some(alt) if self.v2_first => (alt, Some(self.info_hash)),
             // A peer that knows a hybrid torrent only by its v2 info hash (it was added from a
             // v2 magnet link) closes connections that carry the v1 one.
-            (Err(e), Some(alt)) if handshake_refused(&e) => {
+            alt => (self.info_hash, alt),
+        };
+        let first = self.connect_outgoing(first_hash).await;
+        let established = match (first, fallback) {
+            (Err(e), Some(other)) if handshake_refused(&e) => {
                 debug!(
                     addr = ?self.addr,
-                    "peer refused the v1 info hash ({e:#}), retrying with the v2 one"
+                    "peer refused the info hash {first_hash:?} ({e:#}), retrying with {other:?}"
                 );
-                self.connect_outgoing(alt).await?
+                self.connect_outgoing(other).await?
             }
             (other, _) => other?,
         };
@@ -292,9 +335,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
 
         async move {
             let handshake_supports_extended = handshake.supports_extended();
-            let v2 = self.v2 && handshake.supports_v2();
+            let v2 = self.is_v2_connection(handshake.info_hash);
             self.handler
-                .on_handshake(handshake, ckind)
+                .on_handshake(handshake, ckind, v2)
                 .map_err(Error::Anyhow)?;
 
             self.manage_peer(ManagePeerArgs {

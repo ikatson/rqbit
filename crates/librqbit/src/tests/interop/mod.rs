@@ -27,6 +27,7 @@ use tokio::{
     time::timeout,
 };
 
+mod bittorrent_v2;
 mod smoke;
 mod webseed;
 

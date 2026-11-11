@@ -171,7 +171,12 @@ impl PeerConnectionHandler for Handler {
         Ok(0)
     }
 
-    fn on_handshake(&self, handshake: Handshake, _kind: ConnectionKind) -> anyhow::Result<()> {
+    fn on_handshake(
+        &self,
+        handshake: Handshake,
+        _kind: ConnectionKind,
+        _v2: bool,
+    ) -> anyhow::Result<()> {
         if !handshake.supports_extended() {
             anyhow::bail!(
                 "this peer does not support extended handshaking, which is a prerequisite to download metadata"

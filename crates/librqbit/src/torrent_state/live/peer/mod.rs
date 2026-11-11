@@ -281,7 +281,7 @@ pub(crate) struct LivePeerState {
 
     pub connection_kind: ConnectionKind,
 
-    // Both handshakes carried the BitTorrent v2 bit (BEP 52): hashes may be asked of it.
+    // A BitTorrent v2 connection (BEP 52): hashes may be asked of it.
     pub v2: bool,
 }
 

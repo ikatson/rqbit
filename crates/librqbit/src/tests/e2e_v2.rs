@@ -367,9 +367,11 @@ async fn test_e2e_hybrid_v1_and_v2_peers() -> anyhow::Result<()> {
         let mut padded = big[3 * pl..].to_vec();
         padded.resize(BLOCK as usize, 0);
         let addr = seeder.listen_addr().context("listen addr")?;
-        for (hash, v2_bit) in [(v1, false), (v1, true), (v2, true)] {
+        // The v1 hash with the "supports v2" bit is upgraded to the v2 swarm (BEP 52), as
+        // libtorrent does.
+        for (hash, v2_bit, answer) in [(v1, false, v1), (v1, true, v2), (v2, true, v2)] {
             let (mut peer, reply) = connect_with_hash(addr, hash, v2_bit).await?;
-            assert_eq!(reply.info_hash, hash, "answered with another hash");
+            assert_eq!(reply.info_hash, answer, "answered with the wrong hash");
             assert!(reply.supports_v2(), "no v2 bit in the reply");
             peer.interested().await?;
             peer.request(0, 0, BLOCK).await?;

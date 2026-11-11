@@ -254,8 +254,16 @@ async fn test_v2_seeder_answers_hash_requests() -> anyhow::Result<()> {
             (valid.len() + invalid.len()) as u64
         );
 
-        // A peer whose handshake did not have the v2 bit may not send hash messages.
-        let (mut v1_peer, _) = connect_with_hash(addr, info_hash, false).await?;
+        seeder.stop().await;
+
+        // Every connection of a v2-only torrent is a v2 one; a v1 connection to a hybrid
+        // torrent (the v1 hash, without the "supports v2" bit) may not carry hash messages.
+        let hybrid = Bytes::from(files.torrent("hybrid", PIECE_LEN, true).to_bytes());
+        let v1_hash = torrent_from_bytes(&hybrid)?.info_hash;
+        let (_hybrid_dir, seeder, _) = start_seeder(&files, hybrid).await?;
+        let addr = seeder.listen_addr().context("listen addr")?;
+        let (mut v1_peer, reply) = connect_with_hash(addr, v1_hash, false).await?;
+        assert_eq!(reply.info_hash, v1_hash, "a v1 connection was upgraded");
         v1_peer
             .send(
                 MSGID_HASH_REQUEST,

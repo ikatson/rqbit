@@ -585,7 +585,9 @@ impl TorrentStateLive {
             state.shared.spawner.clone(),
             state.shared.connector.clone(),
         )
-        .with_info_hash_v2(state.shared.info_hash_v2);
+        .with_info_hash_v2(state.shared.info_hash_v2)
+        // BEP 52: piece layers can only be asked for on v2 connections.
+        .with_v2_first(!state.metadata.info.has_all_piece_layers());
         let requester = aframe!(
             handler
                 .task_peer_chunk_requester()
@@ -712,8 +714,13 @@ impl TorrentStateLive {
         TimedExistence::new(timeit(reason, || self._locked.write()), reason)
     }
 
-    fn set_peer_live(&self, handle: PeerHandle, h: Handshake, connection_kind: ConnectionKind) {
-        let v2 = self.metadata.info.version().has_v2() && h.supports_v2();
+    fn set_peer_live(
+        &self,
+        handle: PeerHandle,
+        h: Handshake,
+        connection_kind: ConnectionKind,
+        v2: bool,
+    ) {
         self.peers.with_peer_mut(handle, "set_peer_live", |p| {
             p.connecting_to_live(h.peer_id, &self.peers, connection_kind);
             if let Some(live) = p.get_live_mut() {
@@ -1177,8 +1184,13 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         Ok(len)
     }
 
-    fn on_handshake(&self, handshake: Handshake, ckind: ConnectionKind) -> anyhow::Result<()> {
-        self.state.set_peer_live(self.addr, handshake, ckind);
+    fn on_handshake(
+        &self,
+        handshake: Handshake,
+        ckind: ConnectionKind,
+        v2: bool,
+    ) -> anyhow::Result<()> {
+        self.state.set_peer_live(self.addr, handshake, ckind, v2);
         Ok(())
     }
 
