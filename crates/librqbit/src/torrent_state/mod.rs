@@ -275,12 +275,16 @@ impl ManagedTorrent {
         self.shared.options.super_seeding.load(Ordering::Acquire)
     }
 
-    /// Turn super seeding on or off, in any state.
+    /// Turn super seeding on or off, in any state. Turning it on affects the connections made
+    /// from then on; turning it off shows every connection in the mode all of our pieces.
     pub(crate) fn set_super_seeding(&self, enabled: bool) {
         self.shared
             .options
             .super_seeding
             .store(enabled, Ordering::Release);
+        if let ManagedTorrentState::Live(live) = &self.locked.read().state {
+            live.super_seeding.wake_all();
+        }
     }
 
     /// How the torrent orders the pieces it downloads.
