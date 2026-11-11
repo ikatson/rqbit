@@ -26,7 +26,10 @@ use super::MY_EXTENDED_UT_METADATA;
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct PeerExtendedMessageIds {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ut_metadata: Option<u8>,
+    /// `None` (left out of the handshake) when we don't do PEX with the peer.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ut_pex: Option<u8>,
 }
 
@@ -207,6 +210,21 @@ mod tests {
         let sz = msg
             .serialize(&mut buf, &|| PeerExtendedMessageIds::my())
             .unwrap();
+        let de = ExtendedMessage::deserialize(DoubleBufHelper::new(&buf[..sz], &[])).unwrap();
+        assert_eq!(msg, de);
+    }
+
+    #[test]
+    fn test_handshake_without_ut_pex_leaves_it_out() {
+        // A peer we don't do PEX with is not offered ut_pex: the key is left out of "m".
+        let mut hs = ExtendedHandshake::<ByteBuf>::new();
+        hs.m.ut_pex = None;
+        let msg = ExtendedMessage::Handshake(hs);
+        let mut buf = [0u8; 100];
+        let sz = msg
+            .serialize(&mut buf, &|| PeerExtendedMessageIds::my())
+            .unwrap();
+        assert!(!buf[..sz].windows(6).any(|w| w == b"ut_pex"));
         let de = ExtendedMessage::deserialize(DoubleBufHelper::new(&buf[..sz], &[])).unwrap();
         assert_eq!(msg, de);
     }
