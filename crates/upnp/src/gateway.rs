@@ -5,7 +5,7 @@
 //! them for the public address (RFC 6886 section 3.2); whoever answers is a gateway.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Duration,
 };
@@ -13,6 +13,7 @@ use std::{
 use futures::{StreamExt, stream::FuturesUnordered};
 use librqbit_dualstack_sockets::BindDevice;
 use network_interface::{Addr, NetworkInterface};
+use tokio::time::Instant;
 use tracing::{debug, trace};
 
 use crate::{
@@ -20,27 +21,43 @@ use crate::{
     transport::{GatewaySocket, Retransmit},
 };
 
+/// Once the first candidate answered the probe, how much longer to wait for the others. The
+/// guesses that are not gateways never answer, and waiting the whole probe timeout for them
+/// would hold up mapping for seconds although the real gateway answered in milliseconds.
+pub(crate) const PROBE_GRACE: Duration = Duration::from_millis(300);
+
+/// The interface the sockets are bound to (`bind_device`): its index and its name.
+pub(crate) type BoundInterface<'a> = (u32, &'a str);
+
+/// One default route of the IPv4 routing table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DefaultRoute {
+    /// The interface name, as in `/proc/net/route`.
+    pub iface: String,
+    pub gateway: Ipv4Addr,
+}
+
 /// The Linux routing table as text, with the default routes in it.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const PROC_NET_ROUTE: &str = "/proc/net/route";
 
-/// Parses `/proc/net/route` and returns the gateways of the IPv4 default routes, in the order of
-/// the table. Lines that do not parse are skipped: the file is read as a hint, never trusted.
+/// Parses `/proc/net/route` and returns the IPv4 default routes, in the order of the table.
+/// Lines that do not parse are skipped: the file is read as a hint, never trusted.
 ///
 /// The kernel prints addresses as the hex of the `u32` it holds in network byte order, read as a
 /// native integer, so the bytes come back with `to_ne_bytes`.
 // Only Linux and Android have the file; the parser is tested everywhere.
 #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
-pub(crate) fn parse_proc_net_route(text: &str) -> Vec<Ipv4Addr> {
+pub(crate) fn parse_proc_net_route(text: &str) -> Vec<DefaultRoute> {
     // `RTF_UP | RTF_GATEWAY` from `<linux/route.h>`: a usable route through a gateway.
     const RTF_UP: u32 = 0x1;
     const RTF_GATEWAY: u32 = 0x2;
     let hex = |s: &str| u32::from_str_radix(s, 16).ok();
-    let mut gateways = Vec::new();
+    let mut routes: Vec<DefaultRoute> = Vec::new();
     // The first line is the column header.
     for line in text.lines().skip(1) {
         let mut fields = line.split_whitespace();
-        let (Some(_iface), Some(dest), Some(gateway), Some(flags)) =
+        let (Some(iface), Some(dest), Some(gateway), Some(flags)) =
             (fields.next(), fields.next(), fields.next(), fields.next())
         else {
             continue;
@@ -57,17 +74,20 @@ pub(crate) fn parse_proc_net_route(text: &str) -> Vec<Ipv4Addr> {
         if dest != 0 || mask != 0 || flags & (RTF_UP | RTF_GATEWAY) != RTF_UP | RTF_GATEWAY {
             continue;
         }
-        let gateway = Ipv4Addr::from(gateway.to_ne_bytes());
-        if !gateway.is_unspecified() && !gateways.contains(&gateway) {
-            gateways.push(gateway);
+        let route = DefaultRoute {
+            iface: iface.to_owned(),
+            gateway: Ipv4Addr::from(gateway.to_ne_bytes()),
+        };
+        if !route.gateway.is_unspecified() && !routes.contains(&route) {
+            routes.push(route);
         }
     }
-    gateways
+    routes
 }
 
 /// Reads the default routes of the host where the kernel exposes them (Linux and Android, when
 /// readable: Android may forbid it). Elsewhere there is nothing to read.
-pub(crate) fn default_routes() -> Vec<Ipv4Addr> {
+pub(crate) fn default_routes() -> Vec<DefaultRoute> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         match std::fs::read_to_string(PROC_NET_ROUTE) {
@@ -110,13 +130,16 @@ fn subnet_edges(ip: Ipv4Addr, netmask: Ipv4Addr) -> Option<[Ipv4Addr; 2]> {
 ///    last host address of its subnet. `network-interface` does not report whether an interface
 ///    is up; having an address stands in for it.
 ///
-/// With a bound device only the interface of that index is looked at. Nothing is generated for
-/// IPv6: a PCP server there has to be given in `PortMappingOptions::gateways`.
+/// Only private (RFC 1918) and link-local addresses are kept: RFC 6886 section 3 limits NAT-PMP
+/// to hosts behind a NAT, and a host with a public address (a seedbox, say) must not keep asking
+/// its provider's router. With a bound device only that interface is looked at, for the subnets
+/// (by index) and for the routes (by name). Nothing is generated for IPv6: a PCP server there has
+/// to be given in `PortMappingOptions::gateways`.
 pub(crate) fn gateway_candidates(
     interfaces: &[NetworkInterface],
-    default_routes: &[Ipv4Addr],
+    default_routes: &[DefaultRoute],
     igd_hosts: &[Ipv4Addr],
-    bind_device_index: Option<u32>,
+    bound: Option<BoundInterface<'_>>,
 ) -> Vec<Ipv4Addr> {
     let own: HashSet<Ipv4Addr> = interfaces
         .iter()
@@ -126,10 +149,14 @@ pub(crate) fn gateway_candidates(
             Addr::V6(_) => None,
         })
         .collect();
+    let routes = default_routes
+        .iter()
+        .filter(|r| bound.is_none_or(|(_, name)| r.iface == name))
+        .map(|r| r.gateway);
     let from_subnets = interfaces
         .iter()
         .filter(|i| !i.internal)
-        .filter(|i| bind_device_index.is_none_or(|idx| idx == i.index))
+        .filter(|i| bound.is_none_or(|(idx, _)| idx == i.index))
         .flat_map(|i| i.addr.iter())
         .filter_map(|a| match a {
             Addr::V4(a) if a.ip.is_private() => subnet_edges(a.ip, a.netmask?),
@@ -140,11 +167,29 @@ pub(crate) fn gateway_candidates(
     let mut seen = HashSet::new();
     igd_hosts
         .iter()
-        .chain(default_routes)
         .copied()
+        .chain(routes)
         .chain(from_subnets)
-        .filter(|ip| !ip.is_unspecified() && !ip.is_loopback() && !own.contains(ip))
+        .filter(|ip| ip.is_private() || ip.is_link_local())
+        .filter(|ip| !own.contains(ip))
         .filter(|ip| seen.insert(*ip))
+        .collect()
+}
+
+/// The addresses of the host on the interfaces port mapping uses (the bound one, or all but
+/// loopback). Mappings point at one of them, so when this set changes they have to be made
+/// again.
+pub(crate) fn local_addresses(
+    interfaces: &[NetworkInterface],
+    bound: Option<BoundInterface<'_>>,
+) -> BTreeSet<IpAddr> {
+    interfaces
+        .iter()
+        .filter(|i| !i.internal)
+        .filter(|i| bound.is_none_or(|(idx, _)| idx == i.index))
+        .flat_map(|i| i.addr.iter())
+        .map(|a| a.ip())
+        .filter(|ip| !ip.is_loopback())
         .collect()
 }
 
@@ -201,7 +246,8 @@ async fn probe_one(
 
 /// Probes all candidates at once and returns those that answered, in candidate order. The whole
 /// probe ends after `timeout`, so guesses that never answer do not hold discovery for the full
-/// retransmission schedule.
+/// retransmission schedule, and [`PROBE_GRACE`] after the first answer: the other guesses
+/// (usually the silent last address of a subnet) get only that long to answer too.
 pub(crate) async fn probe(
     candidates: &[Ipv4Addr],
     port: u16,
@@ -214,14 +260,27 @@ pub(crate) async fn probe(
         .map(|c| probe_one(*c, port, retransmit, bind_device))
         .collect();
     let mut found = Vec::new();
-    let collect = async {
-        while let Some(r) = probes.next().await {
-            found.extend(r);
+    let mut deadline = Instant::now().checked_add(timeout);
+    loop {
+        let next = match deadline {
+            Some(d) => match tokio::time::timeout_at(d, probes.next()).await {
+                Ok(next) => next,
+                // Running out of time just ends the probe with what answered so far.
+                Err(_elapsed) => {
+                    trace!("gateway probe timed out, {} answered", found.len());
+                    break;
+                }
+            },
+            None => probes.next().await,
+        };
+        let Some(answer) = next else { break };
+        if let Some(gateway) = answer {
+            if found.is_empty() {
+                let grace_end = Instant::now() + PROBE_GRACE;
+                deadline = Some(deadline.map_or(grace_end, |d| d.min(grace_end)));
+            }
+            found.push(gateway);
         }
-    };
-    // Running out of time just ends the probe with what answered so far.
-    if tokio::time::timeout(timeout, collect).await.is_err() {
-        trace!("gateway probe timed out, {} answered", found.len());
     }
     found.sort_by_key(|f| {
         candidates
@@ -259,9 +318,17 @@ mod tests {
              eth3\t00000000\t{gw}\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
              eth4\t00000000\t00000000\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
         );
+        let route = |iface: &str, gateway: Ipv4Addr| DefaultRoute {
+            iface: iface.to_owned(),
+            gateway,
+        };
         assert_eq!(
             parse_proc_net_route(&text),
-            vec![Ipv4Addr::new(192, 168, 1, 1), Ipv4Addr::new(10, 0, 0, 1)]
+            vec![
+                route("eth0", Ipv4Addr::new(192, 168, 1, 1)),
+                route("wlan0", Ipv4Addr::new(10, 0, 0, 1)),
+                route("eth3", Ipv4Addr::new(192, 168, 1, 1)),
+            ]
         );
         assert!(parse_proc_net_route("").is_empty());
         assert!(parse_proc_net_route("only a header").is_empty());
@@ -342,7 +409,16 @@ mod tests {
                 false,
             ),
         ];
-        let routes = [Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(192, 168, 1, 1)];
+        let route = |iface: &str, gateway: Ipv4Addr| DefaultRoute {
+            iface: iface.to_owned(),
+            gateway,
+        };
+        let routes = [
+            route("en2", Ipv4Addr::new(10, 0, 0, 1)),
+            route("en0", Ipv4Addr::new(192, 168, 1, 1)),
+            // The provider's router of a host with a public address: never asked.
+            route("en1", Ipv4Addr::new(8, 8, 4, 1)),
+        ];
         let igd = [Ipv4Addr::new(192, 168, 1, 1)];
 
         assert_eq!(
@@ -356,10 +432,57 @@ mod tests {
             ]
         );
         assert_eq!(
-            gateway_candidates(&interfaces, &[], &[], Some(6)),
+            gateway_candidates(&interfaces, &routes, &[], Some((6, "en2"))),
             vec![Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 254)]
         );
+        // Bound to en0: the route of en2 is not taken.
+        assert_eq!(
+            gateway_candidates(&interfaces, &routes, &[], Some((4, "en0"))),
+            vec![
+                Ipv4Addr::new(192, 168, 1, 1),
+                Ipv4Addr::new(192, 168, 1, 254)
+            ]
+        );
         assert!(gateway_candidates(&[], &[], &[], None).is_empty());
+    }
+
+    #[test]
+    fn test_local_addresses() {
+        let interfaces = vec![
+            NetworkInterface::new_afinet(
+                "lo0",
+                Ipv4Addr::LOCALHOST,
+                Some(Ipv4Addr::new(255, 0, 0, 0)),
+                None,
+                1,
+                true,
+            ),
+            NetworkInterface::new_afinet(
+                "en0",
+                Ipv4Addr::new(192, 168, 1, 37),
+                Some(Ipv4Addr::new(255, 255, 255, 0)),
+                None,
+                4,
+                false,
+            ),
+            NetworkInterface::new_afinet(
+                "en2",
+                Ipv4Addr::new(10, 0, 0, 2),
+                Some(Ipv4Addr::new(255, 255, 255, 0)),
+                None,
+                6,
+                false,
+            ),
+        ];
+        let ip = |a, b, c, d| IpAddr::V4(Ipv4Addr::new(a, b, c, d));
+        assert_eq!(
+            local_addresses(&interfaces, None),
+            BTreeSet::from([ip(192, 168, 1, 37), ip(10, 0, 0, 2)])
+        );
+        assert_eq!(
+            local_addresses(&interfaces, Some((6, "en2"))),
+            BTreeSet::from([ip(10, 0, 0, 2)])
+        );
     }
 
     async fn probe_fake(
@@ -369,6 +492,8 @@ mod tests {
         let retransmit = Retransmit {
             initial: Duration::from_millis(20),
             attempts: 3,
+            max_wait: Duration::MAX,
+            jitter: false,
         };
         probe(
             &[Ipv4Addr::LOCALHOST],

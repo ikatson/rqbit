@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use network_interface::NetworkInterface;
 use tokio::{sync::oneshot, task::JoinHandle, time::Instant};
 
 use crate::{
@@ -27,11 +28,13 @@ const DEADLINE: Duration = Duration::from_secs(10);
 fn opts() -> PortMappingOptions {
     PortMappingOptions {
         description: "rqbit test".to_owned(),
-        // 400 ms with the fast router second: renewed every 200 ms.
+        // 400 ms with the fast router second. Renewals come every `discover_interval` (100 ms),
+        // which is sooner than half of it.
         lease_duration: Duration::from_secs(40),
         discover_interval: Duration::from_millis(100),
         discover_timeout: Duration::from_secs(2),
         retransmit_initial: Duration::from_millis(20),
+        pcp_retransmit_initial: Duration::from_millis(20),
         retransmit_attempts: 4,
         protocol_second: SECOND,
         shutdown_timeout: Duration::from_secs(2),
@@ -76,7 +79,10 @@ fn start(
     methods: PortMappingMethods,
     opts: PortMappingOptions,
 ) -> Running {
-    let mapper = PortMapper::new(ports.iter().copied(), methods, opts, None);
+    spawn(PortMapper::new(ports.iter().copied(), methods, opts, None))
+}
+
+fn spawn(mapper: PortMapper) -> Running {
     let (stop, stopped) = oneshot::channel::<()>();
     let task = tokio::spawn({
         let mapper = mapper.clone();
@@ -249,19 +255,29 @@ async fn renews_before_expiry(protocols: FakeGatewayProtocols, method: PortMappi
         .await
         .unwrap();
     let ports = [(Tcp, 6881), (Udp, 6881)];
-    let running = start(&ports, NATPMP, natpmp_opts(&gw));
+    // Renewals at half the lifetime, not earlier because of `discover_interval`; the lifetime
+    // (1 s) leaves half a second for a slow scheduler before a mapping would run out.
+    let running = start(
+        &ports,
+        NATPMP,
+        PortMappingOptions {
+            lease_duration: Duration::from_secs(100),
+            discover_interval: Duration::from_secs(60),
+            ..natpmp_opts(&gw)
+        },
+    );
     wait_mapped(&running, &ports, method, EXTERNAL_IP.into()).await;
 
-    // The fake drops mappings when their 400 ms run out. Watch them for several lifetimes: they
-    // must never disappear, and the gateway must have seen renewals.
+    // The fake drops mappings when their lifetime runs out. Watch them for several lifetimes:
+    // they must never disappear, and the gateway must have seen renewals.
     let maps = |gw: &FakeGateway| {
         gw.requests()
             .iter()
-            .filter(|r| r.port() == Some((Tcp, 6881)) && r.lifetime() == Some(40))
+            .filter(|r| r.port() == Some((Tcp, 6881)) && r.lifetime() == Some(100))
             .count()
     };
     let before = maps(&gw);
-    let watch_until = Instant::now() + SECOND * 40 * 3;
+    let watch_until = Instant::now() + SECOND * 100 * 3;
     while Instant::now() < watch_until {
         assert_eq!(gateway_ports(&gw).len(), 2, "a mapping expired");
         assert_eq!(running.row(Tcp, 6881).state, PortMappingState::Mapped);
@@ -837,7 +853,7 @@ async fn upnp_is_preferred_when_every_method_mapped() {
 }
 
 #[tokio::test]
-async fn status_after_stop_and_without_methods() {
+async fn status_after_stop() {
     let gw = FakeGateway::start(
         Ipv4Addr::LOCALHOST.into(),
         gateway_opts(FakeGatewayProtocols::Both),
@@ -865,4 +881,178 @@ async fn status_after_stop_and_without_methods() {
             state: PortMappingState::Failed("port mapping stopped".to_owned()),
         }]
     );
+}
+
+#[tokio::test]
+async fn without_methods_or_ports() {
+    let mapper = PortMapper::new([(Tcp, 6881)], PortMappingMethods::default(), opts(), None);
+    let disabled = vec![PortMappingStatus {
+        protocol: Tcp,
+        internal_port: 6881,
+        external_port: None,
+        method: None,
+        external_ip: None,
+        state: PortMappingState::Failed("port mapping disabled".to_owned()),
+    }];
+    assert_eq!(mapper.status(), disabled);
+    let running = spawn(mapper);
+    running.stop().await;
+
+    // Nothing to map: the mapper only waits for the stop.
+    let running = start(&[], NATPMP, opts());
+    assert_eq!(running.mapper.status(), vec![]);
+    let took = running.stop().await;
+    assert!(took < Duration::from_secs(1), "{took:?}");
+}
+
+/// An interface of the host with a private address on a /24.
+fn lan_interface(ip: Ipv4Addr) -> NetworkInterface {
+    NetworkInterface::new_afinet(
+        "en0",
+        ip,
+        Some(Ipv4Addr::new(255, 255, 255, 0)),
+        None,
+        4,
+        false,
+    )
+}
+
+#[tokio::test]
+async fn local_address_change_maps_natpmp_again() {
+    let gw = FakeGateway::start(
+        Ipv4Addr::LOCALHOST.into(),
+        gateway_opts(FakeGatewayProtocols::NatPmpOnly),
+    )
+    .await
+    .unwrap();
+    let mapper = PortMapper::new([(Tcp, 6881)], NATPMP, natpmp_opts(&gw), None);
+    mapper.override_interfaces(vec![lan_interface(Ipv4Addr::new(192, 168, 77, 2))]);
+    let running = spawn(mapper);
+    let ports = [(Tcp, 6881)];
+    wait_mapped(
+        &running,
+        &ports,
+        PortMappingMethod::NatPmp,
+        EXTERNAL_IP.into(),
+    )
+    .await;
+    // Every run on a gateway starts with the public address request (more than one datagram
+    // when a slow scheduler made the mapper retransmit).
+    let public_requests = |gw: &FakeGateway| {
+        gw.requests()
+            .iter()
+            .filter(|r| **r == FakeGatewayRequest::NatPmpPublicAddress)
+            .count()
+    };
+    let before = public_requests(&gw);
+    assert!(before >= 1);
+
+    // DHCP renumbers the host: the mappings point at the old address, so the gateway is served
+    // again from scratch, well before the 200 ms renewal would have noticed anything.
+    running
+        .mapper
+        .override_interfaces(vec![lan_interface(Ipv4Addr::new(192, 168, 77, 3))]);
+    wait_until(DEADLINE, || {
+        if public_requests(&gw) > before {
+            Ok(())
+        } else {
+            Err("not served again".to_owned())
+        }
+    })
+    .await;
+    wait_mapped(
+        &running,
+        &ports,
+        PortMappingMethod::NatPmp,
+        EXTERNAL_IP.into(),
+    )
+    .await;
+    running.stop().await;
+    assert_eq!(gw.mappings(), vec![]);
+}
+
+#[tokio::test]
+async fn local_address_change_maps_upnp_again() {
+    let igd = FakeIgd::start(FakeIgdOptions::default()).await.unwrap();
+    let loopback = |ip: Ipv4Addr| {
+        NetworkInterface::new_afinet("lo0", ip, Some(Ipv4Addr::new(255, 0, 0, 0)), None, 1, true)
+    };
+    let ports = [(Tcp, 6881), (Udp, 6881)];
+    let mapper = PortMapper::new(ports, UPNP, upnp_opts(&igd), None);
+    mapper.override_interfaces(vec![loopback(Ipv4Addr::LOCALHOST)]);
+    let running = spawn(mapper);
+    wait_mapped(
+        &running,
+        &ports,
+        PortMappingMethod::Upnp,
+        EXTERNAL_IP.into(),
+    )
+    .await;
+    let clients = |igd: &FakeIgd| {
+        let mut clients: Vec<String> = igd
+            .mappings()
+            .into_iter()
+            .map(|m| m.internal_client)
+            .collect();
+        clients.dedup();
+        clients
+    };
+    assert_eq!(clients(&igd), vec!["127.0.0.1".to_owned()]);
+
+    // The address towards the router changes: the old mappings are deleted and the ports are
+    // mapped to the new address.
+    running
+        .mapper
+        .override_interfaces(vec![loopback(Ipv4Addr::new(127, 0, 0, 2))]);
+    wait_until(DEADLINE, || {
+        let clients = clients(&igd);
+        if clients == ["127.0.0.2"] && igd.mappings().len() == 2 {
+            Ok(())
+        } else {
+            Err(format!("{clients:?}"))
+        }
+    })
+    .await;
+    assert_eq!(igd_calls(&igd, "DeletePortMapping").len(), 2);
+    wait_mapped(
+        &running,
+        &ports,
+        PortMappingMethod::Upnp,
+        EXTERNAL_IP.into(),
+    )
+    .await;
+    running.stop().await;
+    assert_eq!(igd.mappings(), vec![]);
+}
+
+#[tokio::test]
+async fn upnp_conflict_after_success_is_not_deleted() {
+    let igd = FakeIgd::start(FakeIgdOptions::default()).await.unwrap();
+    let ports = [(Tcp, 6881), (Udp, 6881)];
+    let running = start(&ports, UPNP, upnp_opts(&igd));
+    wait_mapped(
+        &running,
+        &ports,
+        PortMappingMethod::Upnp,
+        EXTERNAL_IP.into(),
+    )
+    .await;
+    // The router reboots and another host takes the TCP port before our refresh.
+    igd.add_foreign_mapping(Tcp, 6881);
+    wait_until(DEADLINE, || {
+        let why = failed_reason(&running.row(Tcp, 6881))?;
+        if why.contains("718") {
+            Ok(())
+        } else {
+            Err(why)
+        }
+    })
+    .await;
+    // Shutdown deletes only the port that is still ours.
+    running.stop().await;
+    let deleted: Vec<String> = igd_calls(&igd, "DeletePortMapping")
+        .into_iter()
+        .map(|c| c.args["NewProtocol"].clone())
+        .collect();
+    assert_eq!(deleted, vec!["UDP".to_owned()]);
 }

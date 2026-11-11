@@ -6,7 +6,7 @@
 //! one row per port.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -19,7 +19,10 @@ use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use reqwest::Client;
 use serde_derive::{Deserialize, Serialize};
 use tokio::{
-    sync::mpsc::{UnboundedSender, unbounded_channel},
+    sync::{
+        mpsc::{UnboundedSender, unbounded_channel},
+        watch,
+    },
     time::Instant,
 };
 use tracing::{Instrument, debug, debug_span, info, trace, warn};
@@ -103,19 +106,29 @@ pub struct PortMappingOptions {
     pub upnp_locations: Vec<Url>,
     /// `NewPortMappingDescription` of UPnP mappings, shown in the router's port forwarding page.
     pub description: String,
-    /// Lifetime asked for every mapping. Mappings are renewed at half the granted lifetime.
+    /// Lifetime asked for every mapping. Mappings are renewed at half the granted lifetime, or
+    /// every `discover_interval` if that comes first (see `Inner::renew_after`).
     pub lease_duration: Duration,
-    /// How often to look for routers again (SSDP, gateway probing), and how long to wait before
-    /// retrying a mapping the router refused.
+    /// How often to look for routers again (SSDP, gateway probing, a change of the local
+    /// addresses), how long to wait before retrying a mapping the router refused, and the longest
+    /// time between two refreshes of a mapping.
     pub discover_interval: Duration,
     /// How long one discovery round waits for answers. Also the timeout of UPnP HTTP requests.
     pub discover_timeout: Duration,
-    /// NAT-PMP / PCP retransmission: the first wait, doubled after every attempt (RFC 6886
-    /// section 3.1 says 250 ms).
+    /// NAT-PMP retransmission: the first wait, doubled after every attempt (RFC 6886 section 3.1
+    /// says 250 ms). Also used to probe gateway candidates.
     pub retransmit_initial: Duration,
-    /// NAT-PMP / PCP retransmission: how many times a request is sent before the gateway counts
-    /// as gone (RFC 6886 section 3.1 says 9).
+    /// NAT-PMP retransmission: how many times a request is sent before the gateway counts as
+    /// gone (RFC 6886 section 3.1 says 9).
     pub retransmit_attempts: u32,
+    /// PCP retransmission: the first wait, doubled after every attempt up to 1024 s and spread
+    /// by +-10 % (RFC 6887 section 8.1.1 says 3 s).
+    pub pcp_retransmit_initial: Duration,
+    /// PCP retransmission: how many times a request is sent before the gateway counts as not
+    /// speaking PCP. RFC 6887 section 8.1.1 retransmits without end; the mapper stops earlier
+    /// so that a gateway that ignores PCP falls back to NAT-PMP in reasonable time (4 attempts
+    /// take 45 s).
+    pub pcp_retransmit_attempts: u32,
     /// How long one second of router time lasts for the timers derived from router answers
     /// (granted lifetimes, epochs). One second except in tests, which shrink it to run fast.
     pub protocol_second: Duration,
@@ -135,15 +148,39 @@ impl Default for PortMappingOptions {
             discover_timeout: Duration::from_secs(10),
             retransmit_initial: Duration::from_millis(250),
             retransmit_attempts: 9,
+            pcp_retransmit_initial: Duration::from_secs(3),
+            pcp_retransmit_attempts: 4,
             protocol_second: Duration::from_secs(1),
             shutdown_timeout: Duration::from_secs(2),
         }
     }
 }
 
+impl PortMappingOptions {
+    /// Brings every duration into a range the timers can handle: a zero interval would make
+    /// tokio panic, and a huge one would overflow `Instant` arithmetic.
+    fn clamped(mut self) -> Self {
+        const MAX: Duration = Duration::from_secs(365 * 24 * 3600);
+        const MIN_INTERVAL: Duration = Duration::from_millis(1);
+        self.discover_interval = self.discover_interval.clamp(MIN_INTERVAL, MAX);
+        self.discover_timeout = self.discover_timeout.min(MAX);
+        self.retransmit_initial = self.retransmit_initial.min(MAX);
+        self.pcp_retransmit_initial = self.pcp_retransmit_initial.min(MAX);
+        // Router timers multiply this by up to a day of seconds.
+        self.protocol_second = self
+            .protocol_second
+            .clamp(MIN_INTERVAL, Duration::from_secs(3600));
+        self.shutdown_timeout = self.shutdown_timeout.min(MAX);
+        self
+    }
+}
+
 /// Lifetimes above this are treated as this long when scheduling renewals (RFC 6887 section 8.3
 /// asks clients to cap absurd values).
 const MAX_LIFETIME_SECS: u32 = 24 * 3600;
+
+/// RFC 6887 section 11.2.1: renewals of one mapping are at least this many seconds apart.
+const MIN_RENEW_SECS: u32 = 4;
 
 /// RFC 6887 section 9: after a gateway turned PCP down, try PCP again after 30 minutes in case
 /// it was upgraded.
@@ -197,14 +234,25 @@ struct GatewayMemory {
     nonces: BTreeMap<PortKey, pcp::Nonce>,
 }
 
+/// A UPnP mapping we hold: the one to delete at shutdown.
+#[derive(Debug, Clone)]
+struct UpnpMapping {
+    service: IgdService,
+    key: PortKey,
+}
+
 #[derive(Debug)]
 struct State {
     rows: BTreeMap<PortKey, BTreeMap<Source, SourceEntry>>,
     upnp: Discovery,
     gateways: Discovery,
     /// IPv4 hosts of the internet gateway devices SSDP found: likely NAT-PMP / PCP gateways too.
+    /// Cleared when the local addresses change, so the routers of an earlier network are not
+    /// probed for ever.
     igd_hosts: Vec<Ipv4Addr>,
-    upnp_mapped: Vec<(IgdService, PortKey)>,
+    /// Only mappings the router granted us and did not later give to another host: deleting
+    /// any other one could remove a mapping that belongs to someone else.
+    upnp_mapped: Vec<UpnpMapping>,
     gateway_memory: BTreeMap<SocketAddr, GatewayMemory>,
 }
 
@@ -277,7 +325,9 @@ impl State {
                 )
                 .collect();
             if reasons.is_empty() {
-                if self.upnp == Discovery::Stopped || self.gateways == Discovery::Stopped {
+                if self.upnp == Discovery::Disabled && self.gateways == Discovery::Disabled {
+                    PortMappingState::Failed("port mapping disabled".to_owned())
+                } else if self.upnp == Discovery::Stopped || self.gateways == Discovery::Stopped {
                     PortMappingState::Failed("port mapping stopped".to_owned())
                 } else {
                     PortMappingState::Pending
@@ -303,6 +353,9 @@ struct Inner {
     opts: PortMappingOptions,
     bind_device: Option<BindDevice>,
     state: Mutex<State>,
+    /// Replaces the interfaces of the host in tests, which change them to simulate a network
+    /// change. Always `None` otherwise.
+    interfaces_override: Mutex<Option<Vec<NetworkInterface>>>,
 }
 
 /// Keeps ports mapped on the routers of the local network with UPnP IGD, PCP and NAT-PMP, and
@@ -322,7 +375,8 @@ impl std::fmt::Debug for PortMapper {
 }
 
 impl PortMapper {
-    /// Creates a mapper for `ports`. Nothing happens until [`PortMapper::run`].
+    /// Creates a mapper for `ports`. Nothing happens until [`PortMapper::run`]. Durations in
+    /// `opts` outside what the timers can handle (zero intervals, centuries) are clamped.
     pub fn new(
         ports: impl IntoIterator<Item = (PortMappingProtocol, u16)>,
         methods: PortMappingMethods,
@@ -351,9 +405,10 @@ impl PortMapper {
             inner: Arc::new(Inner {
                 ports,
                 methods,
-                opts,
+                opts: opts.clamped(),
                 bind_device,
                 state: Mutex::new(state),
+                interfaces_override: Mutex::new(None),
             }),
         }
     }
@@ -396,6 +451,16 @@ impl PortMapper {
         }
         inner.shutdown().await;
     }
+
+    /// Makes the mapper see `interfaces` as the interfaces of the host from now on.
+    #[cfg(test)]
+    pub(crate) fn override_interfaces(&self, interfaces: Vec<NetworkInterface>) {
+        *self
+            .inner
+            .interfaces_override
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(interfaces);
+    }
 }
 
 /// The result of one mapping request.
@@ -424,8 +489,10 @@ enum PcpAnswer {
 }
 
 /// Picks the answer to `req` out of a datagram (RFC 6887 sections 8.3 and 11.4): the MAP fields
-/// must match unless the answer is an error too short to carry them. A NAT-PMP gateway answers a
-/// PCP request with a NAT-PMP `UNSUPP_VERSION` (RFC 6887 appendix A).
+/// must match. Error responses copy them from the request (section 7.2), so an answer without
+/// them is not ours, or is forged: only `UNSUPP_VERSION`, which a server of another version
+/// cannot shape like our request, is taken without them. A NAT-PMP gateway answers a PCP
+/// request with a NAT-PMP `UNSUPP_VERSION` (RFC 6887 appendix A).
 fn pcp_answer(buf: &[u8], req: &pcp::MapRequest) -> Option<PcpAnswer> {
     if buf.first() == Some(&natpmp::VERSION) {
         return natpmp::Response::decode(buf)
@@ -437,16 +504,11 @@ fn pcp_answer(buf: &[u8], req: &pcp::MapRequest) -> Option<PcpAnswer> {
     if r.result == pcp::ResultCode::UnsuppVersion {
         return Some(PcpAnswer::Unsupported);
     }
-    match &r.map {
-        Some(m)
-            if m.nonce != req.nonce
-                || m.protocol != req.protocol
-                || m.internal_port != req.internal_port =>
-        {
-            None
-        }
-        _ => Some(PcpAnswer::Response(r)),
+    let m = r.map.as_ref()?;
+    if m.nonce != req.nonce || m.protocol != req.protocol || m.internal_port != req.internal_port {
+        return None;
     }
+    Some(PcpAnswer::Response(r))
 }
 
 /// Picks the NAT-PMP answer to a mapping request out of a datagram.
@@ -497,6 +559,15 @@ struct GatewayEnd {
     why: String,
 }
 
+/// The view of the network the NAT-PMP / PCP side compares to notice a change.
+#[derive(Debug, PartialEq, Eq)]
+struct Network {
+    /// The gateway candidates; `None` when the gateways are given in the options.
+    candidates: Option<Vec<Ipv4Addr>>,
+    /// The addresses mappings may point at.
+    local: BTreeSet<IpAddr>,
+}
+
 /// A message from UPnP discovery to the UPnP loop.
 enum UpnpEvent {
     Device {
@@ -513,10 +584,23 @@ impl Inner {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn retransmit(&self) -> Retransmit {
+    fn natpmp_retransmit(&self) -> Retransmit {
         Retransmit {
             initial: self.opts.retransmit_initial,
             attempts: self.opts.retransmit_attempts.max(1),
+            // RFC 6886 has no cap (nine attempts end at 64 s); this one only keeps doubled
+            // option values from overflowing the timer.
+            max_wait: Duration::from_secs(24 * 3600),
+            jitter: false,
+        }
+    }
+
+    fn pcp_retransmit(&self) -> Retransmit {
+        Retransmit {
+            initial: self.opts.pcp_retransmit_initial,
+            attempts: self.opts.pcp_retransmit_attempts.max(1),
+            max_wait: Retransmit::PCP_MAX_WAIT,
+            jitter: true,
         }
     }
 
@@ -531,9 +615,17 @@ impl Inner {
         self.opts.protocol_second.saturating_mul(secs)
     }
 
-    /// When to renew a mapping granted for `lifetime` seconds: at half of it.
+    /// When to renew a mapping granted for `lifetime` seconds: at half of it, but at least every
+    /// `discover_interval` and at most every 4 seconds (RFC 6887 section 11.2.1).
+    ///
+    /// Neither UPnP nor a gateway we do not hear from tells us when the router rebooted and
+    /// forgot the mappings; the next request does (an error, or a NAT-PMP / PCP epoch that went
+    /// back). Refreshing every `discover_interval` bounds how long a reboot goes unnoticed, at
+    /// the cost of one small request per port and interval.
     fn renew_after(&self, lifetime: u32) -> Duration {
-        self.router_secs(lifetime.min(MAX_LIFETIME_SECS)) / 2
+        (self.router_secs(lifetime.min(MAX_LIFETIME_SECS)) / 2)
+            .min(self.opts.discover_interval)
+            .max(self.router_secs(MIN_RENEW_SECS))
     }
 
     fn set_outcome(
@@ -614,7 +706,10 @@ impl Inner {
         // Discovery only ends when nobody listens, which cannot happen while this loop runs;
         // the flag keeps the finished future from being polled again all the same.
         let mut discovery_done = false;
-        let mut managed = HashSet::<Url>::new();
+        // The services being served, with the local address their mappings point at: discovery
+        // reports it every round, and a service whose address changed (DHCP renumbered the
+        // host, or the interface towards the router went away) maps again for the new one.
+        let mut managed = HashMap::<Url, watch::Sender<IpAddr>>::new();
         let mut services = FuturesUnordered::new();
         loop {
             tokio::select! {
@@ -622,12 +717,20 @@ impl Inner {
                 Some(event) = rx.recv() => match event {
                     UpnpEvent::Device { services: found, local_ip } => {
                         for service in found {
-                            if managed.insert(service.control_url.clone()) {
-                                let span = debug_span!("upnp_service", url = %service.control_url);
-                                services.push(
-                                    self.run_upnp_service(&client, service, local_ip).instrument(span),
-                                );
+                            if let Some(tx) = managed.get(&service.control_url) {
+                                tx.send_if_modified(|ip| {
+                                    let changed = *ip != local_ip;
+                                    *ip = local_ip;
+                                    changed
+                                });
+                                continue;
                             }
+                            let (tx, local_ip_rx) = watch::channel(local_ip);
+                            managed.insert(service.control_url.clone(), tx);
+                            let span = debug_span!("upnp_service", url = %service.control_url);
+                            services.push(
+                                self.run_upnp_service(&client, service, local_ip_rx).instrument(span),
+                            );
                         }
                     }
                     UpnpEvent::RoundDone => {
@@ -642,8 +745,12 @@ impl Inner {
                 Some(lost) = services.next(), if !services.is_empty() => {
                     managed.remove(&lost);
                     self.remove_sources(|s| *s == Source::Upnp(lost.clone()));
+                    let mut state = self.lock();
+                    // The router stopped answering: deleting its mappings at shutdown would only
+                    // wait for the timeout. If it comes back, it is mapped (and recorded) again.
+                    state.upnp_mapped.retain(|m| m.service.control_url != lost);
                     if managed.is_empty() {
-                        self.lock().upnp = Discovery::Searching;
+                        state.upnp = Discovery::Searching;
                     }
                 }
             }
@@ -750,8 +857,7 @@ impl Inner {
         if services.is_empty() {
             return Ok(None);
         }
-        let nics = NetworkInterface::show()?;
-        let local_ip = get_local_ip_relative_to(response.received_from, &nics)?;
+        let local_ip = get_local_ip_relative_to(response.received_from, &self.interfaces())?;
         if let IpAddr::V4(host) = response.received_from.ip() {
             let mut state = self.lock();
             if !state.igd_hosts.contains(&host) {
@@ -789,13 +895,14 @@ impl Inner {
         }
     }
 
-    /// Keeps the ports mapped on one UPnP service. Returns its control URL when the service
-    /// stops answering, so discovery can find it (or its replacement) again.
+    /// Keeps the ports mapped on one UPnP service, pointing at the address in `local_ip`.
+    /// Returns its control URL when the service stops answering, so discovery can find it (or
+    /// its replacement) again.
     async fn run_upnp_service(
         &self,
         client: &Client,
         service: IgdService,
-        local_ip: IpAddr,
+        mut local_ip: watch::Receiver<IpAddr>,
     ) -> Url {
         let source = Source::Upnp(service.control_url.clone());
         for key in &self.ports {
@@ -803,6 +910,7 @@ impl Inner {
         }
         let mut lease = self.requested_lifetime();
         loop {
+            let internal_client = *local_ip.borrow_and_update();
             // Only the mapping requests decide whether the service works: some routers answer
             // `GetExternalIPAddress` badly and map ports all the same.
             let external_ip = match service.get_external_ip(client).await {
@@ -812,113 +920,194 @@ impl Inner {
                     None
                 }
             };
-            let mut any_failed = false;
             for key in &self.ports {
                 let (protocol, port) = *key;
-                let outcome = match self
-                    .upnp_add(client, &service, *key, local_ip, &mut lease)
-                    .await
+                let result = self
+                    .upnp_add(client, &service, *key, internal_client, &mut lease)
+                    .await;
+                if let Err(SoapError::Transport(e)) = &result {
+                    debug!(?protocol, port, "AddPortMapping failed: {e:#}");
+                    return service.control_url;
+                }
                 {
-                    Ok(()) => {
-                        let mut state = self.lock();
-                        if !state
-                            .upnp_mapped
-                            .iter()
-                            .any(|(s, k)| s == &service && k == key)
-                        {
-                            state.upnp_mapped.push((service.clone(), *key));
+                    // Only a mapping the router just confirmed as ours is deleted at shutdown:
+                    // after a refusal (718 in particular) the port may belong to another host.
+                    let mut state = self.lock();
+                    let held = state
+                        .upnp_mapped
+                        .iter()
+                        .position(|m| m.service == service && m.key == *key);
+                    match (&result, held) {
+                        (Ok(()), None) => state.upnp_mapped.push(UpnpMapping {
+                            service: service.clone(),
+                            key: *key,
+                        }),
+                        (Err(_), Some(i)) => {
+                            state.upnp_mapped.swap_remove(i);
                         }
-                        Outcome::Mapped {
-                            external_port: port,
-                            external_ip,
-                        }
+                        _ => {}
                     }
+                }
+                let outcome = match result {
+                    Ok(()) => Outcome::Mapped {
+                        external_port: port,
+                        external_ip,
+                    },
                     Err(SoapError::Upnp { code, .. })
                         if code == igd::ERROR_CONFLICT_IN_MAPPING_ENTRY =>
                     {
-                        any_failed = true;
                         Outcome::Failed(format!(
                             "UPnP {}: external {protocol:?} port {port} is mapped to another host \
                              (error 718 ConflictInMappingEntry)",
                             service.control_url
                         ))
                     }
-                    Err(e @ SoapError::Upnp { .. }) => {
-                        any_failed = true;
-                        Outcome::Failed(format!("UPnP {}: {e}", service.control_url))
-                    }
-                    Err(SoapError::Transport(e)) => {
-                        debug!(?protocol, port, "AddPortMapping failed: {e:#}");
-                        return service.control_url;
-                    }
+                    Err(e) => Outcome::Failed(format!("UPnP {}: {e}", service.control_url)),
                 };
                 self.set_outcome(*key, &source, PortMappingMethod::Upnp, outcome);
             }
             // A permanent lease does not run out, but routers forget them on reboot: refresh
-            // them as if they had the lease we asked for.
+            // them as if they had the lease we asked for. `renew_after` also caps the wait at
+            // `discover_interval`, which bounds how long a reboot or a refusal goes unnoticed.
             let renew = self.renew_after(if lease == 0 {
                 self.requested_lifetime()
             } else {
                 lease
             });
-            let wait = if any_failed {
-                renew.min(self.opts.discover_interval)
-            } else {
-                renew
-            };
-            tokio::time::sleep(wait).await;
+            tokio::select! {
+                _ = tokio::time::sleep(renew) => {}
+                Ok(()) = local_ip.changed() => {
+                    info!(
+                        url = %service.control_url,
+                        old = %internal_client,
+                        new = %*local_ip.borrow(),
+                        "local address changed, mapping the ports again"
+                    );
+                    // The router keeps a mapping per external port: the old ones would make the
+                    // new requests conflict, and would forward to an address we no longer have.
+                    self.delete_upnp_mappings_of(client, &service).await;
+                }
+            }
+        }
+    }
+
+    /// Deletes the mappings we hold on `service` (best effort) and forgets them.
+    async fn delete_upnp_mappings_of(&self, client: &Client, service: &IgdService) {
+        let held: Vec<UpnpMapping> = {
+            let mut state = self.lock();
+            let (ours, others) = std::mem::take(&mut state.upnp_mapped)
+                .into_iter()
+                .partition(|m| m.service == *service);
+            state.upnp_mapped = others;
+            ours
+        };
+        for m in held {
+            let (protocol, port) = m.key;
+            if let Err(e) = service.delete_port_mapping(client, protocol, port).await {
+                debug!(url = %service.control_url, ?protocol, port, "DeletePortMapping failed: {e}");
+            }
         }
     }
 
     // ---------------------------------------------------------------------------------------
     // NAT-PMP / PCP
 
-    fn gateway_candidates(&self) -> Vec<Ipv4Addr> {
-        let interfaces = match NetworkInterface::show() {
+    /// The network interfaces of the host (the test override, if set).
+    fn interfaces(&self) -> Vec<NetworkInterface> {
+        if let Some(list) = self
+            .interfaces_override
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            return list.clone();
+        }
+        match NetworkInterface::show() {
             Ok(i) => i,
             Err(e) => {
                 debug!("error listing network interfaces: {e:#}");
                 Vec::new()
             }
-        };
-        let igd_hosts = self.lock().igd_hosts.clone();
-        gateway::gateway_candidates(
-            &interfaces,
-            &gateway::default_routes(),
-            &igd_hosts,
-            self.bind_device.as_ref().map(|d| d.index().get()),
-        )
+        }
     }
 
+    fn bound_interface(&self) -> Option<gateway::BoundInterface<'_>> {
+        self.bind_device
+            .as_ref()
+            .map(|d| (d.index().get(), d.name()))
+    }
+
+    /// What the NAT-PMP / PCP side watches to notice that the network changed.
+    fn network(&self) -> Network {
+        let interfaces = self.interfaces();
+        let bound = self.bound_interface();
+        let candidates = self.opts.gateways.is_empty().then(|| {
+            let igd_hosts = self.lock().igd_hosts.clone();
+            gateway::gateway_candidates(&interfaces, &gateway::default_routes(), &igd_hosts, bound)
+        });
+        Network {
+            candidates,
+            local: gateway::local_addresses(&interfaces, bound),
+        }
+    }
+
+    async fn probe(&self, candidates: &[Ipv4Addr]) -> Vec<gateway::FoundGateway> {
+        gateway::probe(
+            candidates,
+            self.opts.gateway_port,
+            self.natpmp_retransmit(),
+            self.opts.discover_timeout,
+            self.bind_device.as_ref(),
+        )
+        .await
+    }
+
+    /// Finds the NAT-PMP / PCP gateways and serves each of them until it stops answering.
+    ///
+    /// Every `discover_interval` the network is looked at again:
+    /// - a change of the local addresses makes every mapping wrong (they point at the old
+    ///   address, and the sockets send from it): all gateways are dropped and searched again,
+    ///   and the routers of the old network that are not found again are forgotten, so that
+    ///   shutdown does not wait for them;
+    /// - new gateway candidates (a default route, or the host of an internet gateway device
+    ///   that SSDP found) are probed, and the ones that answer are served next to the others;
+    /// - a gateway that mapped ports and then stopped answering is tried again. One that never
+    ///   mapped anything waits for the next full discovery.
+    ///
+    /// When no gateway is left, discovery starts again at once if one of them had mapped ports
+    /// (a renewal that fails falls back to discovery), and after `discover_interval` otherwise.
     async fn run_gateways(&self) -> ! {
         let opts = &self.opts;
+        let start = |g: gateway::FoundGateway| {
+            let span = debug_span!("gateway", addr = %g.addr);
+            async move { (g, self.run_gateway(g).await) }.instrument(span)
+        };
+        let mut network_changed = false;
         loop {
-            let (found, candidates) = if opts.gateways.is_empty() {
-                let candidates = self.gateway_candidates();
-                debug!(?candidates, "probing NAT-PMP / PCP gateway candidates");
-                let found = gateway::probe(
-                    &candidates,
-                    opts.gateway_port,
-                    self.retransmit(),
-                    opts.discover_timeout,
-                    self.bind_device.as_ref(),
-                )
-                .await;
-                (found, Some(candidates))
-            } else {
-                let given = opts
+            let mut network = self.network();
+            let found = match &network.candidates {
+                Some(candidates) => {
+                    debug!(?candidates, "probing NAT-PMP / PCP gateway candidates");
+                    self.probe(candidates).await
+                }
+                None => opts
                     .gateways
                     .iter()
                     .map(|addr| gateway::FoundGateway {
                         addr: *addr,
                         external_ip: None,
                     })
-                    .collect();
-                (given, None)
+                    .collect(),
             };
+            if std::mem::take(&mut network_changed) {
+                let port = opts.gateway_port;
+                self.lock()
+                    .gateway_memory
+                    .retain(|addr, _| found.iter().any(|g| SocketAddr::new(g.addr, port) == *addr));
+            }
 
             if found.is_empty() {
-                let asked = candidates.as_deref().unwrap_or_default();
+                let asked = network.candidates.as_deref().unwrap_or_default();
                 let why = if asked.is_empty() {
                     "NAT-PMP/PCP: no gateway candidates".to_owned()
                 } else {
@@ -931,39 +1120,81 @@ impl Inner {
             }
             self.lock().gateways = Discovery::Found;
 
-            let mut runs: FuturesUnordered<_> = found
-                .iter()
-                .map(|g| {
-                    let span = debug_span!("gateway", addr = %g.addr);
-                    self.run_gateway(*g).instrument(span)
-                })
-                .collect();
+            let mut running: HashSet<IpAddr> = found.iter().map(|g| g.addr).collect();
+            let mut runs: FuturesUnordered<_> = found.into_iter().map(start).collect();
+            let mut probes = FuturesUnordered::new();
+            // Gateways that mapped ports and then stopped answering: tried again at the next
+            // check.
+            let mut to_retry: Vec<gateway::FoundGateway> = Vec::new();
+            let mut failures: Vec<String> = Vec::new();
             let mut network_check = tokio::time::interval_at(
                 Instant::now() + opts.discover_interval,
                 opts.discover_interval,
             );
             network_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // Serve the gateways until one stops answering or the network changes, then look
-            // for gateways again.
-            let end = loop {
+            let rediscover_now = loop {
                 tokio::select! {
-                    Some(end) = runs.next() => break end,
-                    _ = network_check.tick(), if candidates.is_some() => {
-                        let now = self.gateway_candidates();
-                        if Some(&now) != candidates.as_ref() {
-                            debug!(?now, "gateway candidates changed, discovering again");
-                            break GatewayEnd { had_success: true, why: String::new() };
+                    Some((g, end)) = runs.next() => {
+                        let target = SocketAddr::new(g.addr, opts.gateway_port);
+                        debug!(gateway = %target, "gateway no longer served: {}", end.why);
+                        running.remove(&g.addr);
+                        self.remove_sources(|s| *s == Source::Gateway(target));
+                        if end.had_success {
+                            to_retry.push(g);
+                        } else {
+                            failures.push(end.why);
+                        }
+                        if runs.is_empty() && probes.is_empty() {
+                            break !to_retry.is_empty();
+                        }
+                    }
+                    Some(answered) = probes.next() => {
+                        let answered: Vec<gateway::FoundGateway> = answered;
+                        for g in answered {
+                            if running.insert(g.addr) {
+                                runs.push(start(g));
+                            }
+                        }
+                        if runs.is_empty() && probes.is_empty() {
+                            break !to_retry.is_empty();
+                        }
+                    }
+                    _ = network_check.tick() => {
+                        let now = self.network();
+                        if now.local != network.local {
+                            debug!(local = ?now.local, "local addresses changed, discovering again");
+                            network_changed = true;
+                            self.lock().igd_hosts.clear();
+                            break true;
+                        }
+                        let added: Vec<Ipv4Addr> = now
+                            .candidates
+                            .iter()
+                            .flatten()
+                            .filter(|c| !network.candidates.iter().flatten().any(|o| o == *c))
+                            .copied()
+                            .collect();
+                        if !added.is_empty() {
+                            debug!(?added, "probing new gateway candidates");
+                            probes.push(async move { self.probe(&added).await });
+                        }
+                        network = now;
+                        for g in to_retry.drain(..) {
+                            if running.insert(g.addr) {
+                                runs.push(start(g));
+                            }
                         }
                     }
                 }
             };
             drop(runs);
             self.remove_sources(|s| matches!(s, Source::Gateway(_)));
-            if end.had_success {
+            if rediscover_now {
                 self.lock().gateways = Discovery::Searching;
             } else {
-                debug!("{}", end.why);
-                self.lock().gateways = Discovery::NotFound(end.why);
+                let why = failures.join("; ");
+                debug!("{why}");
+                self.lock().gateways = Discovery::NotFound(why);
                 tokio::time::sleep(opts.discover_interval).await;
             }
         }
@@ -1048,7 +1279,7 @@ impl Inner {
                     return;
                 }
             };
-            let deletions = upnp.iter().map(|(service, (protocol, port))| {
+            let deletions = upnp.iter().map(|UpnpMapping { service, key: (protocol, port) }| {
                 let client = &client;
                 async move {
                     match service.delete_port_mapping(client, *protocol, *port).await {
@@ -1084,7 +1315,9 @@ impl Inner {
     }
 
     /// Deletes our mappings on one gateway, one request at a time (RFC 6886 section 3.1 asks
-    /// clients not to send several requests at once).
+    /// clients not to send several requests at once). PCP deletions too retransmit on the
+    /// NAT-PMP schedule: the shutdown bound is a couple of seconds, and the 3 s first wait of
+    /// PCP would allow a single datagram in it.
     async fn delete_gateway_mappings(&self, gateway: SocketAddr, memory: &GatewayMemory) {
         let socket = match GatewaySocket::connect(gateway, self.bind_device.as_ref()).await {
             Ok(s) => s,
@@ -1099,7 +1332,7 @@ impl Inner {
                 Some(nonce) if memory.pcp => {
                     let req = pcp::MapRequest::delete(socket.local_ip(), *nonce, protocol, port);
                     socket
-                        .exchange(&req.encode(), self.retransmit(), |buf| {
+                        .exchange(&req.encode(), self.natpmp_retransmit(), |buf| {
                             pcp_answer(buf, &req)
                         })
                         .await
@@ -1113,7 +1346,7 @@ impl Inner {
                         lifetime: 0,
                     };
                     socket
-                        .exchange(&req.encode(), self.retransmit(), |buf| {
+                        .exchange(&req.encode(), self.natpmp_retransmit(), |buf| {
                             natpmp_map_answer(buf, protocol, port)
                         })
                         .await
@@ -1304,7 +1537,7 @@ impl GatewayRun<'_> {
         };
         let answer = self
             .socket
-            .exchange(&req.encode(), self.inner.retransmit(), |buf| {
+            .exchange(&req.encode(), self.inner.pcp_retransmit(), |buf| {
                 pcp_answer(buf, &req)
             })
             .await
@@ -1316,13 +1549,17 @@ impl GatewayRun<'_> {
         self.observe_epoch(EpochRule::Pcp, r.epoch);
         let gateway = self.gateway();
         Ok(match (r.result, r.map) {
-            (pcp::ResultCode::Success, Some(map)) if r.lifetime > 0 => Granted::Mapped {
-                external_port: map.assigned_external_port,
-                external_ip: Some(map.assigned_external_ip),
-                lifetime: r.lifetime,
-            },
+            (pcp::ResultCode::Success, Some(map))
+                if r.lifetime > 0 && map.assigned_external_port != 0 =>
+            {
+                Granted::Mapped {
+                    external_port: map.assigned_external_port,
+                    external_ip: Some(map.assigned_external_ip),
+                    lifetime: r.lifetime,
+                }
+            }
             (pcp::ResultCode::Success, _) => Granted::Refused {
-                why: format!("PCP {gateway}: granted no lifetime"),
+                why: format!("PCP {gateway}: granted no lifetime or no port"),
                 retry_after: self.inner.opts.discover_interval,
             },
             (result, _) => Granted::Refused {
@@ -1344,7 +1581,7 @@ impl GatewayRun<'_> {
                 .socket
                 .exchange(
                     &natpmp::Request::PublicAddress.encode(),
-                    self.inner.retransmit(),
+                    self.inner.natpmp_retransmit(),
                     natpmp_public_answer,
                 )
                 .await
@@ -1374,7 +1611,7 @@ impl GatewayRun<'_> {
         };
         let r = self
             .socket
-            .exchange(&req.encode(), self.inner.retransmit(), |buf| {
+            .exchange(&req.encode(), self.inner.natpmp_retransmit(), |buf| {
                 natpmp_map_answer(buf, protocol, internal_port)
             })
             .await
@@ -1388,13 +1625,13 @@ impl GatewayRun<'_> {
                     lifetime,
                     ..
                 },
-            ) if lifetime > 0 => Granted::Mapped {
+            ) if lifetime > 0 && external_port != 0 => Granted::Mapped {
                 external_port,
                 external_ip: self.natpmp_external_ip.flatten().map(IpAddr::V4),
                 lifetime,
             },
             (natpmp::ResultCode::Success, _) => Granted::Refused {
-                why: format!("NAT-PMP {gateway}: granted no lifetime"),
+                why: format!("NAT-PMP {gateway}: granted no lifetime or no port"),
                 retry_after: self.inner.opts.discover_interval,
             },
             (result, _) => Granted::Refused {
@@ -1402,5 +1639,191 @@ impl GatewayRun<'_> {
                 retry_after: self.inner.opts.discover_interval,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NONCE: pcp::Nonce = [7; pcp::NONCE_LEN];
+
+    fn pcp_request() -> pcp::MapRequest {
+        pcp::MapRequest {
+            lifetime: 7200,
+            client_ip: Ipv4Addr::new(192, 168, 1, 10).into(),
+            nonce: NONCE,
+            protocol: PortMappingProtocol::Tcp,
+            internal_port: 6881,
+            suggested_external_port: 6881,
+            suggested_external_ip: None,
+        }
+    }
+
+    fn pcp_response(result: pcp::ResultCode, map: Option<pcp::MapResponseData>) -> Vec<u8> {
+        pcp::Response {
+            version: pcp::VERSION,
+            opcode: pcp::OP_MAP,
+            result,
+            lifetime: 7200,
+            epoch: 5,
+            map,
+        }
+        .encode()
+    }
+
+    fn map_data(
+        nonce: pcp::Nonce,
+        protocol: PortMappingProtocol,
+        internal_port: u16,
+    ) -> Option<pcp::MapResponseData> {
+        Some(pcp::MapResponseData {
+            nonce,
+            protocol,
+            internal_port,
+            assigned_external_port: 6881,
+            assigned_external_ip: Ipv4Addr::new(203, 0, 113, 7).into(),
+        })
+    }
+
+    #[test]
+    fn pcp_answers_must_match_the_request() {
+        let req = pcp_request();
+        let ok = pcp_response(
+            pcp::ResultCode::Success,
+            map_data(NONCE, PortMappingProtocol::Tcp, 6881),
+        );
+        assert!(matches!(
+            pcp_answer(&ok, &req),
+            Some(PcpAnswer::Response(r)) if r.result == pcp::ResultCode::Success
+        ));
+        // An error that copies the request is ours.
+        let refused = pcp_response(
+            pcp::ResultCode::NotAuthorized,
+            map_data(NONCE, PortMappingProtocol::Tcp, 6881),
+        );
+        assert!(matches!(
+            pcp_answer(&refused, &req),
+            Some(PcpAnswer::Response(r)) if r.result == pcp::ResultCode::NotAuthorized
+        ));
+        // Another nonce, protocol or port: the answer to some other request.
+        for map in [
+            map_data([8; pcp::NONCE_LEN], PortMappingProtocol::Tcp, 6881),
+            map_data(NONCE, PortMappingProtocol::Udp, 6881),
+            map_data(NONCE, PortMappingProtocol::Tcp, 6882),
+        ] {
+            let other = pcp_response(pcp::ResultCode::Success, map);
+            assert!(pcp_answer(&other, &req).is_none());
+        }
+        // A short error without the MAP fields cannot be told apart from a forged one.
+        let short = pcp_response(pcp::ResultCode::NotAuthorized, None);
+        assert_eq!(short.len(), 24);
+        assert!(pcp_answer(&short, &req).is_none());
+        // ... except UNSUPP_VERSION, from a PCP server of another version or a NAT-PMP one.
+        let unsupported = pcp_response(pcp::ResultCode::UnsuppVersion, None);
+        assert!(matches!(
+            pcp_answer(&unsupported, &req),
+            Some(PcpAnswer::Unsupported)
+        ));
+        let natpmp_unsupported = natpmp::Response {
+            opcode: pcp::OP_MAP,
+            result: natpmp::ResultCode::UnsupportedVersion,
+            epoch: 5,
+            body: natpmp::ResponseBody::None,
+        }
+        .encode();
+        assert!(matches!(
+            pcp_answer(&natpmp_unsupported, &req),
+            Some(PcpAnswer::Unsupported)
+        ));
+        // Any other NAT-PMP answer is not one to a PCP request.
+        let natpmp_refused = natpmp::Response {
+            opcode: natpmp::OP_MAP_TCP,
+            result: natpmp::ResultCode::NotAuthorized,
+            epoch: 5,
+            body: natpmp::ResponseBody::None,
+        }
+        .encode();
+        assert!(pcp_answer(&natpmp_refused, &req).is_none());
+        assert!(pcp_answer(&[], &req).is_none());
+        assert!(pcp_answer(&ok[..30], &req).is_none());
+    }
+
+    #[test]
+    fn natpmp_answers_must_match_the_request() {
+        let map = |opcode, internal_port| {
+            natpmp::Response {
+                opcode,
+                result: natpmp::ResultCode::Success,
+                epoch: 5,
+                body: natpmp::ResponseBody::Map {
+                    internal_port,
+                    external_port: 6881,
+                    lifetime: 7200,
+                },
+            }
+            .encode()
+        };
+        let tcp = PortMappingProtocol::Tcp;
+        assert!(natpmp_map_answer(&map(natpmp::OP_MAP_TCP, 6881), tcp, 6881).is_some());
+        // The answer for UDP, or for another port.
+        assert!(natpmp_map_answer(&map(natpmp::OP_MAP_UDP, 6881), tcp, 6881).is_none());
+        assert!(natpmp_map_answer(&map(natpmp::OP_MAP_TCP, 6882), tcp, 6881).is_none());
+        // A public address answer is not a mapping answer.
+        let public = natpmp::Response {
+            opcode: natpmp::OP_PUBLIC_ADDRESS,
+            result: natpmp::ResultCode::Success,
+            epoch: 5,
+            body: natpmp::ResponseBody::PublicAddress(Ipv4Addr::new(203, 0, 113, 7)),
+        }
+        .encode();
+        assert!(natpmp_map_answer(&public, tcp, 6881).is_none());
+        assert!(natpmp_public_answer(&public).is_some());
+        assert!(natpmp_public_answer(&map(natpmp::OP_MAP_TCP, 6881)).is_none());
+        // A short error carries no port: NAT-PMP has nothing else to match it with.
+        let refused = natpmp::Response {
+            opcode: natpmp::OP_MAP_TCP,
+            result: natpmp::ResultCode::OutOfResources,
+            epoch: 5,
+            body: natpmp::ResponseBody::None,
+        }
+        .encode();
+        assert!(natpmp_map_answer(&refused, tcp, 6881).is_some());
+        assert!(natpmp_map_answer(&[], tcp, 6881).is_none());
+    }
+
+    #[test]
+    fn renewals_are_bounded() {
+        let opts = PortMappingOptions {
+            discover_interval: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let mapper = PortMapper::new([], PortMappingMethods::default(), opts, None);
+        let inner = &mapper.inner;
+        // Half the lifetime.
+        assert_eq!(inner.renew_after(100), Duration::from_secs(50));
+        // At most every `discover_interval`, to notice a reboot or a refusal.
+        assert_eq!(inner.renew_after(7200), Duration::from_secs(60));
+        assert_eq!(inner.renew_after(u32::MAX), Duration::from_secs(60));
+        // Never more often than every 4 s (RFC 6887 section 11.2.1).
+        assert_eq!(inner.renew_after(1), Duration::from_secs(4));
+        assert_eq!(inner.renew_after(0), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn options_are_clamped() {
+        let opts = PortMappingOptions {
+            discover_interval: Duration::ZERO,
+            discover_timeout: Duration::MAX,
+            protocol_second: Duration::MAX,
+            shutdown_timeout: Duration::MAX,
+            ..Default::default()
+        }
+        .clamped();
+        assert!(opts.discover_interval > Duration::ZERO);
+        assert!(Instant::now().checked_add(opts.discover_interval).is_some());
+        assert!(Instant::now().checked_add(opts.discover_timeout).is_some());
+        assert!(Instant::now().checked_add(opts.shutdown_timeout).is_some());
+        assert!(opts.protocol_second <= Duration::from_secs(3600));
     }
 }
