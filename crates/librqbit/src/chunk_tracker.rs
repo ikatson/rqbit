@@ -242,6 +242,15 @@ impl ChunkTracker {
         self.have.as_slice()[id.get() as usize]
     }
 
+    /// Whether `pieces`, the piece set of a peer, holds a piece we still need: selected and
+    /// not had yet. Such a peer is the one we are interested in (BEP 3).
+    pub(crate) fn has_needed_piece(&self, pieces: &BS) -> bool {
+        let have = self.have.as_slice();
+        pieces
+            .iter_ones()
+            .any(|p| self.selected.get(p).is_some_and(|b| *b) && have.get(p).is_some_and(|b| !*b))
+    }
+
     pub fn mark_piece_broken_if_not_have(&mut self, index: ValidPieceIndex) {
         if self
             .have

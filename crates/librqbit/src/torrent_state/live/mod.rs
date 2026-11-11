@@ -1477,8 +1477,13 @@ impl PeerConnectionHandler for &'_ PeerHandler {
         }
         // While we still look for peers to download from, a connection that does nothing is
         // only kept for as long as no other peer could use it. Nothing is asked of a peer that
-        // chokes us, or that we pause because it rejected too much (Fast Extension).
-        (they_wait || self.is_choked() || self.fast.lock().is_paused(Instant::now()))
+        // chokes us, that we pause because it rejected too much (Fast Extension), or that has
+        // nothing we need (until it announces something: a super seeder shows a piece after a
+        // while).
+        (they_wait
+            || self.is_choked()
+            || self.fast.lock().is_paused(Instant::now())
+            || !self.peer_is_interesting())
             && self.state.peer_semaphore.available_permits() > 0
     }
 
@@ -2429,6 +2434,33 @@ impl PeerHandler {
                 }
             }
 
+            // Interested only in a peer that has something for us (BEP 3). A super seeder
+            // (BEP 16) shows its next piece to a peer that is not interested in it, or that
+            // announced the last one: staying interested in a peer that has nothing for us
+            // would leave us waiting for it forever.
+            // Registered before looking, so a change in between is not missed.
+            let peer_announced = self.on_bitfield_notify.notified();
+            let need_changed = self.state.new_pieces_notify.notified();
+            if !self.peer_is_interesting() {
+                update_interest(self, false)?;
+                // Its `Have`s, or a change in what we need, may make it interesting.
+                match aframe!(tokio::time::timeout(
+                    // Half of default rw timeout not to race with it.
+                    Duration::from_secs(5),
+                    async {
+                        tokio::select! {
+                            _ = peer_announced => {}
+                            _ = need_changed => {}
+                        }
+                    }
+                ))
+                .await
+                {
+                    Ok(()) => debug!("woken up, the peer may have something for us"),
+                    Err(_) => trace!("the peer has nothing for us, looking again"),
+                }
+                continue;
+            }
             update_interest(self, true)?;
             aframe!(self.wait_for_request_slot(None)).await;
 
@@ -3043,6 +3075,30 @@ impl PeerHandler {
         self.state
             .peers
             .with_live(self.addr, |live| live.requested_inflight_count())
+    }
+
+    /// Whether the peer has a piece we still need, or one a stream waits for: the peer we
+    /// are interested in (BEP 3). `false` while its piece set is unknown or the torrent is not
+    /// live.
+    fn peer_is_interesting(&self) -> bool {
+        self.state
+            .peers
+            .with_live(self.addr, |live| {
+                let g = self.state.lock_read("peer_is_interesting");
+                let Ok(chunks) = g.get_chunks() else {
+                    return false;
+                };
+                chunks.has_needed_piece(&live.bitfield)
+                    || self
+                        .state
+                        .streams
+                        .iter_next_pieces(&self.state.lengths)
+                        .any(|p| {
+                            live.bitfield.get(p.get_usize()).is_some_and(|b| *b)
+                                && !chunks.is_piece_have(p)
+                        })
+            })
+            .unwrap_or(false)
     }
 
     fn can_send_request(&self, piece: Option<ValidPieceIndex>) -> bool {

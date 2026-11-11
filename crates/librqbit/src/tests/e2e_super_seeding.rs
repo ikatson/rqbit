@@ -529,6 +529,54 @@ async fn test_client_follows_a_super_seeder_promptly() -> anyhow::Result<()> {
     .await
 }
 
+// A client is interested only in a peer that has something for it, and keeps the connection
+// to a peer that has nothing yet: libtorrent's super seeder shows its first piece to a peer
+// only after the peer has not been interested in it for a while (10 seconds).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_client_waits_uninterested_for_a_peer_with_nothing() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts::default()).await?;
+        let client = start_client(
+            &seed,
+            ClientOpts {
+                listen: true,
+                read_write_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            },
+        )
+        .await?;
+        let mut peer =
+            FakePeer::connect_fast(client.addr(), client.info_hash, &peer_id(b"-SS0010-")).await?;
+        peer.have_none().await?;
+        peer.unchoke().await?;
+        // Several read timeouts of silence.
+        let (msgs, closed) = peer.collect(Duration::from_secs(4)).await;
+        ensure!(
+            !closed,
+            "the client hung up on a peer that has nothing yet: {msgs:?}"
+        );
+        ensure!(
+            !msgs.contains(&Wire::Interested),
+            "the client was interested in a peer that has nothing: {msgs:?}"
+        );
+        peer.have(0).await?;
+        peer.expect(Wire::Interested, STEP).await?;
+        loop {
+            match peer.recv(STEP).await {
+                Recv::Msg(Wire::Request(index, _, _)) => {
+                    ensure!(index == 0, "asked for {index} while shown 0");
+                    break;
+                }
+                Recv::Msg(_) => {}
+                Recv::Timeout => bail!("the piece shown was not asked for"),
+                Recv::Closed => bail!("closed after the piece was shown"),
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
 // Two leecher sessions get every piece from a rate limited super seeder about once: they pass
 // the pieces on to each other instead.
 #[tokio::test(flavor = "multi_thread")]
