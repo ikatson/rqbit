@@ -35,7 +35,7 @@ async fn e2e_stream() -> anyhow::Result<()> {
             peer_id: Some(TestPeerMetadata::good().as_peer_id()),
             persistence: None,
             listen: Some(crate::listen::ListenerOptions {
-                listen_addr: (Ipv4Addr::LOCALHOST, 16001).into(),
+                listen_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 ..Default::default()
             }),
             ..Default::default()
