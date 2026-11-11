@@ -122,6 +122,8 @@ tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 tokio-test.workspace = true
 tempfile.workspace = true
 pollster.workspace = true
+# The port mapping tests use the fake routers of librqbit-upnp.
+librqbit-upnp = { workspace = true, features = ["test-util"] }
 
 [[example]]
 name = "simulate_traffic"

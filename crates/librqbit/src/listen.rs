@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::Context;
 use librqbit_dualstack_sockets::{BindOpts, TcpListener};
+use librqbit_upnp::PortMappingOptions;
 use librqbit_utp::{BindDevice, UtpSocketUdp, UtpSocketUdpOpts};
 use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
@@ -16,6 +17,8 @@ pub(crate) struct ListenResult {
     pub tcp_socket: Option<TcpListener>,
     pub utp_socket: Option<Arc<UtpSocketUdp>>,
     pub enable_upnp_port_forwarding: bool,
+    pub enable_natpmp_port_forwarding: bool,
+    pub port_mapping: Option<PortMappingOptions>,
     pub addr: SocketAddr,
     pub announce_port: Option<u16>,
     pub max_pending_incoming_handshake_checks: usize,
@@ -52,7 +55,15 @@ impl ListenerMode {
 pub struct ListenerOptions {
     pub mode: ListenerMode,
     pub listen_addr: SocketAddr,
+    /// Map the peer listen ports (TCP, and UDP when uTP is on) and the DHT port on the router
+    /// with UPnP IGD.
     pub enable_upnp_port_forwarding: bool,
+    /// Map the same ports with NAT-PMP and PCP.
+    pub enable_natpmp_port_forwarding: bool,
+    /// Settings of the port mapper used by the two options above: NAT-PMP / PCP gateways to use
+    /// instead of discovering them, lease duration, timers. `None` uses the defaults, with the
+    /// client name and version as the UPnP mapping description.
+    pub port_mapping: Option<PortMappingOptions>,
     pub utp_opts: Option<librqbit_utp::SocketOpts>,
     pub announce_port: Option<u16>,
     pub ipv4_only: bool,
@@ -66,6 +77,8 @@ impl Default for ListenerOptions {
             mode: ListenerMode::TcpOnly,
             listen_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
             enable_upnp_port_forwarding: false,
+            enable_natpmp_port_forwarding: false,
+            port_mapping: None,
             utp_opts: None,
             announce_port: None,
             ipv4_only: false,
@@ -159,6 +172,8 @@ impl ListenerOptions {
             announce_port,
             addr: listen_addr,
             enable_upnp_port_forwarding: self.enable_upnp_port_forwarding,
+            enable_natpmp_port_forwarding: self.enable_natpmp_port_forwarding,
+            port_mapping: self.port_mapping,
             max_pending_incoming_handshake_checks: self.max_pending_incoming_handshake_checks,
         })
     }
