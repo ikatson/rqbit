@@ -68,6 +68,10 @@ async fn h_api_root(parts: Parts) -> impl IntoResponse {
             "POST /torrents/{id_or_infohash}/update_only_files": "Change the selection of files to download. You need to POST json of the following form {\"only_files\": [0, 1, 2]}",
             "GET /torrents/{id_or_infohash}/limits": "The torrent's own rate limits, {\"upload_bps\": ..., \"download_bps\": ...} (null: unlimited)",
             "POST /torrents/{id_or_infohash}/limits": "Change the torrent's own rate limits. POST json of the form {\"upload_bps\": 1048576, \"download_bps\": null} (null: unlimited)",
+            "GET /torrents/peer_limit": "How many peers all torrents together may have connecting or connected, {\"peer_limit\": ...} (null: no session-wide limit)",
+            "POST /torrents/peer_limit": "Change the session-wide peer limit. POST json of the form {\"peer_limit\": 500} (null: no limit). Lowering it disconnects nobody",
+            "GET /torrents/{id_or_infohash}/peer_limit": "The torrent's own peer limit, {\"peer_limit\": ...} (null: the session default)",
+            "POST /torrents/{id_or_infohash}/peer_limit": "Change the torrent's own peer limit. POST json of the form {\"peer_limit\": 50} (null: the session default). Lowering it disconnects nobody",
             "POST /rust_log": "Set RUST_LOG to this post launch (for debugging)",
         },
         "server": "rqbit",
@@ -111,6 +115,14 @@ pub fn make_api_router(state: ApiState) -> Router {
         .route(
             "/torrents/{id}/limits",
             get(configure::h_get_torrent_ratelimits),
+        )
+        .route(
+            "/torrents/peer_limit",
+            get(configure::h_get_global_peer_limit),
+        )
+        .route(
+            "/torrents/{id}/peer_limit",
+            get(configure::h_get_torrent_peer_limit),
         );
 
     if !state.opts.read_only {
@@ -123,6 +135,14 @@ pub fn make_api_router(state: ApiState) -> Router {
             .route(
                 "/torrents/{id}/limits",
                 post(configure::h_update_torrent_ratelimits),
+            )
+            .route(
+                "/torrents/peer_limit",
+                post(configure::h_update_global_peer_limit),
+            )
+            .route(
+                "/torrents/{id}/peer_limit",
+                post(configure::h_update_torrent_peer_limit),
             )
             .route(
                 "/torrents/{id}/pause",

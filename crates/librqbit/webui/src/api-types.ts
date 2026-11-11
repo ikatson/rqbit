@@ -121,6 +121,7 @@ export interface SessionStats {
   download_speed: Speed;
   upload_speed: Speed;
   uptime_seconds: number;
+  peer_connections: number;
 }
 
 export interface LimitsConfig {

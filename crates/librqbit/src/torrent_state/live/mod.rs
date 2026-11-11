@@ -77,7 +77,7 @@ use peer_binary_protocol::{
     },
 };
 use tokio::sync::{
-    Notify, OwnedSemaphorePermit, Semaphore,
+    Notify,
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
 };
 use tokio_util::sync::CancellationToken;
@@ -86,6 +86,7 @@ use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
 use crate::{
     Error,
     chunk_tracker::{ChunkMarkingResult, ChunkTracker, HaveNeededSelected},
+    connection_limit::PeerPermits,
     file_ops::FileOps,
     peer_connection::{
         PeerConnection, PeerConnectionHandler, PeerConnectionOptions, WriterRequest,
@@ -190,8 +191,8 @@ pub struct TorrentStateLive {
     stats: AtomicStats,
     lengths: Lengths,
 
-    // Limits how many active (occupying network resources) peers there are at a moment in time.
-    peer_semaphore: Arc<Semaphore>,
+    // How many peers occupy network resources (connecting or connected) at a time is limited by
+    // shared.options.peer_slots and session_peer_slots; every peer task holds a permit of both.
 
     // The queue for peer manager to connect to them.
     peer_queue_tx: UnboundedSender<SocketAddr>,
@@ -283,9 +284,6 @@ impl TorrentStateLive {
                 ..Default::default()
             },
             lengths,
-            peer_semaphore: Arc::new(Semaphore::new(
-                paused.shared.options.peer_limit.unwrap_or(128),
-            )),
             new_pieces_notify: Notify::new(),
             peer_queue_tx,
             finished_notify: Notify::new(),
@@ -369,15 +367,15 @@ impl TorrentStateLive {
     ) -> anyhow::Result<AddIncomingPeerResult> {
         use dashmap::mapref::entry::Entry;
         let (tx, rx) = unbounded_channel();
-        let permit = match self.peer_semaphore.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                debug!("limit of live peers reached, dropping incoming peer");
-                self.peers.with_peer(checked_peer.addr, |p| {
-                    atomic_inc(&p.stats.counters.incoming_connections);
-                });
-                return Ok(AddIncomingPeerResult::ConcurrencyLimitReached);
-            }
+        let options = &self.shared.options;
+        let Some(permits) =
+            PeerPermits::try_acquire(&options.peer_slots, &options.session_peer_slots)
+        else {
+            debug!("limit of live peers reached, dropping incoming peer");
+            self.peers.with_peer(checked_peer.addr, |p| {
+                atomic_inc(&p.stats.counters.incoming_connections);
+            });
+            return Ok(AddIncomingPeerResult::ConcurrencyLimitReached);
         };
 
         let counters = match self.peers.states.entry(checked_peer.addr) {
@@ -428,10 +426,13 @@ impl TorrentStateLive {
                 "[{}][addr={}]manage_incoming_peer",
                 self.shared.id, checked_peer.addr
             ),
-            aframe!(
-                self.clone()
-                    .task_manage_incoming_peer(checked_peer, counters, tx, rx, permit)
-            ),
+            aframe!(self.clone().task_manage_incoming_peer(
+                checked_peer,
+                counters,
+                tx,
+                rx,
+                permits
+            )),
         );
         Ok(AddIncomingPeerResult::Added)
     }
@@ -473,7 +474,7 @@ impl TorrentStateLive {
         counters: Arc<AtomicPeerCounters>,
         tx: PeerTx,
         rx: PeerRx,
-        permit: OwnedSemaphorePermit,
+        permits: PeerPermits,
     ) -> crate::Result<()> {
         let handler = PeerHandler {
             addr: checked_peer.addr,
@@ -523,14 +524,14 @@ impl TorrentStateLive {
                 handler.on_peer_died(Some(e))?;
             }
         };
-        drop(permit);
+        drop(permits);
         Ok(())
     }
 
     async fn task_manage_outgoing_peer(
         self: Arc<Self>,
         addr: SocketAddr,
-        permit: OwnedSemaphorePermit,
+        permits: PeerPermits,
     ) -> crate::Result<()> {
         let state = self;
         let (rx, tx) = state.peers.mark_peer_connecting(addr)?;
@@ -597,7 +598,7 @@ impl TorrentStateLive {
                 handler.on_peer_died(Some(e))?;
             }
         }
-        drop(permit);
+        drop(permits);
         Ok(())
     }
 
@@ -654,11 +655,15 @@ impl TorrentStateLive {
                 continue;
             }
 
-            let permit = state.peer_semaphore.clone().acquire_owned().await?;
+            // Held by the connection task for as long as it lives; see PeerPermits::acquire for
+            // why the torrent's permit comes first.
+            let options = &state.shared.options;
+            let permits =
+                PeerPermits::acquire(&options.peer_slots, &options.session_peer_slots).await?;
             state.spawn(
                 debug_span!(parent: state.shared.span.clone(), "manage_peer", peer = ?addr),
                 format!("[{}][addr={addr}]manage_peer", state.shared.id),
-                aframe!(state.clone().task_manage_outgoing_peer(addr, permit)),
+                aframe!(state.clone().task_manage_outgoing_peer(addr, permits)),
             );
         }
     }

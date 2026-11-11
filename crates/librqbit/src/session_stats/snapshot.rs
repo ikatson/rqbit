@@ -16,6 +16,9 @@ pub struct SessionStatsSnapshot {
     pub peers: AggregatePeerStats,
     pub uptime_seconds: u64,
     pub connections: ConnectStatsSnapshot,
+    /// Peers connecting or connected over all torrents: what counts against
+    /// [`crate::Session::global_peer_limit`].
+    pub peer_connections: usize,
 }
 
 impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
@@ -27,6 +30,7 @@ impl From<(&SessionStats, ConnectStatsSnapshot)> for SessionStatsSnapshot {
             peers: s.peers.snapshot(),
             uptime_seconds: s.startup_time.elapsed().as_secs(),
             connections: c,
+            peer_connections: s.peer_slots.in_use(),
         }
     }
 }
@@ -96,6 +100,7 @@ impl SessionStatsSnapshot {
         m!(gauge, rqbit_peers_queued, self.peers.queued);
         m!(gauge, rqbit_peers_seen, self.peers.seen);
         m!(gauge, rqbit_peers_steals, self.peers.steals);
+        m!(gauge, rqbit_peer_connections, self.peer_connections);
     }
 }
 
@@ -114,6 +119,7 @@ mod tests {
             peers: Default::default(),
             uptime_seconds: 0,
             connections: Default::default(),
+            peer_connections: 0,
         };
         let mut out = String::new();
         snapshot.as_prometheus(&mut out);

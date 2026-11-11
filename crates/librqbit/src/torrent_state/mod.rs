@@ -26,7 +26,7 @@ use librqbit_core::lengths::Lengths;
 use librqbit_core::spawn_utils::spawn_with_cancel;
 use librqbit_core::torrent_metainfo::ValidatedTorrentMetaV1Info;
 pub use live::*;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use tokio::sync::Notify;
 use tokio::time::timeout;
@@ -39,6 +39,7 @@ use tracing::warn;
 
 use crate::Session;
 use crate::chunk_tracker::ChunkTracker;
+use crate::connection_limit::ConnectionLimit;
 use crate::file_info::FileInfo;
 use crate::limits::{Limits, LimitsConfig};
 use crate::session::TorrentId;
@@ -107,7 +108,6 @@ pub(crate) struct ManagedTorrentLocked {
     pub(crate) only_files: Option<Vec<usize>>,
 }
 
-#[derive(Default)]
 pub(crate) struct ManagedTorrentOptions {
     pub force_tracker_interval: Option<Duration>,
     pub peer_connect_timeout: Option<Duration>,
@@ -119,7 +119,16 @@ pub(crate) struct ManagedTorrentOptions {
     /// survives pause / resume; the session limits apply on top of them.
     pub ratelimits: Limits,
     pub initial_peers: Vec<SocketAddr>,
-    pub peer_limit: Option<usize>,
+    /// The torrent's own peer limit as set by the user (`None`: the session default), the value
+    /// that is persisted.
+    pub peer_limit: Mutex<Option<usize>>,
+    /// The limit used when `peer_limit` is `None`.
+    pub default_peer_limit: usize,
+    /// The torrent's cap on connecting + connected peers. It lives here, not in the live state,
+    /// so that a change survives pause / resume.
+    pub peer_slots: Arc<ConnectionLimit>,
+    /// The session-wide cap, shared by all torrents of the session.
+    pub session_peer_slots: Arc<ConnectionLimit>,
     #[cfg(feature = "disable-upload")]
     pub _disable_upload: bool,
 }
@@ -266,6 +275,26 @@ impl ManagedTorrent {
     /// to both directions.
     pub(crate) fn set_ratelimits(&self, limits: LimitsConfig) {
         self.shared.options.ratelimits.set_config(limits);
+    }
+
+    /// The torrent's own cap on connecting + connected peers as set with
+    /// [`Session::set_torrent_peer_limit`] or [`crate::AddTorrentOptions::peer_limit`]. `None`:
+    /// the session's default ([`crate::SessionOptions::peer_limit`], 128 if that isn't set
+    /// either). The session-wide cap applies on top of it.
+    pub fn peer_limit(&self) -> Option<usize> {
+        *self.shared.options.peer_limit.lock()
+    }
+
+    /// Change the torrent's own peer limit, in any state.
+    pub(crate) fn set_peer_limit(&self, limit: Option<usize>) {
+        let options = &self.shared.options;
+        // Under the lock, so that concurrent changes can't leave the cap and the stored value
+        // apart.
+        let mut own = options.peer_limit.lock();
+        *own = limit;
+        options
+            .peer_slots
+            .set_limit(Some(limit.unwrap_or(options.default_peer_limit)));
     }
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
         f(&self.locked.read().state)

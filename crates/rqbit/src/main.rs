@@ -153,6 +153,10 @@ struct Opts {
     #[arg(long = "peer-limit", env = "RQBIT_PEER_LIMIT")]
     peer_limit: Option<usize>,
 
+    /// The maximum number of connecting + connected peers over all torrents together, on top
+    /// of each torrent's own limit. Unlimited if not set.
+    #[arg(long = "global-peer-limit", env = "RQBIT_GLOBAL_PEER_LIMIT")]
+    global_peer_limit: Option<usize>,
     /// How many threads to spawn for the executor.
     #[arg(short = 't', long, env = "RQBIT_RUNTIME_WORKER_THREADS")]
     worker_threads: Option<usize>,
@@ -688,6 +692,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
         disable_trackers: opts.disable_trackers,
         trackers,
         peer_limit: opts.peer_limit,
+        global_peer_limit: opts.global_peer_limit,
         runtime_worker_threads: Some(opts.max_blocking_threads as usize),
         ipv4_only: opts.ipv4_only,
         client_name_and_version: None,

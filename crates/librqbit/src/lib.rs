@@ -46,6 +46,7 @@ mod api_error;
 mod bitv;
 mod bitv_factory;
 mod chunk_tracker;
+mod connection_limit;
 mod create_torrent_file;
 mod dht_utils;
 mod error;
@@ -92,8 +93,8 @@ pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use listen::{ListenerMode, ListenerOptions};
 pub use peer_connection::PeerConnectionOptions;
 pub use session::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListOnlyResponse,
-    SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, DEFAULT_PEER_LIMIT, DhtSessionConfig,
+    ListOnlyResponse, SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,
 };
 pub use stream_connect::ConnectionOptions;
 pub use torrent_state::{
