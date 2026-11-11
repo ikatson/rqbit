@@ -27,6 +27,7 @@ use tokio::{
     time::timeout,
 };
 
+mod dht;
 mod smoke;
 
 /// The environment variable that points at a Python interpreter with `libtorrent` installed.
