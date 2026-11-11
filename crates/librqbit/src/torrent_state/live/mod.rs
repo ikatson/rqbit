@@ -618,44 +618,48 @@ impl TorrentStateLive {
                 continue;
             }
 
-            let session = state
-                .shared
-                .session
-                .upgrade()
-                .ok_or(Error::SessionDestroyed)?;
-
-            if session.ipv4_only && addr.is_ipv6() {
-                debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
-                continue;
-            }
-
-            if addr.port() == 0 {
-                debug!(?addr, "skipping peer with port 0");
-                continue;
-            }
-
-            if session.blocklist.has(addr.ip()) {
-                session
-                    .stats
-                    .counters
-                    .blocked_outgoing
-                    .fetch_add(1, Ordering::Relaxed);
-                debug!(?addr, "blocked outgoing connection (by the blacklist)");
-                continue;
-            }
-
-            if session
-                .allowlist
-                .as_ref()
-                .is_some_and(|l| !l.has(addr.ip()))
             {
-                session
-                    .stats
-                    .counters
-                    .blocked_outgoing
-                    .fetch_add(1, Ordering::Relaxed);
-                debug!(?addr, "blocked outgoing connection (by the allowlist)");
-                continue;
+                // Scoped: the session must not be kept alive while waiting for a
+                // peer permit below, or a dropped session would never be cancelled.
+                let session = state
+                    .shared
+                    .session
+                    .upgrade()
+                    .ok_or(Error::SessionDestroyed)?;
+
+                if session.ipv4_only && addr.is_ipv6() {
+                    debug!(?addr, "skipping ipv6 peer (ipv4_only=true)");
+                    continue;
+                }
+
+                if addr.port() == 0 {
+                    debug!(?addr, "skipping peer with port 0");
+                    continue;
+                }
+
+                if session.blocklist.has(addr.ip()) {
+                    session
+                        .stats
+                        .counters
+                        .blocked_outgoing
+                        .fetch_add(1, Ordering::Relaxed);
+                    debug!(?addr, "blocked outgoing connection (by the blacklist)");
+                    continue;
+                }
+
+                if session
+                    .allowlist
+                    .as_ref()
+                    .is_some_and(|l| !l.has(addr.ip()))
+                {
+                    session
+                        .stats
+                        .counters
+                        .blocked_outgoing
+                        .fetch_add(1, Ordering::Relaxed);
+                    debug!(?addr, "blocked outgoing connection (by the allowlist)");
+                    continue;
+                }
             }
 
             let permit = state.peer_semaphore.clone().acquire_owned().await?;
