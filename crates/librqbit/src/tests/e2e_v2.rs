@@ -20,11 +20,12 @@ use tokio::{
 
 use crate::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, ListenerOptions, Session,
-    SessionOptions, SessionPersistenceConfig,
+    SessionOptions, SessionPersistenceConfig, WebSeedState,
     api::TorrentIdOrHash,
     tests::{
         fake_peer::{FakePeer, Recv, Wire, handshake_bytes, peer_id, run},
         v2_torrent::V2Files,
+        web_seed_server::WebSeedServer,
     },
     torrent_state::ManagedTorrentHandle,
 };
@@ -551,6 +552,221 @@ async fn test_e2e_v2_corrupted_block_is_redownloaded() -> anyhow::Result<()> {
         files.assert_equal_to(client_dir.path());
         client.stop().await;
         seeder.stop().await;
+        Ok(())
+    })
+    .await
+}
+
+/// Whether the session holds each piece of `handle`, by index.
+fn have_all(handle: &ManagedTorrentHandle, num_pieces: u32) -> Vec<bool> {
+    (0..num_pieces).map(|p| have(handle, p)).collect()
+}
+
+/// Flips the byte at `offset` of the file `path` under `dir`.
+fn flip_byte(dir: &Path, path: &str, offset: usize) -> anyhow::Result<()> {
+    let file = dir.join(path);
+    let mut content = std::fs::read(&file)?;
+    let byte = content.get_mut(offset).context("offset past the end")?;
+    *byte ^= 0xff;
+    std::fs::write(&file, content)?;
+    Ok(())
+}
+
+/// A web seed serving the files of `files` for a torrent named `name`.
+async fn web_seed_for(files: &V2Files, name: &str) -> anyhow::Result<WebSeedServer> {
+    WebSeedServer::start(
+        files
+            .files
+            .iter()
+            .filter(|(_, content)| !content.is_empty())
+            .map(|(path, content)| (format!("/seed/{name}/{path}"), content.clone())),
+    )
+    .await
+}
+
+/// Adds `torrent` to `session`, downloading into `out` from the web seed `url` only.
+async fn add_with_web_seed(
+    session: &Arc<Session>,
+    torrent: Bytes,
+    out: &Path,
+    url: String,
+) -> anyhow::Result<ManagedTorrentHandle> {
+    session
+        .add_torrent(
+            AddTorrent::from_bytes(torrent),
+            Some(AddTorrentOptions {
+                output_folder: Some(out.to_str().context("utf-8 path")?.to_owned()),
+                web_seeds: Some(vec![url]),
+                ..Default::default()
+            }),
+        )
+        .await?
+        .into_handle()
+        .context("into_handle")
+}
+
+/// A web seed alone downloads v2-only and hybrid torrents: every piece is
+/// checked with the hashes of its version, and the byte ranges asked for
+/// follow the per-file pieces of the v2 layout (short last pieces, no bytes
+/// between files) and skip the padding of the hybrid v1 layout.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_v2_and_hybrid_from_web_seed() -> anyhow::Result<()> {
+    run(async {
+        for (hybrid, name) in [(false, "v2ws"), (true, "hybridws")] {
+            let files = sample_files(4);
+            let torrent = Bytes::from(files.torrent(name, PIECE_LEN, hybrid).to_bytes());
+            let num_pieces = torrent_from_bytes(&torrent)?
+                .validate_with_piece_layers()?
+                .lengths()
+                .total_pieces();
+            let server = web_seed_for(&files, name).await?;
+
+            let dir = TempDir::with_prefix("rqbit_v2_web_seed")?;
+            let session = new_session(dir.path(), SessionSetup::default()).await?;
+            let out = dir.path().join("out");
+            let handle = add_with_web_seed(&session, torrent, &out, server.url()).await?;
+            completed(&handle, Duration::from_secs(60)).await?;
+            files.assert_equal_to(&out);
+
+            let checked = handle
+                .live()
+                .map_or(0, |l| l.stats_snapshot().downloaded_and_checked_pieces);
+            assert_eq!(checked, u64::from(num_pieces), "hybrid={hybrid}");
+            // Every byte of the files was asked for exactly once, and nothing else.
+            assert_eq!(server.body_bytes(), files.total_len(), "hybrid={hybrid}");
+            let seeds = handle.web_seeds();
+            let seed = seeds.first().context("no web seed")?;
+            assert_eq!(seed.last_error, None, "hybrid={hybrid}");
+            session.stop().await;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// A web seed that serves wrong bytes for two pieces of a v2-only torrent (one
+/// of them the 1-byte last piece of a file): the merkle check rejects both,
+/// the failures count as hash failures of the web seed, which is disabled,
+/// and the torrent itself keeps running.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_v2_web_seed_merkle_failures_disable_it() -> anyhow::Result<()> {
+    run(async {
+        let name = "v2wsbad";
+        let files = sample_files(5);
+        let torrent = Bytes::from(files.torrent(name, PIECE_LEN, false).to_bytes());
+        let server = web_seed_for(&files, name).await?;
+        let pl = u64::from(PIECE_LEN);
+        server.set(|b| {
+            b.corrupt = vec![
+                (format!("/seed/{name}/big.bin"), pl..pl + 1),
+                (format!("/seed/{name}/ünï/名前.bin"), pl..pl + 1),
+            ]
+        });
+
+        let dir = TempDir::with_prefix("rqbit_v2_web_seed_bad")?;
+        let session = new_session(dir.path(), SessionSetup::default()).await?;
+        let out = dir.path().join("out");
+        let handle = add_with_web_seed(&session, torrent, &out, server.url()).await?;
+
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let seed = loop {
+            let seeds = handle.web_seeds();
+            if let Some(seed) = seeds.first()
+                && seed.state == WebSeedState::Disabled
+            {
+                break seed.clone();
+            }
+            anyhow::ensure!(Instant::now() < deadline, "the web seed was not disabled");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let error = seed.last_error.context("no error")?;
+        assert!(error.contains("hash check"), "{error}");
+        // big.bin is pieces 0..4, "ünï/名前.bin" pieces 7 and 8.
+        assert!(!have(&handle, 1));
+        assert!(!have(&handle, 8));
+        assert!(handle.live().is_some(), "the torrent stopped");
+        session.stop().await;
+        Ok(())
+    })
+    .await
+}
+
+/// A forced recheck of a v2-only torrent verifies every piece with its merkle
+/// hash: damaged pieces, including the short last piece of a file, are found
+/// and are no longer had; the others are.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_v2_force_recheck_finds_damaged_pieces() -> anyhow::Result<()> {
+    run(async {
+        let files = sample_files(6);
+        let torrent = Bytes::from(files.torrent("v2", PIECE_LEN, false).to_bytes());
+        let num_pieces = u32::try_from(files.v2_pieces(PIECE_LEN).len())?;
+
+        let dir = TempDir::with_prefix("rqbit_v2_recheck")?;
+        files.write_to(dir.path());
+        let session = new_session(dir.path(), SessionSetup::default()).await?;
+        let handle = add(&session, torrent, dir.path(), vec![]).await?;
+        completed(&handle, Duration::from_secs(20)).await?;
+        assert!(have_all(&handle, num_pieces).iter().all(|h| *h));
+
+        // big.bin is pieces 0..4 (piece 3 short), "ünï/名前.bin" pieces 7
+        // and 8 (piece 8 is its last byte).
+        let pl = PIECE_LEN as usize;
+        flip_byte(dir.path(), "big.bin", 3 * pl + 10)?;
+        flip_byte(dir.path(), "ünï/名前.bin", pl)?;
+        session.force_recheck(&handle).await?;
+        timeout(Duration::from_secs(20), handle.wait_until_initialized())
+            .await
+            .context("timed out waiting for the check")??;
+
+        let expected: Vec<bool> = (0..num_pieces).map(|p| p != 3 && p != 8).collect();
+        assert_eq!(have_all(&handle, num_pieces), expected);
+        assert!(!handle.stats().finished);
+        session.stop().await;
+        Ok(())
+    })
+    .await
+}
+
+/// The fastresume bitfield of a v2-only torrent is sampled with merkle checks:
+/// a stored bitfield that claims a piece the data no longer matches is
+/// distrusted, the torrent is checked in full, and only the damaged piece is
+/// missing afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_e2e_v2_fastresume_with_damaged_piece_is_rechecked() -> anyhow::Result<()> {
+    run(async {
+        let files = sample_files(7);
+        let torrent = Bytes::from(files.torrent("v2", PIECE_LEN, false).to_bytes());
+        let info_hash: Id20 = torrent_from_bytes(&torrent)?.info_hash;
+        let num_pieces = u32::try_from(files.v2_pieces(PIECE_LEN).len())?;
+
+        let dir = TempDir::with_prefix("rqbit_v2_fastresume")?;
+        let data = dir.path().join("data");
+        let persistence = dir.path().join("session");
+        files.write_to(&data);
+        let setup = || SessionSetup {
+            persistence: Some(persistence.clone()),
+            ..Default::default()
+        };
+        let session = new_session(&data, setup()).await?;
+        let handle = add(&session, torrent, &data, vec![]).await?;
+        completed(&handle, Duration::from_secs(20)).await?;
+        session.stop().await;
+        drop(handle);
+        drop(session);
+
+        // "dir/small.bin" is piece 6, the only piece of its file: the
+        // fastresume sample always checks it.
+        flip_byte(&data, "dir/small.bin", 0)?;
+        let session = new_session(&data, setup()).await?;
+        let handle = session
+            .get(TorrentIdOrHash::Hash(info_hash))
+            .context("torrent not restored")?;
+        timeout(Duration::from_secs(20), handle.wait_until_initialized())
+            .await
+            .context("timed out waiting for the check")??;
+        let expected: Vec<bool> = (0..num_pieces).map(|p| p != 6).collect();
+        assert_eq!(have_all(&handle, num_pieces), expected);
+        session.stop().await;
         Ok(())
     })
     .await
