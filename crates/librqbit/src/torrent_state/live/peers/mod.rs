@@ -21,6 +21,8 @@ pub(crate) struct PeerStates {
 
     // This keeps track of live addresses we connected to, for PEX.
     pub live_outgoing_peers: RwLock<HashSet<PeerHandle>>,
+    // How soon outgoing peers that died are dialed again.
+    pub peer_backoff: crate::PeerBackoffConfig,
     pub stats: AggregatePeerStatsAtomic,
     pub states: DashMap<PeerHandle, Peer>,
 }
@@ -43,7 +45,7 @@ impl PeerStates {
         match self.states.entry(addr) {
             Entry::Occupied(_) => None,
             Entry::Vacant(vac) => {
-                vac.insert(Peer::new_with_outgoing_address(addr));
+                vac.insert(Peer::new_with_outgoing_address(addr, self.peer_backoff));
                 atomic_inc(&self.stats.queued);
                 atomic_inc(&self.session_stats.queued);
 
@@ -201,6 +203,7 @@ mod tests {
         PeerStates {
             session_stats: Default::default(),
             live_outgoing_peers: Default::default(),
+            peer_backoff: Default::default(),
             stats: Default::default(),
             states: Default::default(),
         }

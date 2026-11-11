@@ -57,6 +57,7 @@ pub mod http_api;
 pub mod http_api_client;
 #[cfg(any(feature = "http-api", feature = "http-api-client"))]
 pub mod http_api_types;
+mod http_client;
 mod ip_ranges;
 pub mod limits;
 mod listen;
@@ -90,7 +91,7 @@ pub use create_torrent_file::{CreateTorrentOptions, CreateTorrentResult, create_
 pub use dht;
 pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use listen::{ListenerMode, ListenerOptions};
-pub use peer_connection::PeerConnectionOptions;
+pub use peer_connection::{PeerBackoffConfig, PeerConnectionOptions};
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListOnlyResponse,
     SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,
@@ -100,12 +101,16 @@ pub use torrent_state::{
     ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, TorrentMetadata, TorrentStats,
     TorrentStatsState,
 };
+pub use tracker_comms::{TrackerAnnounceOptions, TrackerState, TrackerStats};
 pub use type_aliases::FileInfos;
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;
 pub use librqbit_core::magnet::*;
 pub use librqbit_core::peer_id::*;
+/// The parsed form of [`ConnectionOptions::proxy_url`], re-exported so that a proxy URL can be
+/// checked (and shown without its password) before a session is created with it.
+pub use librqbit_core::proxy::{ProxyConfig, ProxyKind, ProxyUrlError};
 pub use librqbit_core::torrent_metainfo::*;
 
 #[cfg(test)]

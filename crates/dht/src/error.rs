@@ -53,8 +53,21 @@ pub enum Error {
     #[error("error in recv: {0:#}")]
     Recv(#[source] std::io::Error),
 
+    #[error(transparent)]
+    Proxy(librqbit_core::proxy::ProxyError),
+
     #[error("bencode serialize error: {0:#}")]
     Serialize(#[source] Box<SerializeError>),
+
+    #[error("invalid BEP 44 item: {0}")]
+    InvalidItem(&'static str),
+
+    #[error("no node stored the item (asked {asked}, refused: {rejections:?})")]
+    ItemNotStored {
+        asked: usize,
+        /// The KRPC errors (`code`, `message`) of the nodes that refused it.
+        rejections: Vec<(i32, String)>,
+    },
 }
 
 impl From<SerializeError> for Error {

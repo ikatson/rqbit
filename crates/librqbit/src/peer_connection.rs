@@ -75,6 +75,19 @@ pub struct PeerConnectionOptions {
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub read_write_timeout: Option<Duration>,
 
+    /// How long to wait for the peer's BitTorrent handshake, when we dial it and when it dials
+    /// us. Defaults to `read_write_timeout`. A stalled handshake holds a peer slot
+    /// (`peer_limit`) until it times out, so this can be much shorter than the timeout of
+    /// regular messages.
+    #[serde_as(as = "Option<serde_with::DurationSeconds>")]
+    pub handshake_timeout: Option<Duration>,
+
+    /// The most outgoing connections a torrent starts per second (`0` counts as `1`). `None`
+    /// (the default) starts them as fast as the peer limit allows. Bounds the burst of
+    /// connection attempts a big peer list (a tracker announce, DHT) otherwise causes, which can
+    /// exhaust the connection tracking of small routers.
+    pub connect_rate: Option<u32>,
+
     #[serde_as(as = "Option<serde_with::DurationSeconds>")]
     pub keep_alive_interval: Option<Duration>,
 
@@ -83,6 +96,32 @@ pub struct PeerConnectionOptions {
     /// one at a stream's read position after a seek, is requested only after
     /// those, so a smaller window makes streams react faster to seeks.
     pub max_request_window: Option<usize>,
+}
+
+/// How long to wait before dialing an outgoing peer again after its connection died, growing
+/// exponentially (with jitter) while it keeps failing. The default is 10 s, times 6 on each
+/// failure, at most an hour, and the peer is dropped after 24 h of accumulated delay.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PeerBackoffConfig {
+    /// The delay after the first failure.
+    pub min_delay: Duration,
+    /// The factor the delay grows by after each failure.
+    pub factor: f32,
+    /// The longest single delay.
+    pub max_delay: Duration,
+    /// The peer is dropped when the delays add up to this much. `None` retries forever.
+    pub total_delay: Option<Duration>,
+}
+
+impl Default for PeerBackoffConfig {
+    fn default() -> Self {
+        Self {
+            min_delay: Duration::from_secs(10),
+            factor: 6.,
+            max_delay: Duration::from_secs(3600),
+            total_delay: Some(Duration::from_secs(86400)),
+        }
+    }
 }
 
 pub(crate) struct PeerConnection<H> {
@@ -223,6 +262,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .connect_timeout
             .unwrap_or_else(|| Duration::from_secs(10));
 
+        // How long the peer has to answer our handshake; the read/write timeout unless set.
+        let handshake_timeout = self.options.handshake_timeout.unwrap_or(rwtimeout);
+
         let now = Instant::now();
         let (ckind, mut read, mut write) = with_timeout(
             "connecting",
@@ -247,7 +289,9 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
             .await?;
 
             let mut read_buf = ReadBuf::new();
-            let h = read_buf.read_handshake(&mut read, rwtimeout).await?;
+            let h = read_buf
+                .read_handshake(&mut read, handshake_timeout)
+                .await?;
             let handshake_supports_extended = h.supports_extended();
             trace!(
                 peer_id=?h.peer_id,

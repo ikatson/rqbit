@@ -181,6 +181,7 @@ impl TestHarness {
                 disable_local_service_discovery: false,
                 connect: Some(ConnectionOptions {
                     proxy_url: None,
+                    proxy_peer_connections: true,
                     enable_tcp: listen_mode.tcp_enabled(),
                     peer_opts: Some(PeerConnectionOptions {
                         connect_timeout: Some(Duration::from_secs(1)),
@@ -270,6 +271,7 @@ impl TestHarness {
                 disable_local_service_discovery: false,
                 connect: Some(ConnectionOptions {
                     proxy_url: None,
+                    proxy_peer_connections: true,
                     enable_tcp: true,
                     peer_opts: Some(PeerConnectionOptions {
                         connect_timeout: Some(Duration::from_secs(1)),

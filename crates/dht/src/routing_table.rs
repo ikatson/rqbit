@@ -518,6 +518,29 @@ impl RoutingTable {
         self.buckets.iter()
     }
 
+    /// A table built around a new id `id` (BEP 42 moved us) with the nodes of this one. What we
+    /// know about each node (when it last answered, errors) is kept. Good nodes and the nodes
+    /// closest to the new id go in first, so they win when buckets are full; nodes that do not
+    /// fit any more are dropped.
+    pub fn with_new_id(&self, id: Id20) -> Self {
+        let mut table = Self {
+            id,
+            size: 0,
+            buckets: BucketTree::new(self.buckets.max_size),
+        };
+        for node in self.sorted_by_distance_from(id, Instant::now()) {
+            match table.add_node(node.id, node.addr) {
+                InsertResult::Added | InsertResult::ReplacedBad(_) => {
+                    if let Some(inserted) = table.buckets.get_mut(&node.id, None) {
+                        *inserted = node.clone();
+                    }
+                }
+                InsertResult::WasExisting | InsertResult::Ignored => {}
+            }
+        }
+        table
+    }
+
     pub fn add_node(&mut self, id: Id20, addr: SocketAddr) -> InsertResult {
         let res = self.buckets.add_node(&self.id, id, addr);
         let replaced = match &res {
@@ -703,5 +726,37 @@ mod tests {
             let id = dbg!(generate_random_id(&start, bits));
             assert!(id >= start && id <= end, "{:?}", id);
         }
+    }
+
+    #[test]
+    fn with_new_id_keeps_what_fits_and_what_we_know() {
+        let mut old = generate_table(Some(1000));
+        let new_id = random_id_20();
+        let now = Instant::now();
+        let closest: Vec<Id20> = old
+            .sorted_by_distance_from(new_id, now)
+            .iter()
+            .take(8)
+            .map(|n| n.id())
+            .collect();
+        assert!(old.mark_response(&closest[0], now));
+
+        let new = old.with_new_id(new_id);
+        assert_eq!(new.id, new_id);
+        // The size is what the buckets hold, and no node appears out of nowhere or moves.
+        assert_eq!(new.len(), new.iter().count());
+        assert!(new.len() > 0 && new.len() <= old.len());
+        let old_addrs: std::collections::HashMap<Id20, SocketAddr> =
+            old.iter().map(|n| (n.id(), n.addr())).collect();
+        for node in new.iter() {
+            assert_eq!(old_addrs.get(&node.id()), Some(&node.addr()));
+        }
+        // The nodes closest to the new id always fit: their bucket is the one that splits.
+        for id in &closest {
+            assert!(new.iter().any(|n| n.id() == *id), "{id:?} was dropped");
+        }
+        // What we knew about a node comes along with it.
+        let known = new.iter().find(|n| n.id() == closest[0]).unwrap();
+        assert!(matches!(known.status(now), super::NodeStatus::Good));
     }
 }

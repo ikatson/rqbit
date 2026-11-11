@@ -77,14 +77,30 @@ Assuming bash, add this to your `~/.bashrc`. Modify for your shell of choice.
 eval "$(rqbit completions bash)"
 ```
 
-## Socks proxy support
+## Proxy support
 
 ```
 rqbit --socks-url socks5h://[username:password]@host:port ...
 ```
 
-Supported schemes: `socks5h://` (DNS resolved by the proxy), `socks5://` (DNS resolved
-locally).
+Supported schemes:
+
+| Scheme | Protocol | Host names resolved by | UDP (UDP trackers, DHT) |
+|---|---|---|---|
+| `socks5://` | SOCKS5, optional `user:password@` | this host | through UDP ASSOCIATE |
+| `socks5h://` | SOCKS5, optional `user:password@` | the proxy | through UDP ASSOCIATE |
+| `socks4://` | SOCKS4, optional `userid@` | this host | off |
+| `socks4a://` | SOCKS4a, optional `userid@` | the proxy | off |
+| `http://` | HTTP `CONNECT` tunnels, optional `user:password@` | the proxy | off |
+
+Peer connections, HTTP(S) trackers and every other HTTP request go through the proxy. Nothing
+is ever sent directly: what the proxy can't carry is turned off (UDP trackers report an error,
+the DHT is not started), outgoing uTP is not used (TCP through the proxy instead), and when the
+proxy is down connections fail until it is back. Incoming connections are unchanged, but a
+session behind a proxy is normally not reachable from outside. Under `socks5h://` the DHT
+bootstrap nodes are pinged through the proxy by name. The DHT does not reuse the node ids saved
+with another egress (direct, or another proxy), so they can't link the two addresses.
+`https://` proxies are not supported.
 
 ## Watching a directory for .torrents
 

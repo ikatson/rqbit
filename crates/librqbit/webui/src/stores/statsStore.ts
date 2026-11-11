@@ -63,6 +63,18 @@ export const useStatsStore = create<StatsStore>((set) => ({
           errors: 0,
         },
       },
+      http_proxy: {
+        v4: {
+          attempts: 0,
+          successes: 0,
+          errors: 0,
+        },
+        v6: {
+          attempts: 0,
+          successes: 0,
+          errors: 0,
+        },
+      },
     },
   },
   setStats: (stats) => {

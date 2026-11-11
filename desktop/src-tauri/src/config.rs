@@ -66,6 +66,7 @@ impl RqbitDesktopConfigConnections {
             } else {
                 Some(self.socks_proxy.clone())
             },
+            proxy_peer_connections: true,
             enable_tcp: self.enable_tcp_outgoing,
             peer_opts: Some(PeerConnectionOptions {
                 connect_timeout: Some(self.peer_connect_timeout),
