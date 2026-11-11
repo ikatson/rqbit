@@ -870,6 +870,32 @@ impl DhtState {
         self.enforce_node_id.store(enforce, Ordering::Relaxed);
     }
 
+    /// Pings the DHT node at `addr` and, when it answers, puts it into the routing table (like
+    /// libtorrent's `add_dht_node`). For nodes known from elsewhere, such as the "nodes" of a
+    /// torrent file (BEP 5): the bootstrap addresses only seed lookups and do not go into the
+    /// routing table themselves. Returns the id the node answered with.
+    pub async fn add_node(&self, addr: SocketAddr) -> crate::Result<Id20> {
+        let id = match self.request(Request::Ping, addr).await? {
+            ResponseOrError::Response(r) => r.id,
+            ResponseOrError::Error(e) => {
+                debug!(?addr, error = ?e, "node answered a ping with an error");
+                return Err(Error::ErrorResponse);
+            }
+        };
+        if !self.node_id_acceptable(&id, addr) {
+            debug!(?addr, ?id, "not adding a node with a non-BEP 42 id");
+            return Ok(id);
+        }
+        let mut table = self.get_table_for_addr(addr).write();
+        match table.add_node(id, addr) {
+            InsertResult::WasExisting | InsertResult::ReplacedBad(_) | InsertResult::Added => {
+                table.mark_response(&id, now());
+            }
+            InsertResult::Ignored => {}
+        }
+        Ok(id)
+    }
+
     /// Counts the "ip" field of a response from `voter` towards our external address, and moves
     /// our node id when the vote adopts a new address.
     pub(crate) fn on_external_ip_reported(
@@ -2344,6 +2370,24 @@ mod tests {
 
         dht.set_enforce_node_id(false);
         assert_eq!(handed_out(&dht), HashSet::from([valid, invalid, local]));
+    }
+
+    #[tokio::test]
+    async fn test_add_node_pings_and_inserts() {
+        let silent = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let a = start_dht(silent.local_addr().unwrap()).await;
+        let b = start_dht(silent.local_addr().unwrap()).await;
+        assert_eq!(a.get_stats().routing_table_size, 0);
+
+        let id = a.add_node(b.listen_addr()).await.unwrap();
+        assert_eq!(id, b.get_stats().id);
+        let in_table: Vec<_> = a
+            .routing_table_v4
+            .read()
+            .iter()
+            .map(|n| (n.id(), n.addr()))
+            .collect();
+        assert_eq!(in_table, vec![(id, b.listen_addr())]);
     }
 
     /// `n` DHT nodes on loopback that all know each other. They bootstrap from a socket that
