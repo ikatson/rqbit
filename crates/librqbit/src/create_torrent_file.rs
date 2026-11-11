@@ -369,28 +369,34 @@ enum V1Entry {
 }
 
 /// The v1 file list of files of `lengths`, in order, and the length of the
-/// data it describes. With `pad` (hybrid torrents), a padding file goes in
-/// front of every non-empty file that would not start on a piece boundary, as
-/// libtorrent does: so every file but the first non-empty one follows padding
-/// unless the one before ends on a boundary, empty files take no padding, and
-/// nothing pads the end.
+/// data it describes. With `pad` (hybrid torrents) and more than one file, a
+/// padding file follows every non-empty file that does not end on a piece
+/// boundary, the last one too, so that every file starts on a boundary. That is
+/// what libtorrent writes by default, so the same folder makes the same hybrid
+/// torrent. A lone file is never padded: there is nothing to align after it.
 fn v1_entries(
-    lengths: impl IntoIterator<Item = u64>,
+    lengths: impl IntoIterator<Item = u64, IntoIter: ExactSizeIterator>,
     piece_length: u32,
     pad: bool,
 ) -> anyhow::Result<(Vec<V1Entry>, u64)> {
     let pl = u64::from(piece_length);
+    let lengths = lengths.into_iter();
+    let pad = pad && lengths.len() > 1;
     let mut offset = 0u64;
-    let mut out = Vec::new();
-    for (index, len) in lengths.into_iter().enumerate() {
+    let mut out = Vec::with_capacity(if pad {
+        2 * lengths.len()
+    } else {
+        lengths.len()
+    });
+    for (index, len) in lengths.enumerate() {
+        out.push(V1Entry::File(index));
+        offset = offset.checked_add(len).context("too much data")?;
         let misalignment = offset % pl;
         if pad && len > 0 && misalignment != 0 {
             let pad_len = pl - misalignment;
             out.push(V1Entry::Pad(pad_len));
             offset = offset.checked_add(pad_len).context("too much data")?;
         }
-        out.push(V1Entry::File(index));
-        offset = offset.checked_add(len).context("too much data")?;
     }
     Ok((out, offset))
 }
@@ -966,10 +972,275 @@ pub async fn create_torrent<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use librqbit_core::torrent_metainfo::torrent_from_bytes;
+pub(crate) mod tests {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
 
-    use crate::{CreateTorrentOptions, create_torrent, spawn_utils::BlockingSpawner};
+    use bytes::Bytes;
+    use librqbit_core::magnet::Magnet;
+    use librqbit_core::metainfo_v2::TorrentVersion;
+    use librqbit_core::torrent_metainfo::torrent_from_bytes;
+    use tokio_util::sync::CancellationToken;
+
+    use super::{
+        CreateTorrentCancelled, CreateTorrentOptions, CreateTorrentProgress,
+        CreateTorrentProgressCallback, CreateTorrentResult, InputFile, MAX_PIECE_LENGTH,
+        MIN_PIECE_LENGTH, PROGRESS_STEP, auto_piece_length, create_torrent, sort_files, v1_entries,
+        validate_piece_length,
+    };
+    use crate::spawn_utils::BlockingSpawner;
+
+    const P: u32 = 16 * 1024;
+    const PL: usize = P as usize;
+    const FORMATS: [TorrentVersion; 3] = [
+        TorrentVersion::V1,
+        TorrentVersion::V2,
+        TorrentVersion::Hybrid,
+    ];
+
+    /// Content sizes around the steps of the automatic piece length, and the piece length
+    /// picked for each.
+    pub(crate) const AUTO_PIECE_LENGTHS: &[(u64, u32)] = &[
+        (1, 16 << 10),
+        (2_684_355, 16 << 10),
+        (2_684_356, 32 << 10),
+        (10_737_418, 32 << 10),
+        (10_737_419, 64 << 10),
+        (42_949_673, 64 << 10),
+        (42_949_674, 128 << 10),
+        (171_798_692, 128 << 10),
+        (171_798_693, 256 << 10),
+        (687_194_767, 256 << 10),
+        (687_194_768, 512 << 10),
+        (2_748_779_069, 512 << 10),
+        (2_748_779_070, 1 << 20),
+        (10_995_116_278, 1 << 20),
+        (10_995_116_279, 2 << 20),
+        (43_980_465_111, 2 << 20),
+        (43_980_465_112, 4 << 20),
+        (175_921_860_444, 4 << 20),
+        (175_921_860_445, 8 << 20),
+        (703_687_441_777, 8 << 20),
+        (703_687_441_778, 16 << 20),
+        (10_000_000_000_000, 16 << 20),
+    ];
+
+    /// A file of a test: its path in the torrent ('/'-separated) and its content.
+    type TestFile = (String, Vec<u8>);
+
+    /// Pseudo-random bytes, different for every `seed`, so that no two pieces are alike.
+    fn data(seed: u64, len: usize) -> Vec<u8> {
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x.to_le_bytes()[0]
+            })
+            .collect()
+    }
+
+    fn files<S: AsRef<str>>(spec: &[(S, usize)]) -> Vec<TestFile> {
+        spec.iter()
+            .zip(1..)
+            .map(|((path, len), seed)| (path.as_ref().to_owned(), data(seed, *len)))
+            .collect()
+    }
+
+    fn write_files<'a>(root: &Path, files: impl IntoIterator<Item = &'a TestFile>) {
+        for (path, content) in files {
+            let full = root.join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(full, content).unwrap();
+        }
+    }
+
+    fn tempdir() -> tempfile::TempDir {
+        tempfile::TempDir::with_prefix("rqbit_create_torrent").unwrap()
+    }
+
+    fn folder_with(files: &[TestFile]) -> tempfile::TempDir {
+        let dir = tempdir();
+        write_files(dir.path(), files);
+        dir
+    }
+
+    async fn create(
+        path: &Path,
+        options: CreateTorrentOptions<'_>,
+    ) -> anyhow::Result<CreateTorrentResult> {
+        create_torrent(path, options, &BlockingSpawner::new(1)).await
+    }
+
+    async fn torrent_bytes(path: &Path, options: CreateTorrentOptions<'_>) -> Bytes {
+        create(path, options).await.unwrap().as_bytes().unwrap()
+    }
+
+    async fn error_of(path: &Path, options: CreateTorrentOptions<'_>) -> String {
+        format!("{:#}", create(path, options).await.unwrap_err())
+    }
+
+    fn options(version: TorrentVersion) -> CreateTorrentOptions<'static> {
+        CreateTorrentOptions {
+            version,
+            piece_length: Some(P),
+            ..Default::default()
+        }
+    }
+
+    fn components(path: &str) -> Vec<String> {
+        path.split('/').map(str::to_owned).collect()
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    fn text<B: AsRef<[u8]>>(b: Option<&B>) -> Option<&str> {
+        b.map(|b| std::str::from_utf8(b.as_ref()).unwrap())
+    }
+
+    /// Checks `torrent` against the content it was made of: it parses back with the same info
+    /// hashes and format, lists `files` in this order (padding files aside), and every piece
+    /// verifies against the data, and does not with a byte of it changed.
+    fn check(torrent: &CreateTorrentResult, version: TorrentVersion, files: &[TestFile]) {
+        let bytes = torrent.as_bytes().unwrap();
+        let parsed = torrent_from_bytes(&bytes).unwrap();
+        assert_eq!(parsed.info_hash, torrent.info_hash());
+        assert_eq!(parsed.info_hash_v2, torrent.info_hash_v2());
+        assert_eq!(torrent.info_hash_v2().is_some(), version.has_v2());
+        let info = parsed.validate_with_piece_layers().unwrap();
+        assert_eq!(info.version(), version);
+
+        let listed: Vec<(Vec<String>, u64)> = info
+            .iter_file_details()
+            .filter(|d| !d.attrs().padding)
+            .map(|d| (d.filename.to_vec(), d.len))
+            .collect();
+        let expected: Vec<(Vec<String>, u64)> = files
+            .iter()
+            .map(|(path, content)| (components(path), content.len() as u64))
+            .collect();
+        assert_eq!(listed, expected);
+
+        // The pieces as one stream of bytes: padding files, and in a v2 torrent the gap from
+        // the end of a file to the next piece boundary, read as zeros.
+        let content: HashMap<Vec<String>, &[u8]> = files
+            .iter()
+            .map(|(path, content)| (components(path), content.as_slice()))
+            .collect();
+        let mut stream = Vec::new();
+        for file in info.iter_file_details_ext() {
+            let start = usize::try_from(file.offset).unwrap();
+            let end = start + usize::try_from(file.details.len).unwrap();
+            if stream.len() < end {
+                stream.resize(end, 0);
+            }
+            if !file.details.attrs().padding {
+                stream[start..end].copy_from_slice(content[&file.details.filename.to_vec()]);
+            }
+        }
+        let lengths = info.lengths();
+        let mut pieces = 0;
+        for piece in lengths.iter_piece_infos() {
+            let index = piece.piece_index;
+            let start = usize::try_from(lengths.piece_offset(index)).unwrap();
+            let data = &stream[start..start + piece.len as usize];
+            let mut verifier = info.piece_verifier(index).expect("no hash for a piece");
+            assert_eq!(verifier.checks_v1(), version.has_v1());
+            assert_eq!(verifier.checks_v2(), version.has_v2());
+            verifier.update(data);
+            assert!(verifier.finish(), "piece {} does not verify", index.get());
+
+            // A piece starts with file data in every format.
+            let mut changed = data.to_vec();
+            changed[0] ^= 1;
+            let mut verifier = info.piece_verifier(index).unwrap();
+            verifier.update(&changed);
+            assert!(!verifier.finish(), "piece {} verifies changed", index.get());
+            pieces += 1;
+        }
+        assert_eq!(pieces, lengths.total_pieces());
+    }
+
+    /// The folders of the layout tests, with their files in torrent order.
+    fn folder_cases() -> Vec<(&'static str, Vec<TestFile>)> {
+        let many: Vec<(String, usize)> = (0..150)
+            .map(|i| (format!("many/{i:03}.txt"), (i * 37) % 900 + 1))
+            .collect();
+        vec![
+            (
+                "nested folders",
+                // "a/..." sorts before "a.b": paths are compared component by component.
+                files(&[
+                    ("a/b/c/deep.bin", 2 * PL + 5),
+                    ("a/x.bin", 700),
+                    ("a.b", 300),
+                    ("top.bin", PL + 1),
+                ]),
+            ),
+            (
+                "exact multiple of the piece length",
+                files(&[("exact.bin", 4 * PL), ("next.bin", 2 * PL)]),
+            ),
+            (
+                "smaller than a piece",
+                files(&[("big.bin", 3 * PL + 3), ("small.bin", 100)]),
+            ),
+            ("empty first", files(&[("a", 0), ("b", 1500), ("c", 1500)])),
+            ("empty middle", files(&[("a", 1500), ("b", 0), ("c", 1500)])),
+            ("empty last", files(&[("a", 1500), ("b", 1500), ("c", 0)])),
+            ("many small files", files(&many)),
+            (
+                "non-ASCII names",
+                // By UTF-8 bytes: 'B' < 'z' < 'Ü' (C3 9C) < 'ä' (C3 A4) < 'é' (C3 A9).
+                files(&[
+                    ("B.txt", 10),
+                    ("z.txt", 10),
+                    ("Ünïcødé/É 本.bin", 3000),
+                    ("ä.txt", 2 * PL),
+                    ("émoji 🎉.dat", 20_000),
+                ]),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_folder_layouts_in_every_format() {
+        for (case, files) in folder_cases() {
+            let dir = folder_with(&files);
+            for version in FORMATS {
+                eprintln!("{case}, {version:?}");
+                let torrent = create(dir.path(), options(version)).await.unwrap();
+                check(&torrent, version, &files);
+                assert_eq!(torrent.output_folder, dir.path());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_single_file_in_every_format() {
+        for len in [1, 5000, PL, 2 * PL, 3 * PL + 123] {
+            let dir = tempdir();
+            let path = dir.path().join("single.bin");
+            let content = data(len as u64, len);
+            std::fs::write(&path, &content).unwrap();
+            let files = vec![("single.bin".to_owned(), content)];
+            for version in FORMATS {
+                eprintln!("{len} bytes, {version:?}");
+                let torrent = create(&path, options(version)).await.unwrap();
+                check(&torrent, version, &files);
+                // `length` instead of a file list, so never padding.
+                let info = &torrent.meta.info.data;
+                assert!(info.files.is_none());
+                assert_eq!(info.length, version.has_v1().then_some(len as u64));
+                assert_eq!(torrent.output_folder, dir.path());
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_create_torrent() {
@@ -980,14 +1251,633 @@ mod tests {
             1000 * 1000,
             Some("rqbit_test_create_torrent"),
         );
-        let torrent = create_torrent(dir.path(), Default::default(), &BlockingSpawner::new(1))
-            .await
-            .unwrap();
-
+        let torrent = create(dir.path(), Default::default()).await.unwrap();
         let bytes = torrent.as_bytes().unwrap();
-
         let deserialized = torrent_from_bytes(&bytes).unwrap();
         assert_eq!(torrent.info_hash(), deserialized.info_hash);
+    }
+
+    #[tokio::test]
+    async fn test_output_is_deterministic() {
+        let files = files(&[
+            ("b/1", 3000),
+            ("a", 2 * PL + 1),
+            ("c/d/e", 1),
+            ("b/0", 0),
+            ("é", 5),
+        ]);
+        let forward = folder_with(&files);
+        let backward = tempdir();
+        write_files(backward.path(), files.iter().rev());
+        for version in FORMATS {
+            let options = || CreateTorrentOptions {
+                name: Some("same"),
+                ..options(version)
+            };
+            let first = torrent_bytes(forward.path(), options()).await;
+            assert_eq!(first, torrent_bytes(forward.path(), options()).await);
+            assert_eq!(first, torrent_bytes(backward.path(), options()).await);
+        }
+    }
+
+    #[test]
+    fn test_file_order_does_not_depend_on_the_listing_order() {
+        let expected = ["B", "a/a", "a/b", "a.b", "z", "Ü/x", "é"];
+        for rotation in 0..expected.len() {
+            for reverse in [false, true] {
+                let mut listing = expected.to_vec();
+                listing.rotate_left(rotation);
+                if reverse {
+                    listing.reverse();
+                }
+                let mut files: Vec<InputFile> = listing
+                    .iter()
+                    .map(|path| InputFile {
+                        path: PathBuf::from(path),
+                        components: components(path),
+                        len: 1,
+                    })
+                    .collect();
+                sort_files(&mut files);
+                let sorted: Vec<String> = files.iter().map(|f| f.components.join("/")).collect();
+                assert_eq!(sorted, expected);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fields_round_trip() {
+        let files = files(&[("a/one.bin", 2 * PL + 7), ("two.bin", 900)]);
+        let dir = folder_with(&files);
+        let name = dir.path().file_name().unwrap().to_str().unwrap().to_owned();
+        let t1 = "udp://t1.example:1337/announce";
+        let t2 = "http://t2.example/announce";
+        let t3 = "https://t3.example/announce";
+        let ws1 = "http://ws1.example/files/";
+        let ws2 = "https://ws2.example/x";
+        for version in FORMATS {
+            let torrent = create(
+                dir.path(),
+                CreateTorrentOptions {
+                    trackers: vec!["http://ignored.example/announce".to_owned()],
+                    tracker_tiers: vec![
+                        vec![t1.to_owned(), String::new(), t2.to_owned()],
+                        vec![],
+                        vec![t3.to_owned()],
+                    ],
+                    web_seeds: vec![ws1.to_owned(), format!(" {ws2} "), ws1.to_owned()],
+                    private: true,
+                    source: Some("SITE"),
+                    comment: Some("a comment"),
+                    created_by: Some("tester 1.0"),
+                    creation_date: Some(1_700_000_000),
+                    ..options(version)
+                },
+            )
+            .await
+            .unwrap();
+            check(&torrent, version, &files);
+
+            let bytes = torrent.as_bytes().unwrap();
+            let parsed = torrent_from_bytes(&bytes).unwrap();
+            assert_eq!(text(parsed.announce.as_ref()), Some(t1));
+            let tiers: Vec<Vec<&str>> = parsed
+                .announce_list
+                .iter()
+                .map(|tier| tier.iter().map(|url| text(Some(url)).unwrap()).collect())
+                .collect();
+            assert_eq!(tiers, [vec![t1, t2], vec![t3]]);
+            assert_eq!(parsed.url_list, [ws1, ws2]);
+            assert!(parsed.info.data.private);
+            assert!(contains(parsed.info.raw_bytes.as_ref(), b"7:privatei1e"));
+            assert_eq!(text(parsed.info.data.source.as_ref()), Some("SITE"));
+            assert_eq!(text(parsed.comment.as_ref()), Some("a comment"));
+            assert_eq!(text(parsed.created_by.as_ref()), Some("tester 1.0"));
+            assert_eq!(parsed.creation_date, Some(1_700_000_000));
+
+            let magnet = torrent.as_magnet().to_string();
+            assert_eq!(magnet.contains("xt=urn:btih:"), version.has_v1());
+            assert_eq!(magnet.contains("xt=urn:btmh:1220"), version.has_v2());
+            let magnet = Magnet::parse(&magnet).unwrap();
+            assert_eq!(
+                magnet.as_id20(),
+                version.has_v1().then_some(torrent.info_hash())
+            );
+            assert_eq!(magnet.as_id32(), torrent.info_hash_v2());
+            assert_eq!(magnet.trackers, [t1, t2, t3]);
+            assert_eq!(magnet.web_seeds, [ws1, ws2]);
+            // The magnet string has no `dn`, the `Magnet` has the name.
+            assert_eq!(magnet.name, None);
+            assert_eq!(torrent.as_magnet().name.as_deref(), Some(name.as_str()));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_private_and_source_change_the_info_hash() {
+        let dir = folder_with(&files(&[("a", 3000)]));
+        let hashes = |t: &CreateTorrentResult| (t.info_hash(), t.info_hash_v2());
+        for version in FORMATS {
+            let plain = create(dir.path(), options(version)).await.unwrap();
+            // Like libtorrent: no `private` key unless private, no `source` unless given.
+            let raw = plain.meta.info.raw_bytes.as_ref();
+            assert!(!contains(raw, b"7:private"));
+            assert!(!contains(raw, b"6:source"));
+            let private = CreateTorrentOptions {
+                private: true,
+                ..options(version)
+            };
+            let private = create(dir.path(), private).await.unwrap();
+            let source = CreateTorrentOptions {
+                source: Some("SITE"),
+                ..options(version)
+            };
+            let source = create(dir.path(), source).await.unwrap();
+            let empty_source = CreateTorrentOptions {
+                source: Some(""),
+                ..options(version)
+            };
+            let empty_source = create(dir.path(), empty_source).await.unwrap();
+            assert_ne!(plain.info_hash(), private.info_hash());
+            assert_ne!(plain.info_hash(), source.info_hash());
+            assert_ne!(private.info_hash(), source.info_hash());
+            if version.has_v2() {
+                assert_ne!(plain.info_hash_v2(), private.info_hash_v2());
+                assert_ne!(plain.info_hash_v2(), source.info_hash_v2());
+            }
+            assert_eq!(hashes(&plain), hashes(&empty_source));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_trackers_and_web_seeds_are_written_like_libtorrent() {
+        fn with(trackers: &[&str], web_seeds: &[&str]) -> CreateTorrentOptions<'static> {
+            CreateTorrentOptions {
+                trackers: trackers.iter().map(|t| t.to_string()).collect(),
+                web_seeds: web_seeds.iter().map(|t| t.to_string()).collect(),
+                ..Default::default()
+            }
+        }
+        fn bencoded(s: &str) -> String {
+            format!("{}:{s}", s.len())
+        }
+
+        let dir = folder_with(&files(&[("a", 100)]));
+        let a = "http://a.example/announce";
+        let b = "udp://b.example:80";
+        let w1 = "http://w1.example/files/";
+        let w2 = "https://w2.example/x";
+
+        let none = torrent_bytes(dir.path(), with(&[], &[])).await;
+        assert!(!contains(&none, b"8:announce"));
+        assert!(!contains(&none, b"13:announce-list"));
+        assert!(!contains(&none, b"8:url-list"));
+
+        // One tracker: `announce` only. One web seed: a string.
+        let one = torrent_bytes(dir.path(), with(&[a], &[w1])).await;
+        assert!(contains(
+            &one,
+            format!("8:announce{}", bencoded(a)).as_bytes()
+        ));
+        assert!(!contains(&one, b"13:announce-list"));
+        assert!(contains(
+            &one,
+            format!("8:url-list{}", bencoded(w1)).as_bytes()
+        ));
+
+        // Two: `announce` is the first, `announce-list` has both; the web seeds are a list.
+        let two = torrent_bytes(dir.path(), with(&[a, b], &[w1, w1, w2])).await;
+        let (a, b, w1, w2) = (bencoded(a), bencoded(b), bencoded(w1), bencoded(w2));
+        assert!(contains(&two, format!("8:announce{a}").as_bytes()));
+        assert!(contains(
+            &two,
+            format!("13:announce-listll{a}{b}ee").as_bytes()
+        ));
+        assert!(contains(&two, format!("8:url-listl{w1}{w2}e").as_bytes()));
+    }
+
+    #[tokio::test]
+    async fn test_default_options() {
+        let files = files(&[("a", 100_000), ("b/c", 5)]);
+        let dir = folder_with(&files);
+        let torrent = create(dir.path(), Default::default()).await.unwrap();
+        check(&torrent, TorrentVersion::V1, &files);
+        let meta = &torrent.meta;
+        let info = &meta.info.data;
+        assert_eq!(info.piece_length, 16 * 1024);
+        assert!(!info.private);
+        assert!(info.source.is_none());
+        assert!(info.meta_version.is_none());
+        assert!(info.file_tree.is_none());
+        assert!(meta.piece_layers.is_none());
+        assert_eq!(
+            text(meta.created_by.as_ref()),
+            Some(crate::client_name_and_version())
+        );
+        assert_eq!(text(meta.encoding.as_ref()), Some("utf-8"));
+        assert!(meta.announce.is_none());
+        assert!(meta.announce_list.is_empty());
+        assert!(meta.url_list.is_empty());
+        assert!(meta.comment.is_none());
+        assert!(meta.creation_date.is_none());
+
+        // An empty `created by` writes none.
+        let anonymous = CreateTorrentOptions {
+            created_by: Some(""),
+            ..Default::default()
+        };
+        let anonymous = create(dir.path(), anonymous).await.unwrap();
+        assert!(anonymous.meta.created_by.is_none());
+        assert_eq!(anonymous.info_hash(), torrent.info_hash());
+    }
+
+    #[test]
+    fn test_auto_piece_length_table() {
+        // The interop tests check that libtorrent picks the same for these sizes.
+        for &(total, expected) in AUTO_PIECE_LENGTHS {
+            assert_eq!(auto_piece_length(total), expected, "{total}");
+        }
+        assert_eq!(auto_piece_length(u64::MAX), 16 << 20);
+    }
+
+    #[test]
+    fn test_explicit_piece_lengths() {
+        for valid in [
+            MIN_PIECE_LENGTH,
+            32 << 10,
+            1 << 20,
+            16 << 20,
+            MAX_PIECE_LENGTH,
+        ] {
+            assert!(validate_piece_length(valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            0,
+            1,
+            1024,
+            8 << 10,
+            48 << 10,
+            3 << 20,
+            256 << 20,
+            1 << 31,
+            u32::MAX,
+        ] {
+            assert!(validate_piece_length(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_piece_length_option() {
+        let files = files(&[("a", 100), ("b", 3 * PL)]);
+        let dir = folder_with(&files);
+        for version in FORMATS {
+            let invalid = CreateTorrentOptions {
+                piece_length: Some(48 << 10),
+                ..options(version)
+            };
+            let error = error_of(dir.path(), invalid).await;
+            assert!(error.contains("invalid piece length"), "{error}");
+
+            let large = CreateTorrentOptions {
+                piece_length: Some(1 << 20),
+                ..options(version)
+            };
+            let torrent = create(dir.path(), large).await.unwrap();
+            assert_eq!(torrent.meta.info.data.piece_length, 1 << 20);
+            check(&torrent, version, &files);
+        }
+    }
+
+    #[test]
+    fn test_hybrid_padding_follows_libtorrent() {
+        use super::V1Entry::{File as F, Pad};
+
+        let p = u64::from(P);
+        let padded = |lengths: &[u64]| v1_entries(lengths.iter().copied(), P, true).unwrap();
+        // What libtorrent 2.1 writes for these layouts by default: padding after every
+        // non-empty file that does not end on a piece boundary, the last one too, none after
+        // empty files, none at all when there is one file.
+        assert_eq!(padded(&[1500, 0]), (vec![F(0), Pad(p - 1500), F(1)], p));
+        assert_eq!(padded(&[0, 1500]), (vec![F(0), F(1), Pad(p - 1500)], p));
+        assert_eq!(
+            padded(&[1500, 0, 1500]),
+            (vec![F(0), Pad(p - 1500), F(1), F(2), Pad(p - 1500)], 2 * p)
+        );
+        assert_eq!(
+            padded(&[0, 1500, 1500]),
+            (vec![F(0), F(1), Pad(p - 1500), F(2), Pad(p - 1500)], 2 * p)
+        );
+        assert_eq!(padded(&[0, 0, 5]), (vec![F(0), F(1), F(2), Pad(p - 5)], p));
+        assert_eq!(padded(&[1500, p]), (vec![F(0), Pad(p - 1500), F(1)], 2 * p));
+        assert_eq!(padded(&[p, 1500]), (vec![F(0), F(1), Pad(p - 1500)], 2 * p));
+        assert_eq!(padded(&[p, 2 * p]), (vec![F(0), F(1)], 3 * p));
+        assert_eq!(
+            padded(&[1500, 1500, 0, 0]),
+            (
+                vec![F(0), Pad(p - 1500), F(1), Pad(p - 1500), F(2), F(3)],
+                2 * p
+            )
+        );
+        assert_eq!(padded(&[3 * p + 1]), (vec![F(0)], 3 * p + 1));
+        // v1 torrents have none.
+        assert_eq!(
+            v1_entries([1500, 1500, 0], P, false).unwrap(),
+            (vec![F(0), F(1), F(2)], 3000)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_padding_files() {
+        let dir = folder_with(&files(&[("a", 1500), ("b", 0), ("c", 1500)]));
+        let torrent = create(dir.path(), options(TorrentVersion::Hybrid))
+            .await
+            .unwrap();
+        let listed: Vec<(String, u64, Option<&str>)> = torrent
+            .meta
+            .info
+            .data
+            .files
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                let path: Vec<&str> = f.path.iter().map(|c| text(Some(c)).unwrap()).collect();
+                (path.join("/"), f.length, text(f.attr.as_ref()))
+            })
+            .collect();
+        let pad = u64::from(P) - 1500;
+        let pad = (format!(".pad/{pad}"), pad, Some("p"));
+        assert_eq!(
+            listed,
+            [
+                ("a".to_owned(), 1500, None),
+                pad.clone(),
+                ("b".to_owned(), 0, None),
+                ("c".to_owned(), 1500, None),
+                pad,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_piece_layers() {
+        let same = data(9, 3 * PL + 10);
+        let files = vec![
+            ("copy1".to_owned(), same.clone()),
+            ("copy2".to_owned(), same),
+            ("one_piece".to_owned(), data(3, PL)),
+            ("small".to_owned(), data(4, 10)),
+        ];
+        let dir = folder_with(&files);
+        for version in [TorrentVersion::V2, TorrentVersion::Hybrid] {
+            let torrent = create(dir.path(), options(version)).await.unwrap();
+            check(&torrent, version, &files);
+            // Only files larger than a piece have a layer, and identical files share it.
+            let layers = &torrent.meta.piece_layers.as_ref().unwrap().0;
+            assert_eq!(layers.len(), 1);
+            assert_eq!(layers[0].1.as_ref().len(), 4 * 32);
+        }
+    }
+
+    /// Two files of a little more than 9 MiB each.
+    fn big_files() -> Vec<TestFile> {
+        vec![
+            ("a".to_owned(), vec![1; 9 << 20]),
+            ("b".to_owned(), vec![2; (9 << 20) + 1]),
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_progress_reaches_total_bytes() {
+        let dir = folder_with(&big_files());
+        let total = (18 << 20) + 1;
+        for version in FORMATS {
+            let reports = Arc::new(Mutex::new(Vec::new()));
+            let progress: CreateTorrentProgressCallback = {
+                let reports = reports.clone();
+                Arc::new(move |p: CreateTorrentProgress| reports.lock().unwrap().push(p))
+            };
+            // Hybrid: the padding is hashed but not counted.
+            let options = CreateTorrentOptions {
+                progress: Some(progress),
+                ..options(version)
+            };
+            create(dir.path(), options).await.unwrap();
+            let reports = reports.lock().unwrap().clone();
+            assert!(
+                reports.iter().all(|r| r.total_bytes == total),
+                "{reports:?}"
+            );
+            let hashed: Vec<u64> = reports.iter().map(|r| r.hashed_bytes).collect();
+            // At the start, every 8 MiB, at the end: not on every read.
+            assert_eq!(hashed.len(), 4, "{hashed:?}");
+            assert_eq!(hashed.first(), Some(&0));
+            assert_eq!(hashed.last(), Some(&total));
+            assert!(hashed.windows(2).all(|w| w[1] > w[0]), "{hashed:?}");
+            assert!(hashed[1] >= PROGRESS_STEP && hashed[2] - hashed[1] >= PROGRESS_STEP);
+        }
+    }
+
+    /// The files and folders under `dir` and their lengths.
+    fn listing(dir: &Path) -> Vec<(PathBuf, u64)> {
+        let mut out: Vec<(PathBuf, u64)> = walkdir::WalkDir::new(dir)
+            .into_iter()
+            .map(|e| {
+                let e = e.unwrap();
+                (e.path().to_owned(), e.metadata().unwrap().len())
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[tokio::test]
+    async fn test_cancel_while_hashing() {
+        let dir = folder_with(&big_files());
+        let before = listing(dir.path());
+        for version in FORMATS {
+            let cancel = CancellationToken::new();
+            let reports = Arc::new(Mutex::new(Vec::new()));
+            let progress: CreateTorrentProgressCallback = {
+                let reports = reports.clone();
+                let cancel = cancel.clone();
+                Arc::new(move |p: CreateTorrentProgress| {
+                    reports.lock().unwrap().push(p.hashed_bytes);
+                    if p.hashed_bytes > 0 {
+                        cancel.cancel();
+                    }
+                })
+            };
+            let options = CreateTorrentOptions {
+                progress: Some(progress),
+                cancel: Some(cancel),
+                ..options(version)
+            };
+            let err = create(dir.path(), options).await.unwrap_err();
+            assert!(err.is::<CreateTorrentCancelled>(), "{err:#}");
+            // It stopped at the next read: no further report, not even the final one.
+            let reports = reports.lock().unwrap().clone();
+            assert_eq!(reports.len(), 2, "{reports:?}");
+            assert!(reports[1] < (18 << 20) + 1, "{reports:?}");
+        }
+        // Nothing was written.
+        assert_eq!(listing(dir.path()), before);
+    }
+
+    #[tokio::test]
+    async fn test_cancelled_before_the_start() {
+        let dir = folder_with(&files(&[("a", 100)]));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let called = Arc::new(AtomicBool::new(false));
+        let progress: CreateTorrentProgressCallback = {
+            let called = called.clone();
+            Arc::new(move |_| called.store(true, Ordering::SeqCst))
+        };
+        let options = CreateTorrentOptions {
+            progress: Some(progress),
+            cancel: Some(cancel),
+            ..Default::default()
+        };
+        let err = create(dir.path(), options).await.unwrap_err();
+        assert!(err.is::<CreateTorrentCancelled>(), "{err:#}");
+        assert!(!called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_input() {
+        let dir = tempdir();
+        let missing = dir.path().join("missing");
+        let error = error_of(&missing, Default::default()).await;
+        assert!(error.contains("missing"), "{error}");
+        let empty = dir.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let error = error_of(&empty, Default::default()).await;
+        assert!(error.contains("no files"), "{error}");
+        let zeros = dir.path().join("zeros");
+        write_files(&zeros, &files(&[("a", 0), ("b/c", 0)]));
+        let error = error_of(&zeros, Default::default()).await;
+        assert!(error.contains("no data"), "{error}");
+
+        let ok = dir.path().join("ok");
+        write_files(&ok, &files(&[("a", 10)]));
+        fn web_seeds(urls: &[&str]) -> Vec<String> {
+            urls.iter().map(|u| u.to_string()).collect()
+        }
+        let too_many: Vec<String> = (0..=64).map(|i| format!("http://ws{i}.example/")).collect();
+        for (expected, options) in [
+            (
+                "invalid torrent name",
+                CreateTorrentOptions {
+                    name: Some(""),
+                    ..Default::default()
+                },
+            ),
+            (
+                "invalid torrent name",
+                CreateTorrentOptions {
+                    name: Some("a/b"),
+                    ..Default::default()
+                },
+            ),
+            (
+                "invalid web seed",
+                CreateTorrentOptions {
+                    web_seeds: web_seeds(&["ftp://example.com/x"]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "invalid web seed",
+                CreateTorrentOptions {
+                    web_seeds: web_seeds(&["/relative"]),
+                    ..Default::default()
+                },
+            ),
+            (
+                "too many web seeds",
+                CreateTorrentOptions {
+                    web_seeds: too_many,
+                    ..Default::default()
+                },
+            ),
+            (
+                "invalid creation date",
+                CreateTorrentOptions {
+                    creation_date: Some(-1),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let error = error_of(&ok, options).await;
+            assert!(error.contains(expected), "{expected}: {error}");
+        }
+
+        // 64 distinct web seeds are fine; duplicates do not count.
+        let mut many: Vec<String> = (0..64).map(|i| format!("http://ws{i}.example/")).collect();
+        many.push("http://ws0.example/".to_owned());
+        let options = CreateTorrentOptions {
+            web_seeds: many,
+            ..Default::default()
+        };
+        let torrent = create(&ok, options).await.unwrap();
+        assert_eq!(torrent.meta.url_list.len(), 64);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_symbolic_links() {
+        use std::os::unix::fs::symlink;
+
+        let real = data(1, 3000);
+        let dir = folder_with(&[("real.bin".to_owned(), real.clone())]);
+        let outside = folder_with(&files(&[("inner.bin", 10)]));
+        // A link to a file is followed, a link to a folder is not.
+        symlink(dir.path().join("real.bin"), dir.path().join("link.bin")).unwrap();
+        symlink(outside.path(), dir.path().join("folder_link")).unwrap();
+        let expected = vec![
+            ("link.bin".to_owned(), real.clone()),
+            ("real.bin".to_owned(), real),
+        ];
+        for version in FORMATS {
+            let torrent = create(dir.path(), options(version)).await.unwrap();
+            check(&torrent, version, &expected);
+        }
+
+        // A broken link is an error that names it.
+        symlink(dir.path().join("nowhere"), dir.path().join("broken")).unwrap();
+        let error = error_of(dir.path(), Default::default()).await;
+        assert!(error.contains("broken"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_unreadable_file_is_an_error_naming_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = folder_with(&files(&[("a", 10), ("secret.bin", 10)]));
+        let secret = dir.path().join("secret.bin");
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&secret).is_ok() {
+            // Running as root: permissions do not stop reads.
+            return;
+        }
+        let error = error_of(dir.path(), Default::default()).await;
+        assert!(error.contains("secret.bin"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_name_that_is_not_utf8_is_an_error() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = folder_with(&files(&[("a", 10)]));
+        let bad = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.bin"));
+        if std::fs::write(&bad, b"x").is_err() {
+            // Some file systems (APFS) refuse such names.
+            return;
+        }
+        let error = error_of(dir.path(), Default::default()).await;
+        assert!(error.contains("UTF-8"), "{error}");
     }
 
     async fn piece_count(files: &[(&str, usize)], piece_length: u32) -> usize {
@@ -995,13 +1885,12 @@ mod tests {
         for (name, len) in files {
             std::fs::write(dir.path().join(name), vec![7u8; *len]).unwrap();
         }
-        let torrent = create_torrent(
+        let torrent = create(
             dir.path(),
             CreateTorrentOptions {
                 piece_length: Some(piece_length),
                 ..Default::default()
             },
-            &BlockingSpawner::new(1),
         )
         .await
         .unwrap();
@@ -1017,22 +1906,17 @@ mod tests {
             / 20
     }
 
-    const P: usize = 16 * 1024;
-
     // libtorrent rejects a torrent that has more piece hashes than pieces.
     #[tokio::test]
     async fn test_content_ending_on_a_piece_boundary_has_no_extra_piece() {
-        assert_eq!(piece_count(&[("a", 4 * P)], P as u32).await, 4);
-        assert_eq!(piece_count(&[("a", 4 * P + 1)], P as u32).await, 5);
-        assert_eq!(piece_count(&[("a", 1)], P as u32).await, 1);
+        assert_eq!(piece_count(&[("a", 4 * PL)], P).await, 4);
+        assert_eq!(piece_count(&[("a", 4 * PL + 1)], P).await, 5);
+        assert_eq!(piece_count(&[("a", 1)], P).await, 1);
     }
 
     #[tokio::test]
     async fn test_empty_file_does_not_drop_the_last_piece() {
         // Whatever order the two files are read in, there are 1.5 pieces of data: two pieces.
-        assert_eq!(
-            piece_count(&[("a", P + P / 2), ("b", 0)], P as u32).await,
-            2
-        );
+        assert_eq!(piece_count(&[("a", PL + PL / 2), ("b", 0)], P).await, 2);
     }
 }

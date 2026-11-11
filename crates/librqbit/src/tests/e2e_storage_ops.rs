@@ -1,5 +1,6 @@
 //! End-to-end tests of the storage operations: `Session::force_recheck`,
-//! `AddTorrentOptions::skip_initial_check`, `Session::move_storage` and `Session::rename_file`.
+//! `AddTorrentOptions::skip_initial_check` (and `Session::create_and_serve_torrent`, which
+//! relies on it), `Session::move_storage` and `Session::rename_file`.
 //!
 //! They run real sessions on loopback. Torrents are built here, so that file layouts (nested
 //! directories, BEP 47 padding) and piece boundaries are known exactly. A storage wrapper
@@ -32,9 +33,9 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 
 use crate::{
-    AddTorrent, AddTorrentOptions, ConnectionOptions, ListenerOptions, ManagedTorrent,
-    ManagedTorrentShared, ManagedTorrentState, MoveStorageMode, Session, SessionOptions,
-    SessionPersistenceConfig, TorrentMetadata, TorrentStatsState,
+    AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
+    ManagedTorrent, ManagedTorrentShared, ManagedTorrentState, MoveStorageMode, Session,
+    SessionOptions, SessionPersistenceConfig, TorrentMetadata, TorrentStatsState,
     api::TorrentIdOrHash,
     limits::LimitsConfig,
     storage::{
@@ -468,6 +469,8 @@ struct SessionOpts {
     persistence: Option<PathBuf>,
     upload_bps: Option<u32>,
     download_bps: Option<u32>,
+    // The storage of the torrents added without one of their own.
+    default_storage: Option<BoxStorageFactory>,
 }
 
 async fn new_session(dir: &Path, o: SessionOpts) -> anyhow::Result<Arc<Session>> {
@@ -476,6 +479,7 @@ async fn new_session(dir: &Path, o: SessionOpts) -> anyhow::Result<Arc<Session>>
         dir.to_owned(),
         SessionOptions {
             dht: None,
+            default_storage_factory: o.default_storage,
             persistence: o.persistence.map(|folder| SessionPersistenceConfig::Json {
                 folder: Some(folder),
             }),
@@ -1794,6 +1798,126 @@ async fn test_operations_with_pause_and_unpause() -> anyhow::Result<()> {
         assert!(is_live(&handle), "{:?}", state(&handle));
         assert_eq!(have_pieces(&handle)?, content.all_pieces());
         Ok(())
+    })
+    .await
+}
+
+// ---------------------------------------------------------------------------------------------
+// Create and serve
+// ---------------------------------------------------------------------------------------------
+
+// A session that seeds with storage counting the reads in `ctl`.
+async fn counting_seeder_session(dir: &Path, ctl: &Arc<Ctl>) -> anyhow::Result<Arc<Session>> {
+    new_session(
+        dir,
+        SessionOpts {
+            listen: true,
+            default_storage: Some(InstrumentedFactory { ctl: ctl.clone() }.boxed()),
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+// Seeds `content` (with the torrent `create_and_serve_torrent` made) from `session`, checks
+// that a client downloads all of it, and that the seeder read the data for that: the counter
+// that stayed at zero before does count.
+async fn assert_served(
+    content: &Content,
+    session: Arc<Session>,
+    handle: ManagedTorrentHandle,
+    dir: TempDir,
+    ctl: &Ctl,
+) -> anyhow::Result<()> {
+    let seed = Seeder {
+        addr: session.listen_addr().context("no listen addr")?,
+        session,
+        handle,
+        dir,
+    };
+    let client = start_client(content, &seed, None, false).await?;
+    wait_completed(&client.handle).await?;
+    content.assert_at(&client.out(), &[])?;
+    assert!(ctl.read_bytes.load(Ordering::SeqCst) >= content.total_len as u64);
+    Ok(())
+}
+
+// A folder made into a torrent is seeded from where it is without reading the data again
+// (creating the torrent hashed it), and can be downloaded from at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_create_and_serve_folder_does_not_hash_again() -> anyhow::Result<()> {
+    run(async {
+        let content = Content::new(NESTED_FILES, false);
+        let dir = TempDir::with_prefix("rqbit_create_and_serve")?;
+        let folder = dir.path().join("folder");
+        content.write_to(&folder);
+        let ctl = Arc::new(Ctl::default());
+        let session = counting_seeder_session(dir.path(), &ctl).await?;
+        let (created, handle) = session
+            .create_and_serve_torrent(
+                &folder,
+                CreateTorrentOptions {
+                    piece_length: Some(PIECE_LEN as u32),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        wait_initialized(&handle).await?;
+        assert_eq!(handle.output_folder(), folder);
+        assert!(handle.stats().finished);
+        assert_eq!(have_pieces(&handle)?, content.all_pieces());
+        assert_eq!(ctl.read_bytes.load(Ordering::SeqCst), 0, "data was hashed");
+
+        let content = Content {
+            torrent: created.as_bytes()?,
+            ..content
+        };
+        assert_served(&content, session, handle, dir, &ctl).await
+    })
+    .await
+}
+
+// A single file given another name in the torrent is seeded from the file as it is named on
+// disk, without reading it again; the client stores it under the torrent's name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_create_and_serve_renamed_single_file() -> anyhow::Result<()> {
+    run(async {
+        let mut data = vec![0u8; 5 * PIECE_LEN / 2];
+        rand::fill(&mut data[..]);
+        let dir = TempDir::with_prefix("rqbit_create_and_serve_file")?;
+        let file = dir.path().join("on-disk.bin");
+        std::fs::write(&file, &data)?;
+        let ctl = Arc::new(Ctl::default());
+        let session = counting_seeder_session(dir.path(), &ctl).await?;
+        let (created, handle) = session
+            .create_and_serve_torrent(
+                &file,
+                CreateTorrentOptions {
+                    name: Some("in-torrent.bin"),
+                    piece_length: Some(PIECE_LEN as u32),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        wait_initialized(&handle).await?;
+        assert!(handle.stats().finished);
+        assert_eq!(have_pieces(&handle)?, vec![0, 1, 2]);
+        assert_eq!(ctl.read_bytes.load(Ordering::SeqCst), 0, "data was hashed");
+        // Nothing was renamed or copied on disk.
+        assert_eq!(std::fs::read(&file)?, data);
+        assert!(!dir.path().join("in-torrent.bin").exists());
+
+        let content = Content {
+            total_len: data.len(),
+            files: vec![TestFile {
+                index: 0,
+                path: "in-torrent.bin",
+                offset: 0,
+                data,
+            }],
+            torrent: created.as_bytes()?,
+        };
+        assert_served(&content, session, handle, dir, &ctl).await
     })
     .await
 }
