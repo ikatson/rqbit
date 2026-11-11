@@ -30,6 +30,23 @@ pub(crate) use runtime::{I2pRuntime, TrackerTransport};
 
 /// How the session reaches the I2P network: through the SAM v3 bridge of a local I2P router
 /// (I2P's own router or i2pd, with SAM enabled).
+///
+/// Supported:
+/// - SAM 3.1 `STREAM` sessions with a transient destination: a new one every time the session
+///   is (re)created, e.g. after the router restarted. The bridge is only contacted once a
+///   torrent needs I2P; torrents without I2P trackers never touch it.
+/// - Peer connections over I2P streams, both ways (incoming through `STREAM ACCEPT`).
+/// - HTTP trackers inside I2P (`http://….i2p/`, including `.b32.i2p`), announced to over an
+///   I2P stream; compact and dictionary peer lists.
+/// - Mixed mode ([`I2pOptions::mixed_mode`]): an I2P torrent also uses the clearnet.
+///
+/// Not supported: the I2P DHT, UDP trackers inside I2P (and any non-HTTP `.i2p` tracker),
+/// persistent destinations, PEX with I2P peers (the extended handshake doesn't offer it to
+/// them).
+///
+/// I2P peers are known to the rest of the client by synthetic addresses in the IPv6 discard
+/// prefix `0100::/64`. The peer limits and the peer stats see those addresses; IP filters
+/// (blocklist, allowlist) don't apply to them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct I2pOptions {
