@@ -535,6 +535,7 @@ export const MockAPI: RqbitAPI & { getVersion: () => Promise<string> } = {
         human_readable: `${uploadSpeed.toFixed(1)} MB/s`,
       },
       uptime_seconds: Math.floor(Date.now() / 1000) % 86400,
+      peer_connections: Math.floor(Math.random() * 400),
     };
   },
 

@@ -8,7 +8,10 @@ use librqbit_core::speed_estimator::SpeedEstimator;
 use snapshot::SessionStatsSnapshot;
 use tracing::debug_span;
 
-use crate::{Session, torrent_state::peers::stats::AggregatePeerStatsAtomic};
+use crate::{
+    Session, connection_limit::ConnectionLimit,
+    torrent_state::peers::stats::AggregatePeerStatsAtomic,
+};
 
 pub mod snapshot;
 
@@ -25,6 +28,9 @@ pub struct SessionStats {
     pub down_speed_estimator: SpeedEstimator,
     pub up_speed_estimator: SpeedEstimator,
     pub startup_time: Instant,
+    // The session-wide cap on connecting + connected peers; the stats report how much of it is
+    // in use. Unlimited until the session sets it.
+    pub(crate) peer_slots: Arc<ConnectionLimit>,
 }
 
 impl SessionStats {
@@ -35,6 +41,7 @@ impl SessionStats {
             down_speed_estimator: SpeedEstimator::new(5),
             up_speed_estimator: SpeedEstimator::new(5),
             startup_time: Instant::now(),
+            peer_slots: ConnectionLimit::new(None),
         }
     }
 }

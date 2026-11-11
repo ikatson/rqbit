@@ -16,6 +16,7 @@ use crate::{
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
+    connection_limit::{ConnectionLimit, PeerPermits},
     create_torrent,
     create_torrent_file::CreateTorrentResult,
     dht_utils::{ReadMetainfoResult, read_metainfo_from_peer_receiver},
@@ -64,7 +65,7 @@ use librqbit_core::{
 };
 use librqbit_lsd::{LocalServiceDiscovery, LocalServiceDiscoveryOptions};
 use librqbit_utp::BindDevice;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use peer_binary_protocol::Handshake;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -74,7 +75,22 @@ use tracker_comms::{TrackerComms, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
+/// How many peers a torrent may have connecting or connected at a time when neither the
+/// torrent nor the session sets a limit.
+pub const DEFAULT_PEER_LIMIT: usize = 128;
+
 pub type TorrentId = usize;
+
+// How long an incoming connection that has a torrent permit may queue for a session permit
+// before it is refused. Short: the peer waits for our handshake meanwhile.
+const INCOMING_SESSION_SLOT_WAIT: Duration = Duration::from_secs(3);
+
+// A checked incoming connection, with its permits if the limits let it in.
+type IncomingCheck = (
+    Arc<TorrentStateLive>,
+    CheckedIncomingConnection,
+    Option<PeerPermits>,
+);
 
 struct ParsedTorrentFile {
     meta: TorrentMetaV1Owned,
@@ -281,13 +297,17 @@ pub struct AddTorrentOptions {
     #[serde(default)]
     pub disable_trackers: bool,
 
+    /// The torrent's own rate limits, enforced in addition to the session ones. Can be changed
+    /// later with [`Session::set_torrent_ratelimits`].
     #[serde(default)]
     pub ratelimits: LimitsConfig,
 
     /// Initial peers to start of with.
     pub initial_peers: Option<Vec<SocketAddr>>,
 
-    /// Max concurrent connected peers.
+    /// Max concurrent connecting + connected peers of this torrent. `None`: the session's
+    /// default ([`SessionOptions::peer_limit`]). Can be changed later with
+    /// [`Session::set_torrent_peer_limit`].
     pub peer_limit: Option<usize>,
 
     /// This is used to restore the session from serialized state.
@@ -471,9 +491,16 @@ pub struct SessionOptions {
     // The list of tracker URLs to always use for each torrent.
     pub trackers: HashSet<url::Url>,
 
-    /// Default peer limit per torrent.
+    /// Default peer limit per torrent ([`DEFAULT_PEER_LIMIT`] if not set): how many peers each
+    /// torrent may have connecting or connected at a time. A torrent can override it, see
+    /// [`AddTorrentOptions::peer_limit`].
     pub peer_limit: Option<usize>,
 
+    /// How many peers all torrents of the session together may have connecting or connected at
+    /// a time, on top of each torrent's own limit. The connections that fetch the metadata of a
+    /// magnet link count as well. `None` (the default): no session-wide limit.
+    /// Can be changed later with [`Session::set_global_peer_limit`].
+    pub global_peer_limit: Option<usize>,
     #[cfg(feature = "disable-upload")]
     pub disable_upload: bool,
 
@@ -509,6 +536,7 @@ impl Default for SessionOptions {
             allowlist_url: None,
             trackers: HashSet::new(),
             peer_limit: None,
+            global_peer_limit: None,
             #[cfg(feature = "disable-upload")]
             disable_upload: false,
             disable_local_service_discovery: false,
@@ -802,7 +830,11 @@ impl Session {
                 reqwest_client,
                 connector: stream_connector,
                 root_span: opts.root_span,
-                stats: Arc::new(SessionStats::new()),
+                stats: {
+                    let stats = SessionStats::new();
+                    stats.peer_slots.set_limit(opts.global_peer_limit);
+                    Arc::new(stats)
+                },
                 concurrent_initialize_semaphore: Arc::new(tokio::sync::Semaphore::new(
                     opts.concurrent_init_limit.unwrap_or(3),
                 )),
@@ -914,7 +946,7 @@ impl Session {
         kind: ConnectionKind,
         mut reader: BoxAsyncReadVectored,
         writer: BoxAsyncWrite,
-    ) -> anyhow::Result<(Arc<TorrentStateLive>, CheckedIncomingConnection)> {
+    ) -> anyhow::Result<IncomingCheck> {
         let rwtimeout = self
             .peer_opts
             .read_write_timeout
@@ -961,6 +993,15 @@ impl Session {
             .await
             .with_context(|| format!("torrent {id} is not live, ignoring connection"))?;
 
+        // Waiting here rather than in the listener loop, which hands connections over one by one.
+        let options = &live.shared.options;
+        let permits = PeerPermits::acquire_incoming(
+            &options.peer_slots,
+            &options.session_peer_slots,
+            INCOMING_SESSION_SLOT_WAIT,
+        )
+        .await;
+
         Ok((
             live,
             CheckedIncomingConnection {
@@ -971,6 +1012,7 @@ impl Session {
                 handshake: h,
                 read_buf,
             },
+            permits,
         ))
     }
 
@@ -1009,9 +1051,9 @@ impl Session {
                         }
                     }
                 },
-                Some(Ok((live, checked))) = futs.next(), if !futs.is_empty() => {
+                Some(Ok((live, checked, permits))) = futs.next(), if !futs.is_empty() => {
                     let (addr, kind) = (checked.addr, checked.kind);
-                    if let Err(e) = live.add_incoming_peer(checked) {
+                    if let Err(e) = live.add_incoming_peer(checked, permits) {
                         warn!(?addr, ?kind, "error handing over incoming connection: {e:#}");
                     }
                 },
@@ -1357,6 +1399,7 @@ impl Session {
             let span = debug_span!(parent: self.rs(), "torrent", id);
             let peer_opts = self.merge_peer_opts(opts.peer_opts);
             let metadata = Arc::new(metadata);
+            let default_peer_limit = self.peer_limit.unwrap_or(DEFAULT_PEER_LIMIT);
             let minfo = Arc::new(ManagedTorrentShared {
                 id,
                 span,
@@ -1372,9 +1415,14 @@ impl Session {
                     peer_max_request_window: peer_opts.max_request_window,
                     allow_overwrite: opts.overwrite,
                     output_folder,
-                    ratelimits: opts.ratelimits,
+                    ratelimits: Limits::new(opts.ratelimits),
                     initial_peers: opts.initial_peers.clone().unwrap_or_default(),
-                    peer_limit: opts.peer_limit.or(self.peer_limit),
+                    peer_limit: Mutex::new(opts.peer_limit),
+                    default_peer_limit,
+                    peer_slots: ConnectionLimit::new(Some(
+                        opts.peer_limit.unwrap_or(default_peer_limit),
+                    )),
+                    session_peer_slots: self.stats.peer_slots.clone(),
                     #[cfg(feature = "disable-upload")]
                     _disable_upload: self._disable_upload,
                 },
@@ -1644,6 +1692,53 @@ impl Session {
         Ok(())
     }
 
+    /// Change a torrent's own upload and download rate limits (`None`: unlimited), in any state.
+    /// A live torrent applies them at once, also to the transfers already waiting for the old
+    /// rate. They are kept across pause / resume and persisted. The session limits
+    /// ([`Session::ratelimits`]) keep applying on top of them.
+    pub async fn set_torrent_ratelimits(
+        &self,
+        handle: &ManagedTorrentHandle,
+        limits: LimitsConfig,
+    ) -> anyhow::Result<()> {
+        handle.set_ratelimits(limits);
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    /// Change a torrent's own limit on connecting + connected peers (`None`: the session's
+    /// default, [`SessionOptions::peer_limit`]), in any state. It is kept across pause / resume
+    /// and persisted; the session-wide limit applies on top of it.
+    ///
+    /// Raising it lets the torrent connect to more peers at once. Lowering it below the number
+    /// of peers the torrent has disconnects nobody: no new connection is made (incoming ones are
+    /// refused) until enough of the existing ones have ended.
+    pub async fn set_torrent_peer_limit(
+        &self,
+        handle: &ManagedTorrentHandle,
+        limit: Option<usize>,
+    ) -> anyhow::Result<()> {
+        handle.set_peer_limit(limit);
+        self.try_update_persistence_metadata(handle).await;
+        Ok(())
+    }
+
+    /// The limit on connecting + connected peers over all torrents of the session. `None`: no
+    /// session-wide limit.
+    pub fn global_peer_limit(&self) -> Option<usize> {
+        self.stats.peer_slots.limit()
+    }
+
+    /// Change the limit on connecting + connected peers over all torrents of the session
+    /// (`None`: no session-wide limit). Each torrent's own limit keeps applying.
+    ///
+    /// Raising it lets the waiting torrents connect at once. Lowering it below the number of
+    /// peers the session has disconnects nobody: no new connection is made (incoming ones are
+    /// refused) until enough of the existing ones have ended.
+    pub fn set_global_peer_limit(&self, limit: Option<usize>) {
+        self.stats.peer_slots.set_limit(limit);
+    }
+
     pub fn listen_addr(&self) -> Option<SocketAddr> {
         self.listen_addr
     }
@@ -1667,6 +1762,7 @@ impl Session {
             Some(self.merge_peer_opts(peer_opts)),
             self.connector.clone(),
             self.client_name_and_version.clone(),
+            self.stats.peer_slots.clone(),
         )
         .await
         {
