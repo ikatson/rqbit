@@ -1,20 +1,33 @@
 use anyhow::{Context, bail};
 use bstr::BStr;
-use futures::{StreamExt, TryFutureExt, stream::FuturesUnordered};
 use librqbit_dualstack_sockets::{BindDevice, UdpSocket};
-use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+use network_interface::NetworkInterface;
 use reqwest::Client;
 use serde_derive::Deserialize;
 use std::{
-    collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
     time::Duration,
 };
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tracing::{Instrument, Span, debug, debug_span, trace, warn};
+use tokio::sync::mpsc::UnboundedSender;
+use tracing::{Span, debug, debug_span, trace, warn};
 use url::Url;
 
-const SERVICE_TYPE_WAN_IP_CONNECTION: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
+mod gateway;
+mod igd;
+mod mapper;
+#[cfg(test)]
+mod mapper_tests;
+mod natpmp;
+mod pcp;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
+mod transport;
+
+pub use mapper::{
+    NATPMP_PCP_PORT, PortMapper, PortMappingMethod, PortMappingMethods, PortMappingOptions,
+    PortMappingProtocol, PortMappingState, PortMappingStatus,
+};
+
 const SSDP_MULTICAST_IP: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(239, 255, 255, 250), 1900));
 pub const SSDP_SEARCH_WAN_IPCONNECTION_ST: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
@@ -75,64 +88,6 @@ pub fn get_local_ip_relative_to(
         }
     }
     bail!("couldn't find a local ip address")
-}
-
-async fn forward_port(
-    control_url: Url,
-    local_ip: IpAddr,
-    port: u16,
-    lease_duration: Duration,
-) -> anyhow::Result<()> {
-    let request_body = format!(
-        r#"
-        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
-            s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-            <s:Body>
-                <u:AddPortMapping xmlns:u="{SERVICE_TYPE_WAN_IP_CONNECTION}">
-                    <NewRemoteHost></NewRemoteHost>
-                    <NewExternalPort>{port}</NewExternalPort>
-                    <NewProtocol>TCP</NewProtocol>
-                    <NewInternalPort>{port}</NewInternalPort>
-                    <NewInternalClient>{local_ip}</NewInternalClient>
-                    <NewEnabled>1</NewEnabled>
-                    <NewPortMappingDescription>rust UPnP</NewPortMappingDescription>
-                    <NewLeaseDuration>{}</NewLeaseDuration>
-                </u:AddPortMapping>
-            </s:Body>
-        </s:Envelope>
-    "#,
-        lease_duration.as_secs()
-    );
-
-    let url = control_url;
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url.clone())
-        .header("Content-Type", "text/xml")
-        .header(
-            "SOAPAction",
-            format!("\"{SERVICE_TYPE_WAN_IP_CONNECTION}#AddPortMapping\""),
-        )
-        .body(request_body)
-        .send()
-        .await
-        .context("error sending")?;
-
-    let status = response.status();
-
-    let response_text = response
-        .text()
-        .await
-        .context("error reading response text")?;
-
-    trace!(status = %status, text=response_text, "AddPortMapping response");
-    if !status.is_success() {
-        bail!("failed port forwarding: {}", status);
-    } else {
-        debug!(%local_ip, port, "successfully port forwarded");
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -214,62 +169,24 @@ impl Service {
 }
 
 #[derive(Debug)]
-struct UpnpEndpoint {
-    discover_response: UpnpDiscoverResponse,
-    data: RootDesc,
-    nics: Vec<NetworkInterface>,
-}
-
-impl UpnpEndpoint {
-    fn location(&self) -> &Url {
-        &self.discover_response.location
-    }
-
-    fn span(&self) -> tracing::Span {
-        debug_span!("upnp_endpoint", location = %self.location())
-    }
-
-    fn iter_services(&self) -> impl Iterator<Item = (tracing::Span, &Service)> + '_ {
-        let self_span = self.span();
-        self.data
-            .devices
-            .iter()
-            .flat_map(move |d| d.iter_services(self_span.clone()))
-    }
-
-    fn my_local_ip(&self) -> anyhow::Result<IpAddr> {
-        let received_from = self.discover_response.received_from;
-        let local_ip = get_local_ip_relative_to(received_from, &self.nics)
-            .with_context(|| format!("can't determine local IP relative to {received_from}"))?;
-        Ok(local_ip)
-    }
-
-    fn get_wan_ip_control_urls(&self) -> impl Iterator<Item = (tracing::Span, Url)> + '_ {
-        self.iter_services()
-            .filter(|(_, s)| s.service_type == SERVICE_TYPE_WAN_IP_CONNECTION)
-            .map(|(span, s)| (span, self.discover_response.location.join(&s.control_url)))
-            .filter_map(|(span, url)| match url {
-                Ok(url) => Some((span, url)),
-                Err(e) => {
-                    debug!("bad control url: {e:#}");
-                    None
-                }
-            })
-    }
-}
-
-#[derive(Debug)]
 pub struct UpnpDiscoverResponse {
     pub received_from: SocketAddr,
     pub location: Url,
 }
 
 pub async fn discover_services(location: Url) -> anyhow::Result<RootDesc> {
-    let response = Client::new()
+    fetch_root_desc(&Client::new(), &location).await
+}
+
+/// Downloads and parses the device description at `location`.
+pub(crate) async fn fetch_root_desc(client: &Client, location: &Url) -> anyhow::Result<RootDesc> {
+    let response = client
         .get(location.clone())
         .send()
         .await
         .context("failed to send GET request")?
+        .error_for_status()
+        .context("device description request failed")?
         .text()
         .await
         .context("failed to read response body")?;
@@ -366,6 +283,7 @@ pub async fn discover_once(
     Ok(())
 }
 
+/// Settings of [`UpnpPortForwarder`].
 pub struct UpnpPortForwarderOptions {
     pub lease_duration: Duration,
     pub discover_interval: Duration,
@@ -382,10 +300,10 @@ impl Default for UpnpPortForwarderOptions {
     }
 }
 
+/// Maps TCP ports with UPnP for as long as it runs. A [`PortMapper`] limited to UPnP and TCP;
+/// use [`PortMapper`] directly for UDP, NAT-PMP / PCP, status and deletion on shutdown.
 pub struct UpnpPortForwarder {
-    ports: Vec<u16>,
-    opts: UpnpPortForwarderOptions,
-    bind_device: Option<BindDevice>,
+    mapper: PortMapper,
 }
 
 impl UpnpPortForwarder {
@@ -397,127 +315,34 @@ impl UpnpPortForwarder {
         if ports.is_empty() {
             bail!("empty ports")
         }
-        Ok(Self {
-            ports,
-            opts: opts.unwrap_or_default(),
+        let opts = opts.unwrap_or_default();
+        let mapper = PortMapper::new(
+            ports.into_iter().map(|p| (PortMappingProtocol::Tcp, p)),
+            PortMappingMethods {
+                upnp: true,
+                natpmp: false,
+            },
+            PortMappingOptions {
+                lease_duration: opts.lease_duration,
+                discover_interval: opts.discover_interval,
+                discover_timeout: opts.discover_timeout,
+                ..Default::default()
+            },
             bind_device,
-        })
+        );
+        Ok(Self { mapper })
     }
 
-    async fn parse_endpoint(
-        &self,
-        discover_response: UpnpDiscoverResponse,
-    ) -> anyhow::Result<UpnpEndpoint> {
-        let services = discover_services(discover_response.location.clone()).await?;
-        let nics = network_interface::NetworkInterface::show()
-            .context("error listing network interfaces")?;
-        Ok(UpnpEndpoint {
-            discover_response,
-            data: services,
-            nics,
-        })
-    }
-
-    async fn discover_once(
-        &self,
-        tx: &UnboundedSender<UpnpDiscoverResponse>,
-    ) -> anyhow::Result<()> {
-        discover_once(
-            tx,
-            SSDP_SEARCH_WAN_IPCONNECTION_ST,
-            self.opts.discover_timeout,
-            self.bind_device.as_ref(),
-        )
-        .await
-    }
-
-    async fn discovery(&self, tx: UnboundedSender<UpnpDiscoverResponse>) -> anyhow::Result<()> {
-        let mut discover_interval = tokio::time::interval(self.opts.discover_interval);
-        discover_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        loop {
-            discover_interval.tick().await;
-            if let Err(e) = self.discover_once(&tx).await {
-                warn!("failed to run SSDP/UPNP discovery: {e:#}");
-            }
-        }
-    }
-
-    async fn manage_port(&self, control_url: Url, local_ip: IpAddr, port: u16) -> ! {
-        let lease_duration = self.opts.lease_duration;
-        let mut interval = tokio::time::interval(lease_duration / 2);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = forward_port(control_url.clone(), local_ip, port, lease_duration).await
-            {
-                warn!("failed to forward port: {e:#}");
-            }
-        }
-    }
-
-    async fn manage_service(&self, control_url: Url, local_ip: IpAddr) -> anyhow::Result<()> {
-        futures::future::join_all(self.ports.iter().cloned().map(|port| {
-            self.manage_port(control_url.clone(), local_ip, port)
-                .instrument(debug_span!("manage_port", port = port))
-        }))
-        .await;
-        Ok(())
+    /// The mapper behind this forwarder, to read its status.
+    pub fn mapper(&self) -> &PortMapper {
+        &self.mapper
     }
 
     pub async fn run_forever(self) -> ! {
-        let (discover_tx, mut discover_rx) = unbounded_channel();
-        let discovery = self.discovery(discover_tx);
-
-        let mut spawned_tasks = HashSet::<Url>::new();
-
-        let mut endpoints = FuturesUnordered::new();
-        let mut service_managers = FuturesUnordered::new();
-
-        tokio::pin!(discovery);
-
+        self.mapper.run(std::future::pending()).await;
+        // `run` returns only once its shutdown future resolves, and this one never does.
         loop {
-            tokio::select! {
-                _ = &mut discovery => {},
-                r = discover_rx.recv() => {
-                    let r = r.unwrap();
-                    let location = r.location.clone();
-                    endpoints.push(self.parse_endpoint(r).map_err(|e| {
-                        debug!("error parsing endpoint: {e:#}");
-                        e
-                    }).instrument(debug_span!("parse endpoint", location=location.to_string())));
-                },
-                Some(Ok(endpoint)) = endpoints.next(), if !endpoints.is_empty() => {
-                    let mut local_ip = None;
-                    for (span, control_url) in endpoint.get_wan_ip_control_urls() {
-                        if spawned_tasks.contains(&control_url) {
-                            debug!("already spawned for {}", control_url);
-                            continue;
-                        }
-                        let ip = match local_ip {
-                            Some(ip) => ip,
-                            None => {
-                                match endpoint.my_local_ip() {
-                                    Ok(ip) => {
-                                        local_ip = Some(ip);
-                                        ip
-                                    },
-                                    Err(e) => {
-                                        warn!("failed to determine local IP for endpoint at {}: {:#}", endpoint.location(), e);
-                                        break;
-                                    }
-                                }
-                            }
-                        };
-                        spawned_tasks.insert(control_url.clone());
-                        service_managers.push(self.manage_service(control_url, ip).instrument(span))
-                    }
-                },
-                _ = service_managers.next(), if !service_managers.is_empty() => {
-
-                },
-            }
+            std::future::pending::<()>().await;
         }
     }
 }
