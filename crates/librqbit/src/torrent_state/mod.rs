@@ -42,6 +42,7 @@ use crate::choker::UploadSlots;
 use crate::chunk_tracker::ChunkTracker;
 use crate::file_info::FileInfo;
 use crate::limits::LimitsConfig;
+use crate::piece_picker::PiecePicking;
 use crate::session::TorrentId;
 use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
@@ -106,6 +107,8 @@ pub(crate) struct ManagedTorrentLocked {
     pub(crate) paused: bool,
     pub(crate) state: ManagedTorrentState,
     pub(crate) only_files: Option<Vec<usize>>,
+    // Kept here, not in the live state, so it survives pause / resume.
+    pub(crate) piece_picking: PiecePicking,
 }
 
 #[derive(Default)]
@@ -258,6 +261,21 @@ impl ManagedTorrent {
 
     pub fn only_files(&self) -> Option<Vec<usize>> {
         self.locked.read().only_files.clone()
+    }
+
+    /// How the torrent orders the pieces it downloads.
+    pub fn piece_picking(&self) -> PiecePicking {
+        self.locked.read().piece_picking
+    }
+
+    /// Change how the torrent orders the pieces it downloads, in any state. Applies to the
+    /// pieces requested from now on.
+    pub fn set_piece_picking(&self, piece_picking: PiecePicking) {
+        let mut g = self.locked.write();
+        g.piece_picking = piece_picking;
+        if let ManagedTorrentState::Live(live) = &g.state {
+            live.set_piece_picking(piece_picking);
+        }
     }
 
     pub fn with_state<R>(&self, f: impl FnOnce(&ManagedTorrentState) -> R) -> R {
@@ -424,7 +442,15 @@ impl ManagedTorrent {
                     }
                     let paused = g.state.take().assert_paused();
                     let (tx, rx) = tokio::sync::oneshot::channel();
-                    let live = TorrentStateLive::new(paused, tx, token.clone())?;
+                    let only_files: Option<HashSet<usize>> =
+                        g.only_files.as_ref().map(|f| f.iter().copied().collect());
+                    let live = TorrentStateLive::new(
+                        paused,
+                        g.piece_picking,
+                        only_files.as_ref(),
+                        tx,
+                        token.clone(),
+                    )?;
                     g.state = ManagedTorrentState::Live(live.clone());
                     t.state_change_notify.notify_waiters();
 

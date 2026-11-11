@@ -66,6 +66,7 @@ mod merge_streams;
 mod peer_connection;
 mod peer_info_reader;
 mod peer_policy;
+mod piece_picker;
 mod piece_tracker;
 mod read_buf;
 mod session;
@@ -97,6 +98,7 @@ pub use librqbit_core::spawn_utils::spawn as librqbit_spawn;
 pub use listen::{ListenerMode, ListenerOptions};
 pub use peer_connection::PeerConnectionOptions;
 pub use peer_policy::{DEFAULT_THROTTLED_UPLOAD_BPS, PeerCtx, PeerEvent, PeerPolicy, PeerVerdict};
+pub use piece_picker::PiecePicking;
 pub use session::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListOnlyResponse,
     SUPPORTED_SCHEMES, Session, SessionOptions, SessionPersistenceConfig,

@@ -95,12 +95,13 @@ use crate::{
         WriterRequest,
     },
     peer_policy::{PeerEvent, PeerPolicyBinding, PeerVerdict, canonical_ip},
+    piece_picker::{PieceAvailability, PiecePicker, PiecePicking},
     piece_tracker::{AcquireRequest, AcquireResult, PieceTracker},
     session::CheckedIncomingConnection,
     session_stats::SessionStats,
     stream_connect::ConnectionKind,
     torrent_state::{peer::Peer, utils::atomic_inc},
-    type_aliases::{BF, BS, FilePriorities, FileStorage, PeerHandle},
+    type_aliases::{BF, BS, FileStorage, PeerHandle},
     upload_gate::{
         MAX_QUEUED_THROTTLED_UPLOADS_PER_PEER, MAX_QUEUED_UPLOADS_PER_PEER, Registered, UploadGate,
         UploadRequest, block_key,
@@ -135,8 +136,8 @@ pub(crate) struct TorrentStateLocked {
     // If this is None, the torrent was paused, and this live state is useless, and needs to be dropped.
     pub(crate) pieces: Option<PieceTracker>,
 
-    // The sorted file list in which order to download them.
-    file_priorities: FilePriorities,
+    // Orders the queue: rarest first, sequential, first and last pieces first.
+    picker: PiecePicker,
 
     // If this is None, then it was already used
     fatal_errors_tx: Option<tokio::sync::oneshot::Sender<anyhow::Error>>,
@@ -243,6 +244,8 @@ impl TorrentStateLive {
 
     pub(crate) fn new(
         paused: TorrentStatePaused,
+        piece_picking: PiecePicking,
+        only_files: Option<&HashSet<usize>>,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<Arc<Self>> {
@@ -261,19 +264,12 @@ impl TorrentStateLive {
         let selection_complete =
             Arc::new(AtomicBool::new(paused.chunk_tracker.get_hns().finished()));
 
-        // TODO: make it configurable
-        let file_priorities = {
-            let mut pri = (0..paused.metadata.file_infos.len()).collect::<Vec<usize>>();
-            // sort by filename, cause many torrents have random sort order.
-            pri.sort_unstable_by_key(|id| {
-                paused
-                    .metadata
-                    .file_infos
-                    .get(*id)
-                    .map(|fi| fi.relative_filename.as_path())
-            });
-            pri
-        };
+        let picker = PiecePicker::new(
+            piece_picking,
+            lengths,
+            &paused.metadata.file_infos,
+            only_files,
+        );
 
         let (have_broadcast_tx, _) = tokio::sync::broadcast::channel(128);
 
@@ -294,11 +290,12 @@ impl TorrentStateLive {
                 session_stats: session_stats.peers.clone(),
                 stats: Default::default(),
                 states: Default::default(),
+                availability: PieceAvailability::new(lengths.total_pieces()),
                 live_outgoing_peers: Default::default(),
             },
             _locked: RwLock::new(TorrentStateLocked {
                 pieces: Some(PieceTracker::new(paused.chunk_tracker)),
-                file_priorities,
+                picker,
                 fatal_errors_tx: Some(fatal_errors_tx),
                 unflushed_bitv_bytes: 0,
             }),
@@ -971,6 +968,8 @@ impl TorrentStateLive {
                 .update_only_files(&self.metadata.file_infos, only_files)?;
             self.selection_complete
                 .store(hns.finished(), Ordering::Release);
+            g.picker
+                .update_only_files(&self.metadata.file_infos, Some(only_files));
             hns
         };
         // With the state lock released. A dying peer holds its shard of the peer table
@@ -980,6 +979,13 @@ impl TorrentStateLive {
             self.reconnect_all_not_needed_peers();
         }
         Ok(())
+    }
+
+    /// Change how the next pieces are picked. Pieces already in flight are not affected.
+    pub(crate) fn set_piece_picking(&self, piece_picking: PiecePicking) {
+        self.lock_write("set_piece_picking")
+            .picker
+            .set_options(piece_picking);
     }
 
     // If we have all selected pieces but not necessarily all pieces.
@@ -1782,11 +1788,7 @@ impl PeerHandler {
 
                 let bf = &live.bitfield;
                 // Extract references to disjoint fields
-                let TorrentStateLocked {
-                    pieces,
-                    file_priorities,
-                    ..
-                } = &mut **g;
+                let TorrentStateLocked { pieces, picker, .. } = &mut **g;
                 let pieces = pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)?;
                 // A piece that went to another peer (stolen) while it waited to be given back is
                 // not ours to give back any more: our requests for it were cancelled, so their
@@ -1831,8 +1833,8 @@ impl PeerHandler {
                     peer: self.addr,
                     peer_avg_time: self.counters.average_piece_download_time(),
                     priority_pieces,
-                    file_priorities,
-                    file_infos: &self.state.metadata.file_infos,
+                    picker,
+                    availability: &self.state.peers.availability,
                     peer_has_piece,
                     can_steal: |p| {
                         self.state.per_piece_locks[p.get_usize()]
@@ -2027,8 +2029,8 @@ impl PeerHandler {
                 if live.bitfield.is_empty() {
                     live.bitfield = make_piece_bitfield(&self.state.lengths);
                 }
-                match live.bitfield.get_mut(have as usize) {
-                    Some(mut v) => *v = true,
+                let newly_had = match live.bitfield.get_mut(have as usize) {
+                    Some(mut v) => !v.replace(true),
                     None => {
                         warn!(
                             id = self.state.shared.id,
@@ -2040,6 +2042,9 @@ impl PeerHandler {
                         return;
                     }
                 };
+                if newly_had {
+                    self.state.peers.on_new_peer_piece(live, have as usize);
+                }
                 trace!("updated bitfield with have={}", have);
                 self.state
                     .peers

@@ -6,6 +6,7 @@ mod e2e_fast;
 mod e2e_have;
 mod e2e_padded_files;
 mod e2e_peer_policy;
+mod e2e_piece_picking;
 mod e2e_stream;
 mod fake_peer;
 mod interop;

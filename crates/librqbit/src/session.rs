@@ -13,7 +13,8 @@ use std::{
 };
 
 use crate::{
-    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared, UploadSlots,
+    ApiError, CreateTorrentOptions, FileInfos, ManagedTorrent, ManagedTorrentShared, PiecePicking,
+    UploadSlots,
     api::TorrentIdOrHash,
     api_error::WithStatus,
     bitv_factory::{BitVFactory, NonPersistentBitVFactory},
@@ -303,6 +304,11 @@ pub struct AddTorrentOptions {
 
     // Custom trackers
     pub trackers: Option<Vec<String>>,
+
+    /// How pieces are ordered: rarest first (default), sequential, first and last pieces first.
+    /// Can be changed later with [`Session::set_piece_picking`].
+    #[serde(default)]
+    pub piece_picking: PiecePicking,
 }
 
 pub struct ListOnlyResponse {
@@ -1434,6 +1440,7 @@ impl Session {
                     paused: opts.paused,
                     state: ManagedTorrentState::Initializing(initializing),
                     only_files,
+                    piece_picking: opts.piece_picking,
                 }),
                 state_change_notify: Notify::new(),
                 shared: minfo,
@@ -1679,6 +1686,16 @@ impl Session {
         handle.update_only_files(only_files)?;
         self.try_update_persistence_metadata(handle).await;
         Ok(())
+    }
+
+    /// Change how a torrent orders the pieces it downloads, in any state.
+    pub async fn set_piece_picking(
+        self: &Arc<Self>,
+        handle: &ManagedTorrentHandle,
+        piece_picking: PiecePicking,
+    ) {
+        handle.set_piece_picking(piece_picking);
+        self.try_update_persistence_metadata(handle).await;
     }
 
     pub fn listen_addr(&self) -> Option<SocketAddr> {
