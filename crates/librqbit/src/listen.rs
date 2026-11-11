@@ -134,9 +134,7 @@ impl ListenerOptions {
                         listen_addr = sock.bind_addr();
                         Some(sock)
                     }
-                    Err(e)
-                        if may_pick_again && picks < MAX_PORT_PICKS && is_addr_in_use(&e) =>
-                    {
+                    Err(e) if may_pick_again && picks < MAX_PORT_PICKS && is_addr_in_use(&e) => {
                         debug!("UDP {listen_addr:?} is taken, picking another port");
                         picks += 1;
                         continue;
