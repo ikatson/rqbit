@@ -136,10 +136,11 @@ fn is_public_address(ip: IpAddr) -> bool {
     }
 }
 
-/// The network a voter belongs to: its /24 (IPv4) or /48 (IPv6). Several nodes in one network
-/// count as one vote, so that a single party cannot outvote the rest of the DHT cheaply. IPv6
-/// end sites usually get a /48, so anything narrower would let one site vote many times.
-fn voter_network(ip: IpAddr) -> [u8; 8] {
+/// The network an address belongs to: its /24 (IPv4) or /48 (IPv6). Several nodes in one
+/// network count as one vote, so that a single party cannot outvote the rest of the DHT cheaply;
+/// the BEP 44 store shares itself out by the same networks. IPv6 end sites usually get a /48,
+/// so anything narrower would let one site count many times.
+pub(crate) fn voter_network(ip: IpAddr) -> [u8; 8] {
     let mut key = [0u8; 8];
     match ip.to_canonical() {
         IpAddr::V4(ip) => {

@@ -13,7 +13,7 @@ use std::{
 use crate::{
     Error, INACTIVITY_TIMEOUT, REQUERY_INTERVAL, RESPONSE_TIMEOUT,
     bep42::{self, ExternalIpVoter},
-    bep44::{self, ItemStore, MutableItem, StoredView},
+    bep44::{self, ItemStore, MutableItem, StoredView, WriteTokens},
     bprotocol::{
         self, AnnouncePeer, CompactNodeInfo, CompactNodeInfoOwned, ErrorDescription,
         FindNodeRequest, FixedBytes, GetPeersRequest, GetRequest, Message, MessageKind, Node,
@@ -572,13 +572,16 @@ struct PutArgs {
     mutable: Option<SignedMutable>,
 }
 
-/// Checks a value we are about to put: one bencoded value, small enough for the DHT.
+/// Checks a value we are about to put: one canonically bencoded value, small enough for the
+/// DHT. Other nodes refuse anything else.
 fn check_item_value(value: &[u8]) -> crate::Result<()> {
     if value.len() > bep44::MAX_VALUE_SIZE {
         return Err(Error::InvalidItem("value over 1000 bytes"));
     }
-    if !bep44::is_single_bencoded_value(value) {
-        return Err(Error::InvalidItem("value is not one bencoded value"));
+    if !bep44::is_canonical_bencode(value) {
+        return Err(Error::InvalidItem(
+            "value is not one canonically bencoded value",
+        ));
     }
     Ok(())
 }
@@ -871,6 +874,8 @@ pub struct DhtState {
     pub(crate) peer_store: PeerStore,
     // BEP 44 items other nodes put to us.
     items: ItemStore,
+    // The write tokens of BEP 44 `get` answers.
+    write_tokens: WriteTokens,
 }
 
 impl DhtState {
@@ -909,6 +914,7 @@ impl DhtState {
             rate_limiter: make_rate_limiter(),
             peer_store,
             items: ItemStore::default(),
+            write_tokens: WriteTokens::new(now()),
             cancellation_token,
         }
     }
@@ -1473,7 +1479,7 @@ impl DhtState {
                     nodes,
                     nodes6,
                     token: Some(ByteBufOwned::from(
-                        &self.peer_store.gen_token_for(req.id, addr)[..],
+                        &self.write_tokens.token(addr.ip(), &req.target, now())[..],
                     )),
                     ..Default::default()
                 };
@@ -1544,23 +1550,19 @@ impl DhtState {
             .ok_or(Error::DhtDead)
     }
 
-    /// Checks a BEP 44 `put` from `addr` and stores the item. The token is checked first: it is
-    /// cheap, and it stops anyone who did not `get` from us first from making us verify
-    /// signatures.
+    /// Checks a BEP 44 `put` from `addr` and stores the item.
     fn store_item(
         &self,
         req: &PutRequest<ByteBufOwned>,
         addr: SocketAddr,
     ) -> Result<(), bep44::PutError> {
-        if !self
-            .peer_store
-            .token_is_valid(req.token.as_ref(), &req.id, addr)
-        {
-            return Err(bep44::PutError::Protocol("invalid token"));
-        }
-        let item = bep44::check_put(req)?;
+        let now = now();
+        let item = bep44::check_put(req, |target| {
+            self.write_tokens
+                .is_valid(req.token.as_ref(), addr.ip(), target, now)
+        })?;
         let ids = *self.ids.read();
-        self.items.put(item, [ids.v4, ids.v6], now())
+        self.items.put(item, addr.ip(), [ids.v4, ids.v6], now)
     }
 
     /// Our known nodes closest to `target`, from both routing tables: where a lookup starts.

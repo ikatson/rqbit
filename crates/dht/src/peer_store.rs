@@ -150,14 +150,6 @@ impl PeerStore {
         if is_v4 { ids.0 } else { ids.1 }
     }
 
-    /// Whether `token` is one we handed out to the node `node_id` at `addr` recently.
-    pub(crate) fn token_is_valid(&self, token: &[u8], node_id: &Id20, addr: SocketAddr) -> bool {
-        self.tokens
-            .read()
-            .iter()
-            .any(|t| t.token[..] == token[..] && t.addr == addr && t.node_id == *node_id)
-    }
-
     pub fn store_peer(&self, announce: &AnnouncePeer<ByteBufOwned>, mut addr: SocketAddr) -> bool {
         // If the info_hash in announce is too far away from us, don't store it.
         // If the token doesn't match, don't store it.
@@ -171,7 +163,9 @@ impl PeerStore {
             trace!("peer store: info_hash too far to store");
             return false;
         }
-        if !self.token_is_valid(announce.token.as_ref(), &announce.id, addr) {
+        if !self.tokens.read().iter().any(|t| {
+            t.token[..] == announce.token.as_ref()[..] && t.addr == addr && t.node_id == announce.id
+        }) {
             trace!("peer store: can't find this token / addr combination");
             return false;
         }
