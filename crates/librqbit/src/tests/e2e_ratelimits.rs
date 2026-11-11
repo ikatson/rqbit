@@ -13,13 +13,13 @@ use std::{
 
 use anyhow::Context;
 use bytes::Bytes;
-use librqbit_core::Id20;
+use librqbit_core::{Id20, constants::CHUNK_SIZE};
 use tempfile::TempDir;
 use tokio::time::timeout;
 
 use crate::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, CreateTorrentOptions, ListenerOptions,
-    Session, SessionOptions, SessionPersistenceConfig,
+    PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig,
     api::TorrentIdOrHash,
     create_torrent,
     limits::LimitsConfig,
@@ -197,11 +197,27 @@ async fn time_to_move(
     Ok(start.elapsed())
 }
 
+// A timed client never has more than this many blocks asked for and not received yet.
+const IN_FLIGHT_BLOCKS: u32 = 4;
+
+// The peer options of a client whose transfer is timed across a limit change. A transfer is
+// paced when it starts: a seeder takes a block's share of the rate before it queues the block
+// to the connection, a downloader before it sends the request. What was paced under the old
+// rate still goes out after a change, and with the default window (128 blocks) a busy machine
+// lets far more of it pile up than the new rate allows for in the time measured: blocks the
+// seeder's writer has not sent yet, requests the seeder has not answered yet. Capping the
+// requests caps that at `IN_FLIGHT_BLOCKS`.
+fn timed_peer_opts() -> Option<PeerConnectionOptions> {
+    Some(PeerConnectionOptions {
+        max_request_window: Some(IN_FLIGHT_BLOCKS as usize),
+        ..Default::default()
+    })
+}
+
 // At `rate` bytes per second, moving `bytes` takes at least this long: the bucket starts with
-// one second worth of the rate, and a few blocks may already have been on their way (a download
-// limit is taken before a request goes out, so what was asked for earlier still arrives).
+// one second worth of the rate, and the blocks in flight may have been paced already.
 fn at_least(bytes: u64, rate: u32) -> Duration {
-    let free = u64::from(rate) + 64 * 1024;
+    let free = u64::from(rate) + u64::from(IN_FLIGHT_BLOCKS * CHUNK_SIZE);
     Duration::from_secs_f64(bytes.saturating_sub(free) as f64 / f64::from(rate) * 0.8)
 }
 
@@ -223,7 +239,14 @@ async fn test_torrent_upload_limit_changes_while_seeding() -> anyhow::Result<()>
             .await?;
         assert_eq!(seed.handle.ratelimits(), fast);
 
-        let client = start_client(&seed, AddTorrentOptions::default()).await?;
+        let client = start_client(
+            &seed,
+            AddTorrentOptions {
+                peer_opts: timed_peer_opts(),
+                ..Default::default()
+            },
+        )
+        .await?;
         wait_for(
             "the transfer to start",
             || seed.uploaded() >= 256 * 1024,
@@ -284,6 +307,7 @@ async fn test_torrent_download_limit_changes_while_downloading() -> anyhow::Resu
             &seed,
             AddTorrentOptions {
                 ratelimits: fast,
+                peer_opts: timed_peer_opts(),
                 ..Default::default()
             },
         )
@@ -344,6 +368,7 @@ async fn test_torrent_limit_set_while_paused_applies_after_resume() -> anyhow::R
             &seed,
             AddTorrentOptions {
                 paused: true,
+                peer_opts: timed_peer_opts(),
                 ..Default::default()
             },
         )
