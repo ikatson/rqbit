@@ -956,4 +956,164 @@ mod tests {
         bencode_serialize_to_writer(Want::None, &mut w).unwrap();
         assert_eq!(&w, b"le")
     }
+
+    /// `b` as a bencoded byte string.
+    fn bstr(b: &[u8]) -> Vec<u8> {
+        let mut out = format!("{}:", b.len()).into_bytes();
+        out.extend_from_slice(b);
+        out
+    }
+
+    /// Concatenates the parts of a hand-written message.
+    fn msg(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    const ID: &[u8; 20] = b"abcdefghij0123456789";
+    const TARGET: &[u8; 20] = b"mnopqrstuvwxyz123456";
+    const KEY: &[u8; 32] = &[0x77; 32];
+    const SIG: &[u8; 64] = &[0x55; 64];
+    // A dictionary whose keys are not sorted: not canonical bencode, so a value that went through
+    // a parse and a re-serialization would come out different.
+    const UNSORTED_V: &[u8] = b"d1:bi1e1:ai2ee";
+
+    fn put_mutable_request(k: &[u8], salt: &[u8], sig: &[u8], v: &[u8]) -> Vec<u8> {
+        msg(&[
+            b"d1:ad3:casi3e2:id",
+            &bstr(ID),
+            b"1:k",
+            &bstr(k),
+            b"4:salt",
+            &bstr(salt),
+            b"3:seqi4e3:sig",
+            &bstr(sig),
+            b"5:token4:abcd1:v",
+            v,
+            b"e1:q3:put1:t2:aa1:y1:qe",
+        ])
+    }
+
+    fn get_response(k: &[u8], sig: &[u8], v: &[u8]) -> Vec<u8> {
+        msg(&[
+            b"d1:rd2:id",
+            &bstr(ID),
+            b"1:k",
+            &bstr(k),
+            b"3:seqi4e3:sig",
+            &bstr(sig),
+            b"5:token4:abcd1:v",
+            v,
+            b"e1:t2:aa1:y1:re",
+        ])
+    }
+
+    #[test]
+    fn bep44_get_request_round_trip() {
+        let data = msg(&[
+            b"d1:ad2:id",
+            &bstr(ID),
+            b"3:seqi4e6:target",
+            &bstr(TARGET),
+            b"e1:q3:get1:t2:aa1:y1:qe",
+        ]);
+        match bprotocol::deserialize_message::<ByteBuf>(&data)
+            .unwrap()
+            .kind
+        {
+            bprotocol::MessageKind::GetRequest(r) => {
+                assert_eq!(r.target.0, *TARGET);
+                assert_eq!(r.seq, Some(4));
+            }
+            other => panic!("not a get: {other:?}"),
+        }
+        test_deserialize_then_serialize(&data, "bep44_get_request");
+    }
+
+    #[test]
+    fn bep44_put_requests_round_trip() {
+        let immutable = msg(&[
+            b"d1:ad2:id",
+            &bstr(ID),
+            b"5:token4:abcd1:v12:Hello World!e1:q3:put1:t2:aa1:y1:qe",
+        ]);
+        match bprotocol::deserialize_message::<ByteBuf>(&immutable)
+            .unwrap()
+            .kind
+        {
+            bprotocol::MessageKind::PutRequest(r) => {
+                assert_eq!(r.v.0.as_ref(), b"12:Hello World!");
+                assert!(r.k.is_none() && r.sig.is_none() && r.seq.is_none());
+            }
+            other => panic!("not a put: {other:?}"),
+        }
+        test_deserialize_then_serialize(&immutable, "bep44_put_immutable");
+
+        let mutable = put_mutable_request(KEY, b"foobar", SIG, UNSORTED_V);
+        match bprotocol::deserialize_message::<ByteBuf>(&mutable)
+            .unwrap()
+            .kind
+        {
+            bprotocol::MessageKind::PutRequest(r) => {
+                assert_eq!(r.v.0.as_ref(), UNSORTED_V);
+                assert_eq!(r.k.unwrap().0, *KEY);
+                assert_eq!(r.sig.unwrap().0, *SIG);
+                assert_eq!((r.seq, r.cas), (Some(4), Some(3)));
+                assert_eq!(r.salt.unwrap().as_ref(), b"foobar");
+            }
+            other => panic!("not a put: {other:?}"),
+        }
+        test_deserialize_then_serialize(&mutable, "bep44_put_mutable");
+    }
+
+    #[test]
+    fn bep44_get_response_round_trip() {
+        let data = get_response(KEY, SIG, UNSORTED_V);
+        match bprotocol::deserialize_message::<ByteBuf>(&data)
+            .unwrap()
+            .kind
+        {
+            bprotocol::MessageKind::Response(r) => {
+                assert_eq!(r.v.unwrap().0.as_ref(), UNSORTED_V);
+                assert_eq!(r.k.unwrap().0, *KEY);
+                assert_eq!(r.sig.unwrap().0, *SIG);
+                assert_eq!(r.seq, Some(4));
+            }
+            other => panic!("not a response: {other:?}"),
+        }
+        test_deserialize_then_serialize(&data, "bep44_get_response");
+    }
+
+    #[test]
+    fn bep44_rejects_mis_sized_fields() {
+        let decodes = |data: &[u8]| bprotocol::deserialize_message::<ByteBuf>(data).is_ok();
+        let v = b"i1e";
+
+        // "k" is exactly 32 bytes, "sig" exactly 64, in queries and in responses.
+        assert!(decodes(&put_mutable_request(KEY, b"", SIG, v)));
+        assert!(!decodes(&put_mutable_request(&KEY[..31], b"", SIG, v)));
+        assert!(!decodes(&put_mutable_request(&[0x77; 33], b"", SIG, v)));
+        assert!(!decodes(&put_mutable_request(KEY, b"", &SIG[..63], v)));
+        assert!(decodes(&get_response(KEY, SIG, v)));
+        assert!(!decodes(&get_response(&KEY[..31], SIG, v)));
+        assert!(!decodes(&get_response(KEY, &[0x55; 65], v)));
+
+        // "v" must be one well-formed bencoded value.
+        assert!(!decodes(&put_mutable_request(KEY, b"", SIG, b"i1x")));
+        assert!(!decodes(&get_response(KEY, SIG, b"x")));
+
+        // A response carries at most 1000 bytes of "v".
+        let v_of_len = |len: usize| bstr(&vec![b'x'; len - 4]);
+        assert_eq!(v_of_len(1000).len(), 1000);
+        assert!(decodes(&get_response(KEY, SIG, &v_of_len(1000))));
+        assert!(!decodes(&get_response(KEY, SIG, &v_of_len(1001))));
+
+        // A put with too big a "v" or "salt" still decodes, so that it is answered with error
+        // 205 / 207 (see bep44::check_put) instead of being dropped.
+        assert!(decodes(&put_mutable_request(
+            KEY,
+            &[b's'; 65],
+            SIG,
+            &v_of_len(1001)
+        )));
+    }
 }
