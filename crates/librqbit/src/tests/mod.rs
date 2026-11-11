@@ -8,6 +8,7 @@ mod e2e_padded_files;
 mod e2e_peer_policy;
 mod e2e_piece_picking;
 mod e2e_stream;
+mod e2e_super_seeding;
 mod fake_peer;
 mod interop;
 pub mod test_util;
