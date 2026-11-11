@@ -50,9 +50,9 @@ pub trait PeerConnectionHandler {
     fn should_upload_chunk(&self, _chunk: &ChunkInfo) -> bool {
         true
     }
-    /// Asked when the peer sent nothing for the read timeout. `true` keeps the connection:
-    /// right now the peer has nothing to tell us, so only keep-alives are due
-    /// ([`SILENT_PEER_TIMEOUT`]).
+    /// Asked while the peer sends nothing. `true` excuses the silence: right now the peer has
+    /// nothing to tell us, so only keep-alives are due ([`SILENT_PEER_TIMEOUT`]). The read
+    /// timeout only runs while the silence is not excused.
     fn may_be_silent(&self) -> bool {
         false
     }
@@ -486,14 +486,26 @@ impl<H: PeerConnectionHandler> PeerConnection<H> {
         };
 
         let reader = async move {
+            // The peer is given up on when it sent nothing for the read timeout without an
+            // excuse. An excuse can end at any moment (the peer gets an upload slot, or
+            // unchokes us), and the silence counts against the peer from then on only, so the
+            // handler is asked twice within the timeout rather than once at its end.
+            let patience = rwtimeout / 2;
             let mut heard_at = Instant::now();
+            let mut excused_at = heard_at;
             loop {
-                let message = match read_buf.read_message(&mut read, rwtimeout).await {
-                    Err(Error::Timeout(_))
-                        if heard_at.elapsed() < SILENT_PEER_TIMEOUT
-                            && self.handler.may_be_silent() =>
-                    {
-                        continue;
+                let message = match read_buf.read_message(&mut read, patience).await {
+                    Err(Error::Timeout(name)) => {
+                        let now = Instant::now();
+                        if self.handler.may_be_silent() {
+                            excused_at = now;
+                        }
+                        if now.duration_since(excused_at.max(heard_at)) < rwtimeout
+                            && now.duration_since(heard_at) < SILENT_PEER_TIMEOUT
+                        {
+                            continue;
+                        }
+                        return Err(Error::Timeout(name));
                     }
                     r => r?,
                 };

@@ -163,6 +163,42 @@ async fn test_slots_move_to_the_peers_that_use_them() -> anyhow::Result<()> {
     .await
 }
 
+// The silence of a peer that waited for a slot is not held against it the moment it gets one:
+// it has the read timeout from then on to ask for something.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unchoked_peer_is_given_time_to_ask() -> anyhow::Result<()> {
+    run(async {
+        let seed = start_seeder(SeederOpts {
+            upload_slots: fixed(1),
+            read_write_timeout: Some(Duration::from_secs(3)),
+            ..Default::default()
+        })
+        .await?;
+        let mut a = connect(&seed, b"-FK0001-").await?;
+        a.interested().await?;
+        a.expect(Wire::Unchoke, Duration::from_secs(5)).await?;
+        let mut b = connect(&seed, b"-FK0002-").await?;
+        b.interested().await?;
+        let waiting_since = Instant::now();
+
+        // `b` has said nothing for 5.5 s, almost two read timeouts, when the slot becomes
+        // its own...
+        while waiting_since.elapsed() < Duration::from_millis(5500) {
+            a.keep_alive().await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        drop(a);
+        b.expect(Wire::Unchoke, Duration::from_secs(2)).await?;
+        // ... and it asks for its first block a second later, 6.5 s after its last message.
+        tokio::time::sleep(Duration::from_millis(6500).saturating_sub(waiting_since.elapsed()))
+            .await;
+        b.request(0, 0, BLOCK).await?;
+        b.expect_pieces(1, Duration::from_secs(5)).await?;
+        Ok(())
+    })
+    .await
+}
+
 // A peer that chokes us owes us nothing: the client waits for its turn, for longer than the
 // read timeout, instead of hanging up on the peer and dialing it again later.
 #[tokio::test(flavor = "multi_thread")]
