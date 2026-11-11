@@ -978,9 +978,11 @@ impl TorrentStateLive {
                 connected.clear();
                 dropped.clear();
 
+                // I2P peers are never told to anyone: their synthetic addresses aren't real.
                 connected.extend(
                     live_peers
                         .difference(&peer_view_of_live_peers)
+                        .filter(|a| !librqbit_core::i2p::is_synthetic(a))
                         .take(MAX_SENT_PEERS)
                         .copied(),
                 );
@@ -1006,11 +1008,7 @@ impl TorrentStateLive {
                 }
             };
 
-            // I2P peers are never told to anyone: their synthetic addresses aren't real.
-            let filter = |addr: &SocketAddr| {
-                !(peer_ip_non_local && other_ip_is_local(&addr.ip()))
-                    && !librqbit_core::i2p::is_synthetic(addr)
-            };
+            let filter = |addr: &SocketAddr| !(peer_ip_non_local && other_ip_is_local(&addr.ip()));
 
             // BEP 11 - Dont send closed if they are now in live
             // it's assured by mutual exclusion of two  above sets  if in sent_peers_live, it cannot be in addrs_live_to_sent,
@@ -1240,18 +1238,21 @@ impl PeerConnectionHandler for &'_ PeerHandler {
             );
         }
         // Lets update outgoing Socket address for incoming connection. Not for an I2P peer:
-        // it is reached by its destination, whatever port it names.
+        // it is reached by its destination, whatever port it names; and a clearnet peer
+        // naming a synthetic address must not make us dial into I2P.
         if self.incoming
             && !librqbit_core::i2p::is_synthetic(&self.addr)
             && let Some(port) = hs.port()
         {
             let peer_ip = hs.ip_addr().unwrap_or(self.addr.ip());
             let outgoing_addr = SocketAddr::new(peer_ip, port);
-            self.state
-                .peers
-                .with_peer_mut(self.addr, "update outgoing addr", |peer| {
-                    peer.outgoing_address = Some(outgoing_addr)
-                });
+            if !librqbit_core::i2p::is_synthetic(&outgoing_addr) {
+                self.state
+                    .peers
+                    .with_peer_mut(self.addr, "update outgoing addr", |peer| {
+                        peer.outgoing_address = Some(outgoing_addr)
+                    });
+            }
         }
 
         Ok(())

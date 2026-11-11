@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use futures::{Stream, StreamExt};
 use librqbit_core::i2p::{is_i2p_host, is_synthetic};
 use serde::{Deserialize, Serialize};
 
@@ -145,6 +146,15 @@ pub(crate) fn peer_handshake_timeout(addr: &SocketAddr, timeout: Duration) -> Du
     } else {
         timeout
     }
+}
+
+/// The peers a clearnet source (the DHT, LSD) gives, without synthetic addresses: whoever
+/// sends one is not an I2P peer, and it must not make the torrent dial into I2P.
+pub(crate) fn clearnet_peers<S>(peers: S) -> impl Stream<Item = SocketAddr> + Unpin + Send + use<S>
+where
+    S: Stream<Item = SocketAddr> + Unpin + Send,
+{
+    peers.filter(|addr| std::future::ready(!is_synthetic(addr)))
 }
 
 #[cfg(test)]

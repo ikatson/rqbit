@@ -87,6 +87,8 @@ pub(crate) struct I2pRuntime {
     book: AddressBook,
     names: Mutex<HashMap<String, I2pDestination>>,
     state: watch::Sender<SamState>,
+    /// How many SAM sessions were created so far.
+    created: watch::Sender<u64>,
     started: AtomicBool,
     incoming_tx: mpsc::Sender<IncomingStream>,
     cancel: CancellationToken,
@@ -116,6 +118,7 @@ impl I2pRuntime {
             book: AddressBook::new(DEFAULT_CAPACITY),
             names: Mutex::new(HashMap::new()),
             state: watch::Sender::new(SamState::Idle),
+            created: watch::Sender::new(0),
             started: AtomicBool::new(false),
             incoming_tx,
             cancel,
@@ -132,6 +135,13 @@ impl I2pRuntime {
 
     pub fn options(&self) -> &I2pOptions {
         &self.options
+    }
+
+    /// Changes every time a SAM session is created, to the number of sessions created so far.
+    /// Every session has a new transient destination: the I2P trackers must hear about it,
+    /// and those that failed while the bridge was unreachable are worth retrying.
+    pub fn sessions_created(&self) -> watch::Receiver<u64> {
+        self.created.subscribe()
     }
 
     /// Starts keeping a SAM session, unless done already.
@@ -164,6 +174,7 @@ impl I2pRuntime {
                         "I2P session created"
                     );
                     self.state.send_replace(SamState::Up(session.clone()));
+                    self.created.send_modify(|n| *n += 1);
                     for _ in 0..PENDING_ACCEPTS {
                         spawn_with_cancel(
                             debug_span!(parent: self.span.clone(), "i2p_accept"),
