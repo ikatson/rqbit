@@ -859,3 +859,86 @@ async fn test_a_store_written_without_priorities_loads_only_files_as_levels() ->
     })
     .await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_a_closed_streams_piece_is_given_back_when_the_seeder_is_dropped() -> anyhow::Result<()>
+{
+    run(async {
+        let p = PIECE as usize;
+        // "a" is pieces 0 and 1, "b" (skipped) 2 and 3. Piece 1 and 2 are asked for but not
+        // delivered until the end.
+        let torrent = make_torrent(&[2 * p, 2 * p]);
+        let seeder = start_seeder_holding(&torrent, set([1, 2])).await?;
+        let client = start_client(
+            &torrent,
+            Some(&seeder),
+            AddTorrentOptions {
+                file_priorities: Some(vec![1, 0]),
+                ..Default::default()
+            },
+        )
+        .await?;
+        wait_for(Duration::from_secs(20), "requests for a", || {
+            seeder.requested().is_superset(&set([0, 1]))
+        })
+        .await?;
+
+        // A player opens "b" and gets stuck on its first piece, then goes away.
+        let mut stream = client.handle.clone().stream(1).await?;
+        let reader = tokio::spawn(async move {
+            let mut byte = [0u8; 1];
+            stream.read(&mut byte).await
+        });
+        wait_for(Duration::from_secs(20), "the stream's request", || {
+            seeder.requested().contains(&2)
+        })
+        .await?;
+        reader.abort();
+        assert!(reader.await.is_err_and(|e| e.is_cancelled()));
+
+        // Nothing is wanted any more: the torrent finishes and hangs up on the seeder while
+        // the stream's piece is still in flight with it.
+        client
+            .session
+            .set_file_priorities(&client.handle, &[(0, 0)])
+            .await?;
+        wait_for(Duration::from_secs(10), "the seeder to be dropped", || {
+            client.handle.stats().finished
+                && client.handle.live().is_some_and(|l| {
+                    l.per_peer_stats_snapshot(Default::default())
+                        .peers
+                        .is_empty()
+                })
+        })
+        .await?;
+        // The piece is given back with the connection. Were it left reserved for it, only the
+        // death of a later connection to the same address would free it.
+        let piece_2 = librqbit_core::lengths::Lengths::new(torrent.content.len() as u64, PIECE)?
+            .validate_piece_index(2)
+            .context("piece 2")?;
+        wait_for(
+            Duration::from_secs(10),
+            "the stream's piece to be released",
+            || {
+                client.handle.live().is_some_and(|l| {
+                    l.lock_read("test")
+                        .get_pieces()
+                        .is_ok_and(|p| p.get_inflight(piece_2).is_none())
+                })
+            },
+        )
+        .await?;
+
+        // Wanting everything again downloads everything, the stream's piece included: it was
+        // not left reserved for the connection that is gone.
+        seeder.log.lock().hold.clear();
+        client
+            .session
+            .set_file_priorities(&client.handle, &[(0, 1), (1, 1)])
+            .await?;
+        client.wait_completed().await?;
+        client.assert_has(&torrent, 0..4);
+        Ok(())
+    })
+    .await
+}

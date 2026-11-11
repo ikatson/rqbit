@@ -933,6 +933,7 @@ impl TorrentStateLive {
     }
 
     fn disconnect_all_peers_that_have_full_torrent(&self) {
+        let mut hung_up = Vec::new();
         for mut pe in self.peers.states.iter_mut() {
             if let PeerState::Live(l) = pe.value().get_state()
                 && l.has_full_torrent(self.lengths.total_pieces() as usize)
@@ -943,7 +944,33 @@ impl TorrentStateLive {
                     .unwrap()
                     .tx
                     .send(WriterRequest::Disconnect(Ok(())));
+                hung_up.push(*pe.key());
             }
+        }
+        if hung_up.is_empty() {
+            return;
+        }
+
+        // The entries are NotNeeded now, so when these connections end on_peer_died leaves
+        // their pieces alone. Something may still be in flight with them, such as a piece a
+        // closed stream asked for on a skipped file: give it back here, or it would stay
+        // reserved and could never be queued when that file is raised. The peer table guards
+        // are gone, so taking the state lock keeps the lock order.
+        let mut g = self.lock_write("release_pieces_of_hung_up_peers");
+        let pieces = match g.get_pieces_mut() {
+            Ok(pieces) => pieces,
+            Err(e) => {
+                debug!(error = %e, "no pieces to release from hung up peers");
+                return;
+            }
+        };
+        let released: usize = hung_up
+            .into_iter()
+            .map(|addr| pieces.release_pieces_owned_by(addr))
+            .sum();
+        if released > 0 {
+            trace!(released, "released the in-flight pieces of hung up peers");
+            self.new_pieces_notify.notify_waiters();
         }
     }
 
@@ -1310,23 +1337,24 @@ impl PeerHandler {
                 return Ok(());
             }
         };
-        let prev = pe.value_mut().take_state(peers);
-
         // A connection we hung up on (disconnect_all_peers_that_have_full_torrent marks the
         // entry NotNeeded right away) can end after the torrent wanted the peer back, e.g. a
-        // file was raised from priority 0: the entry is then queued again, or already owned by
-        // the next connection to the same address. That entry is not ours to change.
-        let superseded = match &prev {
-            PeerState::Queued => true,
+        // file was raised from priority 0: the entry is then queued again, owned by the next
+        // connection to the same address, or dead after that one failed. That entry is not
+        // ours to change, so this is decided before taking the state out of it: taking a live
+        // state un-counts its pieces from the availability, and putting it back would not
+        // count them again.
+        let superseded = match pe.value().get_state() {
+            PeerState::Queued | PeerState::Dead => true,
             PeerState::Connecting(tx) => !tx.same_channel(&self.tx),
             PeerState::Live(live) => !live.tx.same_channel(&self.tx),
-            PeerState::Dead | PeerState::NotNeeded => false,
+            PeerState::NotNeeded => false,
         };
         if superseded {
             trace!("connection superseded by a newer one, leaving the peer entry alone");
-            pe.value_mut().set_state(prev, peers);
             return Ok(());
         }
+        let prev = pe.value_mut().take_state(peers);
 
         match prev {
             PeerState::Connecting(_) => {}
@@ -1358,21 +1386,10 @@ impl PeerHandler {
                     self.state.new_pieces_notify.notify_waiters();
                 }
             }
-            PeerState::NotNeeded => {
+            // NotNeeded: we hung up on it. Queued and Dead were left alone above.
+            s @ (PeerState::NotNeeded | PeerState::Queued | PeerState::Dead) => {
                 // Restore it as std::mem::take() replaced it above.
-                pe.value_mut().set_state(PeerState::NotNeeded, peers);
-                return Ok(());
-            }
-            s @ PeerState::Queued | s @ PeerState::Dead => {
-                warn!(
-                    id = self.state.shared.id,
-                    info_hash = ?self.state.shared.info_hash,
-                    addr = ?handle,
-                    "bug: peer was in a wrong state {s:?}, ignoring it forever"
-                );
-                // Prevent deadlocks.
-                drop(pe);
-                self.state.peers.drop_peer(handle);
+                pe.value_mut().set_state(s, peers);
                 return Ok(());
             }
         };
