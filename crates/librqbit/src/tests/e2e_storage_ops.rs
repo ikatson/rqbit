@@ -338,6 +338,7 @@ struct Ctl {
     fail_writes: AtomicBool,
     read_gate: Arc<Gate>,
     move_gate: Arc<Gate>,
+    rename_gate: Arc<Gate>,
 }
 
 #[derive(Clone, Default)]
@@ -438,6 +439,7 @@ impl TorrentStorage for Instrumented {
     }
 
     fn rename_file(&self, file_id: usize, from: &Path, to: &Path) -> anyhow::Result<()> {
+        self.ctl.rename_gate.pass();
         self.inner.rename_file(file_id, from, to)
     }
 
